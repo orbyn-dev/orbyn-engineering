@@ -231,7 +231,13 @@ function Tool({ item, live }: { item: ToolItem; live: boolean }) {
           {trace.command ? (
             <CodeBlock code={trace.command} lang="bash" bare />
           ) : (
-            <pre tabIndex={0}>{prettyJson(item.args) || "None"}</pre>
+            prettyJson(item.args) ? (
+              <pre tabIndex={0}>{prettyJson(item.args)}</pre>
+            ) : (
+              <pre tabIndex={0} data-find-skip>
+                None
+              </pre>
+            )
           )}
           <CommandOutput item={item} running={running} />
           {item.exitCode !== null ? <p className="tool-exit" data-failed={failed || undefined}>Exit code {item.exitCode}</p> : null}

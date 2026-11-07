@@ -15,8 +15,9 @@ interface Highlights {
 const registry = () => (globalThis.CSS as unknown as { highlights?: Highlights } | undefined)?.highlights;
 const makeHighlight = (ranges: Range[]) => new (globalThis as unknown as { Highlight: new (...r: Range[]) => unknown }).Highlight(...ranges);
 
-/** Chrome the count never includes: button labels and anything hidden from assistive technology. */
-const SKIPPED = "button, [aria-hidden='true'], .sr-only, script, style, .render-card, .workflow-card";
+/** Chrome the count never includes: button labels, "No output.", "Exit code N", and anything hidden from assistive technology. */
+const SKIPPED =
+  "button, [aria-hidden='true'], .sr-only, script, style, .render-card, .workflow-card, .tool-exit, .tool-empty, [data-find-skip]";
 
 /**
  * Every occurrence of `needle` in the text a row shows, in page order. Text inside buttons is

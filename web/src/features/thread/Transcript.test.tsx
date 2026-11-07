@@ -726,3 +726,51 @@ describe("A new width", () => {
     expect(sizes.width).toBe(600);
   });
 });
+
+describe("A reply you switch into while it streams", () => {
+  const region = () => document.querySelector<HTMLElement>(".sr-only[role=status]")!;
+
+  it("is announced once when it finishes, though it began before the thread opened", () => {
+    const history = turns(5);
+    const streaming = message("live", "assistant", "Partway", "r-live", false); // began long before
+    load("t-mid", [...history, streaming]);
+    render(<Transcript threadId="t-mid" active activeRunId="r-live" />);
+    expect(region()).toHaveTextContent("");
+    act(() => load("t-mid", [...history, { ...streaming, text: "Partway through the answer" }]));
+    expect(region()).toHaveTextContent("");
+    act(() => load("t-mid", [...history, { ...streaming, text: "Partway through the answer, done", done: true }]));
+    expect(region().textContent).toBe("New reply from the agent");
+  });
+
+  it("leaves history that arrives already finished silent", () => {
+    render(<Transcript threadId="t-done-history" active={false} />);
+    act(() => load("t-done-history", turns(20)));
+    expect(region()).toHaveTextContent("");
+  });
+});
+
+describe("Find skips what the cards add around their text", () => {
+  it("keeps the count equal to the highlights for 'output', 'code' and 'none' in a group of tools", async () => {
+    const bare: ToolItem = { ...tool("bare", "r0", ""), name: "mystery", args: "", result: null, output: "", done: true, exitCode: null };
+    const items: ThreadItem[] = [
+      message("u0", "user", "Go", "r0"),
+      tool("t1", "r0", "the output line\n"),
+      { ...tool("t2", "r0", ""), args: "", result: null, output: "", exitCode: null, name: "mystery2" },
+      bare,
+      message("a0", "assistant", "Done", "r0"),
+    ];
+    load("t-chrome", items);
+    render(<Transcript threadId="t-chrome" active={false} />);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    const entries = arrangeTimeline(items, {}, null);
+    const rows = [...document.querySelectorAll<HTMLElement>(".transcript-inner > .item")];
+    // The page has "No output.", "None" and "Exit code 0" in it; none of them is counted or painted.
+    for (const word of ["output", "code", "none"]) {
+      const painted = rows.flatMap((row) => rangesIn(row, word)).length;
+      expect(findMatches(entries, word)).toHaveLength(painted);
+    }
+    expect(document.body.textContent).toContain("No output.");
+    expect(document.body.textContent).toContain("Exit code 0");
+    expect(findMatches(entries, "output")).toHaveLength(1);
+  });
+});
