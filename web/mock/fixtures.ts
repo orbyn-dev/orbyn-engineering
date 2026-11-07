@@ -932,6 +932,74 @@ export const engineModels = (engine: string) => ({
   ],
 });
 
+/** The Pull requests page's rows in every data state, with the details the service adds. */
+const listed = (
+  number: number,
+  title: string,
+  over: Record<string, unknown> = {},
+  project = "orbyn-engineering-app",
+) => ({
+  project_id: project,
+  pull: {
+    number,
+    title,
+    url: "https://github.com/orbyn-dev/orbyn-engineering/pull/" + number,
+    state: "open",
+    head: "feat/" + title.toLowerCase().replace(/[^a-z]+/g, "-").slice(0, 14),
+    base: "main",
+    author: "riley",
+    draft: false,
+    updated_at: iso(-240),
+    labels: [],
+    review_state: null,
+    checks_state: "pass",
+    checks: { total: 4, passing: 4, failing: 0, running: 0, failing_names: [] as string[] },
+    ...over,
+  },
+});
+export const pullList = () => [
+  listed(142, "Return to the page people came from", {
+    updated_at: iso(-240),
+    review_state: "approved",
+    checks_state: "fail",
+    checks: { total: 4, passing: 3, failing: 1, running: 0, failing_names: ["e2e (macOS)"] },
+  }),
+  listed(139, "Project icon picker", {
+    updated_at: iso(-7200),
+    review_state: "changes_requested",
+    checks_state: "fail",
+    checks: { total: 5, passing: 2, failing: 3, running: 0, failing_names: ["e2e (macOS)", "e2e (Linux)", "docs build"] },
+  }),
+  listed(138, "Usage cost filters", {
+    updated_at: iso(-18000),
+    checks_state: "pending",
+    checks: { total: 4, passing: 1, failing: 0, running: 2, failing_names: [] },
+  }),
+  listed(137, "Settings scoped rows", { updated_at: iso(-90000) }),
+  listed(3, "Calendar feed token", {
+    updated_at: iso(-100000),
+    checks: { total: 4, passing: 2, failing: 0, running: 0, failing_names: [] },
+  }, "orbyn-planner"),
+  listed(131, "Rename workspace", {
+    updated_at: iso(-180000),
+    checks_state: "none",
+    checks: { total: 2, passing: 0, failing: 0, running: 0, failing_names: [] },
+  }),
+  listed(136, "Flaky E2E shard", { updated_at: iso(-260000), checks_state: "none", checks: { total: 0, passing: 0, failing: 0, running: 0, failing_names: [] } }, "orbyn-planner"),
+  listed(57, "Footer links", { updated_at: iso(-270000), draft: true, checks_state: "none", checks: undefined }),
+];
+export const pullDetails = () => [
+  { project_id: "orbyn-engineering-app", number: 142, created_at: iso(-86400), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 12, viewer_review_state: "approved" },
+  { project_id: "orbyn-engineering-app", number: 139, created_at: iso(-172800), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 3, viewer_review_state: "changes_requested" },
+  { project_id: "orbyn-engineering-app", number: 138, created_at: iso(-200000), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 1, viewer_review_state: "commented" },
+  { project_id: "orbyn-engineering-app", number: 137, created_at: iso(-300000), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 2, viewer_review_state: "dismissed" },
+  { project_id: "orbyn-planner", number: 3, created_at: iso(-310000), requested_reviewers: [{ name: "orbyn-dev/web", kind: "team" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 5, viewer_review_state: "pending" },
+  { project_id: "orbyn-engineering-app", number: 131, created_at: iso(-400000), requested_reviewers: [{ name: "you", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 0, viewer_review_state: "none" },
+  { project_id: "orbyn-planner", number: 136, created_at: iso(-500000), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 1, viewer_review_state: "none" },
+  // A forge that gives none of these: every cell shows an en dash.
+  { project_id: "orbyn-engineering-app", number: 57 },
+];
+
 export const pulls = () => [
   {
     project_id: "orbyn-engineering-app",

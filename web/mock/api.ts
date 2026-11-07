@@ -34,7 +34,21 @@ export interface MockResponse {
   body?: unknown;
 }
 
-export type Scenario = "default" | "empty" | "first-run" | "no-skills" | "remote" | "offline" | "reference";
+export type Scenario =
+  | "default"
+  | "empty"
+  | "first-run"
+  | "no-skills"
+  | "remote"
+  | "offline"
+  | "reference"
+  /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
+  | "pulls"
+  | "pulls-details-failed"
+  | "pulls-rate-limited"
+  | "pulls-signed-out"
+  | "pulls-none"
+  | "pulls-unreachable";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -635,7 +649,38 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/editors":
         return { status: 200, body: [{ id: "code", name: "VS Code", launch_style: "goto", file_manager: false }] };
       case "GET /api/pulls":
-        return { status: 200, body: { pulls: fixtures.pulls(), failed: [] } };
+        if (scenario === "pulls-none") return { status: 200, body: { pulls: [], failed: [] } };
+        if (scenario === "pulls-unreachable") return { status: 200, body: { pulls: [], failed: [{ project_id: "orbyn-engineering-app", message: "GitHub did not answer." }] } };
+        if (scenario.startsWith("pulls") && query.get("state") === "closed") {
+          // A second list with its own numbers, so the details of the first do not cover it.
+          const closed = fixtures.pullList().map((entry) => ({ ...entry, pull: { ...entry.pull, number: entry.pull.number + 1000, state: "closed" } }));
+          return { status: 200, body: { pulls: closed, failed: [] } };
+        }
+        return { status: 200, body: { pulls: scenario.startsWith("pulls") ? fixtures.pullList() : fixtures.pulls(), failed: [] } };
+      case "POST /api/pulls": {
+        if (seg[2] !== "details") break;
+        if (scenario === "pulls-details-failed") return err(502, "forge_unreachable", "GitHub did not answer.");
+        const asked = ((data.pulls ?? []) as { project_id: string; number: number }[]).map((one) => `${one.project_id}:${one.number}`);
+        const all = scenario.startsWith("pulls") ? [...fixtures.pullDetails(), ...fixtures.pullDetails().map((one) => ({ ...one, number: one.number + 1000 }))] : [];
+        return {
+          status: 200,
+          body: {
+            details: all
+              .filter((one) => asked.includes(`${one.project_id}:${one.number}`))
+              .map((one) => (scenario === "pulls-rate-limited" ? { ...one, comment_count: undefined } : one)),
+            paused: scenario === "pulls-rate-limited" ? ["comment_count"] : [],
+          },
+        };
+      }
+      case "GET /api/forges":
+        return {
+          status: 200,
+          body: [
+            scenario === "pulls-signed-out"
+              ? { id: "github", name: "GitHub", program: "gh", installed: true, version: "2.60.0", signed_in: false, accounts: [], problem: null }
+              : { id: "github", name: "GitHub", program: "gh", installed: true, version: "2.60.0", signed_in: true, accounts: ["you"], viewer: "you", problem: null },
+          ],
+        };
       case "GET /api/clones":
         return { status: 200, body: clones };
       case "POST /api/clones": {
