@@ -19,6 +19,24 @@ const entries: TimelineEntry[] = [
   message("a2", "Nothing here"),
 ];
 
+describe("thread search, shaped like what is shown", () => {
+  it("counts rendered Markdown text, not link targets, fences or markers", () => {
+    const source = "see [the needle docs](https://example.com/needle) and **bold needle**\n\n```ts\nconst needle = 1\n```\n\nplain https://example.com/needle link";
+    const rows: TimelineEntry[] = [message("a", source)];
+    // The label, the bold word and the code line; the two URLs are shown only as the bare link.
+    expect(findMatches(rows, "needle")).toHaveLength(4);
+    expect(findMatches(rows, "https://example.com/needle")).toHaveLength(1);
+    expect(findMatches(rows, "```")).toHaveLength(0);
+    expect(findMatches(rows, "**")).toHaveLength(0);
+  });
+
+  it("finds text in a tool card's output, not only its command", () => {
+    const rows: TimelineEntry[] = [{ kind: "work", key: "w", items: [{ ...tool("t", "shell", "npm test"), output: "FAIL zq-output-marker\n", result: null }] }];
+    expect(findMatches(rows, "zq-output-marker")).toEqual([{ index: 0, nth: 0 }]);
+    expect(findMatches(rows, "npm test")).toHaveLength(1);
+  });
+});
+
 describe("thread search", () => {
   it("counts every occurrence in order, case-insensitively, including inside folds", () => {
     expect(findMatches(entries, "needle")).toEqual([

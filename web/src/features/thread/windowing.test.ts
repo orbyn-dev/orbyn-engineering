@@ -53,6 +53,20 @@ describe("row windowing model", () => {
     }
   });
 
+  it("forgets the heights of rows out of the page when the width changes", () => {
+    const sizes = new RowSizes(new Map([["a", 100], ["b", 200], ["c", 300]]));
+    sizes.retain(["b"]);
+    expect(sizes.get("a")).toBeUndefined();
+    expect(sizes.get("b")).toBe(200);
+    expect(sizes.get("c")).toBeUndefined();
+  });
+
+  it("remembers the width the cached heights were taken at, per thread", () => {
+    sizesFor("w1").width = 640;
+    expect(sizesFor("w1").width).toBe(640);
+    expect(sizesFor("w2").width).toBe(0);
+  });
+
   it("keeps heights per thread for the next visit and forgets old threads", () => {
     sizesFor("a").set("m0", 321);
     expect(sizesFor("a").get("m0")).toBe(321);

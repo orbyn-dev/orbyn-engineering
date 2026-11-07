@@ -4,8 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUi } from "../../state/ui";
 import { Transcript } from "./Transcript";
 import { ThreadFind } from "./ThreadFind";
-import { emptyLog, type MessageItem, type ThreadItem } from "./projection";
+import type { Approval } from "../../api/types";
+import { forgetOpenState } from "../../ui/openState";
+import { useWorkspace } from "../../state/workspace";
+import { LedgerPin } from "./LedgerPin";
+import { emptyLog, type ApprovalItem, type MessageItem, type ThreadItem, type ToolItem } from "./projection";
 import { useThreadLogs } from "./threadLogs";
+import { arrangeTimeline } from "./timeline";
+import { transcriptFor } from "./transcriptRegistry";
+import { estimateRow, sizesFor } from "./windowing";
 
 /**
  * jsdom has no layout, so this gives the transcript a small one: every `.item` is HEIGHT tall
@@ -53,6 +60,9 @@ function layout() {
     const make = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 800, width: 800, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
     if (this.classList.contains("transcript")) return make(0, VIEW);
     const scroller = this.closest(".transcript") as HTMLElement | null;
+    // Anything inside a row sits at the row's top; only the rows themselves are laid out here.
+    const inside = this.closest(".item");
+    if (inside && inside !== this) return make(inside.getBoundingClientRect().top, 20);
     const parent = this.parentElement;
     if (!scroller || !parent) return make(0, 0);
     const before = [...parent.children].slice(0, [...parent.children].indexOf(this));
@@ -108,7 +118,11 @@ const scrollTo = (top: number) => {
     scroller().scrollTop = top;
   });
 };
-const resize = () => act(() => callbacks.forEach((callback) => callback([], {} as ResizeObserver)));
+const resize = () =>
+  act(() => {
+    const rows = [...document.querySelectorAll<HTMLElement>(".transcript .item")].map((target) => ({ target }) as unknown as ResizeObserverEntry);
+    callbacks.forEach((callback) => callback(rows, {} as ResizeObserver));
+  });
 
 beforeEach(() => {
   heights.clear();
@@ -119,6 +133,7 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
 });
 afterEach(() => {
+  forgetOpenState();
   vi.unstubAllGlobals();
   useThreadLogs.setState({ logs: {}, streams: {}, prompts: {} });
   useUi.setState({ messageReveal: null });
@@ -126,21 +141,17 @@ afterEach(() => {
 
 describe("Transcript windowing", () => {
   it("mounts only the rows near the view and keeps the full scroll height", () => {
-    load("t-window", turns(500)); // 1,000 rows
+    const items = turns(500); // 1,000 rows
+    load("t-window", items);
     render(<Transcript threadId="t-window" active={false} />);
     expect(mountedRows()).toBeGreaterThan(0);
     expect(mountedRows()).toBeLessThan(40);
-    // Mounted rows are 100px; the rest stand in at their estimates (56 for a prompt, 39 for a reply).
-    const mounted = new Set(mountedKeys());
+    // The page is as tall as if every row were mounted: each row at its measured height, or at its
+    // estimate until it has been on screen, with the 16px gaps and the column's 24px padding.
+    const sizes = sizesFor("t-window");
     let expected = 24 + 24 - 16;
-    for (let n = 0; n < 500; n++) {
-      expected += (mounted.has(`msg:u${n}`) ? 100 : 56) + 16;
-      expected += (mounted.has(`msg:a${n}`) ? 100 : 39) + 16;
-    }
-    // Rows that were measured and then left the window keep their measured height, so the
-    // height is at least the estimate-only total and a little more, never the 1,000 rows' worth.
-    expect(scroller().scrollHeight).toBeGreaterThanOrEqual(expected);
-    expect(scroller().scrollHeight).toBeLessThan(expected + 3000);
+    for (const entry of arrangeTimeline(items, {}, null)) expected += (sizes.get(entry.key) ?? estimateRow(entry)) + 16;
+    expect(scroller().scrollHeight).toBe(expected);
   });
 
   it("opens at the end of the thread", () => {
@@ -267,8 +278,23 @@ describe("Transcript windowing", () => {
     render(<Transcript threadId="t-a11y" active={false} />);
     expect(scroller()).toHaveAttribute("tabindex", "0");
     expect(screen.getByRole("navigation", { name: "Prompts in this thread" })).toBeInTheDocument();
-    // Spacers carry no content for assistive technology.
-    for (const gap of document.querySelectorAll(".transcript-inner > div[aria-hidden]")) expect(gap).toBeEmptyDOMElement();
+    expect(scroller()).toHaveAttribute("aria-live", "off");
+  });
+
+  it("has a spacer on each side of the window in the middle of a long thread, and nothing in them", () => {
+    load("t-gaps", turns(500));
+    render(<Transcript threadId="t-gaps" active={false} />);
+    scrollTo(30000);
+    const children = [...document.querySelectorAll(".transcript-inner > *")];
+    const rows = children.filter((child) => child.classList.contains("item"));
+    const gaps = children.filter((child) => child.getAttribute("aria-hidden") === "true");
+    expect(gaps).toHaveLength(2);
+    expect(children.indexOf(gaps[0]!)).toBeLessThan(children.indexOf(rows[0]!));
+    expect(children.indexOf(gaps[1]!)).toBeGreaterThan(children.indexOf(rows.at(-1)!));
+    for (const gap of gaps) {
+      expect(gap).toBeEmptyDOMElement();
+      expect(Number.parseFloat((gap as HTMLElement).style.height)).toBeGreaterThan(1000);
+    }
   });
 
   it("lets the prompts strip reach a prompt that is not mounted", async () => {
@@ -314,5 +340,201 @@ describe("Find in thread", () => {
     load("t-none", turns(50));
     await find("t-none", "walrus");
     expect(await screen.findByText("0/0")).toBeInTheDocument();
+  });
+});
+
+const tool = (key: string, runId: string, output: string): ToolItem => ({
+  kind: "tool", key, seq: 0, ts: "2026-01-01T00:00:00Z", runId, callId: key, name: "shell", args: "ls", output, result: output, done: true, exitCode: 0,
+});
+
+/** Turn n with a command in the middle, so it folds: prompt, fold, answer. */
+function foldedTurns(count: number, output: (n: number) => string = () => "ok"): ThreadItem[] {
+  return Array.from({ length: count }, (_, n) => [
+    message(`u${n}`, "user", `Question ${n}`, `r${n}`),
+    tool(`tool${n}`, `r${n}`, output(n)),
+    message(`a${n}`, "assistant", `Answer ${n}`, `r${n}`),
+  ]).flat();
+}
+
+describe("Rows keep what you opened", () => {
+  it("keeps a fold open after its row scrolls out of the window and back", async () => {
+    load("t-open", foldedTurns(200));
+    render(<Transcript threadId="t-open" active={false} />);
+    scrollTo(0);
+    const fold = () => document.querySelector<HTMLElement>('[data-entry="fold:r0"] button.work-summary')!;
+    expect(fold()).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(fold());
+    expect(fold()).toHaveAttribute("aria-expanded", "true");
+    act(() => fold().blur()); // a row with focus stays mounted; this one is simply read and left
+    scrollTo(30000);
+    expect(document.querySelector('[data-entry="fold:r0"]')).toBeNull();
+    scrollTo(0);
+    expect(fold()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("keeps a fold closed when it was never opened, and forgets nothing about other threads", () => {
+    load("t-closed", foldedTurns(200));
+    render(<Transcript threadId="t-closed" active={false} />);
+    scrollTo(0);
+    expect(document.querySelector('[data-entry="fold:r0"] button.work-summary')).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("Screen reader announcements", () => {
+  it("announces a reply by its arrival, even when it lands below the window", () => {
+    load("t-say", turns(300));
+    render(<Transcript threadId="t-say" active={false} />);
+    scrollTo(0);
+    expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("");
+    act(() =>
+      load("t-say", [...turns(300), message("late", "assistant", "A new reply while you read up", "r-late")]),
+    );
+    expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("A new reply while you read up");
+  });
+
+  it("stays quiet when rows only mount because you scrolled", () => {
+    load("t-quiet", turns(300));
+    render(<Transcript threadId="t-quiet" active={false} />);
+    scrollTo(0);
+    scrollTo(20000);
+    scrollTo(5000);
+    expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("");
+  });
+});
+
+describe("Scroll targets", () => {
+  it("aligns a far row once and then leaves the view alone while the thread streams", async () => {
+    load("t-goal", turns(400));
+    render(<Transcript threadId="t-goal" active />);
+    const aligned = vi.spyOn(Element.prototype, "scrollIntoView");
+    let arrived!: Promise<HTMLElement | null>;
+    act(() => {
+      arrived = transcriptFor("t-goal")!.reveal(300, "center");
+    });
+    await act(async () => {
+      await arrived;
+    });
+    const calls = aligned.mock.calls.length;
+    expect(calls).toBeGreaterThan(0);
+    expect(calls).toBeLessThanOrEqual(3);
+    // You scroll on; the last row grows as the reply streams. Nothing pulls the view back.
+    scrollTo(scroller().scrollTop + 700);
+    const place = scroller().scrollTop;
+    heights.set("msg:a399", 900);
+    resize();
+    resize();
+    expect(aligned.mock.calls.length).toBe(calls);
+    expect(scroller().scrollTop).toBe(place);
+    aligned.mockRestore();
+  });
+
+  it("gives way at once to wheel input", async () => {
+    load("t-wheel", turns(400));
+    render(<Transcript threadId="t-wheel" active={false} />);
+    const aligned = vi.spyOn(Element.prototype, "scrollIntoView");
+    let arrived!: Promise<HTMLElement | null>;
+    act(() => {
+      arrived = transcriptFor("t-wheel")!.reveal(300, "center");
+      scroller().dispatchEvent(new Event("wheel"));
+    });
+    await act(async () => {
+      await arrived;
+    });
+    expect(aligned).not.toHaveBeenCalled();
+    aligned.mockRestore();
+  });
+});
+
+describe("Following the end", () => {
+  it("stays on the end when the browser clamps the view after content shrinks", () => {
+    load("t-clamp", turns(100));
+    render(<Transcript threadId="t-clamp" active />);
+    const end = scroller().scrollHeight - VIEW;
+    expect(scroller().scrollTop).toBe(end);
+    // The last row measures shorter, so the page gets 90px shorter and the browser pulls the view up.
+    heights.set("msg:a99", 10);
+    act(() => {
+      scroller().scrollTop = end - 90;
+    });
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).not.toBeInTheDocument();
+  });
+
+  it("lets go of the end when you scroll up by more than a shrink explains", () => {
+    load("t-away", turns(100));
+    render(<Transcript threadId="t-away" active />);
+    const end = scroller().scrollHeight - VIEW;
+    act(() => {
+      scroller().scrollTop = end - 600;
+    });
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+});
+
+describe("Selection across rows", () => {
+  const selectFirst = () => {
+    const start = screen.getByText("Question 0").firstChild!;
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.setBaseAndExtent(start, 0, start, 3);
+    act(() => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+  };
+  /** Drags the selection's far end to a row that is mounted at the current scroll position. */
+  const extendTo = (text: string) => {
+    document.getSelection()!.extend(screen.getByText(text).firstChild!, 3);
+    act(() => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+  };
+
+  it("keeps every row between the ends mounted when they are 200 rows apart or fewer", () => {
+    load("t-short", turns(300));
+    render(<Transcript threadId="t-short" active={false} />);
+    scrollTo(0);
+    selectFirst();
+    scrollTo(14000); // around row 120
+    const far = mountedKeys().find((key) => key?.startsWith("msg:a"))!;
+    extendTo(`Answer ${far.slice(5)}`);
+    scrollTo(60000);
+    const keys = mountedKeys();
+    expect(keys).toContain("msg:u0");
+    expect(keys).toContain(far);
+    expect(keys).toContain("msg:u30"); // a row in the middle that is nowhere near the view
+  });
+
+  it("keeps only the two ends of a selection longer than 200 rows", () => {
+    load("t-long", turns(300));
+    render(<Transcript threadId="t-long" active={false} />);
+    scrollTo(0);
+    selectFirst();
+    scrollTo(40000); // around row 345
+    const far = mountedKeys().find((key) => key?.startsWith("msg:a"))!;
+    extendTo(`Answer ${far.slice(5)}`);
+    scrollTo(0);
+    scrollTo(60000);
+    const keys = mountedKeys();
+    expect(keys).toContain("msg:u0");
+    expect(keys).toContain(far);
+    expect(keys).not.toContain("msg:u90"); // between the ends, so a copy of this selection has a gap
+  });
+});
+
+describe("The Ledger pin", () => {
+  const pending = (id: string): Approval =>
+    ({ id, thread_id: "t-pin", run_id: "r150", kind: "tool", summary: `Run ${id}?`, detail: {}, state: "pending", decided_by: null, decided_at: null, created_at: "" }) as Approval;
+
+  it("brings an approval that is outside the window into view and focuses it", async () => {
+    useUi.getState().setPrefs({ workspaceLayout: "ledger" });
+    useWorkspace.setState({ approvals: { loading: false, error: null, data: [pending("x1")] } });
+    const ask: ApprovalItem = { kind: "approval", key: "approval:x1", seq: 0, ts: "", runId: "r150", approval: pending("x1") };
+    const items = turns(300);
+    items.splice(300, 0, ask);
+    load("t-pin", items);
+    render(<Transcript threadId="t-pin" active={false} header={<LedgerPin threadId="t-pin" />} />);
+    expect(document.querySelector(".approval[data-pending]")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Show" }));
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector(".approval[data-pending]")));
+    useUi.getState().setPrefs({ workspaceLayout: "console" });
   });
 });
