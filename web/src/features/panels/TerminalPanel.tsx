@@ -9,6 +9,7 @@ import { useComposerChips } from "../thread/composerChipStore";
 import { charactersOver, chipId, promptWithChips, terminalSelection } from "../thread/composerContext";
 import { Button, Pill } from "../../ui/controls";
 import { terminalUrl } from "./terminalSocket";
+import { registerTerminal, terminalKey } from "./terminalControls";
 import { linkProvider } from "./terminalLinks";
 import { ShellMarks, type Position, type ShellCommand } from "./shellMarks";
 import type { Terminal as XTerm } from "@xterm/xterm";
@@ -181,7 +182,26 @@ export function TerminalPanel({
       });
       observer.observe(element);
 
+      const unregister = registerTerminal(terminalKey(threadId, terminalId), {
+        clear: () => terminal.clear(),
+        interrupt: () => {
+          if (!observe && socket.readyState === WebSocket.OPEN) socket.send(encoder.encode("\x03"));
+        },
+        output: () => {
+          const buffer = terminal.buffer.active;
+          const lines: string[] = [];
+          for (let row = 0; row < buffer.length; row += 1) {
+            const line = buffer.getLine(row);
+            if (!line) continue;
+            const text = line.translateToString(true);
+            if (line.isWrapped && lines.length > 0) lines[lines.length - 1] += text;
+            else lines.push(text);
+          }
+          return lines.join("\n").replace(/\s+$/, "");
+        },
+      });
       cleanup = () => {
+        unregister();
         cancelAnimationFrame(frame);
         observer.disconnect();
         input.dispose();

@@ -151,3 +151,106 @@
     flex-basis: 150px;
   }
 }
+
+/* The terminal drawer's row sits on the same footing; its tab icons, the splits and the controls at the end. */
+.term-head {
+  align-items: flex-end;
+  padding-right: 8px;
+  border-bottom-color: var(--color-border);
+}
+.term-head .terminal-tabs-gap {
+  flex: 1;
+}
+.term-head .icon-btn {
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 2px;
+  color: var(--color-muted);
+}
+.term-head .icon-btn[aria-pressed="true"] {
+  color: var(--color-selectedText);
+}
+.term-head .ptl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.term-head .ptl .spin {
+  flex: none;
+}
+.term-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-danger);
+}
+.terminal-splits .term-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.terminal-splits .term-pane + .term-pane {
+  border-left: 1px solid var(--color-border);
+}
+.terminal-splits[data-direction="vertical"] .term-pane + .term-pane {
+  border-top: 1px solid var(--color-border);
+  border-left: 0;
+}
+.term-pane-title {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 0;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+/* Under the output: what is running, how a command ended, what can be done with it. */
+.term-dock {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.term-dock[data-tone="failed"] {
+  background: var(--color-dangerSoft);
+  color: var(--color-text);
+}
+.term-dock-title {
+  color: var(--color-muted);
+}
+.term-dock-acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.term-dock-acts .btn {
+  gap: 6px;
+}
+/* The closed drawer keeps a slim bar while something runs. */
+.term-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.term-bar-dot {
+  color: var(--color-faint);
+}
+.term-bar-open {
+  margin-left: auto;
+}

@@ -31,7 +31,7 @@ import { engineById, useWorkspace } from "../../state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../ui/states";
 import { SurfacePane } from "../panels/SurfacePane";
-import { TerminalDrawerBody } from "../panels/TerminalDrawerBody";
+import { TerminalBar, TerminalDrawerBody } from "../panels/TerminalDrawerBody";
 import { threadRunState } from "../workspace/RunState";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
@@ -536,6 +536,7 @@ export function ThreadView({ id }: { id: string }) {
           </div>
         </div>
         <TerminalDrawer threadId={id} open={terminalOpen} moves={paneMoves} onClose={() => togglePanel("terminal")} />
+        {terminalOpen ? null : <TerminalBar threadId={id} onOpen={() => togglePanel("terminal")} />}
         {rail && detailsShown ? <DetailsCard thread={thread} engine={engine} compact={false} onClose={toggleDetailsPref} /> : null}
         {!rail && !inPanel && detailsPopover ? (
           <DetailsPopover thread={thread} engine={engine} compact={phone} onClose={() => setDetailsPopover(false)} />
