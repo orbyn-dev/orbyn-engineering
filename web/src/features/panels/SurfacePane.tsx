@@ -1,5 +1,7 @@
 import { CloudOff, Maximize2, Minimize2, MoreHorizontal, Plus, RefreshCw, X } from "lucide-react";
 import type { DragEvent, KeyboardEvent, ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { captureFocusReturn } from "../../ui/focusReturn";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { Thread } from "../../api/types";
 import { useUi, type RightTab } from "../../state/ui";
@@ -183,14 +185,28 @@ export function SurfacePane({
   const closedItems: MenuItem[] = [
     ...order
       .filter((id) => closedTabs.includes(id))
-      .map((id, at) => {
+      .map((id) => {
         const { label, icon: Icon } = tabOf(id);
-        return { label, icon: <Icon size={14} aria-hidden />, onSelect: () => reopenTab(id), ...(at === 0 ? {} : {}) };
+        return { label, icon: <Icon size={14} aria-hidden />, onSelect: () => reopenTab(id) };
       }),
+    ...(closedTabs.length === 0 && !changed ? [{ label: "All tabs are open.", disabled: true }] : []),
     ...(changed ? [{ ...reset, separatorBefore: closedTabs.length > 0 }] : []),
   ];
+  const [said, setSaid] = useState("");
+  const plusButton = useRef<HTMLButtonElement>(null);
   const focusTab = (id: RightTab) =>
     requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`#${TAB_ID}${id}`)?.focus());
+  /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
+  const closeWithFocus = (id: RightTab) => {
+    const at = rowIds.indexOf(id);
+    const neighbour = rowIds[at + 1] ?? rowIds[at - 1];
+    const target =
+      (neighbour ? list.current?.querySelector<HTMLElement>(`#${TAB_ID}${neighbour}`) : null) ?? plusButton.current ?? list.current;
+    const back = captureFocusReturn(target);
+    flushSync(() => closeTab(id));
+    back.restore();
+    setSaid("Tab closed");
+  };
   // One Tab stop: the chosen tab. Arrows move between tabs, Delete closes one, Alt+Shift+Arrow moves it.
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const at = rowIds.indexOf(tab);
@@ -201,14 +217,13 @@ export function SurfacePane({
       if (!neighbour) return;
       event.preventDefault();
       moveTab(current, order.indexOf(neighbour));
+      setSaid("Tab moved");
       focusTab(current);
       return;
     }
-    if (event.key === "Delete" && rowIds.length > 1) {
+    if ((event.key === "Delete" || event.key === "Backspace") && rowIds.length > 1) {
       event.preventDefault();
-      const next = rowIds[rowIds.indexOf(current) + 1] ?? rowIds[rowIds.indexOf(current) - 1];
-      closeTab(current);
-      if (next) focusTab(next);
+      closeWithFocus(current);
       return;
     }
     const next =
@@ -225,7 +240,10 @@ export function SurfacePane({
   };
   const onDrop = (event: DragEvent<HTMLDivElement>, onto: RightTab) => {
     event.preventDefault();
-    if (dragging && dragging !== onto) moveTab(dragging, order.indexOf(onto));
+    if (dragging && dragging !== onto) {
+      moveTab(dragging, order.indexOf(onto));
+      setSaid("Tab moved");
+    }
     setDragging(null);
     setOver(null);
   };
@@ -287,6 +305,9 @@ export function SurfacePane({
                   event.preventDefault();
                   setOver(id);
                 }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver((current) => (current === id ? null : current));
+                }}
                 onDrop={(event) => onDrop(event, id)}
               >
                 <button
@@ -306,7 +327,7 @@ export function SurfacePane({
                   {offline ? <CloudOff size={12} aria-hidden /> : null}
                 </button>
                 {rowIds.length > 1 ? (
-                  <button type="button" className="ptx" tabIndex={-1} aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => closeTab(id)}>
+                  <button type="button" className="ptx" tabIndex={-1} aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => closeWithFocus(id)}>
                     <X size={11} aria-hidden />
                   </button>
                 ) : null}
@@ -314,8 +335,9 @@ export function SurfacePane({
             );
           })}
         </div>
-        {closedItems.length > 0 ? (
+        {(
           <IconButton
+            ref={plusButton}
             className="padd"
             label="Open a tab"
             pressed={plusMenu !== null}
@@ -327,7 +349,7 @@ export function SurfacePane({
           >
             <Plus size={14} aria-hidden />
           </IconButton>
-        ) : null}
+        )}
         <div className="head-end">
           {folded ? (
             <IconButton
@@ -399,6 +421,9 @@ export function SurfacePane({
           </div>
         )}
       </div>
+      <span className="sr-only" role="status" aria-live="polite">
+        {said}
+      </span>
     </aside>
   );
 }

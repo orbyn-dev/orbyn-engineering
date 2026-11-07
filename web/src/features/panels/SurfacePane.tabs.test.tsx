@@ -123,9 +123,30 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTab).toBe("diff");
   });
 
-  it("has no plus while every tab is open and in its place", () => {
+  it("always draws the plus; with nothing closed its menu says All tabs are open", async () => {
+    const user = userEvent.setup();
     pane();
-    expect(screen.queryByRole("button", { name: "Open a tab" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["All tabs are open."]);
+    expect(screen.queryByRole("menuitem", { name: "Reset tab order" })).not.toBeInTheDocument();
+  });
+
+  it("moves focus to the neighbouring tab after a pointer close, and announces it", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTab: "files" });
+    pane();
+    await user.click(screen.getByRole("button", { name: "Close Files" }));
+    expect(screen.getByRole("tab", { name: "Browser" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("Tab closed");
+  });
+
+  it("closes with Backspace as well as Delete and keeps focus in the row", async () => {
+    const user = userEvent.setup();
+    pane();
+    screen.getByRole("tab", { name: "Side chat" }).focus();
+    await user.keyboard("{Backspace}");
+    expect(useUi.getState().panelTabsClosed).toEqual(["side"]);
+    expect(screen.getByRole("tab", { name: "Activity" })).toHaveFocus();
   });
 
   it("closes a tab from its button, opens the next, and brings it back from the plus with Reset tab order under it", async () => {
