@@ -402,13 +402,17 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   const popover = page.getByRole("dialog", { name: "Pull requests" });
   await popover.getByRole("switch", { name: "Watch" }).check();
   await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/watches`)).map((watch) => watch.number)).toEqual([1]);
-  await popover.getByRole("link").first().getByRole("button", { name: "Unlink" }).click();
+  await popover.getByRole("button", { name: "Unlink #1" }).click();
   await expect(page.locator(".pr-chip")).toHaveCount(0);
   // With none linked the details card still offers to link one.
   await page.getByRole("button", { name: "Details" }).click();
-  await page.getByRole("button", { name: "Link a pull request" }).click();
-  const dialog = page.getByRole("dialog", { name: "Link a pull request" });
-  await dialog.getByRole("button", { name: /#1 First layer/ }).click();
+  await page.getByRole("button", { name: "Link by number" }).click();
+  const link = page.getByRole("dialog", { name: "Link by number" });
+  await link.getByRole("textbox", { name: "Pull request number" }).fill("9999");
+  await link.getByRole("button", { name: "Link", exact: true }).click();
+  await expect(link.getByText("No pull request #9999 in this repository.")).toBeVisible();
+  await link.getByRole("textbox", { name: "Pull request number" }).fill("1");
+  await link.getByRole("button", { name: "Link", exact: true }).click();
   await expect(page.locator(".pr-chip")).toHaveText("#1");
   expect(projectId).not.toBe("");
 });

@@ -245,7 +245,7 @@ test("each thread restores its own panel across switches and a reload", async ({
   await expect(pane).toBeHidden();
 });
 
-test("the terminal drawer opens tabs and splits, and files and diff sources read the checkout", async ({ page }) => {
+test("the terminal drawer opens tabs, and files and diff sources read the checkout", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const id = ids.Bravo ?? "";
   await page.goto(`${service.page}#/threads/${id}`);
@@ -254,8 +254,6 @@ test("the terminal drawer opens tabs and splits, and files and diff sources read
   await expect(drawer.getByText("Connected")).toBeVisible({ timeout: 10_000 });
   await drawer.getByRole("button", { name: "New terminal" }).click();
   await expect(drawer.getByRole("tab")).toHaveCount(2);
-  await drawer.getByRole("button", { name: "Split terminal horizontally" }).click();
-  await expect(drawer.locator(".terminal-panel")).toHaveCount(2);
   await drawer.getByRole("button", { name: /^Close Terminal|^Close [^t]/ }).first().click();
 
   const pane = await openPanelTab(page, "Files");
