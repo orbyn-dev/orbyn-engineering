@@ -38,6 +38,26 @@ test("a finished turn folds, groups its tools and shows command output", async (
   const colored = page.locator(".tool-output span", { hasText: "README.md" });
   await expect(colored).toHaveAttribute("style", /--ansi-green/);
 
+  // An opened fold mounts its rows on first open, so highlighting and heights land after the
+  // click: wait until the button has not moved for a few frames.
+  const inspect = page.getByRole("button", { name: "Inspect item" }).first();
+  await inspect.evaluate(
+    (button) =>
+      new Promise<void>((resolve) => {
+        let last = button.getBoundingClientRect().top;
+        let still = 0;
+        const check = () => {
+          const now = button.getBoundingClientRect().top;
+          still = now === last ? still + 1 : 0;
+          last = now;
+          if (still >= 20) resolve();
+          else requestAnimationFrame(check);
+        };
+        requestAnimationFrame(check);
+      }),
+    undefined,
+    { timeout: 10_000 },
+  );
   await page.getByRole("button", { name: "Inspect item" }).first().click();
   const details = page.getByRole("dialog", { name: "Item details" });
   await expect(details).toContainText("exit");
@@ -59,11 +79,42 @@ test("a long live tool trace groups in fives and defers rows beyond thirty", asy
   await expect(page).toHaveURL(/#\/threads\//);
   const earlier = page.getByRole("button", { name: "Show 15 earlier activities" });
   await expect(earlier).toBeVisible();
-  await expect(page.locator(".work-log > .trace")).toHaveCount(28);
-  await expect(page.getByRole("button", { name: "Ran 5 commands", exact: true })).toHaveCount(5);
+  // Only the rows near the view are mounted, so walk the thread top to bottom and collect what each
+  // window shows: every tool row under its group, and each group's label.
+  const walk = () =>
+    page.getByRole("log", { name: "Thread messages" }).evaluate(async (log) => {
+      const rows = new Set<string>();
+      const labels: string[] = [];
+      const seen = new Set<string>();
+      const settle = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      log.scrollTop = 0;
+      for (let at = 0; ; at += Math.max(200, log.clientHeight - 200)) {
+        log.scrollTop = at;
+        await settle();
+        for (const section of log.querySelectorAll<HTMLElement>("section.work-rows")) {
+          const row = section.closest<HTMLElement>("[data-entry]");
+          const sections = [...(row?.querySelectorAll("section.work-rows") ?? [])];
+          const key = `${row?.dataset.entry ?? ""}/${sections.indexOf(section)}`;
+          section.querySelectorAll(".work-log > .trace").forEach((_, index) => rows.add(`${key}#${index}`));
+          const label = section.querySelector(".trace-label")?.textContent ?? "";
+          if (!seen.has(key) && /^Ran \d+ commands?$/.test(label)) {
+            seen.add(key);
+            labels.push(label);
+          }
+        }
+        if (at >= log.scrollHeight - log.clientHeight) break;
+      }
+      return { rows: rows.size, labels };
+    });
+  // 43 commands group in fives; the newest 30 stay in view and 15 wait behind "Show 15 earlier".
+  let seen = await walk();
+  expect(seen.rows).toBe(28);
+  expect(seen.labels.filter((label) => label === "Ran 5 commands")).toHaveLength(5);
   await earlier.click();
-  await expect(page.locator(".work-log > .trace")).toHaveCount(43);
-  await expect(page.getByRole("button", { name: "Ran 3 commands", exact: true })).toBeVisible();
+  seen = await walk();
+  expect(seen.rows).toBe(43);
+  expect(seen.labels.filter((label) => label === "Ran 5 commands")).toHaveLength(8);
+  expect(seen.labels.filter((label) => label === "Ran 3 commands")).toHaveLength(1);
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await settled(service, threadIdOf(page));
 });

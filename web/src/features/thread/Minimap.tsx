@@ -11,26 +11,41 @@ const SPACING = 8;
 const MIN_ITEMS = 2;
 
 /** One tick per prompt beside the conversation. Hover previews; a click goes there. */
-export function Minimap({ items, scroller }: { items: readonly MinimapItem[]; scroller: RefObject<HTMLDivElement | null> }) {
+export function Minimap({
+  items,
+  scroller,
+  locate,
+  goTo,
+  revision,
+}: {
+  items: readonly MinimapItem[];
+  scroller: RefObject<HTMLDivElement | null>;
+  /** Where an item's row starts in the scrolled content, whether or not it is mounted. */
+  locate(key: string): number | null;
+  /** Scrolls to an item's row, mounting it first when it is out of view. */
+  goTo(key: string): void;
+  /** Changes when row heights are corrected, so the current tick is read again. */
+  revision: number;
+}) {
   const [active, setActive] = useState<string | null>(null);
   const [hover, setHover] = useState<MinimapItem | null>(null);
   useEffect(() => {
     const element = scroller.current;
     if (!element) return;
     const update = () => {
-      const top = element.getBoundingClientRect().top + element.clientHeight / 3;
+      const top = element.scrollTop + element.clientHeight / 3;
       let current: string | null = null;
       for (const item of items) {
         if (item.kind === "failed" || item.kind === "ask") continue;
-        const row = element.querySelector(`[data-minimap="${CSS.escape(item.key)}"]`);
-        if (row && row.getBoundingClientRect().top <= top) current = item.key;
+        const at = locate(item.key);
+        if (at !== null && at <= top) current = item.key;
       }
       setActive(current);
     };
     update();
     element.addEventListener("scroll", update, { passive: true });
     return () => element.removeEventListener("scroll", update);
-  }, [items, scroller]);
+  }, [items, scroller, locate, revision]);
   if (items.filter((item) => item.kind !== "failed" && item.kind !== "ask").length < MIN_ITEMS) return null;
   // Hidden until the pointer reaches the edge, so a short thread shows no stray ticks.
   return (
@@ -58,11 +73,7 @@ export function Minimap({ items, scroller }: { items: readonly MinimapItem[]; sc
             style={{ top: `${items.length > 1 ? (at / (items.length - 1)) * 100 : 0}%` }}
             onPointerEnter={() => setHover(item)}
             onPointerLeave={() => setHover(null)}
-            onClick={() =>
-              scroller.current
-                ?.querySelector(`[data-minimap="${CSS.escape(item.key)}"]`)
-                ?.scrollIntoView({ block: "start" })
-            }
+            onClick={() => goTo(item.key)}
           />
           ),
         )}

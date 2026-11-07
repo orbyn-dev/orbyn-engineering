@@ -471,6 +471,8 @@ describe("App against the mock API", () => {
     go("#/threads/t-site-approval");
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "Stop" }));
+    // The stopped turn folds; its rows mount when the fold is opened.
+    await user.click(await screen.findByRole("button", { name: /^You stopped/ }));
     await waitFor(() => expect(screen.getByText("Run cancelled.")).toBeInTheDocument());
     expect(await screen.findByText("Expired")).toBeInTheDocument();
     await waitFor(() => expect(document.querySelector(".thread-state")).toHaveTextContent("Cancelled"));
