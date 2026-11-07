@@ -1,23 +1,38 @@
-import { CircleCheck, CircleDot, CircleX, GitMerge, GitPullRequest, MessageSquare } from "lucide-react";
+import { CircleCheck, CircleDot, CircleX, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, MessageSquare } from "lucide-react";
 import type { PullListEntry } from "../../api/types";
 import { compactAge } from "../../lib/format";
 import { IconButton } from "../../ui/controls";
 import { ChecksCell, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
-import { detailsKey, type DetailsByKey } from "./pullModel";
+import { detailsKey, mergeGate, type DetailsByKey } from "./pullModel";
+
+/** The one word after the title. Conflicts and Ready to merge wait for the list to carry whether it merges cleanly. */
+const stateWord = (pull: PullListEntry["pull"]) =>
+  pull.state === "merged"
+    ? "Merged"
+    : pull.state === "closed"
+      ? "Closed"
+      : pull.draft
+        ? "Draft"
+        : pull.review_state === "approved" && pull.checks_state === "pass"
+          ? "Ready to merge"
+          : pull.review_state === "changes_requested"
+            ? "Changes"
+            : null;
+const STATE_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
 
 /** The table's column titles. The comments column is named by its icon. */
 export function PullsHead() {
   return (
     <div className="pulls-head" aria-hidden>
       <span />
-      <span>Pull request</span>
+      <span>Title and state</span>
       <span>Checks</span>
-      <span>Reviewers</span>
+      <span className="h-reviewers">Reviewers</span>
       <span>Your review</span>
-      <span>
+      <span className="h-comments">
         <MessageSquare size={14} aria-hidden />
       </span>
-      <span>Updated</span>
+      <span className="h-age">Updated</span>
     </div>
   );
 }
@@ -34,10 +49,10 @@ export function PullsSkeleton() {
             <i style={{ width: "30%" }} />
           </span>
           <i className="pull-skel-checks" />
-          <span />
+          <span className="h-reviewers" />
           <i className="pull-skel-review" />
-          <span />
-          <i className="pull-skel-updated" />
+          <span className="h-comments" />
+          <i className="pull-skel-updated h-age" />
         </li>
       ))}
     </ul>
@@ -75,7 +90,10 @@ export function PullRows(props: PullRowsProps) {
             }}
           >
             <span className="pull-lead" data-picked={isPicked || undefined}>
-              <GitPullRequest size={14} className="pull-lead-icon" aria-hidden />
+              {(() => {
+                const Icon = STATE_ICON[pull.state === "merged" ? "merged" : pull.state === "closed" ? "closed" : pull.draft ? "draft" : "open"];
+                return <Icon size={14} className="pull-lead-icon" aria-hidden />;
+              })()}
               <input
                 type="checkbox"
                 className="pull-row-pick"
@@ -85,9 +103,11 @@ export function PullRows(props: PullRowsProps) {
               />
             </span>
             <button type="button" className="pull-open" onClick={() => props.onOpen(entry)}>
-              <span className="pull-row-name" data-quiet={pull.draft || pull.state === "closed" || undefined}>
-                {pull.draft ? "Draft · " : ""}
-                {pull.title}
+              <span className="pull-row-title">
+                <span className="pull-row-name" data-quiet={pull.draft || pull.state !== "open" || undefined}>
+                  {pull.title}
+                </span>
+                {stateWord(pull) ? <span className="pull-state-word">{stateWord(pull)}</span> : null}
               </span>
               <small>{[`#${pull.number}`, pull.head, props.projectName(project), pull.author].filter(Boolean).join(" · ")}</small>
             </button>
@@ -95,7 +115,7 @@ export function PullRows(props: PullRowsProps) {
             <ReviewersCell entry={entry} details={row} env={env} />
             <YourReviewCell entry={entry} details={row} env={env} />
             <CommentsCell entry={entry} details={row} env={env} />
-            <span className="pull-age">{pull.updated_at ? compactAge(pull.updated_at) : ""}</span>
+            <span className="pull-age h-age">{pull.updated_at ? compactAge(pull.updated_at) : ""}</span>
             <span className="pull-row-actions">
               {pull.state === "closed" ? (
                 <IconButton label={`Reopen #${pull.number}`} onClick={() => props.onReopen(entry)}>
@@ -109,9 +129,11 @@ export function PullRows(props: PullRowsProps) {
               ) : null}
               {pull.state === "open" ? (
                 <>
-                  <IconButton label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
-                    <GitMerge size={14} aria-hidden />
-                  </IconButton>
+                  {mergeGate(pull, null, { offline: false, auto: false, forge: "" }).enabled && !pull.draft ? (
+                    <IconButton label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
+                      <GitMerge size={14} aria-hidden />
+                    </IconButton>
+                  ) : null}
                   <IconButton label={`Close #${pull.number}`} onClick={() => props.onClose(entry)}>
                     <CircleX size={14} aria-hidden />
                   </IconButton>

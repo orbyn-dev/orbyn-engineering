@@ -59,8 +59,8 @@ function Block({ icon, title, children, actions }: { icon: ReactNode; title: str
 }
 
 export const NoPulls = () => (
-  <Block icon={<GitPullRequest size={16} aria-hidden />} title="No pull requests">
-    Pull requests from your projects show up here, with checks and review state. Open one from a thread when its changes are ready.
+  <Block icon={<GitPullRequest size={16} aria-hidden />} title="No pull requests yet.">
+    Open one from a thread{"\u2019"}s Git menu.
   </Block>
 );
 

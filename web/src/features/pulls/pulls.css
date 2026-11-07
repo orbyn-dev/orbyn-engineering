@@ -137,6 +137,18 @@
 .pull-lead[data-picked] .pull-row-pick {
   opacity: 1;
 }
+.pull-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+.pull-state-word {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
 .pull-row-name[data-quiet] {
   color: var(--color-muted);
 }
@@ -868,4 +880,51 @@
 }
 .pull-files-none p {
   margin: 0;
+}
+
+/* Narrow: columns go in the order Updated, Comments, Reviewers; then Checks keeps only its icon. */
+.pulls-table {
+  container: pulls / inline-size;
+}
+@container pulls (max-width: 859px) {
+  .pulls-table {
+    --pulls-cols: 24px minmax(0, 1fr) 190px 96px 170px 56px;
+  }
+  .h-age {
+    display: none;
+  }
+}
+@container pulls (max-width: 779px) {
+  .pulls-table {
+    --pulls-cols: 24px minmax(0, 1fr) 190px 96px 170px;
+  }
+  .h-comments {
+    display: none;
+  }
+}
+@container pulls (max-width: 699px) {
+  .pulls-table {
+    --pulls-cols: 24px minmax(0, 1fr) 190px 170px;
+  }
+  .h-reviewers,
+  .pull-reviewers-cell {
+    display: none;
+  }
+}
+@container pulls (max-width: 559px) {
+  .pulls-table {
+    --pulls-cols: 24px minmax(0, 1fr) 28px 170px;
+  }
+  .pull-res-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.pulls-upd-phone {
+  margin: 0 16px 8px;
 }
