@@ -389,7 +389,7 @@ describe("Screen reader announcements", () => {
     act(() =>
       load("t-say", [...turns(300), message("late", "assistant", "A new reply while you read up", "r-late")]),
     );
-    expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("A new reply while you read up");
+    expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("New reply from the agent");
   });
 
   it("stays quiet when rows only mount because you scrolled", () => {

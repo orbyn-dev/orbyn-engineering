@@ -89,10 +89,12 @@ test("a long live tool trace groups in fives and defers rows beyond thirty", asy
       for (let at = 0; ; at += Math.max(200, log.clientHeight - 200)) {
         log.scrollTop = at;
         await settle();
-        for (const group of log.querySelectorAll<HTMLElement>(".item-work")) {
-          const key = group.dataset.entry ?? "";
-          group.querySelectorAll(".work-log > .trace").forEach((_, index) => rows.add(`${key}#${index}`));
-          const label = group.querySelector(".trace-label")?.textContent ?? "";
+        for (const section of log.querySelectorAll<HTMLElement>("section.work-rows")) {
+          const row = section.closest<HTMLElement>("[data-entry]");
+          const sections = [...(row?.querySelectorAll("section.work-rows") ?? [])];
+          const key = `${row?.dataset.entry ?? ""}/${sections.indexOf(section)}`;
+          section.querySelectorAll(".work-log > .trace").forEach((_, index) => rows.add(`${key}#${index}`));
+          const label = section.querySelector(".trace-label")?.textContent ?? "";
           if (!seen.has(key) && /^Ran \d+ commands?$/.test(label)) {
             seen.add(key);
             labels.push(label);

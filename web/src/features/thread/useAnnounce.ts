@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { ThreadItem } from "./projection";
 
-const MAX_CHARS = 300;
-
-/** What a screen reader should hear when an item arrives, or null for rows that stay quiet. */
+/**
+ * What a screen reader should hear when an item arrives, or null for rows that stay quiet. It says
+ * that something arrived, not what: the text is in the log for reading, and repeating it here
+ * would read it twice and duplicate it on the page.
+ */
 export function announcementFor(item: ThreadItem): string | null {
   switch (item.kind) {
     case "message":
-      return item.role !== "user" && item.done && item.text.trim() ? item.text.slice(0, MAX_CHARS) : null;
+      return item.role !== "user" && item.done && item.text.trim() ? "New reply from the agent" : null;
     case "notice":
-      return item.tone === "error" ? `Error: ${item.text.slice(0, MAX_CHARS)}` : null;
+      return item.tone === "error" ? "Something went wrong in this thread" : null;
     case "approval":
-      return item.approval.state === "pending" ? `Needs your decision: ${item.approval.summary}` : null;
+      return item.approval.state === "pending" ? "The agent needs your decision" : null;
     default:
       return null;
   }
@@ -38,7 +40,7 @@ export function useAnnounce(items: readonly ThreadItem[]): string {
       heard.current.add(item.key);
       fresh.push(said);
     }
-    if (fresh.length > 0) setSpoken(fresh.slice(-3).join(". "));
+    if (fresh.length > 0) setSpoken([...new Set(fresh)].join(". "));
   }, [items]);
   return spoken;
 }
