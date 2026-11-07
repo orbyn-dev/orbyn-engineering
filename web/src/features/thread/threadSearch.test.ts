@@ -37,6 +37,47 @@ describe("thread search, shaped like what is shown", () => {
   });
 });
 
+describe("thread search counts what a tool card shows", () => {
+  const finished = (args: string, output: string, result: string | null): TimelineEntry => ({
+    kind: "work",
+    key: "w",
+    items: [{ ...tool("t", "shell", args), output, result, done: true }],
+  });
+
+  it("counts a finished command's text once when the streamed output and the result are the same", () => {
+    const rows = [finished(JSON.stringify({ command: "echo hi" }), "FAIL zq-marker\n", "FAIL zq-marker\n")];
+    expect(findMatches(rows, "zq-marker")).toHaveLength(1);
+  });
+
+  it("counts the output while it streams, before there is a result", () => {
+    expect(findMatches([finished("ls", "zq-marker\n", null)], "zq-marker")).toHaveLength(1);
+  });
+
+  it("does not count the JSON keys of a command's arguments, which the card replaces with the command", () => {
+    const rows = [finished(JSON.stringify({ command: "echo hi" }), "ok", "ok")];
+    expect(findMatches(rows, "command")).toHaveLength(0);
+    expect(findMatches(rows, "echo hi")).toHaveLength(1);
+  });
+
+  it("counts the pretty JSON the card shows for a tool without a command", () => {
+    const rows = [finished(JSON.stringify({ path: "a.txt", mode: "read" }), "ok", "ok")];
+    expect(findMatches(rows, '"mode"')).toHaveLength(1);
+    expect(findMatches(rows, "a.txt")).toHaveLength(1);
+  });
+
+  it("counts a command's own text, and output without terminal escape codes", () => {
+    const rows = [finished("ls -la", "\u001b[32mgreen word\u001b[0m\n", null)];
+    expect(findMatches(rows, "ls -la")).toHaveLength(1);
+    expect(findMatches(rows, "green word")).toHaveLength(1);
+    expect(findMatches(rows, "[32m")).toHaveLength(0);
+  });
+
+  it("does not count a diff summary's file paths, which are button labels behind a toggle", () => {
+    const diff: TimelineEntry = { kind: "diff", key: "d", seq: 0, ts: "", runId: "r", files: [{ path: "src/zq-file.ts", additions: 1, deletions: 0 }] };
+    expect(findMatches([diff], "zq-file")).toHaveLength(0);
+  });
+});
+
 describe("thread search", () => {
   it("counts every occurrence in order, case-insensitively, including inside folds", () => {
     expect(findMatches(entries, "needle")).toEqual([

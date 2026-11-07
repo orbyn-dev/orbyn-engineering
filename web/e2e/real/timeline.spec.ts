@@ -55,6 +55,8 @@ test("a finished turn folds, groups its tools and shows command output", async (
         };
         requestAnimationFrame(check);
       }),
+    undefined,
+    { timeout: 10_000 },
   );
   await page.getByRole("button", { name: "Inspect item" }).first().click();
   const details = page.getByRole("dialog", { name: "Item details" });

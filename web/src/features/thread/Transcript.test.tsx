@@ -8,6 +8,8 @@ import type { Approval } from "../../api/types";
 import { forgetOpenState } from "../../ui/openState";
 import { useWorkspace } from "../../state/workspace";
 import { LedgerPin } from "./LedgerPin";
+import { findMatches } from "./threadSearch";
+import { rangesIn } from "./ThreadFind";
 import { emptyLog, type ApprovalItem, type MessageItem, type ThreadItem, type ToolItem } from "./projection";
 import { useThreadLogs } from "./threadLogs";
 import { arrangeTimeline } from "./timeline";
@@ -23,6 +25,7 @@ import { estimateRow, sizesFor } from "./windowing";
 const VIEW = 600;
 const HEIGHT = 100;
 const heights = new Map<string, number>();
+let width = 800;
 let callbacks: ResizeObserverCallback[] = [];
 
 const stackHeight = (children: Element[]): number =>
@@ -48,6 +51,7 @@ function layout() {
     },
   });
   Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => VIEW });
+  Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => width });
   Object.defineProperty(proto, "scrollHeight", {
     configurable: true,
     get(this: HTMLElement) {
@@ -88,11 +92,11 @@ function layout() {
   };
 }
 
-const message = (key: string, role: "user" | "assistant", text: string, runId: string, done = true): MessageItem => ({
+const message = (key: string, role: "user" | "assistant", text: string, runId: string, done = true, ts = "2026-01-01T00:00:00Z"): MessageItem => ({
   kind: "message",
   key: `msg:${key}`,
   seq: 0,
-  ts: "2026-01-01T00:00:00Z",
+  ts,
   runId,
   role,
   text,
@@ -111,6 +115,7 @@ const load = (threadId: string, items: ThreadItem[]) =>
   useThreadLogs.setState((state) => ({ logs: { ...state.logs, [threadId]: { ...emptyLog, items } } }));
 
 const scroller = () => screen.getByRole("log", { name: "Thread messages" });
+const later = () => new Date(Date.now() + 60_000).toISOString();
 const mountedRows = () => document.querySelectorAll(".transcript .item").length;
 const mountedKeys = () => [...document.querySelectorAll<HTMLElement>(".transcript .item")].map((row) => row.dataset.entry);
 const scrollTo = (top: number) => {
@@ -126,6 +131,7 @@ const resize = () =>
 
 beforeEach(() => {
   heights.clear();
+  width = 800;
   callbacks = [];
   layout();
   // The windowed rows need an animation frame for find; run it at once.
@@ -372,11 +378,12 @@ describe("Rows keep what you opened", () => {
     expect(fold()).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("keeps a fold closed when it was never opened, and forgets nothing about other threads", () => {
+  it("keeps a fold closed when it was never opened", () => {
     load("t-closed", foldedTurns(200));
     render(<Transcript threadId="t-closed" active={false} />);
     scrollTo(0);
     expect(document.querySelector('[data-entry="fold:r0"] button.work-summary')).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector('[data-entry="fold:r1"] button.work-summary')).toHaveAttribute("aria-expanded", "false");
   });
 });
 
@@ -387,7 +394,7 @@ describe("Screen reader announcements", () => {
     scrollTo(0);
     expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("");
     act(() =>
-      load("t-say", [...turns(300), message("late", "assistant", "A new reply while you read up", "r-late")]),
+      load("t-say", [...turns(300), message("late", "assistant", "A new reply while you read up", "r-late", true, later())]),
     );
     expect(document.querySelector(".sr-only[role=status]")).toHaveTextContent("New reply from the agent");
   });
@@ -536,5 +543,186 @@ describe("The Ledger pin", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show" }));
     await waitFor(() => expect(document.activeElement).toBe(document.querySelector(".approval[data-pending]")));
     useUi.getState().setPrefs({ workspaceLayout: "console" });
+  });
+});
+
+describe("Announcements, in detail", () => {
+  const region = () => document.querySelector<HTMLElement>(".sr-only[role=status]")!;
+
+  it("speaks again for a second reply with the same words", () => {
+    load("t-twice", turns(5));
+    render(<Transcript threadId="t-twice" active={false} />);
+    const first = message("n1", "assistant", "One", "r-n1", true, later());
+    act(() => load("t-twice", [...turns(5), first]));
+    expect(region()).toHaveTextContent("New reply from the agent");
+    const spoken = region().firstElementChild;
+    act(() => load("t-twice", [...turns(5), first, message("n2", "assistant", "Two", "r-n2", true, later())]));
+    expect(region()).toHaveTextContent("New reply from the agent");
+    // A new node, so a screen reader hears it again rather than seeing no change.
+    expect(region().firstElementChild).not.toBe(spoken);
+  });
+
+  it("does not announce history that loads after the transcript opened, then announces one new reply", () => {
+    render(<Transcript threadId="t-late-log" active={false} />);
+    act(() => load("t-late-log", turns(50)));
+    expect(region()).toHaveTextContent("");
+    act(() => load("t-late-log", [...turns(50), message("fresh", "assistant", "Fresh", "r-fresh", true, later())]));
+    expect(region().textContent).toBe("New reply from the agent");
+  });
+
+  it("empties the region after a few seconds so it is not found stale", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      load("t-clear", turns(5));
+      render(<Transcript threadId="t-clear" active={false} />);
+      act(() => load("t-clear", [...turns(5), message("n1", "assistant", "One", "r-n1", true, later())]));
+      expect(region()).toHaveTextContent("New reply from the agent");
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(region()).toHaveTextContent("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+const details = (summary: string, body: string) => `<details>\n<summary>${summary}</summary>\n\n${body}\n</details>`;
+const longPlan = (title: string) => `<proposed_plan>\n# ${title}\n${Array.from({ length: 40 }, (_, n) => `- Step ${n}`).join("\n")}\n</proposed_plan>`;
+const diffItem = (runId: string): ThreadItem => ({
+  kind: "diff", key: `diff:${runId}`, seq: 0, ts: "2026-01-01T00:00:00Z", runId, files: [{ path: "src/a.ts", additions: 1, deletions: 0 }],
+});
+
+describe("Everything a row opens is kept while it is away", () => {
+  /** Opens something in a row, lets focus go, scrolls far away and back, and returns the row. */
+  const awayAndBack = (key: string) => {
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    scrollTo(30000);
+    expect(document.querySelector(`[data-entry="${key}"]`)).toBeNull();
+    scrollTo(0);
+    return document.querySelector<HTMLElement>(`[data-entry="${key}"]`)!;
+  };
+  const scrollThread = (items: ThreadItem[], id: string) => {
+    load(id, [...items, ...turns(300)]);
+    render(<Transcript threadId={id} active={false} />);
+    scrollTo(0);
+  };
+
+  it("a tool card inside a fold", async () => {
+    scrollThread(foldedTurns(1), "t-tool");
+    const fold = document.querySelector<HTMLElement>('[data-entry="fold:r0"]')!;
+    await userEvent.click(fold.querySelector("button.work-summary")!);
+    const card = () => document.querySelector<HTMLElement>('[data-entry="fold:r0"] .trace button.trace-summary')!;
+    await userEvent.click(card());
+    expect(card()).toHaveAttribute("aria-expanded", "true");
+    awayAndBack("fold:r0");
+    expect(card()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("a plan card", async () => {
+    scrollThread([message("p0", "assistant", longPlan("First"), "rx")], "t-plan");
+    await userEvent.click(screen.getByRole("button", { name: "Expand plan" }));
+    awayAndBack("msg:p0");
+    expect(screen.getByRole("button", { name: "Collapse plan" })).toBeInTheDocument();
+  });
+
+  it("a <details> block", async () => {
+    scrollThread([message("d0", "assistant", details("More notes", "Hidden detail"), "rx")], "t-details");
+    const summary = () => document.querySelector<HTMLElement>('[data-entry="msg:d0"] .md-details button')!;
+    await userEvent.click(summary());
+    expect(summary()).toHaveAttribute("aria-expanded", "true");
+    awayAndBack("msg:d0");
+    expect(summary()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("a diff summary's file list", async () => {
+    scrollThread([diffItem("rx")], "t-diff");
+    const count = () => document.querySelector<HTMLElement>('[data-entry="diff:rx"] button.diff-count')!;
+    await userEvent.click(count());
+    expect(count()).toHaveAttribute("aria-expanded", "true");
+    awayAndBack("diff:rx");
+    expect(count()).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+describe("Open state is keyed by the item, not the row that holds it", () => {
+  it("two messages in one folded turn do not share a <details> state", async () => {
+    load("t-keys", [
+      message("u0", "user", "Question", "r0"),
+      message("m1", "assistant", details("Notes", "first body"), "r0"),
+      message("m2", "assistant", details("Notes", "second body"), "r0"),
+      message("a0", "assistant", "Done", "r0"),
+    ]);
+    render(<Transcript threadId="t-keys" active={false} />);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    const [first, second] = [...document.querySelectorAll<HTMLElement>(".md-details > button")];
+    await userEvent.click(first!);
+    expect(first).toHaveAttribute("aria-expanded", "true");
+    expect(second).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("a revised plan does not inherit the earlier plan's expanded state", async () => {
+    load("t-plans", [
+      message("u0", "user", "Plan it", "r0"),
+      message("p1", "assistant", longPlan("Plan"), "r0"),
+      message("u1", "user", "Revise", "r1"),
+      message("p2", "assistant", longPlan("Plan"), "r1"),
+    ]);
+    render(<Transcript threadId="t-plans" active={false} />);
+    const [first] = screen.getAllByRole("button", { name: "Expand plan" });
+    await userEvent.click(first!);
+    expect(screen.getAllByRole("button", { name: "Expand plan" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Collapse plan" })).toHaveLength(1);
+  });
+
+  it("a tool card stays open when its turn finishes and the row moves into the fold", async () => {
+    const running: ThreadItem[] = [message("u0", "user", "Go", "r0"), tool("tool0", "r0", "output")];
+    load("t-move", running);
+    const view = render(<Transcript threadId="t-move" active activeRunId="r0" />);
+    const card = () => document.querySelector<HTMLElement>("button.trace-summary")!;
+    await userEvent.click(card());
+    expect(card()).toHaveAttribute("aria-expanded", "true");
+    act(() => load("t-move", [...running, message("a0", "assistant", "Done", "r0")]));
+    view.rerender(<Transcript threadId="t-move" active={false} activeRunId={null} />);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(card()).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+describe("Find and what is on the page", () => {
+  it("counts exactly as many matches as there are highlights once the row is open", async () => {
+    const items: ThreadItem[] = [
+      message("u0", "user", "needle in the question", "r0"),
+      message("m1", "assistant", "see [the needle docs](https://example.com/needle) and **needle**\n\n```ts\nconst needle = 1\n```", "r0"),
+      tool("tool0", "r0", "ran needle\n"),
+      message("a0", "assistant", "Final needle", "r0"),
+    ];
+    load("t-count", items);
+    render(<Transcript threadId="t-count" active={false} />);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    const counted = findMatches(arrangeTimeline(items, {}, null), "needle").length;
+    const root = document.querySelector<HTMLElement>(".transcript")!;
+    const painted = [...root.querySelectorAll<HTMLElement>(".transcript-inner > .item")].flatMap((row) => rangesIn(row, "needle"));
+    expect(counted).toBe(6);
+    expect(painted).toHaveLength(counted);
+  });
+});
+
+describe("A new width", () => {
+  it("drops the heights kept for rows out of the page and keeps those in it", () => {
+    load("t-width", turns(300));
+    render(<Transcript threadId="t-width" active={false} />);
+    scrollTo(0);
+    scrollTo(30000);
+    const sizes = sizesFor("t-width");
+    expect(sizes.get("msg:u0")).toBe(100); // measured while it was on screen, now unmounted
+    width = 600;
+    act(() => {
+      callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+    });
+    expect(sizes.get("msg:u0")).toBeUndefined();
+    const mounted = mountedKeys()[0]!;
+    expect(sizes.get(mounted)).toBe(100);
+    expect(sizes.width).toBe(600);
   });
 });
