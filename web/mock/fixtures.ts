@@ -269,6 +269,15 @@ export function threads(): Thread[] {
       last_run_state: "completed",
       model: "claude-opus-5-5",
     }),
+    baseThread("t-tools", "p-app", "Tool call states", "claude", -1700, {
+      last_run_state: "completed",
+      model: "claude-opus-5-5",
+    }),
+    baseThread("t-tools-live", "p-app", "Tool calls, running", "claude", -120, {
+      active_run: run("r-tools-live", "t-tools-live", "running", -130),
+      last_run_state: "running",
+      model: "claude-opus-5-5",
+    }),
     baseThread("t-failed", "p-app", "Upgrade tokio and fix the fallout", "codex", -3600, {
       last_run_state: "failed",
     }),
@@ -474,6 +483,11 @@ const tool = (id: string, name: string, args: string, result: string): AgUiEvent
   { type: "TOOL_CALL_RESULT", messageId: `${id}-r`, toolCallId: id, content: result, role: "tool" },
 ];
 
+/** The exit code the driver reports once a command ends. */
+const exited = (id: string, exitCode: number): AgUiEvent => ({ type: "CUSTOM", name: "tool.finished", value: { toolCallId: id, exitCode } });
+
+const hundredLines = Array.from({ length: 214 }, (_, at) => `  ✓ e2e/case-${String(at + 1).padStart(2, "0")}.spec.ts ${40 + (at % 9) * 7}ms`).join("\n");
+
 const approvalSnapshot = (approval: Approval): AgUiEvent => ({
   type: "ACTIVITY_SNAPSHOT",
   messageId: `approval-${approval.id}`,
@@ -573,6 +587,43 @@ export function logs(): Record<string, WireThreadEvent[]> {
         ...tool("c2", "Bash", '{"command":"cargo test -p orbyn-core events"}', longToolOutput),
         ...assistant("a1", longAnswer),
         { type: "RUN_FINISHED", threadId: "t-done", runId: "r-done", outcome: { type: "success" } },
+      ]),
+    ]),
+    "t-tools": sequence([
+      ...logOf("t-tools", "r-tools", -1800, [
+        { type: "RUN_STARTED", threadId: "t-tools", runId: "r-tools" },
+        ...user("u1", "Run the tests and check the redirect still works."),
+        ...tool("c1", "Bash", '{"command":"git status --short"}', " M auth/redirect.ts\n M auth/redirect.test.ts\n?? auth/next.ts"),
+        exited("c1", 0),
+        ...tool("c2", "Bash", JSON.stringify({ command: 'rg -n "next" auth/redirect.ts auth/session.ts' }), "auth/redirect.ts:13:  const next = req.query.next"),
+        exited("c2", 0),
+        ...tool("c3", "Bash", '{"command":"npm test -- --reporter=dot"}', " ✓ auth/redirect.test.ts (6)\n ✗ e2e/login.spec.ts › returns to the page after sign-in\n   AssertionError: expected \"/home\" to equal \"/settings\"\n\n Tests  1 failed | 47 passed (48)"),
+        exited("c3", 1),
+        ...tool("c4", "Read", '{"file_path":"/Users/dev/code/orbyn-engineering-app/auth/redirect.ts","offset":12,"limit":7}', "    12→export function after(req) {\n    13→  const next = req.query.next\n    14→  if (!next) return \"/\"\n    15→  const url = new URL(next, req.origin)\n    16→  if (url.host !== req.host) return \"/\"\n    17→  return url.pathname + url.search\n    18→}"),
+        ...tool("c5", "Read", '{"file_path":"/Users/dev/code/orbyn-engineering-app/auth/session.ts"}', "     1→export const session = {}"),
+        ...tool("c6", "Edit", JSON.stringify({ file_path: "/Users/dev/code/orbyn-engineering-app/auth/redirect.ts", old_string: '  return "/home"', new_string: '  const next = req.query.next\n  return inside(next) ? next : "/"' }), "The file has been updated."),
+        ...tool("c7", "Write", JSON.stringify({ file_path: "/Users/dev/code/orbyn-engineering-app/auth/next.ts", content: 'export function inside(next) {\n  if (!next) return false\n  return !next.startsWith("//")\n}' }), "File created successfully at: /Users/dev/code/orbyn-engineering-app/auth/next.ts"),
+        ...tool("c8", "Grep", '{"pattern":"AGENTS.md"}', "AGENTS.md:1:# Orbyn Engineering library instructions\nCLAUDE.md:3:@AGENTS.md\ndocs/agents/roles.md:14:Read AGENTS.md before you edit"),
+        ...tool("c9", "LS", '{"path":"/Users/dev/code/orbyn-engineering-app/auth"}', "- /Users/dev/code/orbyn-engineering-app/auth/\n  - redirect.ts\n  - redirect.test.ts\n  - session.ts"),
+        ...tool("c10", "WebFetch", '{"url":"https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"}', "Redirects and forwards are common. Check the destination against an allowlist."),
+        ...tool("c11", "mcp__orbyn-memory__find", '{"query":"login redirect","scope":"project","limit":5}', "Redirects must stay on the app's own host"),
+        ...tool("c12", "Bash", '{"command":"python3 -m unittest discover -s tests -v"}', hundredLines),
+        exited("c12", 0),
+        ...tool("c13", "Bash", '{"command":"git diff --exit-code auth/"}', ""),
+        exited("c13", 0),
+        ...assistant("a1", "The redirect ignored `next`. I changed it and the tests now expect the original page."),
+        { type: "RUN_FINISHED", threadId: "t-tools", runId: "r-tools", outcome: { type: "success" } },
+      ]),
+    ]),
+    "t-tools-live": sequence([
+      ...logOf("t-tools-live", "r-tools-live", -130, [
+        { type: "RUN_STARTED", threadId: "t-tools-live", runId: "r-tools-live" },
+        ...user("u1", "Run the tests."),
+        ...tool("l1", "Bash", '{"command":"git status --short"}', " M auth/redirect.ts"),
+        exited("l1", 0),
+        { type: "TOOL_CALL_START", toolCallId: "l2", toolCallName: "Bash" },
+        { type: "TOOL_CALL_ARGS", toolCallId: "l2", delta: '{"command":"python3 -m unittest discover -s tests -v"}' },
+        { type: "CUSTOM", name: "tool.output", value: { toolCallId: "l2", delta: "  ✓ e2e/case-01.spec.ts 47ms\n  ✓ e2e/case-02.spec.ts 54ms\n  … e2e/case-03.spec.ts" } },
       ]),
     ]),
     "t-failed": sequence(

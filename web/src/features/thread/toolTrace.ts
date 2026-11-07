@@ -18,7 +18,7 @@ const WEB = /^(web_?search|web_?fetch)/i;
 const BROWSER = /(^|[._])(browser|preview)/i;
 const COMMAND = /^(command|bash|shell|exec|powershell)/i;
 
-const parsed = (args: string): Record<string, unknown> => {
+export const parsed = (args: string): Record<string, unknown> => {
   try {
     const value: unknown = JSON.parse(args);
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -36,14 +36,14 @@ const firstText = (body: Record<string, unknown>, ...keys: string[]): string | n
   return null;
 };
 
-const paths = (body: Record<string, unknown>): string[] => {
+export const paths = (body: Record<string, unknown>): string[] => {
   const list = body.paths;
   if (Array.isArray(list)) return list.filter((entry): entry is string => typeof entry === "string");
   const one = firstText(body, "file_path", "path", "notebook_path");
   return one ? [one] : [];
 };
 
-const baseName = (path: string) => path.split(/[\\/]/).pop() || path;
+export const baseName = (path: string) => path.split(/[\\/]/).pop() || path;
 
 /** Reads what a call did from its name and arguments; engines name tools differently. */
 export function traceTool(item: Pick<ToolItem, "name" | "args">): ToolTrace {

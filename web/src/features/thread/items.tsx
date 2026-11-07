@@ -2,68 +2,46 @@ import { PreparationRetryButton } from "./ThreadBanners";
 import { useWorkspace } from "../../state/workspace";
 import { MessageActions } from "./MessageActions";
 import {
-  AppWindow,
   Brain,
-  Check,
   ChevronRight,
-  CircleDashed,
-  Eye,
   FileDiff as FileDiffIcon,
-  Globe,
-  Hammer,
-  Loader2,
   OctagonAlert,
-  Search,
-  SquarePen,
-  SquareTerminal,
-  Wrench,
-  X,
-  type LucideIcon,
 } from "lucide-react";
-import { createContext, memo, use, useLayoutEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
-import { clockTime, elapsed, prettyJson } from "../../lib/format";
-import { useAsync } from "../../lib/useAsync";
+import { memo, useState } from "react";
+import { elapsed } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { EngineGlyph } from "../../ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
 import { OpenStatePrefix, useOpenState } from "../../ui/openState";
-import { Dialog } from "../../ui/Dialog";
 import { useUi } from "../../state/ui";
 import { Button, Pill } from "../../ui/controls";
-import { outputSpans } from "./ansi";
 import { ApprovalCard, useResolvedApproval } from "./ApprovalCard";
-import { CodeBlock } from "./CodeBlock";
-import { HtmlRender } from "./HtmlRender";
-import { McpApp } from "./McpApp";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
 import { Markdown } from "./Markdown";
 import { PlanCard } from "./PlanCard";
 import { proposedPlanIn, textAroundPlan } from "./proposedPlan";
 import { SentFiles } from "./SentFiles";
 import {
-  LIVE_ROW_LIMIT,
   type TimelineEntry,
   type TurnFold,
   type WorkGroup,
   type WorkingRow,
   type WorkItem,
 } from "./timeline";
-import { summarizeWork, toolFailed, traceTool, type ToolAction } from "./toolTrace";
+import { callRuns, type CallRun } from "./toolCalls";
+import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
+import { TimelineThread, useThreadOfTimeline } from "./timelineThread";
 import type {
   ActivityItem,
   ApprovalItem,
   DiffSummaryItem,
   MessageItem,
   NoticeItem,
-  PlanItem,
   ReasoningItem,
   ToolItem,
 } from "./projection";
 
-/** Which thread the timeline below it belongs to. */
-export const TimelineThread = createContext<string | null>(null);
-const useThreadOfTimeline = () => use(TimelineThread);
+export { TimelineThread };
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {
@@ -115,173 +93,9 @@ function Reasoning({ item, live }: { item: ReasoningItem; live: boolean }) {
   );
 }
 
-const ACTION_ICONS: Record<ToolAction | "mixed" | "reasoning", LucideIcon> = {
-  command: SquareTerminal,
-  edit: SquarePen,
-  read: Eye,
-  web: Globe,
-  "code-search": Search,
-  browser: AppWindow,
-  other: Wrench,
-  mixed: Hammer,
-  reasoning: Brain,
-};
-
-function CommandOutput({ item, running }: { item: ToolItem; running: boolean }) {
-  const scroller = useRef<HTMLPreElement>(null);
-  const following = useRef(true);
-  const text = item.result ?? item.output;
-  useLayoutEffect(() => {
-    const element = scroller.current;
-    if (element && following.current) element.scrollTop = element.scrollHeight;
-  });
-  if (!text) {
-    return running ? null : <p className="tool-empty">No output.</p>;
-  }
-  return (
-    <pre
-      ref={scroller}
-      tabIndex={0}
-      className="tool-output"
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        following.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 8;
-      }}
-    >
-      {outputSpans(text).map((span, at) =>
-        span.color || span.bold ? (
-          <span key={at} style={{ color: span.color ?? undefined, fontWeight: span.bold ? 600 : undefined }}>
-            {span.text}
-          </span>
-        ) : (
-          span.text
-        ),
-      )}
-    </pre>
-  );
-}
-
-function ItemDetails({ threadId, id }: { threadId: string; id: string }) {
-  const raw = useAsync(`item:${threadId}:${id}`, (signal) => api.threadItem(threadId, id, signal));
-  if (raw.error) return <p className="tool-empty">Not recorded for this item.</p>;
-  return (
-    <pre tabIndex={0} className="tool-output">
-      {raw.data ? JSON.stringify(raw.data, null, 2) : "Loading..."}
-    </pre>
-  );
-}
-
-function InspectItem({ item }: { item: ToolItem }) {
-  const [open, setOpen] = useState(false);
-  const threadId = useThreadOfTimeline();
-  if (!threadId) return null;
-  return (
-    <>
-      <button type="button" className="inline-link tool-inspect" onClick={() => setOpen(true)}>
-        Inspect item
-      </button>
-      {open ? (
-        <Dialog title="Item details" onClose={() => setOpen(false)}>
-          <ItemDetails threadId={threadId} id={item.callId} />
-        </Dialog>
-      ) : null}
-    </>
-  );
-}
-
-function Tool({ item, live }: { item: ToolItem; live: boolean }) {
-  const finished = item.result !== null || item.done;
-  const running = live && !finished;
-  const trace = traceTool(item);
-  const failed = toolFailed(item);
-  const Icon = ACTION_ICONS[trace.action];
-  const threadId = useThreadOfTimeline();
-  const surfaced = use(SurfacedWorkflows);
-  const timestampFormat = useUi((state) => state.timestampFormat);
-  return (
-    <>
-      <Collapsible
-        className="trace"
-        persistId={`tool:${item.key}`}
-        data-live={running || undefined}
-        summaryClassName="trace-summary"
-        summary={
-          <>
-            {failed ? null : <Icon size={14} aria-hidden />}
-            <span className="trace-label" title={trace.label}>
-              {trace.label}
-            </span>
-            {running ? <span className="sr-only">Running</span> : null}
-            {failed ? (
-              <X size={14} className="trace-failed trace-lead" role="img" aria-label="Tool call failed" />
-            ) : null}
-            {failed ? (
-              <span className="trace-output" aria-hidden>
-                Output
-              </span>
-            ) : null}
-            <span className="trace-time" aria-hidden>
-              {clockTime(item.ts, timestampFormat)}
-            </span>
-            <ChevronRight size={14} className="chev trace-end" aria-hidden />
-          </>
-        }
-      >
-        <div className="trace-body">
-          {trace.command ? (
-            <CodeBlock code={trace.command} lang="bash" bare />
-          ) : (
-            prettyJson(item.args) ? (
-              <pre tabIndex={0}>{prettyJson(item.args)}</pre>
-            ) : (
-              <pre tabIndex={0} data-find-skip>
-                None
-              </pre>
-            )
-          )}
-          <CommandOutput item={item} running={running} />
-          {item.exitCode !== null ? <p className="tool-exit" data-failed={failed || undefined}>Exit code {item.exitCode}</p> : null}
-          {finished ? <InspectItem item={item} /> : null}
-        </div>
-      </Collapsible>
-      {/* A published page is the result, so it stays visible with the details closed. */}
-      <HtmlRender item={item} threadId={threadId} />
-      <McpApp item={item} threadId={threadId} />
-      {surfaced ? null : <WorkflowCards items={[item]} threadId={threadId} live={live} />}
-    </>
-  );
-}
-
 function ApprovalEntry({ item }: { item: ApprovalItem }) {
   const approval = useResolvedApproval(item.approval);
   return <ApprovalCard approval={approval} minimapKey={item.key} />;
-}
-
-const stepDone = (status: string | null) => status === "completed" || status === "done";
-const stepActive = (status: string | null) => status === "in_progress" || status === "running";
-
-function Plan({ item, live }: { item: PlanItem; live: boolean }) {
-  if (item.steps.length === 0) return null;
-  return (
-    <section className="plan" aria-label="Plan">
-      <h3>Plan</h3>
-      <ol>
-        {item.steps.map((step, at) => (
-          <li key={at} data-state={stepDone(step.status) ? "done" : stepActive(step.status) ? "active" : "todo"}>
-            {stepDone(step.status) ? (
-              <Check size={16} aria-hidden />
-            ) : stepActive(step.status) && live ? (
-              <Loader2 size={16} className="spin" aria-hidden />
-            ) : (
-              <CircleDashed size={16} aria-hidden />
-            )}
-            <span>{step.text}</span>
-            {step.status ? <span className="sr-only">({step.status.replaceAll("_", " ")})</span> : null}
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
 }
 
 function ChangedFile({ file }: { file: DiffSummaryItem["files"][number] }) {
@@ -377,10 +191,6 @@ function Notice({ item }: { item: NoticeItem }) {
   );
 }
 
-function WorkEntry({ item, live }: { item: WorkItem; live: boolean }) {
-  return item.kind === "reasoning" ? <Reasoning item={item} live={live} /> : <Tool item={item} live={live} />;
-}
-
 function RunningStack({ tools }: { tools: ToolItem[] }) {
   const now = useNow(true);
   const oldest = tools[0];
@@ -402,51 +212,54 @@ function RunningStack({ tools }: { tools: ToolItem[] }) {
   );
 }
 
-/** One call shows as its own row; several read as one summary until opened. */
+/** Tool calls read as rows by kind; reasoning sits between them where it happened. */
 export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean }) {
   const threadId = useThreadOfTimeline();
-  const [open, setOpen] = useOpenState(`group:${group.key}`, false);
-  const [all, setAll] = useOpenState(`group-all:${group.key}`, false);
-  const only = group.items[0];
-  if (group.items.length === 1 && only) {
-    return (
-      <section className="work-rows" aria-label="Activity">
-        <WorkEntry item={only} live={live} />
-      </section>
-    );
+  const [focused, setFocused] = useState(false);
+  const segments: ({ reasoning: ReasoningItem } | { runs: CallRun[] })[] = [];
+  for (const item of group.items) {
+    if (item.kind === "reasoning") {
+      segments.push({ reasoning: item });
+      continue;
+    }
+    const last = segments.at(-1);
+    if (last && "runs" in last) {
+      const tools = last.runs.flatMap((run) => run.items);
+      segments[segments.length - 1] = { runs: callRuns([...tools, item]) };
+    } else {
+      segments.push({ runs: callRuns([item]) });
+    }
   }
-  const { summary, action, failed } = summarizeWork(group.items);
-  const Icon = ACTION_ICONS[action];
-  const hiddenRows = all ? 0 : Math.max(group.items.length - LIVE_ROW_LIMIT, 0);
-  return (
-    <section className="work-rows" aria-label="Activity">
-      <SurfacedWorkflows value>
-      <Collapsible
-        open={open}
-        onOpenChange={setOpen}
-        className="trace"
-        summaryClassName="trace-summary"
-        summary={
-          <>
-            {failed ? <X size={14} className="trace-failed" aria-hidden /> : <Icon size={14} aria-hidden />}
-            <span className="trace-label">{summary}</span>
-            <ChevronRight size={14} className="chev trace-end" aria-hidden />
-          </>
-        }
-      >
-        <div className="work-log" role="region" aria-label="Tool calls" tabIndex={0}>
-          {hiddenRows > 0 ? (
-            <button type="button" className="inline-link" onClick={() => setAll(true)}>
-              Show {hiddenRows} earlier
-            </button>
-          ) : null}
-          {group.items.slice(hiddenRows).map((item) => (
-            <WorkEntry key={item.key} item={item} live={live} />
-          ))}
+  const several = group.items.length > 1;
+  const rows = segments.map((segment) =>
+    "reasoning" in segment ? (
+      <Reasoning key={segment.reasoning.key} item={segment.reasoning} live={live} />
+    ) : (
+      segment.runs.map((run) => (
+        <div className="tg" key={run.key}>
+          <TrailRun run={run} live={live} />
         </div>
-      </Collapsible>
-      </SurfacedWorkflows>
-      <WorkflowCards items={group.items} threadId={threadId} live={live} />
+      ))
+    ),
+  );
+  return (
+    <section
+      className="steps tc"
+      aria-label="Activity"
+      onKeyDown={trailKeys}
+      onFocus={(event) => setFocused((event.target as HTMLElement).matches("button.tcr"))}
+      onBlur={() => setFocused(false)}
+    >
+      {several ? <SurfacedWorkflows value>{rows}</SurfacedWorkflows> : rows}
+      {several ? <WorkflowCards items={group.items} threadId={threadId} live={live} /> : null}
+      {focused ? (
+        <div className="tchint" aria-hidden>
+          <span><kbd>↑</kbd><kbd>↓</kbd>Move</span>
+          <span><kbd>→</kbd>Open</span>
+          <span><kbd>←</kbd>Close</span>
+          <span><kbd>C</kbd>Copy command</span>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -539,7 +352,7 @@ function ItemView({ item, live }: { item: Exclude<TimelineEntry, WorkGroup | Tur
     case "approval":
       return <ApprovalEntry item={item} />;
     case "plan":
-      return <Plan item={item} live={live} />;
+      return <PlanRow item={item} live={live} />;
     case "diff":
       return <DiffSummary item={item} />;
     case "notice":
