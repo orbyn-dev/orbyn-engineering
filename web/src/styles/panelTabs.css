@@ -60,7 +60,7 @@
 }
 .ptab[data-selected] {
   z-index: 1;
-  flex: 0 0 128px;
+  flex: 0 1 128px;
   height: 31px;
   margin-bottom: -1px;
   background: var(--color-background);

@@ -154,16 +154,20 @@ export function SurfacePane({
   const refit = useCallback(() => {
     const row = list.current;
     if (!row) return;
+    // A tab is wider while it is the open one, so only the widths of tabs that are not open are kept for later.
+    const measured = new Map(widths.current);
     for (const element of row.querySelectorAll<HTMLElement>("[data-tab]")) {
       const id = element.dataset.tab as RightTab;
-      if (element.offsetWidth > 0) widths.current.set(id, element.offsetWidth);
+      if (element.offsetWidth <= 0) continue;
+      if (id !== latest.current.tab) widths.current.set(id, element.offsetWidth);
+      measured.set(id, element.offsetWidth);
     }
     // What the tabs may take: the header less its padding, the "+" and the buttons at the end (the More button among them while it shows).
     const head = row.parentElement;
     const end = head?.querySelector<HTMLElement>(".head-end");
     // A header with no width yet (not laid out, or hidden) folds nothing.
     const room = !head || head.clientWidth === 0 ? Number.POSITIVE_INFINITY : head.clientWidth - HEAD_PAD - PLUS_SPACE - (end?.offsetWidth ?? 0) + (latest.current.folded ? MORE_WIDTH : 0);
-    const next = fitTabs(latest.current.ids, widths.current, room, MORE_WIDTH, latest.current.tab);
+    const next = fitTabs(latest.current.ids, measured, room, MORE_WIDTH, latest.current.tab);
     setShown((current) => (current.length === next.length && current.every((id, i) => id === next[i]) ? current : next));
   }, []);
   useLayoutEffect(() => {
