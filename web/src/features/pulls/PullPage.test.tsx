@@ -150,4 +150,11 @@ describe("one pull request as a page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
     expect(screen.queryByText(/No files match/)).toBeNull();
   });
+
+  it("says how many checks failed above the Checks tab, in place of the state banner", async () => {
+    await show(detail({ checks_state: "fail", checks: { total: 4, passing: 3, failing: 1, running: 0, failing_names: ["e2e (macOS)"] } }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Checks/ }));
+    expect(screen.getByText("1 check failed")).toBeInTheDocument();
+    expect(screen.queryByText("e2e (macOS) failed", { selector: "b" })).toBeNull();
+  });
 });

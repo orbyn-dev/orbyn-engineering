@@ -789,6 +789,10 @@ export function PullDetail({
             detail.reload();
           }}
         />
+      ) : tab === "checks" && failing > 0 ? (
+        <PullsBanner tone="err" icon={<X size={14} aria-hidden />} actions={null}>
+          {failing} {failing === 1 ? "check" : "checks"} failed
+        </PullsBanner>
       ) : (
         <PullStateBanner
           pull={pull}
@@ -821,14 +825,7 @@ export function PullDetail({
                   <Timeline projectId={projectId} number={number} />
                 </>
               ) : (
-                <>
-                  {failing > 0 ? (
-                    <PullsBanner tone="err" icon={<X size={14} aria-hidden />} actions={null}>
-                      {failing} {failing === 1 ? "check" : "checks"} failed
-                    </PullsBanner>
-                  ) : null}
-                  <Checks projectId={projectId} number={number} />
-                </>
+                <Checks projectId={projectId} number={number} />
               )}
             </div>
             <div className="pull-side">{sideColumn()}</div>
