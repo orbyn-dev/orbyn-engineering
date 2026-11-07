@@ -1862,40 +1862,10 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         }
     });
     match forge {
-        Forge::GitHub => {
-            let flag = format!("--{}", options.method);
-            let mut args = vec!["pr", "merge", id.as_str(), flag.as_str()];
-            if options.auto {
-                args.push("--auto");
-            }
-            if options.delete_branch {
-                args.push("--delete-branch");
-            }
-            if let Some(subject) = &options.subject {
-                args.extend(["--subject", subject]);
-            }
-            if let Some(body) = &body {
-                args.extend(["--body", body]);
-            }
-            call(forge, cwd, &args).await.map(|_| ())
-        }
-        Forge::GitLab => {
-            let mut args = vec!["mr", "merge", id.as_str(), "--yes"];
-            match options.method.as_str() {
-                "squash" => args.push("--squash"),
-                "rebase" => args.push("--rebase"),
-                _ => {}
-            }
-            if options.auto {
-                args.push("--auto-merge");
-            }
-            if options.delete_branch {
-                args.push("--remove-source-branch");
-            }
-            if let Some(body) = &body {
-                args.extend(["--message", body]);
-            }
-            call(forge, cwd, &args).await.map(|_| ())
+        Forge::GitHub | Forge::GitLab => {
+            let args = merge_args(forge, &id, options, body.as_deref());
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            call(forge, cwd, &args).await.map(|_| ()).map_err(|error| head_moved(forge, error))
         }
         Forge::Azure => {
             let squash = if options.method == "squash" {
@@ -1940,6 +1910,69 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         .await
         .map(|_| ()),
         Forge::Bitbucket => Err(forge.unsupported("merge")),
+    }
+}
+
+/// The merge command for the forges whose CLI takes the options as flags. The head the person saw
+/// goes with it, so the forge refuses a branch that has moved on.
+fn merge_args(forge: Forge, id: &str, options: &MergePull, body: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut push = |words: &[&str]| args.extend(words.iter().map(|word| (*word).to_owned()));
+    if forge == Forge::GitHub {
+        push(&["pr", "merge", id, &format!("--{}", options.method)]);
+        if options.auto {
+            push(&["--auto"]);
+        }
+        if options.delete_branch {
+            push(&["--delete-branch"]);
+        }
+        if let Some(subject) = &options.subject {
+            push(&["--subject", subject]);
+        }
+        if let Some(body) = body {
+            push(&["--body", body]);
+        }
+        if let Some(head) = &options.expected_head {
+            push(&["--match-head-commit", head]);
+        }
+    } else {
+        push(&["mr", "merge", id, "--yes"]);
+        match options.method.as_str() {
+            "squash" => push(&["--squash"]),
+            "rebase" => push(&["--rebase"]),
+            _ => {}
+        }
+        if options.auto {
+            push(&["--auto-merge"]);
+        }
+        if options.delete_branch {
+            push(&["--remove-source-branch"]);
+        }
+        if let Some(body) = body {
+            push(&["--message", body]);
+        }
+        if let Some(head) = &options.expected_head {
+            push(&["--sha", head]);
+        }
+    }
+    args
+}
+
+/// True when a forge's refusal says the head moved after the person looked, by the phrases that forge uses.
+pub fn head_changed(forge: Forge, message: &str) -> bool {
+    let message = message.to_lowercase();
+    match forge {
+        Forge::GitHub => message.contains("head branch was modified") || message.contains("head commit"),
+        Forge::GitLab => message.contains("sha does not match") || message.contains("sha mismatch"),
+        _ => false,
+    }
+}
+
+/// A merge the forge refused because the head moved is its own error, not a generic failure.
+fn head_moved(forge: Forge, error: CoreError) -> CoreError {
+    match &error {
+        CoreError::Git(message) if head_changed(forge, message) => CoreError::PullHeadChanged,
+        _ => error,
     }
 }
 
@@ -2211,6 +2244,41 @@ fn auth_accounts(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_head_the_person_saw_goes_to_the_forge() {
+        let options = MergePull {
+            method: "squash".into(),
+            auto: false,
+            delete_branch: false,
+            subject: None,
+            body: None,
+            strip_credits: false,
+            expected_head: Some("abc123".into()),
+        };
+        let github = merge_args(Forge::GitHub, "7", &options, None);
+        assert_eq!(github, ["pr", "merge", "7", "--squash", "--match-head-commit", "abc123"]);
+        let gitlab = merge_args(Forge::GitLab, "7", &options, None);
+        assert_eq!(gitlab, ["mr", "merge", "7", "--yes", "--squash", "--sha", "abc123"]);
+        let none = MergePull { expected_head: None, ..options };
+        assert!(!merge_args(Forge::GitHub, "7", &none, None).iter().any(|arg| arg.contains("head")));
+    }
+
+    #[test]
+    fn a_refusal_for_a_moved_head_is_its_own_error() {
+        let github = Forge::GitHub;
+        assert!(head_changed(github, "X Pull request #4 is not mergeable: Head branch was modified. Review and try the merge again."));
+        assert!(matches!(
+            head_moved(github, CoreError::Git("GraphQL: Head branch was modified. Review and try the merge again.".into())),
+            CoreError::PullHeadChanged
+        ));
+        // Other failures keep their own words.
+        assert!(matches!(head_moved(github, CoreError::Git("merge conflict".into())), CoreError::Git(_)));
+        assert!(head_changed(Forge::GitLab, "405: SHA does not match HEAD of source branch"));
+        assert!(!head_changed(Forge::Forgejo, "Head branch was modified"));
+        assert_eq!(CoreError::PullHeadChanged.code(), "pull_head_changed");
+        assert_eq!(CoreError::PullHeadChanged.status(), 409);
+    }
 
     #[test]
     fn only_a_forges_no_such_pull_request_answer_is_matched() {

@@ -932,6 +932,7 @@ impl Core {
                     subject: None,
                     body: None,
                     strip_credits: false,
+                    expected_head: None,
                 };
                 self.merge_project_pull(project_id, layer.number, &options, actor)
                     .await

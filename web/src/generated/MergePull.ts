@@ -12,4 +12,8 @@ auto: boolean, delete_branch: boolean, subject?: string, body?: string,
 /**
  * Removes agent credit lines from the merge commit body.
  */
-strip_credits: boolean, };
+strip_credits: boolean, 
+/**
+ * The head commit the person saw. The forge refuses the merge if the branch has moved on.
+ */
+expected_head?: string, };

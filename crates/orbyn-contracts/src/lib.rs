@@ -1429,6 +1429,10 @@ pub struct MergePull {
     /// Removes agent credit lines from the merge commit body.
     #[serde(default)]
     pub strip_credits: bool,
+    /// The head commit the person saw. The forge refuses the merge if the branch has moved on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expected_head: Option<String>,
 }
 }
 
