@@ -271,7 +271,27 @@ it("keeps the section and offers Retry when the list fails", async () => {
   const mock = installMockFetch();
   mock.fail("/api/tasks", 1, 500, "internal", "The service is unavailable.");
   render(<ThreadAutomations threadId="t-approval" />);
-  expect(await screen.findByText("Couldn't load automations")).toBeVisible();
+  expect(await screen.findByText("Couldn’t load automations.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("2 tasks")).toBeVisible();
+});
+
+it("ends the open list with a link to Scheduled tasks in Settings", async () => {
+  const user = userEvent.setup();
+  installMockFetch();
+  render(<ThreadAutomations threadId="t-approval" />);
+  await openRow(user);
+  await user.click(screen.getByRole("button", { name: "Manage scheduled tasks" }));
+  expect(window.location.hash).toBe("#/settings/tasks");
+});
+
+it("shows Resume with a different mark than Run now", async () => {
+  const user = userEvent.setup();
+  installMockFetch();
+  render(<ThreadAutomations threadId="t-approval" />);
+  await openRow(user);
+  await user.click(toggleOf());
+  await waitFor(() => expect(toggleOf()).toHaveAccessibleName("Resume"));
+  const group = within(screen.getByRole("group", { name: "Daily review" }));
+  expect(group.getByRole("button", { name: "Resume" }).innerHTML).not.toBe(group.getByRole("button", { name: "Run now" }).innerHTML);
 });

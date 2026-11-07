@@ -222,3 +222,23 @@
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
 }
+.drow .dv small .dlink,
+.drow .dv small.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+.dauto .dtext small.mono {
+  font-family: var(--font-mono);
+}
+.drow .dv .dlink {
+  color: var(--color-textSoft);
+}
+.dauto .dmanage {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 8px;
+}
+.this-run {
+  padding: 4px 8px 8px;
+}

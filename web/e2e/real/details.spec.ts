@@ -51,7 +51,7 @@ test("details shows linked pull requests, and right-click turns rows off and bac
   await page.keyboard.press("Escape");
   await expect(details(page).getByText("Usage", { exact: true })).toBeVisible();
   await details(page).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Reset" }).click();
+  await page.getByRole("menuitem", { name: "Reset to default" }).click();
   await expect(details(page).getByRole("button", { name: "Pull requests" })).toContainText("#42");
   await page.goto(`${service.page}#/settings/general`);
   await expect(page.getByRole("button", { name: "8 of 9 on" })).toBeVisible();

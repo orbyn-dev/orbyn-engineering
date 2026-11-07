@@ -340,11 +340,11 @@ describe("details card Pull requests row", () => {
     expect(screen.getByRole("button", { name: "Link by number" })).toBeInTheDocument();
   });
 
-  it("says the forge is unreachable and offers Try again", async () => {
+  it("says the host did not answer and offers Try again", async () => {
     vi.spyOn(pullsApi, "linked").mockRejectedValue(new Error("no"));
     vi.spyOn(pullsApi, "watches").mockResolvedValue([]);
     render(<PullsRow thread={thread} />);
-    expect(await screen.findByText("GitHub unreachable")).toBeInTheDocument();
+    expect(await screen.findByText("The host didn’t answer")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

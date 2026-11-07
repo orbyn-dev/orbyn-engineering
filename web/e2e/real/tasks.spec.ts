@@ -203,4 +203,6 @@ test("a task bound to a thread pauses, runs and edits from the details card", as
   details = await openDetails(page);
   await details.getByRole("button", { name: "Automations" }).click();
   await expect(automations()).toContainText("Nightly check");
+  await details.getByRole("button", { name: "Manage scheduled tasks" }).click();
+  await expect(page).toHaveURL((url) => url.hash === "#/settings/tasks");
 });

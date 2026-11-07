@@ -123,4 +123,18 @@ describe("the Details button and the details card", () => {
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Usage" }));
     expect(screen.getByRole("menuitemcheckbox", { name: "Usage" })).toHaveAttribute("aria-checked", "false");
   });
+
+  it("holds only its rows; the folder path and Delete thread are in the header's thread menu", async () => {
+    setViewportWidth(1400);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await details());
+    expect(within(card()!).queryByText("This computer")).toBeNull();
+    expect(within(card()!).queryByRole("button", { name: /Copy folder path/ })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Thread menu" }));
+    const menu = await screen.findByRole("menu", { name: "Thread menu" });
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Rename", "Copy folder path", "Archive", "Delete thread"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
+    expect(await screen.findByRole("dialog", { name: /Delete “/ })).toBeInTheDocument();
+  });
 });

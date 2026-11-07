@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { LimitValue } from "./DetailsCard";
+import { LimitValue, tokensShort } from "./DetailsCard";
 import { DRow } from "./DetailRows";
 
 it("shows each limit window as it is, amber at 20% left or less and still amber at 0%", () => {
@@ -26,4 +26,8 @@ it("keeps a loading row empty until its wait is over and then shows a still bar"
   expect(bar).not.toBeNull();
   expect(bar?.style.width).toBe("96px");
   expect(view.container.querySelector(".drow")).toHaveAttribute("aria-busy", "true");
+});
+
+it("shortens token counts as 38k, 1.5k and 1.5M", () => {
+  expect([950, 1500, 38_000, 1_500_000, 2_000_000].map(tokensShort)).toEqual(["950", "1.5k", "38k", "1.5M", "2M"]);
 });

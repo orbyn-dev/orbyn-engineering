@@ -397,7 +397,7 @@ export function PullsRow({ thread }: { thread: Thread }) {
       <DRow
         icon={icon}
         label="Pull requests"
-        value={<span className="t3">{offline ? "Offline" : "GitHub unreachable"}</span>}
+        value={<span className="t3">{offline ? "Offline" : `${forgeName(undefined)} didn’t answer`}</span>}
         extra={
           offline ? null : (
             <Button small tone="quiet" onClick={() => void load(thread)}>

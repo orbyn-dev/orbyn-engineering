@@ -1,4 +1,4 @@
-import { CalendarClock, Pause, Pencil, Play } from "lucide-react";
+import { CalendarClock, CirclePlay, Pause, Pencil, Play } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { request } from "../../api/client";
 import type { ScheduledTask } from "../../api/types";
@@ -73,13 +73,15 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
         icon={icon}
         label="Automations"
         title={tasks.error.message}
-        value={<span className="t3">Couldn't load automations</span>}
+        value={<span className="t3">Couldn’t load automations.</span>}
         extra={
           <Button small tone="quiet" onClick={tasks.reload}>
             Retry
           </Button>
         }
-      />
+      >
+        <ManageLink />
+      </DRow>
     );
   }
   if (bound.length === 0) return <DRow icon={icon} label="Automations" value={<span className="t3">No automations on this thread</span>} />;
@@ -90,7 +92,7 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
       hour12: timestampFormat === "locale" ? undefined : timestampFormat === "12-hour",
     });
   const upcoming = bound
-    .filter((task) => task.enabled && task.next_run_at)
+    .filter((task) => (pending[task.id] ?? task.enabled) && task.next_run_at)
     .map((task) => task.next_run_at as string)
     .sort()[0];
 
@@ -155,7 +157,15 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
       expanded={expanded}
       onClick={() => setExpanded(!expanded)}
       value={<span className="t2">{bound.length === 1 ? "1 task" : `${bound.length} tasks`}</span>}
-      sub={upcoming ? `Next run ${clock(upcoming)}` : bound.every((task) => !task.enabled) ? "Paused" : undefined}
+      sub={
+        tasks.status === "error"
+          ? "Couldn’t refresh automations."
+          : upcoming
+            ? `Next run ${clock(upcoming)}`
+            : bound.every((task) => !(pending[task.id] ?? task.enabled))
+              ? "Paused"
+              : undefined
+      }
     >
       {expanded ? (
         <>
@@ -172,7 +182,7 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
                   </span>
                   <span className="end">
                     <IconButton label={enabled ? "Pause" : "Resume"} disabled={busy !== null} onClick={() => void toggle(task, !enabled)}>
-                      {enabled ? <Pause size={14} aria-hidden /> : <Play size={14} aria-hidden />}
+                      {enabled ? <Pause size={14} aria-hidden /> : <CirclePlay size={14} aria-hidden />}
                     </IconButton>
                     {task.schedule.kind === "webhook" ? null : (
                       <IconButton label="Run now" disabled={busy !== null} onClick={() => void run(task)}>
@@ -191,6 +201,7 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
               );
             })}
           </ul>
+          <ManageLink />
           {tasks.status === "error" ? (
             <p className="detail-automation-error" role="alert">
               {saved?.threadId === threadId && saved.rows === tasks.data
@@ -202,5 +213,18 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
         </>
       ) : null}
     </DRow>
+  );
+}
+
+/** The last row of the open Automations row: Scheduled tasks in Settings. */
+function ManageLink() {
+  return (
+    <div className="dauto">
+      <div className="dmanage">
+        <button type="button" className="dlink" onClick={() => navigate({ name: "settings", section: "tasks" })}>
+          Manage scheduled tasks
+        </button>
+      </div>
+    </div>
   );
 }

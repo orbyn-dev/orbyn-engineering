@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 /** The still grey bar a row shows in the value position while its data loads. */
@@ -14,6 +15,7 @@ export function DRow({
   label,
   value,
   sub,
+  subLines,
   onClick,
   disabled,
   loading,
@@ -30,6 +32,8 @@ export function DRow({
   label: string;
   value?: ReactNode;
   sub?: ReactNode;
+  /** Several quiet lines under the value, such as one address each. */
+  subLines?: ReactNode[];
   onClick?(): void;
   disabled?: boolean;
   /** Still waiting for data; nothing shows for the first 400 ms, then a still bar. */
@@ -52,7 +56,9 @@ export function DRow({
       <span className="dv">
         {loading ? (waited ? <ValueSkeleton width={skeleton} /> : null) : <span className="row1">{value}</span>}
         {!loading && sub ? <small>{sub}</small> : null}
+        {!loading && subLines ? subLines.map((line, at) => <small key={at}>{line}</small>) : null}
       </span>
+      {expanded === undefined ? null : expanded ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
     </>
   );
   return (
