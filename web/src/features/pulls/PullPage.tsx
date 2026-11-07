@@ -1,4 +1,4 @@
-import { ChevronDown, CircleCheck, Clock, CloudOff, Copy, FileDiff, GitPullRequest, Lock, RefreshCw, SquareCheck, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, CircleCheck, Clock, CloudOff, FileDiff, GitPullRequest, Lock, RefreshCw, SquareCheck, Trash2, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PullCheck, PullFile, PullRequest } from "../../api/types";
 import { Button } from "../../ui/controls";
@@ -138,7 +138,7 @@ export function checksHead(pull: PullRequest): { text: string; tone?: "danger" |
 }
 
 const checkWord = (check: PullCheck) =>
-  check.state === "fail" ? "failed" : check.state === "pending" ? "running" : check.state === "skipped" ? "skipped" : check.state === "neutral" ? "neutral" : "";
+  check.state === "pass" ? "Passed" : check.state === "fail" ? "Failed" : check.state === "pending" ? "running" : check.state === "skipped" ? "skipped" : check.state === "neutral" ? "neutral" : "";
 
 export function ChecksCard({ pull, checks }: { pull: PullRequest; checks: PullCheck[] | null }) {
   const head = checksHead(pull);
@@ -235,7 +235,7 @@ export function MergeRow({
   onAuto(value: boolean): void;
   deleteBranch: boolean;
   onDeleteBranch(value: boolean): void;
-  gate: { enabled: boolean; hint: string };
+  gate: { enabled: boolean; hint: string; tip?: string };
   menu: { x: number; y: number } | null;
   onMenu(at: { x: number; y: number } | null): void;
   onMerge(): void;
@@ -265,7 +265,7 @@ export function MergeRow({
             {label}
             <ChevronDown size={14} aria-hidden />
           </button>
-          <Button tone="primary" small disabled={!gate.enabled} onClick={onMerge}>
+          <Button tone="primary" small disabled={!gate.enabled} title={gate.tip} onClick={onMerge}>
             Merge
           </Button>
         </div>
@@ -321,23 +321,17 @@ export function PullBlock({ icon, title, children, actions }: { icon: ReactNode;
   );
 }
 
-export const UnreachableBlock = ({ forge, number, onRetry, onCopy }: { forge: string; number: number; onRetry(): void; onCopy(): void }) => (
-  <PullBlock
-    icon={<X size={16} aria-hidden />}
-    title={`Can’t reach ${forge}`}
-    actions={
-      <>
-        <Button tone="primary" icon={<RefreshCw size={14} aria-hidden />} onClick={onRetry}>
-          Retry
-        </Button>
-        <Button icon={<Copy size={14} aria-hidden />} onClick={onCopy}>
-          Copy details
-        </Button>
-      </>
-    }
-  >
-    Pull request #{number} did not load. Nothing was changed on {forge} or in your thread.
-  </PullBlock>
+/** Nothing cached to show: the page says it could not load, and offers to try again. */
+export const UnreachableBlock = ({ onRetry }: { onRetry(): void }) => (
+  <div className="pulls-block pull-block">
+    <X size={16} aria-hidden />
+    <p>Couldn{"\u2019"}t load details.</p>
+    <div className="pulls-block-actions">
+      <Button tone="primary" icon={<RefreshCw size={14} aria-hidden />} onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  </div>
 );
 
 export const SignedOutBlock = ({ forge, number, onSignIn, onLater }: { forge: string; number: number; onSignIn(): void; onLater(): void }) => (

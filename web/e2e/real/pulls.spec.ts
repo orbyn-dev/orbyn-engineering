@@ -316,6 +316,7 @@ test("the actions menu changes draft state, updates the branch and allows mainta
   await moreAction(page, article, "Allow maintainer edits");
   await expect.poll(() => service.ghPull(2).maintainerCanModify).toBe(true);
   await moreAction(page, article, "Delete branch");
+  await page.getByRole("dialog", { name: "Delete the branch?" }).getByRole("button", { name: "Delete branch" }).click();
   await expect.poll(() => service.ghCalls().some((call) => call.join(" ").includes("git/refs/heads/feat-two"))).toBe(true);
 });
 
@@ -338,7 +339,7 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   await article.getByRole("button", { name: /Squash and merge/ }).click();
   await page.getByRole("menuitem", { name: "Merge when checks pass" }).click();
   await article.getByRole("button", { name: "Merge", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Merge #2?" });
+  const dialog = page.getByRole("dialog", { name: "Merge pull request" });
   await dialog.getByLabel("Commit message").fill("Second layer\n\nCo-Authored-By: Claude <noreply@example.com>");
   await dialog.getByLabel("Remove agent credits").check();
   await dialog.getByRole("button", { name: "Enable auto-merge" }).click();
@@ -346,9 +347,11 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   await expect(article.getByText("Merges when checks pass")).toBeVisible();
   expect(service.ghPull(2).mergeBody).toBe("Second layer");
 
-  await page.goto(`${service.page}#/pulls`);
+  // Back to the list the way a person goes: the sidebar.
+  await page.getByRole("link", { name: /^Pull requests/ }).click();
+  await page.locator(".pull-rows > li", { hasText: "Unrelated fix" }).hover();
   await page.getByRole("button", { name: "Merge #3" }).click();
-  await page.getByRole("dialog", { name: "Merge #3?" }).getByRole("button", { name: "Merge" }).click();
+  await page.getByRole("dialog", { name: "Merge pull request" }).getByRole("button", { name: "Merge", exact: true }).click();
   await expect.poll(() => service.ghPull(3).state).toBe("MERGED");
 });
 
@@ -363,6 +366,7 @@ test("a merged pull request can be reverted", async ({ page }) => {
 test("rows close and reopen, one at a time or selected together", async ({ page }) => {
   await page.goto(`${service.page}#/pulls`);
   await page.getByRole("button", { name: "Close #1" }).click();
+  await page.getByRole("dialog", { name: "Close #1?" }).getByRole("button", { name: "Close pull request" }).click();
   await expect.poll(() => service.ghPull(1).state).toBe("CLOSED");
   await page.getByRole("button", { name: "Closed", exact: true }).click();
   await page.getByRole("button", { name: "Reopen #1" }).click();

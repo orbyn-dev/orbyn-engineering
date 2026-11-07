@@ -9,8 +9,8 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import { navigate } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
-import { Button, Field, IconButton, Pill } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
+import { Button, IconButton, Pill } from "../../ui/controls";
+import { ConfirmDialog } from "../../ui/Dialog";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { PageBar } from "../../ui/PageBar";
@@ -25,6 +25,7 @@ import { useThreadPulls } from "../thread/pullStore";
 import { agoWords, forgeName, numberLabel } from "../thread/pullStore";
 import { useVisibleProjects } from "../../state/workspace";
 import { PullsBanner } from "./PullStates";
+import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
 import { mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
 
@@ -207,105 +208,6 @@ function Timeline({ projectId, number }: { projectId: string; number: number }) 
   );
 }
 
-function MergeDialog({
-  projectId,
-  detail,
-  onClose,
-  onMerged,
-  initialMethod,
-  chosen,
-}: {
-  projectId: string;
-  detail: PullRequestDetail;
-  onClose(): void;
-  onMerged(): void;
-  initialMethod: string;
-  /** On the page the merge menu has already chosen these, so the dialog asks only for the message. */
-  chosen?: { auto: boolean; deleteBranch: boolean };
-}) {
-  const { number } = detail.pull;
-  const [method, setMethod] = useState(initialMethod);
-  const [auto, setAuto] = useState(chosen?.auto ?? false);
-  const [deleteBranch, setDeleteBranch] = useState(chosen?.deleteBranch ?? true);
-  const [strip, setStrip] = useState(false);
-  const [body, setBody] = useState(detail.body);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const merge = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await pullsApi.merge(projectId, number, {
-        method,
-        auto,
-        delete_branch: deleteBranch,
-        strip_credits: strip,
-        ...(method === "rebase" ? {} : { body }),
-      });
-      onMerged();
-      onClose();
-    } catch (failure) {
-      setError(toFailure(failure).message);
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      title={`Merge #${number}?`}
-      onClose={onClose}
-      busy={busy}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button tone="primary" busy={busy} onClick={() => void merge()}>
-            {auto ? "Enable auto-merge" : "Merge"}
-          </Button>
-        </>
-      }
-    >
-      {chosen ? null : (
-        <Field label="Merge method">
-          {(props) => (
-            <select {...props} value={method} onChange={(event) => setMethod(event.target.value)}>
-              <option value="squash">Squash and merge</option>
-              <option value="merge">Create a merge commit</option>
-              <option value="rebase">Rebase and merge</option>
-            </select>
-          )}
-        </Field>
-      )}
-      {method === "rebase" ? null : (
-        <Field label="Commit message">
-          {(props) => <textarea {...props} rows={4} value={body} onChange={(event) => setBody(event.target.value)} />}
-        </Field>
-      )}
-      {chosen ? null : (
-        <>
-          <label className="check">
-            <input type="checkbox" checked={auto} onChange={(event) => setAuto(event.target.checked)} />
-            <span>Merge when checks pass</span>
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={deleteBranch} onChange={(event) => setDeleteBranch(event.target.checked)} />
-            <span>Delete the branch</span>
-          </label>
-        </>
-      )}
-      <label className="check">
-        <input type="checkbox" checked={strip} onChange={(event) => setStrip(event.target.checked)} />
-        <span>Remove agent credits</span>
-      </label>
-      {error ? (
-        <p className="field-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </Dialog>
-  );
-}
-
 /** Where this pull request sits among the ones stacked on each other. */
 function Stack({ projectId, number, onOpen }: { projectId: string; number: number; onOpen?(number: number): void }) {
   const stack = useAsync(`pull-stack:${projectId}:${number}`, (signal) => pullsApi.stack(projectId, number, signal));
@@ -359,7 +261,6 @@ export function PullDetail({
   projectId,
   number,
   layout = "panel",
-  onBack,
   onClose,
   onOpen,
 }: {
@@ -367,8 +268,6 @@ export function PullDetail({
   number: number;
   /** A page of its own, or the compact view inside a thread's side panel. */
   layout?: "page" | "panel";
-  /** On the page: back to the list of pull requests. */
-  onBack?(): void;
   /** In the panel: back to the thread's linked pull requests. */
   onClose?(): void;
   /** Moves to another pull request in the same stack. */
@@ -385,10 +284,13 @@ export function PullDetail({
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal));
   const connection = useConnectionKind();
   const projects = useVisibleProjects();
-  const linkedThread = useThreadPulls((store) => Object.entries(store.byThread).find(([, entry]) => entry.pulls?.some((one) => one.number === number))?.[0]);
+  const pullUrl = detail.data?.pull.url;
+  // The address says which project's pull request, which a number alone does not.
+  const linkedThread = useThreadPulls((store) => (pullUrl ? Object.entries(store.byThread).find(([, entry]) => entry.pulls?.some((one) => one.url === pullUrl))?.[0] : undefined));
   const threadTitle = useWorkspace((state) => (linkedThread ? state.threads[linkedThread]?.title : undefined));
+  const [confirm, setConfirm] = useState<"close" | "delete_branch" | null>(null);
   const [auto, setAuto] = useState(false);
-  const [deleteAfter, setDeleteAfter] = useState(true);
+  const [deleteAfter, setDeleteAfter] = useState(() => deleteBranchChoice(projectId));
   const [mergeMenu, setMergeMenu] = useState<{ x: number; y: number } | null>(null);
   const loadedAt = useMemo(() => (detail.data ? Date.now() : null), [detail.data]);
   const [tab, setTab] = useState<Tab>("summary");
@@ -442,7 +344,6 @@ export function PullDetail({
   }
   if (detail.status === "error" && !detail.data) {
     if (page) {
-      const failure = detail.error;
       return (
         <article className="pull-page" aria-label={`Pull request #${number}`}>
           {pageHead(
@@ -451,14 +352,9 @@ export function PullDetail({
             </h1>,
           )}
           {signedOut ? (
-            <SignedOutBlock forge={forgeLabel} number={number} onSignIn={() => navigate({ name: "settings", section: "source-control" })} onLater={() => onBack?.()} />
+            <SignedOutBlock forge={forgeLabel} number={number} onSignIn={() => navigate({ name: "settings", section: "source-control" })} onLater={() => window.history.back()} />
           ) : (
-            <UnreachableBlock
-              forge={forgeLabel}
-              number={number}
-              onRetry={detail.reload}
-              onCopy={() => void navigator.clipboard?.writeText(`${failure.code}: ${failure.message}`).then(() => pushToast("Copied"), () => pushToast("Couldn't copy"))}
-            />
+            <UnreachableBlock onRetry={detail.reload} />
           )}
         </article>
       );
@@ -474,7 +370,12 @@ export function PullDetail({
     try {
       await work;
       pushToast(done);
-      detail.reload();
+      void detail.reload();
+      // What the banner and the tab counts read goes stale with the pull request.
+      if (page) {
+        void extras.reload();
+        void checkList.reload();
+      }
     } catch (failure) {
       pushToast(`Couldn't do that. ${toFailure(failure).message}`);
     }
@@ -508,7 +409,8 @@ export function PullDetail({
       ? [
           { label: "Edit title", onSelect: () => setEditing(pull.title) },
           { label: "Work on this", onSelect: () => void work() },
-          ...(open ? [{ label: "Close pull request", onSelect: () => void act("close", "Closed") }] : []),
+          { label: `Open on ${forge === "The host" ? "the forge" : forge}`, disabled: connection === "offline", onSelect: () => void window.open(pull.url, "_blank", "noreferrer") },
+          ...(open ? [{ label: "Close pull request", destructive: true, onSelect: () => setConfirm("close") }] : []),
         ]
       : []),
     ...(open
@@ -534,7 +436,7 @@ export function PullDetail({
       label: "Delete branch",
       destructive: true,
       separatorBefore: true,
-      onSelect: () => void act("delete_branch", "Branch deleted"),
+      onSelect: () => setConfirm("delete_branch"),
     },
   ];
 
@@ -623,6 +525,18 @@ export function PullDetail({
     );
   const dialogs = (
     <>
+      {confirm ? (
+        <ConfirmDialog
+          title={confirm === "close" ? `Close #${number}?` : "Delete the branch?"}
+          confirmLabel={confirm === "close" ? "Close pull request" : "Delete branch"}
+          tone="danger"
+          cancelFocus
+          onClose={() => setConfirm(null)}
+          onConfirm={() => run(pullsApi.action(projectId, number, confirm), confirm === "close" ? "Closed" : "Branch deleted")}
+        >
+          <p>{confirm === "close" ? `${pull.title} is closed without merging. It can be reopened.` : `${pull.head} is deleted from the forge.`}</p>
+        </ConfirmDialog>
+      ) : null}
       {merging ? (
         <MergeDialog
           projectId={projectId}
@@ -696,7 +610,7 @@ export function PullDetail({
           </Button>
           {open ? (
             <>
-              <Button small onClick={() => void act("close", "Closed")}>
+              <Button small onClick={() => setConfirm("close")}>
                 Close
               </Button>
               <Button
@@ -730,7 +644,7 @@ export function PullDetail({
   const submitReview = (event: "approve" | "request_changes") =>
     run(pullsApi.review(projectId, number, event, ""), event === "approve" ? "Approved" : "Changes requested");
   const forgeLink = (
-    <a className="btn btn-secondary btn-small pull-forge" href={pull.url} target="_blank" rel="noreferrer" aria-disabled={offline || undefined}>
+    <a className="btn btn-secondary btn-small pull-forge" href={pull.url} target="_blank" rel="noreferrer" aria-disabled={offline || undefined} tabIndex={offline ? -1 : undefined} onClick={(event) => offline && event.preventDefault()}>
       Open on {forge === "The host" ? "the forge" : forge}
     </a>
   );
@@ -803,7 +717,7 @@ export function PullDetail({
             ready: () => void update({ draft: false }, "Ready for review"),
             approve: () => void submitReview("approve"),
             requestChanges: () => setTab("timeline"),
-            deleteBranch: () => void act("delete_branch", "Branch deleted"),
+            deleteBranch: () => setConfirm("delete_branch"),
           }}
         />
       )}
@@ -818,7 +732,7 @@ export function PullDetail({
               {tab === "guide" ? (
                 <PullGuide projectId={projectId} number={number} headSha={current.head_sha} />
               ) : tab === "code" ? (
-                <PullCode projectId={projectId} number={number} onReviewed={detail.reload} />
+                <PullCode projectId={projectId} number={number} shared={fileList} onReviewed={detail.reload} />
               ) : tab === "timeline" ? (
                 <>
                   <PullConversation projectId={projectId} number={number} />
@@ -862,7 +776,7 @@ export function PullDetail({
             {reviewWords(pull, current.reviewers)}
           </Row>
           <Row name="Conflicts" tone={mergeable === "conflicting" ? "warn" : undefined}>
-            {mergeable === "conflicting" ? "Yes" : mergeable === "mergeable" ? "None" : "\u2014"}
+            {mergeable === "conflicting" ? "Has conflicts" : mergeable === "mergeable" ? "None" : "\u2014"}
           </Row>
           {threadTitle ? (
             <Row name="Thread">
@@ -877,7 +791,10 @@ export function PullDetail({
           auto={auto}
           onAuto={setAuto}
           deleteBranch={deleteAfter}
-          onDeleteBranch={setDeleteAfter}
+          onDeleteBranch={(on) => {
+            setDeleteAfter(on);
+            rememberDeleteBranch(projectId, on);
+          }}
           gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : gate}
           menu={mergeMenu}
           onMenu={setMergeMenu}

@@ -4,6 +4,7 @@
  * no network. ORBYN_GH_STATE names the file; ORBYN_GH_LOG collects each call.
  */
 import { appendFileSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 const args = process.argv.slice(2);
@@ -18,10 +19,12 @@ const pause = new Int32Array(new SharedArrayBuffer(4));
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  // A killed process that has not been reaped still answers signal 0: its state says Z.
+  const state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "";
+  return !state.trim().startsWith("Z");
 };
 for (;;) {
   try {
@@ -39,6 +42,13 @@ for (;;) {
   }
 }
 process.on("exit", () => rmSync(lock, { force: true }));
+// A call the service gives up on is ended by a signal, which skips "exit": let go of the lock then too.
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(signal, () => {
+    rmSync(lock, { force: true });
+    process.exit(1);
+  });
+}
 
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 appendFileSync(process.env.ORBYN_GH_LOG, `${JSON.stringify(args)}\n`);

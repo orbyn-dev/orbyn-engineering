@@ -124,12 +124,24 @@ function FileRow({
 }
 
 /** The changed files, marks of what's been read, and comments held for one review. */
-export function PullCode({ projectId, number, onReviewed }: { projectId: string; number: number; onReviewed(): void }) {
+export function PullCode({
+  projectId,
+  number,
+  shared,
+  onReviewed,
+}: {
+  projectId: string;
+  number: number;
+  /** The page already reads the changed files; the tab shows that read, not its own. */
+  shared?: ReturnType<typeof useAsync<PullFile[]>>;
+  onReviewed(): void;
+}) {
   const [revision, setRevision] = useState("");
   const revisions = useAsync(`pull-revisions:${projectId}:${number}`, (signal) => pullsApi.revisions(projectId, number, signal));
-  const files = useAsync(`pull-files:${projectId}:${number}:${revision}`, (signal) =>
-    revision ? pullsApi.commitFiles(projectId, revision, signal) : pullsApi.files(projectId, number, signal),
+  const own = useAsync(`pull-files:${projectId}:${number}:${revision}`, (signal) =>
+    revision ? pullsApi.commitFiles(projectId, revision, signal) : shared ? Promise.resolve([]) : pullsApi.files(projectId, number, signal),
   );
+  const files = revision || !shared ? own : shared;
   const [drafts, setDrafts] = useState<ReviewLineComment[]>([]);
   const [body, setBody] = useState("");
   const [find, setFind] = useState("");

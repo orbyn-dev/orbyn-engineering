@@ -120,13 +120,13 @@ describe("one pull request as a page", () => {
     expect(merge()).toBeDisabled();
   });
 
-  it("says the forge did not answer when the page cannot load, and Retry asks again", async () => {
+  it("says the details did not load when nothing is cached, and Try again asks again", async () => {
     vi.mocked(pullsApi.detail).mockRejectedValue(new ApiFailure("bad_gateway", "no", 502));
     render(<PullDetail layout="page" projectId="p" number={142} />);
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
-    expect(screen.getByText("Can’t reach GitHub")).toBeInTheDocument();
-    expect(screen.getByText("Pull request #142 did not load. Nothing was changed on GitHub or in your thread.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByRole("heading", { name: "Pull request #142" })).toBeInTheDocument();
+    expect(screen.getByText("Couldn’t load details.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(pullsApi.detail).toHaveBeenCalledTimes(2);
   });
 
@@ -156,5 +156,27 @@ describe("one pull request as a page", () => {
     fireEvent.click(screen.getByRole("tab", { name: /^Checks/ }));
     expect(screen.getByText("1 check failed")).toBeInTheDocument();
     expect(screen.queryByText("e2e (macOS) failed", { selector: "b" })).toBeNull();
+  });
+
+  it("asks before closing, and closes only on the confirmation", async () => {
+    vi.spyOn(pullsApi, "action").mockResolvedValue(undefined);
+    await show(detail());
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close pull request" }));
+    expect(pullsApi.action).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Close pull request" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(pullsApi.action).toHaveBeenCalledWith("p", 142, "close");
+  });
+
+  it("reads the review request again after Approve, so the banner goes", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [{ name: "me", kind: "user" }], comment_count: 3 }], paused: [] } as never);
+    await show(detail({ review_state: "review_required" }));
+    expect(screen.getByText("Your review is requested")).toBeInTheDocument();
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [], comment_count: 3 }], paused: [] } as never);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.queryByText("Your review is requested")).toBeNull();
   });
 });
