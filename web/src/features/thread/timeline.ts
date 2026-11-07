@@ -86,7 +86,7 @@ const staysVisible = (item: ThreadItem): boolean => {
     case "approval":
       return item.approval.state === "pending";
     case "notice":
-      return item.tone === "error";
+      return item.tone === "error" || item.code === "run_stopped";
     case "diff":
       return true;
     case "message":

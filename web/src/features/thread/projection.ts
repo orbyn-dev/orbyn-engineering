@@ -323,8 +323,8 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
           key: `notice:${wire.seq}`,
           kind: "notice",
           tone: "neutral",
-          text: "Run cancelled.",
-          code: null,
+          text: "Stopped by you",
+          code: "run_stopped",
         });
       }
       log(outcome === "cancelled" ? "Run cancelled" : "Run finished", null);

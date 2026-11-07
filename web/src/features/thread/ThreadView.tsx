@@ -37,6 +37,7 @@ import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
+import { ArchivedBanner, CompactingStep } from "./ThreadStates";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "./timeline";
@@ -515,6 +516,7 @@ export function ThreadView({ id }: { id: string }) {
           <WorktreeSetupCard thread={thread} />
           <ThreadErrorBanner thread={thread} />
           <LimitBanner thread={thread} />
+          <CompactingStep thread={thread} />
           <ServiceDownBanner />
           <div className="composer-lane">
             <div ref={mover} className="composer-group">
@@ -524,6 +526,8 @@ export function ThreadView({ id }: { id: string }) {
                 <div ref={anchor}>
                   {thread.lifecycle?.relation === "subagent" ? (
                     <SubagentBar thread={thread} />
+                  ) : thread.lifecycle?.archived_at ? (
+                    <ArchivedBanner thread={thread} />
                   ) : (
                     <Composer
                       thread={thread}

@@ -1,3 +1,4 @@
+import { useCompacting } from "./ThreadStates";
 import { composerMarkup } from "./composerMarkup";
 import { recordUserPrompt } from "../workspace/GitHubStarPrompt";
 import { ArrowUp, Archive, Folder, GitBranch, ListChecks, Paperclip, ShieldOff, SlidersHorizontal, Square, X,
@@ -226,7 +227,8 @@ export function Composer({
   const fence = openFenceAt(draft, caret);
   // The draft is kept while the Orbyn service does not answer, and sending waits for it.
   const serviceDown = useConnectionKind() === "service-down";
-  const canSend = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown;
+  const compacting = useCompacting(thread);
+  const canSend = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -889,7 +891,9 @@ export function Composer({
           aria-label={`Message ${thread.title}`}
           aria-describedby="composer-help"
           placeholder={
-            serviceDown
+            compacting
+              ? "Waiting for compact to finish"
+              : serviceDown
               ? "Your draft is kept. Sending waits for the Orbyn service."
               : pendingHere.length > 0
               ? engine?.capabilities.decline_feedback

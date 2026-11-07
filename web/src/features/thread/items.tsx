@@ -8,7 +8,8 @@ import {
   OctagonAlert,
 } from "lucide-react";
 import { memo, useMemo, useState } from "react";
-import { elapsed } from "../../lib/format";
+import { Square } from "lucide-react";
+import { clockTime, elapsed } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { EngineGlyph } from "../../ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
@@ -174,6 +175,19 @@ function Activity({ item }: { item: ActivityItem }) {
 function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
+  if (item.code === "run_stopped") {
+    return (
+      <div className="stop-mark" data-minimap={item.key}>
+        <span aria-hidden />
+        <Square size={12} aria-hidden />
+        <span>
+          {item.text}
+          <span data-find-skip> · {clockTime(item.ts)}</span>
+        </span>
+        <span aria-hidden />
+      </div>
+    );
+  }
   if (item.tone === "neutral") {
     return <p className="notice">{item.text}</p>;
   }

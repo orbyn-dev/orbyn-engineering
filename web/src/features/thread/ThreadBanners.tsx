@@ -1,3 +1,4 @@
+import { useNow } from "../../lib/useNow";
 import { CircleAlert, Clock, Gauge, RotateCcw, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "../../api/client";
@@ -30,9 +31,11 @@ export function LimitBanner({ thread }: { thread: Thread }) {
   return (
     <div className="thread-error thread-limit" role="status" aria-label="Limited">
       <Gauge size={14} aria-hidden />
+      <span className="limit-label">Rate limited</span>
       <span>
         {limit.message}
         {limit.resets_at ? ` Resets ${resetLabel(limit.resets_at)}.` : ""}
+        {future ? <LimitCountdown limit={limit} /> : null}
       </span>
       <Button
         small
@@ -128,4 +131,24 @@ export function PreparationRetryButton({ threadId, runId }: { threadId: string; 
     });
   };
   return <Button small tone="quiet" disabled={retrying} icon={<RotateCcw size={12} aria-hidden />} onClick={retry}>Retry</Button>;
+}
+
+/** "Try again in 2m 14s", counting down, with a bar for how much of the wait has passed. */
+function LimitCountdown({ limit }: { limit: { stopped_at: string; resets_at: string | null } }) {
+  const now = useNow(true);
+  const end = limit.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
+  const start = Date.parse(limit.stopped_at);
+  const left = Math.max(end - now, 0);
+  const seconds = Math.ceil(left / 1000);
+  const text = seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m` : seconds >= 60 ? `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
+  const share = Number.isNaN(start) || end <= start ? 0 : Math.min(Math.max((now - start) / (end - start), 0), 1);
+  return (
+    <>
+      {" "}
+      Try again in <b className="limit-left">{text}</b>.
+      <span className="xbar" role="presentation">
+        <i style={{ width: `${Math.round(share * 100)}%` }} />
+      </span>
+    </>
+  );
 }
