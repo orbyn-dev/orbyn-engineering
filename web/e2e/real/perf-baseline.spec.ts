@@ -70,6 +70,7 @@ test.afterAll(async () => {
 
 test("startup to first usable screen, LCP, CLS, idle memory", async () => {
   test.setTimeout(300_000);
+  const shifts: unknown[] = [];
   const usable: number[] = [], lcp: number[] = [], cls: number[] = [], heaps: number[] = [], nodes: number[] = [];
   for (let i = 0; i < RUNS; i++) {
     const { browser, page, heap } = await fresh();
@@ -79,9 +80,11 @@ test("startup to first usable screen, LCP, CLS, idle memory", async () => {
     const p = await perf(page);
     usable.push(Math.round(p.firstUsable)); lcp.push(Math.round(p.lcp)); cls.push(+p.cls.toFixed(4));
     const h = await heap(); heaps.push(h.heap_used_mb); nodes.push(h.dom_nodes);
-    if (i === 0) { await page.screenshot({ path: "perf-home.png" }); report.startup_detail = { shifts: (p as unknown as { shifts: unknown }).shifts, lcp_element: (p as unknown as { lcpEl: string }).lcpEl }; }
+    shifts.push((p as unknown as { shifts: unknown }).shifts);
+    if (i === 0) { await page.screenshot({ path: "perf-home.png" }); report.startup_detail = { lcp_element: (p as unknown as { lcpEl: string }).lcpEl }; }
     await browser.close();
   }
+  report.layout_shifts_per_run = shifts;
   report.startup_web = { runs: RUNS, first_usable_ms: { median: median(usable), all: usable }, lcp_ms: { median: median(lcp), all: lcp }, cls: { max: Math.max(...cls), all: cls } };
   report.idle_memory = { heap_used_mb: { median: median(heaps), all: heaps }, dom_nodes: median(nodes) };
 });
@@ -130,7 +133,7 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
     // Typing: 120 characters at 30 ms per key into the composer; Event Timing durations (>=16 ms recorded).
     await page.evaluate(() => { (window as unknown as { __perf: { events: unknown[] } }).__perf.events = []; });
     const box = page.getByRole("textbox", { name: /^Message/ });
-    await box.click();
+    await box.click({ timeout: 10_000 });
     const typeStart = Date.now();
     await page.keyboard.type("a".repeat(120), { delay: 30 });
     const typeWall = Date.now() - typeStart;
@@ -152,7 +155,7 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
       return out;
     });
     report.typing_long_thread = { keys: 120, wall_ms: typeWall, event_entries_over_16ms: durs.length, event_duration_max_ms: durs.length ? Math.max(...durs) : 0, event_duration_p95_ms: durs.length ? pct(durs, 0.95) : 0, input_to_next_frame_ms: { median: +median(lat).toFixed(1), p95: +pct(lat, 0.95).toFixed(1), max: +Math.max(...lat).toFixed(1) } };
-    await box.fill("").catch((e) => { report.fill_error = String(e); });
+    await box.fill("", { timeout: 10_000 }).catch((e) => { report.fill_error = String(e); });
     console.log("after typing");
 
     // Thread switch via the sidebar row, timed click to the other transcript's content.
@@ -162,8 +165,8 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
         console.log("switch", title);
         const row = page.locator(`li[data-thread-item="${id}"]`).getByText(title, { exact: true }).first();
         const t = Date.now();
-        await row.click();
-        await expect(page).toHaveURL(new RegExp(id));
+        await row.click({ timeout: 10_000 });
+        await expect(page).toHaveURL(new RegExp(id), { timeout: 10_000 });
         await expect(page.getByText(marker).last()).toBeVisible({ timeout: 60_000 });
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
         switches.push({ to: title, ms: Date.now() - t });
@@ -173,7 +176,7 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
 
     // Side panel tabs on the long thread.
     const tablist = page.getByRole("tablist", { name: "Context" });
-    if (!(await tablist.isVisible())) await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Surfaces" }).click();
+    if (!(await tablist.isVisible())) await page.getByRole("button", { name: "Show side panel" }).click({ timeout: 10_000 });
     await tablist.waitFor({ timeout: 10_000 }).catch(() => {});
     const tabTimes: Record<string, number[]> = {};
     if (await tablist.isVisible()) {
@@ -184,8 +187,8 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
           const tab = tabs.nth(i);
           const name = (await tab.getAttribute("aria-label")) ?? (await tab.innerText());
           const t = Date.now();
-          await tab.click();
-          await expect(tab).toHaveAttribute("aria-selected", "true");
+          await tab.click({ timeout: 10_000 });
+          await expect(tab).toHaveAttribute("aria-selected", "true", { timeout: 10_000 });
           await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
           (tabTimes[name] ??= []).push(Date.now() - t);
         }

@@ -166,19 +166,20 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The frame is mounted before projects and engines arrive, so the composer takes focus once it shows.
+  const pending = !projects || !engines;
   useLayoutEffect(() => {
-    field.current?.focus();
-  }, []);
+    if (!pending) field.current?.focus();
+  }, [pending]);
   useEffect(() => {
     setPrefs({ draftProject: chosenProject });
   }, [chosenProject, setPrefs]);
 
-  if (!projects || !engines) return <div className="page"><Loading label="Loading" rows={3} /></div>;
   const unmanaged = engine !== null && !engine.capabilities.managed;
   // A mode the chosen engine does not offer would run Supervised, so it starts that way.
   const access = shownAccess(engine, chosenAccess);
 
-  if (!project && !scratch) return <NoProjects />;
+  if (!pending && !project && !scratch) return <NoProjects />;
 
   const branch = targets?.find((target) => target.project_id === project?.id)?.branch ?? null;
   const setPrompt = (text: string) => setDraft(DRAFT_KEY, text);
@@ -318,7 +319,12 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   };
 
   return (
-    <div className="draft-layout">
+    <div className="draft-layout" data-pending={pending ? "" : undefined} aria-busy={pending || undefined}>
+      {pending ? (
+        <div className="draft-pending">
+          <Loading label="Loading" rows={3} />
+        </div>
+      ) : null}
       <section className="draft-main thread-main" aria-label="New thread">
         <header className="topbar">
           <NarrowBack />
@@ -373,7 +379,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                 )}
               </p>
               <SkillsNotice />
-              {project && !prompt ? (
+              {(project || pending) && !prompt ? (
                 <div className="draft-suggestions" role="group" aria-label="Suggestions">
                   {SUGGESTIONS.map(({ icon: Icon, label, text }) => (
                     <button
@@ -633,7 +639,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       ) : null}</Presence>
       {picker ? (
         <DraftProjectPicker
-          projects={projects}
+          projects={projects ?? []}
           current={project?.id ?? ""}
           anchor={picker}
           onClose={() => setPicker(null)}

@@ -2604,6 +2604,19 @@ button.detail-row:hover {
   height: 100%;
   min-height: 0;
 }
+/* Until projects and engines arrive the frame keeps its final boxes, unseen, so nothing moves when they do. */
+.draft-layout[data-pending] > .draft-main {
+  visibility: hidden;
+}
+.draft-pending {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 32px;
+}
 .draft-main {
   display: flex;
   flex: 1;
