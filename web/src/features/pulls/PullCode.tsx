@@ -1,4 +1,4 @@
-import { FileDiff, MessageSquarePlus, X } from "lucide-react";
+import { FileDiff, MessageSquarePlus, Search, X } from "lucide-react";
 import { useState } from "react";
 import type { PullFile, ReviewLineComment } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
@@ -132,6 +132,7 @@ export function PullCode({ projectId, number, onReviewed }: { projectId: string;
   );
   const [drafts, setDrafts] = useState<ReviewLineComment[]>([]);
   const [body, setBody] = useState("");
+  const [find, setFind] = useState("");
   const [busy, setBusy] = useState(false);
   const pushToast = useUi((state) => state.pushToast);
   if (files.status === "loading") return <Loading label="Loading files" rows={4} />;
@@ -139,6 +140,10 @@ export function PullCode({ projectId, number, onReviewed }: { projectId: string;
     return <ErrorState compact title="Couldn't load the files" failure={files.error} onRetry={files.reload} />;
   }
   const viewed = files.data.filter((file) => file.viewed).length;
+  const query = find.trim().toLowerCase();
+  const shown = query ? files.data.filter((file) => file.path.toLowerCase().includes(query)) : files.data;
+  const names = files.data.map((file) => file.path);
+  const sentence = names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   const mark = (file: PullFile, next: boolean) => {
     pullsApi.setViewed(projectId, number, [file.path], next).then(files.reload, (failure: unknown) =>
       pushToast(`Couldn't mark that. ${toFailure(failure).message}`),
@@ -170,16 +175,32 @@ export function PullCode({ projectId, number, onReviewed }: { projectId: string;
           ))}
         </select>
       ) : null}
-      {revision ? (
-        <p className="muted" role="status">
-          {files.data.length === 1 ? "1 file in this commit" : `${files.data.length} files in this commit`}
-        </p>
-      ) : (
-        <p className="muted" role="status">
-          {viewed} of {files.data.length} files viewed
-        </p>
-      )}
-      {files.data.map((file) => (
+      <div className="pull-filter">
+        <label className="pull-filter-field">
+          <Search size={14} aria-hidden />
+          <input aria-label="Filter files" placeholder="Filter files" value={find} onChange={(event) => setFind(event.target.value)} />
+        </label>
+        {revision ? (
+          <p className="pull-filter-count" role="status">
+            {files.data.length === 1 ? "1 file in this commit" : `${files.data.length} files in this commit`}
+          </p>
+        ) : (
+          <p className="pull-filter-count" role="status">
+            {query ? `${shown.length} of ${files.data.length} files` : `Viewed ${viewed} of ${files.data.length}`}
+          </p>
+        )}
+      </div>
+      {query && shown.length === 0 ? (
+        <div className="pull-files-none">
+          <Search size={16} aria-hidden />
+          <h2>No files match {"\u201c"}{find.trim()}{"\u201d"}</h2>
+          <p>This pull request changes {sentence}.</p>
+          <Button icon={<X size={14} aria-hidden />} onClick={() => setFind("")}>
+            Clear filter
+          </Button>
+        </div>
+      ) : null}
+      {shown.map((file) => (
         <FileRow
           key={file.path}
           file={file}

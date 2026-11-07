@@ -123,6 +123,9 @@
 .pull-lead .pull-row-pick {
   opacity: 0;
 }
+.pull-lead-icon {
+  pointer-events: none;
+}
 /* The pick box takes the icon's place on hover, on focus and once chosen. */
 .pull-rows > li:hover .pull-lead:not([data-picked]) .pull-lead-icon,
 .pull-lead:focus-within .pull-lead-icon,
@@ -719,14 +722,14 @@
   color: var(--color-text);
   font-weight: 500;
 }
-.pull-files {
+.pull-filelist {
   display: flex;
   flex-direction: column;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.pull-files li {
+.pull-filelist li {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -810,4 +813,59 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+/* The Files changed tab: a filter above the diffs, and what it says when nothing matches. */
+.pull-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pull-filter-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 240px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--color-sunken);
+  color: var(--color-muted);
+}
+.pull-filter-field input {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12.5px;
+  outline: 0;
+}
+.pull-filter-field:focus-within {
+  box-shadow: 0 0 0 2px var(--color-borderStrong);
+}
+.pull-filter-count {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.pull-files-none {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px 0;
+  color: var(--color-muted);
+}
+.pull-files-none h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.pull-files-none p {
+  margin: 0;
 }

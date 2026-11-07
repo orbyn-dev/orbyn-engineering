@@ -214,12 +214,16 @@ export function visiblePulls(
     return labels.every((label) => names.includes(label));
   });
   // The forge reports no creation time in the list, so the number stands in for it until details bring one.
+  const number = (entry: PullListEntry) => String(entry.pull.number).padStart(12, "0");
+  const anyCreated = kept.some((entry) => detailsOf(entry)?.created_at);
   const key = (entry: PullListEntry): string | null =>
     sort.by === "updated"
       ? (entry.pull.updated_at ?? "")
       : sort.by === "comments"
         ? ((count) => (count === undefined ? null : String(count).padStart(12, "0")))(detailsOf(entry)?.comment_count)
-        : (detailsOf(entry)?.created_at ?? String(entry.pull.number).padStart(12, "0"));
+        : anyCreated
+          ? ((at) => (at ? `${at}|${number(entry)}` : null))(detailsOf(entry)?.created_at)
+          : number(entry);
   const order = sort.dir === "newest" ? -1 : 1;
   // A pull request whose forge gives no value for the sort comes last, whichever way it runs.
   return [...kept].sort((a, b) => {

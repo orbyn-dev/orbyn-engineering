@@ -137,4 +137,17 @@ describe("one pull request as a page", () => {
     act(() => void vi.advanceTimersByTime(400));
     expect(document.querySelectorAll(".pull-skel-card").length).toBeGreaterThan(0);
   });
+
+  it("filters the changed files, and says what the pull request does change when none match", async () => {
+    vi.spyOn(pullsApi, "revisions").mockResolvedValue([]);
+    await show(detail());
+    fireEvent.click(screen.getByRole("tab", { name: /^Files changed/ }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Viewed 0 of 1");
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter files" }), { target: { value: "migrations" } });
+    expect(screen.getByText("No files match \u201cmigrations\u201d")).toBeInTheDocument();
+    expect(screen.getByText("This pull request changes auth/redirect.ts.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect(screen.queryByText(/No files match/)).toBeNull();
+  });
 });

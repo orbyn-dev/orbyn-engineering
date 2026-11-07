@@ -140,6 +140,15 @@ describe("filters that need details", () => {
     expect(numbers(noFilters, { by: "comments", dir: "newest" })).toEqual([2, 1, 3]);
     expect(numbers(noFilters, { by: "comments", dir: "oldest" })).toEqual([1, 2, 3]);
   });
+  it("sorts by the creation time the details bring, the number breaking a tie, and rows without one last", () => {
+    const created = new Map([
+      ["p:1", { project_id: "p", number: 1, created_at: "2026-10-01T00:00:00Z" }],
+      ["p:2", { project_id: "p", number: 2, created_at: "2026-10-01T00:00:00Z" }],
+    ]) as Parameters<typeof visiblePulls>[5];
+    const order = (sort: PullSort) => visiblePulls(list, noFilters, [], sort, [], created).map((e) => e.pull.number);
+    expect(order(newest)).toEqual([2, 1, 3]);
+    expect(order(oldest)).toEqual([1, 2, 3]);
+  });
   it("names its chips", () => {
     expect(activeChips({ ...noFilters, review: ["review_required"], requestedFrom: ["team:orbyn-dev/web"] }).map((chip) => chip.label)).toEqual([
       "Review: needs my review",

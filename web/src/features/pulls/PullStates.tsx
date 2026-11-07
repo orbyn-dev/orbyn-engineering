@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { Button } from "../../ui/controls";
 
 /** A quiet bar above the list: what is wrong, and the step that helps. */
-export function PullsBanner({ icon, children, actions, tone }: { icon: ReactNode; children: ReactNode; actions: ReactNode; tone?: "warn" | "err" }) {
+export function PullsBanner({ icon, children, actions, tone, live }: { icon: ReactNode; children: ReactNode; actions: ReactNode; tone?: "warn" | "err"; live?: boolean }) {
   return (
-    <div className="pulls-banner" data-tone={tone} role="status">
+    <div className="pulls-banner" data-tone={tone} role={live ? "status" : undefined}>
       {icon}
       <span>{children}</span>
       <span className="pulls-banner-end">{actions}</span>
@@ -15,6 +15,7 @@ export function PullsBanner({ icon, children, actions, tone }: { icon: ReactNode
 
 export const OfflineBanner = ({ ago, onRetry }: { ago: string; onRetry(): void }) => (
   <PullsBanner
+    live
     icon={<CloudOff size={14} aria-hidden />}
     actions={
       <Button small tone="secondary" icon={<RefreshCw size={14} aria-hidden />} onClick={onRetry}>
@@ -28,6 +29,7 @@ export const OfflineBanner = ({ ago, onRetry }: { ago: string; onRetry(): void }
 
 export const DetailsBanner = ({ onRetry, onRemove }: { onRetry(): void; onRemove(): void }) => (
   <PullsBanner
+    live
     icon={<TriangleAlert size={14} aria-hidden />}
     actions={
       <>

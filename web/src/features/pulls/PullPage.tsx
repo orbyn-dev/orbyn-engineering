@@ -194,7 +194,7 @@ export function FilesCard({ files, additions, deletions }: { files: PullFile[]; 
           </span>
         ) : null}
       </div>
-      <ul className="pull-files">
+      <ul className="pull-filelist">
         {files.map((file) => (
           <li key={file.path}>
             <FileDiff size={14} aria-hidden />
@@ -359,6 +359,7 @@ export const SignedOutBlock = ({ forge, number, onSignIn, onLater }: { forge: st
 
 export const OfflineLine = ({ ago, onRetry }: { ago: string; onRetry(): void }) => (
   <PullsBanner
+    live
     icon={<CloudOff size={14} aria-hidden />}
     actions={
       <Button small icon={<RefreshCw size={14} aria-hidden />} onClick={onRetry}>
