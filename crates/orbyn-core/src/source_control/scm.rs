@@ -23,7 +23,7 @@ use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::{
     self, ALL_FORGES, DETAIL_FIELDS, DETAILS_ROW_LIMIT, DetailsOutcome, Forge, PullFilter,
-    create_pull, fetch_pull, forge_of, number_from_url,
+    create_pull, fetch_pull, forge_of, no_such_pull, number_from_url,
 };
 use crate::source_control::git::{git, text};
 use crate::store::{AuditRecord, WatchUpdate};
@@ -298,7 +298,16 @@ impl Core {
     pub async fn link_pull(&self, id: &str, number: u64) -> Result<PullRequest> {
         let thread = self.scm_thread(id)?;
         let cwd = Path::new(&thread.cwd);
-        let pull = fetch_pull(forge_of(cwd).await?, cwd, number).await?;
+        let forge = forge_of(cwd).await?;
+        // The forge's own "no such pull request" answer is a 404; every other failure stays as it is.
+        let pull = fetch_pull(forge, cwd, number)
+            .await
+            .map_err(|error| match error {
+                CoreError::Git(message) if no_such_pull(forge, &message) => {
+                    CoreError::NotFound("pull request".into())
+                }
+                other => other,
+            })?;
         self.store.link_pull(id, &pull)?;
         Ok(pull)
     }
