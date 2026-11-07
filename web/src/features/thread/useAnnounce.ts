@@ -31,19 +31,24 @@ export interface Spoken {
 /**
  * Words for a polite live region, taken from items as they arrive in the log. The transcript's
  * own region is switched off because rows mount and unmount as the view moves, and that is not
- * news; a message that lands out of the window is still news. Only items that began after the
- * transcript opened count, so history that loads late is never announced as new.
+ * news; a message that lands out of the window is still news. An item counts when it began after
+ * the transcript opened, or when it was seen still streaming and has now finished (a reply you
+ * switched into mid-way). History replays already finished, so it is never announced as new.
  */
 export function useAnnounce(items: readonly ThreadItem[], arrivedAt: string): Spoken {
   const [spoken, setSpoken] = useState<Spoken>({ text: "", n: 0 });
   const heard = useRef(new Set<string>());
+  /** Replies that were still streaming the last time they were looked at. */
+  const streaming = useRef(new Set<string>());
   useEffect(() => {
     const fresh: string[] = [];
     for (const item of items) {
-      if (item.ts <= arrivedAt || heard.current.has(item.key)) continue;
+      if (item.kind === "message" && item.role !== "user" && !item.done) streaming.current.add(item.key);
+      if (heard.current.has(item.key)) continue;
       const said = announcementFor(item);
-      if (said === null) continue;
+      if (said === null || (item.ts <= arrivedAt && !streaming.current.has(item.key))) continue;
       heard.current.add(item.key);
+      streaming.current.delete(item.key);
       fresh.push(said);
     }
     if (fresh.length > 0) setSpoken((prev) => ({ text: [...new Set(fresh)].join(". "), n: prev.n + 1 }));
