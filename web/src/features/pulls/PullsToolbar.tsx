@@ -1,5 +1,6 @@
-import { Check, ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
+import { Check, ChevronDown, Search, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { deriveProjectIdentity } from "../../lib/projectIdentity";
 import { Segmented } from "../../ui/Segmented";
 import { Button, IconButton } from "../../ui/controls";
 import { ToolbarPopover } from "./ToolbarPopover";
@@ -31,6 +32,8 @@ export interface ToolbarProps {
   draftCount: number;
   /** While the list loads the pill counts read as an ellipsis, never 0. */
   loading?: boolean;
+  /** When the list could not be read they read as an en dash. */
+  unavailable?: boolean;
   filters: PullFilters;
   onFilters(next: PullFilters): void;
   sort: PullSort;
@@ -54,6 +57,12 @@ export interface ToolbarProps {
   has?: PullData;
   /** On a phone the refresh button sits beside the search. */
   phoneRefresh?: ReactNode;
+  /** People asked to review, other than the viewer, for the Review requested from group. */
+  requesters?: string[];
+  /** The signed-in login, which the group offers as Me. */
+  viewer?: string | null;
+  /** A filter that needs details is chosen and they are on their way, or could not load. */
+  detailsWait?: "waiting" | "failed";
 }
 
 type Kind = "project" | "filters" | "sort";
@@ -75,15 +84,26 @@ const CHECK_OPTIONS: { value: CheckKey; label: string }[] = [
   { value: "running", label: "Running" },
 ];
 
-function Tick({ on, label, count, onClick }: { on: boolean; label: string; count?: number; onClick(): void }) {
+function Tick({ on, label, count, wait, lead, onClick }: { on: boolean; label: string; count?: number; wait?: boolean; lead?: ReactNode; onClick(): void }) {
   return (
     <button type="button" role="checkbox" aria-checked={on} className="pulls-mi" onClick={onClick}>
       <span className="pulls-cbx" aria-hidden>
-        {on ? <Check size={10} strokeWidth={3} /> : null}
+        {on ? wait ? <i className="pulls-wait spin" /> : <Check size={10} strokeWidth={3} /> : null}
       </span>
+      {lead}
       {label}
       {count !== undefined ? <span className="pulls-k">{count}</span> : null}
     </button>
+  );
+}
+
+/** A person's round mark, in the colour their name gives. */
+function Avatar({ name }: { name: string }) {
+  const identity = deriveProjectIdentity(name);
+  return (
+    <span className={`pulls-av project-color-${identity.color}`} aria-hidden>
+      {identity.monogram}
+    </span>
   );
 }
 
@@ -176,13 +196,44 @@ function FilterPanel({ props, count, sheet, dismiss }: { props: ToolbarProps; co
     <>
       <div className="pulls-mh">Review</div>
       {has.reviewRequests ? (
-        <Tick on={filters.review.includes("review_required")} label="Needs my review" onClick={() => set({ review: toggle(filters.review, "review_required") })} />
+        <Tick
+          on={filters.review.includes("review_required")}
+          wait={props.detailsWait === "waiting"}
+          label="Needs my review"
+          onClick={() => set({ review: toggle(filters.review, "review_required") })}
+        />
       ) : null}
       {REVIEW_OPTIONS.map((entry) => (
         <Tick key={entry.value} on={filters.review.includes(entry.value)} label={entry.label} onClick={() => set({ review: toggle(filters.review, entry.value) })} />
       ))}
     </>
   );
+  const asked = (entry: string) => set({ requestedFrom: toggle(filters.requestedFrom, entry) });
+  const requested = has.reviewRequests ? (
+    <>
+      <div className="pulls-mh">Review requested from</div>
+      {props.viewer ? (
+        <Tick
+          on={filters.requestedFrom.includes(`user:${props.viewer}`)}
+          wait={props.detailsWait === "waiting"}
+          lead={<Avatar name={props.viewer} />}
+          label="Me"
+          onClick={() => asked(`user:${props.viewer}`)}
+        />
+      ) : null}
+      {(props.requesters ?? []).length > 0 ? <div className="pulls-mh">People</div> : null}
+      {(props.requesters ?? []).map((name) => (
+        <Tick
+          key={name}
+          on={filters.requestedFrom.includes(`user:${name}`)}
+          wait={props.detailsWait === "waiting"}
+          lead={<Avatar name={name} />}
+          label={name}
+          onClick={() => asked(`user:${name}`)}
+        />
+      ))}
+    </>
+  ) : null;
   const checks = (
     <>
       <div className="pulls-mh">Checks</div>
@@ -304,6 +355,7 @@ function FilterPanel({ props, count, sheet, dismiss }: { props: ToolbarProps; co
           {state}
           {draft}
           {review}
+          {requested}
           {checks}
           {author}
           {label}
@@ -326,6 +378,7 @@ function FilterPanel({ props, count, sheet, dismiss }: { props: ToolbarProps; co
           {state}
           {draft}
           {review}
+          {requested}
           {checks}
         </div>
         <div className="pulls-mc">
@@ -436,7 +489,7 @@ export function PullsToolbar(props: ToolbarProps) {
             aria-pressed={filters.states.length === 1 && filters.states[0] === "open" && filters.draft === "all"}
             onClick={() => onFilters({ ...filters, states: ["open"], draft: "all" })}
           >
-            Open · {props.loading ? "\u2026" : props.openCount}
+            Open · {props.loading ? "\u2026" : props.unavailable ? "\u2013" : props.openCount}
           </button>
           <button
             type="button"
@@ -444,7 +497,7 @@ export function PullsToolbar(props: ToolbarProps) {
             aria-pressed={filters.states.length === 1 && filters.states[0] === "open" && filters.draft === "only"}
             onClick={() => onFilters({ ...filters, states: ["open"], draft: "only" })}
           >
-            Drafts · {props.loading ? "\u2026" : props.draftCount}
+            Drafts · {props.loading ? "\u2026" : props.unavailable ? "\u2013" : props.draftCount}
           </button>
           {(["merged", "closed"] as const).map((state) => (
             <button
@@ -486,14 +539,19 @@ export function PullsToolbar(props: ToolbarProps) {
       </div>
       {chips.length > 0 ? (
         <div className="pulls-chiprow" role="group" aria-label="Active filters">
-          {chips.map((chip) => (
-            <span key={chip.id} className="pulls-fchip">
-              {chip.label}
-              <button type="button" className="pulls-x" aria-label={`Remove filter ${chip.label}`} onClick={() => onFilters(chip.remove(filters))}>
-                <X size={10} aria-hidden />
-              </button>
-            </span>
-          ))}
+          {chips.map((chip) => {
+            const dependent = props.detailsWait !== undefined && (chip.id === "review:review_required" || chip.id.startsWith("requested:"));
+            const waiting = dependent && props.detailsWait === "waiting";
+            return (
+              <span key={chip.id} className="pulls-fchip" data-wait={dependent ? props.detailsWait : undefined}>
+                {dependent && props.detailsWait === "failed" ? <TriangleAlert size={14} className="pulls-chip-alert" aria-hidden /> : null}
+                {chip.label}
+                <button type="button" className="pulls-x" aria-label={`Remove filter ${chip.label}`} onClick={() => onFilters(chip.remove(filters))}>
+                  {waiting ? <i className="pulls-wait spin" aria-hidden /> : <X size={10} aria-hidden />}
+                </button>
+              </span>
+            );
+          })}
           <button type="button" className="pulls-ghost" onClick={() => onFilters(clearedFilters(filters))}>
             Clear all
           </button>
