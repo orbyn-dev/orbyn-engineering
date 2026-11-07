@@ -10,6 +10,8 @@ import type { MessageItem, ThreadItem } from "./projection";
 import { rowOfItems } from "./threadSearch";
 import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "./timeline";
 import { registerTranscript } from "./transcriptRegistry";
+import { OpenStatePrefix, OpenStateScope } from "../../ui/openState";
+import { useAnnounce } from "./useAnnounce";
 import { useHeldRows } from "./useHeldRows";
 import { useRowWindow, type Anchor } from "./useRowWindow";
 
@@ -112,6 +114,8 @@ export function Transcript({
   const rowOfItem = useMemo(() => rowOfItems(entries), [entries]);
   const held = useHeldRows(scroller, indexByKey, entryKeys);
   const win = useRowWindow({ threadId, entries, scroller, pinned, following, indexByKey, held, restore, onUnpin: unpin });
+  const { scrollToIndex, offsetOfRow, onScroll: windowScrolled } = win;
+  const spoken = useAnnounce(items);
 
   const { stickToEnd } = win;
   const entriesNow = useRef(entries);
@@ -128,8 +132,8 @@ export function Transcript({
     };
   }, [threadId]);
   useEffect(
-    () => registerTranscript(threadId, { entries: () => entriesNow.current, root: () => scroller.current, reveal: win.scrollToIndex }),
-    [threadId, win.scrollToIndex],
+    () => registerTranscript(threadId, { entries: () => entriesNow.current, root: () => scroller.current, reveal: scrollToIndex }),
+    [threadId, scrollToIndex],
   );
 
   // Pinned means pinned: expanding content, late fonts and streaming all stay in view, and
@@ -160,12 +164,12 @@ export function Transcript({
     const at = key ? indexByKey.get(key) : undefined;
     if (at === undefined) return;
     clearReveal();
-    void win.scrollToIndex(at, "center").then((row) => {
+    void scrollToIndex(at, "center").then((row) => {
       row?.setAttribute("data-revealed", "true");
       clearTimeout(revealTimer.current);
       revealTimer.current = setTimeout(() => row?.removeAttribute("data-revealed"), REVEAL_MS);
     });
-  }, [reveal, entries, indexByKey, clearReveal, win]);
+  }, [reveal, entries, indexByKey, clearReveal, scrollToIndex]);
 
   // Only a move up lets go of the end. A scroll event can arrive after the view has shrunk,
   // which leaves the end farther away without anyone having scrolled from it.
@@ -186,7 +190,7 @@ export function Transcript({
     wasAtEnd.current = atEnd;
     if (atEnd) setPinned(true);
     else if (movedUp) setPinned(false);
-    win.onScroll();
+    windowScrolled();
   };
 
   const jump = () => {
@@ -200,16 +204,16 @@ export function Transcript({
   const locate = useCallback(
     (key: string) => {
       const at = rowOfItem.get(key);
-      return at === undefined ? null : win.offsetOfRow(at);
+      return at === undefined ? null : offsetOfRow(at);
     },
-    [rowOfItem, win],
+    [rowOfItem, offsetOfRow],
   );
   const goTo = useCallback(
     (key: string) => {
       const at = rowOfItem.get(key);
-      if (at !== undefined) void win.scrollToIndex(at, "start");
+      if (at !== undefined) void scrollToIndex(at, "start");
     },
-    [rowOfItem, win],
+    [rowOfItem, scrollToIndex],
   );
 
   const status = stream?.status ?? "connecting";
@@ -224,6 +228,7 @@ export function Transcript({
         tabIndex={0}
         role="log"
         aria-label="Thread messages"
+        aria-live="off"
         aria-busy={active || undefined}
       >
         <div ref={inner} className="transcript-inner">
@@ -238,6 +243,7 @@ export function Transcript({
             </Empty>
           ) : (
             <TimelineThread value={threadId}>
+              <OpenStateScope value={threadId}>
               {win.segments.map((segment) => {
                 if (segment.kind === "gap") {
                   // Rows out of view: one spacer with the height they would fill.
@@ -252,15 +258,22 @@ export function Transcript({
                       </p>
                     ) : null}
                     <div ref={win.rowRef} className={`item item-${entry.kind}`} data-entry={entry.key}>
-                      <Row entry={entry} live={active} tools={tools} />
+                      <OpenStatePrefix value={entry.key}>
+                        <Row entry={entry} live={active} tools={tools} />
+                      </OpenStatePrefix>
                     </div>
                   </Fragment>
                 );
               })}
+              </OpenStateScope>
             </TimelineThread>
           )}
           {footer}
         </div>
+      </div>
+      {/* The log above is not live (its rows mount as you scroll); this announces what arrives. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {spoken}
       </div>
       <Minimap items={turnPrompts} scroller={scroller} locate={locate} goTo={goTo} revision={win.rev} />
       {!following ? (

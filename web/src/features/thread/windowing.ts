@@ -36,11 +36,19 @@ export function estimateRow(entry: TimelineEntry): number {
   }
 }
 
-/** Remembers how tall each row measured, by row key. */
+/** Remembers how tall each row measured, by row key, and at what width the text was laid out. */
 export class RowSizes {
   private readonly heights: Map<string, number>;
-  constructor(heights?: Map<string, number>) {
+  private readonly holder: { width: number };
+  constructor(heights?: Map<string, number>, holder?: { width: number }) {
     this.heights = heights ?? new Map();
+    this.holder = holder ?? { width: 0 };
+  }
+  get width(): number {
+    return this.holder.width;
+  }
+  set width(value: number) {
+    this.holder.width = value;
   }
   get(key: string): number | undefined {
     return this.heights.get(key);
@@ -52,23 +60,33 @@ export class RowSizes {
     this.heights.set(key, height);
     return true;
   }
+  /** Forgets every height except these rows', which are in the page and report their own. */
+  retain(keys: Iterable<string>): void {
+    const keep = new Map<string, number>();
+    for (const key of keys) {
+      const height = this.heights.get(key);
+      if (height !== undefined) keep.set(key, height);
+    }
+    this.heights.clear();
+    for (const [key, height] of keep) this.heights.set(key, height);
+  }
 }
 
-const caches = new Map<string, Map<string, number>>();
+interface CachedSizes {
+  heights: Map<string, number>;
+  holder: { width: number };
+}
+const caches = new Map<string, CachedSizes>();
 const CACHED_THREADS = 8;
 
 /** Row heights per thread, so coming back to a thread places rows where they were. */
 export function sizesFor(threadId: string): RowSizes {
-  const known = caches.get(threadId);
-  if (known) {
-    caches.delete(threadId);
-    caches.set(threadId, known);
-    return new RowSizes(known);
-  }
-  const fresh = new Map<string, number>();
-  caches.set(threadId, fresh);
+  let known = caches.get(threadId);
+  if (known) caches.delete(threadId);
+  else known = { heights: new Map(), holder: { width: 0 } };
+  caches.set(threadId, known);
   for (const old of [...caches.keys()].slice(0, Math.max(0, caches.size - CACHED_THREADS))) caches.delete(old);
-  return new RowSizes(fresh);
+  return new RowSizes(known.heights, known.holder);
 }
 
 /** `offsets[i]` is the top of row i; the last slot is the end of the final row plus its gap. */

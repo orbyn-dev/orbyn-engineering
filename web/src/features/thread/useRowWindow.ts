@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
-import { flushSync } from "react-dom";
 import type { TimelineEntry } from "./timeline";
 import { buildOffsets, indexAt, planRows, sizesFor, totalHeight, visibleRange, type Segment } from "./windowing";
 
@@ -13,14 +12,15 @@ export interface Anchor {
 const FIRST_CONTENT_TOP = 24;
 /** Scrolling less than this does not change which rows are mounted (the overscan is far larger). */
 const QUANTUM = 100;
-/** How long a scroll target keeps being re-aligned while rows around it settle. */
-const SETTLE_MS = 400;
-
+/** The longest a scroll target waits for its row to mount before giving up. */
+const GOAL_MS = 400;
 
 type Align = "start" | "center";
 interface Goal {
   key: string;
   align: Align;
+  /** The row's height at the last alignment; a second pass at the same height ends the goal. */
+  height: number | null;
   resolve(element: HTMLElement | null): void;
 }
 
@@ -84,8 +84,8 @@ export function useRowWindow({
   const range = useMemo(() => visibleRange(offsets, top, view.height), [offsets, top, view.height]);
   const heldRows = useMemo(() => {
     const rows = held.map((key) => indexByKey.get(key)).filter((at): at is number => at !== undefined);
-    const goal = target === null ? undefined : indexByKey.get(target);
-    return goal === undefined ? rows : [...rows, goal];
+    const goalRow = target === null ? undefined : indexByKey.get(target);
+    return goalRow === undefined ? rows : [...rows, goalRow];
   }, [held, indexByKey, target]);
   const segments: readonly Segment[] = useMemo(() => planRows(offsets, range, heldRows), [offsets, range, heldRows]);
 
@@ -93,8 +93,13 @@ export function useRowWindow({
   const contentTop = useRef(FIRST_CONTENT_TOP);
   const anchor = useRef<Anchor | null>(restore);
   const goal = useRef<Goal | null>(null);
+  const goalTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const laidOut = useRef<Float64Array | null>(null);
   const mounted = useRef(new Map<string, HTMLElement>());
+  /** Rows that mounted since the last commit and have not been measured yet. */
+  const fresh = useRef(new Set<string>());
+  /** A height change is waiting for its commit; the anchor must not be re-read before it lands. */
+  const relayout = useRef(false);
 
   const stickToEnd = useCallback(() => {
     const element = scroller.current;
@@ -113,33 +118,39 @@ export function useRowWindow({
     anchor.current = { key: rows[at]!.key, offset: now[at]! - rel };
   }, [scroller]);
 
-  const measure = useCallback((): boolean => {
+  /** Measures the rows that just mounted; rows already in the page report their own changes. */
+  const measureFresh = useCallback((): boolean => {
     let changed = false;
-    for (const [key, element] of mounted.current) {
-      if (sizes.set(key, unit(element).height)) changed = true;
+    for (const key of fresh.current) {
+      const element = mounted.current.get(key);
+      if (element && sizes.set(key, unit(element).height)) changed = true;
     }
+    fresh.current.clear();
     return changed;
   }, [sizes]);
 
   const onScroll = useCallback(() => {
     const element = scroller.current;
     if (!element) return;
-    capture();
+    if (!relayout.current) capture();
     const rel = element.scrollTop - contentTop.current;
     const height = element.clientHeight;
     setView((prev) => (Math.abs(prev.top - rel) < QUANTUM && prev.height === height ? prev : { top: rel, height }));
   }, [capture, scroller]);
 
-  // Rows can change height after they mount: images, code, streaming text, a card opening.
-  const onRowsResize = useRef<() => void>(() => {});
+  // Rows can change height after they mount: images, code, streaming text, a card opening. A row
+  // above the reading place moves it, so the view is shifted by the same amount at once, before
+  // the next paint, and the new heights follow through a normal render.
+  const onRowsResize = useRef<(changed: readonly ResizeObserverEntry[]) => void>(() => {});
   const [observer] = useState(() =>
-    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => onRowsResize.current()),
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver((changed) => onRowsResize.current(changed)),
   );
   const rowRef = useCallback(
     (element: HTMLElement | null) => {
       const key = element?.dataset.entry;
       if (!element || !key) return;
       mounted.current.set(key, element);
+      fresh.current.add(key);
       observer?.observe(element);
       return () => {
         if (mounted.current.get(key) === element) mounted.current.delete(key);
@@ -149,31 +160,98 @@ export function useRowWindow({
     [observer],
   );
 
+  const endGoal = useCallback(() => {
+    clearTimeout(goalTimer.current);
+    goal.current = null;
+    setTarget(null);
+  }, []);
+
   useLayoutEffect(() => {
     latest.current = { offsets, indexByKey, entries };
-    onRowsResize.current = () => {
-      if (!measure()) return;
-      flushSync(bump);
+    onRowsResize.current = (changed) => {
+      const element = scroller.current;
+      const now = latest.current;
+      const anchorAt = anchor.current ? now.indexByKey.get(anchor.current.key) : undefined;
+      let shift = 0;
+      let any = false;
+      for (const entry of changed) {
+        const row = entry.target as HTMLElement;
+        const key = row.dataset.entry;
+        if (!key) continue;
+        const before = sizes.get(key);
+        const next = unit(row).height;
+        if (!sizes.set(key, next)) continue;
+        any = true;
+        const at = now.indexByKey.get(key);
+        if (before !== undefined && at !== undefined && anchorAt !== undefined && at < anchorAt) shift += next - before;
+      }
+      if (!any) return;
+      relayout.current = true;
+      if (element && shift !== 0 && !pinned.current && !goal.current) element.scrollTop += shift;
+      bump();
     };
   });
 
   useEffect(() => {
     const element = scroller.current;
     if (!element || typeof ResizeObserver === "undefined") return;
-    const watch = new ResizeObserver(() => onScroll());
+    let width = element.clientWidth;
+    const watch = new ResizeObserver(() => {
+      // A new width rewraps text, so heights kept for rows out of the page are stale: forget them
+      // and let the rows in the page report theirs.
+      if (width > 0 && Math.abs(element.clientWidth - width) > 1) {
+        sizes.retain(mounted.current.keys());
+        sizes.width = element.clientWidth;
+        relayout.current = true;
+        bump();
+      }
+      width = element.clientWidth;
+      onScroll();
+    });
     watch.observe(element);
     return () => watch.disconnect();
-  }, [scroller, onScroll]);
+  }, [scroller, onScroll, sizes]);
   useEffect(() => () => observer?.disconnect(), [observer]);
+  useEffect(() => () => clearTimeout(goalTimer.current), []);
 
-  // After every commit: take real heights, then hold the place the person was looking at.
+  // A scroll target gives way to the person at once.
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const yield_ = () => {
+      const wanted = goal.current;
+      if (!wanted) return;
+      wanted.resolve(mounted.current.get(wanted.key) ?? null);
+      endGoal();
+    };
+    const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+    for (const name of events) element.addEventListener(name, yield_, { passive: true });
+    return () => {
+      for (const name of events) element.removeEventListener(name, yield_);
+    };
+  }, [scroller, endGoal]);
+
+  // The first time rows are in the page, a width that differs from the one the cached heights
+  // were taken at means they are stale.
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    if (measure()) {
+    if (sizes.width > 0 && Math.abs(element.clientWidth - sizes.width) > 1) {
+      sizes.retain([]);
+      bump();
+    }
+    sizes.width = element.clientWidth;
+  }, [scroller, sizes]);
+
+  // After a commit that changed what is laid out: take heights for new rows, then hold the place.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    if (measureFresh()) {
       bump();
       return;
     }
+    relayout.current = false;
     const first = segments.find((segment) => segment.kind === "row");
     const firstElement = first && mounted.current.get(entries[first.index]!.key);
     if (first && firstElement) {
@@ -185,8 +263,16 @@ export function useRowWindow({
     if (wanted && rowAt !== undefined) {
       const row = mounted.current.get(wanted.key);
       if (row) {
+        // Align, and once the row's height is the same on a second pass the goal is done: after
+        // that the reading place is kept by the anchor and nothing pulls the view back.
+        const height = unit(row).height;
         if (typeof row.scrollIntoView === "function") row.scrollIntoView({ block: wanted.align });
         wanted.resolve(row);
+        if (wanted.height === height) endGoal();
+        else {
+          wanted.height = height;
+          bump();
+        }
       } else {
         const lead = wanted.align === "center" ? element.clientHeight / 2 : 0;
         element.scrollTop = Math.max(0, offsets[rowAt]! + contentTop.current - lead);
@@ -205,7 +291,7 @@ export function useRowWindow({
     capture();
     const rel = element.scrollTop - contentTop.current;
     setView((prev) => (Math.abs(prev.top - rel) < QUANTUM && prev.height === element.clientHeight ? prev : { top: rel, height: element.clientHeight }));
-  }, [scroller, measure, segments, entries, indexByKey, pinned, following, capture, offsets, stickToEnd]);
+  }, [scroller, measureFresh, segments, entries, indexByKey, pinned, following, capture, offsets, stickToEnd, endGoal]);
 
   const scrollToIndex = useCallback(
     (index: number, align: Align): Promise<HTMLElement | null> => {
@@ -216,21 +302,20 @@ export function useRowWindow({
       onUnpin();
       return new Promise((resolve) => {
         goal.current?.resolve(null);
-        const finish = (found: HTMLElement | null) => {
-          resolve(found);
-        };
-        goal.current = { key: row.key, align, resolve: finish };
+        clearTimeout(goalTimer.current);
+        const wanted: Goal = { key: row.key, align, height: null, resolve };
+        goal.current = wanted;
         setTarget(row.key);
         const lead = align === "center" ? element.clientHeight / 2 : 0;
         element.scrollTop = Math.max(0, now[index]! + contentTop.current - lead);
-        setTimeout(() => {
-          if (goal.current?.resolve === finish) goal.current = null;
-          finish(mounted.current.get(row.key) ?? null);
-          setTarget((current) => (current === row.key ? null : current));
-        }, SETTLE_MS);
+        goalTimer.current = setTimeout(() => {
+          if (goal.current !== wanted) return;
+          wanted.resolve(mounted.current.get(row.key) ?? null);
+          endGoal();
+        }, GOAL_MS);
       });
     },
-    [onUnpin, scroller],
+    [onUnpin, scroller, endGoal],
   );
 
   const offsetOfRow = useCallback((index: number): number | null => {
