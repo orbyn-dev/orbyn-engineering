@@ -38,7 +38,7 @@ for (const entry of ["terminal", "details"] as const) {
       } else {
         const card = page.getByRole("complementary", { name: "Thread details" });
         await card.getByRole("button", { name: /^Scripts/ }).click();
-        await card.getByRole("button", { name: "Preview action", exact: true }).click();
+        await card.getByRole("button", { name: "Run Preview action", exact: true }).click();
       }
       await expect(page.getByRole("combobox", { name: "Search or enter URL" })).toHaveValue(`${origin}/action`);
       await expect(page.getByRole("img", { name: `Page at ${origin}/action`, exact: true })).toBeVisible();

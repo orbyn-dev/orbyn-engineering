@@ -293,7 +293,6 @@ test("a failed turn keeps its error in view and a command with no output says so
   await settled(service, threadIdOf(page));
   await send(page, "[scene:empty]");
   await page.getByRole("button", { name: /^Ran 1 command ·/ }).last().click();
-  await page.getByRole("button", { name: /^Ran 1 command \d/ }).last().click();
   await page.getByRole("button", { name: /^true/ }).click();
   await expect(page.getByText("No output", { exact: true })).toBeVisible();
 });

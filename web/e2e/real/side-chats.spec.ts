@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openDetails, openPanelTab, send, settled, startProject, threadIdOf, type Service } from "./service";
+import { openPanelTab, send, settled, startProject, threadIdOf, type Service } from "./service";
 
 /** Side chats through the real service: asked beside a thread, then brought back. */
 
@@ -50,8 +50,8 @@ test("/side asks in a tab while the row list stays as it was, and it can be foun
   // The chip carries the side chat's own title, or "Side chat N" while it has none.
   const [kept] = await sideOf(id);
   await expect(page.getByRole("group", { name: "Side chats" }).getByRole("button", { name: kept?.title?.trim() || "Side chat 1", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Close side panel" }).click();
-  await (await openDetails(page)).getByRole("button", { name: kept?.title?.trim() || "Side chat 1" }).click();
+  // Side chats are listed in the Side chat tab itself, not in the details card.
+  await page.getByRole("group", { name: "Side chats" }).getByRole("button", { name: kept?.title?.trim() || "Side chat 1", exact: true }).click();
   await expect(pane(page).getByText("what did it find?")).toBeVisible();
   await pane(page).getByRole("button", { name: "Delete" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
