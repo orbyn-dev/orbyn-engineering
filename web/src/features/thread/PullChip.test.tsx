@@ -264,9 +264,9 @@ describe("pull request list focus and link errors", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Link a pull request…" })).toHaveFocus());
   });
 
-  it("says there is no such pull request only for a 404 or 422; a 500 is the host not answering, with Retry", async () => {
+  it("says there is no such pull request only for a 404; a server error is the host not answering, with Retry", async () => {
     serve(three);
-    vi.spyOn(pullsApi, "link").mockRejectedValueOnce(new ApiFailure("boom", "boom", 500)).mockRejectedValueOnce(new ApiFailure("gone", "gone", 422));
+    vi.spyOn(pullsApi, "link").mockRejectedValueOnce(new ApiFailure("boom", "boom", 500)).mockRejectedValueOnce(new ApiFailure("gone", "gone", 404));
     const user = await open();
     await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
     await user.type(screen.getByRole("textbox", { name: "Pull request number" }), "9");
@@ -274,6 +274,23 @@ describe("pull request list focus and link errors", () => {
     expect(await screen.findByText("GitHub didn’t answer.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("No pull request #9 in this repository.")).toBeInTheDocument();
+  });
+
+  it("shows the service's own message for another 4xx, such as a 422 or a 400, with no Retry and no claim that the pull request is missing", async () => {
+    serve(three);
+    vi.spyOn(pullsApi, "link")
+      .mockRejectedValueOnce(new ApiFailure("unsupported", "Install gh and sign in to it.", 422))
+      .mockRejectedValueOnce(new ApiFailure("bad", "This project has no origin remote.", 400));
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
+    await user.type(screen.getByRole("textbox", { name: "Pull request number" }), "9");
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    expect(await screen.findByText("Install gh and sign in to it.")).toBeInTheDocument();
+    expect(screen.queryByText(/No pull request/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    expect(await screen.findByText("This project has no origin remote.")).toBeInTheDocument();
+    expect(screen.queryByText(/didn’t answer/)).not.toBeInTheDocument();
   });
 
   it("rejects a number that is not a safe integer, and sends nothing", async () => {

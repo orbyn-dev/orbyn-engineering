@@ -248,7 +248,7 @@ export function TerminalDrawerBody({
     focusBack.current.restore();
     focusBack.current = null;
   }, [terminals.data, mainHidden]);
-  /** A tab's X ends that shell; one that is alive asks first. */
+  /** A tab's X ends that shell; one that is alive asks first. The main shell's X only hides its tab here, so it asks nothing. */
   const end = (terminal: TerminalInfo) => {
     if (terminal.alive) setEnding(terminal);
     else {
@@ -260,12 +260,6 @@ export function TerminalDrawerBody({
     rememberFocus(MAIN);
     setMainHidden(true);
     if (active === MAIN) setActive(tabs[0]?.[0]?.group ?? MAIN);
-  };
-  /** The main shell's X only hides its tab on this window; it asks if the service says something runs in it. */
-  const endMain = () => {
-    const info = groups.find((group) => group[0]?.group === MAIN)?.[0];
-    if (info?.alive && info.script !== null) setEnding(info);
-    else hideMain();
   };
   const run = async (script: ProjectScript) => {
     try {
@@ -374,7 +368,7 @@ export function TerminalDrawerBody({
               <SquareTerminal size={14} aria-hidden />
               <span className="ptl">Terminal</span>
             </button>
-            <button type="button" className="ptx" aria-label="Close Terminal" onClick={endMain}>
+            <button type="button" className="ptx" aria-label="Close Terminal" onClick={hideMain}>
               <X size={11} aria-hidden />
             </button>
           </div>
@@ -521,8 +515,7 @@ export function TerminalDrawerBody({
       {ending ? (
         <ConfirmDialog title="End this terminal?" confirmLabel="End" tone="danger" cancelFocus onConfirm={async () => {
             rememberFocus(ending.group);
-            if (ending.id === MAIN || ending.group === MAIN) hideMain();
-            else await close(ending);
+            await close(ending);
           }} onClose={() => setEnding(null)}>
           <p>{ending.title} is still running. Ending the terminal stops it.</p>
         </ConfirmDialog>

@@ -84,10 +84,12 @@ export function LinkForm({ thread, host = "The host", onDone, onCancel }: { thre
       },
       (failure: unknown) => {
         setBusy(false);
-        // Only a 404 or 422 says there is no such pull request; any other failure is the host not answering.
-        const missing = failure instanceof ApiFailure && (failure.status === 404 || failure.status === 422);
-        setFailed(!missing);
-        setError(missing ? `No pull request #${number} in this repository.` : `${host} didn’t answer.`);
+        // A 404 says there is no such pull request. Another 4xx is the service's own answer and is shown as it is;
+        // only a server error or no answer at all reads as the host not answering, which Retry can help.
+        const status = failure instanceof ApiFailure ? failure.status : 0;
+        const refused = status >= 400 && status < 500 && status !== 404 && status !== 408 && status !== 429;
+        setFailed(status !== 404 && !refused);
+        setError(status === 404 ? `No pull request #${number} in this repository.` : refused ? toFailure(failure).message : `${host} didn’t answer.`);
       },
     );
   };

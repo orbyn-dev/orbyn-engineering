@@ -57,7 +57,7 @@ const fail = (message) => {
   process.exit(1);
 };
 const out = (value) => process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value)}\n`);
-const pull = (number) => state.pulls.find((entry) => entry.number === Number(number)) ?? fail("no pull request");
+const pull = (number) => state.pulls.find((entry) => entry.number === Number(number)) ?? fail(`GraphQL: Could not resolve to a PullRequest with the number of ${number}. (repository.pullRequest)`);
 
 /** The fields only `gh pr view` shows, on top of a list row. */
 const view = (entry) => ({

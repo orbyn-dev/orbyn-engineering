@@ -54,11 +54,8 @@ test("alt+up takes the last queued message back, and a terminal key opens one", 
   await page.locator(".terminal-drawer-body .xterm-helper-textarea").first().focus();
   await page.keyboard.press("ControlOrMeta+n");
   await expect.poll(async () => (await service.api<unknown[]>("GET", `/api/threads/${threadIdOf(page)}/terminals`)).length).toBeGreaterThan(1);
-  // The new tab's terminal loads after its row appears, and takes focus when it does. Splits are Planned.
-  await expect(async () => {
-    await page.locator(".terminal-splits .xterm-helper-textarea").first().focus();
-    await expect(page.locator(".terminal-splits .xterm-helper-textarea").first()).toBeFocused({ timeout: 500 });
-  }).toPass();
+  // The new tab takes focus on its own once its terminal has loaded.
+  await expect(page.locator(".terminal-splits .xterm-helper-textarea").first()).toBeFocused({ timeout: 15_000 });
 });
 
 test("Shift+PageUp reads scrollback without leaving the terminal", async ({ page }) => {

@@ -227,6 +227,16 @@ describe("terminal focus, search keys and the hidden main shell", () => {
     expect(screen.getByRole("tab", { name: "lint" })).toHaveFocus();
   });
 
+  it("hides the main shell's tab without a confirm that promises to stop it", async () => {
+    serveLive([terminal({ id: "main", group: "main", title: "Terminal", script: "dev" })]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Close Terminal" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
+    expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+  });
+
   it("asks before ending a shell that is alive, not only a script", async () => {
     serveLive([terminal({ script: null })]);
     const user = userEvent.setup();
