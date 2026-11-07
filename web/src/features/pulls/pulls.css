@@ -449,9 +449,6 @@
   flex-direction: column;
   min-height: 100%;
 }
-.pull-back {
-  padding: 10px 24px 0;
-}
 .pull-meta {
   display: flex;
   align-items: center;
@@ -537,10 +534,7 @@
   .pull-cols {
     grid-template-columns: minmax(0, 1fr);
   }
-  .pull-back {
-    padding-inline: 12px;
-  }
-  .pull-meta,
+    .pull-meta,
   .pull-page-tabs,
   .pull-page-body,
   .pull-page .pull-stack {
@@ -898,7 +892,8 @@
   .pulls-table {
     --pulls-cols: 24px minmax(0, 1fr) 190px 96px 170px;
   }
-  .h-comments {
+  .h-comments,
+  .pull-comments-cell {
     display: none;
   }
 }

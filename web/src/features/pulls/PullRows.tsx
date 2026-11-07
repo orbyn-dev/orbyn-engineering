@@ -3,10 +3,10 @@ import type { PullListEntry } from "../../api/types";
 import { compactAge } from "../../lib/format";
 import { IconButton } from "../../ui/controls";
 import { ChecksCell, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
-import { detailsKey, mergeGate, type DetailsByKey } from "./pullModel";
+import { detailsKey, type DetailsByKey } from "./pullModel";
 
 /** The one word after the title. Conflicts and Ready to merge wait for the list to carry whether it merges cleanly. */
-const stateWord = (pull: PullListEntry["pull"]) =>
+export const stateWord = (pull: PullListEntry["pull"]) =>
   pull.state === "merged"
     ? "Merged"
     : pull.state === "closed"
@@ -15,9 +15,7 @@ const stateWord = (pull: PullListEntry["pull"]) =>
         ? "Draft"
         : pull.review_state === "approved" && pull.checks_state === "pass"
           ? "Ready to merge"
-          : pull.review_state === "changes_requested"
-            ? "Changes"
-            : null;
+          : null;
 const STATE_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
 
 /** The table's column titles. The comments column is named by its icon. */
@@ -65,6 +63,8 @@ export interface PullRowsProps {
   env: CellEnv;
   picked: readonly PullListEntry[];
   revealed: boolean;
+  /** Merging needs the forge, so it is not offered with no network. */
+  online: boolean;
   projectName(id: string): string;
   onPick(entry: PullListEntry): void;
   onOpen(entry: PullListEntry): void;
@@ -129,7 +129,7 @@ export function PullRows(props: PullRowsProps) {
               ) : null}
               {pull.state === "open" ? (
                 <>
-                  {mergeGate(pull, null, { offline: false, auto: false, forge: "" }).enabled && !pull.draft ? (
+                  {stateWord(pull) === "Ready to merge" && props.online ? (
                     <IconButton label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
                       <GitMerge size={14} aria-hidden />
                     </IconButton>

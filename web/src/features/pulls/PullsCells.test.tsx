@@ -180,3 +180,27 @@ describe("details in chunks", () => {
     expect(vi.mocked(pullsApi.details).mock.calls.map(([body]) => body.pulls.length)).toEqual([100, 100, 30]);
   });
 });
+
+describe("one details chunk failing", () => {
+  it("keeps the rows the other chunks answered and says details are unavailable for the rest", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: Array.from({ length: 150 }, (_, at) => entry(at + 1)), failed: [] });
+    vi.mocked(pullsApi.details).mockImplementation(async (body) => {
+      if (body.pulls.length === 50) throw new Error("no");
+      return { details: body.pulls.map((one) => details(Number(one.number), { requested_reviewers: [], comment_count: 5, viewer_review_state: "none" })), paused: [] };
+    });
+    render(<PullsPage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    const rows = document.querySelectorAll(".pull-rows > li");
+    expect(rows[0]!.querySelector(".pull-count")).not.toBeNull();
+    expect(rows[120]!.querySelector(".pull-count")).toBeNull();
+    expect(screen.getByText(/Details unavailable/)).toBeInTheDocument();
+  });
+
+  it("offers Merge on a row only when it is Ready to merge, and not while offline", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { review_state: "approved" }), entry(2, { review_state: "changes_requested" })], failed: [] });
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [], paused: [] });
+    render(<PullsPage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getAllByRole("button", { name: /^Merge #/ }).map((one) => one.getAttribute("aria-label"))).toEqual(["Merge #1"]);
+  });
+});

@@ -114,6 +114,16 @@ export function PullsPage() {
     wasOpen.current = open;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  /** The row may leave the list: focus goes to the row now in its place, or else the heading. */
+  const afterRowAction = (entry: PullListEntry) => {
+    const at = rows.findIndex((one) => one.project_id === entry.project_id && one.pull.number === entry.pull.number);
+    void list.reload().then(() =>
+      requestAnimationFrame(() => {
+        const buttons = document.querySelectorAll<HTMLElement>(".pull-rows .pull-open");
+        (buttons[Math.min(Math.max(at, 0), buttons.length - 1)] ?? document.querySelector<HTMLElement>("[data-page-title]"))?.focus();
+      }),
+    );
+  };
   const refreshByPerson = () => {
     details.markFresh();
     refresh();
@@ -235,7 +245,7 @@ export function PullsPage() {
         <SignedOut
           forge={forgeLabel}
           onSignIn={() => navigate({ name: "settings", section: "source-control" })}
-          onLater={() => window.history.back()}
+          onLater={() => (window.history.length > 1 ? window.history.back() : navigate({ name: "home" }))}
         />
       ) : (
         <>
@@ -347,7 +357,15 @@ export function PullsPage() {
           </div>
         </>
       )}
-      {merging ? <RowMergeDialog projectId={merging.project_id} number={merging.pull.number} onClose={() => setMerging(null)} onMerged={refresh} /> : null}
+      {merging ? <RowMergeDialog
+          projectId={merging.project_id}
+          number={merging.pull.number}
+          onClose={() => setMerging(null)}
+          onMerged={() => {
+            pushToast("Merged");
+            afterRowAction(merging);
+          }}
+        /> : null}
       {closing ? (
         <ConfirmDialog
           title={`Close #${closing.pull.number}?`}
@@ -355,7 +373,7 @@ export function PullsPage() {
           tone="danger"
           cancelFocus
           onClose={() => setClosing(null)}
-          onConfirm={() => pullsApi.action(closing.project_id, closing.pull.number, "close").then(() => (pushToast("Closed"), refresh()))}
+          onConfirm={() => pullsApi.action(closing.project_id, closing.pull.number, "close").then(() => (pushToast("Closed"), afterRowAction(closing)))}
         >
           <p>{closing.pull.title} is closed without merging. It can be reopened.</p>
         </ConfirmDialog>
@@ -370,6 +388,7 @@ export function PullsPage() {
       env,
       picked,
       revealed,
+      online: connection !== "offline",
       projectName: nameOf,
       onPick: (entry: PullListEntry) =>
         setPicked(

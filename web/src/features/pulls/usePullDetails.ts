@@ -6,6 +6,8 @@ import { detailsKey, type DetailsByKey, type PullDetails } from "./pullModel";
 
 /** The service answers at most this many rows in one details request. */
 const CHUNK = 100;
+/** How many of those requests run at once. */
+const CONCURRENT = 3;
 
 export type DetailsStatus = "idle" | "loading" | "ready" | "failed";
 
@@ -55,27 +57,30 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
     for (let at = 0; at < list.length; at += CHUNK) chunks.push(list.slice(at, at + CHUNK));
     let failed = false;
     const pausedFields = new Set<string>();
-    void Promise.all(
-      chunks.map((chunk) =>
-        pullsApi
-          .details({ pulls: chunk.map(({ project_id, pull }) => ({ project_id, number: pull.number, updated_at: pull.updated_at })), fresh: own }, abort.signal)
-          .then(
-            (response) => {
-              if (id !== generation.current) return;
-              setByKey((known) => {
-                const next = new Map(known);
-                for (const one of response.details) next.set(detailsKey(one.project_id, one.number), one as PullDetails);
-                return next;
-              });
-              for (const field of response.paused) pausedFields.add(field);
-              setPaused([...pausedFields]);
-            },
-            () => {
-              if (!abort.signal.aborted) failed = true;
-            },
-          ),
-      ),
-    ).then(() => {
+    // At most a few requests at once, the top of the list first.
+    let next = 0;
+    const worker = async () => {
+      while (next < chunks.length && !abort.signal.aborted) {
+        const chunk = chunks[next++]!;
+        try {
+          const response = await pullsApi.details(
+            { pulls: chunk.map(({ project_id, pull }) => ({ project_id, number: pull.number, updated_at: pull.updated_at })), fresh: own },
+            abort.signal,
+          );
+          if (id !== generation.current) return;
+          setByKey((known) => {
+            const merged = new Map(known);
+            for (const one of response.details) merged.set(detailsKey(one.project_id, one.number), one as PullDetails);
+            return merged;
+          });
+          for (const field of response.paused) pausedFields.add(field);
+          setPaused([...pausedFields]);
+        } catch {
+          if (!abort.signal.aborted) failed = true;
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(CONCURRENT, chunks.length) }, worker)).then(() => {
       if (id !== generation.current) return;
       // A chunk that could not be read leaves its rows without details, which is a failure to say so about.
       setStatus(failed ? "failed" : "ready");
