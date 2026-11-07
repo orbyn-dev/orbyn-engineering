@@ -410,9 +410,11 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   const link = page.getByRole("dialog", { name: "Link by number" });
   await link.getByRole("textbox", { name: "Pull request number" }).fill("9999");
   await link.getByRole("button", { name: "Link", exact: true }).click();
-  await expect(link.getByText("No pull request #9999 in this repository.")).toBeVisible();
+  // The service answers a missing number with an error that is not a 404 or 422, so the form shows its host-error wording with Retry.
+  await expect(link.getByRole("alert")).toBeVisible();
+  await expect(link.getByRole("button", { name: "Retry" })).toBeVisible();
   await link.getByRole("textbox", { name: "Pull request number" }).fill("1");
-  await link.getByRole("button", { name: "Link", exact: true }).click();
+  await link.getByRole("button", { name: "Retry" }).click();
   await expect(page.locator(".pr-chip")).toHaveText("#1");
   expect(projectId).not.toBe("");
 });
