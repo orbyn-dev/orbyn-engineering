@@ -93,9 +93,9 @@ export function ExternalLink({ href, children }: { href: string; children: React
   };
   const onClick = (event: MouseEvent) => {
     stopPreview();
-    if (number !== null && inApp) {
+    if (number !== null && inApp && contextProject) {
       event.preventDefault();
-      useUi.getState().revealPull(number);
+      navigate({ name: "pulls", project: contextProject, number });
       return;
     }
     const commit = commitShaOf(href);

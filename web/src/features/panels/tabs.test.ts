@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { RightTab } from "../../state/ui";
 import { fitTabs } from "./tabs";
 
-const ids: RightTab[] = ["diff", "files", "browser", "activity", "pulls", "side"];
+const ids: RightTab[] = ["diff", "files", "browser", "activity", "side"];
 const widths = new Map(ids.map((id) => [id, 50]));
 
 it("keeps every tab when the row has room", () => {

@@ -1,18 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { useConnection } from "../../state/connection";
 import { useUi, type RightTab } from "../../state/ui";
-import { useClosedTabs } from "./closedTabs";
 import { SurfacePane, type PaneMode } from "./SurfacePane";
 
 vi.mock("./BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
 vi.mock("./DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div>Files content</div> }));
 vi.mock("./ActivityPanel", () => ({ ActivityPanel: () => null }));
-vi.mock("./LinkedPulls", () => ({ LinkedPulls: () => <div>Linked pulls content</div> }));
 vi.mock("./SideChatPane", () => ({ SideChatPane: () => <div>Side chat content</div> }));
 vi.mock("./sideChat", () => ({ openSideChat: vi.fn(), closeSideChat: vi.fn() }));
 
@@ -21,8 +19,7 @@ const thread = { id: "thread-1" } as Thread;
 beforeEach(() => {
   vi.spyOn(api, "diff").mockResolvedValue([]);
   useConnection.setState({ offline: false, serviceDown: false });
-  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, pullReveal: null });
-  useClosedTabs.setState({ closed: [] });
+  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
 });
 
 function pane(props: { mode?: PaneMode; onReturn?: () => void; onToggleMaximize?: () => void; maximized?: boolean } = {}) {
@@ -40,12 +37,10 @@ function pane(props: { mode?: PaneMode; onReturn?: () => void; onToggleMaximize?
 }
 
 describe("surface tabs", () => {
-  it("always shows the six fixed tabs, with Pull requests named in full", () => {
+  it("shows the five surfaces, with no Pull requests tab and no Terminal tab, each with a close button", () => {
     pane();
-    const tabs = screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label") ?? tab.textContent);
-    expect(tabs).toEqual(["Diff", "Files", "Browser", "Activity", "Pull requests", "Side chat"]);
-    expect(screen.getByRole("tab", { name: "Pull requests" })).toHaveTextContent("PRs");
-    expect(screen.queryByRole("button", { name: /^Close (Files|Diff)/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
+    expect(screen.getByRole("button", { name: "Close Files" })).toBeInTheDocument();
   });
 
   it("shows the first surface until another is chosen, and keeps the chosen one when its tab is pressed again", async () => {
@@ -57,9 +52,9 @@ describe("surface tabs", () => {
     expect(screen.getByText("Files content")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Files" }));
     expect(screen.getByText("Files content")).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Pull requests" }));
-    expect(screen.getByText("Linked pulls content")).toBeInTheDocument();
-    expect(useUi.getState().panelTab).toBe("pulls");
+    await user.click(screen.getByRole("tab", { name: "Side chat" }));
+    expect(screen.getByText("Side chat content")).toBeInTheDocument();
+    expect(useUi.getState().panelTab).toBe("side");
   });
 
   it("keeps the layout controls: maximise and close", async () => {
@@ -79,7 +74,7 @@ describe("surface tabs", () => {
     expect(screen.getByRole("button", { name: "Back to thread" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close side panel" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Maximise panel" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 
   it("keeps the tab row, with Maximise and Close at its right end, when it floats over the thread", () => {
@@ -128,22 +123,67 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTab).toBe("diff");
   });
 
-  it("has no plus while every tab is open", () => {
+  it("has no plus while every tab is open and in its place", () => {
     pane();
     expect(screen.queryByRole("button", { name: "Open a tab" })).not.toBeInTheDocument();
   });
 
-  it("lists closed surfaces under a plus at the end of the row, reopens one, and leaves Terminal and Reset tab order out", async () => {
+  it("closes a tab from its button, opens the next, and brings it back from the plus with Reset tab order under it", async () => {
     const user = userEvent.setup();
-    useClosedTabs.setState({ closed: ["files", "side"] });
+    useUi.setState({ panelTab: "files" });
     pane();
-    expect(screen.getAllByRole("tab").map((tab) => tab.id)).toEqual(["context-tab-diff", "context-tab-browser", "context-tab-activity", "context-tab-pulls"]);
+    await user.click(screen.getByRole("button", { name: "Close Files" }));
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
+    expect(useUi.getState().panelTab).toBe("browser");
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Side chat"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Reset tab order"]);
     await user.click(screen.getByRole("menuitem", { name: "Files" }));
-    expect(useClosedTabs.getState().closed).toEqual(["side"]);
-    expect(useUi.getState().panelTab).toBe("files");
     expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
+    expect(useUi.getState().panelTab).toBe("files");
+    expect(useUi.getState().panelTabsClosed).toEqual([]);
+  });
+
+  it("keeps the last tab: it has no close button", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side"] });
+    pane();
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Close (Diff|Files)/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Browser", "Activity", "Side chat", "Reset tab order"]);
+  });
+
+  it("reorders by drag, and Reset tab order puts the default back", async () => {
+    const user = userEvent.setup();
+    pane();
+    const tab = (name: string) => screen.getByRole("tab", { name }).parentElement!;
+    fireEvent.dragStart(tab("Side chat"));
+    fireEvent.dragOver(tab("Files"));
+    fireEvent.drop(tab("Files"));
+    expect(screen.getAllByRole("tab").map((entry) => entry.textContent)).toEqual(["Diff", "Side chat", "Files", "Browser", "Activity"]);
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    await user.click(screen.getByRole("menuitem", { name: "Reset tab order" }));
+    expect(screen.getAllByRole("tab").map((entry) => entry.textContent)).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
+  });
+
+  it("moves the focused tab with Alt+Shift+Arrow and closes it with Delete", async () => {
+    const user = userEvent.setup();
+    pane();
+    screen.getByRole("tab", { name: "Files" }).focus();
+    await user.keyboard("{Alt>}{Shift>}{ArrowRight}{/Shift}{/Alt}");
+    expect(screen.getAllByRole("tab").map((entry) => entry.textContent)).toEqual(["Diff", "Browser", "Files", "Activity", "Side chat"]);
+    expect(useUi.getState().panelTab).toBeNull();
+    screen.getByRole("tab", { name: "Files" }).focus();
+    await user.keyboard("{Delete}");
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
+    expect(useUi.getState().panelTabsClosed).toEqual(["files"]);
+  });
+
+  it("opens a closed surface when something reveals it", () => {
+    useUi.setState({ panelTabsClosed: ["browser"] });
+    useUi.getState().showInBrowser("https://example.com");
+    expect(useUi.getState().panelTabsClosed).toEqual([]);
+    expect(useUi.getState().panelTab).toBe("browser");
   });
 });
 
@@ -152,10 +192,10 @@ describe("connection states in the panel", () => {
 
   it("marks only the tabs that need the network when offline, and says so over their content", () => {
     useConnection.setState({ offline: true });
-    useUi.setState({ panelTab: "pulls" });
+    useUi.setState({ panelTab: "side" });
     pane();
-    const offline = screen.getAllByRole("tab").filter((tab) => tab.hasAttribute("data-offline"));
-    expect(offline.map((tab) => tab.id)).toEqual(["context-tab-browser", "context-tab-pulls", "context-tab-side"]);
+    const offline = screen.getAllByRole("tab").filter((tab) => tab.parentElement!.hasAttribute("data-offline"));
+    expect(offline.map((tab) => tab.id)).toEqual(["context-tab-browser", "context-tab-side"]);
     expect(screen.getByText("You’re offline.")).toBeInTheDocument();
   });
 
@@ -198,8 +238,8 @@ describe("connection states in the panel", () => {
     useConnection.setState({ offline: true });
     useUi.setState({ panelTab: "browser" });
     pane();
-    expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("data-offline");
-    for (const name of ["Diff", "Files", "Activity"]) expect(screen.getByRole("tab", { name })).not.toHaveAttribute("data-offline");
+    expect(screen.getByRole("tab", { name: "Browser" }).parentElement).toHaveAttribute("data-offline");
+    for (const name of ["Diff", "Files", "Activity"]) expect(screen.getByRole("tab", { name }).parentElement).not.toHaveAttribute("data-offline");
     expect(screen.getByText("Browser content")).toBeInTheDocument();
     expect(screen.queryByText("You’re offline.")).not.toBeInTheDocument();
   });
@@ -207,7 +247,7 @@ describe("connection states in the panel", () => {
   it("folds tabs that don't fit into More, keeping the open tab visible", async () => {
     const user = userEvent.setup();
     const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.getAttribute("role") === "tab" ? 50 : 24;
+      return this.hasAttribute("data-tab") ? 50 : 24;
     });
     const client = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
       return this.getAttribute("role") === "tablist" ? 174 : 0;
@@ -216,7 +256,7 @@ describe("connection states in the panel", () => {
     pane();
     expect(screen.getAllByRole("tab").map((tab) => tab.id)).toEqual(["context-tab-diff", "context-tab-files", "context-tab-side"]);
     await user.click(screen.getByRole("button", { name: "More tabs" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Browser", "Activity", "PRs"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Browser", "Activity"]);
     await user.click(screen.getByRole("menuitem", { name: "Browser" }));
     expect(useUi.getState().panelTab).toBe("browser");
     width.mockRestore();

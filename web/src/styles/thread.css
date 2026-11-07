@@ -1832,57 +1832,6 @@ button.detail-row:hover {
 .context[data-mode="overlay"][data-maximized] {
   border-left: 0;
 }
-.context-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  /* 4px sides leave room for all six tabs at 380px whatever the platform's font metrics. */
-  padding: 12px 4px 8px;
-  flex: none;
-}
-.context-head .layout-toggles .icon-btn[aria-pressed="false"],
-.context-head .layout-toggles .icon-btn:not([aria-pressed]) {
-  color: var(--color-muted);
-}
-/* The panel's fixed text tabs. The row scrolls sideways rather than wrapping when the panel is narrow. */
-.tabs {
-  display: flex;
-  flex: 1;
-  gap: 0;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.tabs::-webkit-scrollbar {
-  display: none;
-}
-.tabs[data-overflow] {
-  -webkit-mask-image: linear-gradient(to right, var(--color-text) calc(100% - 20px), transparent);
-  mask-image: linear-gradient(to right, var(--color-text) calc(100% - 20px), transparent);
-}
-.ptab {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-muted);
-  font-size: var(--text-nav);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.ptab[data-selected] {
-  background: var(--color-selected);
-  color: var(--color-text);
-}
-.ptab:not([data-selected]):hover {
-  background: var(--color-hover);
-  color: var(--color-textSoft);
-}
 /* The drawer's own row above the tabs: Back to thread at the left, Maximise and Close at the right. */
 .drawer-head {
   display: flex;
@@ -1909,15 +1858,6 @@ button.detail-row:hover {
   width: 24px;
   height: 24px;
   color: var(--color-muted);
-}
-.context-head .end {
-  display: flex;
-  flex: none;
-  gap: 0;
-}
-.context-head .end .icon-btn {
-  width: 24px;
-  height: 24px;
 }
 /* Small pills: the pages of the Browser, and the side chats. */
 .chips {
@@ -4648,10 +4588,6 @@ div.browser-bridge-row {
   border-radius: var(--radius-md);
   font-size: var(--text-meta);
 }
-/* The Reading drawer is 360px: tighter tabs keep all six in view next to the controls. */
-:root[data-workspace="reading"] .context:not([data-maximized]) .ptab {
-  padding: 0 4px;
-}
 .browser-popout {
   margin-left: auto;
 }
@@ -4755,14 +4691,6 @@ div.browser-bridge-row {
 }
 .thread-stage[data-connection="service-down"] .composer-lane {
   opacity: 0.6;
-}
-.ptab[data-offline] > svg {
-  flex: none;
-  color: var(--color-muted);
-}
-.tabs-more[aria-pressed="true"] {
-  background: var(--color-selected);
-  color: var(--color-text);
 }
 .conn-panel-banner {
   margin: 12px 14px 0;
