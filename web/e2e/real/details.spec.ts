@@ -37,18 +37,22 @@ test("details shows linked pull requests, and right-click turns rows off and bac
   await page.reload();
   await openDetails(page);
   const pulls = details(page).getByRole("button", { name: "Pull requests" });
-  await expect(pulls).toHaveText("1 pull request");
+  await expect(pulls).toContainText("#42");
   await pulls.click();
   await expect(details(page).getByRole("button", { name: /#42 Fix the login/ })).toBeVisible();
   await details(page).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Pull requests" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Pull requests" }).click();
+  // Each toggle applies at once and the menu stays open.
   await expect(pulls).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Thread details rows" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await details(page).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Usage" }).click();
-  await expect(details(page).getByText("Usage")).toBeVisible();
+  await page.getByRole("menuitemcheckbox", { name: "Usage" }).click();
+  await page.keyboard.press("Escape");
+  await expect(details(page).getByText("Usage", { exact: true })).toBeVisible();
   await details(page).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Reset" }).click();
-  await expect(details(page).getByRole("button", { name: "Pull requests" })).toHaveText("1 pull request");
+  await expect(details(page).getByRole("button", { name: "Pull requests" })).toContainText("#42");
   await page.goto(`${service.page}#/settings/general`);
   await expect(page.getByRole("button", { name: "8 of 9 on" })).toBeVisible();
 });

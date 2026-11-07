@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
@@ -90,5 +90,37 @@ describe("the Details button and the details card", () => {
     await details();
     await waitFor(() => expect(container.querySelector(".thread-main > .details")).not.toBeNull());
     expect(panel()).toBeNull();
+  });
+
+  it("collapses to its header line, and the choice is kept for the window", async () => {
+    setViewportWidth(1400);
+    sessionStorage.removeItem("orbyn.details.collapsed");
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+    await user.click(await details());
+    expect(within(card()!).getByText("Changes")).toBeInTheDocument();
+    await user.click(within(card()!).getByRole("button", { name: "Collapse card" }));
+    expect(within(card()!).queryByText("Changes")).toBeNull();
+    expect(within(card()!).getByRole("button", { name: "Expand card" })).toHaveAttribute("aria-expanded", "false");
+    unmount();
+    render(<App />);
+    await user.click(await details());
+    expect(within(card()!).getByRole("button", { name: "Expand card" })).toBeInTheDocument();
+    sessionStorage.removeItem("orbyn.details.collapsed");
+  });
+
+  it("opens the Rows menu on a right-click, and each row toggles at once with the menu still open", async () => {
+    setViewportWidth(1400);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await details());
+    await user.pointer({ keys: "[MouseRight]", target: card()! });
+    const usage = await screen.findByRole("menuitemcheckbox", { name: "Usage" });
+    expect(usage).toHaveAttribute("aria-checked", "false");
+    await user.click(usage);
+    expect(screen.getByRole("menuitemcheckbox", { name: "Usage" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menu", { name: "Thread details rows" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Usage" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Usage" })).toHaveAttribute("aria-checked", "false");
   });
 });

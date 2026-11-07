@@ -1,4 +1,4 @@
-import { Check, ChevronDown, CloudOff, GitPullRequest, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
+import { Check, CloudOff, GitPullRequest, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useCommand } from "../../app/shortcuts";
 import { ApiFailure } from "../../api/client";
@@ -13,6 +13,7 @@ import { navigate } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Button, IconButton } from "../../ui/controls";
+import { DRow } from "./DetailRows";
 import { captureFocusReturn } from "../../ui/focusReturn";
 import { ToolbarPopover } from "../pulls/ToolbarPopover";
 import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "./GitControl";
@@ -366,7 +367,7 @@ export function PullChip({ thread }: { thread: Thread }) {
   );
 }
 
-/** The details card's Pull requests row: how many, and the same list opened in place. */
+/** The details card's Pull requests row: the number and state, or how many, and the same list opened in place. */
 export function PullsRow({ thread }: { thread: Thread }) {
   const entry = useLinked(thread);
   const load = useThreadPulls((state) => state.load);
@@ -374,52 +375,94 @@ export function PullsRow({ thread }: { thread: Thread }) {
   const [creating, setCreating] = useState(false);
   const [linking, setLinking] = useState<HTMLElement | null>(null);
   const gitAvailable = useGitAvailable(thread.id);
+  const offline = useConnectionKind() === "offline";
   const failed = entry.pulls === null && entry.failed;
-  const count = entry.pulls?.length ?? 0;
+  const loading = entry.pulls === null && !failed;
+  const waited = useWaited(loading);
+  const pulls = entry.pulls ?? [];
+  const count = pulls.length;
   // A pull request linked from the empty row turns it into the count row: focus goes there.
   const linkedFromEmpty = useRef(false);
-  const rowButton = useRef<HTMLButtonElement>(null);
+  const rowButton = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (count > 0 && linkedFromEmpty.current) {
       linkedFromEmpty.current = false;
-      captureFocusReturn(rowButton.current).restore();
+      captureFocusReturn(rowButton.current?.querySelector("button") ?? null).restore();
     }
   }, [count]);
-  if (entry.pulls === null && !failed) return null;
+  const icon = <GitPullRequest size={16} aria-hidden />;
+  if (loading) return <DRow icon={icon} label="Pull requests" loading waited={waited} skeleton={70} />;
+  if (failed) {
+    return (
+      <DRow
+        icon={icon}
+        label="Pull requests"
+        value={<span className="t3">{offline ? "Offline" : "GitHub unreachable"}</span>}
+        extra={
+          offline ? null : (
+            <Button small tone="quiet" onClick={() => void load(thread)}>
+              Try again
+            </Button>
+          )
+        }
+      />
+    );
+  }
   if (count === 0) {
     return (
-      <div className="detail-row detail-row-static">
-        <GitPullRequest size={16} aria-hidden />
-        <span className="detail-dim">{failed ? "Couldn’t load pull requests" : "No pull request yet"}</span>
-        {failed ? (
-          <Button small onClick={() => void load(thread)}>
-            Retry
-          </Button>
-        ) : gitAvailable ? (
-          <Button small onClick={() => setCreating(true)}>
-            Open a pull request
-          </Button>
-        ) : null}
-        <Button small aria-haspopup="dialog" onClick={(event) => setLinking(linking ? null : event.currentTarget)}>
-          Link by number
-        </Button>
+      <>
+        <DRow
+          icon={icon}
+          label="Pull requests"
+          value={<span className="t3">No pull request yet</span>}
+          sub={
+            <span className="dlinks">
+              {gitAvailable ? (
+                <>
+                  <button type="button" className="dlink" onClick={() => setCreating(true)}>
+                    Open a pull request
+                  </button>
+                  <span> · </span>
+                </>
+              ) : null}
+              <button type="button" className="dlink" aria-haspopup="dialog" onClick={(event) => setLinking(linking ? null : event.currentTarget)}>
+                Link by number
+              </button>
+            </span>
+          }
+        />
         {creating ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} onClose={() => setCreating(false)} /> : null}
         {linking ? (
           <ToolbarPopover anchor={linking} label="Link by number" width={260} onClose={() => setLinking(null)}>
             {(dismiss) => <LinkForm thread={thread} onDone={() => { linkedFromEmpty.current = true; dismiss(); }} onCancel={dismiss} />}
           </ToolbarPopover>
         ) : null}
-      </div>
+      </>
     );
   }
+  const first = pulls[0];
+  const word = count === 1 && first ? (stateWord(first) ?? "Draft") : null;
   return (
-    <>
-      <button ref={rowButton} type="button" className="detail-row" aria-expanded={expanded} aria-label="Pull requests" onClick={() => setExpanded(!expanded)}>
-        <GitPullRequest size={16} aria-hidden />
-        <span>{count === 1 ? "1 pull request" : `${count} pull requests`}</span>
-        <ChevronDown size={14} aria-hidden data-open={expanded || undefined} className="detail-chevron" />
-      </button>
-      {expanded ? <PullList thread={thread} onOpen={() => undefined} /> : null}
-    </>
+    <div ref={rowButton}>
+      <DRow
+        icon={icon}
+        label="Pull requests"
+        ariaLabel="Pull requests"
+        expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+        value={
+          count === 1 && first ? (
+            <>
+              <span className="t2">{numberLabel(first)}</span>
+              <span className="pillx">{word}</span>
+            </>
+          ) : (
+            <span className="t2">{count} pull requests</span>
+          )
+        }
+      >
+        {expanded ? <PullList thread={thread} onOpen={() => undefined} /> : null}
+      </DRow>
+    </div>
   );
 }

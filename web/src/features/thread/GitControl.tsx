@@ -1,3 +1,4 @@
+import { DRow } from "./DetailRows";
 import { Check, ChevronDown, CloudUpload, GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Search, Upload, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "../../api/client";
@@ -351,17 +352,16 @@ export function BranchRow({ thread, branch }: { thread: Thread; branch: string }
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button
-        type="button"
-        className="detail-row"
+      <DRow
+        icon={<GitBranch size={16} aria-hidden />}
+        label="Branch"
+        ariaLabel={`Branch ${branch}`}
+        value={<span className="mono">{branch}</span>}
+        sub={thread.cwd}
         title={thread.cwd}
-        aria-label={`Branch ${branch}`}
         disabled={thread.active_run !== null}
         onClick={() => setOpen(true)}
-      >
-        <GitBranch size={16} aria-hidden />
-        <span>{branch}</span>
-      </button>
+      />
       {open ? <BranchDialog thread={thread} onClose={() => setOpen(false)} /> : null}
     </>
   );

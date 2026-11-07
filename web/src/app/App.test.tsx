@@ -540,10 +540,10 @@ describe("App against the mock API", () => {
     })) as unknown as typeof window.matchMedia;
     render(<App />);
     const details = await screen.findByRole("complementary", { name: "Thread details" });
-    await waitFor(() => expect(details).toHaveTextContent("+42 -3"));
+    await waitFor(() => expect(details).toHaveTextContent("+42 −3"));
     expect(within(details).getByText("approval-timeout")).toBeInTheDocument();
     expect(within(details).queryByText("Commit")).toBeNull();
-    expect(within(details).queryByText(/Open in editor/)).toBeNull();
+    expect(within(details).getByText("Open in editor")).toBeInTheDocument();
   });
 
   it("opens the command palette and goes to a result", async () => {

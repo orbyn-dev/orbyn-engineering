@@ -3,9 +3,11 @@ import {
   Copy,
   FileDiff,
   Gauge,
+  Globe,
+  ChevronDown,
+  ChevronRight,
   MessagesSquare,
   Monitor,
-  Server,
   SquareTerminal,
   EllipsisVertical,
   Trash2,
@@ -13,11 +15,17 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { api, request } from "../../api/client";
-import type { EngineLimits, EngineStatus, ProjectFileView, Thread } from "../../api/types";
+import type { EngineLimits, EngineStatus, LocalServer, ProjectFileView, Thread } from "../../api/types";
 import { compactAge, elapsed } from "../../lib/format";
 import { showSideChat, sideChatsOf } from "../panels/sideChat";
 import { toFailure, useAsync } from "../../lib/useAsync";
+import type { ProjectScript } from "../../generated/ProjectScript";
+import { runProjectAction } from "./runProjectAction";
+import { ProjectActionIcon } from "../../ui/ProjectActionIcon";
 import { usageShare } from "./ComposerExtras";
+import { pluralize } from "./toolCalls";
+import { DRow } from "./DetailRows";
+import { useWaited as useWaitedFor } from "../../lib/motion";
 import { useNow } from "../../lib/useNow";
 import { navigate } from "../../state/route";
 import { useThreadLogs } from "./threadLogs";
@@ -34,9 +42,6 @@ import { OpenInEditor } from "./OpenInEditor";
 import { PullsRow } from "./PullChip";
 import { ThreadAutomations } from "./ThreadAutomations";
 import { runningTools } from "./timeline";
-import type { ProjectScript } from "../../generated/ProjectScript";
-import { runProjectAction } from "./runProjectAction";
-import { ProjectActionIcon } from "../../ui/ProjectActionIcon";
 
 function ThreadActions({ deletable, closing, panelRef, onDelete }: { deletable: boolean; closing?: boolean; panelRef: RefObject<HTMLDivElement | null>; onDelete(): void }) {
   return (
@@ -115,6 +120,7 @@ export function detailsMenuItems(): MenuItem[] {
     ...DETAIL_ROWS.map((row) => ({
       label: row.label,
       selected: !detailsHidden.includes(row.id),
+      keepOpen: true,
       onSelect: () =>
         setPrefs({
           detailsHidden: detailsHidden.includes(row.id)
@@ -128,17 +134,35 @@ export function detailsMenuItems(): MenuItem[] {
 
 function ServersRow({ threadId }: { threadId: string }) {
   const servers = useAsync(`details-servers:${threadId}`, (signal) =>
-    request<unknown[]>("GET", `/api/threads/${encodeURIComponent(threadId)}/servers`, undefined, signal),
+    request<LocalServer[]>("GET", `/api/threads/${encodeURIComponent(threadId)}/servers`, undefined, signal),
   );
   const togglePanel = useUi((state) => state.togglePanel);
-  const count = servers.data?.length ?? 0;
-  if (count === 0) return null;
+  const showInBrowser = useUi((state) => state.showInBrowser);
+  const waited = useWaitedFor(servers.status === "loading");
+  const list = Array.isArray(servers.data) ? servers.data : [];
+  const address = (server: LocalServer) => `localhost:${server.port}`;
+  const only = list.length === 1 ? list[0] : undefined;
   return (
-    <button type="button" className="detail-row" onClick={() => togglePanel("browser")}>
-      <Server size={16} aria-hidden />
-      <span>Local servers</span>
-      <span className="detail-meta">{count}</span>
-    </button>
+    <DRow
+      icon={<Globe size={16} aria-hidden />}
+      label="Local servers"
+      loading={servers.status === "loading"}
+      waited={waited}
+      skeleton={96}
+      value={
+        servers.status === "error" ? (
+          <span className="t3">Unavailable</span>
+        ) : list.length === 0 ? (
+          <span className="t3">None running</span>
+        ) : only ? (
+          <span className="mono">{address(only)}</span>
+        ) : (
+          <span className="t2">{list.length} servers</span>
+        )
+      }
+      sub={list.length > 1 ? list.map(address).join(" · ") : undefined}
+      onClick={list.length > 0 ? () => (only ? showInBrowser(`http://${address(only)}`) : togglePanel("browser")) : undefined}
+    />
   );
 }
 
@@ -146,33 +170,46 @@ function UsageRow({ threadId }: { threadId: string }) {
   const usage = useThreadLogs((state) => state.logs[threadId]?.usage);
   const share = usageShare(usage);
   if (!share) return null;
-  return (
-    <div className="detail-row detail-row-static">
-      <Gauge size={16} aria-hidden />
-      <span>Usage</span>
-      <span className="detail-meta">
-        {share.used.toLocaleString()} of {share.window.toLocaleString()}
-      </span>
-    </div>
-  );
+  return <DRow icon={<Gauge size={16} aria-hidden />} label="Usage" value={<span className="t2">{share.used >= 1000 ? `${Math.round(share.used / 1000)}k` : share.used} tokens</span>} sub="This thread" />;
 }
 
-function ScriptRows({ threadId }: { threadId: string }) {
+function ScriptsRow({ threadId }: { threadId: string }) {
   const base = `/api/threads/${encodeURIComponent(threadId)}`;
   const scripts = useAsync(`details-scripts:${threadId}`, (signal) =>
     request<ProjectFileView>("GET", `${base}/scripts`, undefined, signal),
   );
   const pushToast = useUi((state) => state.pushToast);
+  const [expanded, setExpanded] = useState(false);
+  const waited = useWaitedFor(scripts.status === "loading");
   const list = scripts.data?.scripts ?? [];
   const run = (script: ProjectScript) => {
     void runProjectAction(threadId, script).catch((failure: unknown) => pushToast(`Couldn't run ${script.name}. ${toFailure(failure).message}`));
   };
-  return list.map((script) => (
-    <button key={script.name} type="button" className="detail-row" onClick={() => run(script)}>
-      <ProjectActionIcon icon={script.icon} />
-      <span>{script.name}</span>
-    </button>
-  ));
+  return (
+    <DRow
+      icon={<SquareTerminal size={16} aria-hidden />}
+      label="Scripts"
+      loading={scripts.status === "loading"}
+      waited={waited}
+      expanded={list.length > 0 ? expanded : undefined}
+      onClick={list.length > 0 ? () => setExpanded(!expanded) : undefined}
+      value={list.length === 0 ? <span className="t3">None in this project</span> : <span className="t2">{pluralize(list.length, "script", "scripts")}</span>}
+      sub={list.length > 0 ? list.map((script) => script.name).join(" · ") : undefined}
+    >
+      {expanded && list.length > 0 ? (
+        <ul className="dauto" aria-label="Scripts">
+          {list.map((script) => (
+            <li key={script.name} className="dtask">
+              <button type="button" className="dscript" onClick={() => run(script)}>
+                <ProjectActionIcon icon={script.icon} />
+                <span>{script.name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </DRow>
+  );
 }
 
 function SideChatRows({ threadId }: { threadId: string }) {
@@ -201,6 +238,7 @@ function ChangesRow({ threadId }: { threadId: string }) {
   const { reload } = diff;
   const togglePanel = useUi((state) => state.togglePanel);
   const showing = useUi((state) => state.panelOpen === true && state.panelTab === "diff");
+  const waited = useWaitedFor(diff.status === "loading");
 
   useEffect(() => {
     if (version > 0) reload();
@@ -210,26 +248,34 @@ function ChangesRow({ threadId }: { threadId: string }) {
   const added = files.reduce((sum, file) => sum + file.additions, 0);
   const removed = files.reduce((sum, file) => sum + file.deletions, 0);
   return (
-    <button
-      type="button"
-      className="detail-row"
+    <DRow
+      icon={<FileDiff size={16} aria-hidden />}
+      label="Changes"
+      loading={diff.status === "loading"}
+      waited={waited}
+      value={
+        diff.status === "error" ? (
+          <span className="t3">Unavailable</span>
+        ) : files.length === 0 ? (
+          <span className="t3">No changes</span>
+        ) : (
+          <>
+            <span>
+              <span className="diff-add">+{added}</span> <span className="diff-del">−{removed}</span>
+            </span>{" "}
+            <span className="t3">· {pluralize(files.length, "file", "files")}</span>
+          </>
+        )
+      }
       onClick={() => {
         if (!showing) togglePanel("diff");
       }}
-    >
-      <FileDiff size={16} aria-hidden />
-      <span>Changes</span>
-      {diff.status === "error" ? (
-        <span className="detail-meta">Unavailable</span>
-      ) : diff.data ? (
-        <span className="detail-meta">
-          <span className="diff-add">+{added}</span> <span>-{removed}</span>
-        </span>
-      ) : null}
-    </button>
+    />
   );
 }
 
+/** A limit window turns amber at this much left or less, and stays amber at 0%. */
+const LIMIT_WARN_AT = 20;
 
 /** Automatic checks stay this far apart, however often the card appears. */
 const LIMITS_CHECK_MS = 5 * 60 * 1000;
@@ -247,11 +293,23 @@ function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   });
   const windows = limits.data?.windows ?? [];
   if (windows.length === 0) return null;
+  return <DRow icon={<Activity size={16} aria-hidden />} label="Limits" value={<LimitValue windows={windows} />} />;
+}
+
+/** "5h 62% left · Weekly 88% left"; a window at 20% left or less is amber, and stays amber at 0%. */
+export function LimitValue({ windows }: { windows: readonly { label: string; used_percent: number }[] }) {
   return (
-    <div className="detail-row detail-row-static">
-      <Gauge size={16} aria-hidden />
-      <span>{windows.map((window) => `${window.label} ${Math.max(100 - Math.round(window.used_percent), 0)}% left`).join(", ")}</span>
-    </div>
+    <span className="t2">
+      {windows.map((window, at) => {
+        const left = Math.max(100 - Math.round(window.used_percent), 0);
+        return (
+          <span key={window.label}>
+            {at > 0 ? <span className="t3"> · </span> : null}
+            <span className={left <= LIMIT_WARN_AT ? "amb" : undefined}>{`${window.label} ${left}% left`}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -273,6 +331,28 @@ function RunningList({ threadId, active }: { threadId: string; active: boolean }
   );
 }
 
+/** The card's header collapses it to one line; the choice lasts for this window. */
+function useCollapsedCard(): [boolean, (value: boolean) => void] {
+  const [collapsed, set] = useState(() => {
+    try {
+      return sessionStorage.getItem("orbyn.details.collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  return [
+    collapsed,
+    (value) => {
+      set(value);
+      try {
+        sessionStorage.setItem("orbyn.details.collapsed", value ? "1" : "0");
+      } catch {
+        // Not remembered; the card still collapses.
+      }
+    },
+  ];
+}
+
 export function DetailsCard({
   thread,
   engine,
@@ -288,6 +368,7 @@ export function DetailsCard({
   const remote = useRemoteLabel();
   const hidden = useUi((state) => state.detailsHidden);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [collapsed, setCollapsed] = useCollapsedCard();
   const shows = (row: string) => !hidden.includes(row);
   const log = useThreadLogs((state) => state.logs[thread.id]);
   const runningCount = useMemo(
@@ -317,6 +398,37 @@ export function DetailsCard({
       }}
     >
       <Presence>{menu ? <Menu {...menu} label="Thread details rows" items={detailsMenuItems()} onClose={() => setMenu(null)} /> : null}</Presence>
+      <div className="dcard" data-collapsed={collapsed || undefined} aria-label="Thread details rows" role="group">
+        <button type="button" className="dh" aria-label={collapsed ? "Expand card" : "Collapse card"} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
+          Details
+          {collapsed ? <ChevronRight size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
+        </button>
+        {collapsed ? null : (
+          <>
+            {branch && shows("branch") ? <BranchRow thread={thread} branch={branch} /> : null}
+            {shows("changes") ? <ChangesRow threadId={thread.id} /> : null}
+            {shows("pulls") ? <PullsRow thread={thread} /> : null}
+            {shows("automations") ? <ThreadAutomations threadId={thread.id} /> : null}
+            {shows("servers") ? <ServersRow threadId={thread.id} /> : null}
+            {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
+            {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
+            {shows("scripts") ? <ScriptsRow threadId={thread.id} /> : null}
+            {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
+          </>
+        )}
+      </div>
+      {compact ? (
+        <div className="details-section">
+          <button type="button" className="detail-row" onClick={() => togglePanel("activity")}>
+            <Activity size={16} aria-hidden />
+            <span>Activity</span>
+          </button>
+          <button type="button" className="detail-row" onClick={() => togglePanel("terminal")}>
+            <SquareTerminal size={16} aria-hidden />
+            <span>Terminal</span>
+          </button>
+        </div>
+      ) : null}
       <div className="details-section">
         <div className="detail-row detail-row-static">
           <Monitor size={16} aria-hidden />
@@ -337,29 +449,6 @@ export function DetailsCard({
           {engine && !engine.capabilities.managed ? <span className="detail-dim">Unmanaged</span> : null}
         </div>
       </div>
-      <div className="details-section">
-        {branch && shows("branch") ? <BranchRow thread={thread} branch={branch} /> : null}
-        {shows("changes") ? <ChangesRow threadId={thread.id} /> : null}
-        {shows("pulls") ? <PullsRow thread={thread} /> : null}
-        {shows("servers") ? <ServersRow threadId={thread.id} /> : null}
-        {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
-        {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
-        {shows("scripts") ? <ScriptRows threadId={thread.id} /> : null}
-        {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
-        {compact ? (
-          <>
-            <button type="button" className="detail-row" onClick={() => togglePanel("activity")}>
-              <Activity size={16} aria-hidden />
-              <span>Activity</span>
-            </button>
-            <button type="button" className="detail-row" onClick={() => togglePanel("terminal")}>
-              <SquareTerminal size={16} aria-hidden />
-              <span>Terminal</span>
-            </button>
-          </>
-        ) : null}
-      </div>
-      {shows("automations") ? <ThreadAutomations threadId={thread.id} /> : null}
       <SideChatRows threadId={thread.id} />
       {runningCount > 0 ? (
         <div className="details-section">
