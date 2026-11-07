@@ -44,7 +44,7 @@ test("/side asks in a tab while the row list stays as it was, and it can be foun
   await expect(page.locator(`li[data-thread-item="${side?.id}"]`)).toHaveCount(0);
   await page.reload();
   await expect(pane(page)).toBeVisible();
-  await page.getByRole("button", { name: "Close Side chat" }).click();
+  await page.getByRole("button", { name: "Close Side chat", exact: true }).click();
   await expect(page.getByText("No side chat open")).toBeVisible();
   await expect((await sideOf(id)).length).toBe(1);
   // The chip carries the side chat's own title, or "Side chat N" while it has none.
@@ -66,7 +66,7 @@ test("a side chat opens from the launcher while the thread works, and an unused 
   await expect(pane(page)).toBeVisible();
   await expect.poll(async () => (await sideOf(id)).length).toBe(1);
   await expect(pane(page).getByRole("button", { name: "Bring back" })).toBeDisabled();
-  await page.getByRole("button", { name: "Close Side chat" }).click();
+  await page.getByRole("button", { name: "Close Side chat", exact: true }).click();
   await expect.poll(async () => (await sideOf(id)).length).toBe(0);
   await page.getByRole("button", { name: "Stop" }).click();
   await settled(service, id);

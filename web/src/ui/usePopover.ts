@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type RefObject } from "react";
 import { captureFocusReturn, moveFocus, tabbables, watchOutside, type CloseCause, type FocusReturn, type PopoverKind } from "./focusReturn";
 
 export interface PopoverPane {
@@ -36,6 +36,7 @@ export interface PopoverOptions {
  */
 export function usePopover({ kind, root, trigger, active = true, closing, panes, onClose }: PopoverOptions) {
   const state = useRef<{ focusReturn: FocusReturn | null; moved: boolean }>({ focusReturn: null, moved: false });
+  const id = useId();
   // Taken as it opens, while rendering, before anything inside takes focus.
   if (!active) state.current = { focusReturn: null, moved: false };
   else if (!state.current.focusReturn) state.current.focusReturn = captureFocusReturn(trigger?.() ?? undefined);
@@ -54,8 +55,14 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
   useLayoutEffect(() => {
     const element = root.current;
     if (!active || !element) return;
-    element.setAttribute("data-popover-root", "");
-    return () => element.removeAttribute("data-popover-root");
+    element.setAttribute("data-popover-root", id);
+    // A popover opened from inside another names it, so only that one counts as inside it.
+    const owner = latest.current.trigger?.()?.closest<HTMLElement>("[data-popover-root]")?.dataset.popoverRoot;
+    if (owner) element.setAttribute("data-popover-owner", owner);
+    return () => {
+      element.removeAttribute("data-popover-root");
+      element.removeAttribute("data-popover-owner");
+    };
   });
 
   useEffect(() => {
@@ -115,8 +122,18 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
       }
     };
     document.addEventListener("keydown", onKeyDown, true);
-    // A menu opened from inside the popover is a portal: pressing its items is not leaving the popover.
-    const inMenu = (target: EventTarget | null) => target instanceof Element && !!target.closest("[data-menu-root]");
+    // A menu, or a popover opened from inside this one, is a portal: pressing in it is not leaving.
+    const inMenu = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest("[data-menu-root]")) return true;
+      let popover = target.closest<HTMLElement>("[data-popover-root]");
+      for (let depth = 0; popover && depth < 8; depth += 1) {
+        if (popover.dataset.popoverRoot === id) return true;
+        const owner = popover.dataset.popoverOwner;
+        popover = owner ? document.querySelector<HTMLElement>(`[data-popover-root="${CSS.escape(owner)}"]`) : null;
+      }
+      return false;
+    };
     const stop = watchOutside(
       (target) => inRoot(target) || inTrigger(target) || inMenu(target),
       (cause, target) => latest.current.dismiss(cause, target),
@@ -125,7 +142,7 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
       stop();
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [active, closing, root]);
+  }, [active, closing, root, id]);
 
   // Closed from outside (the trigger toggling it): the same as Escape, unless focus moved on already.
   useLayoutEffect(() => {

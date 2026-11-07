@@ -225,6 +225,23 @@ async fn run_owned(builder: Command, input: Option<&str>) -> Result<std::process
     child.output().await
 }
 
+/// True when a forge CLI's failure says the pull request does not exist, by the phrases that forge
+/// uses for it. Anything else (auth, network, rate limit, a server error) is not matched.
+pub fn no_such_pull(forge: Forge, message: &str) -> bool {
+    let message = message.to_lowercase();
+    let any = |phrases: &[&str]| phrases.iter().any(|phrase| message.contains(phrase));
+    match forge {
+        Forge::GitHub => any(&["could not resolve to a pullrequest with the number of"]),
+        // A bare 404 may be a proxy's page; GitLab's own answer names the merge request it looked for.
+        Forge::GitLab => {
+            (message.contains("merge_requests/") && message.contains("404 not found"))
+                || any(&["merge request not found"])
+        }
+        Forge::Azure => any(&["tf401180", "pull request does not exist"]),
+        Forge::Forgejo | Forge::Bitbucket => false,
+    }
+}
+
 pub async fn call(forge: Forge, cwd: &Path, args: &[&str]) -> Result<String> {
     let output = spawn(forge, cwd, args, None).await?;
     if output.success {
@@ -2194,6 +2211,45 @@ fn auth_accounts(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_forges_no_such_pull_request_answer_is_matched() {
+        let github = Forge::GitHub;
+        assert!(no_such_pull(
+            github,
+            "GraphQL: Could not resolve to a PullRequest with the number of 5. (repository.pullRequest)"
+        ));
+        // The branch form is not a numbered answer, and a proxy's bare 404 page is not GitLab's.
+        assert!(!no_such_pull(
+            github,
+            "no pull requests found for branch \"x\""
+        ));
+        assert!(!no_such_pull(
+            Forge::GitLab,
+            "<html>404 Not Found</html> from a proxy"
+        ));
+        assert!(no_such_pull(
+            Forge::GitLab,
+            "GET https://x/api/v4/projects/1/merge_requests/9: 404 Not Found"
+        ));
+        assert!(no_such_pull(
+            Forge::Azure,
+            "TF401180: The requested pull request was not found."
+        ));
+        // Auth, rate limit and server failures keep their own wording.
+        assert!(!no_such_pull(
+            github,
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)"
+        ));
+        assert!(!no_such_pull(github, "API rate limit exceeded"));
+        assert!(!no_such_pull(github, "HTTP 502: Bad Gateway"));
+        assert!(!no_such_pull(Forge::GitLab, "401 Unauthorized"));
+        assert!(!no_such_pull(
+            Forge::Azure,
+            "Please run 'az login' to setup account."
+        ));
+        assert!(!no_such_pull(Forge::Forgejo, "404 Not Found"));
+    }
 
     #[tokio::test]
     async fn a_finished_forge_cli_does_not_leave_helpers_running() {

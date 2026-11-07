@@ -14,7 +14,18 @@ export interface ToastAction { label: string; run(): void }
 
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
-export type RightTab = "diff" | "files" | "activity" | "pulls" | "browser" | "side";
+export type RightTab = "diff" | "files" | "activity" | "browser" | "side";
+/** The panel's surfaces in their default order. Terminal is the header button and the drawer, never a tab. */
+export const RIGHT_TAB_IDS: readonly RightTab[] = ["diff", "files", "browser", "activity", "side"];
+
+/** A saved order or closed set may be stale: unknown and repeated ids go, missing ones return at the end, and one tab always stays. */
+export function cleanTabs(order: unknown, closed: unknown): { order: RightTab[]; closed: RightTab[] } {
+  const valid = (list: unknown): RightTab[] =>
+    (Array.isArray(list) ? list : []).filter((id, at, all): id is RightTab => RIGHT_TAB_IDS.includes(id as RightTab) && all.indexOf(id) === at);
+  const first = valid(order);
+  const shut = valid(closed);
+  return { order: [...first, ...RIGHT_TAB_IDS.filter((id) => !first.includes(id))], closed: shut.length >= RIGHT_TAB_IDS.length ? [] : shut };
+}
 export type ContextTab = RightTab | "terminal";
 export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
@@ -24,6 +35,10 @@ interface Prefs {
   panelOpen: boolean | null;
   /** The surface showing; null when none is. */
   panelTab: RightTab | null;
+  /** The tab row's order for this thread. */
+  panelTabOrder: RightTab[];
+  /** Surfaces closed in this thread's tab row; the "+" brings them back. */
+  panelTabsClosed: RightTab[];
   /** Panel and hero motion in ms, 0 to 400. 0 is off; the default is the --m-slow token. */
   panelAnimationMs: number;
   /** The floating details card on wide layouts. */
@@ -149,6 +164,8 @@ export interface StashedPrompt {
 export interface ThreadLayout {
   panelOpen: boolean | null;
   panelTab: RightTab | null;
+  panelTabOrder: RightTab[];
+  panelTabsClosed: RightTab[];
   detailsOpen: boolean;
   terminalOpen: boolean;
   panelMaximized: boolean;
@@ -178,6 +195,8 @@ const defaults: Prefs = {
   theme: "dark",
   panelOpen: null,
   panelTab: null,
+  panelTabOrder: [...RIGHT_TAB_IDS],
+  panelTabsClosed: [],
   panelAnimationMs: MOTION.slow,
   detailsOpen: true,
   terminalOpen: false,
@@ -275,9 +294,6 @@ interface UiState extends Prefs {
   messageReveal: { threadId: string; messageId: string } | null;
   revealMessage(threadId: string, messageId: string): void;
   clearMessageReveal(): void;
-  /** A pull request the panel should open. */
-  pullReveal: number | null;
-  revealPull(number: number | null): void;
   /** A file the Diff surface should scroll to. */
   diffReveal: ThreadNavigationOrigin & { path: string; nonce: number } | null;
   /** A commit the Diff surface should show next. */
@@ -286,6 +302,14 @@ interface UiState extends Prefs {
   revealDiff(path: string, origin: ThreadNavigationOrigin): void;
   consumeDiffReveal(nonce: number): void;
   togglePanel(tab: ContextTab): void;
+  /** Takes a surface out of this thread's tab row. The last tab stays; closing the open one opens its neighbour. */
+  closePanelTab(tab: RightTab): void;
+  /** Puts a closed surface back in the row, opens it and shows the panel. */
+  reopenPanelTab(tab: RightTab): void;
+  /** Moves a tab to `index` in the row's order. */
+  movePanelTab(tab: RightTab, index: number): void;
+  /** The default order, with every tab back in the row. */
+  resetPanelTabs(): void;
   /** A page floating over the chat, if any. */
   previewFloat: { threadId: string; tabId: string } | null;
   /** A URL to open, or an existing tab to reveal in the Browser panel. */
@@ -315,6 +339,8 @@ interface UiState extends Prefs {
 const layoutDefaults: ThreadLayout = {
   panelOpen: defaults.panelOpen,
   panelTab: defaults.panelTab,
+  panelTabOrder: defaults.panelTabOrder,
+  panelTabsClosed: defaults.panelTabsClosed,
   detailsOpen: defaults.detailsOpen,
   terminalOpen: defaults.terminalOpen,
   panelMaximized: defaults.panelMaximized,
@@ -325,6 +351,8 @@ const layoutDefaults: ThreadLayout = {
 const currentLayout = (state: Prefs): ThreadLayout => ({
   panelOpen: state.panelOpen,
   panelTab: state.panelTab,
+  panelTabOrder: state.panelTabOrder,
+  panelTabsClosed: state.panelTabsClosed,
   detailsOpen: state.detailsOpen,
   terminalOpen: state.terminalOpen,
   panelMaximized: state.panelMaximized,
@@ -343,6 +371,8 @@ const prefsOf = (state: Prefs): Prefs => ({
   theme: state.theme,
   panelOpen: state.panelOpen,
   panelTab: state.panelTab,
+  panelTabOrder: state.panelTabOrder,
+  panelTabsClosed: state.panelTabsClosed,
   panelAnimationMs: state.panelAnimationMs,
   detailsOpen: state.detailsOpen,
   terminalOpen: state.terminalOpen,
@@ -438,14 +468,27 @@ function migratePrefs(saved: Partial<Prefs>): Partial<Prefs> {
   return next;
 }
 
+/** Each thread's saved layout may predate the tab fields or name the removed Pull requests tab. */
+function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
+  if (!isPlainObject(layouts)) return {};
+  return Object.fromEntries(
+    Object.entries(layouts as Record<string, unknown>)
+      // A damaged entry is dropped; the thread starts from the defaults.
+      .filter((entry): entry is [string, ThreadLayout] => isPlainObject(entry[1]))
+      .map(([key, layout]) => {
+        const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
+        const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
+        return [key, { ...layout, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
+      }),
+  );
+}
+
 /** Saved preferences may predate a field or carry a removed value. */
 function savedPrefs(): Partial<Prefs> {
   const stored = readJson<unknown>(PREFS_KEY);
   const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
-  const panelTab =
-    saved.panelTab === "diff" || saved.panelTab === "files" || saved.panelTab === "activity" || saved.panelTab === "pulls" || saved.panelTab === "side"
-      ? saved.panelTab
-      : null;
+  const panelTab = RIGHT_TAB_IDS.includes(saved.panelTab as RightTab) ? (saved.panelTab as RightTab) : null;
+  const tabs = cleanTabs(saved.panelTabOrder, saved.panelTabsClosed);
   const grouping = saved.projectGrouping;
   const projectGrouping =
     grouping === "repository" || grouping === "repository_path" || grouping === "separate"
@@ -457,7 +500,7 @@ function savedPrefs(): Partial<Prefs> {
     ),
   );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelTab, layouts: saved.layouts ?? {}, projectGrouping, projectGroupingOverrides, workspaceLayout };
+  return { ...saved, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
 }
 
 export const useUi = create<UiState>((set, get) => {
@@ -503,18 +546,6 @@ export const useUi = create<UiState>((set, get) => {
       set({ theme });
       savePrefs();
     },
-    pullReveal: null,
-    revealPull(number) {
-      if (number === null) {
-        set({ pullReveal: null });
-        return;
-      }
-      set({
-        pullReveal: number,
-        panelOpen: true,
-        panelTab: "pulls",
-      });
-    },
     diffReveal: null,
     commitReveal: null,
     revealCommit(sha) {
@@ -522,6 +553,7 @@ export const useUi = create<UiState>((set, get) => {
         commitReveal: { sha, nonce: Date.now() },
         panelOpen: true,
         panelTab: "diff",
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "diff"),
       });
     },
     revealDiff(path, origin) {
@@ -530,6 +562,7 @@ export const useUi = create<UiState>((set, get) => {
         fileReveal: null,
         panelOpen: true,
         panelTab: "diff",
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "diff"),
       });
     },
     consumeDiffReveal(nonce) {
@@ -549,6 +582,7 @@ export const useUi = create<UiState>((set, get) => {
         diffReveal: null,
         panelOpen: true,
         panelTab: "files",
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "files"),
       });
     },
     consumeFileReveal(nonce) {
@@ -568,6 +602,7 @@ export const useUi = create<UiState>((set, get) => {
         previewRequest: url,
         panelOpen: true,
         panelTab: "browser",
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "browser"),
       });
     },
     togglePanel(tab) {
@@ -581,9 +616,36 @@ export const useUi = create<UiState>((set, get) => {
             : {
                 panelOpen: true,
                 panelTab: tab,
+                panelTabsClosed: get().panelTabsClosed.filter((id) => id !== tab),
               },
         );
       }
+      savePrefs();
+    },
+    closePanelTab(tab) {
+      const { panelTabOrder, panelTabsClosed, panelTab } = get();
+      const row = panelTabOrder.filter((id) => !panelTabsClosed.includes(id));
+      if (!row.includes(tab) || row.length < 2) return;
+      const at = row.indexOf(tab);
+      const shown = panelTab && row.includes(panelTab) ? panelTab : row[0];
+      set({
+        panelTabsClosed: [...panelTabsClosed, tab],
+        ...(shown === tab ? { panelTab: row[at + 1] ?? row[at - 1] ?? null } : {}),
+      });
+      savePrefs();
+    },
+    reopenPanelTab(tab) {
+      set({ panelTabsClosed: get().panelTabsClosed.filter((id) => id !== tab), panelOpen: true, panelTab: tab });
+      savePrefs();
+    },
+    movePanelTab(tab, index) {
+      const order = get().panelTabOrder.filter((id) => id !== tab);
+      order.splice(Math.max(0, Math.min(index, order.length)), 0, tab);
+      set({ panelTabOrder: order });
+      savePrefs();
+    },
+    resetPanelTabs() {
+      set({ panelTabOrder: [...RIGHT_TAB_IDS], panelTabsClosed: [] });
       savePrefs();
     },
     closePanel() {

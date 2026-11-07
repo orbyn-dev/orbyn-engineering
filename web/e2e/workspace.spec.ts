@@ -373,21 +373,21 @@ test("Reading folds the sidebar away on a wide window, but a narrow home is stil
   await expect(page.getByRole("button", { name: "Show sidebar" })).toBeFocused();
 });
 
-test("the panel shows all six tabs at 380px, and the arrow keys move between them", async ({ page }) => {
+test("the panel shows all five tabs at 380px, and the arrow keys move between them", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto("/__mock/scenario/default?to=/%23/threads/t-done");
   await page.getByRole("button", { name: "Show side panel" }).click();
   await page.getByRole("tab", { name: "Files" }).click();
   const row = page.getByRole("tablist", { name: "Context" });
   await expect(row).toBeVisible();
-  await expect(row.getByRole("tab")).toHaveText(["Diff", "Files", "Browser", "Activity", "PRs", "Side chat"]);
+  await expect(row.getByRole("tab")).toHaveText(["Diff", "Files", "Browser", "Activity", "Side chat"]);
   const m = await row.evaluate((e) => ({ sw: e.scrollWidth, cw: e.clientWidth, o: e.hasAttribute("data-overflow"), w: e.closest(".context")!.getBoundingClientRect().width }));
   expect(m.w).toBe(380);
   expect(m.sw).toBeLessThanOrEqual(m.cw);
   expect(m.o).toBe(false);
-  // Nothing is folded into More, and with no tab closed there is no "+" either.
+  // Nothing is folded into More, and the "+" is always drawn.
   await expect(page.getByRole("button", { name: "More tabs" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open a tab" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open a tab" })).toBeVisible();
   // One tab stop: the chosen tab. The arrows move the choice, and End and Home reach the ends.
   const files = page.getByRole("tab", { name: "Files" });
   await expect(files).toHaveAttribute("aria-selected", "true");

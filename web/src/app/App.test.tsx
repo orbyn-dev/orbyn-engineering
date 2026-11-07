@@ -600,14 +600,14 @@ describe("App against the mock API", () => {
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   });
 
-  it("opens the panel on its first tab, with no launcher, when the window is wide enough to open it itself", async () => {
+  it("opens the panel on its first tab, with the plus drawn, when the window is wide enough to open it itself", async () => {
     setViewportWidth(1700);
     go("#/threads/t-done");
     render(<App />);
     const row = await screen.findByRole("tablist", { name: "Context" });
     expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByLabelText("Open a surface")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open a tab" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });
 
   it("opens an empty thread as a draft, with the project in the heading", async () => {

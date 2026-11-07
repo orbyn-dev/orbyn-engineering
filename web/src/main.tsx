@@ -11,6 +11,7 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";
 import "./styles/thread.css";
+import "./styles/panelTabs.css";
 import "./styles/pages.css";
 import "./styles/layouts.css";
 

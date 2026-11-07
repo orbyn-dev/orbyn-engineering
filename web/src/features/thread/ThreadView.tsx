@@ -31,11 +31,12 @@ import { engineById, useWorkspace } from "../../state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../ui/states";
 import { SurfacePane } from "../panels/SurfacePane";
-import { TerminalDrawerBody } from "../panels/TerminalDrawerBody";
+import { TerminalBar, TerminalDrawerBody } from "../panels/TerminalDrawerBody";
 import { threadRunState } from "../workspace/RunState";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";
+import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "./timeline";
 import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
@@ -109,11 +110,13 @@ function TopBar({
           ) : null}
           {connection ? <ConnectionStatus /> : thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null}
         </span>
+        {narrow ? <PullChip thread={thread} /> : null}
       </div>
       <RelatedThreads thread={thread} />
       <GitActions thread={thread} />
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
+        {narrow ? null : <PullChip thread={thread} />}
         <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup={detailsPopup ? "dialog" : undefined} icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>
@@ -295,14 +298,15 @@ function TerminalDrawer({
   onClose(): void;
 }) {
   const [opened, setOpened] = useState(open);
+  const [maximized, setMaximized] = useState(false);
   const { exitMs } = usePanelMotion();
   // Stays shown while it slides out, then hides.
   const shown = useLingering(open, exitMs);
   if (open && !opened) setOpened(true);
   if (!opened) return null;
   return (
-    <section className="drawer" hidden={!shown} data-closing={!open || undefined} data-moves={moves || undefined} aria-label="Terminal">
-      <TerminalDrawerBody threadId={threadId} onClose={onClose} />
+    <section className="drawer" hidden={!shown} data-closing={!open || undefined} data-moves={moves || undefined} data-maximized={maximized || undefined} aria-label="Terminal">
+      <TerminalDrawerBody threadId={threadId} maximized={maximized} onToggleMaximize={() => setMaximized(!maximized)} onClose={onClose} />
     </section>
   );
 }
@@ -533,6 +537,7 @@ export function ThreadView({ id }: { id: string }) {
           </div>
         </div>
         <TerminalDrawer threadId={id} open={terminalOpen} moves={paneMoves} onClose={() => togglePanel("terminal")} />
+        {terminalOpen ? null : <TerminalBar threadId={id} onOpen={() => togglePanel("terminal")} />}
         {rail && detailsShown ? <DetailsCard thread={thread} engine={engine} compact={false} onClose={toggleDetailsPref} /> : null}
         {!rail && !inPanel && detailsPopover ? (
           <DetailsPopover thread={thread} engine={engine} compact={phone} onClose={() => setDetailsPopover(false)} />

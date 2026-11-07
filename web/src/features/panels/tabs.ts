@@ -1,15 +1,20 @@
-import { Activity, AppWindow, FileDiff, Files, GitPullRequest, MessagesSquare } from "lucide-react";
-import type { RightTab } from "../../state/ui";
+import { Activity, FileDiff, Files, Globe, MessagesSquare } from "lucide-react";
+import { RIGHT_TAB_IDS, type RightTab } from "../../state/ui";
 
-/** The panel's six fixed tabs, in the order the design shows. `text` is what the tab reads, `label` its name. */
-export const RIGHT_TABS: { id: RightTab; label: string; text: string; icon: typeof FileDiff }[] = [
-  { id: "diff", label: "Diff", text: "Diff", icon: FileDiff },
-  { id: "files", label: "Files", text: "Files", icon: Files },
-  { id: "browser", label: "Browser", text: "Browser", icon: AppWindow },
-  { id: "activity", label: "Activity", text: "Activity", icon: Activity },
-  { id: "pulls", label: "Pull requests", text: "PRs", icon: GitPullRequest },
-  { id: "side", label: "Side chat", text: "Side chat", icon: MessagesSquare },
+/** The panel's five surfaces. `label` is the tab's name and what it reads. */
+export const RIGHT_TABS: { id: RightTab; label: string; icon: typeof FileDiff }[] = [
+  { id: "diff", label: "Diff", icon: FileDiff },
+  { id: "files", label: "Files", icon: Files },
+  { id: "browser", label: "Browser", icon: Globe },
+  { id: "activity", label: "Activity", icon: Activity },
+  { id: "side", label: "Side chat", icon: MessagesSquare },
 ];
+
+export const tabOf = (id: RightTab) => RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
+
+/** True when the row is not the default: a tab was closed or the order was changed. */
+export const tabsChanged = (order: readonly RightTab[], closed: readonly RightTab[]) =>
+  closed.length > 0 || order.some((id, at) => id !== RIGHT_TAB_IDS[at]);
 
 /**
  * Which tabs stay in the row when the panel is narrow; the rest fold into More. The open tab always
