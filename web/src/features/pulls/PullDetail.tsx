@@ -25,6 +25,7 @@ import { useThreadPulls } from "../thread/pullStore";
 import { agoWords, forgeName, numberLabel } from "../thread/pullStore";
 import { useVisibleProjects } from "../../state/workspace";
 import { PullsBanner } from "./PullStates";
+import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
 import { mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
@@ -288,6 +289,9 @@ export function PullDetail({
   // The address says which project's pull request, which a number alone does not.
   const linkedThread = useThreadPulls((store) => (pullUrl ? Object.entries(store.byThread).find(([, entry]) => entry.pulls?.some((one) => one.url === pullUrl))?.[0] : undefined));
   const threadTitle = useWorkspace((state) => (linkedThread ? state.threads[linkedThread]?.title : undefined));
+  /** The review card is open, and what was sent once it was. */
+  const [reviewing, setReviewing] = useState(false);
+  const [requested, setRequested] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"close" | "delete_branch" | null>(null);
   const [auto, setAuto] = useState(false);
   const [deleteAfter, setDeleteAfter] = useState(() => deleteBranchChoice(projectId));
@@ -409,6 +413,7 @@ export function PullDetail({
       ? [
           { label: "Edit title", onSelect: () => setEditing(pull.title) },
           { label: "Work on this", onSelect: () => void work() },
+          ...(pull.state === "open" ? [{ label: "Request changes", onSelect: () => setReviewing(true) }] : []),
           { label: `Open on ${forge === "The host" ? "the forge" : forge}`, disabled: connection === "offline", onSelect: () => void window.open(pull.url, "_blank", "noreferrer") },
           ...(open ? [{ label: "Close pull request", destructive: true, onSelect: () => setConfirm("close") }] : []),
         ]
@@ -653,6 +658,7 @@ export function PullDetail({
   const viewers = (forges.data ?? []).flatMap((one) => (one.signed_in && one.viewer ? [one.viewer] : []));
   const mine = extras.data?.details[0];
   const reviewAsked = reviewAskedOf(mine, viewers);
+  const own = Boolean(pull.author && viewers.some((login) => login.toLowerCase() === (pull.author ?? "").toLowerCase()));
   const state = pageState(pull, mergeable, reviewAsked);
   const failedCheck = (checkList.data ?? []).find((check) => check.state === "fail");
   const gate = mergeGate(pull, mergeable, { offline, auto, forge: forgeLabel });
@@ -709,6 +715,7 @@ export function PullDetail({
         <span className="pull-sub">
           {numberLabel(pull)} {"\u00b7"} {projectName}
           <Pill tone={pillTone}>{statusWord}</Pill>
+          {requested !== null ? <span className="pull-changes-label">Changes requested</span> : null}
         </span>
       </PageBar>
       {offline ? (
@@ -723,16 +730,18 @@ export function PullDetail({
         <PullsBanner tone="err" icon={<X size={14} aria-hidden />} actions={null}>
           {failing} {failing === 1 ? "check" : "checks"} failed
         </PullsBanner>
-      ) : (
+      ) : requested !== null ? null : (
         <PullStateBanner
           pull={pull}
           state={state}
           failed={failedCheck}
+          own={own}
+          reviewing={reviewing}
           actions={{
             reopen: () => void act("reopen", "Reopened"),
             ready: () => void update({ draft: false }, "Ready for review"),
             approve: () => void submitReview("approve"),
-            requestChanges: () => setTab("timeline"),
+            requestChanges: () => setReviewing(true),
             deleteBranch: () => setConfirm("delete_branch"),
           }}
         />
@@ -800,7 +809,7 @@ export function PullDetail({
             </Row>
           ) : null}
         </div>
-        <ChecksCard pull={pull} checks={checkList.data} />
+        <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing || requested !== null} />
         <MergeRow
           method={mergeMethod}
           onMethod={setMergeMethod}
@@ -811,12 +820,29 @@ export function PullDetail({
             setDeleteAfter(on);
             rememberDeleteBranch(projectId, on);
           }}
-          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : gate}
+          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : requested !== null ? { ...gate, hint: "You requested changes." } : gate}
           menu={mergeMenu}
           onMenu={setMergeMenu}
           onMerge={() => setMerging(true)}
           hidden={pull.state === "merged"}
         />
+        {reviewing ? (
+          <RequestChangesCard
+            projectId={projectId}
+            number={number}
+            own={own}
+            forge={forgeLabel}
+            onCancel={() => setReviewing(false)}
+            onDone={(note) => {
+              setReviewing(false);
+              setRequested(note);
+              void detail.reload();
+              void extras.reload();
+            }}
+          />
+        ) : requested !== null ? (
+          <RequestedChangesEntry note={requested} />
+        ) : null}
         {reviewers}
         {labels}
       </>

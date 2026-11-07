@@ -941,3 +941,47 @@
   margin: 0;
   color: var(--color-muted);
 }
+
+/* The review card under the merge row, and what it becomes. */
+.pull-review {
+  margin-top: 10px;
+  gap: 8px;
+}
+.pull-review > b,
+.pull-review-head b {
+  font-weight: 500;
+}
+.pull-review textarea {
+  width: 100%;
+  resize: vertical;
+}
+.pull-review-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.pull-review-note[data-tone="danger"] {
+  color: var(--color-danger);
+}
+.pull-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pull-review-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+}
+.pull-review-done p {
+  margin: 0;
+  color: var(--color-textSoft);
+}
+.pull-changes-label {
+  color: var(--color-warnText);
+  font-size: var(--text-label);
+}

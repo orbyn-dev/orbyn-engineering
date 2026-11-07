@@ -291,6 +291,19 @@ test("the code tab marks files viewed and submits line comments as one review", 
   });
 });
 
+test("Request changes opens a review card, sends the note as a review and becomes a timeline entry", async ({ page }) => {
+  const article = await openPull(page, "Unrelated fix");
+  await moreAction(page, article, "Request changes");
+  const send = article.getByRole("button", { name: "Request changes" });
+  await expect(send).toBeDisabled();
+  await article.getByRole("textbox", { name: "What needs to change?" }).fill("Please add a test.");
+  await send.click();
+  await expect(article.getByRole("region", { name: "You requested changes" })).toBeVisible();
+  await expect(article.locator(".pull-changes-label")).toHaveText("Changes requested");
+  await expect(article.getByText("You requested changes.", { exact: true })).toBeVisible();
+  await expect.poll(() => service.ghPull(3)).toMatchObject({ reviewed: "--request-changes", reviewBody: "Please add a test." });
+});
+
 test("the code tab shows one commit at a time, then every change again", async ({ page }) => {
   const article = await openPull(page, "First layer");
   await article.getByRole("tab", { name: /^Files changed/ }).click();

@@ -13,12 +13,18 @@ export function PullStateBanner({
   pull,
   state,
   failed,
+  own,
+  reviewing,
   actions,
 }: {
   pull: PullRequest;
   state: PageState;
   /** The first failing check, for the failed state. */
   failed?: PullCheck;
+  /** The person opened it: a forge does not let them review it. */
+  own?: boolean;
+  /** The review card is open, so the banner leaves the one button to it. */
+  reviewing?: boolean;
   actions: { reopen(): void; ready(): void; approve(): void; requestChanges(): void; deleteBranch(): void };
 }) {
   switch (state) {
@@ -97,12 +103,14 @@ export function PullStateBanner({
           icon={<TriangleAlert size={14} aria-hidden />}
           actions={
             <>
-              <Button small tone="primary" icon={<SquareCheck size={14} aria-hidden />} onClick={actions.approve}>
+              <Button small tone="primary" disabled={own} icon={<SquareCheck size={14} aria-hidden />} onClick={actions.approve}>
                 Approve
               </Button>
-              <Button small onClick={actions.requestChanges}>
-                Request changes
-              </Button>
+              {reviewing ? null : (
+                <Button small onClick={actions.requestChanges}>
+                  Request changes
+                </Button>
+              )}
             </>
           }
         >
@@ -140,11 +148,20 @@ export function checksHead(pull: PullRequest): { text: string; tone?: "danger" |
 const checkWord = (check: PullCheck) =>
   check.state === "pass" ? "Passed" : check.state === "fail" ? "Failed" : check.state === "pending" ? "running" : check.state === "skipped" ? "skipped" : check.state === "neutral" ? "neutral" : "";
 
-export function ChecksCard({ pull, checks }: { pull: PullRequest; checks: PullCheck[] | null }) {
+export function ChecksCard({ pull, checks, collapsed }: { pull: PullRequest; checks: PullCheck[] | null; collapsed?: boolean }) {
   const head = checksHead(pull);
   if (!pull.checks && (!checks || checks.length === 0)) return null;
   const total = pull.checks?.total ?? 0;
   const running = pull.checks?.running ?? 0;
+  // With the review card open there is no room for the list: one line says how they stand.
+  if (collapsed)
+    return (
+      <div className="pull-card pull-checks-card">
+        <Row name="Checks" tone={head.tone}>
+          {head.text}
+        </Row>
+      </div>
+    );
   return (
     <div className="pull-card pull-checks-card">
       <Row name="Checks" tone={head.tone}>

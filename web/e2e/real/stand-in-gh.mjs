@@ -263,6 +263,7 @@ switch (route) {
   }
   case "pr review":
     pull(args[2]).reviewed = args.find((arg) => /^--(approve|request-changes|comment)$/.test(arg));
+    pull(args[2]).reviewBody = flag("--body");
     save();
     break;
   case "pr revert":
