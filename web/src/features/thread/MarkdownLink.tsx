@@ -93,9 +93,10 @@ export function ExternalLink({ href, children }: { href: string; children: React
   };
   const onClick = (event: MouseEvent) => {
     stopPreview();
-    if (number !== null && inApp && contextProject) {
+    const project = contextProject ?? previewProjectId();
+    if (number !== null && inApp && project) {
       event.preventDefault();
-      navigate({ name: "pulls", project: contextProject, number });
+      navigate({ name: "pulls", project, number });
       return;
     }
     const commit = commitShaOf(href);
