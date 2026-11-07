@@ -130,11 +130,11 @@ describe("filters that need details", () => {
   const list = [entry(1), entry(2), entry(3)];
   const numbers = (filters: Parameters<typeof visiblePulls>[1], sort = newest) => visiblePulls(list, filters, [], sort, ["me"], withDetails).map((e) => e.pull.number);
 
-  it("keeps what asks the viewer for review, and drops rows with no details", () => {
-    expect(numbers({ ...noFilters, review: ["review_required"] })).toEqual([1]);
+  it("keeps what asks the viewer for review, and keeps rows with no details", () => {
+    expect(numbers({ ...noFilters, review: ["review_required"] })).toEqual([3, 1]);
   });
-  it("keeps what asks any chosen person or team", () => {
-    expect(numbers({ ...noFilters, requestedFrom: ["user:sam"] })).toEqual([2]);
+  it("keeps what asks any chosen person or team, and rows with no details", () => {
+    expect(numbers({ ...noFilters, requestedFrom: ["user:sam"] })).toEqual([3, 2]);
   });
   it("sorts by comments with the unknown last, whichever way it runs", () => {
     expect(numbers(noFilters, { by: "comments", dir: "newest" })).toEqual([2, 1, 3]);
@@ -184,7 +184,7 @@ describe("the pull request page", () => {
     [{ review_state: "review_required" }, "mergeable", false, false, "Merge needs an approval."],
     [{ review_state: "approved" }, "mergeable", false, true, "No conflicts"],
   ] as const)("gates Merge for %j: enabled %s, saying %s", (over, mergeable, offline, enabled, hint) => {
-    expect(mergeGate(pull(over as Partial<PullListEntry["pull"]>), mergeable, { offline, auto: false, forge: "GitHub" })).toEqual({ enabled, hint });
+    expect(mergeGate(pull(over as Partial<PullListEntry["pull"]>), mergeable, { offline, auto: false, forge: "GitHub" })).toMatchObject({ enabled, hint });
   });
 
   it("lets Merge wait for checks once auto-merge is chosen", () => {

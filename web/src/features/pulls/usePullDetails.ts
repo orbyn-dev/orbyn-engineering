@@ -4,6 +4,9 @@ import type { PullListEntry } from "../../api/types";
 import { useWaited } from "../../lib/motion";
 import { detailsKey, type DetailsByKey, type PullDetails } from "./pullModel";
 
+/** The service answers at most this many rows in one details request. */
+const CHUNK = 100;
+
 export type DetailsStatus = "idle" | "loading" | "ready" | "failed";
 
 export interface PullDetailsState {
@@ -46,23 +49,37 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
     const abort = new AbortController();
     controller.current = abort;
     setStatus("loading");
-    pullsApi
-      .details({ pulls: list.map(({ project_id, pull }) => ({ project_id, number: pull.number, updated_at: pull.updated_at })), fresh: own }, abort.signal)
-      .then(
-        (response) => {
-          if (id !== generation.current) return;
-          setByKey((known) => {
-            const next = new Map(known);
-            for (const one of response.details) next.set(detailsKey(one.project_id, one.number), one as PullDetails);
-            return next;
-          });
-          setPaused(response.paused);
-          setStatus("ready");
-        },
-        () => {
-          if (id === generation.current && !abort.signal.aborted) setStatus("failed");
-        },
-      );
+    setPaused([]);
+    // The service answers at most 100 rows a request, so the rows go in chunks, the top of the list first.
+    const chunks: PullListEntry[][] = [];
+    for (let at = 0; at < list.length; at += CHUNK) chunks.push(list.slice(at, at + CHUNK));
+    let failed = false;
+    const pausedFields = new Set<string>();
+    void Promise.all(
+      chunks.map((chunk) =>
+        pullsApi
+          .details({ pulls: chunk.map(({ project_id, pull }) => ({ project_id, number: pull.number, updated_at: pull.updated_at })), fresh: own }, abort.signal)
+          .then(
+            (response) => {
+              if (id !== generation.current) return;
+              setByKey((known) => {
+                const next = new Map(known);
+                for (const one of response.details) next.set(detailsKey(one.project_id, one.number), one as PullDetails);
+                return next;
+              });
+              for (const field of response.paused) pausedFields.add(field);
+              setPaused([...pausedFields]);
+            },
+            () => {
+              if (!abort.signal.aborted) failed = true;
+            },
+          ),
+      ),
+    ).then(() => {
+      if (id !== generation.current) return;
+      // A chunk that could not be read leaves its rows without details, which is a failure to say so about.
+      setStatus(failed ? "failed" : "ready");
+    });
   }, []);
 
   // One request per list read: a new list object is a new read.

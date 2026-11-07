@@ -120,7 +120,7 @@ describe("a row's details cells", () => {
     await settle();
     await act(async () => answer({ details: [details(1)], paused: [] }));
     const tips = within(row()).getAllByRole("tooltip", { hidden: true }).map((tip) => tip.textContent);
-    expect(tips).toContain("GitLab doesn’t provide check counts");
+    expect(tips).toContain("GitLab doesn’t provide check counts here.");
   });
 });
 
@@ -155,5 +155,28 @@ describe("a filter that needs details", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove filter" }));
     expect(screen.queryByText("Couldn’t load details, so this filter can’t apply yet.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove filter Review: needs my review" })).toBeNull();
+  });
+
+  it("keeps rows whose details are missing when a filter needs details, and says so when the rate limit paused reviewers", async () => {
+    render(<PullsPage />);
+    await settle();
+    await act(async () => answer({ details: [details(1, { requested_reviewers: [{ name: "me", kind: "user" }] })], paused: [] }));
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Needs my review" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /^Closed/ }));
+    await settle();
+    await act(async () => answer({ details: [], paused: ["requested_reviewers"] }));
+    expect(screen.getByRole("button", { name: /PR 9/ })).toBeInTheDocument();
+    expect(screen.getByText("Couldn’t load details, so this filter can’t apply yet.")).toBeInTheDocument();
+  });
+});
+
+describe("details in chunks", () => {
+  it("asks for at most 100 rows a request", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: Array.from({ length: 230 }, (_, at) => entry(at + 1)), failed: [] });
+    render(<PullsPage />);
+    await settle();
+    expect(vi.mocked(pullsApi.details).mock.calls.map(([body]) => body.pulls.length)).toEqual([100, 100, 30]);
   });
 });

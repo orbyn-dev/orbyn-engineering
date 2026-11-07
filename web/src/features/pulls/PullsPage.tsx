@@ -1,6 +1,6 @@
 import { RefreshCw, Search, X } from "lucide-react";
 import "./pulls.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PullList, PullListEntry } from "../../api/types";
 import { relativeTime } from "../../lib/format";
 import { useWaited } from "../../lib/motion";
@@ -18,6 +18,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { PageBar } from "../../ui/PageBar";
 import { ErrorState } from "../../ui/states";
 import { PullDetail } from "./PullDetail";
+import { RowMergeDialog } from "./MergeDialog";
 import { PullsToolbar } from "./PullsToolbar";
 import { PullRows, PullsHead, PullsSkeleton } from "./PullRows";
 import { DetailsBanner, NoPulls, OfflineBanner, SignedOut, Unreachable } from "./PullStates";
@@ -65,6 +66,7 @@ export function PullsPage() {
     navigate(next ? { name: "pulls", project: next.project, number: next.number } : { name: "pulls" });
   const [picked, setPicked] = useState<PullListEntry[]>([]);
   const [merging, setMerging] = useState<PullListEntry | null>(null);
+  const [closing, setClosing] = useState<PullListEntry | null>(null);
   const pushToast = useUi((state) => state.pushToast);
   const projects = useVisibleProjects();
   const phone = useLayoutWidth() === "phone";
@@ -91,8 +93,10 @@ export function PullsPage() {
   // A filter never runs on missing data: while details are on their way the unfiltered rows stay,
   // and after a failure they stay with a banner.
   const missing = all.some(({ project_id, pull }) => !details.byKey.has(detailsKey(project_id, pull.number)));
-  const blocked = needsDetails(filters) && missing && details.status !== "ready";
-  const detailsFailed = blocked && details.status === "failed";
+  // The rate limit pausing reviewers is the same as not having them: the filter cannot apply yet.
+  const rateLimited = details.status === "ready" && details.paused.includes("requested_reviewers");
+  const blocked = needsDetails(filters) && ((missing && details.status !== "ready") || rateLimited);
+  const detailsFailed = blocked && (details.status === "failed" || rateLimited);
   const filterWaiting = blocked && !detailsFailed;
   // Without a creation time the number orders by date, which only means something inside one repository.
   const oneRepo = has.createdAt || filters.project !== null || new Set(all.map((entry) => entry.project_id)).size <= 1;
@@ -102,6 +106,14 @@ export function PullsPage() {
     [all, blocked, filters, tokens, orderBy, viewers, details.byKey],
   );
   const refresh = () => void list.reload();
+  // Coming back from a pull request, by any way, reads the list again: what it did may have changed a row.
+  const wasOpen = useRef(false);
+  const open = selected !== null;
+  useEffect(() => {
+    if (wasOpen.current && !open) refresh();
+    wasOpen.current = open;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   const refreshByPerson = () => {
     details.markFresh();
     refresh();
@@ -187,10 +199,6 @@ export function PullsPage() {
           key={`${selected.project}:${selected.number}`}
           projectId={selected.project}
           number={selected.number}
-          onBack={() => {
-            setSelected(null);
-            refresh();
-          }}
           onOpen={(number) => setSelected({ project: selected.project, number })}
         />
       </div>
@@ -227,7 +235,7 @@ export function PullsPage() {
         <SignedOut
           forge={forgeLabel}
           onSignIn={() => navigate({ name: "settings", section: "source-control" })}
-          onLater={() => navigate({ name: "home" })}
+          onLater={() => window.history.back()}
         />
       ) : (
         <>
@@ -267,6 +275,14 @@ export function PullsPage() {
             phoneRefresh={phone ? refreshButton : undefined}
             detailsWait={filterWaiting ? "waiting" : detailsFailed ? "failed" : undefined}
           />
+          {phone && details.status === "failed" ? (
+            <p className="pulls-upd pulls-upd-details pulls-upd-phone">
+              Details unavailable {"\u00b7"}{" "}
+              <button type="button" className="pulls-retry" aria-label="Retry loading details" onClick={details.retry}>
+                Retry
+              </button>
+            </p>
+          ) : null}
           {detailsFailed ? (
             <DetailsBanner
               onRetry={details.retry}
@@ -331,22 +347,17 @@ export function PullsPage() {
           </div>
         </>
       )}
-      {merging ? (
+      {merging ? <RowMergeDialog projectId={merging.project_id} number={merging.pull.number} onClose={() => setMerging(null)} onMerged={refresh} /> : null}
+      {closing ? (
         <ConfirmDialog
-          title={`Merge #${merging.pull.number}?`}
-          confirmLabel="Merge"
-          onClose={() => setMerging(null)}
-          onConfirm={async () => {
-            await pullsApi.merge(merging.project_id, merging.pull.number, {
-              method: "squash",
-              auto: false,
-              delete_branch: true,
-              strip_credits: false,
-            });
-            refresh();
-          }}
+          title={`Close #${closing.pull.number}?`}
+          confirmLabel="Close pull request"
+          tone="danger"
+          cancelFocus
+          onClose={() => setClosing(null)}
+          onConfirm={() => pullsApi.action(closing.project_id, closing.pull.number, "close").then(() => (pushToast("Closed"), refresh()))}
         >
-          <p>{merging.pull.title} is squashed into {merging.pull.base} and its branch is deleted.</p>
+          <p>{closing.pull.title} is closed without merging. It can be reopened.</p>
         </ConfirmDialog>
       ) : null}
     </div>
@@ -370,7 +381,7 @@ export function PullsPage() {
       onReopen: (entry: PullListEntry) => quick(pullsApi.action(entry.project_id, entry.pull.number, "reopen"), "Reopened"),
       onReady: (entry: PullListEntry) => quick(pullsApi.update(entry.project_id, entry.pull.number, { draft: false }), "Ready for review"),
       onMerge: (entry: PullListEntry) => setMerging(entry),
-      onClose: (entry: PullListEntry) => quick(pullsApi.action(entry.project_id, entry.pull.number, "close"), "Closed"),
+      onClose: (entry: PullListEntry) => setClosing(entry),
     };
   }
 }

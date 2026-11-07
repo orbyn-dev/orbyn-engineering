@@ -194,11 +194,13 @@ export function visiblePulls(
     if (filters.draft === "hide" && pull.draft) return false;
     const asked = filters.review.filter((key) => key !== "review_required");
     const needsMe = filters.review.includes("review_required");
+    // A row whose reviewers are unknown is kept: a filter never runs on missing data.
+    const unknown = detailsOf(entry)?.requested_reviewers === undefined;
     if (asked.length > 0 || needsMe) {
       const byState = (asked as string[]).includes(pull.review_state ?? "none");
-      if (!byState && !(needsMe && reviewAskedOf(detailsOf(entry), viewers))) return false;
+      if (!byState && !(needsMe && (unknown || reviewAskedOf(detailsOf(entry), viewers)))) return false;
     }
-    if (filters.requestedFrom.length > 0) {
+    if (filters.requestedFrom.length > 0 && !unknown) {
       const people = detailsOf(entry)?.requested_reviewers ?? [];
       if (!people.some((one) => filters.requestedFrom.includes(`${one.kind}:${one.name}`))) return false;
     }
@@ -311,7 +313,7 @@ export function mergeGate(
   pull: PullRequest,
   mergeable: string | null,
   options: { offline: boolean; auto: boolean; forge: string },
-): { enabled: boolean; hint: string } {
+): { enabled: boolean; hint: string; tip?: string } {
   if (pull.state === "merged") return { enabled: false, hint: `Nothing left to do on ${options.forge}.` };
   if (pull.state === "closed") return { enabled: false, hint: "Reopen to merge it." };
   if (pull.draft) return { enabled: false, hint: "Mark it ready for review to merge." };
@@ -319,7 +321,7 @@ export function mergeGate(
   if (mergeable === "conflicting") return { enabled: false, hint: "Resolve the conflict to merge." };
   const checks = checksOf(pull.checks_state);
   if (checks === "fail") return { enabled: false, hint: "Merge is blocked by a failing check." };
-  if (checks === "pending" && !options.auto) return { enabled: false, hint: "Merge unlocks when checks pass." };
+  if (checks === "pending" && !options.auto) return { enabled: false, hint: "Merge unlocks when checks pass.", tip: "Checks are still running." };
   if (pull.review_state === "review_required" || pull.review_state === "changes_requested") return { enabled: false, hint: "Merge needs an approval." };
   return { enabled: true, hint: mergeable === "mergeable" ? "No conflicts" : "" };
 }

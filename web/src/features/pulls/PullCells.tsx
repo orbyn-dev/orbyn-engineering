@@ -109,14 +109,15 @@ function Slot({
     const named = PAUSED_FIELD[field];
     return env.status === "ready" && named !== null && env.paused.includes(named);
   })();
+  // Check counts come with the list, so a details failure says nothing about them.
   const why =
-    env.status === "failed"
-      ? "Couldn’t load details"
+    env.status === "failed" && field !== "checks"
+      ? "Couldn\u2019t load details"
       : paused
         ? field === "comments"
-          ? "Comment counts are paused until GitHub’s rate limit resets"
-          : `${NOUN[field][0]!.toUpperCase()}${NOUN[field].slice(1)} are paused until GitHub’s rate limit resets`
-        : `${forge} doesn’t provide ${NOUN[field]}`;
+          ? "Comment counts are paused until GitHub\u2019s rate limit resets"
+          : `${NOUN[field][0]!.toUpperCase()}${NOUN[field].slice(1)} are paused until GitHub\u2019s rate limit resets`
+        : `${forge} doesn\u2019t provide ${NOUN[field]} here.`;
   return (
     <Cell className={className} tip={why}>
       <span className="pull-slot" style={size}>
