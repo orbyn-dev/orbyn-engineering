@@ -282,7 +282,8 @@
   flex: none;
   color: var(--color-muted);
 }
-.pr-note .btn {
+.pr-note .btn,
+.pr-retry {
   margin-left: auto;
 }
 .pr-foot {
@@ -295,7 +296,8 @@
   font-size: var(--text-label);
 }
 .pr-refresh,
-.pr-note .btn {
+.pr-note .btn,
+.pr-retry {
   gap: 6px;
   min-height: 26px;
   padding: 0 10px;
@@ -304,6 +306,9 @@
   background: var(--color-chip);
   color: var(--color-textSoft);
   font-size: var(--text-meta);
+}
+.pr-retry {
+  flex: none;
 }
 .pr-refresh:disabled {
   opacity: 0.45;
