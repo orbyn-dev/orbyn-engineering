@@ -40,7 +40,7 @@ describe("surface tabs", () => {
   it("shows the five surfaces, with no Pull requests tab and no Terminal tab, each with a close button", () => {
     pane();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
-    expect(screen.getByRole("button", { name: "Close Files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close Files tab" })).toBeInTheDocument();
   });
 
   it("shows the first surface until another is chosen, and keeps the chosen one when its tab is pressed again", async () => {
@@ -135,7 +135,7 @@ describe("surface tabs", () => {
     const user = userEvent.setup();
     useUi.setState({ panelTab: "files" });
     pane();
-    await user.click(screen.getByRole("button", { name: "Close Files" }));
+    await user.click(screen.getByRole("button", { name: "Close Files tab" }));
     expect(screen.getByRole("tab", { name: "Browser" })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("Tab closed");
   });
@@ -153,7 +153,7 @@ describe("surface tabs", () => {
     const user = userEvent.setup();
     useUi.setState({ panelTab: "files" });
     pane();
-    await user.click(screen.getByRole("button", { name: "Close Files" }));
+    await user.click(screen.getByRole("button", { name: "Close Files tab" }));
     expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
     expect(useUi.getState().panelTab).toBe("browser");
     await user.click(screen.getByRole("button", { name: "Open a tab" }));

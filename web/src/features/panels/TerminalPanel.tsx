@@ -10,6 +10,7 @@ import { charactersOver, chipId, promptWithChips, terminalSelection } from "../t
 import { Button, Pill } from "../../ui/controls";
 import { terminalUrl } from "./terminalSocket";
 import { registerTerminal, terminalKey } from "./terminalControls";
+import { captureFocusReturn } from "../../ui/focusReturn";
 import { linkProvider } from "./terminalLinks";
 import { ShellMarks, type Position, type ShellCommand } from "./shellMarks";
 import type { Terminal as XTerm } from "@xterm/xterm";
@@ -94,13 +95,18 @@ export function TerminalPanel({
   threadId,
   terminalId,
   observe = false,
+  autoFocus = false,
 }: {
   threadId: string;
   terminalId?: string;
+  /** A terminal just opened takes focus once its input exists. */
+  autoFocus?: boolean;
   /** Shows the output and sends nothing, so it can sit beside a running script. */
   observe?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const focusOnOpen = useRef(autoFocus);
+  focusOnOpen.current = autoFocus;
   const [connection, setConnection] = useState<Connection>("connecting");
   const [attempt, setAttempt] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -139,6 +145,8 @@ export function TerminalPanel({
       const search = new SearchAddon();
       terminal.loadAddon(search);
       terminal.open(element);
+      // The shared focus rule puts focus on the terminal's own input, which xterm has just made.
+      if (focusOnOpen.current) captureFocusReturn(element.querySelector<HTMLElement>(".xterm-helper-textarea")).restore();
       const marks = new ShellMarks((fromLine, fromCol, toLine) => typedText(terminal, fromLine, fromCol, toLine));
       const oscs = [133, 633].map((ident) =>
         terminal.parser.registerOscHandler(ident, (data) => {

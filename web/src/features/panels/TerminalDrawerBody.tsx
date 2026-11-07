@@ -176,6 +176,8 @@ export function TerminalDrawerBody({
     request<ProjectFileView>("GET", `${base}/scripts`, undefined, signal),
   );
   const [active, setActive] = useState(MAIN);
+  // A terminal opened here takes focus when it loads; one that was already there does not.
+  const [focusGroup, setFocusGroup] = useState<string | null>(null);
   const [mainHidden, setMainHidden] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [watching, setWatching] = useState(false);
@@ -209,6 +211,7 @@ export function TerminalDrawerBody({
     try {
       const made = await request<TerminalInfo>("POST", `${base}/terminals`, body);
       setActive(made.group);
+      setFocusGroup(made.group);
       reload();
     } catch (failure) {
       fail(failure);
@@ -219,6 +222,7 @@ export function TerminalDrawerBody({
     try {
       const made = await request<TerminalInfo>("POST", `${base}/console`, {});
       setActive(made.group);
+      setFocusGroup(made.group);
       reload();
     } catch (failure) {
       fail(failure);
@@ -448,6 +452,7 @@ export function TerminalDrawerBody({
                 <TerminalPanel
                   threadId={threadId}
                   observe={watching}
+                  autoFocus={terminal.group === focusGroup}
                   {...(terminal.id === MAIN ? {} : { terminalId: terminal.id })}
                 />
               </div>

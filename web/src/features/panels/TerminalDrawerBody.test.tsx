@@ -9,7 +9,7 @@ import { useComposerChips } from "../thread/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
 import { registerTerminal, terminalKey } from "./terminalControls";
 
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId }: { terminalId?: string }) => <div>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
+vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId, autoFocus }: { terminalId?: string; autoFocus?: boolean }) => <div data-autofocus={autoFocus ? "yes" : "no"}>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 vi.mock("../thread/runProjectAction", () => ({ runProjectAction: vi.fn(() => Promise.resolve()) }));
 
@@ -235,6 +235,27 @@ describe("terminal focus, search keys and the hidden main shell", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
     expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+  });
+
+  it("asks a terminal opened here to take focus when it loads, and not one that was already there", async () => {
+    let list = [idle("t2", "build")];
+    mock.mockImplementation((method: string, path: string) => {
+      if (method === "POST") {
+        const made = idle("t9", "zsh 2");
+        list = [...list, made];
+        return Promise.resolve(made) as never;
+      }
+      if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(list) as never;
+      return Promise.resolve({ scripts: [] }) as never;
+    });
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await screen.findByRole("tab", { name: "build" });
+    expect(screen.getByText("Output of main").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "no");
+    await user.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(screen.getByText("Output of t9").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "yes"));
+    await user.click(screen.getByRole("tab", { name: "build" }));
+    expect(screen.getByText("Output of t2").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "no");
   });
 
   it("asks before ending a shell that is alive, not only a script", async () => {

@@ -337,7 +337,7 @@ export function SurfacePane({
                   {offline ? <CloudOff size={12} aria-hidden /> : null}
                 </button>
                 {rowIds.length > 1 ? (
-                  <button type="button" className="ptx" tabIndex={-1} aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => closeWithFocus(id)}>
+                  <button type="button" className="ptx" tabIndex={-1} aria-label={`Close ${label} tab`} title={`Close ${label}`} onClick={() => closeWithFocus(id)}>
                     <X size={11} aria-hidden />
                   </button>
                 ) : null}
