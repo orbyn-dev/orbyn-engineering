@@ -29,6 +29,8 @@ interface ThreadPullsStore {
   refresh(thread: { id: string; project_id: string }): Promise<void>;
   setWatch(threadId: string, number: number, on: boolean): Promise<void>;
   forget(threadId: string): void;
+  /** A consumer shows this thread's list; the entry is dropped only when the last one lets go. */
+  retain(threadId: string): () => void;
 }
 
 const byNumber = (pulls: readonly PullRequest[]) => [...pulls].sort((a, b) => a.number - b.number);
@@ -43,6 +45,7 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
   // The newest read per thread wins; an older one that lands late is ignored.
   const newest = new Map<string, number>();
   const pending = new Map<string, number>();
+  const holders = new Map<string, number>();
   let counter = 0;
   const patch = (id: string, change: Partial<ThreadPullsEntry>) =>
     set((state) => ({ byThread: { ...state.byThread, [id]: { ...(state.byThread[id] ?? empty), ...change } } }));
@@ -101,6 +104,19 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
         patch(threadId, { watched: before });
         throw failure;
       }
+    },
+    retain(threadId) {
+      holders.set(threadId, (holders.get(threadId) ?? 0) + 1);
+      return () => {
+        holders.set(threadId, (holders.get(threadId) ?? 1) - 1);
+        // A swap of one consumer for another unmounts before it mounts: look again once it has.
+        setTimeout(() => {
+          if ((holders.get(threadId) ?? 0) <= 0) {
+            holders.delete(threadId);
+            get().forget(threadId);
+          }
+        }, 0);
+      };
     },
     forget(threadId) {
       newest.delete(threadId);

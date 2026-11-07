@@ -233,6 +233,77 @@ describe("pull request popover", () => {
   });
 });
 
+describe("pull request list focus and link errors", () => {
+  it("moves focus to the next row after a middle row is unlinked, and to the previous row when the last of several goes", async () => {
+    serve(three);
+    vi.spyOn(pullsApi, "unlink").mockImplementation(async (_thread, number) => {
+      vi.mocked(pullsApi.linked).mockResolvedValue(three.filter((entry) => entry.number !== number));
+    });
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "Unlink #57" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "#142 Pull 142" })).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Unlink #142" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "#3 Pull 3" })).toHaveFocus());
+  });
+
+  it("returns focus to Link a pull request… when the form is cancelled", async () => {
+    serve(three);
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Link a pull request…" })).toHaveFocus());
+  });
+
+  it("returns focus to Link a pull request… after a pull request is linked", async () => {
+    serve(three);
+    vi.spyOn(pullsApi, "link").mockResolvedValue(undefined);
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
+    await user.type(screen.getByRole("textbox", { name: "Pull request number" }), "9");
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Link a pull request…" })).toHaveFocus());
+  });
+
+  it("says there is no such pull request only for a 404 or 422; a 500 is the host not answering, with Retry", async () => {
+    serve(three);
+    vi.spyOn(pullsApi, "link").mockRejectedValueOnce(new ApiFailure("boom", "boom", 500)).mockRejectedValueOnce(new ApiFailure("gone", "gone", 422));
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
+    await user.type(screen.getByRole("textbox", { name: "Pull request number" }), "9");
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    expect(await screen.findByText("GitHub didn’t answer.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("No pull request #9 in this repository.")).toBeInTheDocument();
+  });
+
+  it("rejects a number that is not a safe integer, and sends nothing", async () => {
+    serve(three);
+    const link = vi.spyOn(pullsApi, "link").mockResolvedValue(undefined);
+    const user = await open();
+    await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
+    await user.type(screen.getByRole("textbox", { name: "Pull request number" }), "9007199254740993");
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    expect(await screen.findByText("Enter a pull request number.")).toBeInTheDocument();
+    expect(link).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Pull request number" })).toHaveAttribute("maxlength", "17");
+  });
+});
+
+describe("pull request cache", () => {
+  it("keeps the entry the details row shares when the chip unmounts, and drops it with the last consumer", async () => {
+    serve(three);
+    const chip = render(<PullChip thread={thread} />);
+    const row = render(<PullsRow thread={thread} />);
+    await screen.findAllByRole("button", { name: "Pull requests" });
+    chip.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(useThreadPulls.getState().byThread["t1"]?.pulls).toHaveLength(3);
+    row.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
+  });
+});
+
 describe("details card Pull requests row", () => {
   it("says how many, and opens the same list in place", async () => {
     serve(three);
@@ -285,6 +356,7 @@ describe("pull request store", () => {
     const { unmount } = render(<PullChip thread={thread} />);
     await screen.findByRole("button", { name: "Pull requests" });
     unmount();
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
   });
 });

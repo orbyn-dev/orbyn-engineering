@@ -33,15 +33,15 @@ import "../pulls/pullsToolbar.css";
 import "./pullChip.css";
 
 /** Reads the thread's linked pull requests once it shows, and again whenever it changes. */
-function useLinked(thread: Thread, owner = false) {
+function useLinked(thread: Thread) {
   const load = useThreadPulls((state) => state.load);
-  const forget = useThreadPulls((state) => state.forget);
+  const retain = useThreadPulls((state) => state.retain);
   const { id, project_id: projectId } = thread;
+  // The entry stays while any consumer (the chip, the details row) shows it, and goes with the last.
+  useEffect(() => retain(id), [retain, id]);
   useEffect(() => {
     void load({ id, project_id: projectId });
-    // The owner (the header chip) drops what it read when the thread goes, so the cache doesn't grow.
-    return owner ? () => forget(id) : undefined;
-  }, [load, forget, owner, id, projectId]);
+  }, [load, id, projectId]);
   return useThreadPulls((state) => entryOf(state, thread.id));
 }
 
@@ -62,15 +62,16 @@ function Skeleton() {
 }
 
 /** A pull request number typed in: links it to the thread, or says there is no such one. */
-export function LinkForm({ thread, onDone, onCancel }: { thread: Thread; onDone(): void; onCancel(): void }) {
+export function LinkForm({ thread, host = "The host", onDone, onCancel }: { thread: Thread; host?: string; onDone(): void; onCancel(): void }) {
   const load = useThreadPulls((state) => state.load);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const number = Number(/^#?(\d+)$/.exec(value.trim())?.[1]);
-    if (!Number.isInteger(number) || number < 1) {
+    const number = Number(/^#?(\d{1,16})$/.exec(value.trim())?.[1]);
+    if (!Number.isSafeInteger(number) || number < 1) {
       setError("Enter a pull request number.");
       return;
     }
@@ -83,9 +84,10 @@ export function LinkForm({ thread, onDone, onCancel }: { thread: Thread; onDone(
       },
       (failure: unknown) => {
         setBusy(false);
-        // The forge answered with an error for this number: there is no such pull request here.
-        const known = failure instanceof ApiFailure && failure.status >= 400 && failure.status !== 503;
-        setError(known ? `No pull request #${number} in this repository.` : toFailure(failure).message);
+        // Only a 404 or 422 says there is no such pull request; any other failure is the host not answering.
+        const missing = failure instanceof ApiFailure && (failure.status === 404 || failure.status === 422);
+        setFailed(!missing);
+        setError(missing ? `No pull request #${number} in this repository.` : `${host} didn’t answer.`);
       },
     );
   };
@@ -96,7 +98,7 @@ export function LinkForm({ thread, onDone, onCancel }: { thread: Thread; onDone(
         <span>Pull request number</span>
         <span className="pr-link-field" data-invalid={error ? "" : undefined}>
           <span aria-hidden>#</span>
-          <input aria-label="Pull request number" inputMode="numeric" value={value} autoFocus onChange={(event) => setValue(event.target.value)} />
+          <input aria-label="Pull request number" inputMode="numeric" maxLength={17} value={value} autoFocus onChange={(event) => setValue(event.target.value)} />
         </span>
       </label>
       {error ? (
@@ -109,7 +111,7 @@ export function LinkForm({ thread, onDone, onCancel }: { thread: Thread; onDone(
           Cancel
         </Button>
         <Button type="submit" small tone="primary" disabled={busy}>
-          Link
+          {failed ? "Retry" : "Link"}
         </Button>
       </div>
     </form>
@@ -127,14 +129,24 @@ function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOp
   const summary = checksSummary(pull);
   const project = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.name);
   const watching = entry.watched.includes(pull.number);
-  const unlink = async () => {
-    // The last row takes the chip with it: focus goes to a stable element, the Details button.
+  const unlink = async (from: HTMLElement) => {
+    // Focus goes to the next row's first control, else the previous row's, else "Link a pull request…";
+    // the last row takes the chip with it, so then it goes to a stable element, the Details button.
+    const row = from.closest(".pr-row");
+    const sibling = (step: "nextElementSibling" | "previousElementSibling") =>
+      row?.[step]?.matches(".pr-row") ? row[step]!.querySelector<HTMLElement>(".pr-open") : null;
     const last = (entry.pulls?.length ?? 0) <= 1;
-    const back = last ? captureFocusReturn(document.querySelector<HTMLElement>("[data-details-toggle]")) : null;
+    const target = last
+      ? document.querySelector<HTMLElement>("[data-details-toggle]")
+      : (sibling("nextElementSibling") ?? sibling("previousElementSibling") ?? row?.closest(".pr-pop")?.querySelector<HTMLElement>(".pr-link") ?? null);
+    // Inside an open list the shared rule would refuse the target, so a row or "Link…" takes focus directly.
+    const inside = target !== null && !!target.closest(".pr-pop");
+    const back = inside ? null : captureFocusReturn(target);
     try {
       await pullsApi.unlink(thread.id, pull.number);
       await load(thread);
-      back?.restore();
+      if (back) back.restore();
+      else target?.focus();
     } catch (failure) {
       pushToast(`Couldn't do that. ${toFailure(failure).message}`);
     }
@@ -183,7 +195,7 @@ function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOp
           }}
         />
       </label>
-      <button type="button" className="pr-unlink" aria-label={`Unlink ${numberLabel(pull)}`} onClick={() => void unlink()}>
+      <button type="button" className="pr-unlink" aria-label={`Unlink ${numberLabel(pull)}`} onClick={(event) => void unlink(event.currentTarget)}>
         Unlink
       </button>
     </div>
@@ -207,6 +219,15 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
   const updating = useWaited(entry.busy);
   const pulls = entry.pulls ?? [];
   const loaded = entry.pulls !== null;
+  // Leaving the form (Cancel, or a pull request linked) puts focus back on "Link a pull request…".
+  const wasLinking = useRef(false);
+  useEffect(() => {
+    if (linking) wasLinking.current = true;
+    else if (wasLinking.current) {
+      wasLinking.current = false;
+      root.current?.querySelector<HTMLElement>(".pr-link")?.focus();
+    }
+  }, [linking]);
   useEffect(() => {
     if (focusFirst) root.current?.querySelector<HTMLElement>(".pr-open, .pr-retry")?.focus();
   }, [focusFirst, loaded]);
@@ -230,7 +251,7 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
   const title = pulls.length === 1 ? null : pulls.length > 1 ? `${pulls.length} linked pull requests` : "Linked pull requests";
   const host = forgeName(pulls[0]?.url);
   const firstFailed = entry.pulls === null && entry.failed;
-  if (linking) return <div className="pr-pop" ref={root} data-sheet={sheet || undefined}><LinkForm thread={thread} onDone={() => setLinking(false)} onCancel={() => setLinking(false)} /></div>;
+  if (linking) return <div className="pr-pop" ref={root} data-sheet={sheet || undefined}><LinkForm thread={thread} host={host} onDone={() => setLinking(false)} onCancel={() => setLinking(false)} /></div>;
   return (
     <div className="pr-pop" ref={root} data-sheet={sheet || undefined} onKeyDown={move}>
       {title ? <div className="pr-head">{title}</div> : null}
@@ -286,7 +307,7 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
 
 /** The header's pull request chip. A thread with none linked has no chip at all. */
 export function PullChip({ thread }: { thread: Thread }) {
-  const entry = useLinked(thread, true);
+  const entry = useLinked(thread);
   const [open, setOpen] = useState<{ anchor: HTMLElement; sheet: boolean } | null>(null);
   const layout = useLayoutWidth();
   const sheet = layout === "phone";
@@ -352,8 +373,17 @@ export function PullsRow({ thread }: { thread: Thread }) {
   const [linking, setLinking] = useState<HTMLElement | null>(null);
   const gitAvailable = useGitAvailable(thread.id);
   const failed = entry.pulls === null && entry.failed;
-  if (entry.pulls === null && !failed) return null;
   const count = entry.pulls?.length ?? 0;
+  // A pull request linked from the empty row turns it into the count row: focus goes there.
+  const linkedFromEmpty = useRef(false);
+  const rowButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (count > 0 && linkedFromEmpty.current) {
+      linkedFromEmpty.current = false;
+      captureFocusReturn(rowButton.current).restore();
+    }
+  }, [count]);
+  if (entry.pulls === null && !failed) return null;
   if (count === 0) {
     return (
       <div className="detail-row detail-row-static">
@@ -374,7 +404,7 @@ export function PullsRow({ thread }: { thread: Thread }) {
         {creating ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} onClose={() => setCreating(false)} /> : null}
         {linking ? (
           <ToolbarPopover anchor={linking} label="Link by number" width={260} onClose={() => setLinking(null)}>
-            {(dismiss) => <LinkForm thread={thread} onDone={dismiss} onCancel={dismiss} />}
+            {(dismiss) => <LinkForm thread={thread} onDone={() => { linkedFromEmpty.current = true; dismiss(); }} onCancel={dismiss} />}
           </ToolbarPopover>
         ) : null}
       </div>
@@ -382,7 +412,7 @@ export function PullsRow({ thread }: { thread: Thread }) {
   }
   return (
     <>
-      <button type="button" className="detail-row" aria-expanded={expanded} aria-label="Pull requests" onClick={() => setExpanded(!expanded)}>
+      <button ref={rowButton} type="button" className="detail-row" aria-expanded={expanded} aria-label="Pull requests" onClick={() => setExpanded(!expanded)}>
         <GitPullRequest size={16} aria-hidden />
         <span>{count === 1 ? "1 pull request" : `${count} pull requests`}</span>
         <ChevronDown size={14} aria-hidden data-open={expanded || undefined} className="detail-chevron" />
