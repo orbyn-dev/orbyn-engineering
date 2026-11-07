@@ -1,5 +1,5 @@
 import { ArrowDown } from "lucide-react";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useThreadLogs, type LocalPrompt } from "./threadLogs";
 import { useUi } from "../../state/ui";
 import { Button } from "../../ui/controls";
@@ -7,13 +7,18 @@ import { Empty, ErrorState, Loading } from "../../ui/states";
 import { TimelineRow, TimelineThread } from "./items";
 import { Minimap, type MinimapItem } from "./Minimap";
 import type { MessageItem, ThreadItem } from "./projection";
+import { rowOfItems } from "./threadSearch";
 import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "./timeline";
+import { registerTranscript } from "./transcriptRegistry";
+import { useHeldRows } from "./useHeldRows";
+import { useRowWindow, type Anchor } from "./useRowWindow";
 
 const NEAR_BOTTOM = 80;
 const NO_RUNS = {};
 const REVEAL_MS = 2000;
-/** Scroll position per thread, kept while switching threads in one visit. */
-const scrollMemory = new Map<string, number>();
+/** Where each thread was left scrolled up, as a row and its distance from the top of the view. */
+const scrollMemory = new Map<string, Anchor>();
+const Row = memo(TimelineRow);
 
 /** Shows accepted prompts the log hasn't echoed, at the start of their run. */
 export function withLocalPrompts(
@@ -93,24 +98,45 @@ export function Transcript({
 
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
-  const pinned = useRef(!scrollMemory.has(threadId));
-  const [showJump, setShowJump] = useState(false);
+  const [restore] = useState(() => scrollMemory.get(threadId) ?? null);
+  const pinned = useRef(restore === null);
+  const [following, setFollowing] = useState(restore === null);
+  const setPinned = useCallback((value: boolean) => {
+    pinned.current = value;
+    setFollowing(value);
+  }, []);
+  const unpin = useCallback(() => setPinned(false), [setPinned]);
 
+  const indexByKey = useMemo(() => new Map(entries.map((entry, at) => [entry.key, at])), [entries]);
+  const entryKeys = useMemo(() => entries.map((entry) => entry.key), [entries]);
+  const rowOfItem = useMemo(() => rowOfItems(entries), [entries]);
+  const held = useHeldRows(scroller, indexByKey, entryKeys);
+  const win = useRowWindow({ threadId, entries, scroller, pinned, following, indexByKey, held, restore, onUnpin: unpin });
+
+  const entriesNow = useRef(entries);
+  const anchorNow = useRef(win.anchor);
   useLayoutEffect(() => {
-    const element = scroller.current;
-    if (!element) return;
-    if (pinned.current) element.scrollTop = element.scrollHeight;
-    else element.scrollTop = scrollMemory.get(threadId) ?? element.scrollTop;
-    // Only the first paint restores; afterwards the pin rule below applies.
+    entriesNow.current = entries;
+    anchorNow.current = win.anchor;
+  });
+  useEffect(() => {
     scrollMemory.delete(threadId);
-  }, [threadId, items.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      const at = anchorNow.current();
+      if (!pinned.current && at) scrollMemory.set(threadId, at);
+    };
+  }, [threadId]);
+  useEffect(
+    () => registerTranscript(threadId, { entries: () => entriesNow.current, root: () => scroller.current, reveal: win.scrollToIndex }),
+    [threadId, win.scrollToIndex],
+  );
 
   // Pinned means pinned: expanding content, late fonts and streaming all stay in view, and
   // so does the end when the view itself shrinks, as when the composer grows or a question docks.
   useEffect(() => {
     const element = scroller.current;
     const content = inner.current;
-    if (!element || !content) return;
+    if (!element || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (pinned.current) element.scrollTop = element.scrollHeight;
     });
@@ -124,27 +150,22 @@ export function Transcript({
     if (element && pinned.current) element.scrollTop = element.scrollHeight;
   }, [items]);
 
-  useEffect(() => {
-    const element = scroller.current;
-    return () => {
-      if (element && !pinned.current) scrollMemory.set(threadId, element.scrollTop);
-    };
-  }, [threadId]);
-
   const reveal = useUi((state) => (state.messageReveal?.threadId === threadId ? state.messageReveal : null));
   const clearReveal = useUi((state) => state.clearMessageReveal);
+  const revealTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(revealTimer.current), []);
   useEffect(() => {
     if (!reveal || entries.length === 0) return;
     const key = entryForMessage(entries, reveal.messageId);
-    if (!key) return;
-    const row = scroller.current?.querySelector(`[data-entry="${CSS.escape(key)}"]`);
-    row?.scrollIntoView({ block: "center" });
-    row?.setAttribute("data-revealed", "true");
-    pinned.current = false;
+    const at = key ? indexByKey.get(key) : undefined;
+    if (at === undefined) return;
     clearReveal();
-    const timer = setTimeout(() => row?.removeAttribute("data-revealed"), REVEAL_MS);
-    return () => clearTimeout(timer);
-  }, [reveal, entries, clearReveal]);
+    void win.scrollToIndex(at, "center").then((row) => {
+      row?.setAttribute("data-revealed", "true");
+      clearTimeout(revealTimer.current);
+      revealTimer.current = setTimeout(() => row?.removeAttribute("data-revealed"), REVEAL_MS);
+    });
+  }, [reveal, entries, indexByKey, clearReveal, win]);
 
   // Only a move up lets go of the end. A scroll event can arrive after the view has shrunk,
   // which leaves the end farther away without anyone having scrolled from it.
@@ -155,18 +176,32 @@ export function Transcript({
     const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_BOTTOM;
     const movedUp = element.scrollTop < lastTop.current - 1;
     lastTop.current = element.scrollTop;
-    if (atEnd) pinned.current = true;
-    else if (movedUp) pinned.current = false;
-    setShowJump(!pinned.current);
+    if (atEnd) setPinned(true);
+    else if (movedUp) setPinned(false);
+    win.onScroll();
   };
 
   const jump = () => {
     const element = scroller.current;
     if (!element) return;
-    pinned.current = true;
+    setPinned(true);
     element.scrollTop = element.scrollHeight;
-    setShowJump(false);
   };
+
+  const locate = useCallback(
+    (key: string) => {
+      const at = rowOfItem.get(key);
+      return at === undefined ? null : win.offsetOfRow(at);
+    },
+    [rowOfItem, win],
+  );
+  const goTo = useCallback(
+    (key: string) => {
+      const at = rowOfItem.get(key);
+      if (at !== undefined) void win.scrollToIndex(at, "start");
+    },
+    [rowOfItem, win],
+  );
 
   const status = stream?.status ?? "connecting";
   const empty = items.length === 0;
@@ -194,25 +229,32 @@ export function Transcript({
             </Empty>
           ) : (
             <TimelineThread value={threadId}>
-              {entries.map((entry, at) => (
-                <Fragment key={entry.key}>
-                  {at === newAt ? (
-                    <p className="visit-mark" role="separator">
-                      New since you were here
-                    </p>
-                  ) : null}
-                  <div className={`item item-${entry.kind}`} data-entry={entry.key}>
-                    <TimelineRow entry={entry} live={active} tools={tools} />
-                  </div>
-                </Fragment>
-              ))}
+              {win.segments.map((segment) => {
+                if (segment.kind === "gap") {
+                  // Rows out of view: one spacer with the height they would fill.
+                  return <div key={`gap:${entries[segment.from]!.key}`} aria-hidden style={{ height: segment.height, flex: "none" }} />;
+                }
+                const entry = entries[segment.index]!;
+                return (
+                  <Fragment key={entry.key}>
+                    {segment.index === newAt ? (
+                      <p className="visit-mark" role="separator">
+                        New since you were here
+                      </p>
+                    ) : null}
+                    <div ref={win.rowRef} className={`item item-${entry.kind}`} data-entry={entry.key}>
+                      <Row entry={entry} live={active} tools={tools} />
+                    </div>
+                  </Fragment>
+                );
+              })}
             </TimelineThread>
           )}
           {footer}
         </div>
       </div>
-      <Minimap items={turnPrompts} scroller={scroller} />
-      {showJump ? (
+      <Minimap items={turnPrompts} scroller={scroller} locate={locate} goTo={goTo} revision={win.rev} />
+      {!following ? (
         <Button small className="jump" icon={<ArrowDown size={16} aria-hidden />} onClick={jump}>
           Jump to latest
         </Button>
