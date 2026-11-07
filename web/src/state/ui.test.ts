@@ -70,4 +70,12 @@ describe("panel tab row", () => {
     expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
     expect(fresh.panelTabsClosed).toEqual([]);
   });
+
+  it("skips a saved layout that is not an object instead of failing to load", async () => {
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ layouts: { a: null, b: 7, c: "x", d: { panelTab: "files" } } }));
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(Object.keys(fresh.layouts)).toEqual(["d"]);
+    expect(fresh.layouts["d"]?.panelTab).toBe("files");
+  });
 });

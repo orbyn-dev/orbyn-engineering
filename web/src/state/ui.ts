@@ -472,11 +472,14 @@ function migratePrefs(saved: Partial<Prefs>): Partial<Prefs> {
 function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
   if (!isPlainObject(layouts)) return {};
   return Object.fromEntries(
-    Object.entries(layouts as Record<string, ThreadLayout>).map(([key, layout]) => {
-      const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
-      const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
-      return [key, { ...layout, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
-    }),
+    Object.entries(layouts as Record<string, unknown>)
+      // A damaged entry is dropped; the thread starts from the defaults.
+      .filter((entry): entry is [string, ThreadLayout] => isPlainObject(entry[1]))
+      .map(([key, layout]) => {
+        const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
+        const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
+        return [key, { ...layout, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
+      }),
   );
 }
 
