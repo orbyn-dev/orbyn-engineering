@@ -27,7 +27,7 @@ import { useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
 import { EngineGlyph } from "../../ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
-import { useOpenState } from "../../ui/openState";
+import { OpenStatePrefix, useOpenState } from "../../ui/openState";
 import { Dialog } from "../../ui/Dialog";
 import { useUi } from "../../state/ui";
 import { Button, Pill } from "../../ui/controls";
@@ -523,7 +523,13 @@ export function TimelineRow({ entry, live, tools }: { entry: TimelineEntry; live
 function ItemView({ item, live }: { item: Exclude<TimelineEntry, WorkGroup | TurnFold | WorkingRow>; live: boolean }) {
   switch (item.kind) {
     case "message":
-      return <Message item={item} live={live} />;
+      // What a message's Markdown and plan card remember is keyed by the message, so two messages
+      // with the same <details> summary, or a revised plan, never share a state.
+      return (
+        <OpenStatePrefix value={item.key}>
+          <Message item={item} live={live} />
+        </OpenStatePrefix>
+      );
     case "approval":
       return <ApprovalEntry item={item} />;
     case "plan":

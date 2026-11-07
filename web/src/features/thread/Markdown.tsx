@@ -290,11 +290,11 @@ function withBreaks(text: string): ReactNode[] {
   });
 }
 
-function Details({ block }: { block: Extract<Block, { type: "details" }> }) {
+function Details({ block, at }: { block: Extract<Block, { type: "details" }>; at: number }) {
   return (
     <Collapsible
       className="md-details"
-      persistId={`details:${block.summary}`}
+      persistId={`details:${at}:${block.summary}`}
       summaryClassName="trace-summary"
       summary={
         <>
@@ -369,7 +369,7 @@ function renderBlock(block: Block, key: number): ReactNode {
     case "math":
       return <MathBlock key={key} source={block.source} />;
     case "details":
-      return <Details key={key} block={block} />;
+      return <Details key={key} block={block} at={key} />;
     case "list": {
       const children = block.items.map((item, at) => <li key={at} dir="auto">{item.map(renderBlock)}</li>);
       return block.ordered ? (
