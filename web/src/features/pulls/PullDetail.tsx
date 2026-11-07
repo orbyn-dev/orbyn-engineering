@@ -315,7 +315,7 @@ export function PullDetail({
   const signedOut = forges.status === "ready" && forges.data.some((one) => one.installed) && !forges.data.some((one) => one.signed_in);
   const forgeLabel = forge === "The host" ? (forges.data?.find((one) => one.signed_in || one.installed)?.name ?? "GitHub") : forge;
   const pageHead = (title: ReactNode, pill?: ReactNode) => (
-    <PageBar>
+    <PageBar back={{ name: "pulls" }}>
       {title}
       <span className="pull-sub">
         #{number} {"\u00b7"} {projectName}
@@ -352,7 +352,7 @@ export function PullDetail({
             </h1>,
           )}
           {signedOut ? (
-            <SignedOutBlock forge={forgeLabel} number={number} onSignIn={() => navigate({ name: "settings", section: "source-control" })} onLater={() => window.history.back()} />
+            <SignedOutBlock forge={forgeLabel} number={number} onSignIn={() => navigate({ name: "settings", section: "source-control" })} onLater={() => (window.history.length > 1 ? window.history.back() : navigate({ name: "pulls" }))} />
           ) : (
             <UnreachableBlock onRetry={detail.reload} />
           )}
@@ -541,10 +541,19 @@ export function PullDetail({
         <MergeDialog
           projectId={projectId}
           initialMethod={mergeMethod}
-          chosen={page ? { auto, deleteBranch: deleteAfter } : undefined}
+          fixedMethod={page}
+          initialAuto={page ? auto : undefined}
+          initialDeleteBranch={page ? deleteAfter : undefined}
           detail={current}
           onClose={() => setMerging(false)}
-          onMerged={detail.reload}
+          onMerged={() => {
+            pushToast("Merged");
+            void detail.reload();
+            if (page) {
+              void extras.reload();
+              void checkList.reload();
+            }
+          }}
         />
       ) : null}
       <Presence>{menu ? <Menu x={menu.x} y={menu.y} label="Pull request actions" items={items} onClose={() => setMenu(null)} /> : null}</Presence>
@@ -676,6 +685,7 @@ export function PullDetail({
   return (
     <article className="pull-page" aria-label={pull.title} data-state={state}>
       <PageBar
+        back={{ name: "pulls" }}
         actions={
           <>
             {forgeLink}

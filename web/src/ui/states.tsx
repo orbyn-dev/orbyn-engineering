@@ -66,11 +66,13 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 
 /** Screen identity, plus the explicit way back on one-surface layouts. */
 /** In the phone layout a page has no sidebar beside it, so its topbar leads back to the thread list. */
-export function NarrowBack() {
+export function NarrowBack({ to }: { to?: Route }) {
   const layout = useLayoutWidth();
   if (layout !== "phone") return null;
+  // A page inside a section goes back to that section's list; the rest go to the threads.
+  const label = to?.name === "pulls" ? "Back to pull requests" : "Back to threads";
   return (
-    <a className="icon-btn" href={routeHref({ name: "home" })} aria-label="Back to threads" title="Back to threads">
+    <a className="icon-btn" href={routeHref(to ?? { name: "home" })} aria-label={label} title={label}>
       <ArrowLeft size={16} aria-hidden />
     </a>
   );
