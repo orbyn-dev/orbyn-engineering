@@ -10,7 +10,7 @@ import type { MessageItem, ThreadItem } from "./projection";
 import { rowOfItems } from "./threadSearch";
 import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "./timeline";
 import { registerTranscript } from "./transcriptRegistry";
-import { OpenStatePrefix, OpenStateScope } from "../../ui/openState";
+import { OpenStateScope } from "../../ui/openState";
 import { useAnnounce } from "./useAnnounce";
 import { useHeldRows } from "./useHeldRows";
 import { useRowWindow, type Anchor } from "./useRowWindow";
@@ -95,6 +95,7 @@ export function Transcript({
   );
 
   const [arrivedAt] = useState(() => new Date().toISOString());
+  const spoken = useAnnounce(items, arrivedAt);
   const newKey = useMemo(() => firstUnread(items, readUpTo ?? null, arrivedAt), [items, readUpTo, arrivedAt]);
   const newAt = newKey ? entryIndexOf(entries, newKey) : -1;
 
@@ -115,7 +116,6 @@ export function Transcript({
   const held = useHeldRows(scroller, indexByKey, entryKeys);
   const win = useRowWindow({ threadId, entries, scroller, pinned, following, indexByKey, held, restore, onUnpin: unpin });
   const { scrollToIndex, offsetOfRow, onScroll: windowScrolled } = win;
-  const spoken = useAnnounce(items);
 
   const { stickToEnd } = win;
   const entriesNow = useRef(entries);
@@ -258,9 +258,7 @@ export function Transcript({
                       </p>
                     ) : null}
                     <div ref={win.rowRef} className={`item item-${entry.kind}`} data-entry={entry.key}>
-                      <OpenStatePrefix value={entry.key}>
-                        <Row entry={entry} live={active} tools={tools} />
-                      </OpenStatePrefix>
+                      <Row entry={entry} live={active} tools={tools} />
                     </div>
                   </Fragment>
                 );
@@ -273,7 +271,7 @@ export function Transcript({
       </div>
       {/* The log above is not live (its rows mount as you scroll); this announces what arrives. */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {spoken}
+        {spoken.text ? <span key={spoken.n}>{spoken.text}</span> : null}
       </div>
       <Minimap items={turnPrompts} scroller={scroller} locate={locate} goTo={goTo} revision={win.rev} />
       {!following ? (
