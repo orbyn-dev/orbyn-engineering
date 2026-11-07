@@ -27,6 +27,7 @@ import { useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
 import { EngineGlyph } from "../../ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
+import { useOpenState } from "../../ui/openState";
 import { Dialog } from "../../ui/Dialog";
 import { useUi } from "../../state/ui";
 import { Button, Pill } from "../../ui/controls";
@@ -97,6 +98,7 @@ function Reasoning({ item, live }: { item: ReasoningItem; live: boolean }) {
   return (
     <Collapsible
       className="trace"
+      persistId={`think:${item.key}`}
       summaryClassName="trace-summary"
       summary={
         <>
@@ -200,6 +202,7 @@ function Tool({ item, live }: { item: ToolItem; live: boolean }) {
     <>
       <Collapsible
         className="trace"
+        persistId={`tool:${item.key}`}
         data-live={running || undefined}
         summaryClassName="trace-summary"
         summary={
@@ -295,7 +298,7 @@ function ChangedFile({ file }: { file: DiffSummaryItem["files"][number] }) {
 function DiffSummary({ item }: { item: DiffSummaryItem }) {
   const openPanel = useUi((state) => state.togglePanel);
   const panelShowing = useUi((state) => state.panelOpen === true && state.panelTab === "diff");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useOpenState(`diff:${item.key}`, false);
   const added = item.files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const removed = item.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   return (
@@ -332,6 +335,7 @@ function Activity({ item }: { item: ActivityItem }) {
   return (
     <Collapsible
       className="trace"
+      persistId={`activity:${item.key}`}
       summaryClassName="trace-summary"
       summary={
         <>
@@ -395,8 +399,8 @@ function RunningStack({ tools }: { tools: ToolItem[] }) {
 /** One call shows as its own row; several read as one summary until opened. */
 export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean }) {
   const threadId = useThreadOfTimeline();
-  const [open, setOpen] = useState(false);
-  const [all, setAll] = useState(false);
+  const [open, setOpen] = useOpenState(`group:${group.key}`, false);
+  const [all, setAll] = useOpenState(`group-all:${group.key}`, false);
   const only = group.items[0];
   if (group.items.length === 1 && only) {
     return (
@@ -461,8 +465,8 @@ function Working({ row, tools }: { row: WorkingRow; tools: ToolItem[] }) {
  */
 function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
   const threadId = useThreadOfTimeline();
-  const [open, setOpenNow] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [open, setOpenNow] = useOpenState(`fold:${fold.key}`, false);
+  const [loaded, setLoaded] = useOpenState(`fold-loaded:${fold.key}`, false);
   const setOpen = (value: boolean) => {
     setOpenNow(value);
     if (value) setLoaded(true);
