@@ -263,3 +263,72 @@
 .term-bar-open {
   margin-left: auto;
 }
+
+/* No terminals open: the drawer stays and says so. */
+.term-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+/* Search in the scrollback: a field with the count in it, and the controls after it. */
+.term-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 0;
+}
+.term-search-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-9);
+  background: var(--color-chip);
+  color: var(--color-muted);
+}
+.term-search-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  outline: none;
+}
+.term-search-field:focus-within {
+  outline: 2px solid var(--color-focus);
+}
+.term-search-count {
+  margin-left: auto;
+  font-size: var(--text-label);
+  white-space: nowrap;
+}
+.term-search .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+/* Maximised, the drawer takes the thread's column; the header stays above it and the thread waits. */
+.drawer[data-maximized] {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  border-top: 0;
+}
+.thread-stage:has(~ .drawer[data-maximized]) {
+  flex: 0 0 calc(var(--topbar-h) + 12px);
+  overflow: hidden;
+}

@@ -298,14 +298,15 @@ function TerminalDrawer({
   onClose(): void;
 }) {
   const [opened, setOpened] = useState(open);
+  const [maximized, setMaximized] = useState(false);
   const { exitMs } = usePanelMotion();
   // Stays shown while it slides out, then hides.
   const shown = useLingering(open, exitMs);
   if (open && !opened) setOpened(true);
   if (!opened) return null;
   return (
-    <section className="drawer" hidden={!shown} data-closing={!open || undefined} data-moves={moves || undefined} aria-label="Terminal">
-      <TerminalDrawerBody threadId={threadId} onClose={onClose} />
+    <section className="drawer" hidden={!shown} data-closing={!open || undefined} data-moves={moves || undefined} data-maximized={maximized || undefined} aria-label="Terminal">
+      <TerminalDrawerBody threadId={threadId} maximized={maximized} onToggleMaximize={() => setMaximized(!maximized)} onClose={onClose} />
     </section>
   );
 }

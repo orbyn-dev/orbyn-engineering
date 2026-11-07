@@ -59,13 +59,36 @@ const terminalTheme = () => ({
 
 /** Loaded on first use. xterm's default DOM renderer: WebGL is unsafe on WebKit. */
 const loadXterm = async () => {
-  const [{ Terminal }, { FitAddon }] = await Promise.all([
+  const [{ Terminal }, { FitAddon }, { SearchAddon }] = await Promise.all([
     import("@xterm/xterm"),
     import("@xterm/addon-fit"),
+    import("@xterm/addon-search"),
     import("@xterm/xterm/css/xterm.css"),
   ]);
-  return { Terminal, FitAddon };
+  return { Terminal, FitAddon, SearchAddon };
 };
+
+/** A theme colour as the opaque #rrggbb the search marks need, laid over the terminal's own background. */
+function solid(name: string, backdrop: string): string {
+  const read = (value: string) => {
+    const numbers = value.match(/[\d.]+%?/g)?.map((part) => (part.endsWith("%") ? (parseFloat(part) / 100) * 255 : parseFloat(part)));
+    return numbers && numbers.length >= 3 ? numbers : null;
+  };
+  const probe = document.createElement("span");
+  const resolve = (color: string) => {
+    probe.style.color = color;
+    document.body.append(probe);
+    const computed = getComputedStyle(probe).color;
+    probe.remove();
+    return read(computed);
+  };
+  const front = resolve(`var(${name})`);
+  const back = resolve(backdrop) ?? [255, 255, 255];
+  if (!front) return "#808080";
+  const alpha = front[3] ?? 1;
+  const channel = (at: number) => Math.round((front[at] ?? 0) * alpha + (back[at] ?? 0) * (1 - alpha));
+  return `#${[0, 1, 2].map((at) => channel(at).toString(16).padStart(2, "0")).join("")}`;
+}
 
 export function TerminalPanel({
   threadId,
@@ -95,7 +118,7 @@ export function TerminalPanel({
     let cleanup = () => {};
     setConnection("connecting");
 
-    void loadXterm().then(({ Terminal, FitAddon }) => {
+    void loadXterm().then(({ Terminal, FitAddon, SearchAddon }) => {
       if (disposed) return;
       const terminal = new Terminal({
         convertEol: false,
@@ -103,6 +126,8 @@ export function TerminalPanel({
         fontFamily: cssVar("--font-mono"),
         fontSize: useUi.getState().typography.terminalSize,
         scrollback: 5000,
+        // The search marks are decorations, which xterm still calls proposed.
+        allowProposedApi: true,
         theme: terminalTheme(),
       });
       terminal.attachCustomKeyEventHandler((event) => {
@@ -111,6 +136,8 @@ export function TerminalPanel({
       });
       const fit = new FitAddon();
       terminal.loadAddon(fit);
+      const search = new SearchAddon();
+      terminal.loadAddon(search);
       terminal.open(element);
       const marks = new ShellMarks((fromLine, fromCol, toLine) => typedText(terminal, fromLine, fromCol, toLine));
       const oscs = [133, 633].map((ident) =>
@@ -182,7 +209,26 @@ export function TerminalPanel({
       });
       observer.observe(element);
 
+      const searchMarks = () => {
+        const back = cssVar("--color-raised") || "#ffffff";
+        const match = solid("--color-selected", back);
+        const text = solid("--color-textSoft", back);
+        return { matchBackground: match, matchOverviewRuler: match, activeMatchBackground: match, activeMatchBorder: text, activeMatchColorOverviewRuler: text };
+      };
       const unregister = registerTerminal(terminalKey(threadId, terminalId), {
+        find: (text, direction) => {
+          if (text === "") {
+            search.clearDecorations();
+            return;
+          }
+          const options = { decorations: searchMarks() };
+          if (direction === "previous") search.findPrevious(text, options);
+          else search.findNext(text, options);
+        },
+        onResults: (listener) => {
+          const hear = search.onDidChangeResults(({ resultIndex, resultCount }) => listener({ index: resultIndex, count: resultCount }));
+          return () => hear.dispose();
+        },
         clear: () => terminal.clear(),
         interrupt: () => {
           if (!observe && socket.readyState === WebSocket.OPEN) socket.send(encoder.encode("\x03"));

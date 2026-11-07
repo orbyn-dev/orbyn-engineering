@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "../../api/client";
 import type { TerminalInfo } from "../../api/types";
+import { useConnection } from "../../state/connection";
 import { useUi } from "../../state/ui";
 import { useComposerChips } from "../thread/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
@@ -39,7 +40,8 @@ function serve(terminals: TerminalInfo[]) {
 beforeEach(() => {
   mock.mockReset();
   useComposerChips.setState({ chips: {} });
-  useUi.setState({ terminalOpen: true });
+  useUi.setState({ terminalOpen: true, toasts: [] });
+  useConnection.setState({ offline: false, serviceDown: false });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -64,7 +66,7 @@ describe("terminal drawer", () => {
   it("shows how long a running process has gone, and clears or interrupts it", async () => {
     const clear = vi.fn();
     const interrupt = vi.fn();
-    const stop = registerTerminal(terminalKey("th", "t2"), { clear, interrupt, output: () => "" });
+    const stop = registerTerminal(terminalKey("th", "t2"), { clear, interrupt, output: () => "", find: vi.fn(), onResults: () => () => undefined });
     const user = await show([terminal({})]);
     expect(screen.getByText(/^Running · 1m 0\ds$/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear" }));
@@ -75,7 +77,7 @@ describe("terminal drawer", () => {
   });
 
   it("says a command failed with its code, sends the output to the agent and runs it again", async () => {
-    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), interrupt: vi.fn(), output: () => "1 failed | 47 passed" });
+    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), interrupt: vi.fn(), output: () => "1 failed | 47 passed", find: vi.fn(), onResults: () => () => undefined });
     const user = await show([terminal({ alive: false, exit_code: 1 })]);
     expect(screen.getByText("Exited with code 1")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Send to the agent" }));
@@ -93,10 +95,99 @@ describe("terminal drawer", () => {
     await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t2"));
   });
 
-  it("offers Split, Clear, Copy and Watch from a tab's right-click menu, and End process only while it runs", async () => {
+  it("offers Clear, Copy and Watch from a tab's right-click menu, and End process only while it runs; splits are not offered", async () => {
     const user = await show([terminal({})]);
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: /npm test/ }) });
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Split right", "Split down", "Clear output", "Copy all output", "Watch only", "End process"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Clear output", "Copy all output", "Watch only", "End process"]);
+  });
+
+  it("disables Clear and Copy for a tab that is not showing, and never says Output copied when nothing was copied", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const user = await show([terminal({}), terminal({ id: "t3", group: "g3", title: "build", alive: false, exit_code: 0 })]);
+    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: () => () => undefined });
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "build" }) });
+    expect(screen.getByRole("menuitem", { name: "Clear output" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Copy all output" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: /npm test/ }) });
+    await user.click(screen.getByRole("menuitem", { name: "Copy all output" }));
+    expect(writeText).not.toHaveBeenCalled();
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["Nothing to copy"]);
+    stop();
+  });
+
+  it("opens the tab menu from the keyboard with the menu key", async () => {
+    const user = await show([terminal({})]);
+    screen.getByRole("tab", { name: /npm test/ }).focus();
+    await user.keyboard("{ContextMenu}");
+    expect(screen.getByRole("menu", { name: "Terminal tab" })).toBeInTheDocument();
+  });
+
+  it("hides Stop in Watch only mode", async () => {
+    const user = await show([terminal({})]);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Watch only" }));
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+  });
+
+  it("asks before ending a running terminal, with Cancel focused, and closes an idle one without asking", async () => {
+    const user = await show([terminal({}), terminal({ id: "t3", group: "g3", title: "build", alive: false, exit_code: 0 })]);
+    await user.click(screen.getByRole("button", { name: "Close npm test" }));
+    const dialog = await screen.findByRole("dialog", { name: "End this terminal?" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+    await user.click(within(dialog).getByRole("button", { name: "End" }));
+    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t2"));
+    await user.click(screen.getByRole("button", { name: "Close build" }));
+    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+  });
+
+  it("has Maximise and Collapse at the end of the row, a plus that opens a terminal, and no Close terminal or splits", async () => {
+    const onClose = vi.fn();
+    const onToggleMaximize = vi.fn();
+    serve([terminal({})]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={onClose} onToggleMaximize={onToggleMaximize} />);
+    await screen.findByRole("tab", { name: /npm test/ });
+    await user.click(screen.getByRole("button", { name: "Maximise terminal" }));
+    await user.click(screen.getByRole("button", { name: "Collapse terminal" }));
+    expect(onToggleMaximize).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Close terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Split terminal/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(mock).toHaveBeenCalledWith("POST", "/api/threads/th/terminals", {}));
+  });
+
+  it("says No terminals open once every tab is closed, and offers New terminal", async () => {
+    serve([]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Close Terminal" }));
+    expect(screen.getByText("No terminals open.")).toBeInTheDocument();
+    await user.click(within(screen.getByText("No terminals open.").parentElement!).getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(mock).toHaveBeenCalledWith("POST", "/api/threads/th/terminals", {}));
+  });
+
+  it("searches the output: Ctrl+F opens the field, Enter moves to the next match, and the count says where you are", async () => {
+    const find = vi.fn();
+    const stop = registerTerminal(terminalKey("th", undefined), { clear: vi.fn(), interrupt: vi.fn(), output: () => "", find, onResults: (listener) => { listener({ index: 1, count: 3 }); return () => undefined; } });
+    serve([]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await screen.findByRole("tab", { name: "Terminal" });
+    screen.getByRole("tab", { name: "Terminal" }).focus();
+    await user.keyboard("{Control>}f{/Control}");
+    const field = await screen.findByRole("textbox", { name: "Search the terminal" });
+    await user.type(field, "Expected");
+    expect(find).toHaveBeenLastCalledWith("Expected", "next");
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(find).toHaveBeenLastCalledWith("Expected", "previous");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Search the terminal" })).not.toBeInTheDocument();
+    stop();
   });
 });
 
@@ -109,6 +200,15 @@ describe("closed terminal bar", () => {
     expect(await screen.findByRole("group", { name: "Terminal" })).toHaveTextContent("1 process running");
     await user.click(screen.getByRole("button", { name: "Open terminal" }));
     expect(onOpen).toHaveBeenCalled();
+  });
+
+  it("does not ask while the device is offline", async () => {
+    serve([terminal({})]);
+    useConnection.setState({ offline: true });
+    render(<TerminalBar threadId="th" onOpen={() => undefined} />);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(mock).not.toHaveBeenCalled();
+    useConnection.setState({ offline: false });
   });
 
   it("is not there when nothing runs", async () => {
