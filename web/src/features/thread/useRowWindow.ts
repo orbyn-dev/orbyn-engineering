@@ -16,6 +16,7 @@ const QUANTUM = 100;
 /** How long a scroll target keeps being re-aligned while rows around it settle. */
 const SETTLE_MS = 400;
 
+
 type Align = "start" | "center";
 interface Goal {
   key: string;
@@ -92,7 +93,13 @@ export function useRowWindow({
   const contentTop = useRef(FIRST_CONTENT_TOP);
   const anchor = useRef<Anchor | null>(restore);
   const goal = useRef<Goal | null>(null);
+  const laidOut = useRef<Float64Array | null>(null);
   const mounted = useRef(new Map<string, HTMLElement>());
+
+  const stickToEnd = useCallback(() => {
+    const element = scroller.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [scroller]);
 
   const capture = useCallback(() => {
     const element = scroller.current;
@@ -185,7 +192,8 @@ export function useRowWindow({
         element.scrollTop = Math.max(0, offsets[rowAt]! + contentTop.current - lead);
       }
     } else if (pinned.current) {
-      element.scrollTop = element.scrollHeight;
+      // Only when the layout changed: a focus or selection change must never move the view.
+      if (laidOut.current !== offsets) stickToEnd();
     } else if (anchor.current) {
       const at = indexByKey.get(anchor.current.key);
       if (at !== undefined) {
@@ -193,10 +201,11 @@ export function useRowWindow({
         if (Math.abs(want - element.scrollTop) > 0.5) element.scrollTop = want;
       }
     }
+    laidOut.current = offsets;
     capture();
     const rel = element.scrollTop - contentTop.current;
     setView((prev) => (Math.abs(prev.top - rel) < QUANTUM && prev.height === element.clientHeight ? prev : { top: rel, height: element.clientHeight }));
-  }, [scroller, measure, segments, entries, indexByKey, pinned, following, capture, offsets]);
+  }, [scroller, measure, segments, entries, indexByKey, pinned, following, capture, offsets, stickToEnd]);
 
   const scrollToIndex = useCallback(
     (index: number, align: Align): Promise<HTMLElement | null> => {
@@ -229,5 +238,5 @@ export function useRowWindow({
     return index >= 0 && index < now.length - 1 ? now[index]! + contentTop.current : null;
   }, []);
 
-  return { segments, rowRef, onScroll, scrollToIndex, offsetOfRow, anchor: () => anchor.current, rev };
+  return { segments, rowRef, onScroll, stickToEnd, scrollToIndex, offsetOfRow, anchor: () => anchor.current, rev };
 }

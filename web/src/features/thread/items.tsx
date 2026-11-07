@@ -455,10 +455,18 @@ function Working({ row, tools }: { row: WorkingRow; tools: ToolItem[] }) {
   );
 }
 
-/** The summary of a finished turn; what it hides stays mounted for find. */
+/**
+ * The summary of a finished turn. What it hides mounts when first opened and then stays, so
+ * closing animates; find reads the log rather than this tree, and opens the fold when it needs it.
+ */
 function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
   const threadId = useThreadOfTimeline();
-  const [open, setOpen] = useState(false);
+  const [open, setOpenNow] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const setOpen = (value: boolean) => {
+    setOpenNow(value);
+    if (value) setLoaded(true);
+  };
   return (
     <div className="work">
       <SurfacedWorkflows value>
@@ -474,7 +482,7 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
         }
       >
         <div className="work-fold">
-          {(!fold.lazy || open) && fold.entries.map((entry) => (
+          {(open || loaded) && fold.entries.map((entry) => (
             <TimelineRow key={entry.key} entry={entry} live={false} tools={NO_TOOLS} />
           ))}
         </div>

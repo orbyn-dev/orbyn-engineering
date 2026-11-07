@@ -113,6 +113,7 @@ export function Transcript({
   const held = useHeldRows(scroller, indexByKey, entryKeys);
   const win = useRowWindow({ threadId, entries, scroller, pinned, following, indexByKey, held, restore, onUnpin: unpin });
 
+  const { stickToEnd } = win;
   const entriesNow = useRef(entries);
   const anchorNow = useRef(win.anchor);
   useLayoutEffect(() => {
@@ -138,17 +139,16 @@ export function Transcript({
     const content = inner.current;
     if (!element || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (pinned.current) element.scrollTop = element.scrollHeight;
+      if (pinned.current) stickToEnd();
     });
     observer.observe(content);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [stickToEnd]);
 
   useLayoutEffect(() => {
-    const element = scroller.current;
-    if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [items]);
+    if (pinned.current) stickToEnd();
+  }, [items, stickToEnd]);
 
   const reveal = useUi((state) => (state.messageReveal?.threadId === threadId ? state.messageReveal : null));
   const clearReveal = useUi((state) => state.clearMessageReveal);
@@ -169,13 +169,18 @@ export function Transcript({
 
   // Only a move up lets go of the end. A scroll event can arrive after the view has shrunk,
   // which leaves the end farther away without anyone having scrolled from it.
+  // Rows also change height as they are measured, which can clamp the view upward without anyone
+  // having scrolled, so a move up only counts while the content stayed the same height.
   const lastTop = useRef(0);
+  const lastHeight = useRef(0);
   const onScroll = () => {
     const element = scroller.current;
     if (!element) return;
     const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_BOTTOM;
-    const movedUp = element.scrollTop < lastTop.current - 1;
+    const settled = Math.abs(element.scrollHeight - lastHeight.current) <= 1;
+    const movedUp = element.scrollTop < lastTop.current - 1 && settled;
     lastTop.current = element.scrollTop;
+    lastHeight.current = element.scrollHeight;
     if (atEnd) setPinned(true);
     else if (movedUp) setPinned(false);
     win.onScroll();
@@ -186,6 +191,7 @@ export function Transcript({
     if (!element) return;
     setPinned(true);
     element.scrollTop = element.scrollHeight;
+    stickToEnd();
   };
 
   const locate = useCallback(
