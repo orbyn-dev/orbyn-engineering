@@ -231,11 +231,12 @@ pub fn no_such_pull(forge: Forge, message: &str) -> bool {
     let message = message.to_lowercase();
     let any = |phrases: &[&str]| phrases.iter().any(|phrase| message.contains(phrase));
     match forge {
-        Forge::GitHub => any(&[
-            "could not resolve to a pullrequest with the number of",
-            "no pull requests found",
-        ]),
-        Forge::GitLab => any(&["404 not found", "merge request not found"]),
+        Forge::GitHub => any(&["could not resolve to a pullrequest with the number of"]),
+        // A bare 404 may be a proxy's page; GitLab's own answer names the merge request it looked for.
+        Forge::GitLab => {
+            (message.contains("merge_requests/") && message.contains("404 not found"))
+                || any(&["merge request not found"])
+        }
         Forge::Azure => any(&["tf401180", "pull request does not exist"]),
         Forge::Forgejo | Forge::Bitbucket => false,
     }
@@ -2218,9 +2219,14 @@ mod tests {
             github,
             "GraphQL: Could not resolve to a PullRequest with the number of 5. (repository.pullRequest)"
         ));
-        assert!(no_such_pull(
+        // The branch form is not a numbered answer, and a proxy's bare 404 page is not GitLab's.
+        assert!(!no_such_pull(
             github,
             "no pull requests found for branch \"x\""
+        ));
+        assert!(!no_such_pull(
+            Forge::GitLab,
+            "<html>404 Not Found</html> from a proxy"
         ));
         assert!(no_such_pull(
             Forge::GitLab,
