@@ -293,6 +293,7 @@ export function SurfacePane({
                   type="button"
                   role="tab"
                   id={`${TAB_ID}${id}`}
+                  aria-label={label}
                   aria-selected={tab === id}
                   tabIndex={tab === id ? 0 : -1}
                   aria-controls={tab === id ? `context-${id}` : undefined}

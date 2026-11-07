@@ -165,7 +165,13 @@
   font: inherit;
   cursor: pointer;
 }
+.pr-row {
+  position: relative;
+}
 .pr-unlink {
+  position: absolute;
+  right: 10px;
+  bottom: 6px;
   opacity: 0;
 }
 .pr-row:hover .pr-unlink,
@@ -204,8 +210,19 @@
   color: var(--color-muted);
   font-size: var(--text-label);
 }
-.pr-refresh {
+.pr-refresh,
+.pr-note .btn {
   gap: 6px;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-chip);
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
+}
+.pr-refresh:disabled {
+  opacity: 0.45;
 }
 .pr-updated {
   margin-left: auto;

@@ -189,7 +189,7 @@ export function TerminalDrawerBody({ threadId, onClose }: { threadId: string; on
     <div className="terminal-drawer-body">
       <div className="terminal-tabs term-head" role="tablist" aria-label="Terminals">
         <div className="ptab" data-selected={active === MAIN || undefined} onContextMenu={(event) => onTabMenu(event, mainGroup)}>
-          <button type="button" role="tab" aria-selected={active === MAIN} onClick={() => setActive(MAIN)}>
+          <button type="button" role="tab" aria-label="Terminal" aria-selected={active === MAIN} onClick={() => setActive(MAIN)}>
             <SquareTerminal size={14} aria-hidden />
             <span className="ptl">Terminal</span>
           </button>
@@ -201,7 +201,7 @@ export function TerminalDrawerBody({ threadId, onClose }: { threadId: string; on
           const title = `${first.title}${group.length > 1 ? ` (${group.length})` : ""}`;
           return (
             <div key={first.group} className="ptab" data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)}>
-              <button type="button" role="tab" aria-selected={selected} onClick={() => setActive(first.group)}>
+              <button type="button" role="tab" aria-label={title} aria-selected={selected} onClick={() => setActive(first.group)}>
                 <SquareTerminal size={14} aria-hidden />
                 <span className="ptl">
                   <Marker terminal={first} />

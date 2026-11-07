@@ -237,6 +237,13 @@
 }
 .term-dock-acts .btn {
   gap: 6px;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-chip);
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
 }
 /* The closed drawer keeps a slim bar while something runs. */
 .term-bar {

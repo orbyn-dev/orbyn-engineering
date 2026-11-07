@@ -332,7 +332,7 @@ test("merge takes a method, strips credits and can wait for checks; a row merges
   await expect(article.getByText("Merges when checks pass")).toBeVisible();
   expect(service.ghPull(2).mergeBody).toBe("Second layer");
 
-  await page.getByRole("button", { name: "Pull requests", exact: true }).click();
+  await page.locator(".pr-chip").click();
   await page.getByRole("button", { name: "Merge #3" }).click();
   await page.getByRole("dialog", { name: "Merge #3?" }).getByRole("button", { name: "Merge" }).click();
   await expect.poll(() => service.ghPull(3).state).toBe("MERGED");
@@ -368,7 +368,7 @@ test("the chip lists this thread's pull request, and a thread without one has no
   const thread = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Surface menu" });
   await service.api("POST", `/api/threads/${thread.id}/pulls`, { number: 1 });
   await page.goto(`${service.page}#/threads/${thread.id}`);
-  const chip = page.getByRole("button", { name: "Pull requests", exact: true });
+  const chip = page.locator(".pr-chip");
   await expect(chip).toHaveText("#1");
   await openPanel(page);
   await expect(page.getByRole("tab", { name: "Pull requests" })).toHaveCount(0);
@@ -398,17 +398,17 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   expect(current.worktree?.branch).toBe("feat-one");
   await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/pulls`)).map((pull) => pull.number)).toEqual([1]);
 
-  await page.getByRole("button", { name: "Pull requests", exact: true }).click();
+  await page.locator(".pr-chip").click();
   const popover = page.getByRole("dialog", { name: "Pull requests" });
   await popover.getByRole("switch", { name: "Watch" }).check();
   await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/watches`)).map((watch) => watch.number)).toEqual([1]);
   await popover.getByRole("link").first().getByRole("button", { name: "Unlink" }).click();
-  await expect(page.getByRole("button", { name: "Pull requests", exact: true })).toHaveCount(0);
+  await expect(page.locator(".pr-chip")).toHaveCount(0);
   // With none linked the details card still offers to link one.
   await page.getByRole("button", { name: "Details" }).click();
   await page.getByRole("button", { name: "Link a pull request" }).click();
   const dialog = page.getByRole("dialog", { name: "Link a pull request" });
   await dialog.getByRole("button", { name: /#1 First layer/ }).click();
-  await expect(page.getByRole("button", { name: "Pull requests", exact: true })).toHaveText("#1");
+  await expect(page.locator(".pr-chip")).toHaveText("#1");
   expect(projectId).not.toBe("");
 });
