@@ -55,7 +55,7 @@ describe("the trail of tool calls", () => {
 
   it("marks a failed command in the row and says why on the collapsed group", () => {
     render(<Trail items={[make("Bash", { command: "npm test" }, { exitCode: 1, result: "1 failed" })]} />);
-    const group = screen.getByRole("button", { name: "Ran 1 command npm test 3.9s" });
+    const group = screen.getByRole("button", { name: "Ran 1 command npm test exit 1 · 3.9s" });
     expect(group).toHaveClass("s-fail");
     expect(group).toHaveTextContent("exit 1 · 3.9s");
   });
@@ -113,6 +113,13 @@ describe("the trail of tool calls", () => {
     expect(rows()[1]).toHaveFocus();
     await user.keyboard("{ArrowLeft}");
     expect(rows()[0]).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens the call's stored record from the footer", async () => {
+    render(<Trail items={[make("Bash", { command: "ls" }, { exitCode: 0 })]} />);
+    await openAll();
+    await userEvent.click(screen.getByRole("button", { name: "Inspect item" }));
+    expect(await screen.findByRole("dialog", { name: "Item details" })).toBeInTheDocument();
   });
 
   it("draws an edit as a small diff with its counts on the row", async () => {

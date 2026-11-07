@@ -100,7 +100,8 @@ function ItemDetails({ threadId, id }: { threadId: string; id: string }) {
 
 /** A quiet footer button that opens the call's stored record. */
 function InspectItem({ item, label = "Inspect item" }: { item: ToolItem; label?: string }) {
-  const [open, setOpen] = useState(false);
+  // Kept with the thread's other open state, so the dialog survives its row leaving and returning.
+  const [open, setOpen] = useOpenState(`inspect:${item.key}`, false);
   const threadId = useThreadOfTimeline();
   if (!threadId) return null;
   return (
@@ -728,7 +729,13 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
         className="tcw"
         summaryClassName={`tcr ${stateClass(state)}`.trim()}
         summaryProps={{
-          "aria-label": [lead, detail, !detail && label.note ? `· ${label.note}` : null, total === null ? null : callDuration(total)]
+          "aria-label": [
+            lead,
+            detail,
+            !detail && label.note ? `· ${label.note}` : null,
+            !open && failing && failing.exitCode !== null && failing.exitCode !== undefined && failing.exitCode !== 0 ? `exit ${failing.exitCode} ·` : null,
+            total === null ? null : callDuration(total),
+          ]
             .filter(Boolean)
             .join(" "),
         }}

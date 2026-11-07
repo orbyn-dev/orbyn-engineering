@@ -212,6 +212,16 @@ function RunningStack({ tools }: { tools: ToolItem[] }) {
   );
 }
 
+/** The key hint is for keyboard focus; a pointer press on a row must not shift what lies below it. */
+function keyboardOnRow(target: HTMLElement): boolean {
+  if (!target.matches("button.tcr")) return false;
+  try {
+    return target.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 /** Tool calls read as rows by kind; reasoning sits between them where it happened. */
 export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean }) {
   const threadId = useThreadOfTimeline();
@@ -247,7 +257,7 @@ export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean
       className="steps tc"
       aria-label="Activity"
       onKeyDown={trailKeys}
-      onFocus={(event) => setFocused((event.target as HTMLElement).matches("button.tcr"))}
+      onFocus={(event) => setFocused(keyboardOnRow(event.target as HTMLElement))}
       onBlur={() => setFocused(false)}
     >
       {several ? <SurfacedWorkflows value>{rows}</SurfacedWorkflows> : rows}

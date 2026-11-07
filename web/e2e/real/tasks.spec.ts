@@ -164,7 +164,7 @@ test("a task bound to a thread pauses, runs and edits from the details card", as
   const nightly = () => details.getByRole("group", { name: "Nightly review" });
   const toggle = () => nightly().getByRole("button", { name: /^(Pause|Resume)$/ });
   await expect(automations()).toContainText("Nightly review");
-  await expect(automations().getByRole("listitem")).toHaveCount(1);
+  await expect(automations().getByRole("group")).toHaveCount(1);
   await expect(automations()).not.toContainText("On pushes");
 
   // The mutation reaches the real service; only the browser's subsequent read
