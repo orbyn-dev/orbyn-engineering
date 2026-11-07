@@ -15,10 +15,20 @@ interface Highlights {
 const registry = () => (globalThis.CSS as unknown as { highlights?: Highlights } | undefined)?.highlights;
 const makeHighlight = (ranges: Range[]) => new (globalThis as unknown as { Highlight: new (...r: Range[]) => unknown }).Highlight(...ranges);
 
+/** Chrome the count never includes: button labels and anything hidden from assistive technology. */
+const SKIPPED = "button, [aria-hidden='true'], .sr-only, script, style";
+
+/**
+ * Every occurrence of `needle` in the text a row shows, in page order. Text inside buttons is
+ * skipped, which is also left out of the counts in `threadSearch`, so the nth count is the nth
+ * range here.
+ */
 export function rangesIn(root: Node, needle: string): Range[] {
   if (!needle) return [];
   const lower = needle.toLowerCase();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (node.parentElement?.closest(SKIPPED) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
   const ranges: Range[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = (node.textContent ?? "").toLowerCase();
@@ -34,22 +44,30 @@ export function rangesIn(root: Node, needle: string): Range[] {
 
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-/** Opens the fold or work group a match sits behind, so its text is on screen. */
+/**
+ * The nth occurrence in a mounted row, opening only what hides it: the turn fold when the row has
+ * not mounted its contents yet, then each closed card around the match.
+ */
 async function openAround(row: HTMLElement, needle: string, nth: number): Promise<Range | undefined> {
-  const pick = () => {
+  for (let pass = 0; pass < 4; pass++) {
     const ranges = rangesIn(row, needle);
-    return ranges[Math.min(nth, ranges.length - 1)];
-  };
-  const shown = (range: Range | undefined) => (range?.startContainer.parentElement?.getClientRects().length ?? 0) > 0;
-  for (const toggle of [".work-summary", ".trace-summary"]) {
-    if (shown(pick())) break;
-    const closed = row.querySelectorAll<HTMLElement>(`${toggle}[aria-expanded="false"]`);
-    if (closed.length === 0) continue;
-    for (const button of closed) button.parentElement?.dispatchEvent(new Event("reveal-setting"));
+    if (ranges.length <= nth) {
+      const fold = row.querySelector<HTMLElement>('button.work-summary[aria-expanded="false"]');
+      if (!fold) return ranges[ranges.length - 1];
+      fold.parentElement?.dispatchEvent(new Event("reveal-setting"));
+      await frame();
+      await frame();
+      continue;
+    }
+    const range = ranges[nth]!;
+    const closed = range.startContainer.parentElement?.closest<HTMLElement>(".collapsible-panel[hidden]");
+    if (!closed) return range;
+    closed.parentElement?.dispatchEvent(new Event("reveal-setting"));
     await frame();
     await frame();
   }
-  return pick();
+  const ranges = rangesIn(row, needle);
+  return ranges[Math.min(nth, ranges.length - 1)];
 }
 
 /**
@@ -107,7 +125,7 @@ export function ThreadFind({ threadId, onClose }: { threadId: string; onClose():
     if (matches.current.length > 0) void show(0, text);
   }, [text, threadId, show, paint]);
 
-  // Rows come and go as the view moves, so the highlights follow what is mounted.
+  // Rows come and go as the view moves or the thread streams, so the highlights follow what mounts.
   useEffect(() => {
     const root = transcriptFor(threadId)?.root();
     if (!root || !text) return;
@@ -116,10 +134,11 @@ export function ThreadFind({ threadId, onClose }: { threadId: string; onClose():
       cancelAnimationFrame(queued);
       queued = requestAnimationFrame(() => paint(text));
     };
-    root.addEventListener("scroll", repaint, { passive: true });
+    const watch = new MutationObserver(repaint);
+    watch.observe(root, { childList: true, subtree: true });
     return () => {
       cancelAnimationFrame(queued);
-      root.removeEventListener("scroll", repaint);
+      watch.disconnect();
     };
   }, [threadId, text, paint]);
 

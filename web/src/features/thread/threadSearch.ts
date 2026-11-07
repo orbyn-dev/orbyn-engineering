@@ -1,15 +1,24 @@
+import { markdownText } from "./Markdown";
 import type { ThreadItem } from "./projection";
 import type { TimelineEntry } from "./timeline";
 
-/** Text a person can find in one item, taken from the log rather than from what is mounted. */
+/**
+ * Text a person can find in one item, taken from the log rather than from what is mounted, and
+ * shaped like what the row shows: Markdown is read as rendered, and a tool card contributes its
+ * command and output. Button labels, timestamps and "Exit code" lines are not counted, and find
+ * skips them in the page too, so a count and a highlight always speak of the same text.
+ */
 function itemText(item: ThreadItem): string {
   switch (item.kind) {
     case "message":
+      return item.role === "user" ? item.text : markdownText(item.text);
     case "reasoning":
     case "notice":
       return item.text;
     case "tool":
-      return `${item.name} ${item.args}`;
+      // The summary line repeats the command inside a button, which find skips; the card shows
+      // the command, then what it printed.
+      return [item.args, item.output, item.result ?? ""].filter(Boolean).join("\n");
     case "approval":
       return item.approval.summary;
     case "plan":
@@ -33,7 +42,7 @@ export function entryText(entry: TimelineEntry): string {
       text = entry.items.map(itemText).join("\n");
       break;
     case "fold":
-      text = `${entry.label}\n${entry.entries.map(entryText).join("\n")}`;
+      text = entry.entries.map(entryText).join("\n");
       break;
     case "working":
       text = "";

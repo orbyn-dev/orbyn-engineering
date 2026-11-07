@@ -294,6 +294,7 @@ function Details({ block }: { block: Extract<Block, { type: "details" }> }) {
   return (
     <Collapsible
       className="md-details"
+      persistId={`details:${block.summary}`}
       summaryClassName="trace-summary"
       summary={
         <>
@@ -384,6 +385,59 @@ function renderBlock(block: Block, key: number): ReactNode {
     case "rule":
       return <hr key={key} />;
   }
+}
+
+/** Text of an inline run as the renderer shows it: link targets, code fences and markers are gone. */
+function inlineText(text: string): string {
+  let out = "";
+  let last = 0;
+  for (const match of text.matchAll(INLINE)) {
+    out += text.slice(last, match.index);
+    const [whole, , imageSrc, math, , code, bold1, bold2, em1, em2, strike, linkText, linkHref, bare] = match;
+    if (imageSrc !== undefined) out += "";
+    else if (math !== undefined) out += `$${math}$`;
+    else if (code !== undefined) out += code;
+    else if (bold1 !== undefined || bold2 !== undefined) out += inlineText(bold1 ?? bold2 ?? "");
+    else if (em1 !== undefined || em2 !== undefined) out += inlineText(em1 ?? em2 ?? "");
+    else if (strike !== undefined) out += inlineText(strike);
+    else if (linkText !== undefined) {
+      const href = linkHref ?? "";
+      out += threadLinkId(href) || safeHref(href) || fileLinkTarget(href) ? inlineText(linkText) : whole;
+    } else if (bare !== undefined) out += bare;
+    last = match.index + whole.length;
+  }
+  return out + text.slice(last);
+}
+
+function blockText(block: Block): string {
+  switch (block.type) {
+    case "heading":
+    case "paragraph":
+      return inlineText(block.text);
+    case "code":
+      return block.text;
+    case "quote":
+      return block.blocks.map(blockText).join("\n");
+    case "list":
+      return block.items.map((item) => item.map(blockText).join("\n")).join("\n");
+    case "table":
+      return [...block.head, ...block.rows.flat()].map(inlineText).join("\n");
+    case "details":
+      return [inlineText(block.summary), ...block.blocks.map(blockText)].join("\n");
+    case "math":
+      return `$$${block.source}$$`;
+    case "rule":
+      return "";
+  }
+}
+
+/**
+ * What the renderer puts on screen for this source, as plain text, for searching rows that are
+ * not mounted. Formatting markers and link targets are dropped. Maths is read as the source
+ * (the default); with maths rendering on, the rendered formula text is not matched.
+ */
+export function markdownText(text: string): string {
+  return parseBlocks(text.split(/\r\n|\n|\r/)).map(blockText).join("\n");
 }
 
 export function Markdown({ text, projectId = null, remoteImages = "render" }: { text: string; projectId?: string | null; remoteImages?: "render" | "link" }) {
