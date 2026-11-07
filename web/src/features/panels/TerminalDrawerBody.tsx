@@ -1,6 +1,6 @@
 import { useCommand } from "../../app/shortcuts";
 import { Check, ChevronDown, ChevronUp, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { request } from "../../api/client";
 import type { ProjectFileView, TerminalInfo } from "../../api/types";
 import { elapsed } from "../../lib/format";
@@ -13,7 +13,8 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { TerminalPanel } from "./TerminalPanel";
-import { controlsOf, terminalKey } from "./terminalControls";
+import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
+import { captureFocusReturn } from "../../ui/focusReturn";
 import { addTerminalChip } from "./terminalChip";
 import type { ProjectScript } from "../../generated/ProjectScript";
 import { runProjectAction } from "../thread/runProjectAction";
@@ -41,16 +42,17 @@ function Marker({ terminal }: { terminal: TerminalInfo }) {
 export const runningCount = (terminals: readonly TerminalInfo[] | null | undefined) =>
   (terminals ?? []).filter((terminal) => terminal.id !== MAIN && terminal.alive && terminal.script !== null).length;
 
-/** How often the closed drawer asks what still runs: 10 s, doubling to a minute, and it stops after three empty answers. */
+/** How often the closed drawer asks what still runs: 10 s, doubling to a minute after empty answers, and then a slow minute that never stops while it is mounted. */
 const BAR_POLL_MS = 10_000;
 const BAR_POLL_MAX_MS = 60_000;
-const BAR_POLL_EMPTY_LIMIT = 3;
 
 /** The slim bar left under the thread when the drawer is closed and something is still running. */
 export function TerminalBar({ threadId, onOpen }: { threadId: string; onOpen(): void }) {
   const [count, setCount] = useState(0);
   // Offline or with the service away there is nothing to ask.
   const away = useConnectionKind();
+  // A terminal revealed for this thread (a script started, the agent ran something) starts the quick asking again.
+  const revealed = useUi((state) => (state.terminalReveal?.threadId === threadId ? state.terminalReveal.nonce : 0));
   useEffect(() => {
     if (away) return;
     let live = true;
@@ -68,18 +70,18 @@ export function TerminalBar({ threadId, onOpen }: { threadId: string; onOpen(): 
       }
     };
     const next = () => {
-      if (!live || empty >= BAR_POLL_EMPTY_LIMIT) return;
+      if (!live) return;
       timer = setTimeout(async () => {
         if (!document.hidden) await read();
         next();
-      }, Math.min(BAR_POLL_MS * 2 ** empty, BAR_POLL_MAX_MS));
+      }, Math.min(BAR_POLL_MS * 2 ** Math.min(empty, 3), BAR_POLL_MAX_MS));
     };
     void read().then(next);
     return () => {
       live = false;
       clearTimeout(timer);
     };
-  }, [threadId, away]);
+  }, [threadId, away, revealed]);
   if (count === 0) return null;
   return (
     <div className="term-bar" role="group" aria-label="Terminal">
@@ -98,10 +100,17 @@ export function TerminalBar({ threadId, onOpen }: { threadId: string; onOpen(): 
 }
 
 /** Search in the scrollback of the terminal being shown: the matches are marked and the count says where you are. */
-function TerminalSearch({ keyOf, onClose }: { keyOf: string; onClose(): void }) {
+function TerminalSearch({ keyOf, focusSignal, onClose }: { keyOf: string; focusSignal: number; onClose(): void }) {
   const [text, setText] = useState("");
   const [results, setResults] = useState<{ index: number; count: number }>({ index: -1, count: 0 });
-  useEffect(() => controlsOf(keyOf)?.onResults(setResults), [keyOf]);
+  const field = useRef<HTMLInputElement>(null);
+  // Pressing the search key again while it is open comes back to the field.
+  useEffect(() => {
+    field.current?.focus();
+    field.current?.select();
+  }, [focusSignal]);
+  // Hears the results when xterm registers, which may be after the field opens.
+  useEffect(() => watchTerminal(keyOf, (controls) => controls.onResults(setResults)), [keyOf]);
   useEffect(() => () => controlsOf(keyOf)?.find("", "next"), [keyOf]);
   const find = (value: string, direction: "next" | "previous") => controlsOf(keyOf)?.find(value, direction);
   const count = text === "" ? "" : results.count === 0 ? "No matches" : `${results.index + 1} of ${results.count}`;
@@ -110,6 +119,7 @@ function TerminalSearch({ keyOf, onClose }: { keyOf: string; onClose(): void }) 
       <label className="term-search-field">
         <Search size={14} aria-hidden />
         <input
+          ref={field}
           aria-label="Search the terminal"
           value={text}
           autoFocus
@@ -170,6 +180,7 @@ export function TerminalDrawerBody({
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [watching, setWatching] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [searchFocus, setSearchFocus] = useState(0);
   const [ending, setEnding] = useState<TerminalInfo | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const pushToast = useUi((state) => state.pushToast);
@@ -221,14 +232,40 @@ export function TerminalDrawerBody({
       fail(failure);
     }
   };
-  /** A tab's X ends that shell; a process still running asks first. */
+  /**
+   * Where focus goes when a tab leaves: the neighbouring tab, else the "+". Remembered before the tab
+   * goes (it leaves when the list is read again) and applied once the row has changed.
+   */
+  const focusBack = useRef<ReturnType<typeof captureFocusReturn> | null>(null);
+  const rememberFocus = (group: string) => {
+    const tabsNow = [...(root.current?.querySelectorAll<HTMLElement>(".term-head .ptab") ?? [])];
+    const at = tabsNow.findIndex((tab) => tab.dataset.group === group);
+    const neighbour = tabsNow[at + 1] ?? tabsNow[at - 1];
+    focusBack.current = captureFocusReturn(neighbour?.querySelector<HTMLElement>("[role=tab]") ?? root.current?.querySelector<HTMLElement>(".padd"));
+  };
+  useLayoutEffect(() => {
+    if (!focusBack.current) return;
+    focusBack.current.restore();
+    focusBack.current = null;
+  }, [terminals.data, mainHidden]);
+  /** A tab's X ends that shell; one that is alive asks first. */
   const end = (terminal: TerminalInfo) => {
-    if (terminal.alive && terminal.script !== null) setEnding(terminal);
-    else void close(terminal);
+    if (terminal.alive) setEnding(terminal);
+    else {
+      rememberFocus(terminal.group);
+      void close(terminal);
+    }
   };
   const hideMain = () => {
+    rememberFocus(MAIN);
     setMainHidden(true);
     if (active === MAIN) setActive(tabs[0]?.[0]?.group ?? MAIN);
+  };
+  /** The main shell's X only hides its tab on this window; it asks if the service says something runs in it. */
+  const endMain = () => {
+    const info = groups.find((group) => group[0]?.group === MAIN)?.[0];
+    if (info?.alive && info.script !== null) setEnding(info);
+    else hideMain();
   };
   const run = async (script: ProjectScript) => {
     try {
@@ -279,7 +316,8 @@ export function TerminalDrawerBody({
     const first = group[0];
     const there = registered(group);
     return [
-      { label: "Clear output", disabled: !there, onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
+      ...(mainHidden ? [{ label: "Show Terminal", onSelect: () => { setMainHidden(false); setActive(MAIN); } }] : []),
+      { label: "Clear output", disabled: !there, ...(mainHidden ? { separatorBefore: true } : {}), onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
       { label: "Copy all output", disabled: !there, onSelect: () => copyAll(group) },
       { label: "Watch only", selected: watching, onSelect: () => setWatching(!watching) },
       ...(first && first.id !== MAIN && first.alive
@@ -298,29 +336,45 @@ export function TerminalDrawerBody({
     setTabMenu({ x: rect.left, y: rect.bottom, group });
   };
   const mainGroup = groups.find((group) => group[0]?.group === MAIN) ?? [];
-  // Ctrl or Cmd+F inside the drawer searches its output instead of reaching the shell.
+  // The search key inside the drawer searches its output instead of reaching the shell: Cmd+F on a Mac
+  // (Ctrl+F stays the shell's), Ctrl+F elsewhere. Pressed again while search is open, it returns to the field.
+  const searchOpen = useRef(false);
+  searchOpen.current = searching;
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
+      if (event.key.toLowerCase() !== "f" || event.altKey || event.shiftKey) return;
+      const mac = /mac/i.test(navigator.platform || navigator.userAgent);
+      const accel = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+      if (!accel) return;
       if (!(event.target instanceof Node) || !root.current?.contains(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
-      setSearching(true);
+      if (searchOpen.current) setSearchFocus((count) => count + 1);
+      else setSearching(true);
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, []);
+  // Closing the search puts focus on the terminal itself.
+  const wasSearching = useRef(false);
+  useLayoutEffect(() => {
+    if (searching) wasSearching.current = true;
+    else if (wasSearching.current) {
+      wasSearching.current = false;
+      root.current?.querySelector<HTMLElement>(".terminal-splits .xterm-helper-textarea")?.focus();
+    }
+  }, [searching]);
   const searchKey = keyOf(shown?.[0] ?? { id: MAIN } as TerminalInfo);
   return (
     <div className="terminal-drawer-body" ref={root}>
       <div className="terminal-tabs term-head" role="tablist" aria-label="Terminals">
         {mainHidden ? null : (
-          <div className="ptab" data-selected={current === MAIN || undefined} onContextMenu={(event) => onTabMenu(event, mainGroup)} onKeyDown={(event) => onTabKey(event, mainGroup)}>
+          <div className="ptab" data-group={MAIN} data-selected={current === MAIN || undefined} onContextMenu={(event) => onTabMenu(event, mainGroup)} onKeyDown={(event) => onTabKey(event, mainGroup)}>
             <button type="button" role="tab" aria-label="Terminal" aria-selected={current === MAIN} onClick={() => setActive(MAIN)}>
               <SquareTerminal size={14} aria-hidden />
               <span className="ptl">Terminal</span>
             </button>
-            <button type="button" className="ptx" aria-label="Close Terminal" onClick={hideMain}>
+            <button type="button" className="ptx" aria-label="Close Terminal" onClick={endMain}>
               <X size={11} aria-hidden />
             </button>
           </div>
@@ -331,7 +385,7 @@ export function TerminalDrawerBody({
           const selected = first.group === current;
           const title = `${first.title}${group.length > 1 ? ` (${group.length})` : ""}`;
           return (
-            <div key={first.group} className="ptab" data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)} onKeyDown={(event) => onTabKey(event, group)}>
+            <div key={first.group} className="ptab" data-group={first.group} data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)} onKeyDown={(event) => onTabKey(event, group)}>
               <button type="button" role="tab" aria-label={title} aria-selected={selected} onClick={() => setActive(first.group)}>
                 <SquareTerminal size={14} aria-hidden />
                 <span className="ptl">
@@ -373,13 +427,18 @@ export function TerminalDrawerBody({
           <ChevronDown size={14} aria-hidden />
         </IconButton>
       </div>
-      {searching && !empty ? <TerminalSearch keyOf={searchKey} onClose={() => setSearching(false)} /> : null}
+      {searching && !empty ? <TerminalSearch keyOf={searchKey} focusSignal={searchFocus} onClose={() => setSearching(false)} /> : null}
       {empty ? (
         <div className="term-empty">
           <span>No terminals open.</span>
           <Button small onClick={() => void open({})}>
             New terminal
           </Button>
+          {mainHidden ? (
+            <Button small tone="quiet" onClick={() => { setMainHidden(false); setActive(MAIN); }}>
+              Show Terminal
+            </Button>
+          ) : null}
         </div>
       ) : (
         <div className="terminal-splits" data-direction={shown?.[1]?.direction ?? undefined}>
@@ -460,7 +519,11 @@ export function TerminalDrawerBody({
       ) : null}</Presence>
       <Presence>{tabMenu ? <Menu x={tabMenu.x} y={tabMenu.y} label="Terminal tab" items={menuFor(tabMenu.group)} onClose={() => setTabMenu(null)} /> : null}</Presence>
       {ending ? (
-        <ConfirmDialog title="End this terminal?" confirmLabel="End" tone="danger" cancelFocus onConfirm={() => close(ending)} onClose={() => setEnding(null)}>
+        <ConfirmDialog title="End this terminal?" confirmLabel="End" tone="danger" cancelFocus onConfirm={async () => {
+            rememberFocus(ending.group);
+            if (ending.id === MAIN || ending.group === MAIN) hideMain();
+            else await close(ending);
+          }} onClose={() => setEnding(null)}>
           <p>{ending.title} is still running. Ending the terminal stops it.</p>
         </ConfirmDialog>
       ) : null}

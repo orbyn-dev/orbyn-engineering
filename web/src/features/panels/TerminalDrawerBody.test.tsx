@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "../../api/client";
@@ -9,7 +9,7 @@ import { useComposerChips } from "../thread/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
 import { registerTerminal, terminalKey } from "./terminalControls";
 
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId }: { terminalId?: string }) => <div>Output of {terminalId ?? "main"}</div> }));
+vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId }: { terminalId?: string }) => <div>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 vi.mock("../thread/runProjectAction", () => ({ runProjectAction: vi.fn(() => Promise.resolve()) }));
 
@@ -191,6 +191,107 @@ describe("terminal drawer", () => {
   });
 });
 
+describe("terminal focus, search keys and the hidden main shell", () => {
+  /** A list that forgets a terminal once it has been deleted, as the service does. */
+  function serveLive(initial: TerminalInfo[]) {
+    let list = initial;
+    mock.mockImplementation((method: string, path: string) => {
+      if (method === "DELETE") {
+        const id = path.split("/").pop();
+        list = list.filter((entry) => entry.id !== id);
+        return Promise.resolve(undefined) as never;
+      }
+      if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(list) as never;
+      if (method === "GET" && path.endsWith("/scripts")) return Promise.resolve({ scripts: [] }) as never;
+      return Promise.resolve(undefined) as never;
+    });
+  }
+  const idle = (id: string, title: string) => terminal({ id, group: `g-${id}`, title, alive: false, exit_code: 0 });
+
+  it("moves focus to the neighbouring tab after a terminal tab is closed", async () => {
+    serveLive([idle("t2", "build"), idle("t3", "lint")]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Close build" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "build" })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "lint" })).toHaveFocus();
+  });
+
+  it("moves focus to the neighbouring tab after End is confirmed", async () => {
+    serveLive([terminal({}), idle("t3", "lint")]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Close npm test" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "End this terminal?" })).getByRole("button", { name: "End" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /npm test/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "lint" })).toHaveFocus();
+  });
+
+  it("asks before ending a shell that is alive, not only a script", async () => {
+    serveLive([terminal({ script: null })]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Close npm test" }));
+    expect(await screen.findByRole("dialog", { name: "End this terminal?" })).toBeInTheDocument();
+  });
+
+  it("hides the main shell's tab, focuses its neighbour, and brings it back from a tab's menu", async () => {
+    serveLive([idle("t2", "build")]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Close Terminal" }));
+    expect(screen.queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("tab", { name: "build" })).toHaveFocus());
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "build" }) });
+    await user.click(screen.getByRole("menuitem", { name: "Show Terminal" }));
+    expect(screen.getByRole("tab", { name: "Terminal" })).toBeInTheDocument();
+  });
+
+  it("puts focus on the terminal when the search closes, by Escape or by Close search", async () => {
+    serveLive([]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    const area = await screen.findByLabelText("xterm");
+    area.focus();
+    await user.keyboard("{Control>}f{/Control}");
+    await screen.findByRole("textbox", { name: "Search the terminal" });
+    await user.keyboard("{Escape}");
+    expect(area).toHaveFocus();
+    await user.keyboard("{Control>}f{/Control}");
+    await user.click(await screen.findByRole("button", { name: "Close search" }));
+    expect(area).toHaveFocus();
+  });
+
+  it("uses Cmd+F on a Mac and leaves Ctrl+F to the shell, and returns to the field when pressed again", async () => {
+    const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    serveLive([]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    const area = await screen.findByLabelText("xterm");
+    area.focus();
+    await user.keyboard("{Control>}f{/Control}");
+    expect(screen.queryByRole("textbox", { name: "Search the terminal" })).not.toBeInTheDocument();
+    await user.keyboard("{Meta>}f{/Meta}");
+    const field = await screen.findByRole("textbox", { name: "Search the terminal" });
+    area.focus();
+    await user.keyboard("{Meta>}f{/Meta}");
+    expect(field).toHaveFocus();
+    platform.mockRestore();
+  });
+
+  it("hears search results from a terminal that registers after the field opens", async () => {
+    serveLive([]);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    (await screen.findByLabelText("xterm")).focus();
+    await user.keyboard("{Control>}f{/Control}");
+    await user.type(await screen.findByRole("textbox", { name: "Search the terminal" }), "x");
+    const stop = registerTerminal(terminalKey("th", undefined), { clear: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: (listener) => { listener({ index: 0, count: 2 }); return () => undefined; } });
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+    stop();
+  });
+});
+
 describe("closed terminal bar", () => {
   it("counts the processes still running and opens the drawer", async () => {
     serve([terminal({}), terminal({ id: "t3", group: "g3", alive: false })]);
@@ -200,6 +301,38 @@ describe("closed terminal bar", () => {
     expect(await screen.findByRole("group", { name: "Terminal" })).toHaveTextContent("1 process running");
     await user.click(screen.getByRole("button", { name: "Open terminal" }));
     expect(onOpen).toHaveBeenCalled();
+  });
+
+  it("keeps asking slowly when nothing runs, and shows the bar once a script starts later", async () => {
+    vi.useFakeTimers();
+    try {
+      let list: TerminalInfo[] = [];
+      mock.mockImplementation(() => Promise.resolve(list) as never);
+      render(<TerminalBar threadId="th" onOpen={() => undefined} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000 + 40_000 + 60_000 + 60_000); });
+      expect(screen.queryByRole("group", { name: "Terminal" })).not.toBeInTheDocument();
+      list = [terminal({})];
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(screen.getByRole("group", { name: "Terminal" })).toHaveTextContent("1 process running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks again at once when a terminal is revealed for the thread", async () => {
+    vi.useFakeTimers();
+    try {
+      let list: TerminalInfo[] = [];
+      mock.mockImplementation(() => Promise.resolve(list) as never);
+      render(<TerminalBar threadId="th" onOpen={() => undefined} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      list = [terminal({})];
+      await act(async () => { useUi.getState().revealTerminal("th", "g2"); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(screen.getByRole("group", { name: "Terminal" })).toHaveTextContent("1 process running");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not ask while the device is offline", async () => {
