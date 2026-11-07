@@ -407,6 +407,34 @@ export function createMockApi(options: MockOptions = {}) {
       return err(401, "unauthorized", "Sign in with the access key.");
     }
 
+    if (method === "GET" && seg[1] === "projects" && seg[3] === "pulls" && seg[4] && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
+      const state = fixtures.pageStates[Number(seg[4])]!;
+      if (!seg[5]) {
+        return {
+          status: 200,
+          body: {
+            pull: state.pull,
+            body: "Login now returns people to the page they came from when `next` points inside the app, and to `/` otherwise.",
+            checks: [],
+            comments: [],
+            mergeable: state.mergeable,
+            reviewers: state.reviewers,
+            head_sha: "abc1234",
+            base_sha: "def5678",
+            additions: 4,
+            deletions: 3,
+            changed_files: 2,
+            maintainer_can_modify: null,
+            auto_merge: false,
+          },
+        };
+      }
+      if (seg[5] === "checks") return { status: 200, body: fixtures.pageChecks(Number(seg[4])) };
+      if (seg[5] === "files") return { status: 200, body: fixtures.pageFiles() };
+      if (seg[5] === "timeline") return { status: 200, body: [] };
+      if (seg[5] === "comments") return { status: 200, body: { comments: [], threads: [] } };
+      if (seg[5] === "stack") return { status: 200, body: { layers: [], position: 0 } };
+    }
     if (method === "GET" && seg[1] === "projects" && seg[3] === "pulls" && seg[4]) {
       const pull = fixtures.pulls().find((entry) => String(entry.pull.number) === seg[4])?.pull;
       if (!pull) return err(404, "not_found", "Pull request not found.");

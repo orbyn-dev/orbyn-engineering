@@ -285,3 +285,45 @@ export function yourReview(details: PullDetails, viewers: readonly string[]): Yo
       return undefined;
   }
 }
+
+/** The state a pull request's page opens in, which picks its banner. */
+export type PageState = "merged" | "closed" | "draft" | "conflict" | "failed" | "changes" | "review" | "approved" | "running" | "open";
+
+export function pageState(pull: PullRequest, mergeable: string | null, reviewAsked: boolean): PageState {
+  if (pull.state === "merged") return "merged";
+  if (pull.state === "closed") return "closed";
+  if (pull.draft) return "draft";
+  if (mergeable === "conflicting") return "conflict";
+  const checks = checksOf(pull.checks_state);
+  if (checks === "fail") return "failed";
+  if (pull.review_state === "changes_requested") return "changes";
+  if (reviewAsked && pull.review_state !== "approved") return "review";
+  if (pull.review_state === "approved" && checks === "pass" && mergeable === "mergeable") return "approved";
+  return checks === "pending" ? "running" : "open";
+}
+
+/** Whether Merge can be pressed, and the line under it that says why not, or what is true. */
+export function mergeGate(
+  pull: PullRequest,
+  mergeable: string | null,
+  options: { offline: boolean; auto: boolean; forge: string },
+): { enabled: boolean; hint: string } {
+  if (pull.state === "merged") return { enabled: false, hint: `Nothing left to do on ${options.forge}.` };
+  if (pull.state === "closed") return { enabled: false, hint: "Reopen to merge it." };
+  if (pull.draft) return { enabled: false, hint: "Mark it ready for review to merge." };
+  if (options.offline) return { enabled: false, hint: "Merge needs a connection." };
+  if (mergeable === "conflicting") return { enabled: false, hint: "Resolve the conflict to merge." };
+  const checks = checksOf(pull.checks_state);
+  if (checks === "fail") return { enabled: false, hint: "Merge is blocked by a failing check." };
+  if (checks === "pending" && !options.auto) return { enabled: false, hint: "Merge unlocks when checks pass." };
+  if (pull.review_state === "review_required" || pull.review_state === "changes_requested") return { enabled: false, hint: "Merge needs an approval." };
+  return { enabled: true, hint: mergeable === "mergeable" ? "No conflicts" : "" };
+}
+
+/** The Review line of the status card, from what the forge reports. */
+export function reviewWords(pull: PullRequest, reviewers: readonly string[]): string {
+  if (pull.draft) return "Not requested";
+  if (pull.review_state === "approved") return "Approved";
+  if (pull.review_state === "changes_requested") return "Changes requested";
+  return reviewers.length > 0 ? `Requested from ${reviewers.map((name) => `@${name}`).join(", ")}` : "Not requested";
+}

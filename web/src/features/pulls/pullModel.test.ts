@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PullListEntry } from "../../api/types";
-import { activeChips, checksOf, checksView, noFilters, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
+import { activeChips, checksOf, checksView, mergeGate, noFilters, pageState, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
 
 const newest: PullSort = { by: "created", dir: "newest" };
 const oldest: PullSort = { by: "created", dir: "oldest" };
@@ -145,5 +145,40 @@ describe("filters that need details", () => {
       "Review: needs my review",
       "Review requested from: @orbyn-dev/web",
     ]);
+  });
+});
+
+describe("the pull request page", () => {
+  const pull = (over: Partial<PullListEntry["pull"]> = {}) => entry(1, over).pull;
+  it.each([
+    [{ state: "merged" }, "mergeable", false, "merged"],
+    [{ state: "closed" }, "mergeable", false, "closed"],
+    [{ draft: true }, "mergeable", false, "draft"],
+    [{ review_state: "approved" }, "conflicting", false, "conflict"],
+    [{ checks_state: "fail" }, "mergeable", false, "failed"],
+    [{ review_state: "changes_requested" }, "mergeable", false, "changes"],
+    [{ review_state: "review_required" }, "mergeable", true, "review"],
+    [{ review_state: "approved", checks_state: "pass" }, "mergeable", false, "approved"],
+    [{ checks_state: "pending" }, "mergeable", false, "running"],
+  ] as const)("opens %j in the %s state", (over, mergeable, asked, state) => {
+    expect(pageState(pull(over as Partial<PullListEntry["pull"]>), mergeable, asked)).toBe(state);
+  });
+
+  it.each([
+    [{ state: "merged" }, "mergeable", false, false, "Nothing left to do on GitHub."],
+    [{ state: "closed" }, "mergeable", false, false, "Reopen to merge it."],
+    [{ draft: true }, "mergeable", false, false, "Mark it ready for review to merge."],
+    [{}, "mergeable", true, false, "Merge needs a connection."],
+    [{}, "conflicting", false, false, "Resolve the conflict to merge."],
+    [{ checks_state: "fail" }, "mergeable", false, false, "Merge is blocked by a failing check."],
+    [{ checks_state: "pending" }, "mergeable", false, false, "Merge unlocks when checks pass."],
+    [{ review_state: "review_required" }, "mergeable", false, false, "Merge needs an approval."],
+    [{ review_state: "approved" }, "mergeable", false, true, "No conflicts"],
+  ] as const)("gates Merge for %j: enabled %s, saying %s", (over, mergeable, offline, enabled, hint) => {
+    expect(mergeGate(pull(over as Partial<PullListEntry["pull"]>), mergeable, { offline, auto: false, forge: "GitHub" })).toEqual({ enabled, hint });
+  });
+
+  it("lets Merge wait for checks once auto-merge is chosen", () => {
+    expect(mergeGate(pull({ checks_state: "pending" }), "mergeable", { offline: false, auto: true, forge: "GitHub" }).enabled).toBe(true);
   });
 });

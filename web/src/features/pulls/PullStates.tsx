@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { Button } from "../../ui/controls";
 
 /** A quiet bar above the list: what is wrong, and the step that helps. */
-export function PullsBanner({ icon, children, actions }: { icon: ReactNode; children: ReactNode; actions: ReactNode }) {
+export function PullsBanner({ icon, children, actions, tone }: { icon: ReactNode; children: ReactNode; actions: ReactNode; tone?: "warn" | "err" }) {
   return (
-    <div className="pulls-banner" role="status">
+    <div className="pulls-banner" data-tone={tone} role="status">
       {icon}
       <span>{children}</span>
       <span className="pulls-banner-end">{actions}</span>
