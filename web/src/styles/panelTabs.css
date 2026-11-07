@@ -101,18 +101,20 @@
   border: 0;
   border-radius: var(--radius-5);
   background: transparent;
-  color: var(--color-faint);
   cursor: pointer;
 }
-.ptx svg {
+.ptx > svg {
   width: 11px;
   height: 11px;
+  color: var(--color-faint);
 }
-.ptab[data-selected] .ptx {
+.ptab[data-selected] .ptx > svg {
   color: var(--color-textSoft);
 }
 .ptx:hover {
   background: var(--color-hover);
+}
+.ptx:hover > svg {
   color: var(--color-text);
 }
 .padd.icon-btn {
@@ -249,7 +251,7 @@
   font-size: var(--text-meta);
 }
 .term-bar-dot {
-  color: var(--color-faint);
+  color: var(--color-muted);
 }
 .term-bar-open {
   margin-left: auto;

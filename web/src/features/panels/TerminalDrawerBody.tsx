@@ -200,7 +200,7 @@ export function TerminalDrawerBody({ threadId, onClose }: { threadId: string; on
           const selected = first.group === active;
           const title = `${first.title}${group.length > 1 ? ` (${group.length})` : ""}`;
           return (
-            <div key={first.group} className="ptab terminal-tab" data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)}>
+            <div key={first.group} className="ptab" data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)}>
               <button type="button" role="tab" aria-selected={selected} onClick={() => setActive(first.group)}>
                 <SquareTerminal size={14} aria-hidden />
                 <span className="ptl">

@@ -330,7 +330,6 @@ export function SurfacePane({
         <div className="head-end">
           {folded ? (
             <IconButton
-              className="tabs-more"
               label="More tabs"
               pressed={moreMenu !== null}
               aria-haspopup="menu"
