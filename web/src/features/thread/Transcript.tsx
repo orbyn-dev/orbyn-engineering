@@ -169,18 +169,21 @@ export function Transcript({
 
   // Only a move up lets go of the end. A scroll event can arrive after the view has shrunk,
   // which leaves the end farther away without anyone having scrolled from it.
-  // Rows also change height as they are measured, which can clamp the view upward without anyone
-  // having scrolled, so a move up only counts while the content stayed the same height.
+  // Rows also change height as they are measured. When the content shrinks under a view that was
+  // at the end, the browser clamps the view up by at most that much without anyone having scrolled.
   const lastTop = useRef(0);
   const lastHeight = useRef(0);
+  const wasAtEnd = useRef(restore === null);
   const onScroll = () => {
     const element = scroller.current;
     if (!element) return;
     const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_BOTTOM;
-    const settled = Math.abs(element.scrollHeight - lastHeight.current) <= 1;
-    const movedUp = element.scrollTop < lastTop.current - 1 && settled;
+    const shrunk = lastHeight.current - element.scrollHeight;
+    const clamped = wasAtEnd.current && shrunk > 1 && lastTop.current - element.scrollTop <= shrunk + 1;
+    const movedUp = element.scrollTop < lastTop.current - 1 && !clamped;
     lastTop.current = element.scrollTop;
     lastHeight.current = element.scrollHeight;
+    wasAtEnd.current = atEnd;
     if (atEnd) setPinned(true);
     else if (movedUp) setPinned(false);
     win.onScroll();
