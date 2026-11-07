@@ -13,20 +13,25 @@ export function MergeDialog({
   onClose,
   onMerged,
   initialMethod,
-  chosen,
+  fixedMethod,
+  initialAuto,
+  initialDeleteBranch,
 }: {
   projectId: string;
   detail: PullRequestDetail;
   onClose(): void;
   onMerged(): void;
   initialMethod: string;
-  /** On the page the merge menu has already chosen these, so the dialog asks only for the message. */
-  chosen?: { auto: boolean; deleteBranch: boolean };
+  /** On the page the merge menu has chosen the method, so the dialog only says which. */
+  fixedMethod?: boolean;
+  initialAuto?: boolean;
+  /** Where the page already holds the project's choice; otherwise the remembered one. */
+  initialDeleteBranch?: boolean;
 }) {
   const { number } = detail.pull;
   const [method, setMethod] = useState(initialMethod);
-  const [auto, setAuto] = useState(chosen?.auto ?? false);
-  const [deleteBranch, setDeleteBranch] = useState(chosen?.deleteBranch ?? true);
+  const [auto, setAuto] = useState(initialAuto ?? false);
+  const [deleteBranch, setDeleteBranch] = useState(initialDeleteBranch ?? deleteBranchChoice(projectId));
   const [strip, setStrip] = useState(false);
   const [body, setBody] = useState(detail.body);
   const [busy, setBusy] = useState(false);
@@ -42,6 +47,7 @@ export function MergeDialog({
         strip_credits: strip,
         ...(method === "rebase" ? {} : { body }),
       });
+      rememberDeleteBranch(projectId, deleteBranch);
       onMerged();
       onClose();
     } catch (failure) {
@@ -68,7 +74,7 @@ export function MergeDialog({
       <p className="field-hint">
         {METHOD_WORDS[method] ?? "Squash and merge"} #{number} into {detail.pull.base}.
       </p>
-      {chosen ? null : (
+      {fixedMethod ? null : (
         <Field label="Merge method">
           {(props) => (
             <select {...props} value={method} onChange={(event) => setMethod(event.target.value)}>
@@ -84,23 +90,19 @@ export function MergeDialog({
           {(props) => <textarea {...props} rows={4} value={body} onChange={(event) => setBody(event.target.value)} />}
         </Field>
       )}
-      {chosen ? null : (
-        <>
-          <label className="check">
-            <input type="checkbox" checked={auto} onChange={(event) => setAuto(event.target.checked)} />
-            <span>Merge when checks pass</span>
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={deleteBranch} onChange={(event) => setDeleteBranch(event.target.checked)} />
-            <span>Delete the branch</span>
-          </label>
-        </>
-      )}
       <label className="check">
-        <input type="checkbox" role="switch" checked={strip} onChange={(event) => setStrip(event.target.checked)} />
+        <input type="checkbox" checked={auto} onChange={(event) => setAuto(event.target.checked)} />
+        <span>Merge when checks pass</span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={deleteBranch} onChange={(event) => setDeleteBranch(event.target.checked)} />
+        <span>Delete the branch</span>
+      </label>
+      <label className="check">
+        <input type="checkbox" role="switch" aria-describedby="merge-strip-hint" checked={strip} onChange={(event) => setStrip(event.target.checked)} />
         <span>Remove agent credits</span>
       </label>
-      <p className="field-hint">Strips agent credit lines from the commit message.</p>
+      <p id="merge-strip-hint" className="field-hint">Strips agent credit lines from the commit message.</p>
       {error ? (
         <p className="field-error" role="alert">
           {error}
@@ -113,16 +115,36 @@ export function MergeDialog({
 /** The same dialog from a list row: it reads the pull request first, for its message. */
 export function RowMergeDialog({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose(): void; onMerged(): void }) {
   const detail = useAsync(`pull-merge:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal));
-  if (!detail.data) return null;
+  if (detail.data) {
+    return <MergeDialog projectId={projectId} detail={detail.data} initialMethod="squash" onClose={onClose} onMerged={onMerged} />;
+  }
   return (
-    <MergeDialog
-      projectId={projectId}
-      detail={detail.data}
-      initialMethod="squash"
-      chosen={{ auto: false, deleteBranch: deleteBranchChoice(projectId) }}
+    <Dialog
+      title="Merge pull request"
       onClose={onClose}
-      onMerged={onMerged}
-    />
+      footer={
+        <>
+          <Button data-dialog-focus onClick={onClose}>
+            Cancel
+          </Button>
+          {detail.status === "error" ? (
+            <Button tone="primary" onClick={() => void detail.reload()}>
+              Try again
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+      {detail.status === "error" ? (
+        <p className="field-error" role="alert">
+          Couldn{"\u2019"}t load details.
+        </p>
+      ) : (
+        <p className="field-hint" role="status">
+          Loading {"\u2026"}
+        </p>
+      )}
+    </Dialog>
   );
 }
 
