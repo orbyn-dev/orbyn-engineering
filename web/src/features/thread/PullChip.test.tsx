@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiFailure } from "../../api/client";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequest, Thread } from "../../api/types";
 import { useConnection } from "../../state/connection";
@@ -87,7 +88,7 @@ describe("pull request popover", () => {
     await open();
     const dialog = await screen.findByRole("dialog", { name: "Pull requests" });
     expect(within(dialog).getByText("3 linked pull requests")).toBeInTheDocument();
-    const rows = within(dialog).getAllByRole("link");
+    const rows = within(dialog).getAllByRole("button", { name: /^#\d+ / });
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["#3 Pull 3", "#57 Pull 57", "#142 Pull 142"]);
     await waitFor(() => expect(rows[0]).toHaveFocus());
     expect(within(rows[0]!).getByText("Ready to merge")).toBeInTheDocument();
@@ -101,14 +102,14 @@ describe("pull request popover", () => {
   it("opens the pull request page from a row", async () => {
     serve(three);
     const user = await open();
-    await user.click(await screen.findByRole("link", { name: "#57 Pull 57" }));
+    await user.click(await screen.findByRole("button", { name: "#57 Pull 57" }));
     expect(window.location.hash).toBe("#/pulls/p1/57");
   });
 
   it("moves between rows with the arrow keys", async () => {
     serve(three);
     const user = await open();
-    const rows = await screen.findAllByRole("link");
+    const rows = await screen.findAllByRole("button", { name: /^#\d+ / });
     await waitFor(() => expect(rows[0]).toHaveFocus());
     await user.keyboard("{ArrowDown}");
     expect(rows[1]).toHaveFocus();
@@ -139,11 +140,11 @@ describe("pull request popover", () => {
   it("keeps the list and says so when a refresh fails, with Try again", async () => {
     serve(three);
     const user = await open();
-    await screen.findAllByRole("link");
+    await screen.findAllByRole("button", { name: /^#\d+ / });
     vi.spyOn(pullsApi, "refreshLinked").mockRejectedValue(new Error("no"));
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     expect(await screen.findByText(/GitHub didn’t answer\. Showing what was loaded just now\./)).toBeInTheDocument();
-    expect(screen.getAllByRole("link")).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: /^#\d+ / })).toHaveLength(3);
     vi.spyOn(pullsApi, "refreshLinked").mockResolvedValue(three);
     await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.queryByText(/didn’t answer/)).not.toBeInTheDocument());
@@ -152,7 +153,7 @@ describe("pull request popover", () => {
   it("offline: shows what was loaded with no button, and mutes Refresh and Watch", async () => {
     serve(three);
     await open();
-    await screen.findAllByRole("link");
+    await screen.findAllByRole("button", { name: /^#\d+ / });
     act(() => useConnection.setState({ offline: true }));
     expect(screen.getByText(/You’re offline\. Showing what was loaded/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
@@ -164,19 +165,71 @@ describe("pull request popover", () => {
     serve(three);
     vi.spyOn(pullsApi, "unlink").mockResolvedValue(undefined);
     const user = await open();
-    const row = (await screen.findAllByRole("link"))[0]!;
-    await user.click(within(row).getByRole("button", { name: "Unlink" }));
+    await user.click(await screen.findByRole("button", { name: "Unlink #3" }));
     expect(pullsApi.unlink).toHaveBeenCalledWith("t1", 3);
+    await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledTimes(3));
   });
 
-  it("links one by number from the footer", async () => {
+  it("puts every control in the Tab order: the row, its switch and Unlink are siblings", async () => {
     serve(three);
-    vi.spyOn(pullsApi, "projectPulls").mockResolvedValue([pull(9)]);
-    vi.spyOn(pullsApi, "link").mockResolvedValue(undefined);
+    await open();
+    const row = (await screen.findAllByRole("button", { name: /^#\d+ / }))[0]!.closest(".pr-row")!;
+    expect(row.querySelector("[role=link]")).toBeNull();
+    for (const control of row.querySelectorAll("button, input")) expect(control.closest("button, [role=link]")).toBe(control.tagName === "BUTTON" ? control : null);
+    expect([...row.querySelectorAll("button, input")].every((control) => (control as HTMLElement).tabIndex >= 0)).toBe(true);
+  });
+
+  it("links one by number from the footer, and says when there is no such pull request", async () => {
+    serve(three);
+    vi.spyOn(pullsApi, "link").mockRejectedValueOnce(new ApiFailure("not_found", "gone", 404)).mockResolvedValue(undefined);
     const user = await open();
-    await user.click(await screen.findByRole("button", { name: "Link a pull request" }));
-    await user.click(await screen.findByRole("button", { name: "#9 Pull 9" }));
-    expect(pullsApi.link).toHaveBeenCalledWith("t1", 9);
+    await user.click(await screen.findByRole("button", { name: "Link a pull request…" }));
+    await user.type(screen.getByRole("textbox", { name: "Pull request number" }), "9");
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    expect(await screen.findByText("No pull request #9 in this repository.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Link" }));
+    await waitFor(() => expect(pullsApi.link).toHaveBeenLastCalledWith("t1", 9));
+  });
+
+  it("writes a GitLab merge request as !number, and names GitLab when it does not answer", async () => {
+    serve([pull(3, { url: "https://gitlab.com/acme/orbyn/-/merge_requests/3" })]);
+    const user = await open();
+    expect(screen.getByRole("button", { name: "Pull requests" })).toHaveTextContent("!3");
+    expect(await screen.findByRole("button", { name: "!3 Pull 3" })).toBeInTheDocument();
+    vi.spyOn(pullsApi, "refreshLinked").mockRejectedValue(new Error("no"));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText(/GitLab didn’t answer\./)).toBeInTheDocument();
+  });
+
+  it("keeps the chip, an error with Retry and Link reachable when the first read fails", async () => {
+    vi.spyOn(pullsApi, "linked").mockRejectedValueOnce(new Error("no")).mockRejectedValueOnce(new Error("no")).mockResolvedValue(three);
+    vi.spyOn(pullsApi, "watches").mockResolvedValue([]);
+    vi.spyOn(pullsApi, "detail").mockResolvedValue({ mergeable: "mergeable" } as never);
+    const user = userEvent.setup();
+    render(<PullChip thread={thread} />);
+    await user.click(await screen.findByRole("button", { name: "Pull requests" }));
+    const dialog = await screen.findByRole("dialog", { name: "Pull requests" });
+    await waitFor(() => expect(within(dialog).getByText("The host didn’t answer.")).toBeInTheDocument());
+    expect(within(dialog).getByRole("button", { name: "Link a pull request…" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(await within(dialog).findAllByRole("button", { name: /^#\d+ / })).toHaveLength(3);
+  });
+
+  it("returns focus to the Details button when the last pull request is unlinked", async () => {
+    serve([pull(1)]);
+    vi.spyOn(pullsApi, "unlink").mockImplementation(async () => {
+      vi.mocked(pullsApi.linked).mockResolvedValue([]);
+    });
+    const user = userEvent.setup();
+    render(
+      <>
+        <button data-details-toggle>Details</button>
+        <PullChip thread={thread} />
+      </>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Pull requests" }));
+    await user.click(await screen.findByRole("button", { name: "Unlink #1" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" })).toHaveFocus());
   });
 });
 
@@ -188,7 +241,7 @@ describe("details card Pull requests row", () => {
     const row = await screen.findByRole("button", { name: "Pull requests" });
     expect(row).toHaveTextContent("3 pull requests");
     await user.click(row);
-    expect(await screen.findAllByRole("link")).toHaveLength(3);
+    expect(await screen.findAllByRole("button", { name: /^#\d+ / })).toHaveLength(3);
     expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
   });
 
@@ -196,6 +249,42 @@ describe("details card Pull requests row", () => {
     serve([]);
     render(<PullsRow thread={thread} />);
     expect(await screen.findByText("No pull request yet")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Link a pull request" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link by number" })).toBeInTheDocument();
+  });
+
+  it("says it could not load, with Retry, and still offers Link by number", async () => {
+    vi.spyOn(pullsApi, "linked").mockRejectedValue(new Error("no"));
+    vi.spyOn(pullsApi, "watches").mockResolvedValue([]);
+    render(<PullsRow thread={thread} />);
+    expect(await screen.findByText("Couldn’t load pull requests")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link by number" })).toBeInTheDocument();
+  });
+});
+
+describe("pull request store", () => {
+  it("ignores a read that lands after a newer one, and clears busy only when the last ends", async () => {
+    let slow!: (value: PullRequest[]) => void;
+    vi.spyOn(pullsApi, "linked")
+      .mockImplementationOnce(() => new Promise((resolve) => (slow = resolve)))
+      .mockResolvedValue([pull(2)]);
+    vi.spyOn(pullsApi, "watches").mockResolvedValue([]);
+    vi.spyOn(pullsApi, "detail").mockResolvedValue({ mergeable: "mergeable" } as never);
+    const first = useThreadPulls.getState().load(thread);
+    await useThreadPulls.getState().load(thread);
+    expect(useThreadPulls.getState().byThread["t1"]?.pulls?.map((entry) => entry.number)).toEqual([2]);
+    expect(useThreadPulls.getState().byThread["t1"]?.busy).toBe(true);
+    slow([pull(1)]);
+    await first;
+    expect(useThreadPulls.getState().byThread["t1"]?.pulls?.map((entry) => entry.number)).toEqual([2]);
+    expect(useThreadPulls.getState().byThread["t1"]?.busy).toBe(false);
+  });
+
+  it("drops a thread's entry when its chip goes", async () => {
+    serve([pull(1)]);
+    const { unmount } = render(<PullChip thread={thread} />);
+    await screen.findByRole("button", { name: "Pull requests" });
+    unmount();
+    expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
   });
 });

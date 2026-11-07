@@ -1,6 +1,7 @@
-import { Check, ChevronDown, CloudOff, GitPullRequest, RefreshCw, TriangleAlert, X } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Check, ChevronDown, CloudOff, GitPullRequest, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useCommand } from "../../app/shortcuts";
+import { ApiFailure } from "../../api/client";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequest, Thread } from "../../api/types";
 import { useWaited } from "../../lib/motion";
@@ -12,9 +13,9 @@ import { navigate } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Button, IconButton } from "../../ui/controls";
+import { captureFocusReturn } from "../../ui/focusReturn";
 import { ToolbarPopover } from "../pulls/ToolbarPopover";
 import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "./GitControl";
-import { LinkPullDialog } from "./LinkPullDialog";
 import {
   agoWords,
   checksSummary,
@@ -22,6 +23,7 @@ import {
   chipLabel,
   entryOf,
   forgeName,
+  numberLabel,
   readyToMerge,
   stateWord,
   useThreadPulls,
@@ -31,12 +33,15 @@ import "../pulls/pullsToolbar.css";
 import "./pullChip.css";
 
 /** Reads the thread's linked pull requests once it shows, and again whenever it changes. */
-function useLinked(thread: Thread) {
+function useLinked(thread: Thread, owner = false) {
   const load = useThreadPulls((state) => state.load);
+  const forget = useThreadPulls((state) => state.forget);
   const { id, project_id: projectId } = thread;
   useEffect(() => {
     void load({ id, project_id: projectId });
-  }, [load, id, projectId]);
+    // The owner (the header chip) drops what it read when the thread goes, so the cache doesn't grow.
+    return owner ? () => forget(id) : undefined;
+  }, [load, forget, owner, id, projectId]);
   return useThreadPulls((state) => entryOf(state, thread.id));
 }
 
@@ -56,6 +61,60 @@ function Skeleton() {
   );
 }
 
+/** A pull request number typed in: links it to the thread, or says there is no such one. */
+export function LinkForm({ thread, onDone, onCancel }: { thread: Thread; onDone(): void; onCancel(): void }) {
+  const load = useThreadPulls((state) => state.load);
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const number = Number(/^#?(\d+)$/.exec(value.trim())?.[1]);
+    if (!Number.isInteger(number) || number < 1) {
+      setError("Enter a pull request number.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    pullsApi.link(thread.id, number).then(
+      () => {
+        void load(thread);
+        onDone();
+      },
+      (failure: unknown) => {
+        setBusy(false);
+        const known = failure instanceof ApiFailure && [400, 404, 422].includes(failure.status);
+        setError(known ? `No pull request #${number} in this repository.` : toFailure(failure).message);
+      },
+    );
+  };
+  return (
+    <form className="pr-link-form" onSubmit={submit}>
+      <div className="pr-head">Link a pull request</div>
+      <label className="pr-link-label">
+        <span>Pull request number</span>
+        <span className="pr-link-field" data-invalid={error ? "" : undefined}>
+          <span aria-hidden>#</span>
+          <input aria-label="Pull request number" inputMode="numeric" value={value} autoFocus onChange={(event) => setValue(event.target.value)} />
+        </span>
+      </label>
+      {error ? (
+        <p className="pr-link-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="pr-link-acts">
+        <Button small onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" small tone="primary" disabled={busy}>
+          Link
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOpen(): void }) {
   const entry = useThreadPulls((state) => entryOf(state, thread.id));
   const setWatch = useThreadPulls((state) => state.setWatch);
@@ -67,27 +126,47 @@ function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOp
   const summary = checksSummary(pull);
   const project = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.name);
   const watching = entry.watched.includes(pull.number);
-  const open = () => {
-    onOpen();
-    navigate({ name: "pulls", project: thread.project_id, number: pull.number });
+  const unlink = async () => {
+    // The last row takes the chip with it: focus goes to a stable element, the Details button.
+    const last = (entry.pulls?.length ?? 0) <= 1;
+    const back = last ? captureFocusReturn(document.querySelector<HTMLElement>("[data-details-toggle]")) : null;
+    try {
+      await pullsApi.unlink(thread.id, pull.number);
+      await load(thread);
+      back?.restore();
+    } catch (failure) {
+      pushToast(`Couldn't do that. ${toFailure(failure).message}`);
+    }
   };
   return (
-    <div
-      className="pr-row"
-      role="link"
-      tabIndex={-1}
-      aria-label={`#${pull.number} ${pull.title}`}
-      onClick={(event) => {
-        if (!(event.target as HTMLElement).closest("button, input, label")) open();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" && event.target === event.currentTarget) open();
-      }}
-    >
-      <span className="pr-title">
-        <span className="pr-num">#{pull.number}</span>
-        <b>{pull.title}</b>
-      </span>
+    <div className="pr-row">
+      <button
+        type="button"
+        className="pr-open"
+        aria-label={`${numberLabel(pull)} ${pull.title}`}
+        onClick={() => {
+          onOpen();
+          navigate({ name: "pulls", project: thread.project_id, number: pull.number });
+        }}
+      >
+        <span className="pr-title">
+          <span className="pr-num">{numberLabel(pull)}</span>
+          <b>{pull.title}</b>
+        </span>
+        <span className="pr-meta">
+          {word ? <span className="pr-state">{word}</span> : <span className="pr-quiet">Draft</span>}
+          {ready ? <span className="pr-ready">Ready to merge</span> : null}
+          {summary ? (
+            <span className="pr-checks" data-tone={summary.tone}>
+              {summary.tone === "pass" ? <Check size={12} aria-hidden /> : null}
+              {summary.tone === "fail" ? <X size={12} aria-hidden /> : null}
+              {summary.tone === "running" ? <i className="spin" aria-hidden /> : null}
+              {summary.text}
+            </span>
+          ) : null}
+          <span className="pr-branch">{[project, pull.head].filter(Boolean).join(" · ")}</span>
+        </span>
+      </button>
       <label className="pr-watch" data-disabled={offline || undefined} title={WATCH_TIP}>
         <span>Watch</span>
         <input
@@ -103,31 +182,9 @@ function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOp
           }}
         />
       </label>
-      <span className="pr-meta">
-        {word ? <span className="pr-state">{word}</span> : <span className="pr-quiet">Draft</span>}
-        {ready ? <span className="pr-ready">Ready to merge</span> : null}
-        {summary ? (
-          <span className="pr-checks" data-tone={summary.tone}>
-            {summary.tone === "pass" ? <Check size={12} aria-hidden /> : null}
-            {summary.tone === "fail" ? <X size={12} aria-hidden /> : null}
-            {summary.tone === "running" ? <i className="spin" aria-hidden /> : null}
-            {summary.text}
-          </span>
-        ) : null}
-        <span className="pr-branch">{[project, pull.head].filter(Boolean).join(" · ")}</span>
-        <button
-          type="button"
-          className="pr-unlink"
-          onClick={() => {
-            pullsApi.unlink(thread.id, pull.number).then(
-              () => load(thread),
-              (failure: unknown) => pushToast(`Couldn't do that. ${toFailure(failure).message}`),
-            );
-          }}
-        >
-          Unlink
-        </button>
-      </span>
+      <button type="button" className="pr-unlink" aria-label={`Unlink ${numberLabel(pull)}`} onClick={() => void unlink()}>
+        Unlink
+      </button>
     </div>
   );
 }
@@ -148,9 +205,10 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
   const waited = useWaited(entry.busy && entry.pulls === null);
   const updating = useWaited(entry.busy);
   const pulls = entry.pulls ?? [];
+  const loaded = entry.pulls !== null;
   useEffect(() => {
-    if (focusFirst) root.current?.querySelector<HTMLElement>(".pr-row")?.focus();
-  }, [focusFirst]);
+    if (focusFirst) root.current?.querySelector<HTMLElement>(".pr-open, .pr-retry")?.focus();
+  }, [focusFirst, loaded]);
   // Opening the list reads it again, so what it shows is current.
   useEffect(() => {
     void load(thread);
@@ -159,8 +217,9 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
   }, []);
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    const rows = [...(root.current?.querySelectorAll<HTMLElement>(".pr-row:not([data-skeleton])") ?? [])];
-    const at = rows.findIndex((row) => row === document.activeElement || row.contains(document.activeElement));
+    if ((event.target as HTMLElement).closest("input[type=text], input:not([type])")) return;
+    const rows = [...(root.current?.querySelectorAll<HTMLElement>(".pr-open") ?? [])];
+    const at = rows.findIndex((row) => row.closest(".pr-row")?.contains(document.activeElement));
     const next = rows[at + (event.key === "ArrowDown" ? 1 : -1)];
     if (!next) return;
     event.preventDefault();
@@ -168,7 +227,9 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
   };
   const ago = entry.loadedAt === null ? "" : agoWords(entry.loadedAt, now);
   const title = pulls.length === 1 ? null : pulls.length > 1 ? `${pulls.length} linked pull requests` : "Linked pull requests";
-  const failedBy = forgeName(pulls[0]?.url);
+  const host = forgeName(pulls[0]?.url);
+  const firstFailed = entry.pulls === null && entry.failed;
+  if (linking) return <div className="pr-pop" ref={root} data-sheet={sheet || undefined}><LinkForm thread={thread} onDone={() => setLinking(false)} onCancel={() => setLinking(false)} /></div>;
   return (
     <div className="pr-pop" ref={root} data-sheet={sheet || undefined} onKeyDown={move}>
       {title ? <div className="pr-head">{title}</div> : null}
@@ -177,11 +238,19 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
           <CloudOff size={13} aria-hidden />
           <span>You’re offline. Showing what was loaded {ago}.</span>
         </div>
+      ) : firstFailed ? (
+        <div className="pr-note" role="alert">
+          <TriangleAlert size={13} aria-hidden />
+          <span>{host} didn’t answer.</span>
+          <Button small className="pr-retry" disabled={entry.busy} onClick={() => void load(thread)}>
+            Retry
+          </Button>
+        </div>
       ) : entry.failed && entry.loadedAt !== null ? (
         <div className="pr-note" role="status">
           <TriangleAlert size={13} aria-hidden />
           <span>
-            {failedBy} didn’t answer. Showing what was loaded {ago}.
+            {host} didn’t answer. Showing what was loaded {ago}.
           </span>
           <Button small onClick={() => void refresh(thread)}>
             Try again
@@ -199,36 +268,37 @@ export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread
       ) : (
         pulls.map((pull) => <Row key={pull.number} thread={thread} pull={pull} onOpen={onOpen} />)
       )}
+      <button type="button" className="pr-link" aria-expanded={linking} onClick={() => setLinking(true)}>
+        <Plus size={14} aria-hidden />
+        Link a pull request…
+      </button>
       <div className="pr-foot">
         <Button small className="pr-refresh" disabled={offline || entry.busy} onClick={() => void refresh(thread)}>
           <RefreshCw size={12} aria-hidden />
           Refresh
         </Button>
-        <button type="button" className="pr-link" onClick={() => setLinking(true)}>
-          Link a pull request
-        </button>
         <span className="pr-updated">{updating ? "Updating…" : entry.loadedAt === null ? "" : `Updated ${ago}`}</span>
       </div>
-      {linking ? <LinkPullDialog thread={thread} onClose={() => setLinking(false)} onLinked={() => void load(thread)} /> : null}
     </div>
   );
 }
 
 /** The header's pull request chip. A thread with none linked has no chip at all. */
 export function PullChip({ thread }: { thread: Thread }) {
-  const entry = useLinked(thread);
+  const entry = useLinked(thread, true);
   const [open, setOpen] = useState<{ anchor: HTMLElement; sheet: boolean } | null>(null);
   const layout = useLayoutWidth();
   const sheet = layout === "phone";
   const pulls = entry.pulls ?? [];
+  const failed = entry.pulls === null && entry.failed;
   const pushToast = useUi((state) => state.pushToast);
   useCommand("pullRequest.copyNumber", () => {
     const first = pulls[0];
     if (!first) return false;
     void navigator.clipboard?.writeText(`#${first.number}`).then(() => pushToast(`Copied #${first.number}`));
   });
-  if (pulls.length === 0) return null;
-  const heading = pulls.length === 1 ? "Pull requests" : `${pulls.length} linked pull requests`;
+  if (pulls.length === 0 && !failed) return null;
+  const heading = pulls.length === 1 ? "Pull requests" : pulls.length > 1 ? `${pulls.length} linked pull requests` : "Linked pull requests";
   return (
     <>
       <button
@@ -240,9 +310,9 @@ export function PullChip({ thread }: { thread: Thread }) {
         data-pressed={open !== null || undefined}
         onClick={(event) => setOpen(open ? null : { anchor: event.currentTarget, sheet })}
       >
-        <GitPullRequest size={14} aria-hidden />
-        {chipLabel(pulls)}
-        <span className="pr-dot" data-tone={chipDot(pulls)} aria-hidden />
+        {failed ? <TriangleAlert size={14} aria-hidden /> : <GitPullRequest size={14} aria-hidden />}
+        {failed ? "PRs" : chipLabel(pulls)}
+        {failed ? null : <span className="pr-dot" data-tone={chipDot(pulls)} aria-hidden />}
       </button>
       {open ? (
         <ToolbarPopover anchor={open.anchor} label="Pull requests" layout={open.sheet ? "sheet" : "popover"} width={392} closeNow={open.sheet && !sheet} onClose={() => setOpen(null)}>
@@ -259,7 +329,7 @@ export function PullChip({ thread }: { thread: Thread }) {
                   </div>
                 </div>
                 <div className="pulls-sheet-body">
-                  <PullList thread={thread} sheet onOpen={dismiss} />
+                  <PullList thread={thread} sheet focusFirst onOpen={dismiss} />
                 </div>
               </>
             ) : (
@@ -275,28 +345,37 @@ export function PullChip({ thread }: { thread: Thread }) {
 /** The details card's Pull requests row: how many, and the same list opened in place. */
 export function PullsRow({ thread }: { thread: Thread }) {
   const entry = useLinked(thread);
+  const load = useThreadPulls((state) => state.load);
   const [expanded, setExpanded] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [linking, setLinking] = useState(false);
+  const [linking, setLinking] = useState<HTMLElement | null>(null);
   const gitAvailable = useGitAvailable(thread.id);
-  const load = useThreadPulls((state) => state.load);
-  if (entry.pulls === null) return null;
-  const count = entry.pulls.length;
+  const failed = entry.pulls === null && entry.failed;
+  if (entry.pulls === null && !failed) return null;
+  const count = entry.pulls?.length ?? 0;
   if (count === 0) {
     return (
       <div className="detail-row detail-row-static">
         <GitPullRequest size={16} aria-hidden />
-        <span className="detail-dim">No pull request yet</span>
-        {gitAvailable ? (
+        <span className="detail-dim">{failed ? "Couldn’t load pull requests" : "No pull request yet"}</span>
+        {failed ? (
+          <Button small onClick={() => void load(thread)}>
+            Retry
+          </Button>
+        ) : gitAvailable ? (
           <Button small onClick={() => setCreating(true)}>
             Open a pull request
           </Button>
         ) : null}
-        <Button small onClick={() => setLinking(true)}>
-          Link a pull request
+        <Button small aria-haspopup="dialog" onClick={(event) => setLinking(linking ? null : event.currentTarget)}>
+          Link by number
         </Button>
         {creating ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} onClose={() => setCreating(false)} /> : null}
-        {linking ? <LinkPullDialog thread={thread} onClose={() => setLinking(false)} onLinked={() => void load(thread)} /> : null}
+        {linking ? (
+          <ToolbarPopover anchor={linking} label="Link by number" width={260} onClose={() => setLinking(null)}>
+            {(dismiss) => <LinkForm thread={thread} onDone={dismiss} onCancel={dismiss} />}
+          </ToolbarPopover>
+        ) : null}
       </div>
     );
   }

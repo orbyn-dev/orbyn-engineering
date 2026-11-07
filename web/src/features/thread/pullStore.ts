@@ -36,38 +36,60 @@ const byNumber = (pulls: readonly PullRequest[]) => [...pulls].sort((a, b) => a.
 /** Open, not a draft, and its checks pass: the only ones worth asking whether they can merge. */
 const couldBeReady = (pull: PullRequest) => pull.state === "open" && !pull.draft && checksOf(pull.checks_state) === "pass";
 
+/** Most pull requests asked about at once: the rest keep the label they would have without it. */
+const MAX_MERGEABLE_READS = 8;
+
 export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
+  // The newest read per thread wins; an older one that lands late is ignored.
+  const newest = new Map<string, number>();
+  const pending = new Map<string, number>();
+  let counter = 0;
   const patch = (id: string, change: Partial<ThreadPullsEntry>) =>
     set((state) => ({ byThread: { ...state.byThread, [id]: { ...(state.byThread[id] ?? empty), ...change } } }));
 
-  async function mergeables(thread: { id: string; project_id: string }, pulls: PullRequest[]) {
+  async function mergeables(thread: { id: string; project_id: string }, pulls: PullRequest[], known: Record<number, string | null>, fresh: boolean) {
+    const wanted = pulls.filter(couldBeReady);
+    const asked = wanted.filter((pull) => fresh || !(pull.number in known)).slice(0, MAX_MERGEABLE_READS);
     const entries = await Promise.all(
-      pulls.filter(couldBeReady).map((pull) =>
+      asked.map((pull) =>
         pullsApi.detail(thread.project_id, pull.number).then(
           (detail) => [pull.number, detail.mergeable] as const,
           () => [pull.number, null] as const,
         ),
       ),
     );
-    return Object.fromEntries(entries);
+    return { ...Object.fromEntries(wanted.filter((pull) => pull.number in known).map((pull) => [pull.number, known[pull.number] ?? null])), ...Object.fromEntries(entries) };
   }
 
-  async function read(thread: { id: string; project_id: string }, work: Promise<PullRequest[]>) {
+  async function read(thread: { id: string; project_id: string }, work: Promise<PullRequest[]>, fresh: boolean) {
+    const mine = ++counter;
+    newest.set(thread.id, mine);
+    pending.set(thread.id, (pending.get(thread.id) ?? 0) + 1);
     patch(thread.id, { busy: true });
+    const current = () => newest.get(thread.id) === mine;
     try {
       const [raw, watches] = await Promise.all([work, pullsApi.watches(thread.id)]);
+      if (!current()) return;
       const pulls = byNumber(raw);
       patch(thread.id, { pulls, watched: watches.map((watch) => watch.number), loadedAt: Date.now(), failed: false });
-      patch(thread.id, { mergeable: await mergeables(thread, pulls), busy: false });
+      const mergeable = await mergeables(thread, pulls, get().byThread[thread.id]?.mergeable ?? {}, fresh);
+      if (current()) patch(thread.id, { mergeable });
     } catch {
-      patch(thread.id, { busy: false, failed: true });
+      if (current()) patch(thread.id, { failed: true });
+    } finally {
+      const left = (pending.get(thread.id) ?? 1) - 1;
+      if (left <= 0) {
+        pending.delete(thread.id);
+        // A thread that was forgotten meanwhile stays forgotten.
+        if (newest.has(thread.id)) patch(thread.id, { busy: false });
+      } else pending.set(thread.id, left);
     }
   }
 
   return {
     byThread: {},
-    load: (thread) => read(thread, pullsApi.linked(thread.id)),
-    refresh: (thread) => read(thread, pullsApi.refreshLinked(thread.id)),
+    load: (thread) => read(thread, pullsApi.linked(thread.id), false),
+    refresh: (thread) => read(thread, pullsApi.refreshLinked(thread.id), true),
     async setWatch(threadId, number, on) {
       const before = get().byThread[threadId]?.watched ?? [];
       // The switch changes at once and the row keeps its place; a failure puts it back.
@@ -79,11 +101,14 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
         throw failure;
       }
     },
-    forget: (threadId) =>
+    forget(threadId) {
+      newest.delete(threadId);
+      pending.delete(threadId);
       set((state) => {
         const { [threadId]: _gone, ...rest } = state.byThread;
         return { byThread: rest };
-      }),
+      });
+    },
   };
 });
 
@@ -132,7 +157,10 @@ export function chipDot(pulls: readonly PullRequest[]): DotTone {
   return tones.some((tone) => tone === "pass") ? "ok" : "mute";
 }
 
-export const chipLabel = (pulls: readonly PullRequest[]) => (pulls.length === 1 ? `#${pulls[0]!.number}` : `PRs ${pulls.length}`);
+/** "#3" on GitHub and the other forges, "!3" for a GitLab merge request. */
+export const numberLabel = (pull: Pick<PullRequest, "number" | "url">) => `${forgeName(pull.url) === "GitLab" ? "!" : "#"}${pull.number}`;
+
+export const chipLabel = (pulls: readonly PullRequest[]) => (pulls.length === 1 ? numberLabel(pulls[0]!) : `PRs ${pulls.length}`);
 
 /** "2 min ago", from the time the list was read. */
 export function agoWords(at: number, now: number): string {
@@ -156,7 +184,7 @@ export function forgeName(url: string | undefined): string {
   if (host.includes("gitlab")) return "GitLab";
   if (host.includes("dev.azure") || host.includes("visualstudio")) return "Azure DevOps";
   if (host.includes("forgejo") || host.includes("codeberg")) return "Forgejo";
-  return "GitHub";
+  return "The host";
 }
 
 export const WATCH_TIP =
