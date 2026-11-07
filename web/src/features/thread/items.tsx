@@ -7,12 +7,12 @@ import {
   FileDiff as FileDiffIcon,
   OctagonAlert,
 } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { elapsed } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { EngineGlyph } from "../../ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
-import { OpenStatePrefix, useOpenState } from "../../ui/openState";
+import { OpenStatePrefix, useOpenControl, useOpenState } from "../../ui/openState";
 import { useUi } from "../../state/ui";
 import { Button, Pill } from "../../ui/controls";
 import { ApprovalCard, useResolvedApproval } from "./ApprovalCard";
@@ -225,21 +225,27 @@ function keyboardOnRow(target: HTMLElement): boolean {
 /** Tool calls read as rows by kind; reasoning sits between them where it happened. */
 export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean }) {
   const threadId = useThreadOfTimeline();
-  const [focused, setFocused] = useState(false);
-  const segments: ({ reasoning: ReasoningItem } | { runs: CallRun[] })[] = [];
-  for (const item of group.items) {
-    if (item.kind === "reasoning") {
-      segments.push({ reasoning: item });
-      continue;
+  const [focus, setFocus] = useState<{ copy: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
+  // Reasoning stands where it happened; the calls between are read as rows by kind, once per change.
+  const segments = useMemo(() => {
+    const list: ({ reasoning: ReasoningItem } | { runs: CallRun[] })[] = [];
+    let tools: ToolItem[] = [];
+    const flush = () => {
+      if (tools.length > 0) list.push({ runs: callRuns(tools) });
+      tools = [];
+    };
+    for (const item of group.items) {
+      if (item.kind === "reasoning") {
+        flush();
+        list.push({ reasoning: item });
+      } else {
+        tools.push(item);
+      }
     }
-    const last = segments.at(-1);
-    if (last && "runs" in last) {
-      const tools = last.runs.flatMap((run) => run.items);
-      segments[segments.length - 1] = { runs: callRuns([...tools, item]) };
-    } else {
-      segments.push({ runs: callRuns([item]) });
-    }
-  }
+    flush();
+    return list;
+  }, [group.items]);
   const several = group.items.length > 1;
   const rows = segments.map((segment) =>
     "reasoning" in segment ? (
@@ -256,18 +262,26 @@ export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean
     <section
       className="steps tc"
       aria-label="Activity"
-      onKeyDown={trailKeys}
-      onFocus={(event) => setFocused(keyboardOnRow(event.target as HTMLElement))}
-      onBlur={() => setFocused(false)}
+      onKeyDown={(event) => trailKeys(event, () => setCopied(true))}
+      onFocus={(event) => {
+        const target = event.target as HTMLElement;
+        setCopied(false);
+        setFocus(keyboardOnRow(target) ? { copy: target.querySelector("[data-command]") !== null } : null);
+      }}
+      onBlur={() => {
+        setFocus(null);
+        setCopied(false);
+      }}
     >
-      {several ? <SurfacedWorkflows value>{rows}</SurfacedWorkflows> : rows}
+      <SurfacedWorkflows value={several}>{rows}</SurfacedWorkflows>
       {several ? <WorkflowCards items={group.items} threadId={threadId} live={live} /> : null}
-      {focused ? (
-        <div className="tchint" aria-hidden>
-          <span><kbd>↑</kbd><kbd>↓</kbd>Move</span>
-          <span><kbd>→</kbd>Open</span>
-          <span><kbd>←</kbd>Close</span>
-          <span><kbd>C</kbd>Copy command</span>
+      {focus ? (
+        <div className="tchint">
+          <span aria-hidden><kbd>↑</kbd><kbd>↓</kbd>Move</span>
+          <span aria-hidden><kbd>→</kbd>Open</span>
+          <span aria-hidden><kbd>←</kbd>Close</span>
+          {focus.copy ? <span aria-hidden><kbd>C</kbd>Copy command</span> : null}
+          {copied ? <span role="status">Copied</span> : null}
         </div>
       ) : null}
     </section>
@@ -318,6 +332,7 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
           {(open || loaded) && fold.entries.map((entry) => (
             <TimelineRow key={entry.key} entry={entry} live={false} tools={NO_TOOLS} />
           ))}
+          {open || loaded ? <GroupControls entries={fold.entries} /> : null}
         </div>
       </Collapsible>
       </SurfacedWorkflows>
@@ -329,6 +344,48 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
 }
 
 const NO_TOOLS: ToolItem[] = [];
+
+/** The open-state ids of a turn's tool groups: a group's own, or the row's when it stands alone. */
+function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: number; calls: number } {
+  let ids: string[] = [];
+  let groups = 0;
+  let calls = 0;
+  for (const entry of entries) {
+    if (entry.kind === "fold") {
+      const inner = groupIds(entry.entries);
+      ids = ids.concat(inner.ids);
+      groups += inner.groups;
+      calls += inner.calls;
+    } else if (entry.kind === "work") {
+      const tools = entry.items.filter((item): item is ToolItem => item.kind === "tool");
+      for (const run of callRuns(tools)) {
+        groups += 1;
+        calls += run.items.length;
+        ids.push(run.items.length === 1 ? `tool:${run.key}` : `tg:${run.key}`);
+      }
+    }
+  }
+  return { ids, groups, calls };
+}
+
+/** A long turn: how many calls in how many groups, and two quiet buttons to open or fold them all. */
+function GroupControls({ entries }: { entries: readonly TimelineEntry[] }) {
+  const { setMany } = useOpenControl();
+  const { ids, groups, calls } = useMemo(() => groupIds(entries), [entries]);
+  if (groups < 4) return null;
+  return (
+    <div className="tcmini">
+      <span className="cnt">{`${calls} tool calls in ${groups} groups`}</span>
+      <button type="button" className="lk" onClick={() => setMany(ids, true)}>
+        Expand all
+      </button>
+      <span className="sep" aria-hidden />
+      <button type="button" className="lk" onClick={() => setMany(ids, false)}>
+        Collapse all
+      </button>
+    </div>
+  );
+}
 
 function foldTools(entries: TimelineEntry[]): WorkItem[] {
   return entries.flatMap((entry) =>

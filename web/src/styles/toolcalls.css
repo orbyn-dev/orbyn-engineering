@@ -479,3 +479,39 @@
 .cf .dot {
   color: var(--color-muted);
 }
+.tcmini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  margin: 4px 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.tcmini .sep {
+  width: 1px;
+  height: 12px;
+  background: var(--color-borderStrong);
+}
+.tcmini .lk {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-7);
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  cursor: pointer;
+}
+.tcmini .lk:hover {
+  background: var(--color-sunken);
+}
+.tcmini .lk:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: -2px;
+}
+.tcmini .cnt {
+  margin-right: auto;
+}

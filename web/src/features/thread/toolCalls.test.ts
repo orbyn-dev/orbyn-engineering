@@ -35,11 +35,11 @@ describe("tool call rows", () => {
     const open = call("Bash", {}, { result: null, done: false });
     expect(callState(open, true, false)).toBe("running");
     expect(callState(open, false, true)).toBe("stopped");
-    expect(callState(open, false, false)).toBe("done");
+    expect(callState(open, false, false)).toBe("stopped");
     expect(callState({ ...open, result: "x", done: true, exitCode: 1 }, true, false)).toBe("failed");
   });
 
-  it("groups only commands, reads and edits, and only when they follow each other", () => {
+  it("groups only the kinds that read as a group, and only when they follow each other", () => {
     const items = [
       call("Bash", { command: "a" }),
       call("Bash", { command: "b" }),
@@ -51,8 +51,7 @@ describe("tool call rows", () => {
     expect(callRuns(items).map((run) => [run.kind, run.items.length])).toEqual([
       ["command", 2],
       ["read", 1],
-      ["search", 1],
-      ["search", 1],
+      ["search", 2],
       ["read", 1],
     ]);
   });

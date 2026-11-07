@@ -612,13 +612,11 @@ describe("Everything a row opens is kept while it is away", () => {
     scrollThread(foldedTurns(1), "t-tool");
     const fold = document.querySelector<HTMLElement>('[data-entry="fold:r0"]')!;
     await userEvent.click(fold.querySelector("button.work-summary")!);
-    // A command is a group row with the call under it; both are remembered.
     const rows = () => [...document.querySelectorAll<HTMLElement>('[data-entry="fold:r0"] button.tcr')];
     await userEvent.click(rows()[0]!);
-    await userEvent.click(rows()[1]!);
-    expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+    expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true"]);
     awayAndBack("fold:r0");
-    expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+    expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true"]);
   });
 
   it("a plan card", async () => {
@@ -681,8 +679,7 @@ describe("Open state is keyed by the item, not the row that holds it", () => {
     const running: ThreadItem[] = [message("u0", "user", "Go", "r0"), tool("tool0", "r0", "output")];
     load("t-move", running);
     const view = render(<Transcript threadId="t-move" active activeRunId="r0" />);
-    const card = () => document.querySelectorAll<HTMLElement>("button.tcr")[1]!;
-    await userEvent.click(document.querySelector<HTMLElement>("button.tcr")!);
+    const card = () => document.querySelector<HTMLElement>("button.tcr")!;
     await userEvent.click(card());
     expect(card()).toHaveAttribute("aria-expanded", "true");
     act(() => load("t-move", [...running, message("a0", "assistant", "Done", "r0")]));

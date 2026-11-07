@@ -1,4 +1,4 @@
-import { createContext, useCallback, useState, type Dispatch, type SetStateAction, use } from "react";
+import { createContext, useCallback, useEffect, useState, type Dispatch, type SetStateAction, use } from "react";
 
 /** Which thread's rows are around this component, or null where nothing should be remembered. */
 export const OpenStateScope = createContext<string | null>(null);
@@ -20,6 +20,10 @@ function bucket(scope: string): Map<string, unknown> {
   return known;
 }
 
+const listeners = new Map<string, Set<() => void>>();
+const listenKey = (scope: string, key: string) => `${scope}\u0000${key}`;
+const notify = (scope: string, key: string) => listeners.get(listenKey(scope, key))?.forEach((listener) => listener());
+
 /**
  * State that survives its row leaving the page: a windowed list unmounts rows that scroll far
  * away, and a fold or card the person opened must still be open when they come back.
@@ -40,8 +44,41 @@ export function useOpenState<T>(id: string | null, initial: T): [T, Dispatch<Set
     },
     [scope, key],
   );
+  // Another part of the thread (Expand all, Collapse all) can change what this row remembers.
+  useEffect(() => {
+    if (scope === null) return;
+    const id = listenKey(scope, key);
+    const listener = () => set(bucket(scope).has(key) ? (bucket(scope).get(key) as T) : initial);
+    const set_ = listeners.get(id) ?? new Set();
+    set_.add(listener);
+    listeners.set(id, set_);
+    return () => {
+      set_.delete(listener);
+      if (set_.size === 0) listeners.delete(id);
+    };
+    // `initial` only matters for a key nothing has written.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, key]);
   return [value, update];
 }
 
 /** Forgets what a thread's rows remembered; for tests. */
 export const forgetOpenState = () => kept.clear();
+
+/** Reads and sets what rows of this thread remember, by id: for a control that acts on many rows at once. */
+export function useOpenControl() {
+  const scope = use(OpenStateScope);
+  const prefix = use(OpenStatePrefix);
+  const peek = useCallback((id: string): unknown => (scope === null ? undefined : bucket(scope).get(`${prefix}/${id}`)), [scope, prefix]);
+  const setMany = useCallback(
+    (ids: readonly string[], value: unknown) => {
+      if (scope === null) return;
+      for (const id of ids) {
+        bucket(scope).set(`${prefix}/${id}`, value);
+        notify(scope, `${prefix}/${id}`);
+      }
+    },
+    [scope, prefix],
+  );
+  return { peek, setMany };
+}

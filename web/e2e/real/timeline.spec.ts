@@ -38,7 +38,7 @@ test("a finished turn folds, groups its tools and shows command output", async (
 
   // An opened fold mounts its rows on first open, so highlighting and heights land after the
   // click: wait until the button has not moved for a few frames.
-  const inspect = page.getByRole("button", { name: "Inspect item" }).first();
+  const inspect = page.getByRole("button", { name: "Raw result" }).first();
   await inspect.evaluate(
     (button) =>
       new Promise<void>((resolve) => {
@@ -56,7 +56,7 @@ test("a finished turn folds, groups its tools and shows command output", async (
     undefined,
     { timeout: 10_000 },
   );
-  await page.getByRole("button", { name: "Inspect item" }).first().click();
+  await page.getByRole("button", { name: "Raw result" }).first().click();
   const details = page.getByRole("dialog", { name: "Item details" });
   await expect(details).toContainText("exit");
   await page.keyboard.press("Escape");

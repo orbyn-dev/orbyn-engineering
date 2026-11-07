@@ -34,7 +34,7 @@ import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Collapsible } from "../../ui/Collapsible";
 import { Dialog } from "../../ui/Dialog";
-import { useOpenState } from "../../ui/openState";
+import { useOpenControl, useOpenState } from "../../ui/openState";
 import { outputSpans } from "./ansi";
 import { HtmlRender } from "./HtmlRender";
 import { McpApp } from "./McpApp";
@@ -50,7 +50,6 @@ import {
   callPath,
   callState,
   editDiff,
-  hasWideLine,
   LINES_SHOWN,
   ENTRIES_SHOWN,
   lineCount,
@@ -59,6 +58,10 @@ import {
   resultRows,
   ROWS_SHOWN,
   runLabel,
+  plain,
+  subagentTask,
+  commandText,
+  isWebAddress,
   scalar,
   shownPath,
   sourceLines,
@@ -99,7 +102,7 @@ function ItemDetails({ threadId, id }: { threadId: string; id: string }) {
 }
 
 /** A quiet footer button that opens the call's stored record. */
-function InspectItem({ item, label = "Inspect item" }: { item: ToolItem; label?: string }) {
+function InspectItem({ item, label = "Raw result" }: { item: ToolItem; label?: string }) {
   // Kept with the thread's other open state, so the dialog survives its row leaving and returning.
   const [open, setOpen] = useOpenState(`inspect:${item.key}`, false);
   const threadId = useThreadOfTimeline();
@@ -162,10 +165,22 @@ function OutputBlock({ item, running }: { item: ToolItem; running: boolean }) {
   const [wrap, setWrap] = useOpenState(`out-wrap:${item.key}`, true);
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  // Only a running call follows its end; a finished one starts at its first line.
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (element && following.current) element.scrollTop = element.scrollHeight;
+    if (running && element && following.current) element.scrollTop = element.scrollHeight;
   });
+  // A line wider than the block would scroll sideways with wrapping off; measure that, not a count of characters.
+  const [wide, setWide] = useState(false);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const before = element.style.whiteSpace;
+    element.style.whiteSpace = "pre";
+    const overflows = element.scrollWidth > element.clientWidth + 1;
+    element.style.whiteSpace = before;
+    setWide(overflows);
+  }, [text, all]);
   if (!text) return running ? null : <div className="co mute tool-empty">No output</div>;
   const lines = lineCount(text);
   const capped = !running && lines > LINES_SHOWN && !all;
@@ -199,7 +214,7 @@ function OutputBlock({ item, running }: { item: ToolItem; running: boolean }) {
           onClick={() => setAll(!all)}
         />
       ) : null}
-      {hasWideLine(text) ? (
+      {wide || !wrap ? (
         <MoreBar
           icon={<WrapText size={14} aria-hidden />}
           label="Wrap lines"
@@ -313,7 +328,7 @@ function Block({ item, running, state, cancelled, ms, cwd }: { item: ToolItem; r
       return (
         <div className="cb">
           <BlockHead counted lead="$" tools={command ? <CopyButton value={command} label="Copy command" /> : null}>
-            {command ?? prettyJson(item.args)}
+            {commandText(item)}
           </BlockHead>
           <OutputBlock item={item} running={running} />
           <div className="cf">
@@ -438,15 +453,17 @@ function Block({ item, running, state, cancelled, ms, cwd }: { item: ToolItem; r
         <div className="cb">
           <BlockHead lead={<Globe size={14} />}>{url ? hostOf(url) : "Page"}</BlockHead>
           {url ? <Kvs rows={[["URL", url]]} /> : null}
-          {out ? <div className="co sans">{out}</div> : null}
+          {out ? <div className="co sans">{plain(out)}</div> : null}
           <div className="cf">
             {timing()}
             {url ? (
               <>
-                <button type="button" className="bt" onClick={() => showInBrowser(url)}>
-                  <Globe size={14} aria-hidden />
-                  <span>Open in Browser</span>
-                </button>
+                {isWebAddress(url) ? (
+                  <button type="button" className="bt" onClick={() => showInBrowser(url)}>
+                    <Globe size={14} aria-hidden />
+                    <span>Open in Browser</span>
+                  </button>
+                ) : null}
                 <button type="button" className="bt" onClick={() => void navigator.clipboard?.writeText(url)}>
                   <Link2 size={14} aria-hidden />
                   <span>Copy link</span>
@@ -467,19 +484,19 @@ function Block({ item, running, state, cancelled, ms, cwd }: { item: ToolItem; r
             {label.verb} · {label.object}
           </BlockHead>
           {rows.length ? <Kvs rows={rows} /> : null}
-          {out ? <div className="co sans">{out}</div> : null}
+          {out ? <div className="co sans">{plain(out)}</div> : null}
           <div className="cf">
             {timing()}
-            <InspectItem item={item} label="Raw result" />
+            <InspectItem item={item} />
           </div>
         </div>
       );
     }
     case "subagent": {
       const rows: [string, string][] = [];
-      const task = scalar(body.description ?? body.prompt);
+      const task = subagentTask(body) ?? "";
       if (task) rows.push(["Task", task]);
-      if (out) rows.push(["Result", out]);
+      if (out) rows.push(["Result", plain(out)]);
       return (
         <div className="cb">
           <BlockHead lead={<GitFork size={14} />}>{callLabel(item, cwd).object ?? "Subagent"}</BlockHead>
@@ -613,6 +630,12 @@ function Duration({ ms, state, item }: { ms: number | null; state: CallState; it
   return <span className="du">{text ?? ""}</span>;
 }
 
+/** The row's status for a reader who cannot see its mark: the label replaces the button's own content. */
+function withState(label: string, state: CallState): string {
+  const word = state === "running" ? "running" : state === "failed" ? "failed" : state === "stopped" ? "stopped" : "";
+  return word ? `${label}, ${word}` : label;
+}
+
 /** The duration as it is read aloud: with the exit code when there is one. */
 function spokenDuration(ms: number | null, state: CallState, item: ToolItem): string {
   const text = ms === null ? "" : callDuration(ms);
@@ -655,7 +678,7 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
   const Icon = KIND_ICONS[kind];
   const full = [label.verb, label.object, label.note].filter(Boolean).join(" ");
   const { tip, label: labelRef, props } = useTip();
-  const spoken = [full, spokenDuration(ms, state, item)].filter(Boolean).join(" ");
+  const spoken = withState([full, spokenDuration(ms, state, item)].filter(Boolean).join(" "), state);
   const command = kind === "command" ? traceTool(item).command : null;
   return (
     <>
@@ -697,9 +720,10 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
   );
 }
 
-/** Consecutive calls of one kind: a header, then the calls one indent in. */
+/** Consecutive calls of one kind: a header, then the calls one indent in. One call is just its own row. */
 export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
   const [open, setOpen] = useOpenState(`tg:${run.key}`, false);
+  const { peek } = useOpenControl();
   const threadId = useThreadOfTimeline();
   const cancelled = useThreadLogs((s) => (threadId && run.items[0]?.runId ? s.logs[threadId]?.runs[run.items[0].runId]?.outcome === "cancelled" : false));
   const only = run.items[0];
@@ -713,8 +737,15 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
     return ms === null ? sum : (sum ?? 0) + ms;
   }, null);
   const cwd = useWorkspace((s) => (threadId ? s.threads[threadId]?.cwd ?? null : null));
+  // When a second call joins a row someone opened, the new group opens with it rather than hiding it.
+  const count = run.items.length;
+  const before = useRef(count);
+  useEffect(() => {
+    if (before.current < 2 && count >= 2 && run.items.some((item) => peek(`tool:${item.key}`) === true)) setOpen(true);
+    before.current = count;
+  }, [count, run.items, peek, setOpen]);
   if (!only) return null;
-  if (run.items.length === 1 && run.kind !== "command") return <ToolCallRow item={only} live={live} />;
+  if (count === 1) return <ToolCallRow item={only} live={live} />;
   const label = runLabel(run, running);
   const Icon = KIND_ICONS[run.kind];
   const current = run.items[states.lastIndexOf("running")];
@@ -722,56 +753,52 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
   const lead = !open && running && current ? "Running" : label.verb;
   const detail = !open ? (running && current ? callLabel(current, cwd).object : failing ? callLabel(failing, cwd).object : null) : null;
   const exit = failing?.exitCode;
+  const exited = !open && failing && exit !== null && exit !== undefined && exit !== 0;
+  const duration = total === null ? "" : callDuration(total);
+  const command = detail && run.kind === "command" ? detail : undefined;
   return (
-      <Collapsible
-        open={open}
-        onOpenChange={setOpen}
-        className="tcw"
-        summaryClassName={`tcr ${stateClass(state)}`.trim()}
-        summaryProps={{
-          "aria-label": [
-            lead,
-            detail,
-            !detail && label.note ? `· ${label.note}` : null,
-            !open && failing && failing.exitCode !== null && failing.exitCode !== undefined && failing.exitCode !== 0 ? `exit ${failing.exitCode} ·` : null,
-            total === null ? null : callDuration(total),
-          ]
-            .filter(Boolean)
-            .join(" "),
-        }}
-        summary={
-          <>
-            <span className="tic">
-              <StateIcon state={state} Icon={Icon} />
-            </span>
-            <span className="lb">
-              <span className="tla">{lead}</span>
-              {detail ? <span className="tlb tlfill">{detail}</span> : null}
-              {!detail && label.note ? <span className="tln">· {label.note}</span> : null}
-            </span>
-            <span className="du">
-              {!open && failing && exit !== null && exit !== undefined && exit !== 0 ? (
-                <>
-                  <span className="er">exit {exit}</span> · {total === null ? "" : callDuration(total)}
-                </>
-              ) : total === null ? (
-                ""
-              ) : (
-                callDuration(total)
-              )}
-            </span>
-            <span className="tcv">
-              <ChevronRight size={14} aria-hidden />
-            </span>
-          </>
-        }
-      >
-        <div className="tk">
-          {run.items.map((item) => (
-            <ToolCallRow key={item.key} item={item} live={live} />
-          ))}
-        </div>
-      </Collapsible>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="tcw"
+      summaryClassName={`tcr ${stateClass(state)}`.trim()}
+      summaryProps={{
+        "aria-label": withState(
+          [lead, detail, !detail && label.note ? `· ${label.note}` : null, exited ? `exit ${exit} ·` : null, duration].filter(Boolean).join(" "),
+          state,
+        ),
+      }}
+      summary={
+        <>
+          <span className="tic">
+            <StateIcon state={state} Icon={Icon} />
+          </span>
+          <span className="lb" data-command={command}>
+            <span className="tla">{lead}</span>
+            {detail ? <span className="tlb tlfill">{detail}</span> : null}
+            {!detail && label.note ? <span className="tln">· {label.note}</span> : null}
+          </span>
+          <span className="du">
+            {exited ? (
+              <>
+                <span className="er">exit {exit}</span> · {duration}
+              </>
+            ) : (
+              duration
+            )}
+          </span>
+          <span className="tcv">
+            <ChevronRight size={14} aria-hidden />
+          </span>
+        </>
+      }
+    >
+      <div className="tk">
+        {run.items.map((item) => (
+          <ToolCallRow key={item.key} item={item} live={live} />
+        ))}
+      </div>
+    </Collapsible>
   );
 }
 
@@ -828,7 +855,7 @@ export function PlanRow({ item, live }: { item: PlanItem; live: boolean }) {
 }
 
 /** Rows a person moves between with the arrow keys. */
-export function trailKeys(event: React.KeyboardEvent<HTMLElement>) {
+export function trailKeys(event: React.KeyboardEvent<HTMLElement>, onCopied?: () => void) {
   const target = event.target as HTMLElement;
   if (!target.matches("button.tcr")) return;
   const root = event.currentTarget;
@@ -862,7 +889,7 @@ export function trailKeys(event: React.KeyboardEvent<HTMLElement>) {
       const command = target.querySelector<HTMLElement>("[data-command]")?.dataset.command;
       if (command) {
         event.preventDefault();
-        void navigator.clipboard?.writeText(command);
+        void navigator.clipboard?.writeText(command).then(() => onCopied?.());
       }
       break;
     }

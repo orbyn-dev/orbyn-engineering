@@ -54,7 +54,7 @@ export function callKind(item: Pick<ToolItem, "name" | "args">): CallKind {
 }
 
 /** A short run of the same kind reads as one group; the rest are rows of their own. */
-const GROUPED: readonly CallKind[] = ["command", "read", "edit"];
+const GROUPED: readonly CallKind[] = ["command", "read", "edit", "search", "mcp", "fetch"];
 export const groupsKind = (kind: CallKind) => GROUPED.includes(kind);
 
 /** Seconds as the rows show them: 0.1s, 4.2s, 41s, 1m 02s. */
@@ -82,10 +82,11 @@ export function callMs(item: ToolItem, now: number | null): number | null {
 
 export type CallState = "running" | "done" | "failed" | "stopped";
 
-export function callState(item: ToolItem, live: boolean, cancelled: boolean): CallState {
+export function callState(item: ToolItem, live: boolean, _cancelled = false): CallState {
   const finished = item.result !== null || item.done;
   if (toolFailed(item)) return "failed";
-  if (!finished) return live ? "running" : cancelled ? "stopped" : "done";
+  // A call with no end in a run that is over (stopped, crashed or failed) did not finish.
+  if (!finished) return live ? "running" : "stopped";
   return "done";
 }
 
@@ -323,14 +324,23 @@ export function callLabel(item: ToolItem, cwd: string | null): CallLabel {
   }
 }
 
+/** The command a block shows: the command itself, or the arguments when there is none. */
+export const commandText = (item: Pick<ToolItem, "name" | "args">): string => traceTool(item).command || prettyJson(item.args);
+
+/** What a subagent was asked to do: its description, or its prompt when that is empty. */
+export const subagentTask = (body: Record<string, unknown>): string | null => text(body, "description", "prompt");
+
+/** Output as it reads, without terminal escape codes. */
+export const plain = (value: string): string => outputSpans(value).map((span) => span.text).join("");
+
 /** The parts of a call's block that find counts: exactly the strings the block renders as text. */
 export function callFindText(item: ToolItem): string[] {
   const kind = callKind(item);
   const body = parsed(item.args);
-  const output = outputSpans(item.result ?? item.output).map((span) => span.text).join("");
+  const output = plain(item.result ?? item.output);
   switch (kind) {
     case "command":
-      return [traceTool(item).command || prettyJson(item.args), output].filter(Boolean);
+      return [commandText(item), output].filter(Boolean);
     case "read": {
       const range = readRange(item);
       return [...sourceLines(item.result, range?.from ?? 1).map((line) => line.text)].filter(Boolean);
@@ -352,7 +362,7 @@ export function callFindText(item: ToolItem): string[] {
     case "mcp":
       return [...Object.values(body).map(scalar), output].filter(Boolean);
     case "subagent":
-      return [text(body, "description", "prompt"), output].filter((part): part is string => Boolean(part));
+      return [subagentTask(body), output].filter((part): part is string => Boolean(part));
     default:
       return [prettyJson(item.args), output].filter(Boolean);
   }
@@ -401,23 +411,36 @@ export interface RunLabel {
   note: string | null;
 }
 
+const distinctFiles = (items: readonly ToolItem[]) => new Set(items.flatMap((item) => paths(parsed(item.args))));
+
 export function runLabel(run: CallRun, running: boolean): RunLabel {
   const n = run.items.length;
   switch (run.kind) {
     case "command":
       return { verb: running ? (n === 1 ? "Running command" : `Running ${n} commands`) : `Ran ${pluralize(n, "command", "commands")}`, note: null };
-    case "read":
-      return { verb: `Read ${pluralize(n, "file", "files")}`, note: null };
+    case "read": {
+      const files = distinctFiles(run.items).size;
+      return { verb: `Read ${pluralize(files || n, "file", "files")}`, note: null };
+    }
     case "edit": {
-      const files = new Set(run.items.flatMap((item) => paths(parsed(item.args))));
+      const files = distinctFiles(run.items);
       const stats = run.items.map(editStat);
       const total = stats.reduce<DiffStat | null>(
         (sum, stat) => (stat ? { added: (sum?.added ?? 0) + stat.added, removed: (sum?.removed ?? 0) + stat.removed } : sum),
         null,
       );
-      return { verb: `Edited ${pluralize(Math.max(files.size, n), "file", "files")}`, note: sign(total) };
+      return { verb: `Edited ${pluralize(files.size || n, "file", "files")}`, note: sign(total) };
     }
+    case "search":
+      return { verb: `Searched the code ${n} times`, note: null };
+    case "mcp":
+      return { verb: `${n} MCP calls`, note: null };
+    case "fetch":
+      return { verb: `Fetched ${pluralize(n, "page", "pages")}`, note: null };
     default:
       return { verb: String(n), note: null };
   }
 }
+
+/** Only http and https pages open in the Browser panel; an agent can name any address. */
+export const isWebAddress = (url: string): boolean => /^https?:/i.test(url.trim());
