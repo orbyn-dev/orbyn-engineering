@@ -332,7 +332,7 @@ test("merge takes a method, strips credits and can wait for checks; a row merges
   await expect(article.getByText("Merges when checks pass")).toBeVisible();
   expect(service.ghPull(2).mergeBody).toBe("Second layer");
 
-  await page.locator(".pr-chip").click();
+  await page.getByRole("button", { name: "Pull requests", exact: true }).click();
   await page.getByRole("button", { name: "Merge #3" }).click();
   await page.getByRole("dialog", { name: "Merge #3?" }).getByRole("button", { name: "Merge" }).click();
   await expect.poll(() => service.ghPull(3).state).toBe("MERGED");
