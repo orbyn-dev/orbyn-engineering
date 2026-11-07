@@ -142,7 +142,7 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
       stop();
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [active, closing, root]);
+  }, [active, closing, root, id]);
 
   // Closed from outside (the trigger toggling it): the same as Escape, unless focus moved on already.
   useLayoutEffect(() => {
