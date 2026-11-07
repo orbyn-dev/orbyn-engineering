@@ -68,7 +68,8 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
     patch(thread.id, { busy: true });
     const current = () => newest.get(thread.id) === mine;
     try {
-      const [raw, watches] = await Promise.all([work, pullsApi.watches(thread.id)]);
+      // The list matters more than the Watch switches: a failed read of those leaves them off.
+      const [raw, watches] = await Promise.all([work, pullsApi.watches(thread.id).catch(() => [])]);
       if (!current()) return;
       const pulls = byNumber(raw);
       patch(thread.id, { pulls, watched: watches.map((watch) => watch.number), loadedAt: Date.now(), failed: false });

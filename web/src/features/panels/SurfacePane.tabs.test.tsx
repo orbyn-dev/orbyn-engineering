@@ -271,7 +271,7 @@ describe("connection states in the panel", () => {
       return this.hasAttribute("data-tab") ? 50 : 24;
     });
     const client = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.getAttribute("role") === "tablist" ? 174 : 0;
+      return this.classList.contains("context-head") ? 244 : 0;
     });
     useUi.setState({ panelTab: "side" });
     pane();

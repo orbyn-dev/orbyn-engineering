@@ -19,6 +19,9 @@ import { Presence } from "../../ui/Presence";
 
 /** The More button: a 24px icon button. */
 const MORE_WIDTH = 24;
+/** The header's side padding, and the room the "+" takes with its margins. */
+const HEAD_PAD = 12;
+const PLUS_SPACE = 34;
 const MORE_MENU_WIDTH = 210;
 /** The one line under "Waiting for the Orbyn service", by tab. The Browser is not here: it stays usable. */
 const WAITING_LINE: Partial<Record<RightTab, string>> = {
@@ -155,8 +158,11 @@ export function SurfacePane({
       const id = element.dataset.tab as RightTab;
       if (element.offsetWidth > 0) widths.current.set(id, element.offsetWidth);
     }
-    // The row is narrower by the More button while it shows.
-    const room = row.clientWidth + (latest.current.folded ? MORE_WIDTH : 0);
+    // What the tabs may take: the header less its padding, the "+" and the buttons at the end (the More button among them while it shows).
+    const head = row.parentElement;
+    const end = head?.querySelector<HTMLElement>(".head-end");
+    // A header with no width yet (not laid out, or hidden) folds nothing.
+    const room = !head || head.clientWidth === 0 ? Number.POSITIVE_INFINITY : head.clientWidth - HEAD_PAD - PLUS_SPACE - (end?.offsetWidth ?? 0) + (latest.current.folded ? MORE_WIDTH : 0);
     const next = fitTabs(latest.current.ids, widths.current, room, MORE_WIDTH, latest.current.tab);
     setShown((current) => (current.length === next.length && current.every((id, i) => id === next[i]) ? current : next));
   }, []);

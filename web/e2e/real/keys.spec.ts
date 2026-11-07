@@ -36,7 +36,7 @@ test("composer keys open the model picker, effort and the branch switcher", asyn
   await expect(page.getByRole("dialog", { name: "Switch branch" })).toBeVisible();
 });
 
-test("alt+up takes the last queued message back, and terminal keys split and close", async ({ page }) => {
+test("alt+up takes the last queued message back, and a terminal key opens one", async ({ page }) => {
   await fresh(page, "[hang]");
   await expect(page.getByRole("button", { name: "Stop" })).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => (await service.api<{ active_run: { state: string } | null }>("GET", `/api/threads/${threadIdOf(page)}`)).active_run?.state).toBe("running");
@@ -54,13 +54,8 @@ test("alt+up takes the last queued message back, and terminal keys split and clo
   await page.locator(".terminal-drawer-body .xterm-helper-textarea").first().focus();
   await page.keyboard.press("ControlOrMeta+n");
   await expect.poll(async () => (await service.api<unknown[]>("GET", `/api/threads/${threadIdOf(page)}/terminals`)).length).toBeGreaterThan(1);
-  // The new tab's terminal loads after its row appears, and takes focus when it does.
-  await expect(async () => {
-    await page.locator(".terminal-splits .xterm-helper-textarea").first().focus();
-    await expect(page.locator(".terminal-splits .xterm-helper-textarea").first()).toBeFocused({ timeout: 500 });
-    await page.keyboard.press("ControlOrMeta+d");
-    await expect(page.locator(".terminal-splits .xterm")).toHaveCount(2, { timeout: 1000 });
-  }).toPass();
+  // The new tab's terminal loads after its row appears, and takes focus when it does. Splits are Planned.
+  await expect(page.locator(".terminal-splits .xterm-helper-textarea").first()).toBeFocused({ timeout: 10_000 });
 });
 
 test("Shift+PageUp reads scrollback without leaving the terminal", async ({ page }) => {

@@ -373,7 +373,7 @@ test("the chip lists this thread's pull request, and a thread without one has no
   await openPanel(page);
   await expect(page.getByRole("tab", { name: "Pull requests" })).toHaveCount(0);
   await chip.click();
-  const row = page.getByRole("dialog", { name: "Pull requests" }).getByRole("link", { name: /#1 First layer/ });
+  const row = page.getByRole("dialog", { name: "Pull requests" }).getByRole("button", { name: /#1 First layer/ });
   await expect(row).toBeVisible();
   await row.click();
   await expect(detail(page, "First layer")).toBeVisible();

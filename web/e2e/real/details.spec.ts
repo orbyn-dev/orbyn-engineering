@@ -39,7 +39,7 @@ test("details shows linked pull requests, and right-click turns rows off and bac
   const pulls = details(page).getByRole("button", { name: "Pull requests" });
   await expect(pulls).toHaveText("1 pull request");
   await pulls.click();
-  await expect(details(page).getByRole("link", { name: /#42 Fix the login/ })).toBeVisible();
+  await expect(details(page).getByRole("button", { name: /#42 Fix the login/ })).toBeVisible();
   await details(page).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Pull requests" }).click();
   await expect(pulls).toBeHidden();

@@ -83,7 +83,8 @@ export function LinkForm({ thread, onDone, onCancel }: { thread: Thread; onDone(
       },
       (failure: unknown) => {
         setBusy(false);
-        const known = failure instanceof ApiFailure && [400, 404, 422].includes(failure.status);
+        // The forge answered with an error for this number: there is no such pull request here.
+        const known = failure instanceof ApiFailure && failure.status >= 400 && failure.status !== 503;
         setError(known ? `No pull request #${number} in this repository.` : toFailure(failure).message);
       },
     );

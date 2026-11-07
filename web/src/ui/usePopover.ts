@@ -115,8 +115,8 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
       }
     };
     document.addEventListener("keydown", onKeyDown, true);
-    // A menu opened from inside the popover is a portal: pressing its items is not leaving the popover.
-    const inMenu = (target: EventTarget | null) => target instanceof Element && !!target.closest("[data-menu-root]");
+    // A menu or another popover opened from inside this one is a portal: pressing in it is not leaving.
+    const inMenu = (target: EventTarget | null) => target instanceof Element && !!target.closest("[data-menu-root], [data-popover-root]");
     const stop = watchOutside(
       (target) => inRoot(target) || inTrigger(target) || inMenu(target),
       (cause, target) => latest.current.dismiss(cause, target),
