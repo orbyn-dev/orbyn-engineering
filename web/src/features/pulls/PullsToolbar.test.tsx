@@ -12,6 +12,8 @@ function Harness({
   oneRepo = true,
   has = pullData,
   loading = false,
+  requesters,
+  viewer,
 }: {
   initial?: PullFilters;
   onQuery?(query: string): void;
@@ -19,6 +21,8 @@ function Harness({
   oneRepo?: boolean;
   has?: PullData;
   loading?: boolean;
+  requesters?: string[];
+  viewer?: string | null;
 }) {
   const [filters, setFilters] = useState(initial);
   const [sort, setSort] = useState(defaultSort);
@@ -46,6 +50,8 @@ function Harness({
       phone={phone}
       oneRepo={oneRepo}
       has={has}
+      requesters={requesters}
+      viewer={viewer}
     />
   );
 }
@@ -211,5 +217,21 @@ describe("Filters popover focus", () => {
     expect(panel).not.toHaveAttribute("inert");
     expect(panel).not.toHaveAttribute("data-closing");
     await waitFor(() => expect(screen.getByRole("dialog", { name: "Filters" })).toBeInTheDocument());
+  });
+
+  it("offers Review requested from with Me and the people asked, once reviews are known, and chips the choice", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<Harness requesters={["riley"]} viewer="me" />);
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    expect(screen.queryByRole("checkbox", { name: "Me" })).not.toBeInTheDocument();
+    unmount();
+
+    render(<Harness has={{ reviewRequests: true, viewerLogin: true, commentCount: false, createdAt: false }} requesters={["riley"]} viewer="me" />);
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    expect(screen.getByText("Review requested from")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Me" })).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "riley" }));
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Remove filter Review requested from: riley" })).toBeInTheDocument();
   });
 });
