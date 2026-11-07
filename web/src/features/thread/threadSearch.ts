@@ -1,12 +1,16 @@
+import { prettyJson } from "../../lib/format";
+import { outputSpans } from "./ansi";
 import { markdownText } from "./Markdown";
 import type { ThreadItem } from "./projection";
+import { traceTool } from "./toolTrace";
 import type { TimelineEntry } from "./timeline";
 
 /**
  * Text a person can find in one item, taken from the log rather than from what is mounted, and
  * shaped like what the row shows: Markdown is read as rendered, and a tool card contributes its
- * command and output. Button labels, timestamps and "Exit code" lines are not counted, and find
- * skips them in the page too, so a count and a highlight always speak of the same text.
+ * command and output. Button labels (file paths in a diff summary among them), timestamps and
+ * "Exit code" lines are not counted, and find skips them in the page too, so a count and a
+ * highlight always speak of the same text.
  */
 function itemText(item: ThreadItem): string {
   switch (item.kind) {
@@ -16,15 +20,25 @@ function itemText(item: ThreadItem): string {
     case "notice":
       return item.text;
     case "tool":
-      // The summary line repeats the command inside a button, which find skips; the card shows
-      // the command, then what it printed.
-      return [item.args, item.output, item.result ?? ""].filter(Boolean).join("\n");
+      // Exactly the card's body: the command (or the arguments as pretty JSON), then the result,
+      // or the streamed output until there is one, without terminal escape codes. The summary
+      // line repeats the command inside a button, which find skips.
+      return [
+        traceTool(item).command || prettyJson(item.args),
+        outputSpans(item.result ?? item.output)
+          .map((span) => span.text)
+          .join(""),
+      ]
+        .filter(Boolean)
+        .join("\n");
     case "approval":
       return item.approval.summary;
     case "plan":
       return item.steps.map((step) => step.text).join("\n");
     case "diff":
-      return item.files.map((file) => file.path).join("\n");
+      // The file paths are button labels behind a toggle, and find skips button text, so they
+      // are not counted either.
+      return "";
     default:
       return "";
   }

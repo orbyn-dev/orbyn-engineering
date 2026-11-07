@@ -16,7 +16,7 @@ const registry = () => (globalThis.CSS as unknown as { highlights?: Highlights }
 const makeHighlight = (ranges: Range[]) => new (globalThis as unknown as { Highlight: new (...r: Range[]) => unknown }).Highlight(...ranges);
 
 /** Chrome the count never includes: button labels and anything hidden from assistive technology. */
-const SKIPPED = "button, [aria-hidden='true'], .sr-only, script, style";
+const SKIPPED = "button, [aria-hidden='true'], .sr-only, script, style, .render-card, .workflow-card";
 
 /**
  * Every occurrence of `needle` in the text a row shows, in page order. Text inside buttons is
@@ -53,7 +53,7 @@ async function openAround(row: HTMLElement, needle: string, nth: number): Promis
     const ranges = rangesIn(row, needle);
     if (ranges.length <= nth) {
       const fold = row.querySelector<HTMLElement>('button.work-summary[aria-expanded="false"]');
-      if (!fold) return ranges[ranges.length - 1];
+      if (!fold) return undefined;
       fold.parentElement?.dispatchEvent(new Event("reveal-setting"));
       await frame();
       await frame();
@@ -66,8 +66,7 @@ async function openAround(row: HTMLElement, needle: string, nth: number): Promis
     await frame();
     await frame();
   }
-  const ranges = rangesIn(row, needle);
-  return ranges[Math.min(nth, ranges.length - 1)];
+  return rangesIn(row, needle)[nth];
 }
 
 /**
@@ -85,7 +84,9 @@ export function ThreadFind({ threadId, onClose }: { threadId: string; onClose():
   const paint = useCallback((needle: string) => {
     const css = registry();
     const root = transcriptFor(threadId)?.root();
-    if (css && root) css.set(HIGHLIGHT, makeHighlight(rangesIn(root, needle)));
+    // Only the transcript's own rows: the header, the footer and the "new since" line are not counted.
+    const rows = root ? [...root.querySelectorAll<HTMLElement>(".transcript-inner > .item")] : [];
+    if (css && root) css.set(HIGHLIGHT, makeHighlight(rows.flatMap((row) => rangesIn(row, needle))));
   }, [threadId]);
 
   const show = useCallback(
