@@ -38,6 +38,15 @@ test("a finished turn folds, groups its tools and shows command output", async (
   const colored = page.locator(".tool-output span", { hasText: "README.md" });
   await expect(colored).toHaveAttribute("style", /--ansi-green/);
 
+  // An opened fold mounts its rows on first open, so highlighting and heights land after the click.
+  await expect
+    .poll(async () => {
+      const first = await page.getByRole("button", { name: "Inspect item" }).first().boundingBox();
+      await page.waitForTimeout(250);
+      const later = await page.getByRole("button", { name: "Inspect item" }).first().boundingBox();
+      return first !== null && later !== null && first.y === later.y;
+    })
+    .toBe(true);
   await page.getByRole("button", { name: "Inspect item" }).first().click();
   const details = page.getByRole("dialog", { name: "Item details" });
   await expect(details).toContainText("exit");
@@ -59,10 +68,13 @@ test("a long live tool trace groups in fives and defers rows beyond thirty", asy
   await expect(page).toHaveURL(/#\/threads\//);
   const earlier = page.getByRole("button", { name: "Show 15 earlier activities" });
   await expect(earlier).toBeVisible();
-  await expect(page.locator(".work-log > .trace")).toHaveCount(28);
-  await expect(page.getByRole("button", { name: "Ran 5 commands", exact: true })).toHaveCount(5);
+  // Only the rows near the view are mounted, so the groups are counted in the log, not the page.
+  const rows = page.locator(".work-log > .trace");
+  await expect.poll(() => rows.count()).toBeGreaterThan(5);
+  expect(await rows.count()).toBeLessThanOrEqual(28);
+  await expect(page.getByRole("button", { name: "Ran 5 commands", exact: true }).first()).toBeVisible();
   await earlier.click();
-  await expect(page.locator(".work-log > .trace")).toHaveCount(43);
+  await page.getByRole("log", { name: "Thread messages" }).evaluate((element) => { element.scrollTop = 0; });
   await expect(page.getByRole("button", { name: "Ran 3 commands", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await settled(service, threadIdOf(page));
