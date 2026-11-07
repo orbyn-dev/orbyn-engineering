@@ -364,28 +364,25 @@ test("rows close and reopen, one at a time or selected together", async ({ page 
   await expect.poll(() => service.ghPull(1).state).toBe("OPEN");
 });
 
-test("the PRs tab lists this thread's pull request and a thread without one says so", async ({ page }) => {
+test("the chip lists this thread's pull request, and a thread without one has no chip", async ({ page }) => {
   const thread = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Surface menu" });
   await service.api("POST", `/api/threads/${thread.id}/pulls`, { number: 1 });
   await page.goto(`${service.page}#/threads/${thread.id}`);
+  const chip = page.getByRole("button", { name: "Pull requests", exact: true });
+  await expect(chip).toHaveText("#1");
   await openPanel(page);
-  const tab = page.getByRole("tab", { name: "Pull requests", exact: true });
-  await expect(tab).toHaveText("PRs");
-  await tab.click();
-  // The Details card above the tabs has a row for the same pull request.
-  await page.locator(".linked-pulls").getByRole("button", { name: /First layer/ }).click();
+  await expect(page.getByRole("tab", { name: "Pull requests" })).toHaveCount(0);
+  await chip.click();
+  const row = page.getByRole("dialog", { name: "Pull requests" }).getByRole("link", { name: /#1 First layer/ });
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(detail(page, "First layer")).toBeVisible();
-  await expect(tab).toHaveCount(1);
-  await page.getByRole("tab", { name: "Files", exact: true }).click();
-  await expect(detail(page, "First layer")).toHaveCount(0);
-  await expect(tab).toHaveCount(1);
   expect((await service.api<{ number: number }[]>("GET", `/api/threads/${thread.id}/pulls`)).map((pull) => pull.number)).toEqual([1]);
 
   const unlinked = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "No linked pull" });
   await page.goto(`${service.page}#/threads/${unlinked.id}`);
-  await openPanel(page);
-  await page.getByRole("tab", { name: "Pull requests", exact: true }).click();
-  await expect(page.getByText("No linked pull requests")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No linked pull" })).toBeVisible();
+  await expect(chip).toHaveCount(0);
 });
 
 test("a thread links, watches and unlinks; Work on this opens a thread on the branch", async ({ page }) => {
@@ -401,15 +398,17 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   expect(current.worktree?.branch).toBe("feat-one");
   await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/pulls`)).map((pull) => pull.number)).toEqual([1]);
 
-  await openPanel(page);
-  await page.getByRole("tab", { name: "Pull requests", exact: true }).click();
-  await page.getByRole("button", { name: "Watch #1" }).click();
-  await expect(page.getByRole("button", { name: "Stop watching #1" })).toBeVisible();
-  await page.getByRole("button", { name: "Unlink #1" }).click();
-  await expect(page.getByText("No linked pull requests")).toBeVisible();
+  await page.getByRole("button", { name: "Pull requests", exact: true }).click();
+  const popover = page.getByRole("dialog", { name: "Pull requests" });
+  await popover.getByRole("switch", { name: "Watch" }).check();
+  await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/watches`)).map((watch) => watch.number)).toEqual([1]);
+  await popover.getByRole("link").first().getByRole("button", { name: "Unlink" }).click();
+  await expect(page.getByRole("button", { name: "Pull requests", exact: true })).toHaveCount(0);
+  // With none linked the details card still offers to link one.
+  await page.getByRole("button", { name: "Details" }).click();
   await page.getByRole("button", { name: "Link a pull request" }).click();
   const dialog = page.getByRole("dialog", { name: "Link a pull request" });
   await dialog.getByRole("button", { name: /#1 First layer/ }).click();
-  await expect(page.locator(".linked-pulls").getByRole("button", { name: /First layer/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pull requests", exact: true })).toHaveText("#1");
   expect(projectId).not.toBe("");
 });

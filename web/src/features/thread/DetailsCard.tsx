@@ -3,7 +3,6 @@ import {
   Copy,
   FileDiff,
   Gauge,
-  GitPullRequest,
   MessagesSquare,
   Monitor,
   Server,
@@ -28,11 +27,11 @@ import { EngineGlyph } from "../../ui/badges";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { closingProps, Presence } from "../../ui/Presence";
 import { usePopover } from "../../ui/usePopover";
-import { pullsApi } from "../../api/pulls";
 import { Button, IconButton } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { BranchRow } from "./GitControl";
 import { OpenInEditor } from "./OpenInEditor";
+import { PullsRow } from "./PullChip";
 import { ThreadAutomations } from "./ThreadAutomations";
 import { runningTools } from "./timeline";
 import type { ProjectScript } from "../../generated/ProjectScript";
@@ -125,20 +124,6 @@ export function detailsMenuItems(): MenuItem[] {
     })),
     { label: "Reset", separatorBefore: true, onSelect: () => setPrefs({ detailsHidden: ["usage"] }) },
   ];
-}
-
-function PullRows({ threadId }: { threadId: string }) {
-  const pulls = useAsync(`details-pulls:${threadId}`, (signal) => pullsApi.linked(threadId, signal));
-  const togglePanel = useUi((state) => state.togglePanel);
-  const showing = useUi((state) => state.panelOpen === true && state.panelTab === "pulls");
-  const linked = Array.isArray(pulls.data) ? pulls.data : [];
-  return linked.slice(0, MAX_PULL_ROWS).map((pull) => (
-    <button key={pull.number} type="button" className="detail-row" onClick={() => (showing ? undefined : togglePanel("pulls"))}>
-      <GitPullRequest size={16} aria-hidden />
-      <span>{pull.title}</span>
-      <span className="detail-meta">#{pull.number}</span>
-    </button>
-  ));
 }
 
 function ServersRow({ threadId }: { threadId: string }) {
@@ -245,7 +230,6 @@ function ChangesRow({ threadId }: { threadId: string }) {
   );
 }
 
-const MAX_PULL_ROWS = 3;
 
 /** Automatic checks stay this far apart, however often the card appears. */
 const LIMITS_CHECK_MS = 5 * 60 * 1000;
@@ -356,7 +340,7 @@ export function DetailsCard({
       <div className="details-section">
         {branch && shows("branch") ? <BranchRow thread={thread} branch={branch} /> : null}
         {shows("changes") ? <ChangesRow threadId={thread.id} /> : null}
-        {shows("pulls") ? <PullRows threadId={thread.id} /> : null}
+        {shows("pulls") ? <PullsRow thread={thread} /> : null}
         {shows("servers") ? <ServersRow threadId={thread.id} /> : null}
         {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
         {shows("usage") ? <UsageRow threadId={thread.id} /> : null}

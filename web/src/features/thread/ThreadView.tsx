@@ -36,6 +36,7 @@ import { threadRunState } from "../workspace/RunState";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";
+import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "./timeline";
 import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
@@ -109,11 +110,13 @@ function TopBar({
           ) : null}
           {connection ? <ConnectionStatus /> : thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null}
         </span>
+        {narrow ? <PullChip thread={thread} /> : null}
       </div>
       <RelatedThreads thread={thread} />
       <GitActions thread={thread} />
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
+        {narrow ? null : <PullChip thread={thread} />}
         <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup={detailsPopup ? "dialog" : undefined} icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>
