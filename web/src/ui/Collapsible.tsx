@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useOpenState } from "./openState";
 
 const DURATION_MS = 200;
 
@@ -14,6 +15,7 @@ export function Collapsible({
   summaryClassName,
   panelClassName,
   defaultOpen = false,
+  persistId,
   open: controlled,
   onOpenChange,
   ...rest
@@ -24,11 +26,13 @@ export function Collapsible({
   summaryClassName?: string;
   panelClassName?: string;
   defaultOpen?: boolean;
+  /** Remembers the open state under this id, per row and thread, while its row is out of the page. */
+  persistId?: string;
   open?: boolean;
   onOpenChange?(open: boolean): void;
   "data-live"?: boolean;
 }) {
-  const [internal, setInternal] = useState(defaultOpen);
+  const [internal, setInternal] = useOpenState(persistId ?? null, defaultOpen);
   const open = controlled ?? internal;
   const panelId = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -65,7 +69,7 @@ export function Collapsible({
     const reveal = () => { setInternal(true); onOpenChange?.(true); };
     element?.addEventListener("reveal-setting", reveal);
     return () => element?.removeEventListener("reveal-setting", reveal);
-  }, [onOpenChange]);
+  }, [onOpenChange, setInternal]);
 
   return (
     <div ref={root} className={className} {...rest}>

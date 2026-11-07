@@ -486,7 +486,7 @@ export function ThreadView({ id }: { id: string }) {
           onToggleDetails={toggleDetails}
           onTogglePane={() => setPanelOpen(!panelOpen)}
         />
-        {finding ? <ThreadFind onClose={() => setFinding(false)} /> : null}
+        {finding ? <ThreadFind threadId={id} onClose={() => setFinding(false)} /> : null}
         <div className="thread-stage" hidden={terminalTakesOver} data-hero={hero || undefined} data-connection={connection ?? undefined}>
           {project && !project.trusted ? (
             <p className="banner banner-warn">

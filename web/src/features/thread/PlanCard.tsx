@@ -1,5 +1,6 @@
 import { Ellipsis } from "lucide-react";
 import { use, useState } from "react";
+import { useOpenState } from "../../ui/openState";
 import { request } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../state/ui";
@@ -76,7 +77,7 @@ function SaveDialog({ threadId, text, name, onClose }: { threadId: string; text:
 /** A plan the agent proposed: long ones start clipped, and it can leave the thread. */
 export function PlanCard({ text }: { text: string }) {
   const threadId = use(TimelineThread);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useOpenState("plan", false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const pushToast = useUi((state) => state.pushToast);
