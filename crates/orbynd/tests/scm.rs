@@ -1063,6 +1063,7 @@ async fn a_spent_rate_limit_withholds_every_detail_and_names_them() {
         .map(|n| n.as_str().unwrap())
         .collect();
     assert!(paused.contains(&"comment_count") && paused.contains(&"requested_reviewers"));
+    assert!(limited["resume_at"].as_str().is_some_and(|at| at.ends_with('Z')), "{limited}");
     // The pause holds without asking GitHub again.
     std::fs::remove_file(f._dir.path().join("gh-rate")).unwrap();
     let before = f.log();

@@ -21,7 +21,7 @@ import { PullDetail } from "./PullDetail";
 import { RowMergeDialog } from "./MergeDialog";
 import { PullsToolbar } from "./PullsToolbar";
 import { PullRows, PullsHead, PullsSkeleton } from "./PullRows";
-import { DetailsBanner, NoPulls, OfflineBanner, SignedOut, Unreachable } from "./PullStates";
+import { DetailsBanner, NoPulls, OfflineBanner, RateLimitBanner, SignedOut, Unreachable } from "./PullStates";
 import { usePullDetails } from "./usePullDetails";
 import {
   activeChips,
@@ -96,8 +96,17 @@ export function PullsPage() {
   // The rate limit pausing reviewers is the same as not having them: the filter cannot apply yet.
   const rateLimited = details.status === "ready" && details.paused.includes("requested_reviewers");
   const blocked = needsDetails(filters) && ((missing && details.status !== "ready") || rateLimited);
-  const detailsFailed = blocked && (details.status === "failed" || rateLimited);
-  const filterWaiting = blocked && !detailsFailed;
+  const detailsFailed = blocked && details.status === "failed" && !rateLimited;
+  const paused = blocked && rateLimited;
+  const filterWaiting = blocked && !detailsFailed && !paused;
+  // The pause ends by itself: the details are asked for again then, and the banner goes with them.
+  const resumeMs = rateLimited ? (details.resumeAt ? Math.max(0, new Date(details.resumeAt).getTime() - Date.now()) : 60_000) : null;
+  const retryDetails = details.retry;
+  useEffect(() => {
+    if (resumeMs === null) return;
+    const timer = setTimeout(retryDetails, resumeMs + 500);
+    return () => clearTimeout(timer);
+  }, [resumeMs, retryDetails]);
   // Without a creation time the number orders by date, which only means something inside one repository.
   const oneRepo = has.createdAt || filters.project !== null || new Set(all.map((entry) => entry.project_id)).size <= 1;
   const orderBy = oneRepo || sort.by !== "created" ? sort : defaultSort;
@@ -283,7 +292,7 @@ export function PullsPage() {
             shown={rows.length}
             phone={phone}
             phoneRefresh={phone ? refreshButton : undefined}
-            detailsWait={filterWaiting ? "waiting" : detailsFailed ? "failed" : undefined}
+            detailsWait={filterWaiting ? "waiting" : detailsFailed ? "failed" : paused ? "paused" : undefined}
           />
           {phone && details.status === "failed" ? (
             <p className="pulls-upd pulls-upd-details pulls-upd-phone">
@@ -293,6 +302,7 @@ export function PullsPage() {
               </button>
             </p>
           ) : null}
+          {paused ? <RateLimitBanner forge={forgeLabel} resumeAt={details.resumeAt} /> : null}
           {detailsFailed ? (
             <DetailsBanner
               onRetry={details.retry}

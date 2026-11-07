@@ -157,7 +157,40 @@ describe("a filter that needs details", () => {
     expect(screen.queryByRole("button", { name: "Remove filter Review: needs my review" })).toBeNull();
   });
 
-  it("keeps rows whose details are missing when a filter needs details, and says so when the rate limit paused reviewers", async () => {
+  it("keeps rows whose details are missing when a filter needs details", async () => {
+    render(<PullsPage />);
+    await settle();
+    await act(async () => answer({ details: [details(1, { requested_reviewers: [{ name: "me", kind: "user" }] })], paused: [] }));
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Needs my review" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /^Closed/ }));
+    await settle();
+    await act(async () => refuse());
+    expect(screen.getByRole("button", { name: /PR 9/ })).toBeInTheDocument();
+  });
+
+  it("when the rate limit pauses reviewers, shows every row, a neutral banner without Retry and a paused chip, then asks again at the reset", async () => {
+    render(<PullsPage />);
+    await settle();
+    await act(async () => answer({ details: [details(1, { requested_reviewers: [{ name: "me", kind: "user" }] })], paused: [] }));
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Needs my review" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /^Closed/ }));
+    await settle();
+    const resumeAt = new Date(Date.now() + 60_000).toISOString();
+    await act(async () => answer({ details: [], paused: ["requested_reviewers"], resume_at: resumeAt } as never));
+    expect(screen.getByRole("button", { name: /PR 9/ })).toBeInTheDocument();
+    expect(screen.getByText(/GitHub is limiting requests, so the reviewer and check filters are paused\. They resume at \d\d:\d\d\./)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.getByText("Review: needs my review").closest(".pulls-fchip")).toHaveAttribute("title", "Paused");
+    const calls = vi.mocked(pullsApi.details).mock.calls.length;
+    await act(async () => void (await vi.advanceTimersByTimeAsync(61_000)));
+    expect(vi.mocked(pullsApi.details).mock.calls.length).toBe(calls + 1);
+  });
+
+  it("says they resume soon when the service gives no time", async () => {
     render(<PullsPage />);
     await settle();
     await act(async () => answer({ details: [details(1, { requested_reviewers: [{ name: "me", kind: "user" }] })], paused: [] }));
@@ -167,8 +200,7 @@ describe("a filter that needs details", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Closed/ }));
     await settle();
     await act(async () => answer({ details: [], paused: ["requested_reviewers"] }));
-    expect(screen.getByRole("button", { name: /PR 9/ })).toBeInTheDocument();
-    expect(screen.getByText("Couldn’t load details, so this filter can’t apply yet.")).toBeInTheDocument();
+    expect(screen.getByText(/They resume soon\./)).toBeInTheDocument();
   });
 });
 

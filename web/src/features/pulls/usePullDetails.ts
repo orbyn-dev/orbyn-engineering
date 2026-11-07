@@ -17,6 +17,8 @@ export interface PullDetailsState {
   byKey: DetailsByKey;
   /** Fields the service withheld because GitHub's rate limit is spent. */
   paused: readonly string[];
+  /** When that pause ends, as the service knows it. */
+  resumeAt: string | null;
   /** True once the request has run 400 ms: only then do the cells show their pending look. */
   waited: boolean;
   /** Asks again, as a person's own request. */
@@ -34,6 +36,7 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
   const [status, setStatus] = useState<DetailsStatus>("idle");
   const [byKey, setByKey] = useState<DetailsByKey>(new Map());
   const [paused, setPaused] = useState<readonly string[]>([]);
+  const [resumeAt, setResumeAt] = useState<string | null>(null);
   const fresh = useRef(false);
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -52,6 +55,7 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
     controller.current = abort;
     setStatus("loading");
     setPaused([]);
+    setResumeAt(null);
     // The service answers at most 100 rows a request, so the rows go in chunks, the top of the list first.
     const chunks: PullListEntry[][] = [];
     for (let at = 0; at < list.length; at += CHUNK) chunks.push(list.slice(at, at + CHUNK));
@@ -75,6 +79,7 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
           });
           for (const field of response.paused) pausedFields.add(field);
           setPaused([...pausedFields]);
+          if (response.resume_at) setResumeAt(response.resume_at);
         } catch {
           if (!abort.signal.aborted) failed = true;
         }
@@ -98,6 +103,7 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
     status,
     byKey,
     paused,
+    resumeAt,
     waited: useWaited(status === "loading"),
     retry: () => run(true),
     markFresh: () => {

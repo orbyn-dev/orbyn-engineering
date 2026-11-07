@@ -6,4 +6,8 @@ export type PullDetailsResponse = { details: Array<PullDetails>,
  * Detail fields withheld because GitHub's rate limit is spent, named as they
  * appear on `PullDetails`; empty otherwise. No row carries a paused field.
  */
-paused: Array<string>, };
+paused: Array<string>, 
+/**
+ * When the pause ends, as an RFC 3339 time, while `paused` is not empty.
+ */
+resume_at?: string, };

@@ -1,4 +1,4 @@
-import { CloudOff, Copy, GitPullRequest, Lock, RefreshCw, TriangleAlert, X } from "lucide-react";
+import { Clock, CloudOff, Copy, GitPullRequest, Lock, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "../../ui/controls";
 
@@ -101,3 +101,14 @@ export const SignedOut = ({ forge, onSignIn, onLater }: { forge: string; onSignI
     Orbyn needs your {forge} account to list pull requests, checks and reviews. Nothing is posted without you.
   </Block>
 );
+
+/** The forge is limiting requests: neutral, with no Retry, which cannot help before the limit resets. */
+export const RateLimitBanner = ({ forge, resumeAt }: { forge: string; resumeAt: string | null }) => {
+  const at = resumeAt ? new Date(resumeAt) : null;
+  const time = at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+  return (
+    <PullsBanner live icon={<Clock size={14} aria-hidden />} actions={null}>
+      {forge} is limiting requests, so the reviewer and check filters are paused. {time ? `They resume at ${time}.` : "They resume soon."}
+    </PullsBanner>
+  );
+};

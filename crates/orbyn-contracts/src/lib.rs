@@ -1012,6 +1012,10 @@ pub struct PullDetailsResponse {
     /// Detail fields withheld because GitHub's rate limit is spent, named as they
     /// appear on `PullDetails`; empty otherwise. No row carries a paused field.
     pub paused: Vec<String>,
+    /// When the pause ends, as an RFC 3339 time, while `paused` is not empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resume_at: Option<String>,
 }
 }
 
