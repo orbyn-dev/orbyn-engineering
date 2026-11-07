@@ -361,6 +361,7 @@ export function PullsPage() {
           projectId={merging.project_id}
           number={merging.pull.number}
           onClose={() => setMerging(null)}
+          onStale={refresh}
           onMerged={() => {
             pushToast("Merged");
             afterRowAction(merging);

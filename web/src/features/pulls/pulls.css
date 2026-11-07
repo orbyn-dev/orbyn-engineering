@@ -923,3 +923,21 @@
 .pulls-upd-phone {
   margin: 0 16px 8px;
 }
+
+/* The merge dialog when the pull request changed under it. */
+.merge-stale {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.merge-stale svg {
+  color: var(--color-warnText);
+}
+.merge-stale b {
+  font-weight: 500;
+}
+.merge-stale p {
+  margin: 0;
+  color: var(--color-muted);
+}

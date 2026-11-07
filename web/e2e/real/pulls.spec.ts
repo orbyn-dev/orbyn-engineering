@@ -54,7 +54,8 @@ const fixtures: PullFixture[] = [
     ],
   },
   { number: 2, title: "Second layer", headRefName: "feat-two", baseRefName: "feat-one", isDraft: true, author: { login: "grace" }, labels: [{ name: "docs" }] },
-  { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" } },
+  // Its branch gets a commit after the page is read: the merge must be refused.
+  { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" }, headNow: "ddddddd" },
   { number: 4, title: "Old idea", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
   { number: 5, title: "Shipped work", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
 ];
@@ -350,6 +351,20 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   // Back to the list the way a person goes: the sidebar.
   await page.getByRole("link", { name: /^Pull requests/ }).click();
   await expect(page.locator(".pull-rows > li").first()).toBeVisible();
+});
+
+test("a merge is refused when the branch moved after the page was read, and Reload reads it again", async ({ page }) => {
+  const article = await openPull(page, "Unrelated fix");
+  await article.getByRole("button", { name: "Merge", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Merge pull request" });
+  await dialog.getByRole("button", { name: "Merge", exact: true }).click();
+  await expect(dialog.getByText("This pull request changed")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Merge", exact: true })).toHaveCount(0);
+  expect(service.ghPull(3).state ?? "OPEN").toBe("OPEN");
+  const reads = service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length;
+  await dialog.getByRole("button", { name: "Reload" }).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length).toBeGreaterThan(reads);
 });
 
 test("a merged pull request can be reverted", async ({ page }) => {

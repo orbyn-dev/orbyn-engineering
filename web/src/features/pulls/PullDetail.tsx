@@ -541,6 +541,12 @@ export function PullDetail({
         <MergeDialog
           projectId={projectId}
           initialMethod={mergeMethod}
+          onStale={() => {
+            void detail.reload();
+            void extras.reload();
+            void checkList.reload();
+            void fileList.reload();
+          }}
           fixedMethod={page}
           initialAuto={page ? auto : undefined}
           initialDeleteBranch={page ? deleteAfter : undefined}

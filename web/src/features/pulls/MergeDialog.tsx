@@ -1,3 +1,4 @@
+import { RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequestDetail } from "../../api/types";
@@ -12,6 +13,7 @@ export function MergeDialog({
   detail,
   onClose,
   onMerged,
+  onStale,
   initialMethod,
   fixedMethod,
   initialAuto,
@@ -21,6 +23,8 @@ export function MergeDialog({
   detail: PullRequestDetail;
   onClose(): void;
   onMerged(): void;
+  /** The pull request moved on after it was read: the page reads it again. */
+  onStale(): void;
   initialMethod: string;
   /** On the page the merge menu has chosen the method, so the dialog only says which. */
   fixedMethod?: boolean;
@@ -36,6 +40,7 @@ export function MergeDialog({
   const [body, setBody] = useState(detail.body);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const merge = async () => {
     setBusy(true);
     setError(null);
@@ -46,15 +51,49 @@ export function MergeDialog({
         delete_branch: deleteBranch,
         strip_credits: strip,
         ...(method === "rebase" ? {} : { body }),
+        // The commit the person saw, so a push since then is refused rather than merged unseen.
+        ...(detail.head_sha ? { expected_head: detail.head_sha } : {}),
       });
       rememberDeleteBranch(projectId, deleteBranch);
       onMerged();
       onClose();
     } catch (failure) {
-      setError(toFailure(failure).message);
+      const known = toFailure(failure);
+      if (known.code === "pull_head_changed") setStale(true);
+      else setError(known.message);
       setBusy(false);
     }
   };
+  if (stale) {
+    return (
+      <Dialog
+        title="Merge pull request"
+        onClose={onClose}
+        footer={
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              data-dialog-focus
+              tone="primary"
+              icon={<RefreshCw size={14} aria-hidden />}
+              onClick={() => {
+                onStale();
+                onClose();
+              }}
+            >
+              Reload
+            </Button>
+          </>
+        }
+      >
+        <div className="merge-stale" role="alert">
+          <TriangleAlert size={16} aria-hidden />
+          <b>This pull request changed</b>
+          <p>A new commit was added after you opened this page. Review it again before merging.</p>
+        </div>
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       title="Merge pull request"
@@ -113,10 +152,10 @@ export function MergeDialog({
 }
 
 /** The same dialog from a list row: it reads the pull request first, for its message. */
-export function RowMergeDialog({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose(): void; onMerged(): void }) {
+export function RowMergeDialog({ projectId, number, onClose, onMerged, onStale }: { projectId: string; number: number; onClose(): void; onMerged(): void; onStale(): void }) {
   const detail = useAsync(`pull-merge:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal));
   if (detail.data) {
-    return <MergeDialog projectId={projectId} detail={detail.data} initialMethod="squash" onClose={onClose} onMerged={onMerged} />;
+    return <MergeDialog projectId={projectId} detail={detail.data} initialMethod="squash" onClose={onClose} onMerged={onMerged} onStale={onStale} />;
   }
   return (
     <Dialog
