@@ -1867,6 +1867,12 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
     if !matches!(options.method.as_str(), "merge" | "squash" | "rebase") {
         return Err(CoreError::Invalid("Choose merge, squash or rebase.".into()));
     }
+    // Where the forge cannot check the head itself, it is read just before the merge, uncached.
+    if let Some(expected) = options.expected_head.as_deref()
+        && head_precheck_needed(forge, &options.method)
+    {
+        check_head(expected, current_head(forge, cwd, number).await)?;
+    }
     let id = number.to_string();
     let body = options.body.as_ref().map(|body| {
         if options.strip_credits {
@@ -1978,6 +1984,81 @@ fn merge_args(forge: Forge, id: &str, options: &MergePull, body: Option<&str>) -
         }
     }
     args
+}
+
+/// Whether the service must read the head itself before a merge. GitHub and GitLab (except a rebase,
+/// which moves the head) refuse a moved head on their own; the other forges have no such flag.
+pub fn head_precheck_needed(forge: Forge, method: &str) -> bool {
+    match forge {
+        Forge::GitHub => false,
+        Forge::GitLab => method == "rebase",
+        Forge::Azure | Forge::Forgejo | Forge::Bitbucket => true,
+    }
+}
+
+/// The head commit in a forge's own pull request record.
+pub fn head_in(forge: Forge, record: &Value) -> Option<String> {
+    let at = match forge {
+        Forge::GitHub => "/headRefOid",
+        Forge::GitLab => "/sha",
+        Forge::Azure => "/lastMergeSourceCommit/commitId",
+        Forge::Forgejo => "/head/sha",
+        Forge::Bitbucket => return None,
+    };
+    record
+        .pointer(at)
+        .and_then(Value::as_str)
+        .filter(|sha| !sha.is_empty())
+        .map(str::to_owned)
+}
+
+/// The pull request's head commit now, from a read that goes to the forge every time.
+pub async fn current_head(forge: Forge, cwd: &Path, number: u64) -> Result<String> {
+    let id = number.to_string();
+    let record = match forge {
+        Forge::GitHub => {
+            call_json(forge, cwd, &["pr", "view", &id, "--json", "headRefOid"]).await?
+        }
+        Forge::GitLab => call_json(forge, cwd, &["mr", "view", &id, "--output", "json"]).await?,
+        Forge::Azure => {
+            call_json(
+                forge,
+                cwd,
+                &[
+                    "repos", "pr", "show", "--id", &id, "--detect", "true", "--output", "json",
+                ],
+            )
+            .await?
+        }
+        // The list gives only the branch's name, so the one pull request is read through the API.
+        Forge::Forgejo => {
+            call_json(
+                forge,
+                cwd,
+                &["api", &format!("repos/{{owner}}/{{repo}}/pulls/{id}")],
+            )
+            .await?
+        }
+        Forge::Bitbucket => return Err(forge.unsupported("merge")),
+    };
+    head_in(forge, &record).ok_or_else(unreadable_head)
+}
+
+fn unreadable_head() -> CoreError {
+    CoreError::Git(
+        "Couldn't read the pull request's current head, so it was not merged. Try again.".into(),
+    )
+}
+
+/// Compares what the person saw with what the forge says now. A head that cannot be read refuses
+/// the merge: it is never attempted unguarded.
+pub fn check_head(expected: &str, current: Result<String>) -> Result<()> {
+    match current {
+        Ok(now) if now == expected => Ok(()),
+        Ok(_) => Err(CoreError::PullHeadChanged),
+        Err(CoreError::Unsupported(message)) => Err(CoreError::Unsupported(message)),
+        Err(_) => Err(unreadable_head()),
+    }
 }
 
 /// True when a forge's refusal says the head moved after the person looked, by the phrases that forge uses.
@@ -2330,6 +2411,58 @@ mod tests {
                 .iter()
                 .any(|arg| arg.contains("head"))
         );
+    }
+
+    #[test]
+    fn only_forges_without_a_head_flag_and_a_gitlab_rebase_read_the_head_first() {
+        assert!(!head_precheck_needed(Forge::GitHub, "squash"));
+        assert!(!head_precheck_needed(Forge::GitHub, "rebase"));
+        assert!(!head_precheck_needed(Forge::GitLab, "squash"));
+        assert!(!head_precheck_needed(Forge::GitLab, "merge"));
+        assert!(head_precheck_needed(Forge::GitLab, "rebase"));
+        for forge in [Forge::Azure, Forge::Forgejo, Forge::Bitbucket] {
+            assert!(head_precheck_needed(forge, "squash"));
+        }
+    }
+
+    #[test]
+    fn each_forge_names_its_head_in_its_own_record() {
+        assert_eq!(
+            head_in(Forge::GitLab, &json!({ "sha": "g1" })).as_deref(),
+            Some("g1")
+        );
+        assert_eq!(
+            head_in(
+                Forge::Azure,
+                &json!({ "lastMergeSourceCommit": { "commitId": "a1" } })
+            )
+            .as_deref(),
+            Some("a1")
+        );
+        assert_eq!(
+            head_in(Forge::Forgejo, &json!({ "head": { "sha": "f1" } })).as_deref(),
+            Some("f1")
+        );
+        assert_eq!(head_in(Forge::GitLab, &json!({ "sha": "" })), None);
+        assert_eq!(head_in(Forge::Azure, &json!({})), None);
+        assert_eq!(head_in(Forge::Bitbucket, &json!({ "sha": "x" })), None);
+    }
+
+    #[test]
+    fn the_head_check_merges_on_a_match_refuses_a_mismatch_and_fails_closed() {
+        assert!(check_head("abc", Ok("abc".into())).is_ok());
+        assert!(matches!(
+            check_head("abc", Ok("def".into())),
+            Err(CoreError::PullHeadChanged)
+        ));
+        let unreadable = check_head("abc", Err(CoreError::Git("boom".into())));
+        assert!(
+            matches!(&unreadable, Err(CoreError::Git(message)) if message.contains("not merged"))
+        );
+        assert!(matches!(
+            check_head("abc", Err(CoreError::Unsupported("no".into()))),
+            Err(CoreError::Unsupported(_))
+        ));
     }
 
     #[test]
