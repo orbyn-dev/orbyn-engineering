@@ -66,7 +66,8 @@
   display: none;
 }
 :root[data-workspace="reading"] .shell:not([data-reading-nav="open"]):is([data-layout="medium"], [data-layout="wide"], [data-layout="xwide"]) > .main {
-  grid-area: 2 / 1;
+  /* The one row: the title bar floats over the top of the page (see shell.css), so there is no row above it. */
+  grid-area: 1 / 1;
   border-top: 0;
   border-left: 0;
   border-top-left-radius: 0;

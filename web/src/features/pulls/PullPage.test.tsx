@@ -66,6 +66,7 @@ beforeEach(() => {
   vi.spyOn(pullsApi, "reviewerCandidates").mockResolvedValue([]);
   vi.spyOn(pullsApi, "labelCandidates").mockResolvedValue([]);
   vi.spyOn(pullsApi, "update").mockResolvedValue(undefined);
+  vi.spyOn(pullsApi, "timeline").mockResolvedValue([1, 2, 3].map((id) => ({ id: String(id), kind: "commented", actor: "sam", created_at: null, text: `Comment ${id}` })) as never);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -107,6 +108,62 @@ describe("one pull request as a page", () => {
     const cards = [...document.querySelectorAll(".pull-skel-card")].map((card) => [...card.querySelectorAll("i")].map((line) => (line as HTMLElement).style.width));
     expect(cards).toEqual([["40%", "100%", "82%"], ["30%", "90%", "64%"], ["100%", "100%", "100%", "100%"]]);
     finish(detail());
+  });
+
+  it("shows the base branch as plain text in the Status card, with no input inside it", async () => {
+    await show(detail());
+    const card = document.querySelector(".pull-status") as HTMLElement;
+    expect(card).toHaveTextContent("main");
+    expect(card.querySelector("input, select")).toBeNull();
+  });
+
+  it("offers no base-branch change while the service reports no permission for it", async () => {
+    await show(detail());
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Change base branch" })).toBeNull();
+    expect(document.querySelector(".pull-status input")).toBeNull();
+    expect(document.querySelector("input[aria-label='Base branch']")).toBeNull();
+  });
+
+  it("renders the base branch field only after Change base branch is chosen, when the service allows it", async () => {
+    await show({ ...detail(), can_change_base: true } as never);
+    const card = document.querySelector(".pull-status") as HTMLElement;
+    expect(card.querySelector("input")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change base branch" }));
+    expect(card.querySelector("input[aria-label='Base branch']")).toHaveValue("main");
+  });
+
+  it("reads the activity only when the Conversation tab opens, and keeps its own count after", async () => {
+    // Five events against a comment_count of three, so the two sources cannot be mistaken for each other.
+    vi.mocked(pullsApi.timeline).mockResolvedValue(
+      [1, 2, 3, 4, 5].map((id) => ({ id: String(id), kind: "commented", actor: "sam", created_at: null, text: `Item ${id}` })) as never,
+    );
+    await show(detail());
+    expect(pullsApi.timeline).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 3");
+    fireEvent.click(screen.getByRole("tab", { name: /^Conversation/ }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(pullsApi.timeline).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 5");
+    fireEvent.click(screen.getByRole("tab", { name: /^Summary/ }));
+    // Back on another tab the count stays the activity's, not the comments'.
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 5");
+    expect(pullsApi.timeline).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts the Conversation tab from everything it lists, commits included", async () => {
+    vi.mocked(pullsApi.timeline).mockResolvedValue([
+      { id: "a1", kind: "committed", actor: "Ada", created_at: "2026-11-05T01:05:00Z", text: "Fix the redirect" },
+      { id: "b2", kind: "committed", actor: "Ada", created_at: "2026-11-05T01:06:00Z", text: "Add a test" },
+      { id: "7", kind: "commented", actor: "sam", created_at: "2026-11-05T02:00:00Z", text: "Looks good" },
+      { id: "8", kind: "reviewed", actor: "sam", created_at: "2026-11-05T03:00:00Z", text: "approved" },
+    ] as never);
+    await show({ ...detail(), pull: { ...detail().pull } });
+    fireEvent.click(screen.getByRole("tab", { name: /^Conversation/ }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+    expect(tabs).toContain("Conversation · 4");
   });
 
   it("counts files, checks and comments in the tab names", async () => {

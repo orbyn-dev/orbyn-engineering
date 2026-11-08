@@ -195,7 +195,7 @@ test("the list sorts, switches state from the pills and comes back from a pull r
   await expect(rows).toHaveCount(3);
 });
 
-test("summary edits the title, description, base, reviewers and labels", async ({ page }) => {
+test("summary edits the title, description, reviewers and labels", async ({ page }) => {
   const article = await openPull(page, "First layer");
   await moreAction(page, article, "Edit title");
   await article.getByLabel("Title").fill("First layer, renamed");
@@ -206,9 +206,8 @@ test("summary edits the title, description, base, reviewers and labels", async (
   await renamed.getByLabel("Description").fill("A better reason.");
   await renamed.getByRole("button", { name: "Save description" }).click();
   await expect(renamed.getByText("A better reason.")).toBeVisible();
-  await renamed.getByLabel("Base branch").fill("develop");
-  await renamed.getByLabel("Base branch").blur();
-  await expect.poll(() => service.ghPull(1).baseRefName).toBe("develop");
+  // The base branch is plain text: the service reports no permission to change it, so there is no field.
+  await expect(renamed.getByLabel("Base branch")).toHaveCount(0);
   await renamed.getByRole("button", { name: "Change reviewers" }).click();
   await page.getByRole("menuitem", { name: "grace" }).or(page.getByRole("menuitemradio", { name: "grace" })).first().click();
   await expect(renamed.locator(".pull-people").first()).toContainText("grace");
@@ -219,9 +218,8 @@ test("summary edits the title, description, base, reviewers and labels", async (
   await renamed.getByLabel("Title").fill("First layer");
   await renamed.getByRole("button", { name: "Save", exact: true }).click();
   await expect(detail(page, "First layer")).toBeVisible();
-  await detail(page, "First layer").getByLabel("Base branch").fill("main");
-  await detail(page, "First layer").getByLabel("Base branch").blur();
-  await expect.poll(() => service.ghPull(1).baseRefName).toBe("main");
+  // The forge stand-in has taken the restored title before the next test reads it (the page shows it sooner).
+  await expect.poll(() => service.ghPull(1).title).toBe("First layer");
 });
 
 test("checks show state and a fork's workflow is approved from here", async ({ page }) => {

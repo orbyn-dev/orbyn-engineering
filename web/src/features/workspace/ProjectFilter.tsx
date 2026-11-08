@@ -1,11 +1,25 @@
 import { Check, Folder, Settings } from "lucide-react";
 import { SlidersIcon } from "../../ui/SlidersIcon";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../../api/types";
 import { navigate } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { ProjectBadge } from "../../ui/badges";
 import { usePopover } from "../../ui/usePopover";
+
+export const POPUP_WIDTH = 288;
+/** The popup's tallest size (max-height in shell.css), which the vertical clamp keeps inside the window. */
+export const POPUP_HEIGHT = 320;
+/** The popup under its trigger, left edges aligned, pulled back in when the window is too small for it. */
+export function popupPlace(
+  trigger: { left: number; bottom: number },
+  window: { width: number; height: number },
+): { left: number; top: number } {
+  return {
+    left: Math.max(8, Math.min(trigger.left, window.width - POPUP_WIDTH - 8)),
+    top: Math.max(8, Math.min(trigger.bottom + 4, window.height - POPUP_HEIGHT - 8)),
+  };
+}
 
 /** Limits the thread list to one or several projects. Shift adds or removes one. */
 export function ProjectFilter({ projects }: { projects: readonly Project[] }) {
@@ -14,9 +28,26 @@ export function ProjectFilter({ projects }: { projects: readonly Project[] }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [at, setAt] = useState(0);
+  // Where the popup sits: under its trigger, kept inside the window. Fixed, so no ancestor decides it.
+  const [place, setPlace] = useState<{ left: number; top: number } | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const popover = usePopover({ kind: "fields", root: popup, active: open, trigger: () => trigger.current, onClose: () => setOpen(false) });
+
+  // The popup follows its trigger when the window is resized or anything scrolls (the sidebar list under it, say).
+  useEffect(() => {
+    if (!open) return;
+    const follow = () => {
+      const box = trigger.current?.getBoundingClientRect();
+      if (box) setPlace(popupPlace(box, { width: window.innerWidth, height: window.innerHeight }));
+    };
+    window.addEventListener("resize", follow);
+    window.addEventListener("scroll", follow, true);
+    return () => {
+      window.removeEventListener("resize", follow);
+      window.removeEventListener("scroll", follow, true);
+    };
+  }, [open]);
 
   const scoped = projects.filter((project) => filter.includes(project.id));
   const matches = useMemo(() => {
@@ -60,6 +91,8 @@ export function ProjectFilter({ projects }: { projects: readonly Project[] }) {
         title={label}
         aria-expanded={open}
         onClick={() => {
+          const box = trigger.current?.getBoundingClientRect();
+          if (box) setPlace(popupPlace(box, { width: window.innerWidth, height: window.innerHeight }));
           setOpen(!open);
           setQuery("");
           setAt(0);
@@ -78,7 +111,7 @@ export function ProjectFilter({ projects }: { projects: readonly Project[] }) {
         )}
       </button>
       {open ? (
-        <div className="filter-popup" ref={popup}>
+        <div className="filter-popup" ref={popup} style={place ?? undefined}>
           <input
             autoFocus
             aria-label="Search projects"

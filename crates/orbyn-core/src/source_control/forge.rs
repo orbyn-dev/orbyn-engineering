@@ -1169,20 +1169,7 @@ pub async fn timeline(forge: Forge, cwd: &Path, number: u64) -> Result<Vec<PullT
         Forge::GitHub => {
             let path = format!("repos/{{owner}}/{{repo}}/issues/{id}/timeline");
             let events = call_pages(forge, cwd, &["api", "--paginate", &path]).await?;
-            Ok(events
-                .iter()
-                .map(|event| PullTimelineEvent {
-                    id: id_of(event, "id"),
-                    kind: field(event, "event").to_owned(),
-                    actor: event
-                        .get("actor")
-                        .or_else(|| event.get("user"))
-                        .and_then(person),
-                    created_at: optional(event, "created_at")
-                        .or_else(|| optional(event, "submitted_at")),
-                    text: optional(event, "body").or_else(|| optional(event, "state")),
-                })
-                .collect())
+            Ok(events.iter().map(parse_github_event).collect())
         }
         Forge::GitLab => {
             let path = format!("projects/:id/merge_requests/{id}/notes?per_page=100&sort=asc");
@@ -1204,6 +1191,31 @@ pub async fn timeline(forge: Forge, cwd: &Path, number: u64) -> Result<Vec<PullT
         }
         Forge::Azure | Forge::Forgejo => Ok(Vec::new()),
         Forge::Bitbucket => Err(forge.unsupported("read activity")),
+    }
+}
+
+/// One GitHub timeline event. A `committed` event has no `id`, `actor` or `created_at`: it carries the commit's `sha`,
+/// its `author` and `committer` (a name and a date) and its `message`, so those stand in for them.
+fn parse_github_event(event: &Value) -> PullTimelineEvent {
+    let dated = |who: &str| event.get(who).and_then(|person| optional(person, "date"));
+    let first_line = |text: String| text.lines().next().unwrap_or_default().to_owned();
+    PullTimelineEvent {
+        id: Some(id_of(event, "id"))
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| id_of(event, "sha")),
+        kind: field(event, "event").to_owned(),
+        actor: event
+            .get("actor")
+            .or_else(|| event.get("user"))
+            .or_else(|| event.get("author"))
+            .and_then(person),
+        created_at: optional(event, "created_at")
+            .or_else(|| optional(event, "submitted_at"))
+            .or_else(|| dated("committer"))
+            .or_else(|| dated("author")),
+        text: optional(event, "body")
+            .or_else(|| optional(event, "state"))
+            .or_else(|| optional(event, "message").map(first_line)),
     }
 }
 
@@ -2349,6 +2361,28 @@ fn auth_accounts(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_committed_timeline_event_takes_its_author_date_message_and_sha() {
+        let commit = serde_json::json!({
+            "event": "committed",
+            "sha": "abc123",
+            "author": { "name": "Ada", "email": "ada@example.com", "date": "2026-11-05T01:02:03Z" },
+            "committer": { "name": "GitHub", "date": "2026-11-05T01:05:00Z" },
+            "message": "Fix the redirect\n\nLong body."
+        });
+        let parsed = parse_github_event(&commit);
+        assert_eq!(parsed.id, "abc123");
+        assert_eq!(parsed.actor.as_deref(), Some("Ada"));
+        assert_eq!(parsed.created_at.as_deref(), Some("2026-11-05T01:05:00Z"));
+        assert_eq!(parsed.text.as_deref(), Some("Fix the redirect"));
+        // Other events keep their own fields.
+        let other = serde_json::json!({ "event": "commented", "id": 7, "actor": { "login": "sam" }, "created_at": "2026-11-05T02:00:00Z", "body": "Looks good" });
+        let parsed = parse_github_event(&other);
+        assert_eq!(parsed.id, "7");
+        assert_eq!(parsed.actor.as_deref(), Some("sam"));
+        assert_eq!(parsed.text.as_deref(), Some("Looks good"));
+    }
 
     #[test]
     fn the_graphql_reset_is_read_from_the_rate_limit_answer() {

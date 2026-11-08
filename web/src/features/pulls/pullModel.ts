@@ -340,3 +340,26 @@ export function bodyOpensWith(body: string | null | undefined, title: string): b
   const heading = first?.match(/^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/);
   return heading !== undefined && heading !== null && (heading[1] ?? "").trim().toLowerCase() === title.toLowerCase();
 }
+
+/**
+ * Columns with nothing to show. Reviewers and Your review are left out of the table when every row's details have
+ * arrived and none has anything for them (pr-list-no-review-data); while any row's details are still coming, or
+ * the details failed, the columns stay so the table does not jump.
+ */
+export function emptyColumns(
+  rows: readonly PullListEntry[],
+  details: DetailsByKey,
+  viewers: readonly string[],
+): { reviewers: boolean; review: boolean } {
+  if (rows.length === 0) return { reviewers: false, review: false };
+  const known = rows.map((entry) => details.get(detailsKey(entry.project_id, entry.pull.number)));
+  if (known.some((row) => row === undefined)) return { reviewers: false, review: false };
+  const rowsWith = known as PullDetails[];
+  return {
+    reviewers: rowsWith.every((row) => (row.requested_reviewers ?? []).length === 0),
+    review: rowsWith.every((row) => (yourReview(row, viewers) ?? null) === null),
+  };
+}
+
+/** Whether the service says the person can change this pull request's base branch. It reports no such permission yet, so this is false until it does (a `can_change_base` flag on the detail). */
+export const baseChangeAllowed = (detail: object): boolean => (detail as { can_change_base?: unknown }).can_change_base === true;

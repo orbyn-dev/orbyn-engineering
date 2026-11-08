@@ -4,6 +4,8 @@ import { SseParser } from "./sse";
 import type { ShellAction, ShellEvent } from "./types";
 
 const RETRY_MS = 3000;
+/** A stream that stayed up this long was healthy, whatever it delivered. */
+const STABLE_MS = 5000;
 
 let attached = false;
 
@@ -44,8 +46,14 @@ export function zoomKeyAction(event: KeyboardEvent): ShellAction | null {
 export function followShell(onEvent: (event: ShellEvent) => void): () => void {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-
+  // A menu command sent while the stream is down is lost, and Settings (Cmd+, ) is such a command, so a stream that
+  // was up for a while is retried within 250 ms. One that connects and closes at once (a server that accepts and
+  // drops) counts as a failure, so it backs off from 250 ms up to RETRY_MS instead of being retried hot forever.
+  let failures = 0;
   const connect = async () => {
+    let delivered = false;
+    // When the stream came up, set outside the try so a stream that then errors is still measured.
+    let upSince: number | null = null;
     try {
       const response = await fetch(serviceUrl("/api/shell/events"), {
         signal: controller.signal,
@@ -53,12 +61,14 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
         headers: { ...authHeaders(), Accept: "text/event-stream" },
       });
       if (!response.ok || !response.body) throw new Error("no stream");
+      upSince = Date.now();
       const parser = new SseParser();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
         for (const data of parser.push(value)) {
+          delivered = true;
           try {
             onEvent(JSON.parse(data) as ShellEvent);
           } catch {
@@ -69,7 +79,11 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
     } catch {
       // Retried below, unless this stream was stopped.
     }
-    if (!controller.signal.aborted) timer = setTimeout(() => void connect(), RETRY_MS);
+    if (controller.signal.aborted) return;
+    const upFor = upSince === null ? 0 : Date.now() - upSince;
+    // Healthy: it delivered something or stayed up for a few seconds. Then the next try is the first, not a retry.
+    failures = delivered || upFor >= STABLE_MS ? 1 : failures + 1;
+    timer = setTimeout(() => void connect(), Math.min(RETRY_MS, 250 * 2 ** (failures - 1)));
   };
 
   void connect();

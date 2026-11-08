@@ -1,5 +1,5 @@
 import { AlarmClock, Check, CircleCheck, CircleDashed, Clock, GitBranch, Pin, PinOff, X } from "lucide-react";
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Project, Thread } from "../../api/types";
 import { compactAge, elapsed, runStateLabels } from "../../lib/format";
@@ -8,10 +8,12 @@ import { routeHref } from "../../state/route";
 import { engineById, useWorkspace } from "../../state/workspace";
 import { EngineGlyph, ProjectBadge } from "../../ui/badges";
 import type { DropVerb, SidebarSection } from "./groups";
+import { createLongPress } from "./longPress";
 import { threadRunState } from "./RunState";
 
 const DONE_WINDOW_MS = 5 * 60_000;
 const HOVER_DELAY_MS = 150;
+
 
 const VERB_BADGE: Record<DropVerb, { label: string; icon: ReactNode }> = {
   pin: { label: "Pin", icon: <Pin size={12} aria-hidden /> },
@@ -231,6 +233,14 @@ export function ThreadRow({
   // the pointer comes back or a key is pressed on it. Another row's or surface's menu
   // does not hold this card back.
   const menuFromRow = useRef(false);
+  // Touch has no hover, so a long press opens the context menu, which carries the same actions as the row's strip.
+  const latest = useRef({ actions, thread });
+  latest.current = { actions, thread };
+  const longPress = useMemo(() => createLongPress((at) => {
+    menuFromRow.current = true;
+    latest.current.actions.onMenu(at, latest.current.thread);
+  }), []);
+  useEffect(() => () => longPress.dispose(), [longPress]);
   const startHover = (rect: DOMRect) => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -298,7 +308,7 @@ export function ThreadRow({
                   type="button"
                   className="row-action"
                   aria-label="Snooze thread"
-                  title="Snooze thread"
+                  title="Snooze"
                   onClick={(event) => {
                     event.preventDefault();
                     actions.onSnooze(event, thread);
@@ -310,7 +320,7 @@ export function ThreadRow({
                   type="button"
                   className="row-action"
                   aria-label="Settle thread"
-                  title="Settle thread"
+                  title="Settle"
                   onPointerDown={(event) => actions.onActionPress(event, thread, section)}
                   onClick={(event) => {
                     event.preventDefault();
@@ -318,7 +328,6 @@ export function ThreadRow({
                   }}
                 >
                   <Check size={14} aria-hidden />
-                  Settle
                 </button>
               </>
             )}
@@ -395,11 +404,22 @@ export function ThreadRow({
         aria-current={selected ? "page" : undefined}
         tabIndex={focusable ? 0 : -1}
         draggable={false}
-        onClick={(event) => actions.onClick(event, thread)}
+        onClick={(event) => {
+          if (longPress.consumeClick()) {
+            // The press that opened the menu is not a click on the row.
+            event.preventDefault();
+            return;
+          }
+          actions.onClick(event, thread);
+        }}
         onPointerDown={(event) => {
           stopHover();
+          longPress.down(event);
           actions.onPressStart(event, thread, section);
         }}
+        onPointerMove={(event) => longPress.move(event)}
+        onPointerUp={() => longPress.end()}
+        onPointerCancel={() => longPress.end()}
         onFocus={(event) => {
           actions.onRowFocus(thread.id);
           if (!event.currentTarget.matches(":focus-visible")) return;
@@ -417,6 +437,8 @@ export function ThreadRow({
         onPointerLeave={stopHover}
         onContextMenu={(event) => {
           event.preventDefault();
+          // A long press already opened the menu (Android also sends a contextmenu event); the keyboard's key is never skipped.
+          if (longPress.contextMenu() === "skip") return;
           menuFromRow.current = true;
           stopHover();
           actions.onMenu(event, thread);

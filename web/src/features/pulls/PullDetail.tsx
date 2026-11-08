@@ -28,7 +28,7 @@ import { PullsBanner } from "./PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
-import { bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
+import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
 
 type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
 
@@ -174,18 +174,31 @@ function Description({
   );
 }
 
+/**
+ * The pull request's activity: comments, reviews, commits and the rest. It is paginated on the forge, so it is read
+ * only when something shows it (the Conversation tab); until then the tab's count is the comments' count.
+ */
+function useTimelineEvents(projectId: string, number: number, enabled: boolean) {
+  return useAsync(
+    `pull-timeline:${projectId}:${number}:${enabled}`,
+    (signal) => (enabled ? pullsApi.timeline(projectId, number, signal) : Promise.resolve(null)),
+    { keep: true },
+  );
+}
+type TimelineRead = ReturnType<typeof useAsync<import("../../api/types").PullTimelineEvent[]>>;
+
 function Timeline({ projectId, number }: { projectId: string; number: number }) {
-  const events = useAsync(`pull-timeline:${projectId}:${number}`, (signal) =>
-    pullsApi.timeline(projectId, number, signal),
-  { keep: true },
-);
+  return <TimelineList events={useTimelineEvents(projectId, number, true) as TimelineRead} />;
+}
+
+function TimelineList({ events }: { events: TimelineRead }) {
   const [kind, setKind] = useState("all");
   const kinds = useMemo(() => [...new Set((events.data ?? []).map((event) => event.kind))].sort(), [events.data]);
-  if (events.status === "loading") return <Loading label="Loading timeline" rows={4} />;
+  if (events.status === "loading" || (events.status === "ready" && !events.data)) return <Loading label="Loading timeline" rows={4} />;
   if (events.status === "error") {
     return <ErrorState compact title="Couldn't load the timeline" failure={events.error} onRetry={events.reload} />;
   }
-  if (events.data.length === 0) return <p className="muted">No activity yet.</p>;
+  if (!events.data || events.data.length === 0) return <p className="muted">No activity yet.</p>;
   return (
     <>
       <select aria-label="Filter activity" value={kind} onChange={(event) => setKind(event.target.value)}>
@@ -199,8 +212,8 @@ function Timeline({ projectId, number }: { projectId: string; number: number }) 
       <ol className="pull-timeline">
         {events.data
           .filter((event) => kind === "all" || event.kind === kind)
-          .map((event) => (
-            <li key={event.id}>
+          .map((event, at) => (
+            <li key={event.id || `${event.kind}:${at}`}>
               <span className="pull-actor">{event.actor ?? "Someone"}</span> {event.text ?? event.kind}
               {event.created_at ? <time>{relativeTime(event.created_at)}</time> : null}
             </li>
@@ -310,11 +323,18 @@ export function PullDetail({
   };
   const [mergeMethod, setMergeMethod] = useState("squash");
   const [editing, setEditing] = useState<string | null>(null);
+  const [changingBase, setChangingBase] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const pushToast = useUi((state) => state.pushToast);
   const refreshAll = useWorkspace((state) => state.refreshAll);
   const engines = useWorkspace((state) => state.engines.data);
   const tabsId = useId();
+  // Once the Conversation tab has been opened the activity stays loaded, so its count does not fall back.
+  const [activityWanted, setActivityWanted] = useState(false);
+  useEffect(() => {
+    if (tab === "timeline") setActivityWanted(true);
+  }, [tab]);
+  const activity = useTimelineEvents(projectId, number, activityWanted);
   const setPageLabel = usePageLabel((state) => state.set);
   const shownTitle = detail.status === "ready" ? detail.data.pull.title : null;
   useEffect(() => {
@@ -433,6 +453,7 @@ export function PullDetail({
           pull.draft
             ? { label: "Ready for review", onSelect: () => void update({ draft: false }, "Ready for review") }
             : { label: "Convert to draft", onSelect: () => void update({ draft: true }, "Converted to draft") },
+          ...(baseChangeAllowed(current) ? [{ label: "Change base branch", onSelect: () => setChangingBase(true) }] : []),
           { label: "Update branch", onSelect: () => void act("update_branch", "Branch updated") },
           { label: "Update with rebase", onSelect: () => void act("rebase", "Branch rebased") },
           {
@@ -472,20 +493,29 @@ export function PullDetail({
       </Button>
     </form>
   );
-  const baseBranch = open ? (
-    <input
-      className="pull-base"
-      aria-label="Base branch"
-      defaultValue={pull.base}
-      key={pull.base}
-      onBlur={(event) => {
-        const base = event.target.value.trim();
-        if (base && base !== pull.base) void update({ base }, "Base branch changed");
-      }}
-    />
-  ) : (
-    pull.base
-  );
+  // Plain text, as the frames draw it (pull-detail, pr-detail-cards). The field appears only after Change base branch,
+  // which is offered only when the service says the base can be changed; it reports no such permission yet.
+  const baseBranch =
+    changingBase && open && baseChangeAllowed(current) ? (
+      <input
+        className="pull-base"
+        aria-label="Base branch"
+        defaultValue={pull.base}
+        key={pull.base}
+        autoFocus
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setChangingBase(false);
+        }}
+        onBlur={(event) => {
+          const base = event.target.value.trim();
+          setChangingBase(false);
+          if (base && base !== pull.base) void update({ base }, "Base branch changed");
+        }}
+      />
+    ) : (
+      pull.base
+    );
   const moreActions = (
     <IconButton
       label="More actions"
@@ -681,7 +711,8 @@ export function PullDetail({
   );
   const pageOrder = ["summary", "guide", "timeline", "code", "checks"] as const;
   const counts: Partial<Record<Tab, number | null | undefined>> = {
-    timeline: mine?.comment_count,
+    // What the tab lists: comments, reviews and commits alike. Until it has loaded, the comments alone.
+    timeline: activity.data ? activity.data.length : mine?.comment_count,
     code: files === null ? undefined : Number(files),
     checks: pull.checks?.total,
   };
@@ -771,7 +802,7 @@ export function PullDetail({
               ) : tab === "timeline" ? (
                 <>
                   <PullConversation projectId={projectId} number={number} />
-                  <Timeline projectId={projectId} number={number} />
+                  <TimelineList events={activity as TimelineRead} />
                 </>
               ) : (
                 <Checks projectId={projectId} number={number} />

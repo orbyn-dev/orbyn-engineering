@@ -26,7 +26,7 @@ export function PullsHead() {
       <span>Title and state</span>
       <span>Checks</span>
       <span className="h-reviewers">Reviewers</span>
-      <span>Your review</span>
+      <span className="h-yours">Your review</span>
       <span className="h-comments">
         <MessageSquare size={14} aria-hidden />
       </span>
@@ -48,7 +48,7 @@ export function PullsSkeleton() {
           </span>
           <i className="pull-skel-checks" />
           <span className="h-reviewers" />
-          <i className="pull-skel-review" />
+          <i className="pull-skel-review h-yours" />
           <span className="h-comments" />
           <i className="pull-skel-updated h-age" />
         </li>
