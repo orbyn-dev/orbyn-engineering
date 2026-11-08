@@ -1,2 +1,2 @@
-export { SettingsPage, labels } from "./SettingsPage";
+export { SettingsPage } from "./SettingsPage";
 export { ScheduledTasksPage } from "./ScheduledTasks";

@@ -1,3 +1,4 @@
+import { useClearSelectionOnLeave } from "../../lib/clearSelection";
 import { ArrowDown } from "lucide-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useThreadLogs, type LocalPrompt } from "./threadLogs";
@@ -70,6 +71,7 @@ export function Transcript({
   header?: ReactNode;
   footer?: ReactNode;
 }) {
+  useClearSelectionOnLeave("transcript");
   const log = useThreadLogs((state) => state.logs[threadId]);
   const stream = useThreadLogs((state) => state.streams[threadId]);
   const prompts = useThreadLogs((state) => state.prompts[threadId]);

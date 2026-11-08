@@ -1,3 +1,4 @@
+import { useClearSelectionOnLeave } from "../lib/clearSelection";
 import { WelcomeHost, NoProjects, DraftView, TrustFolder } from "../features/onboarding/public";
 import { QuitConfirmation } from "../features/workspace/QuitConfirmation";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
@@ -41,16 +42,35 @@ import { useReadingNav } from "./readingNav";
 import { toggleSidebarDrawer, useSidebarDrawer } from "./sidebarDrawer";
 import { useEscapeClose } from "../ui/useEscapeClose";
 
+import { POLL_MS, quickFocus, quickTick } from "./pollSchedule";
+
 const HIDDEN_POLL_EVERY = 3;
-const POLL_MS = 4000;
+
 
 // One load at a time: a remount (React's development double mount included) or a
 // slow load meeting the next tick joins the load already running.
 let loading: Promise<void> | null = null;
-const loadAll = () =>
-  (loading ??= useWorkspace.getState().refreshAll().finally(() => {
-    loading = null;
-  }));
+let loadingQuick = false;
+let queuedFull: Promise<void> | null = null;
+let lastFull = 0;
+const loadAll = (quick = false): Promise<void> => {
+  if (loading) {
+    // A full load asked for while a quick one runs waits its turn instead of being dropped.
+    if (quick || !loadingQuick) return loading;
+    return (queuedFull ??= loading.then(() => {
+      queuedFull = null;
+      return loadAll(false);
+    }));
+  }
+  loadingQuick = quick;
+  if (!quick) lastFull = Date.now();
+  return (loading = useWorkspace
+    .getState()
+    .refreshAll({ quick })
+    .finally(() => {
+      loading = null;
+    }));
+};
 let loadingEngines: Promise<void> | null = null;
 const loadEngines = () =>
   (loadingEngines ??= useWorkspace.getState().refreshEngines().finally(() => {
@@ -603,6 +623,7 @@ export function Shell() {
   useTaskRunNotifications();
   usePanelMotionRoot(routeKey);
   useRouteFocus(routeKey, route.name, threadReady, main);
+  useClearSelectionOnLeave(routeKey);
   useToastClearance(`${routeKey}:${threadReady}`);
 
   useEffect(() => {
@@ -614,9 +635,15 @@ export function Shell() {
       // A hidden window keeps up while work runs, or its alerts would never fire, and
       // looks in now and then so it hears of work started elsewhere.
       const running = Object.values(useWorkspace.getState().threads).some((thread) => thread.active_run);
-      if (!document.hidden || running || ticks % HIDDEN_POLL_EVERY === 0) void loadAll();
+      if (!document.hidden || running || ticks % HIDDEN_POLL_EVERY === 0) void loadAll(quickTick(ticks));
     }, POLL_MS);
-    return () => clearInterval(timer);
+    // Coming back to the window: what changed while it was away, Git state included.
+    const onFocus = () => void loadAll(quickFocus(Date.now(), lastFull));
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const needsProject = projects !== null && projects.length === 0;
@@ -657,7 +684,7 @@ export function Shell() {
       }}>
         Skip to content
       </a>
-      <TitleBar route={route} layout={layout} />
+      <TitleBar layout={layout} />
       {small && drawerOpen ? <div className="drawer-scrim" aria-hidden onClick={dismissDrawer} /> : null}
       {showNav ? (
         small ? (

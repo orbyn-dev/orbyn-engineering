@@ -7,7 +7,7 @@ import { actionCommand } from "../../lib/actionCommand";
 
 /** The environment owns shortcuts; an action save and a shortcut save are separate effects. */
 export function useActionKeybinding(initialId: string | null) {
-  const view = useAsync("action-keybindings", (signal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal));
+  const view = useAsync("action-keybindings", (signal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal), { keep: true });
   const [id, setId] = useState(initialId);
   const [draft, setDraft] = useState<string | null>(null);
   const ruleFor = (actionId: string | null) => actionId === null ? undefined

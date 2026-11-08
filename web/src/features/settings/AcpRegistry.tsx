@@ -22,7 +22,8 @@ export function AcpRegistry() {
     query === null
       ? Promise.resolve([])
       : request<AcpRegistryEntry[]>("GET", `/api/acp/registry?q=${q(query)}`, undefined, signal),
-  );
+  { keep: true },
+);
   const act = async (entry: AcpRegistryEntry, work: Promise<unknown>, done: string) => {
     setWorking(entry.id);
     try {

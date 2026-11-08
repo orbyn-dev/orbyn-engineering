@@ -249,6 +249,47 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
 }
 
 #[tokio::test]
+async fn a_branch_switch_shows_in_the_next_workspace_read_not_minutes_later() {
+    let dir = TempDir::new();
+    let service = start(&dir, options(&dir.path().join("l"), None)).await;
+    let repo = external_repo(&dir.path().join("app"));
+    let project = added(&service, &repo).await;
+    let id = project["id"].as_str().unwrap();
+    trust(&service, id).await;
+    let thread = service.thread(id, "claude").await;
+    let branch_of = |status: &Value| -> String {
+        status["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|target| target["project_id"] == id)
+            .map(|target| target["branch"].as_str().unwrap_or_default().to_owned())
+            .unwrap_or_default()
+    };
+    // The first read is kept for a few seconds, so a stale answer would show `main`.
+    assert_eq!(branch_of(&service.json("/api/workspace").await), "main");
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/branches"),
+            json!({ "name": "feature/x" }),
+        )
+        .await;
+    assert_eq!(code, 201, "{body}");
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/branches/switch"),
+            json!({ "name": "feature/x" }),
+        )
+        .await;
+    assert!(code < 300, "{body}");
+    assert_eq!(
+        branch_of(&service.json("/api/workspace").await),
+        "feature/x"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
 async fn codex_runs_its_turn_in_the_checkout_so_the_library_stays_read_only() {
     let dir = TempDir::new();
     let launch_file = dir.path().join("l");

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pullsApi } from "../../api/pulls";
 import { ApiFailure } from "../../api/client";
@@ -89,6 +89,24 @@ describe("one pull request as a page", () => {
     expect(screen.getByText("Draft. Nobody is asked to review it yet.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ready for review" }));
     expect(pullsApi.update).toHaveBeenCalledWith("p", 142, { draft: false });
+  });
+
+  it("titles the Summary card only when the description does not open with that heading", async () => {
+    await show({ ...detail(), body: "## Summary\n\n- one" });
+    expect(document.querySelector(".pull-summary > b")).toBeNull();
+    cleanup();
+    await show({ ...detail(), body: "Fixes the redirect." });
+    expect(document.querySelector(".pull-summary > b")).toHaveTextContent("Summary");
+  });
+
+  it("shapes the loading page like the frame: a title bar, two cards of lines and a side card, drawn after the wait", async () => {
+    let finish: (value: PullRequestDetail) => void = () => {};
+    await show(new Promise<PullRequestDetail>((resolve) => { finish = resolve; }));
+    expect(document.querySelector(".pull-skel-card")).toBeNull();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(600)));
+    const cards = [...document.querySelectorAll(".pull-skel-card")].map((card) => [...card.querySelectorAll("i")].map((line) => (line as HTMLElement).style.width));
+    expect(cards).toEqual([["40%", "100%", "82%"], ["30%", "90%", "64%"], ["100%", "100%", "100%", "100%"]]);
+    finish(detail());
   });
 
   it("counts files, checks and comments in the tab names", async () => {

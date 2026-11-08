@@ -174,6 +174,7 @@ function Activity({ item }: { item: ActivityItem }) {
 
 function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
+  const timestampFormat = useUi((state) => state.timestampFormat);
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
   if (item.code === "run_stopped") {
     return (
@@ -182,7 +183,7 @@ function Notice({ item }: { item: NoticeItem }) {
         <Square size={12} aria-hidden />
         <span>
           {item.text}
-          <span data-find-skip> · {clockTime(item.ts)}</span>
+          <span data-find-skip> · {clockTime(item.ts, timestampFormat)}</span>
         </span>
         <span aria-hidden />
       </div>

@@ -84,7 +84,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
   const ref = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string } | null>(null);
-  const shell = useAsync("settings-search-shell", (signal) => api.shell(signal));
+  const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
   const current = section ?? "general";
   const View = views[current];
 

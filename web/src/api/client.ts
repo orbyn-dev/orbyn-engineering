@@ -301,6 +301,10 @@ export const api = {
   settings: (signal?: AbortSignal) =>
     request<ServerSettings>("GET", "/api/settings", undefined, signal),
   putSettings: (body: ServerSettings) => request<ServerSettings>("PUT", "/api/settings", body),
+  /** Changes some settings on top of what the service holds now. PUT replaces everything,
+   * so building the body from a screen's older copy could undo someone else's change. */
+  updateSettings: async (change: (current: ServerSettings) => ServerSettings) =>
+    api.putSettings(change(await api.settings())),
 
   workspace: (signal?: AbortSignal) =>
     request<WorkspaceStatus>("GET", "/api/workspace", undefined, signal),
