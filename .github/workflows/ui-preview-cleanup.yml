@@ -1,0 +1,42 @@
+# Removes a pull request's screenshots from the pr-previews branch when the pull request closes.
+name: UI preview cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: ui-preview-branch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: Remove the screenshots
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Remove this pull request's folder
+        run: |
+          set -euo pipefail
+          url="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git ls-remote --exit-code --heads "$url" pr-previews >/dev/null 2>&1 || { echo "no pr-previews branch"; exit 0; }
+          git clone --quiet --depth 1 --branch pr-previews "$url" previews
+          cd previews
+          [ -d "pr-${PR}" ] || { echo "nothing to remove"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -r --quiet "pr-${PR}"
+          git commit --quiet -m "remove previews for pull request ${PR}"
+          for attempt in 1 2 3 4; do
+            git push --quiet origin pr-previews && exit 0
+            git pull --quiet --rebase origin pr-previews
+          done
+          exit 1

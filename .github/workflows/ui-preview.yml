@@ -1,0 +1,138 @@
+# Posts the screens a pull request says it built: the app's dev-only mock (fake data, no account) drawn in Light, Dark and Dim.
+# It reads the "Frames built" line of the description. It shows OUR screens only, never the design frames: this repository is public and the
+# designs are private, so nothing here reads or publishes them.
+#
+# Screenshots go to the `pr-previews` branch (one folder per pull request, removed when it closes; see ui-preview-cleanup.yml); the comment links
+# them with `?raw=true`. The run also keeps every image as a download. Informational: nothing here is a required check, and a failure only says so.
+name: UI preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - web/**
+      - .github/workflows/ui-preview.yml
+      - .github/pull_request_template.md
+
+concurrency:
+  group: ui-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # pushes the screenshots to the pr-previews branch
+  pull-requests: write # posts and updates the preview comment
+
+jobs:
+  preview:
+    name: UI preview
+    # Same-repository pull requests only: a fork's code never runs with this token.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      MARKER: "<!-- ui-preview -->"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the app and a browser
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Draw the frames the description names
+        working-directory: web
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
+          short="${HEAD_SHA:0:7}"
+          node tools/pr-preview/render.mjs \
+            --body "$RUNNER_TEMP/body.md" --out "$RUNNER_TEMP/out" \
+            --url "https://github.com/${REPO}/blob/pr-previews/pr-${PR}/${short}" \
+            --run-url "$RUN_URL" --sha "$HEAD_SHA"
+
+      - name: Publish the screenshots
+        run: |
+          set -euo pipefail
+          [ -d "$RUNNER_TEMP/out/images" ] && [ -n "$(ls -A "$RUNNER_TEMP/out/images")" ] || { echo "no screenshots to publish"; exit 0; }
+          short="${HEAD_SHA:0:7}"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          work="$RUNNER_TEMP/previews-branch"
+          rm -rf "$work"
+          if git ls-remote --exit-code --heads "$url" pr-previews >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch pr-previews "$url" "$work"
+          else
+            mkdir "$work"
+            git -C "$work" init --quiet -b pr-previews
+            git -C "$work" remote add origin "$url"
+          fi
+          cd "$work"
+          rm -rf "pr-${PR}"
+          mkdir -p "pr-${PR}/${short}"
+          cp -R "$RUNNER_TEMP/out/images" "pr-${PR}/${short}/images"
+          git add -A
+          git commit --quiet -m "previews for pull request ${PR} at ${short}"
+          for attempt in 1 2 3 4; do
+            git push --quiet origin pr-previews && exit 0
+            git pull --quiet --rebase origin pr-previews
+          done
+          echo "could not push the screenshots" >&2
+          exit 1
+
+      - name: Post, update or remove the comment
+        run: |
+          set -euo pipefail
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            -q '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- ui-preview -->")) | .id' | head -1)
+          if [ ! -s "$RUNNER_TEMP/out/comment.md" ]; then
+            # "Frames built: none": nothing to show, and an earlier request for the line is out of date.
+            [ -z "$existing" ] || gh api -X DELETE "repos/${REPO}/issues/comments/${existing}" >/dev/null
+            exit 0
+          fi
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"$RUNNER_TEMP/out/comment.md" >/dev/null
+          else
+            gh api "repos/${REPO}/issues/${PR}/comments" -F body=@"$RUNNER_TEMP/out/comment.md" >/dev/null
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ui-preview-pr-${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/out
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Say so when the preview failed
+        if: failure()
+        run: |
+          body="<!-- ui-preview -->
+          ## UI preview
+
+          The preview could not be built for \`${HEAD_SHA:0:7}\`. See the [workflow run](${RUN_URL}). Nothing is blocked."
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            -q '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- ui-preview -->")) | .id' | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -f body="$body" >/dev/null
+          else
+            gh api "repos/${REPO}/issues/${PR}/comments" -f body="$body" >/dev/null
+          fi

@@ -43,7 +43,7 @@ export default tseslint.config(
     rules: { "no-restricted-imports": "off" },
   },
   {
-    files: ["scripts/**"],
-    languageOptions: { globals: { console: "readonly", process: "readonly" } },
+    files: ["scripts/**", "tools/**/*.mjs"],
+    languageOptions: { globals: { console: "readonly", process: "readonly", fetch: "readonly", setTimeout: "readonly", document: "readonly", localStorage: "readonly", sessionStorage: "readonly" } },
   },
 );

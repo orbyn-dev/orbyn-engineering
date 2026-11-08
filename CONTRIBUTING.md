@@ -87,6 +87,15 @@ type(scope): summary
   title does not fit, and starts again when the title is edited. Dependabot opens
   its own titles and is skipped.
 
+## Frames built
+
+A pull request that changes `web/` names the screens it draws in a line of its
+description, `Frames built: pr-list-failed, pr-detail-running @ v56` (the ids are in
+[docs/match-kit.md](docs/match-kit.md), then the design version), or says `Frames built: none`.
+A bot reads it and posts screenshots of those screens from the app's dev-only mock data,
+Light first, up to 12. It shows our screens only, never the private designs. It is
+informational: a missing line gets a comment asking for it, and nothing is blocked.
+
 ## Credit
 
 A person who writes or amends the commits on a branch is an author of that change,
