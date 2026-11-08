@@ -89,6 +89,8 @@ export function GitActionDialog({ thread, plan, onClose }: { thread: Thread; pla
       setResult(done);
       useThreadLogs.getState().touchDiff(thread.id);
       void useWorkspace.getState().refreshThread(thread.id);
+      // A commit or pull request moves the branch the projects list shows.
+      void useWorkspace.getState().refreshManaged();
     } catch (failure) {
       setError(toFailure(failure).message);
     } finally {

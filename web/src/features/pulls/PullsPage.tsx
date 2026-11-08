@@ -72,7 +72,7 @@ export function PullsPage() {
   const phone = useLayoutWidth() === "phone";
   const connection = useConnectionKind();
   const asked = statesToAsk(filters.states);
-  const list = useAsync(`pulls:${[...asked].sort().join("+")}:${submitted}`, (signal) => loadPulls(asked, submitted, signal));
+  const list = useAsync(`pulls:${[...asked].sort().join("+")}:${submitted}`, (signal) => loadPulls(asked, submitted, signal), { keep: true });
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal));
   const all = useMemo(() => list.data?.pulls ?? [], [list.data]);
   const details = usePullDetails(all);

@@ -24,7 +24,7 @@ function keyCaps(rule: string): string[] {
 const load = (signal?: AbortSignal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal);
 
 export function KeybindingsSection() {
-  const view = useAsync("keybindings", load);
+  const view = useAsync("keybindings", load, { keep: true });
   const [filter, setFilter] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

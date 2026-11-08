@@ -74,7 +74,7 @@ export function ProjectIconSetting({ query, catalog, members, projectName, disab
   const icon = current?.project_icon ?? null;
   const description = "Emoji, an icon or your own image";
   // The native dialog lives in the desktop app; a browser on a plain server has none.
-  const shell = useAsync("project-icon-shell", (signal) => api.shell(signal));
+  const shell = useAsync("project-icon-shell", (signal) => api.shell(signal), { keep: true });
   const desktop = shell.data?.attached === true;
   const representative = projects?.find((project) => project.id === members[0]?.project_id);
   const preview = representative && current ? { ...representative, project_icon: current.project_icon, favicon_path: current.favicon_path, metadata_revision: current.metadata_revision } : representative;

@@ -66,16 +66,16 @@ function SnoozePresets({ presets, save }: { presets: SnoozePreset[]; save(next: 
 }
 
 export function ThreadsSection() {
-  const settings = useAsync("server-settings", (signal) => api.settings(signal));
+  const settings = useAsync("server-settings", (signal) => api.settings(signal), { keep: true });
   const [error, setError] = useState<string | null>(null);
   const scope = useSettingsScope();
   const folders = useUi((state) => state.projectFolders);
   const setPrefs = useUi((state) => state.setPrefs);
   const projectScoped = scope?.active && scope.query.selection && scope.query.selection.kind !== "all_projects";
 
-  const save = (next: ServerSettings) => {
+  const save = (change: (current: ServerSettings) => ServerSettings) => {
     setError(null);
-    api.putSettings(next).then(settings.setData, (failure: unknown) => {
+    api.updateSettings(change).then(settings.setData, (failure: unknown) => {
       setError(toFailure(failure).message);
     });
   };
@@ -120,7 +120,7 @@ export function ThreadsSection() {
         { key: "text_generation_model", title: settingsLabel("threads-title-model") },
       ] }]} />
       <fieldset className="preference-control" disabled={Boolean(projectScoped)}>
-        <SnoozePresets presets={data.snooze_presets} save={(snooze_presets) => save({ ...data, snooze_presets })} />
+        <SnoozePresets presets={data.snooze_presets} save={(snooze_presets) => save((current) => ({ ...current, snooze_presets }))} />
       </fieldset>
       {error ? (
         <p className="field-error" role="alert">

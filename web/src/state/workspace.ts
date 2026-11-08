@@ -62,7 +62,11 @@ interface WorkspaceState {
   refreshScratch(): Promise<void>;
   refreshApprovals(): Promise<void>;
   refreshEngines(): Promise<void>;
-  refreshAll(): Promise<void>;
+  /**
+   * Reads projects, threads and approvals, and the workspace and update status unless `quick`. Those two are
+   * answered by running Git over the library and every project's worktrees, which the 4 s poll must not repeat.
+   */
+  refreshAll(options?: { quick?: boolean }): Promise<void>;
   putProject(project: Project): void;
   dropProject(projectId: string): void;
   putThread(thread: Thread): void;
@@ -356,10 +360,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async refreshAll() {
+  async refreshAll(options) {
     const { refreshProjects, refreshThreads, refreshApprovals, refreshManaged, refreshUpdates } = get();
+    const quick = options?.quick === true;
     // The workspace status names each project's branch, so it starts with the projects.
-    const managed = refreshManaged();
+    const managed = quick ? Promise.resolve() : refreshManaged();
     await refreshProjects();
     const projects = get().projects.data ?? [];
     await Promise.all([
@@ -367,7 +372,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       get().refreshScratch(),
       refreshApprovals(),
       managed,
-      refreshUpdates(),
+      quick ? Promise.resolve() : refreshUpdates(),
     ]);
   },
 
@@ -470,3 +475,10 @@ export function useVisibleProjects(): Project[] | null {
 /** The engine record for a thread, if the engine list has loaded. */
 export const engineById = (engines: readonly EngineStatus[] | null, id: string) =>
   engines?.find((engine) => engine.id === id) ?? null;
+
+// A run that ends may have committed, switched branch or added a worktree, and the
+// managed status is otherwise read only every few minutes.
+useWorkspace.subscribe((state, before) => {
+  const ended = Object.values(state.threads).some((thread) => before.threads[thread.id]?.active_run && !thread.active_run);
+  if (ended) void state.refreshManaged();
+});

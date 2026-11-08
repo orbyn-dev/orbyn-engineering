@@ -468,10 +468,10 @@ function ModelPriceDialog({ model, onClose, onSaved }: { model: string; onClose(
     const priced = RATES.some((rate) => shown(rate.key) !== "");
     const number = (key: (typeof RATES)[number]["key"]) => Number(shown(key));
     try {
-      await api.putSettings({
-        ...settings.data,
+      await api.updateSettings((current) => ({
+        ...current,
         model_prices: [
-          ...(settings.data.model_prices ?? []).filter((price) => price.model !== model || !sameTier(price.tier, tier)),
+          ...(current.model_prices ?? []).filter((price) => price.model !== model || !sameTier(price.tier, tier)),
           ...(priced
             ? [{
                 model,
@@ -484,10 +484,10 @@ function ModelPriceDialog({ model, onClose, onSaved }: { model: string; onClose(
             : []),
         ],
         model_aliases: [
-          ...(settings.data.model_aliases ?? []).filter((entry) => entry.model !== model),
+          ...(current.model_aliases ?? []).filter((entry) => entry.model !== model),
           ...(target ? [{ model, counts_as: target }] : []),
         ],
-      });
+      }));
       onSaved();
       onClose();
     } catch (failure) {
@@ -565,7 +565,6 @@ export function UsagePage() {
   const tabsId = useId();
   const lastMetric = useRef<"cost" | "tokens">(saved?.metric && saved.metric !== "limits" ? saved.metric : "tokens");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [nonce, setNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const engines = useWorkspace((state) => state.engines.data);
   const pushToast = useUi((state) => state.pushToast);
@@ -582,9 +581,10 @@ export function UsagePage() {
   }, [loadingFirst, skeletonShown]);
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
-  const limits = useAsync(`limits:${metric === "limits"}:${nonce}`, (signal) =>
+  const limits = useAsync(`limits:${metric === "limits"}`, (signal) =>
     metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
-  );
+  { keep: true },
+);
 
   // An engine that never answers must not leave the tab loading for good.
   const limitsSlow = useWaited(metric === "limits" && limits.status === "loading", LIMITS_WAIT_MS);
@@ -618,7 +618,7 @@ export function UsagePage() {
     setRefreshing(true);
     try {
       await api.limits(true);
-      setNonce(nonce + 1);
+      void limits.reload();
     } catch (failure) {
       pushToast(`Couldn't refresh. ${toFailure(failure).message}`);
     } finally {

@@ -148,3 +148,54 @@ describe("visible projects", () => {
     expect(result.current?.map((project) => project.id)).toEqual(["mine"]);
   });
 });
+
+describe("the quick refresh", () => {
+  const stub = () => ({
+    projects: vi.spyOn(api, "projects").mockResolvedValue([]),
+    workspace: vi.spyOn(api, "workspace").mockResolvedValue({ configured: true, default_url: "", library: null, targets: [] } as never),
+    updates: vi.spyOn(api, "updates").mockResolvedValue({ library: {}, app: {}, engines: [], checked_at: null, error: null } as never),
+    approvals: vi.spyOn(api, "pendingApprovals").mockResolvedValue([]),
+  });
+
+  it("reads projects and approvals but not the Git-backed workspace and update status", async () => {
+    const spies = stub();
+    try {
+      await useWorkspace.getState().refreshAll({ quick: true });
+      expect(spies.projects).toHaveBeenCalled();
+      expect(spies.approvals).toHaveBeenCalled();
+      expect(spies.workspace).not.toHaveBeenCalled();
+      expect(spies.updates).not.toHaveBeenCalled();
+    } finally {
+      Object.values(spies).forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  it("is still the full refresh when asked for no option", async () => {
+    const spies = stub();
+    try {
+      await useWorkspace.getState().refreshAll();
+      expect(spies.workspace).toHaveBeenCalledTimes(1);
+      expect(spies.updates).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.values(spies).forEach((spy) => spy.mockRestore());
+    }
+  });
+});
+
+describe("a run that ends", () => {
+  it("reads the Git-backed workspace status again, since the agent may have committed or switched branch", async () => {
+    const workspace = vi.spyOn(api, "workspace").mockResolvedValue({ configured: true, default_url: "", library: null, targets: [] } as never);
+    try {
+      const running = { id: "t1", active_run: { id: "r1" } } as never;
+      useWorkspace.setState({ threads: { t1: running } });
+      expect(workspace).not.toHaveBeenCalled();
+      useWorkspace.setState({ threads: { t1: { id: "t1", active_run: null } as never } });
+      await vi.waitFor(() => expect(workspace).toHaveBeenCalledTimes(1));
+      // A thread that merely changes while idle does not.
+      useWorkspace.setState({ threads: { t1: { id: "t1", active_run: null, title: "x" } as never } });
+      expect(workspace).toHaveBeenCalledTimes(1);
+    } finally {
+      workspace.mockRestore();
+    }
+  });
+});
