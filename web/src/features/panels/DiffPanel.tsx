@@ -540,6 +540,8 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const added = files.reduce((sum, file) => sum + file.additions, 0);
   const removed = files.reduce((sum, file) => sum + file.deletions, 0);
 
+  // Nothing changed means nothing to open a pull request for; the empty state offers Files instead.
+  const offerPull = canCreate && files.length > 0;
   return (
     <div ref={root}>
       <JjChange threadId={threadId} version={version} />
@@ -617,7 +619,12 @@ export function DiffPanel({ threadId }: { threadId: string }) {
         <ErrorState compact title="Couldn't refresh the diff" failure={diff.error} onRetry={reload} />
       ) : null}
       {files.length === 0 ? (
-        <Empty title="No changes" />
+        <Empty title="No changes yet">
+          <p className="t3">Files the agent edits show up here, with a diff for each one.</p>
+          <Button small tone="quiet" onClick={() => useUi.getState().togglePanel("files")}>
+            Open Files
+          </Button>
+        </Empty>
       ) : (
         <ul className="diff-files">
           {page.map((file) => (
@@ -644,14 +651,14 @@ export function DiffPanel({ threadId }: { threadId: string }) {
           ) : null}
         </ul>
       )}
-      {thread && thread.active_run === null && ((source === "turn" && latestRun) || canCreate) ? (
+      {thread && thread.active_run === null && ((source === "turn" && latestRun) || offerPull) ? (
         <div className="diff-foot">
           {source === "turn" && latestRun ? (
             <Button small tone="quiet" icon={<Undo2 size={14} aria-hidden />} onClick={() => setRestoring(true)}>
               Restore files to before this response
             </Button>
           ) : null}
-          {canCreate ? (
+          {offerPull ? (
             <Button small tone="quiet" icon={<GitPullRequest size={14} aria-hidden />} onClick={() => setCreating(true)}>
               Create pull request
             </Button>

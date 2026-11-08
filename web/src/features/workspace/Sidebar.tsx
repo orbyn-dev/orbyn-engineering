@@ -938,15 +938,16 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   const dragTarget = drag?.target?.section ?? null;
   const dragging = drag !== null;
   const noActiveRows = shown.active.length === 0 && emptyProjects.length === 0;
-  // Under project folders the Working shelf sits above them; otherwise it joins the groups below.
-  const shelfAbove = foldersView && shelves.length > 0;
+  // The Working shelf sits at the top of the list in every view, so a running thread
+  // never moves a shelf to the bottom and leaves the Projects header with nothing under it.
+  const shelfAbove = shelves.length > 0;
   const workingGroup = (
     <Group id="working" label="Working" count={shelves.length} defaultOpen>
       {shelves.map((thread) => row(thread, "working", false))}
     </Group>
   );
   const hasShelf =
-    (!foldersView && shelves.length > 0) || shown.snoozed.length > 0 || shown.settled.length > 0 || dragging;
+    shown.snoozed.length > 0 || shown.settled.length > 0 || dragging;
 
   const setGroupingOverride = (projectId: string, mode: ProjectGroupingMode | null) => {
     const next = { ...projectGroupingOverrides };
@@ -1134,7 +1135,6 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
             </ul>
             {hasShelf ? (
               <div className="sidebar-groups">
-                {!foldersView && shelves.length > 0 ? workingGroup : null}
                 {shown.snoozed.length > 0 ? (
                   <Group id="snoozed" label="Snoozed" count={shown.snoozed.length} defaultOpen>
                     {shown.snoozed.map((thread) => row(thread, "snoozed", true))}

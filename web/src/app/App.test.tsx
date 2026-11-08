@@ -107,6 +107,18 @@ describe("App against the mock API", () => {
     expect(settled).toHaveAttribute("aria-expanded", "true");
   });
 
+  it.each([true, false])("keeps the Working shelf above the project list (folders %s)", async (folders) => {
+    useUi.setState({ projectFolders: folders });
+    const running = mock.threads.find((thread) => thread.active_run)!;
+    running.active_run = { ...running.active_run!, state: "running" };
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const shelf = await within(nav).findByRole("button", { name: /^Working/ });
+    const other = mock.threads.find((thread) => thread.id !== running.id && !thread.active_run)!;
+    const row = await within(nav).findByText(other.title);
+    expect(shelf.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("searches threads from the sidebar", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -598,6 +610,22 @@ describe("App against the mock API", () => {
     expect(card).toHaveTextContent("Claude Code, claude-opus-5-5");
     fireEvent.pointerLeave(row);
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  });
+
+  it("closes the hover card on a right-click and does not bring it back over the menu", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const row = (await within(nav).findByText("Explain how the event log resumes")).closest("a") as HTMLElement;
+    fireEvent.pointerEnter(row, { pointerType: "mouse" });
+    await screen.findByRole("tooltip");
+    fireEvent.contextMenu(row);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    // The right-click focuses the row afterwards; that must not start the card again.
+    row.focus();
+    fireEvent.pointerEnter(row, { pointerType: "mouse" });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
   it("opens the panel on its first tab, with the plus drawn, when the window is wide enough to open it itself", async () => {
