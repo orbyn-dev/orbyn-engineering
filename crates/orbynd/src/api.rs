@@ -820,10 +820,16 @@ fn period(query: &HashMap<String, String>) -> ApiResult<Option<u32>> {
         .transpose()
 }
 
+/// Set once Usage has been read, which is what makes the next launch warm the scan.
+pub const USAGE_OPENED: &str = "usage_opened";
+
 pub async fn usage(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
+    if state.core.store.setting(USAGE_OPENED)?.is_none() {
+        state.core.store.set_setting(USAGE_OPENED, "1")?;
+    }
     let settings = state.core.store.settings()?;
     let days = period(&query)?;
     Ok(Json(state.core.usage.report(&settings, days).await?))
