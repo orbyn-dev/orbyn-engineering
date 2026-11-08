@@ -2041,7 +2041,7 @@ pub async fn current_head(forge: Forge, cwd: &Path, number: u64) -> Result<Strin
         }
         Forge::Bitbucket => return Err(forge.unsupported("merge")),
     };
-    head_in(forge, &record).ok_or_else(|| unreadable_head())
+    head_in(forge, &record).ok_or_else(unreadable_head)
 }
 
 fn unreadable_head() -> CoreError {
