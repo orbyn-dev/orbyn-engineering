@@ -718,10 +718,9 @@ li[data-highlight] .thread-row {
   margin-left: -6px;
 }
 .filter-popup {
-  position: absolute;
+  /* Placed from its trigger's box (ProjectFilter), not from an ancestor. */
+  position: fixed;
   z-index: 40;
-  top: calc(100% + 4px);
-  left: -120px;
   display: flex;
   flex-direction: column;
   gap: 4px;
