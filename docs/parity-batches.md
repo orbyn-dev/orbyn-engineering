@@ -31,9 +31,9 @@ comment is historical and must not be used to claim a batch.
 ## Remaining work and evidence
 
 [Parity rows](parity.md) retain the exact `remaining:`, scope and refusal notes.
-`python scripts/count-parity.py` reports 709 rows, 467 source checkboxes ticked,
+`python scripts/count-parity.py` reports 713 rows, 467 source checkboxes ticked,
 and 534 included rows: 396 declared checked, 101 partial, 33 open and 4 not doable.
-There are 175 excluded and zero unresolved-scope rows. Issue closure changes none
+There are 179 excluded and zero unresolved-scope rows. Issue closure changes none
 of those declarations and supplies no new runtime evidence.
 
 - **Native/manual qualification:** #186 records packaged macOS and Windows

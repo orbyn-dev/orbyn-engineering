@@ -67,9 +67,9 @@ reconciliation.
 
 ## Where things stand now
 
-At product revision `3d0f41d`, `python scripts/count-parity.py` reports 709 rows,
+At product revision `4272556`, `python scripts/count-parity.py` reports 709 rows,
 467 source checkboxes ticked and 534 included rows: 396 declared checked,
-101 partial, 33 open and 4 not doable. There are 175 excluded rows and none with
+101 partial, 33 open and 4 not doable. There are 179 excluded rows and none with
 unresolved scope. These are checklist declarations, not fresh runtime evidence.
 
 ### Picking up work
@@ -155,7 +155,7 @@ chain, mobile, hosted services) is marked there so it does not look open.
 Run `python3 scripts/count-parity.py` to count `docs/parity.md` directly.
 Main has 709 rows and 390 source checkboxes ticked. Scope metadata reports 534
 included rows: 349 declared checked, 49 partial, 134 open and 2 not doable.
-There are 175 excluded and zero unresolved-scope rows. These are checklist
+There are 179 excluded and zero unresolved-scope rows. These are checklist
 declarations, not a fresh runtime verification count. F30 remains partial for
 missing cleanup rules and scheduling. The former 365/573 calculation is not a
 valid completion percentage.
