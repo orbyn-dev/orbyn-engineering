@@ -38,7 +38,7 @@
   align-items: center;
   gap: 12px;
   min-height: var(--topbar-h);
-  padding: 22px 28px 6px;
+  padding: 7px 28px;
   flex: none;
 }
 .crumbs {
