@@ -31,8 +31,21 @@ impl DetailCache {
         self.paused_until.is_some_and(|until| now < until)
     }
 
+    /// How long the pause still has to run, while it does.
+    pub fn resumes_in(&self, now: Instant) -> Option<Duration> {
+        self.paused_until
+            .and_then(|until| until.checked_duration_since(now))
+            .filter(|left| !left.is_zero())
+    }
+
     pub fn pause(&mut self, now: Instant) {
-        self.paused_until = Some(now + DETAILS_PAUSE);
+        self.pause_for(now, DETAILS_PAUSE);
+    }
+
+    /// Pauses until the forge says the limit resets, never for less than a few seconds or more than an hour.
+    pub fn pause_for(&mut self, now: Instant, span: Duration) {
+        let span = span.clamp(Duration::from_secs(5), Duration::from_secs(3600));
+        self.paused_until = Some(now + span);
     }
 
     pub fn lookup(
@@ -77,6 +90,19 @@ mod tests {
             comment_count: Some(9),
             viewer_review_state: None,
         }
+    }
+
+    #[test]
+    fn a_pause_lasts_until_the_forges_reset_within_bounds() {
+        let start = Instant::now();
+        let mut cache = DetailCache::default();
+        cache.pause_for(start, Duration::from_secs(900));
+        assert!(cache.paused(start + Duration::from_secs(899)));
+        assert!(!cache.paused(start + Duration::from_secs(900)));
+        cache.pause_for(start, Duration::from_secs(0));
+        assert!(cache.paused(start + Duration::from_secs(4)));
+        cache.pause_for(start, Duration::from_secs(86_400));
+        assert!(!cache.paused(start + Duration::from_secs(3600)));
     }
 
     #[test]
