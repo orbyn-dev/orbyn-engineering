@@ -543,6 +543,8 @@ describe("App against the mock API", () => {
   });
 
   it("shows the thread details with real data only", async () => {
+    // The card sits at the top of the side panel, which is open because it was asked for.
+    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     window.matchMedia = ((query: string) => ({
       matches: query.includes("min-width"),
@@ -628,13 +630,23 @@ describe("App against the mock API", () => {
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
-  it("opens the panel on its first tab, with the plus drawn, when the window is wide enough to open it itself", async () => {
+  it.each([1100, 1700, 2400])("does not open the panel by itself when a thread opens at %i px", async (width) => {
+    setViewportWidth(width);
+    useUi.setState({ panelOpen: false });
+    go("#/threads/t-done");
+    render(<App />);
+    await screen.findByRole("button", { name: "Show side panel" });
+    expect(screen.queryByRole("tablist", { name: "Context" })).toBeNull();
+    expect(useUi.getState().panelOpen).toBe(false);
+  });
+
+  it("keeps the panel open from one thread to the next once it was opened, at any width", async () => {
     setViewportWidth(1700);
+    useUi.setState({ panelOpen: true, panelTab: "diff" });
     go("#/threads/t-done");
     render(<App />);
     const row = await screen.findByRole("tablist", { name: "Context" });
     expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByLabelText("Open a surface")).toBeNull();
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });
 

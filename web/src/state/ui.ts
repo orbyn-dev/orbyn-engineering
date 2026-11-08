@@ -31,8 +31,9 @@ export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
 interface Prefs {
   theme: ThemeChoice;
-  /** The surface pane. Null follows the layout: open only when there's room. */
-  panelOpen: boolean | null;
+  /** The surface pane, one choice for every thread. It opens only when asked, or for
+   * something the person triggered (a diff, file or pull request chip), at any width. */
+  panelOpen: boolean;
   /** The surface showing; null when none is. */
   panelTab: RightTab | null;
   /** The tab row's order for this thread. */
@@ -162,7 +163,6 @@ export interface StashedPrompt {
 
 /** What each thread remembers of its layout. Drafts share the `draft` key until sent. */
 export interface ThreadLayout {
-  panelOpen: boolean | null;
   panelTab: RightTab | null;
   panelTabOrder: RightTab[];
   panelTabsClosed: RightTab[];
@@ -193,7 +193,7 @@ const DRAFTS_KEY = "orbyn.drafts.v1";
 
 const defaults: Prefs = {
   theme: "dark",
-  panelOpen: null,
+  panelOpen: false,
   panelTab: null,
   panelTabOrder: [...RIGHT_TAB_IDS],
   panelTabsClosed: [],
@@ -337,7 +337,6 @@ interface UiState extends Prefs {
 }
 
 const layoutDefaults: ThreadLayout = {
-  panelOpen: defaults.panelOpen,
   panelTab: defaults.panelTab,
   panelTabOrder: defaults.panelTabOrder,
   panelTabsClosed: defaults.panelTabsClosed,
@@ -349,7 +348,6 @@ const layoutDefaults: ThreadLayout = {
 };
 
 const currentLayout = (state: Prefs): ThreadLayout => ({
-  panelOpen: state.panelOpen,
   panelTab: state.panelTab,
   panelTabOrder: state.panelTabOrder,
   panelTabsClosed: state.panelTabsClosed,
@@ -478,7 +476,9 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
       .map(([key, layout]) => {
         const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
         const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
-        return [key, { ...layout, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
+        // Open or closed is one global choice now; an older per-thread value must not override it.
+        const { panelOpen: _global, ...rest } = layout as ThreadLayout & { panelOpen?: unknown };
+        return [key, { ...rest, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
       }),
   );
 }
@@ -500,7 +500,7 @@ function savedPrefs(): Partial<Prefs> {
     ),
   );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
+  return { ...saved, panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
 }
 
 export const useUi = create<UiState>((set, get) => {

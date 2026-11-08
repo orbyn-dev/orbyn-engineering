@@ -125,6 +125,8 @@ describe("composer menu shortcuts (K41)", () => {
   it("composer.branch opens the branch switcher", async () => {
     const user = userEvent.setup();
     for (const thread of mock.threads) thread.active_run = null;
+    // The Branch row lives on the details card at the top of the side panel, open here on request.
+    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     render(<App />);
     await screen.findByRole("button", { name: /^Branch / });
@@ -137,6 +139,8 @@ describe("composer menu shortcuts (K41)", () => {
   it("the branch switcher follows the footerless design: Find a branch, a Current note and the switch hint", async () => {
     const user = userEvent.setup();
     for (const thread of mock.threads) thread.active_run = null;
+    // The Branch row lives on the details card at the top of the side panel, open here on request.
+    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     render(<App />);
     await screen.findByRole("button", { name: /^Branch / });

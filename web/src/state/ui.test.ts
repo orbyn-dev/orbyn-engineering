@@ -5,11 +5,11 @@ const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: null, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
+  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
 });
 
 describe("thread layouts", () => {
-  it("restores each thread's pane, tab, width, terminal and maximize", () => {
+  it("restores each thread's tab, width, terminal and maximize; open or closed is one global choice", () => {
     ui().setLayoutKey("a");
     ui().togglePanel("diff");
     ui().setPanelWidth(420);
@@ -17,7 +17,8 @@ describe("thread layouts", () => {
     ui().setPanelMaximized(true);
 
     ui().setLayoutKey("b");
-    expect(ui().panelOpen).toBeNull();
+    // Opened in thread a, so it is open in thread b too; the rest is b's own.
+    expect(ui().panelOpen).toBe(true);
     expect(ui().terminalOpen).toBe(false);
     expect(ui().panelMaximized).toBe(false);
     ui().togglePanel("activity");
@@ -40,9 +41,50 @@ describe("thread layouts", () => {
     expect(ui().layoutKey).toBe("t1");
     expect(ui().panelOpen).toBe(true);
     ui().setLayoutKey(DRAFT_LAYOUT);
-    expect(ui().panelOpen).toBeNull();
+    expect(ui().panelOpen).toBe(true);
     ui().setLayoutKey("t1");
     expect(ui().panelOpen).toBe(true);
+  });
+
+  it("keeps the panel closed in a thread never opened, and closing it closes it everywhere", () => {
+    ui().setLayoutKey("a");
+    expect(ui().panelOpen).toBe(false);
+    ui().setLayoutKey("b");
+    expect(ui().panelOpen).toBe(false);
+    ui().revealFile("src/a.ts", null, { threadId: "b", cwd: "/w" });
+    expect(ui().panelOpen).toBe(true);
+    ui().setLayoutKey("c");
+    expect(ui().panelOpen).toBe(true);
+    ui().closePanel();
+    ui().setLayoutKey("a");
+    expect(ui().panelOpen).toBe(false);
+  });
+
+  it("opens for something the person triggered: a diff, a commit, a file or a page", () => {
+    for (const open of [
+      () => ui().revealDiff("a.ts", { threadId: "a", cwd: "/w" }),
+      () => ui().revealCommit("abc123"),
+      () => ui().revealFile("a.ts", null, { threadId: "a", cwd: "/w" }),
+      () => ui().showInBrowser("http://localhost:3000"),
+    ]) {
+      ui().closePanel();
+      expect(ui().panelOpen).toBe(false);
+      open();
+      expect(ui().panelOpen).toBe(true);
+    }
+  });
+
+  it("ignores an older saved per-thread open state and a saved null", async () => {
+    localStorage.setItem(
+      "orbyn.prefs.v1",
+      JSON.stringify({ panelOpen: null, layouts: { a: { panelOpen: true, panelTab: "files" } } }),
+    );
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi;
+    expect(fresh.getState().panelOpen).toBe(false);
+    fresh.getState().setLayoutKey("a");
+    expect(fresh.getState().panelOpen).toBe(false);
+    expect(fresh.getState().panelTab).toBe("files");
   });
 });
 

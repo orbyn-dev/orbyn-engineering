@@ -189,7 +189,7 @@ It is a device preference (`workspaceLayout`), set on `<html data-workspace>`, a
 changes arrangement and density only, never colour or behaviour.
 
 - Console, the default: sidebar by project with its threads nested, the thread in the
-  middle, the side panel as a 380px column on the right.
+  middle, the side panel as a 380px column on the right. The side panel opens only when asked, or for a diff, commit, file or page the person clicks, at every width; open or closed is one choice for all threads, and a wider window gives it more room, not an opening.
 - Ledger: the sidebar lists Needs you (amber), Failed (red), Running and Done today, each
   with a count, instead of project folders; every row names its project. The nav moves to
   the bottom, above Settings. Rows give the title the room: no project column, and only a waiting or failed status word. Rows are denser and the 300px details rail opens at the

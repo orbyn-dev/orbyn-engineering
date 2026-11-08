@@ -412,7 +412,8 @@ export function ThreadView({ id }: { id: string }) {
     thread.last_run_state === null;
   const { mover, anchor, recordStart } = useComposerDock(hero, motion.enabled, motion.durationMs);
 
-  const panelOpen = panelPref ?? layout === "xwide";
+  // Open only when asked or triggered; a wider window gives the panel more room, not an opening.
+  const panelOpen = panelPref;
   // Over the thread, Escape closes the panel and focus goes back to the header button.
   useEscapeClose(panelOpen && overlays && !maximized, () => setPanelOpen(false), () =>
     document.querySelector<HTMLElement>("[data-panel-toggle]"),
