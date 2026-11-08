@@ -407,6 +407,18 @@
   padding-inline-start: 1.25rem;
   list-style-type: decimal;
 }
+/* GFM task list: the read-only box takes the marker's place. */
+.md li.md-task {
+  position: relative;
+  list-style: none;
+}
+.md li.md-task > input[type="checkbox"] {
+  position: absolute;
+  top: 0.25em;
+  left: -1.25rem;
+  margin: 0;
+  pointer-events: none;
+}
 .md li::marker {
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
