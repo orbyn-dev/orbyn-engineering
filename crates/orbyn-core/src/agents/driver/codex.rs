@@ -699,7 +699,7 @@ async fn open_turn(
         "config": config,
     });
     if !spec.context.is_empty() {
-        params["developerInstructions"] = json!(spec.context);
+        params["developerInstructions"] = json!(format!("{}\n{CONNECTOR_NOTE}", spec.context));
     }
     if let Some(model) = &spec.model {
         params["model"] = json!(model);
@@ -879,17 +879,25 @@ fn approval_policy(mode: PermissionMode) -> &'static str {
     }
 }
 
+/// How long Codex waits for a user's optional MCP servers to finish starting before
+/// the first turn, so a slow connector is ready when the model first looks for tools.
+const MCP_STARTUP_GRACE_MS: u64 = 10_000;
+
+/// A line for the model: connectors Codex loads for the user are not in the top-level
+/// tool list but inside its code-mode `exec` tool.
+const CONNECTOR_NOTE: &str = "Connectors and MCP servers the person installed (for example GitHub, Gmail or Calendar) are available as mcp__* functions inside the exec tool.";
+
 /// The per-run MCP server. Orbyn's tools carry their own policy gate, so Codex
-/// does not ask a second time before calling them.
+/// does not ask a second time before calling them. The dotted key sets only this one
+/// entry, so a user server of the same table keeps every field it has; a nested
+/// `mcp_servers` object would replace the table.
 fn thread_config(spec: &RunSpec) -> Value {
-    match &spec.mcp_url {
-        Some(url) => json!({
-            "mcp_servers": {
-                (MCP_SERVER_NAME): { "url": url, "default_tools_approval_mode": "approve" }
-            }
-        }),
-        None => json!({}),
+    let mut config = json!({ "mcp_optional_startup_grace_ms": MCP_STARTUP_GRACE_MS });
+    if let Some(url) = &spec.mcp_url {
+        config[format!("mcp_servers.{MCP_SERVER_NAME}")] =
+            json!({ "url": url, "default_tools_approval_mode": "approve" });
     }
+    config
 }
 
 /// Answers one server request on its own task so the turn keeps flowing while a
@@ -908,6 +916,16 @@ fn answer_request(
         tokio::spawn(async move {
             let answers = ask_question(&events, parse_questions(&params)).await;
             let _ = rpc.respond(id, question_response(answers)).await;
+        });
+        return;
+    }
+    // A form that collects data from the person is declined with a valid answer: an
+    // error would read as a broken server, and we never fill in fields for anyone.
+    if method == "mcpServer/elicitation/request" && !is_tool_approval(&params) {
+        tokio::spawn(async move {
+            let _ = rpc
+                .respond(id, json!({ "action": "cancel", "content": null }))
+                .await;
         });
         return;
     }
@@ -1086,6 +1104,20 @@ fn classify_request(
                 paths: Vec::new(),
             })
         }
+        "mcpServer/elicitation/request" if is_tool_approval(params) => {
+            let server = text(params, "serverName").unwrap_or_else(|| "an MCP server".to_owned());
+            let message = text(params, "message").unwrap_or_default();
+            Some(ClassifiedRequest {
+                kind: ActionKind::Tool,
+                summary: if message.is_empty() {
+                    format!("Use a tool from {server}")
+                } else {
+                    format!("{server}: {message}")
+                },
+                target: server,
+                paths: Vec::new(),
+            })
+        }
         "execCommandApproval" => {
             let target = params
                 .get("command")
@@ -1127,10 +1159,27 @@ fn classify_request(
     }
 }
 
+/// Codex asks for a connector or MCP tool call through an elicitation. This is one that
+/// only wants a yes or no: it says so in its meta, or it asks for no fields. A form that
+/// collects data from the person is not an approval and is never answered with one.
+fn is_tool_approval(params: &Value) -> bool {
+    let named = params
+        .pointer("/_meta/codex_approval_kind")
+        .is_some_and(|kind| !kind.is_null());
+    let fields = params
+        .pointer("/requestedSchema/properties")
+        .and_then(Value::as_object)
+        .map_or(0, serde_json::Map::len);
+    named || fields == 0
+}
+
 /// The response shape each approval method's schema requires.
 fn approval_response(method: &str, params: &Value, verdict: &Verdict) -> Value {
     let allowed = verdict.is_allowed();
     match method {
+        "mcpServer/elicitation/request" => {
+            json!({ "action": if allowed { "accept" } else { "decline" }, "content": null })
+        }
         "item/permissions/requestApproval" => {
             if allowed {
                 json!({
@@ -2129,10 +2178,23 @@ mod tests {
     #[test]
     fn mcp_server_name_cannot_merge_with_a_user_orbyn_entry() {
         let config = thread_config(&turn_spec());
-        assert!(config["mcp_servers"]["orbyn"].is_null());
+        assert!(config["mcp_servers.orbyn"].is_null());
         assert_eq!(
-            config["mcp_servers"]["orbyn_engineering"]["url"],
+            config["mcp_servers.orbyn_engineering"]["url"],
             "http://127.0.0.1:1/mcp/x"
+        );
+        // A dotted key, never a nested table that would replace the user's own servers.
+        assert!(config.get("mcp_servers").is_none(), "{config}");
+        assert_eq!(config["mcp_optional_startup_grace_ms"], 10_000);
+    }
+
+    #[test]
+    fn without_a_url_only_the_startup_grace_is_set() {
+        let mut spec = turn_spec();
+        spec.mcp_url = None;
+        assert_eq!(
+            thread_config(&spec),
+            json!({ "mcp_optional_startup_grace_ms": 10_000 })
         );
     }
 
@@ -2187,12 +2249,45 @@ mod tests {
     }
 
     #[test]
+    fn a_connector_tool_approval_goes_through_our_approval_flow() {
+        let params = json!({
+            "serverName": "codex_apps", "threadId": "t", "mode": "form",
+            "_meta": { "codex_approval_kind": "mcp_tool_call" },
+            "message": "Allow Gmail to send an email?",
+            "requestedSchema": { "type": "object", "properties": {} },
+        });
+        let request =
+            classify_request("mcpServer/elicitation/request", &params, &mapper()).unwrap();
+        assert_eq!(request.target, "codex_apps");
+        assert!(request.summary.contains("Allow Gmail to send an email?"));
+        let allow = Verdict::Allow;
+        let deny = Verdict::Deny("no".into());
+        assert_eq!(
+            approval_response("mcpServer/elicitation/request", &params, &allow),
+            json!({ "action": "accept", "content": null })
+        );
+        assert_eq!(
+            approval_response("mcpServer/elicitation/request", &params, &deny)["action"],
+            "decline"
+        );
+    }
+
+    #[test]
+    fn a_form_that_asks_the_person_for_data_is_not_an_approval() {
+        let form = json!({
+            "serverName": "x", "message": "Your email?", "mode": "form",
+            "requestedSchema": { "type": "object", "properties": { "email": { "type": "string" } } },
+        });
+        assert!(!is_tool_approval(&form));
+        assert!(classify_request("mcpServer/elicitation/request", &form, &mapper()).is_none());
+    }
+
+    #[test]
     fn unknown_requests_are_not_classified() {
         let mapper = mapper();
         for method in [
             "account/chatgptAuthTokens/refresh",
             "item/tool/call",
-            "mcpServer/elicitation/request",
             "attestation/generate",
             "anything/new",
         ] {
