@@ -153,6 +153,12 @@ export function goToHash(hash: string): void {
   window.location.hash = hash;
 }
 
+/** Swaps the current history entry for a route, so Back skips the screen that only passed the person on. */
+export function redirect(route: Route): void {
+  window.history.replaceState(null, "", routeHref(route));
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
 const subscribe = (notify: () => void) => {
   window.addEventListener("hashchange", notify);
   return () => window.removeEventListener("hashchange", notify);

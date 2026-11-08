@@ -25,10 +25,10 @@ export function Loading({ label, rows = 4 }: { label: string; rows?: number }) {
 export function Splash({ label }: { label: string }) {
   const slow = useWaited(true);
   return (
-    <div className="logo-splash" role="status">
-      <span className="sr-only">{label}</span>
+    <main className="logo-splash">
+      <span className="sr-only" role="status">{label}</span>
       {slow ? <Logo size={64} /> : null}
-    </div>
+    </main>
   );
 }
 

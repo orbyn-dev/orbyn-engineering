@@ -212,7 +212,7 @@ function runShellCommand(command: string, route: Route): boolean {
       return true;
     case "chat.new":
     case "chat.newLocal":
-      navigate({ name: "new", projectId: thread?.project_id ?? null });
+      navigate({ name: "new", projectId: route.name === "project" ? route.projectId : (thread?.project_id ?? null) });
       return true;
     case "chat.newWithoutProject":
       navigate({ name: "new", projectId: null });

@@ -447,7 +447,7 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     {
         tray = tray.icon(tray_mark(tauri::Theme::Light)).icon_as_template(true);
     }
-    // Elsewhere: black or white by the theme, set again when the theme changes (`sync_tray`).
+    // Elsewhere: black or white by the main window's theme (the app theme, not the taskbar's own setting), set again when it changes (`sync_tray`).
     #[cfg(not(target_os = "macos"))]
     {
         tray = tray.icon(tray_mark(current_theme(app)));
@@ -456,7 +456,7 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The tray mark for a taskbar theme: the black file on a light one, the white file on a dark one.
+/// The tray mark for a theme: the black file on a light one, the white file on a dark one.
 fn tray_mark(theme: tauri::Theme) -> tauri::image::Image<'static> {
     match theme {
         tauri::Theme::Dark => tauri::include_image!("icons/tray-template-white@2x.png"),
@@ -558,7 +558,7 @@ fn main() {
             WindowEvent::Destroyed => {
                 window.app_handle().state::<Zoom>().1.lock().expect("viewer zoom").forget(window.label());
             }
-            // The tray mark follows the taskbar theme on Windows and Linux.
+            // The tray mark follows the main window's theme (the app theme, which follows the system's) on Windows and Linux.
             #[cfg(not(target_os = "macos"))]
             WindowEvent::ThemeChanged(theme) if window.label() == "main" => sync_tray(window.app_handle(), *theme),
             // A permission is granted in System Settings, away from this window.

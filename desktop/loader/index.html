@@ -32,9 +32,11 @@
   </head>
   <body>
     <div class="drag" data-tauri-drag-region aria-hidden="true"></div>
-    <main role="status">
+    <main>
       <svg id="mark" class="mark" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="124.5" fill="none" stroke="currentColor" stroke-width="29"/><polyline points="202,204 262,254 202,304" fill="none" stroke="currentColor" stroke-width="29" stroke-linecap="round" stroke-linejoin="round"/><line x1="286" y1="304" x2="322" y2="304" stroke="currentColor" stroke-width="29" stroke-linecap="round"/><circle cx="344.03" cy="167.97" r="31" fill="var(--dot)"/></svg>
       <h1 id="title" class="sr-only">Starting Orbyn…</h1>
+      <!-- A status region that is filled after load, so a screen reader announces the text. -->
+      <div id="live" class="sr-only" role="status"></div>
       <p id="detail" hidden></p>
       <div id="actions" class="actions" hidden>
         <button id="log" class="ghost">Show log</button>
@@ -51,6 +53,7 @@
         const line = document.getElementById("detail");
         line.textContent = detail || "";
         line.hidden = !detail;
+        document.getElementById("live").textContent = detail ? `${title} ${detail}` : title;
       };
       // Every command takes no argument: the shell decides what each one does.
       const command = (button, name) => button.addEventListener("click", () => {
@@ -62,7 +65,10 @@
           if (name === "show_core_log") button.disabled = false;
         });
       });
-      if (state === "restarting") {
+      if (state !== "restarting" && state !== "failed" && state !== "repeated") {
+        show("Starting Orbyn…");
+        document.getElementById("title").classList.add("sr-only");
+      } else if (state === "restarting") {
         show("Restarting the service…", "Orbyn restarts the service once on its own.");
       } else if (state === "failed" || state === "repeated") {
         document.getElementById("mark").hidden = true;

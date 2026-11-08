@@ -1,17 +1,17 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Project, Thread } from "../../api/types";
+import { ApiFailure } from "../../api/client";
+import type { Project } from "../../api/types";
 import { parseRoute, routeHref } from "../../state/route";
 import { useWorkspace } from "../../state/workspace";
 import { EmptyProject } from "./EmptyProject";
 
-vi.mock("./DraftView", () => ({ DraftView: ({ projectId }: { projectId: string | null }) => <div data-testid="composer">{projectId}</div> }));
-
 const project = (extra: Partial<Project> = {}) => ({ id: "p1", name: "orbyn-engineering", trusted: true, path: "/work/p1", ...extra }) as Project;
+const ready = <T,>(data: T) => ({ data, error: null, loading: false });
 
-const load = (projects: Project[], threads: Record<string, Thread> = {}) =>
-  useWorkspace.setState({ projects: { data: projects, loading: false, error: null }, threads });
+const load = (projects: Project[], ids: string[] | null) =>
+  useWorkspace.setState({ projects: ready(projects), threadIds: ids === null ? {} : { p1: ready(ids) } });
 
 beforeEach(() => {
   window.location.hash = "#/projects/p1";
@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 it("shows the 48 px mark, the headline and one New thread button for a project with no threads", () => {
-  load([project()]);
+  load([project()], []);
   const { container } = render(<EmptyProject projectId="p1" />);
   expect(screen.getByRole("heading", { name: "No threads yet" })).toBeVisible();
   expect(screen.getByText("Start one in orbyn-engineering.")).toBeVisible();
@@ -28,25 +28,58 @@ it("shows the 48 px mark, the headline and one New thread button for a project w
 });
 
 it("opens the new-thread composer route for that project", async () => {
-  load([project()]);
+  load([project()], []);
   render(<EmptyProject projectId="p1" />);
   await userEvent.setup().click(screen.getByRole("button", { name: "New thread" }));
   expect(parseRoute(window.location.hash)).toEqual({ name: "new", projectId: "p1" });
 });
 
-it("hides itself when the project has threads, or is not trusted yet, and shows the composer", () => {
-  load([project()], { t1: { id: "t1", project_id: "p1" } as Thread });
-  render(<EmptyProject projectId="p1" />);
-  expect(screen.getByTestId("composer")).toHaveTextContent("p1");
+it("decides nothing until the project's thread list is known, then passes a project with threads on to the composer", () => {
+  load([project()], null);
+  const { container } = render(<EmptyProject projectId="p1" />);
   expect(screen.queryByText("No threads yet")).toBeNull();
-  act(() => load([project({ trusted: false })]));
-  expect(screen.getByTestId("composer")).toBeInTheDocument();
+  expect(container.querySelector(".loading")).not.toBeNull();
+  expect(window.location.hash).toBe("#/projects/p1");
+  act(() => load([project()], ["t1"]));
+  expect(screen.queryByText("No threads yet")).toBeNull();
+  expect(parseRoute(window.location.hash)).toEqual({ name: "new", projectId: "p1" });
 });
 
-it("draws nothing until the project is known", () => {
-  load([]);
+it("passes a project that is not trusted yet on to the composer", () => {
+  load([project({ trusted: false })], []);
+  render(<EmptyProject projectId="p1" />);
+  expect(screen.queryByText("No threads yet")).toBeNull();
+  expect(parseRoute(window.location.hash)).toEqual({ name: "new", projectId: "p1" });
+});
+
+it("waits while the projects load", () => {
+  useWorkspace.setState({ projects: { data: null, error: null, loading: true }, threadIds: {} });
   const { container } = render(<EmptyProject projectId="p1" />);
-  expect(container).toBeEmptyDOMElement();
+  expect(container.querySelector(".loading")).not.toBeNull();
+  expect(screen.queryByText("Project not found")).toBeNull();
+});
+
+it("says so, with a way home, for a project that is gone", () => {
+  load([], null);
+  render(<EmptyProject projectId="p1" />);
+  expect(screen.getByRole("heading", { name: "Project not found" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Go to threads" })).toHaveAttribute("href", "#/");
+});
+
+it("offers Retry when the projects could not be loaded", async () => {
+  const refreshProjects = vi.fn(async () => undefined);
+  useWorkspace.setState({ projects: { data: null, error: new ApiFailure("network", "Offline", 0), loading: false }, threadIds: {}, refreshProjects });
+  render(<EmptyProject projectId="p1" />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+  expect(refreshProjects).toHaveBeenCalled();
+});
+
+it("offers Retry when the thread list could not be loaded", async () => {
+  const refreshThreads = vi.fn(async () => undefined);
+  useWorkspace.setState({ projects: ready([project()]), threadIds: { p1: { data: null, error: new ApiFailure("network", "Offline", 0), loading: false } }, refreshThreads });
+  render(<EmptyProject projectId="p1" />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+  expect(refreshThreads).toHaveBeenCalledWith("p1");
 });
 
 it("has its own address", () => {
