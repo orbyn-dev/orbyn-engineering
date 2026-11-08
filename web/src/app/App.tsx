@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiFailure, api, setUnauthorizedHandler } from "../api/client";
 import { followShell, readShellStatus } from "../api/shell";
-import { SignIn } from "../features/onboarding/SignIn";
+import { SignIn } from "../features/onboarding/public";
 import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../state/ui";

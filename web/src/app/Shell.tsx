@@ -1,10 +1,7 @@
-import { WelcomeHost } from "../features/onboarding/WelcomeWizard";
+import { WelcomeHost, NoProjects, DraftView, TrustFolder } from "../features/onboarding/public";
 import { QuitConfirmation } from "../features/workspace/QuitConfirmation";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { create } from "zustand";
-import { NoProjects } from "../features/onboarding/NoProjects";
-import { DraftView } from "../features/onboarding/DraftView";
-import { TrustFolder } from "../features/onboarding/TrustFolder";
 import { SettingsPage, ScheduledTasksPage } from "../features/settings/public";
 import { ThreadView } from "../features/thread/ThreadView";
 import { CommandPalette } from "../features/workspace/CommandPalette";

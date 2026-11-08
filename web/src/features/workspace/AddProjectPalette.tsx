@@ -7,7 +7,7 @@ import { navigate, routeHref } from "../../state/route";
 import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
-import { FolderBrowser } from "../onboarding/FolderBrowser";
+import { FolderBrowser } from "../onboarding/public";
 import { dropTrailingSlash, expandHome, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "./CloneJobs";
 import "./addProject.css";
