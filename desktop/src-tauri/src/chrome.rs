@@ -2,6 +2,9 @@
 //! the native one is merged into it and the traffic lights sit over its left end. Other systems keep
 //! their native frame until the designs draw window controls for them.
 
+// Only macOS reads these outside the tests; the other systems keep their native frame.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 /// The web title bar's height, in points (`--titlebar-h` in web/src/styles/tokens.css).
 const BAR_HEIGHT: f64 = 44.0;
 /// A traffic light's drawn diameter and the bar's left padding the first one starts at (the design's `.lights`).

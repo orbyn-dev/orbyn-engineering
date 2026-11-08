@@ -330,17 +330,30 @@ mod tests {
             [
                 "allow-quit-core",
                 "allow-restart-core",
-                "allow-show-core-log",
-                // Dragging and zooming the window by the unified title bar.
-                "core:window:allow-internal-toggle-maximize",
-                "core:window:allow-start-dragging"
+                "allow-show-core-log"
             ]
+        );
+        // Dragging and zooming by the unified title bar is granted on macOS alone, where the system bar is gone.
+        let macos: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-macos.json")).unwrap();
+        assert_eq!(macos["platforms"], serde_json::json!(["macOS"]));
+        assert_eq!(macos["windows"], serde_json::json!(["main"]));
+        assert!(macos.get("remote").is_none());
+        assert_eq!(
+            macos["permissions"],
+            serde_json::json!([
+                "core:window:allow-start-dragging",
+                "core:window:allow-internal-toggle-maximize"
+            ])
         );
         // No other capability file grants any of them.
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
         for entry in std::fs::read_dir(folder).unwrap() {
             let path = entry.unwrap().path();
-            if path.file_name().is_some_and(|name| name == "main.json") {
+            if path
+                .file_name()
+                .is_some_and(|name| name == "main.json" || name == "main-macos.json")
+            {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The static startup document can retry its service, show its log and quit. Each command also checks its separate origin; the product asset origin cannot invoke them. The whole title bar drags the window and a double click on it zooms it, so the two window commands the drag script calls are allowed too.",
+  "description": "The static startup document can retry its service, show its log and quit. Each command also checks its separate origin; the product asset origin cannot invoke them.",
   "windows": [
     "main"
   ],
@@ -9,8 +9,6 @@
   "permissions": [
     "allow-restart-core",
     "allow-show-core-log",
-    "allow-quit-core",
-    "core:window:allow-start-dragging",
-    "core:window:allow-internal-toggle-maximize"
+    "allow-quit-core"
   ]
 }

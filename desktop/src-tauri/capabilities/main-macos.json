@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-macos",
+  "description": "macOS only: the unified title bar replaces the system one, so the web bar drags the window and a double click on it zooms it. Windows and Linux keep their native frame and are not granted these.",
+  "windows": [
+    "main"
+  ],
+  "local": true,
+  "platforms": [
+    "macOS"
+  ],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}
