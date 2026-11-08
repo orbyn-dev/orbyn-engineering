@@ -2280,6 +2280,11 @@ mod tests {
             .into_iter()
             .map(|arg| arg.into_string().unwrap())
             .collect();
+        // The run's folder joins with the platform's separator, so the expected path joins the same way.
+        let settings = Path::new("/run")
+            .join("settings.json")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
             args,
             [
@@ -2301,7 +2306,7 @@ mod tests {
                 "--model",
                 "sonnet",
                 "--settings",
-                "/run/settings.json",
+                settings.as_str(),
                 "--resume",
                 "sess",
             ]
