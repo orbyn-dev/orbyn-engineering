@@ -681,3 +681,24 @@
     margin-left: -16px;
   }
 }
+
+/* A chip whose filter waits on details: a spinner where the x is. Failed, a warning leads it. */
+.pulls-wait {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--color-borderStrong);
+  border-top-color: var(--color-textSoft);
+  border-radius: 50%;
+}
+.pulls-cbx .pulls-wait {
+  width: 8px;
+  height: 8px;
+}
+.pulls-fchip[data-wait="failed"] {
+  color: var(--color-textSoft);
+}
+.pulls-chip-alert {
+  flex: none;
+  color: var(--color-muted);
+}

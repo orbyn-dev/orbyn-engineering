@@ -23,7 +23,7 @@ const skeletonRows = () => document.querySelectorAll(".pull-skel > li");
 it("says Loading in the header, with the table header already there", () => {
   render(<PullsPage />);
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
-  expect(screen.getByText("Pull request")).toBeInTheDocument();
+  expect(screen.getByText("Title and state")).toBeInTheDocument();
 });
 
 it("shows nothing under the header before 400 ms and 6 skeleton rows after", () => {

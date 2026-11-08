@@ -142,6 +142,13 @@ test("the list filters by author, label, checks and draft, and by a label typed 
 
 });
 
+test("a row's comment count comes from the service's details, review comments included", async ({ page }) => {
+  await page.goto(`${service.page}#/pulls`);
+  const first = page.locator(".pull-rows > li", { hasText: "First layer" });
+  // The tooltip shows on hover; its words are in the page, hidden until then.
+  await expect(first.locator('.pull-comments-cell [role="tooltip"]')).toHaveText("2 comments, including review comments");
+});
+
 test("the list sorts, switches state from the pills and comes back from a pull request", async ({ page }) => {
   await page.goto(`${service.page}#/pulls`);
   const rows = page.locator(".pull-rows > li");
@@ -189,7 +196,7 @@ test("the list sorts, switches state from the pills and comes back from a pull r
 
 test("summary edits the title, description, base, reviewers and labels", async ({ page }) => {
   const article = await openPull(page, "First layer");
-  await article.getByRole("button", { name: "Edit title" }).click();
+  await moreAction(page, article, "Edit title");
   await article.getByLabel("Title").fill("First layer, renamed");
   await article.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("article", { name: "First layer, renamed" })).toBeVisible();
@@ -207,7 +214,7 @@ test("summary edits the title, description, base, reviewers and labels", async (
   await renamed.getByRole("button", { name: "Change labels" }).click();
   await page.getByRole("menuitem", { name: "docs" }).or(page.getByRole("menuitemradio", { name: "docs" })).first().click();
   await expect(renamed.locator(".pull-people").nth(1)).toContainText("docs");
-  await page.getByRole("button", { name: "Edit title" }).click();
+  await moreAction(page, renamed, "Edit title");
   await renamed.getByLabel("Title").fill("First layer");
   await renamed.getByRole("button", { name: "Save", exact: true }).click();
   await expect(detail(page, "First layer")).toBeVisible();
@@ -218,6 +225,7 @@ test("summary edits the title, description, base, reviewers and labels", async (
 
 test("checks show state and a fork's workflow is approved from here", async ({ page }) => {
   const article = await openPull(page, "First layer");
+  await article.getByRole("tab", { name: /^Checks/ }).click();
   await expect(article.getByRole("img", { name: "Passing" })).toBeVisible();
   await article.getByRole("button", { name: "Approve workflow" }).click();
   await expect.poll(() => service.ghCalls().some((call) => call.join(" ").includes("actions/runs/555/approve"))).toBe(true);
@@ -225,6 +233,7 @@ test("checks show state and a fork's workflow is approved from here", async ({ p
 
 test("comments edit, react, reply and resolve", async ({ page }) => {
   const article = await openPull(page, "First layer");
+  await article.getByRole("tab", { name: /^Conversation/ }).click();
   const comment = article.getByRole("article", { name: "Comment by grace" }).first();
   await comment.getByRole("button", { name: "Edit comment" }).click();
   await comment.getByLabel("Edit comment text").fill("Looks done.");
@@ -247,7 +256,7 @@ test("comments edit, react, reply and resolve", async ({ page }) => {
 
 test("the timeline filters by kind", async ({ page }) => {
   const article = await openPull(page, "First layer");
-  await article.getByRole("tab", { name: "Timeline" }).click();
+  await article.getByRole("tab", { name: /^Conversation/ }).click();
   await expect(article.locator(".pull-timeline li")).toHaveCount(2);
   await article.getByLabel("Filter activity").selectOption("labeled");
   await expect(article.locator(".pull-timeline li")).toHaveCount(1);
@@ -256,16 +265,16 @@ test("the timeline filters by kind", async ({ page }) => {
 
 test("the code tab marks files viewed and submits line comments as one review", async ({ page }) => {
   const article = await openPull(page, "First layer");
-  await article.getByRole("tab", { name: "Code" }).click();
-  await expect(article.getByRole("status")).toHaveText("0 of 2 files viewed");
+  await article.getByRole("tab", { name: /^Files changed/ }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 0 of 2");
   await article.getByRole("checkbox", { name: "Viewed src/b.ts" }).click();
-  await expect(article.getByRole("status")).toHaveText("1 of 2 files viewed");
+  await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
   // The pull request is in the address, so a reload stays on it, back on its Summary tab.
   await page.reload();
   await expect(page).toHaveURL(/#\/pulls\/[^/]+\/1$/);
-  await page.getByRole("article", { name: "First layer" }).getByRole("tab", { name: "Code" }).click();
+  await page.getByRole("article", { name: "First layer" }).getByRole("tab", { name: /^Files changed/ }).click();
   const again = page.getByRole("article", { name: "First layer" });
-  await expect(again.getByRole("status")).toHaveText("1 of 2 files viewed");
+  await expect(again.getByRole("status")).toHaveText("Viewed 1 of 2");
 
   await again.getByRole("button", { name: "Comment on line 2 of src/a.ts" }).focus();
   await again.getByRole("button", { name: "Comment on line 2 of src/a.ts" }).click();
@@ -283,7 +292,7 @@ test("the code tab marks files viewed and submits line comments as one review", 
 
 test("the code tab shows one commit at a time, then every change again", async ({ page }) => {
   const article = await openPull(page, "First layer");
-  await article.getByRole("tab", { name: "Code" }).click();
+  await article.getByRole("tab", { name: /^Files changed/ }).click();
   const revision = article.getByRole("combobox", { name: "Revision" });
   await revision.selectOption({ label: "2. Add the second file (f6e5d4c)" });
   await expect(article.getByRole("status")).toHaveText("1 file in this commit");
@@ -291,7 +300,7 @@ test("the code tab shows one commit at a time, then every change again", async (
   await expect(article.getByText("src/a.ts")).toBeHidden();
   await expect(article.getByRole("button", { name: /^Comment on line/ })).toHaveCount(0);
   await article.getByRole("combobox", { name: "Revision" }).selectOption({ label: "All changes" });
-  await expect(article.getByRole("status")).toHaveText(/of 2 files viewed/);
+  await expect(article.getByRole("status")).toHaveText(/^Viewed \d of 2$/);
 });
 
 test("the actions menu changes draft state, updates the branch and allows maintainer edits", async ({ page }) => {
@@ -307,6 +316,7 @@ test("the actions menu changes draft state, updates the branch and allows mainta
   await moreAction(page, article, "Allow maintainer edits");
   await expect.poll(() => service.ghPull(2).maintainerCanModify).toBe(true);
   await moreAction(page, article, "Delete branch");
+  await page.getByRole("dialog", { name: "Delete the branch?" }).getByRole("button", { name: "Delete branch" }).click();
   await expect.poll(() => service.ghCalls().some((call) => call.join(" ").includes("git/refs/heads/feat-two"))).toBe(true);
 });
 
@@ -320,22 +330,26 @@ test("a stack shows its position, moves between layers and acts as one", async (
   await expect.poll(() => service.ghCalls().filter((call) => call.join(" ").startsWith("pr update-branch 1 --rebase")).length).toBeGreaterThan(0);
 });
 
-test("merge takes a method, strips credits and can wait for checks; a row merges too", async ({ page }) => {
+test("merge takes a method from the menu, strips credits and can wait for checks; the list comes back through the sidebar", async ({ page }) => {
   const article = await openPull(page, "Second layer");
+  // The earlier test left it a draft, which cannot be merged until it is ready.
+  await expect(article.getByText("Mark it ready for review to merge.")).toBeVisible();
+  await article.getByRole("button", { name: "Ready for review" }).click();
+  await expect(article.getByRole("button", { name: "Merge", exact: true })).toBeEnabled();
+  await article.getByRole("button", { name: /Squash and merge/ }).click();
+  await page.getByRole("menuitem", { name: "Merge when checks pass" }).click();
   await article.getByRole("button", { name: "Merge", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Merge #2?" });
+  const dialog = page.getByRole("dialog", { name: "Merge pull request" });
   await dialog.getByLabel("Commit message").fill("Second layer\n\nCo-Authored-By: Claude <noreply@example.com>");
-  await dialog.getByLabel("Merge when checks pass").check();
   await dialog.getByLabel("Remove agent credits").check();
   await dialog.getByRole("button", { name: "Enable auto-merge" }).click();
   await expect(dialog).toBeHidden();
   await expect(article.getByText("Merges when checks pass")).toBeVisible();
   expect(service.ghPull(2).mergeBody).toBe("Second layer");
 
-  await page.getByRole("button", { name: "Pull requests", exact: true }).click();
-  await page.getByRole("button", { name: "Merge #3" }).click();
-  await page.getByRole("dialog", { name: "Merge #3?" }).getByRole("button", { name: "Merge" }).click();
-  await expect.poll(() => service.ghPull(3).state).toBe("MERGED");
+  // Back to the list the way a person goes: the sidebar.
+  await page.getByRole("link", { name: /^Pull requests/ }).click();
+  await expect(page.locator(".pull-rows > li").first()).toBeVisible();
 });
 
 test("a merged pull request can be reverted", async ({ page }) => {
@@ -349,6 +363,7 @@ test("a merged pull request can be reverted", async ({ page }) => {
 test("rows close and reopen, one at a time or selected together", async ({ page }) => {
   await page.goto(`${service.page}#/pulls`);
   await page.getByRole("button", { name: "Close #1" }).click();
+  await page.getByRole("dialog", { name: "Close #1?" }).getByRole("button", { name: "Close pull request" }).click();
   await expect.poll(() => service.ghPull(1).state).toBe("CLOSED");
   await page.getByRole("button", { name: "Closed", exact: true }).click();
   await page.getByRole("button", { name: "Reopen #1" }).click();
@@ -390,7 +405,7 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   const article = await openPull(page, "First layer");
   await moreAction(page, article, "Check out in a worktree");
   await expect(page.getByText("This checkout is not on the pull request's latest commit.")).toBeVisible();
-  await article.getByRole("button", { name: "Work on this" }).click();
+  await moreAction(page, article, "Work on this");
   await expect(page).toHaveURL(/#\/threads\//);
   const thread = threadIdOf(page);
   const current = await service.api<{ title: string; worktree: { branch: string } | null }>("GET", `/api/threads/${thread}`);
