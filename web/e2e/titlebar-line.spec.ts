@@ -113,3 +113,20 @@ test("a narrow sidebar row hides the project chip and keeps one line", async ({ 
   const heights = await rows.evaluateAll((all) => all.map((row) => Math.round(row.getBoundingClientRect().height)));
   expect(Math.max(...heights)).toBeLessThanOrEqual(36);
 });
+
+/** A hovered project row's plus never covers the project name. */
+test("the hovered plus on a project row does not overlap the project name", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/__mock/scenario/default");
+  await page.goto("/#/threads/t-done");
+  const head = page.locator(".folder-head").first();
+  await expect(head).toBeVisible();
+  await head.hover();
+  const plus = await head.locator(".folder-new").boundingBox();
+  const name = await head.locator(".folder-name").evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    return { right: box.right - parseFloat(getComputedStyle(node).paddingRight) };
+  });
+  expect(plus).not.toBeNull();
+  expect(name.right).toBeLessThanOrEqual((plus?.x ?? 0) + 0.5);
+});
