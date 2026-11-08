@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 const css = readFileSync(join(process.cwd(), "src/styles/thread.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const rule = (selector: string) => css.split("}").find((block) => block.trim().startsWith(`${selector} {`)) ?? "";
 const px = (selector: string, property: string) => Number(new RegExp(`${selector.replace(/[.[\]]/g, "\\$&")} \\{[^}]*?\\b${property}:\\s*(\\d+)px`).exec(css)?.[1]);
 
 it("fits the two-letter engine glyph inside its tab and the tab inside the rail", () => {
