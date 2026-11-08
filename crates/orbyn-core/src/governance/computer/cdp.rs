@@ -262,6 +262,8 @@ struct NavigationWait {
     frame: String,
     /// None for a same-document navigation, which ends on `Page.navigatedWithinDocument`.
     loader: Option<String>,
+    /// Earlier queued commits cannot redirect a navigation that has not committed yet.
+    requested_committed: bool,
 }
 
 impl NavigationWait {
@@ -269,6 +271,7 @@ impl NavigationWait {
         Self {
             frame: frame.to_owned(),
             loader: loader.map(str::to_owned),
+            requested_committed: false,
         }
     }
 
@@ -283,7 +286,11 @@ impl NavigationWait {
                     && frame["id"].as_str() == Some(self.frame.as_str())
                     && let Some(loader) = frame["loaderId"].as_str()
                 {
-                    self.loader = Some(loader.to_owned());
+                    if self.loader.as_deref() == Some(loader) {
+                        self.requested_committed = true;
+                    } else if self.requested_committed {
+                        self.loader = Some(loader.to_owned());
+                    }
                 }
                 false
             }
@@ -916,6 +923,7 @@ mod tests {
         // An iframe's commit never moves the wait.
         assert!(!wait.observe(&committed("main", "frame", Some("parent"))));
         assert!(!wait.observe(&committed("child", "other", None)));
+        assert!(!wait.observe(&committed("main", "first", None)));
         assert!(!wait.observe(&committed("main", "second", None)));
         assert!(!wait.observe(&load("first")));
         assert!(wait.observe(&load("second")));
@@ -1000,6 +1008,153 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[test]
+    fn navigation_rejects_an_earlier_main_frame_commit_and_load() {
+        let mut wait = NavigationWait::new("main", Some("requested"));
+        let commit = |loader: &str| json!({"method":"Page.frameNavigated", "params":{"frame":{"id":"main", "loaderId":loader}}});
+        let load = |loader: &str| json!({"method":"Page.lifecycleEvent", "params":{"frameId":"main", "loaderId":loader, "name":"load"}});
+        // Neither a child nor a different frame can establish the requested commit.
+        assert!(!wait.observe(&json!({"method":"Page.frameNavigated", "params":{"frame":{"id":"main", "parentId":"parent", "loaderId":"requested"}}})));
+        assert!(!wait.observe(&json!({"method":"Page.frameNavigated", "params":{"frame":{"id":"other", "loaderId":"requested"}}})));
+        assert!(!wait.observe(&commit("earlier")));
+        assert!(
+            !wait.observe(&load("earlier")),
+            "an earlier navigation cannot make the requested navigation ready"
+        );
+        assert!(!wait.observe(&commit("requested")));
+        assert!(wait.observe(&load("requested")));
+    }
+
+    #[test]
+    fn navigation_follows_multiple_redirect_commits_and_rejects_earlier_loads() {
+        let mut wait = NavigationWait::new("main", Some("requested"));
+        let commit = |loader: &str| json!({"method":"Page.frameNavigated", "params":{"frame":{"id":"main", "loaderId":loader}}});
+        let load = |loader: &str| json!({"method":"Page.lifecycleEvent", "params":{"frameId":"main", "loaderId":loader, "name":"load"}});
+        for loader in ["requested", "second", "third"] {
+            assert!(!wait.observe(&commit(loader)));
+        }
+        assert!(!wait.observe(&load("requested")));
+        assert!(!wait.observe(&load("second")));
+        assert!(wait.observe(&load("third")));
+    }
+
+    #[tokio::test]
+    async fn navigation_ignores_old_commit_and_load_buffered_before_its_reply() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sent, sent_reply) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut sent = Some(sent);
+            let mut released = Some(released);
+            let mut read_early = false;
+            while let Some(Ok(frame)) = socket.next().await {
+                let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                let signal = |method: &str, params: Value| {
+                    Message::text(
+                        json!({"sessionId":"session","method":method,"params":params}).to_string(),
+                    )
+                };
+                let result = match request["method"].as_str().unwrap() {
+                    "Target.getTargets" => {
+                        json!({"targetInfos":[{"type":"page","targetId":"target"}]})
+                    }
+                    "Target.attachToTarget" => json!({"sessionId":"session"}),
+                    "Page.getFrameTree" => json!({"frameTree":{"frame":{"id":"main"}}}),
+                    "Page.navigate" => {
+                        socket
+                            .send(signal(
+                                "Page.frameNavigated",
+                                json!({"frame":{"id":"main","loaderId":"earlier"}}),
+                            ))
+                            .await
+                            .unwrap();
+                        socket
+                            .send(signal(
+                                "Page.lifecycleEvent",
+                                json!({"frameId":"main","loaderId":"earlier","name":"load"}),
+                            ))
+                            .await
+                            .unwrap();
+                        socket.send(Message::text(json!({"id":request["id"],"result":{"frameId":"main","loaderId":"requested"}}).to_string())).await.unwrap();
+                        sent.take().unwrap().send(()).unwrap();
+
+                        // The requested document cannot load until the test releases
+                        // it. Still answer an early URL read so false readiness is visible.
+                        let mut released = released.take().unwrap();
+                        tokio::select! {
+                            result = &mut released => result.unwrap(),
+                            frame = socket.next() => {
+                                let early: Value = serde_json::from_str(frame.unwrap().unwrap().to_text().unwrap()).unwrap();
+                                assert_eq!(early["method"], "Runtime.evaluate");
+                                read_early = true;
+                                socket.send(Message::text(json!({"id":early["id"],"result":{"result":{"value":"http://example.test/earlier"}}}).to_string())).await.unwrap();
+                                released.await.unwrap();
+                            }
+                        }
+                        for event in [
+                            signal(
+                                "Page.frameNavigated",
+                                json!({"frame":{"id":"main","loaderId":"requested"}}),
+                            ),
+                            signal(
+                                "Page.lifecycleEvent",
+                                json!({"frameId":"main","loaderId":"requested","name":"load"}),
+                            ),
+                        ] {
+                            if socket.send(event).await.is_err() {
+                                return read_early;
+                            }
+                        }
+                        continue;
+                    }
+                    "Runtime.evaluate" => {
+                        json!({"result":{"value":"http://example.test/requested"}})
+                    }
+                    _ => json!({}),
+                };
+                if socket
+                    .send(Message::text(
+                        json!({"id":request["id"],"result":result}).to_string(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            read_early
+        });
+        let mut session = BrowserSession::connect(&format!("ws://{address}"), None)
+            .await
+            .unwrap();
+        let mut navigation = tokio::spawn(async move {
+            let result = session.navigate("http://example.test/requested").await;
+            (session, result)
+        });
+        sent_reply.await.unwrap();
+        let early = tokio::time::timeout(Duration::from_millis(100), &mut navigation)
+            .await
+            .ok();
+        release.send(()).unwrap();
+        let (session, result) = match early {
+            Some(result) => result.unwrap(),
+            None => tokio::time::timeout(Duration::from_secs(3), navigation)
+                .await
+                .unwrap()
+                .unwrap(),
+        };
+        drop(session);
+        let read_early = server.await.unwrap();
+        assert!(
+            !read_early,
+            "the URL was read before the requested navigation loaded"
+        );
+        assert_eq!(result.unwrap()["url"], "http://example.test/requested");
+    }
+
     #[tokio::test]
     async fn navigation_that_redirects_before_load_is_ready_on_the_new_loader() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1035,12 +1190,18 @@ mod tests {
                             "Page.lifecycleEvent",
                             json!({"frameId":"main","loaderId":"second","name":"load"}),
                         );
+                        let committed = signal(
+                            "Page.frameNavigated",
+                            json!({"frame":{"id":"main","loaderId":"first"}}),
+                        );
                         // The redirect either follows the reply or beats it.
                         if navigation == 1 {
                             socket.send(reply).await.unwrap();
+                            socket.send(committed).await.unwrap();
                             socket.send(redirect).await.unwrap();
                             socket.send(load).await.unwrap();
                         } else {
+                            socket.send(committed).await.unwrap();
                             socket.send(redirect).await.unwrap();
                             socket.send(load).await.unwrap();
                             socket.send(reply).await.unwrap();
