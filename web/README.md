@@ -47,12 +47,16 @@ loads the toolbar styles used by its consumers.
 The `onboarding` feature exposes `chooseDraftEngine`, `FolderBrowser`, `SignIn`,
 `NoProjects`, `TrustFolder`, `DraftView` and `WelcomeHost` through
 `features/onboarding/public.ts`.
+The `panels` feature exposes `mediaKind`, `rawUrl`, `previewWindowRoute`,
+`openSideChat`, `SurfacePane`, `TerminalBar`, `TerminalDrawerBody`,
+`PreviewFloat` and `PreviewWindow` through `features/panels/public.ts`.
 All production consumers outside these features, including `app`, use their
 public entry points. ESLint rejects private imports, re-exports, literal dynamic
 imports and type queries into them; each feature may use its own internals.
 Other features will adopt the same boundary one at a time. This follows Luan
 Nguyen's public-entry-point approach in [PR #285](https://github.com/orbyn-dev/orbyn-engineering/pull/285);
-the usage, platform, settings, skills, pulls and onboarding facades are independently designed from current consumers.
+the earlier panels facade included `SurfacePane` and `TerminalDrawerBody`. The current
+facades follow current consumers; the other panels exports are independently selected.
 
 ## Tests
 
@@ -64,11 +68,11 @@ test-only helpers are not product exports.
 
 ## Known limitations
 
-- Features other than `usage`, `platform`, `settings`, `skills`, `pulls` and `onboarding` still import each other's internals, most often
-  `panels` and `thread`. Each such
+- Features other than `usage`, `platform`, `settings`, `skills`, `pulls`, `onboarding` and `panels` still import each other's internals, most often
+  `workspace` and `thread`. Each such
   import is a candidate for moving the shared piece to its real owner.
 - `src/lib` still holds project image and identity helpers used by both `ui` and
   `settings`.
 - The shared-folder inward rule covers static `import` and `export … from` for
-  all features, and literal dynamic imports and type queries into `usage`, `platform`, `settings`, `skills`, `pulls` and `onboarding`.
+  all features, and literal dynamic imports and type queries into `usage`, `platform`, `settings`, `skills`, `pulls`, `onboarding` and `panels`.
   Computed dynamic paths and white-box test/fixture imports are not checked.

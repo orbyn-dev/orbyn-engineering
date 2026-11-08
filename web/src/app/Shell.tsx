@@ -21,7 +21,7 @@ import { useDrawnOrder } from "../features/workspace/drawnOrder";
 import { PullsPage } from "../features/pulls/public";
 import { UsagePage } from "../features/usage/public";
 import { SkillsPage } from "../features/skills/public";
-import { PreviewFloat } from "../features/panels/PreviewFloat";
+import { PreviewFloat } from "../features/panels/public";
 import { Toasts } from "../ui/Toasts";
 import { GitHubStarPrompt } from "../features/workspace/GitHubStarPrompt";
 import { FoldersNotice } from "../features/workspace/FoldersNotice";

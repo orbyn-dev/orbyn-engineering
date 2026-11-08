@@ -44,7 +44,7 @@ import { QuestionPanel } from "./QuestionPanel";
 import { SubagentChips } from "./SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../state/modelStore";
 import { QueuedMessages } from "./QueuedMessages";
-import { openSideChat } from "../panels/sideChat";
+import { openSideChat } from "../panels/public";
 import { pullsApi } from "../../api/pulls";
 import { FILE_MENTION_TYPE, insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
 import { useComposerChips } from "./composerChipStore";

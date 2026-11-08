@@ -22,6 +22,8 @@ describe.each([
   ["src/app/probe.ts", "../features/pulls", "pulls"],
   ["src/features/workspace/probe.ts", "../onboarding", "onboarding"],
   ["src/app/probe.ts", "../features/onboarding", "onboarding"],
+  ["src/features/thread/probe.ts", "../panels", "panels"],
+  ["src/app/probe.ts", "../features/panels", "panels"],
 ])("boundary from %s via %s", (filePath, target, feature) => {
   it.each([
     `import { value } from "${target}/private";`,
@@ -89,13 +91,22 @@ it("enforces onboarding boundaries on existing module paths", async () => {
   expect(await lint("src/features/onboarding/draftEngine.test.ts", 'import { chooseDraftEngine } from "./draftEngine";')).toHaveLength(0);
 });
 
-it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding"])("allows %s internals, inward imports and unfinished destinations", async (feature) => {
-  expect(await lint(`src/features/${feature}/probe.ts`, 'import { value } from "./private";')).toHaveLength(0);
-  expect(await lint("src/features/thread/probe.ts", 'import { value } from "../../state/ui";')).toHaveLength(0);
-  expect(await lint("src/features/thread/probe.ts", 'import { value } from "../panels/private";')).toHaveLength(0);
+it("enforces panels boundaries on existing module paths", async () => {
+  expect(await lint("src/app/App.tsx", 'import { PreviewWindow } from "../features/panels/PreviewWindow";')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/features/thread/ThreadView.tsx", 'export * from "../panels/SurfacePane";')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/features/thread/mediaSource.ts", 'import { mediaKind } from "../panels/public";')).toHaveLength(0);
+  expect(await lint("src/features/panels/SurfacePane.tsx", 'import { BrowserPanel } from "./BrowserPanel";')).toHaveLength(0);
+  expect(await lint("src/state/ui.ts", 'const panels = import("../features/panels/public");')).toMatchObject([{ messageId: "inward" }]);
+  expect(await lint("src/features/panels/SurfacePane.test.tsx", 'import { SurfacePane } from "./SurfacePane";')).toHaveLength(0);
 });
 
-it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding"])("keeps shared folders inward to %s, including public dynamic imports", async (feature) => {
+it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels"])("allows %s internals, inward imports and unfinished destinations", async (feature) => {
+  expect(await lint(`src/features/${feature}/probe.ts`, 'import { value } from "./private";')).toHaveLength(0);
+  expect(await lint("src/features/thread/probe.ts", 'import { value } from "../../state/ui";')).toHaveLength(0);
+  expect(await lint("src/features/thread/probe.ts", 'import { value } from "../workspace/private";')).toHaveLength(0);
+});
+
+it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels"])("keeps shared folders inward to %s, including public dynamic imports", async (feature) => {
   for (const folder of ["ui", "state", "lib", "api", "styles"]) {
     for (const code of [
       `import { value } from "../features/${feature}/public";`,
@@ -116,6 +127,9 @@ it.each([
   ["src/features/workspace/skills-probe.test.ts", "../skills/SkillsNav"],
   ["src/features/thread/pulls-probe.test.ts", "../pulls/pullModel"],
   ["src/features/workspace/onboarding-probe.test.ts", "../onboarding/FolderBrowser"],
+  ["src/features/thread/panels-probe.test.ts", "../panels/FileMedia"],
+  ["src/test-setup.ts", "./features/panels/SurfacePane"],
+  ["src/test-support.ts", "./features/panels/browserPanels"],
   ["src/test-setup.ts", "./features/onboarding/SignIn"],
   ["src/test-support.ts", "./features/onboarding/draftEngine"],
   ["src/test-setup.ts", "./features/pulls/PullsPage"],
@@ -139,6 +153,7 @@ it.each([
   ["src/state/probe.ts", 'import { value } from "../features/skills/public";'],
   ["src/state/probe.ts", 'import { value } from "../features/pulls/public";'],
   ["src/state/probe.ts", 'import { value } from "../features/onboarding/public";'],
+  ["src/state/probe.ts", 'import { value } from "../features/panels/public";'],
   ["src/features/usage/probe.ts", 'import { value } from "@tauri-apps/api";'],
   ["src/features/usage/probe.ts", 'import { value } from "../../../mock/api";'],
 ])("preserves existing restrictions in %s: %s", async (filePath, code) => {
