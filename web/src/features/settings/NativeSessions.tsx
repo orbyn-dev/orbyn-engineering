@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../../api/client";
+import { ApiFailure, request } from "../../api/client";
 import type { EngineStatus } from "../../api/types";
 import type { AcpNativeSession } from "../../generated/AcpNativeSession";
 import type { AcpNativeSessionImported } from "../../generated/AcpNativeSessionImported";
@@ -10,7 +10,12 @@ import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
+import { ErrorState } from "../../ui/states";
 import { SettingRow } from "../../ui/SettingRow";
+
+/** A capability read turned away as busy is asked again up to this many times, a little later each time. */
+const CAPABILITY_RETRIES = 6;
+const CAPABILITY_RETRY_MS = 400;
 
 const base = (engine: string) => `/api/engines/${encodeURIComponent(engine)}/native-sessions`;
 
@@ -23,6 +28,8 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
   const [sessions, setSessions] = useState<AcpNativeSession[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [stuck, setStuck] = useState<ApiFailure | null>(null);
+  const [again, setAgain] = useState(0);
   const [deleting, setDeleting] = useState<AcpNativeSession | null>(null);
   const epoch = useRef(0);
   const active = engine.tier === "acp" && engine.installed;
@@ -30,14 +37,42 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
 
   useEffect(() => {
     epoch.current += 1;
-    setCaps(null); setSessions([]); setNext(null); setBusy(null);
+    setCaps(null); setSessions([]); setNext(null); setBusy(null); setStuck(null);
     if (!active) return;
     const abort = new AbortController();
-    request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then(setCaps, () => undefined);
-    return () => abort.abort();
-  }, [engine.id, active]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let retries = 0;
+    // The agent answers one thing at a time, so a second ask while the first is still being answered (the page asking
+    // again, an update running) is turned away as busy. That is not "cannot list sessions": ask again shortly. Any
+    // other answer (disabled, unsupported, not signed in, a start-up error) is final, and asking again would not change it.
+    const ask = () =>
+      request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then(setCaps, (failure: unknown) => {
+        if (abort.signal.aborted || !(failure instanceof ApiFailure) || failure.code !== "engine_busy") return;
+        if (retries >= CAPABILITY_RETRIES) {
+          // Still busy after the last try: say so, rather than look like an agent that cannot list sessions.
+          setStuck(failure);
+          return;
+        }
+        retries += 1;
+        timer = setTimeout(ask, CAPABILITY_RETRY_MS * retries);
+      });
+    void ask();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [engine.id, active, again]);
 
-  if (!active || !caps?.can_list) return null;
+  // One line for the person, whatever words the service used; the row sits with whatever else the section shows.
+  const stuckRow = active && stuck ? (
+    <ErrorState
+      compact
+      title="Couldn’t check saved sessions"
+      failure={new ApiFailure(stuck.code, "The agent is busy. Try again in a moment.", stuck.status)}
+      onRetry={() => setAgain((n) => n + 1)}
+    />
+  ) : null;
+  if (!active || !caps?.can_list) return stuckRow;
   const canImport = caps.can_load || caps.can_resume;
   const fail = (title: string, failure: unknown) => toast(`${title}: ${toFailure(failure).message}`);
 
@@ -91,6 +126,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
 
   return (
     <div className="native-sessions">
+      {stuckRow}
       <SettingRow title="Native sessions" description={projects.length === 0 ? "Add a project before importing sessions." : "Resume agent-owned conversations as threads."}>
         {projects.length > 0 ? (
           <>

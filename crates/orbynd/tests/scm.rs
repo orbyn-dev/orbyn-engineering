@@ -874,6 +874,168 @@ async fn gitlab_azure_and_forgejo_list_and_merge_through_their_own_clis() {
     assert_eq!((code, body["code"].as_str()), (422, Some("unsupported")));
 }
 
+/// Stand-ins that answer the head read with a sha from a file beside them, or fail when told to.
+/// `read` is the part of the command that asks for the pull request.
+const HEAD_CLIS: &[(&str, &str, &str, &str)] = &[
+    (
+        "glab",
+        "https://gitlab.com/o/r.git",
+        "mr view",
+        r#"{"iid":5,"sha":"HEAD"}"#,
+    ),
+    (
+        "az",
+        "https://dev.azure.com/o/p/_git/r",
+        "repos pr show",
+        r#"{"pullRequestId":5,"lastMergeSourceCommit":{"commitId":"HEAD"}}"#,
+    ),
+    (
+        "tea",
+        "https://codeberg.org/o/r.git",
+        "api repos",
+        r#"{"head":{"sha":"HEAD"}}"#,
+    ),
+];
+
+#[tokio::test]
+async fn forges_without_a_head_flag_read_the_head_before_they_merge() {
+    let f = fixture().await;
+    let dir = f
+        .checkout
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let bin = dir.join("bin");
+    let project = f.project().await;
+    for (program, remote, read, reply) in HEAD_CLIS {
+        let script = format!(
+            "#!/bin/sh\necho \"{program} $@\" >> \"$GH_LOG\"\ncase \"$*\" in\n  *'{read}'*) [ -f \"{dir}/unreadable\" ] && {{ echo boom >&2; exit 1; }}\n    echo '{reply}' | sed \"s/HEAD/$(cat {dir}/head)/\" ;;\nesac\n",
+            dir = bin.display()
+        );
+        let path = bin.join(program);
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        run_git(&f.checkout, &["remote", "set-url", "origin", remote]);
+        let merge = |expected: Option<&str>| {
+            let mut body =
+                json!({ "method": if *program == "glab" { "rebase" } else { "squash" } });
+            if let Some(head) = expected {
+                body["expected_head"] = json!(head);
+            }
+            let service = &f.service;
+            let url = format!("/api/projects/{project}/pulls/5/merge");
+            async move { service.send(&url, body).await }
+        };
+        let merged = |log: &str| {
+            log.lines()
+                .filter(|line| line.contains("merge") || line.contains("update --id"))
+                .count()
+        };
+        let _ = std::fs::remove_file(bin.join("unreadable"));
+        std::fs::write(bin.join("head"), "aaa").unwrap();
+
+        // A match merges, after one read of the head.
+        let before = merged(&f.log());
+        let (code, body) = merge(Some("aaa")).await;
+        assert_eq!(code, 202, "{program}: {body}");
+        assert_eq!(merged(&f.log()), before + 1, "{program}");
+        assert!(f.log().contains(read), "{program} read the head first");
+
+        // A head that moved refuses with its own code and merges nothing.
+        std::fs::write(bin.join("head"), "bbb").unwrap();
+        let before = merged(&f.log());
+        let (code, body) = merge(Some("aaa")).await;
+        assert_eq!(
+            (code, body["code"].as_str()),
+            (409, Some("pull_head_changed")),
+            "{program}: {body}"
+        );
+        assert_eq!(merged(&f.log()), before, "{program}");
+
+        // A head that cannot be read fails closed.
+        std::fs::write(bin.join("unreadable"), "").unwrap();
+        let (code, body) = merge(Some("aaa")).await;
+        assert_ne!(code, 202, "{program}: {body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("not merged"),
+            "{program}: {body}"
+        );
+        assert_eq!(merged(&f.log()), before, "{program}");
+
+        // With no expected head there is nothing to compare, so no read and the merge goes ahead.
+        std::fs::write(bin.join("head"), "ccc").unwrap();
+        let _ = std::fs::remove_file(bin.join("unreadable"));
+        let reads = f.log().matches(read).count();
+        let (code, _) = merge(None).await;
+        assert_eq!(code, 202, "{program}");
+        assert_eq!(
+            f.log().matches(read).count(),
+            reads,
+            "{program} read nothing"
+        );
+    }
+}
+
+#[tokio::test]
+async fn github_and_a_gitlab_merge_that_is_not_a_rebase_leave_the_head_check_to_the_forge() {
+    let f = fixture().await;
+    let dir = f
+        .checkout
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let project = f.project().await;
+    // GitHub: the flag goes with the merge, and the head is not read first.
+    f.hosted();
+    let before = f.log().matches("pr view").count();
+    let (code, _) = f
+        .service
+        .send(
+            &format!("/api/projects/{project}/pulls/12/merge"),
+            json!({ "method": "squash", "expected_head": "abc" }),
+        )
+        .await;
+    assert_eq!(code, 202);
+    let log = f.log();
+    assert!(
+        log.contains("pr merge 12 --squash --match-head-commit abc"),
+        "{log}"
+    );
+    assert_eq!(log.matches("pr view").count(), before, "{log}");
+    // GitLab squash: the flag goes with the merge, and nothing is read first.
+    let script = "#!/bin/sh\necho \"glab $@\" >> \"$GH_LOG\"\n";
+    let path = dir.join("bin").join("glab");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    run_git(
+        &f.checkout,
+        &["remote", "set-url", "origin", "https://gitlab.com/o/r.git"],
+    );
+    let (code, _) = f
+        .service
+        .send(
+            &format!("/api/projects/{project}/pulls/5/merge"),
+            json!({ "method": "squash", "expected_head": "abc" }),
+        )
+        .await;
+    assert_eq!(code, 202);
+    let log = f.log();
+    assert!(
+        log.contains("glab mr merge 5 --yes --squash --sha abc"),
+        "{log}"
+    );
+    assert!(!log.contains("mr view"), "{log}");
+}
+
 /// The first message a thread was sent, as its prompt events carry it.
 async fn prompt_of(service: &Service, thread: &str) -> String {
     service.finished(thread).await;

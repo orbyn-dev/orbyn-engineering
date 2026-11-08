@@ -128,6 +128,9 @@ test("page evaluation and denied input cannot publish an agent pointer", async (
 });
 
 test("link navigation and same-URL reload clear the cursor and allow later legitimate clicks", async ({ page }, info) => {
+  // Quarantined: about one run in three the tab's title stays on the old document after the click. See
+  // https://github.com/orbyn-dev/orbyn-engineering/issues/339 for the evidence and what to check.
+  test.fixme(true, "Flaky in CI: issue #339");
   await withPreview(page, info, async ({ base, cues, act }) => {
     for (const selector of ["#link", "#reload"]) {
       const served = loads;

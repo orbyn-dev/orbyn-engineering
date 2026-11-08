@@ -9,6 +9,8 @@ const history = (kind: string, text: string) => ({ sessionUpdate: kind, content:
 const row = (sessionId: string, cwd: string, title: string) => ({ sessionId, cwd, title, history: [history("user_message_chunk", "saved question"), history("agent_message_chunk", "saved answer")] });
 
 test("an ACP agent's saved sessions are listed, imported and deleted from Settings", async ({ page }, info) => {
+  // Starting the service, then the agent that reports it can list sessions, takes a while on a busy runner.
+  test.setTimeout(120_000);
   const native = mkdtempSync(join(tmpdir(), "orbyn-native-"));
   const { service } = await startProject({ nativeSessions: native });
   try {
@@ -17,6 +19,7 @@ test("an ACP agent's saved sessions are listed, imported and deleted from Settin
     await service.api("PUT", "/api/preferences", { values: { provider_instances: [{ id: "agent", driver: "_local_acp", name: "Saved agent", program: executable, args: ["acp"] }] } });
     await page.goto(`${service.page}#/settings/providers`);
     await page.getByRole("table", { name: "Providers" }).getByRole("button", { name: "Saved agent", exact: true }).click();
+    await expect(page.getByRole("button", { name: "List sessions", exact: true })).toBeVisible({ timeout: 60_000 });
     await page.getByRole("button", { name: "List sessions", exact: true }).click();
     await expect(page.getByText("Alpha chat")).toBeVisible();
     await expect(page.getByText("Beta chat")).toBeVisible();
@@ -46,12 +49,13 @@ test("an ACP agent's saved sessions are listed, imported and deleted from Settin
 });
 
 test("an agent that cannot list sessions shows no session controls", async ({ page }) => {
+  test.setTimeout(120_000);
   const { service } = await startProject();
   try {
     await service.api("PUT", "/api/preferences", { values: { provider_instances: [{ id: "plain", driver: "_local_acp", name: "Plain agent", program: executable, args: ["acp"] }] } });
     await page.goto(`${service.page}#/settings/providers`);
     await page.getByRole("table", { name: "Providers" }).getByRole("button", { name: "Plain agent", exact: true }).click();
-    await expect(page.getByText("Models", { exact: true })).toBeVisible();
+    await expect(page.getByText("Models", { exact: true })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText("Native sessions")).toHaveCount(0);
   } finally { await service.stop(); }
 });

@@ -1,0 +1,21 @@
+name: Contributor licence agreement
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  cla:
+    uses: orbyn-dev/.github/.github/workflows/cla.yml@59d7fc7d24c490fd855c424de192638ee7e35d4d
+    with:
+      agreement-version: "0.1"
+    secrets:
+      signatures-token: ${{ secrets.CLA_SIGNATURES_TOKEN }}
