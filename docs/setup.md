@@ -18,10 +18,24 @@ gh --version
 
 ## Clone and install
 
-These commands work in both shells:
+On macOS:
+
+```bash
+git clone https://github.com/orbyn-dev/orbyn-engineering.git
+```
+
+In PowerShell on Windows:
+
+```powershell
+git clone --config core.autocrlf=false https://github.com/orbyn-dev/orbyn-engineering.git
+```
+
+The Windows option preserves the repository's LF line endings: a stylesheet test
+currently fails with CRLF checkout conversion. [Git applies this setting](https://git-scm.com/docs/git-clone)
+to the new repository before its first checkout; it changes no global settings.
+Then, in either shell:
 
 ```text
-git clone https://github.com/orbyn-dev/orbyn-engineering.git
 cd orbyn-engineering
 cd web
 npm ci
