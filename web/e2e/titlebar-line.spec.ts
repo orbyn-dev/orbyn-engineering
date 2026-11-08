@@ -87,3 +87,14 @@ for (const layout of ["console", "ledger"] as const) {
     expect(await centreOf(pill)).toBeCloseTo(22, 0);
   });
 }
+
+/** The settings overlay: "Find a setting" starts 12px under the 44px bar, with nothing but the bar in the bar's row. */
+test("the settings search sits 12px below the title bar", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/__mock/scenario/default");
+  await page.goto("/#/settings/general");
+  const search = page.getByRole("searchbox", { name: "Search settings" });
+  await expect(search).toBeVisible();
+  const field = await page.locator(".settings-search").boundingBox();
+  expect(field?.y).toBeCloseTo(56, 0);
+});

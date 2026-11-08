@@ -12,7 +12,8 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 12px 10px;
+  /* The title bar floats over the top 44px of the page: "Find a setting" starts 12px below it, nothing in its row. */
+  padding: calc(var(--titlebar-h) + 12px) 10px 12px;
   overflow-y: auto;
   border-right: 1px solid var(--color-border);
 }

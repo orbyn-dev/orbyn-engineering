@@ -22,3 +22,11 @@ describe("where the main area sits in the shell grid", () => {
     expect(reading?.body).toMatch(/grid-area:\s*1 \/ 1/);
   });
 });
+
+describe("what sits under the floating title bar", () => {
+  it("starts the settings search 12px below the 44px bar", () => {
+    const side = rules.find(({ selector }) => selector === ".settings-side");
+    expect(side?.body).toMatch(/padding:\s*calc\(var\(--titlebar-h\) \+ 12px\) 10px 12px/);
+    expect(readFileSync(join(process.cwd(), "src/styles/tokens.css"), "utf8")).toContain("--titlebar-h: 44px;");
+  });
+});
