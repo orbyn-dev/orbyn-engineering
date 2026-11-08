@@ -1,6 +1,6 @@
 # Desktop and local web batch reconciliation
 
-Issue-state snapshot: 7 November 2026. Product and row snapshot: `3d0f41d`.
+Issue-state snapshot: 7 November 2026. Product and row snapshot: `8c7de43`.
 [Umbrella #187](https://github.com/kinqsradio/orbyn-engineering/issues/187)
 remains open. All 26 batch issues below are closed; their closeouts explain the
 work delivered, refused or left unqualified. The umbrella's 5 November assignment
