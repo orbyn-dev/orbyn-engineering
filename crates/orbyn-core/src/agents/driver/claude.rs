@@ -219,6 +219,80 @@ fn launch_settings(spec: &RunSpec, window: Option<u32>) -> Option<Value> {
     Some(Value::Object(settings))
 }
 
+/// One line of `claude mcp list`: the server's name, and what the CLI says of it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct McpListed {
+    pub name: String,
+    pub state: String,
+}
+
+/// Reads `claude mcp list`. A line is `<name>: <url or command> - <state>`; a name may
+/// hold spaces and colons but not `: `, so the first `: ` ends it. Banner and blank
+/// lines carry no such separator after a name and are skipped.
+pub(crate) fn parse_mcp_list(text: &str) -> Vec<McpListed> {
+    text.lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once(": ")?;
+            if name.trim().is_empty() || name.starts_with("Checking") {
+                return None;
+            }
+            let state = rest
+                .rsplit_once(" - ")
+                .map_or("", |(_, state)| state.trim());
+            Some(McpListed {
+                name: name.trim().to_owned(),
+                state: state.to_owned(),
+            })
+        })
+        .collect()
+}
+
+static SERVERS_LEARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks the CLI which MCP servers it will load and remembers their names for the
+/// approval guard. The init frame of a run that passes `--mcp-config` lists only that
+/// one server, and connectors appear after it, so the frame cannot name them. About
+/// four seconds; only names are kept.
+async fn learn_servers(program: &str) {
+    // Tried once per service life whatever comes of it, so a CLI that cannot list
+    // does not make every run wait.
+    let _tried = scopeguard_flag();
+    let Some(command) = crate::host::process::resolve(program) else {
+        return;
+    };
+    let Some(output) = crate::agents::engines::probe::capture(
+        &command,
+        &["mcp", "list"],
+        std::time::Duration::from_secs(20),
+    )
+    .await
+    else {
+        return;
+    };
+    let mut seen = seen_servers()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for server in parse_mcp_list(&output.stdout) {
+        let name = rule_name(&server.name);
+        if name != MCP_SERVER_NAME && seen.len() < MAX_SEEN_SERVERS {
+            seen.insert(name);
+        }
+    }
+}
+
+/// Marks the server names as tried when dropped.
+struct Tried;
+
+impl Drop for Tried {
+    fn drop(&mut self) {
+        SERVERS_LEARNED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn scopeguard_flag() -> Tried {
+    Tried
+}
+
 /// What the init frame says this run has: server names with their state, plugin names
 /// and how many tools it lists. Names only; a URL or token never leaves the frame.
 fn init_tools(frame: &Value) -> Option<EngineEvent> {
@@ -387,6 +461,10 @@ impl EngineDriver for ClaudeDriver {
             probe.account = account;
         }
         probe.sign_in_command = Some("claude auth login".into());
+        if probe.path.is_some() {
+            let program = self.program.clone();
+            tokio::spawn(async move { learn_servers(&program).await });
+        }
         probe
     }
 
@@ -480,6 +558,15 @@ impl EngineDriver for ClaudeDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
+        // An older CLI reads only per-server rules, so a run that comes before the status
+        // probe has named the servers waits for it, once, rather than start unguarded.
+        if !SERVERS_LEARNED.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(8),
+                learn_servers(&self.program),
+            )
+            .await;
+        }
         let process = self.launch(&spec)?;
         Ok(handle_for(process, spec, events, None))
     }
@@ -2369,6 +2456,19 @@ mod tests {
         // The guard rides on the settings flag.
         let args = run_args(&spec(), Path::new("/m"), None);
         assert!(args.iter().any(|arg| arg == "--settings"));
+    }
+
+    #[test]
+    fn mcp_list_names_are_read_with_their_state() {
+        let text = "Checking MCP server health…\n\nclaude.ai Claude Docs: https://api.anthropic.com/v1/pages/mcp - ✔ Connected\nclaude.ai Canva: https://mcp.canva.com/mcp - ! Needs authentication\nplugin:foo:bar: npx -y thing - ✘ Failed to connect\n";
+        let listed = parse_mcp_list(text);
+        let names: Vec<_> = listed.iter().map(|one| one.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["claude.ai Claude Docs", "claude.ai Canva", "plugin:foo:bar"]
+        );
+        assert_eq!(listed[1].state, "! Needs authentication");
+        assert_eq!(rule_name("plugin:foo:bar"), "plugin_foo_bar");
     }
 
     #[test]
