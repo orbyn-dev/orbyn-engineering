@@ -8,7 +8,9 @@ mod provision;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
+use futures_util::{StreamExt, stream};
 use orbyn_contracts::{
     IncomingCommit, LibraryStatus, LibraryUpdateResult, TargetStatus, TargetWorktree,
     WorkspaceSetup, WorkspaceStatus,
@@ -36,6 +38,18 @@ const HOSTS: &[&str] = &[".agents", ".claude", ".cursor"];
 /// Skill link directories that must materialize for native discovery.
 const LINK_ROOTS: &[&str] = &[".claude/skills", ".agents/skills"];
 const CLONE_SYMLINKS: &str = "core.symlinks=true";
+/// How long a computed status answers repeat requests. Every Git call behind it is
+/// local, but a registered checkout with many worktrees costs seconds to read.
+const STATUS_TTL: Duration = Duration::from_secs(15);
+/// Checkouts and worktrees read at the same time.
+const STATUS_PARALLEL: usize = 6;
+
+/// A status answer and what it was computed for.
+struct CachedStatus {
+    at: Instant,
+    projects: Vec<(String, String)>,
+    status: WorkspaceStatus,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Rollback {
@@ -74,6 +88,8 @@ pub struct Workspace {
     moving: Mutex<bool>,
     /// Set from an app install until exit, or until the install fails.
     installing: AtomicBool,
+    /// The last computed status; dropped when the library or its position changes.
+    status_cache: Mutex<Option<CachedStatus>>,
 }
 
 fn refused(message: impl Into<String>) -> CoreError {
@@ -336,6 +352,7 @@ impl Workspace {
             state: RwLock::new(state),
             moving: Mutex::new(false),
             installing: AtomicBool::new(false),
+            status_cache: Mutex::new(None),
         })
     }
 
@@ -352,7 +369,17 @@ impl Workspace {
         self.library_access.read().await
     }
 
+    /// Forgets the cached status so the next read looks at Git again. Callers that
+    /// change a checkout (setup, update, rollback, a project's own Git actions) use it.
+    pub fn invalidate_status(&self) {
+        *self
+            .status_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
     fn save(&self, state: WorkspaceState) -> Result<()> {
+        self.invalidate_status();
         self.store
             .set_setting(STATE_KEY, &serde_json::to_string(&state)?)?;
         *self
@@ -587,6 +614,7 @@ impl Workspace {
         let _reader = self.library_access.read().await;
         let root = self.root()?;
         let pending = self.fetch_unlocked().await?;
+        self.invalidate_status();
         let state = self.current().ok_or(CoreError::WorkspaceRequired)?;
         let revision = revision_of(&state).await?;
         if !apply || pending.is_empty() {
@@ -666,6 +694,38 @@ impl Workspace {
     }
 
     pub async fn status(&self, projects: &[orbyn_contracts::Project]) -> Result<WorkspaceStatus> {
+        let key: Vec<(String, String)> = projects
+            .iter()
+            .map(|project| (project.id.clone(), project.path.clone()))
+            .collect();
+        if let Some(cached) = self.cached_status(&key) {
+            return Ok(cached);
+        }
+        let status = self.compute_status(projects).await?;
+        *self
+            .status_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CachedStatus {
+            at: Instant::now(),
+            projects: key,
+            status: status.clone(),
+        });
+        Ok(status)
+    }
+
+    fn cached_status(&self, key: &[(String, String)]) -> Option<WorkspaceStatus> {
+        let cache = self
+            .status_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let cached = cache.as_ref()?;
+        (cached.at.elapsed() < STATUS_TTL && cached.projects == key).then(|| cached.status.clone())
+    }
+
+    async fn compute_status(
+        &self,
+        projects: &[orbyn_contracts::Project],
+    ) -> Result<WorkspaceStatus> {
         let _reader = self.library_access.read().await;
         let Some(state) = self.current() else {
             return Ok(WorkspaceStatus {
@@ -675,13 +735,20 @@ impl Workspace {
                 targets: Vec::new(),
             });
         };
-        let library = library_status(&state).await;
-        let mut targets = Vec::new();
-        for project in projects {
-            if Path::new(&project.path) != state.root {
-                targets.push(target_status(&state.root, project).await);
-            }
-        }
+        let root = &state.root;
+        // Futures are built up front: a closure over the borrowed project would
+        // not satisfy the handler's `Send` bound.
+        let checkouts: Vec<_> = projects
+            .iter()
+            .filter(|project| Path::new(&project.path) != root)
+            .map(|project| target_status(root, project))
+            .collect();
+        let (library, targets) = tokio::join!(
+            library_status(&state),
+            stream::iter(checkouts)
+                .buffered(STATUS_PARALLEL)
+                .collect::<Vec<_>>()
+        );
         Ok(WorkspaceStatus {
             configured: true,
             default_url: self.default_url.clone(),
@@ -712,18 +779,29 @@ async fn revision_of(state: &WorkspaceState) -> Result<String> {
 async fn library_status(state: &WorkspaceState) -> LibraryStatus {
     let root = &state.root;
     let plain_snapshot = state.snapshot.is_some() && !root.join(".git").exists();
-    let problem = if plain_snapshot {
-        None
-    } else {
-        validate_library(root).await.err().map(|e| e.to_string())
+    let validate = async {
+        if plain_snapshot {
+            None
+        } else {
+            validate_library(root).await.err().map(|e| e.to_string())
+        }
     };
-    let dirty = dirty_files(root).await.unwrap_or_default();
-    let upstream = upstream_of(root).await;
-    let (ahead, behind) = if upstream.is_some() {
-        ahead_behind(root).await.unwrap_or((0, 0))
-    } else {
-        (0, 0)
+    let position = async {
+        let upstream = upstream_of(root).await;
+        let counts = if upstream.is_some() {
+            ahead_behind(root).await.unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+        (upstream, counts)
     };
+    let (problem, dirty, (upstream, (ahead, behind)), revision, branch) = tokio::join!(
+        validate,
+        async { dirty_files(root).await.unwrap_or_default() },
+        position,
+        revision_of(state),
+        branch_of(root)
+    );
     let native_skills = native_skills_available(root);
     let problem = problem.or_else(|| {
         (!native_skills).then(|| {
@@ -736,8 +814,8 @@ async fn library_status(state: &WorkspaceState) -> LibraryStatus {
         path: root.to_string_lossy().into_owned(),
         adopted: state.adopted,
         snapshot: state.snapshot.is_some(),
-        revision: revision_of(state).await.unwrap_or_default(),
-        branch: branch_of(root).await,
+        revision: revision.unwrap_or_default(),
+        branch,
         dirty: !dirty.is_empty(),
         dirty_files: dirty,
         upstream,
@@ -777,6 +855,19 @@ fn same_name_skills(root: &Path, target: &Path) -> Vec<String> {
     overlaps
 }
 
+async fn worktree_status(
+    worktree: crate::source_control::git::RegisteredWorktree,
+) -> TargetWorktree {
+    TargetWorktree {
+        dirty: dirty_files(&worktree.path)
+            .await
+            .map_or(true, |files| !files.is_empty()),
+        path: worktree.path.to_string_lossy().into_owned(),
+        branch: worktree.branch,
+        revision: worktree.revision,
+    }
+}
+
 async fn target_status(root: &Path, project: &orbyn_contracts::Project) -> TargetStatus {
     let path = Path::new(&project.path);
     let mut status = TargetStatus {
@@ -800,27 +891,30 @@ async fn target_status(root: &Path, project: &orbyn_contracts::Project) -> Targe
             return status;
         }
     }
-    status.revision = head(path).await.ok();
-    status.branch = branch_of(path).await;
-    status.dirty = dirty_files(path)
-        .await
-        .map_or(true, |files| !files.is_empty());
+    let (revision, branch, dirty, worktrees) = tokio::join!(
+        head(path),
+        branch_of(path),
+        dirty_files(path),
+        linked_worktrees(path)
+    );
+    status.revision = revision.ok();
+    status.branch = branch;
+    status.dirty = dirty.map_or(true, |files| !files.is_empty());
     status.instructions = INSTRUCTIONS
         .iter()
         .filter(|name| path.join(name).is_file())
         .map(|name| (*name).to_owned())
         .collect();
     status.same_name_skills = same_name_skills(root, path);
-    for worktree in linked_worktrees(path).await.unwrap_or_default() {
-        status.worktrees.push(TargetWorktree {
-            dirty: dirty_files(&worktree.path)
-                .await
-                .map_or(true, |files| !files.is_empty()),
-            path: worktree.path.to_string_lossy().into_owned(),
-            branch: worktree.branch,
-            revision: worktree.revision,
-        });
-    }
+    let reads: Vec<_> = worktrees
+        .unwrap_or_default()
+        .into_iter()
+        .map(worktree_status)
+        .collect();
+    status.worktrees = stream::iter(reads)
+        .buffered(STATUS_PARALLEL)
+        .collect()
+        .await;
     status
 }
 
@@ -1148,5 +1242,48 @@ mod tests {
         let target = root.join("repo/app");
         std::fs::create_dir_all(target.join(".claude/skills/how")).unwrap();
         assert_eq!(same_name_skills(&root, &target), [".claude/skills/how"]);
+    }
+
+    #[tokio::test]
+    async fn a_repeated_status_is_answered_from_the_cache_until_invalidated() {
+        let dir = TempDir::new();
+        let path = library(&dir.path().join("mine"));
+        let workspace = service(&dir).await;
+        workspace.setup(adopt(&path)).await.unwrap();
+        let clean = workspace.status(&[]).await.unwrap();
+        assert!(!clean.library.unwrap().dirty);
+
+        std::fs::write(path.join("scratch.txt"), "x").unwrap();
+        let cached = workspace.status(&[]).await.unwrap();
+        assert!(!cached.library.unwrap().dirty, "second read hits Git again");
+
+        workspace.invalidate_status();
+        assert!(workspace.status(&[]).await.unwrap().library.unwrap().dirty);
+    }
+
+    #[tokio::test]
+    async fn a_saved_state_skips_the_cache() {
+        let dir = TempDir::new();
+        let path = library(&dir.path().join("mine"));
+        let workspace = service(&dir).await;
+        workspace.setup(adopt(&path)).await.unwrap();
+        workspace.status(&[]).await.unwrap();
+        std::fs::write(path.join("scratch.txt"), "x").unwrap();
+        let state = workspace.current().unwrap();
+        workspace.save(state).unwrap();
+        assert!(workspace.status(&[]).await.unwrap().library.unwrap().dirty);
+    }
+
+    #[tokio::test]
+    async fn an_expired_status_is_computed_again() {
+        let dir = TempDir::new();
+        let path = library(&dir.path().join("mine"));
+        let workspace = service(&dir).await;
+        workspace.setup(adopt(&path)).await.unwrap();
+        workspace.status(&[]).await.unwrap();
+        std::fs::write(path.join("scratch.txt"), "x").unwrap();
+        workspace.status_cache.lock().unwrap().as_mut().unwrap().at =
+            Instant::now() - STATUS_TTL - Duration::from_secs(1);
+        assert!(workspace.status(&[]).await.unwrap().library.unwrap().dirty);
     }
 }

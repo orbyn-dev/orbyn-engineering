@@ -688,7 +688,10 @@ pub async fn git_action(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<GitAction>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.git_action(&id, &body, LOCAL_USER).await?))
+    let result = state.core.git_action(&id, &body, LOCAL_USER).await;
+    // Committing, switching or removing a worktree changes what the status reads.
+    state.core.workspace.invalidate_status();
+    Ok(Json(result?))
 }
 
 pub async fn branches(
