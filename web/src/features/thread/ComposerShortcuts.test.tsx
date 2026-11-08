@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
 import { App } from "../../app/App";
+import { runHandlers } from "../../app/shortcuts";
 import { installMockFetch } from "../../test-support";
 import { useUi } from "../../state/ui";
 
@@ -101,6 +102,14 @@ describe("composer menu shortcuts (K41)", () => {
     expect(mock.threads.find((t) => t.id === "t-done")?.effort).toBe("medium");
   });
 
+  it("composer.focus puts the caret in the composer", async () => {
+    const box = await openThread("t-done");
+    box.blur();
+    expect(box).not.toHaveFocus();
+    act(() => void runHandlers("composer.focus"));
+    expect(box).toHaveFocus();
+  });
+
   it("composer.stash stashes the draft, then restores it", async () => {
     const user = userEvent.setup();
     const box = await openThread("t-done");
@@ -123,6 +132,21 @@ describe("composer menu shortcuts (K41)", () => {
     await chord(user, "g");
     const dialog = await screen.findByRole("dialog", { name: "Switch branch" });
     expect(within(dialog).getByRole("list", { name: "Branches" })).toBeInTheDocument();
+  });
+
+  it("the branch switcher follows the footerless design: Find a branch, a Current note and the switch hint", async () => {
+    const user = userEvent.setup();
+    for (const thread of mock.threads) thread.active_run = null;
+    go("#/threads/t-approval");
+    render(<App />);
+    await screen.findByRole("button", { name: /^Branch / });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await chord(user, "g");
+    const dialog = await screen.findByRole("dialog", { name: "Switch branch" });
+    expect(within(dialog).getByRole("textbox", { name: "Search branches" })).toHaveAttribute("placeholder", "Find a branch");
+    expect(await within(dialog).findByText("Current")).toBeInTheDocument();
+    expect(within(dialog).getByText("Choosing a branch switches to it.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   describe("on the draft", () => {

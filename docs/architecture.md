@@ -173,7 +173,7 @@ by `thread/start` or `thread/resume`; a missing required model is an error rathe
 than an invented default. Built-in mode instructions and Orbyn's separate thread
 context are both retained. The collaboration mode does not widen permissions.
 
-`response_streaming_mode` `turn` holds a reply's text until that message ends;
+`response_streaming_mode` (a device choice, never per project) `turn` holds a reply's text until that message ends;
 `paragraph` is the default and writes it as it comes, merged over 33 ms. Reasoning and
 tools always go out as they happen. Steering answers `delivered` or `queued`: an engine
 with no mid-turn input takes it on the next turn, and an engine that refuses one sends it
@@ -276,7 +276,7 @@ Effort and options carry only along with their model: the request's own, then th
 project's `default_effort` and `default_model_options` when the thread's model is that
 default model, then the remembered ones for the same model. `default_model_options`
 holds option ids with one string value each and never `effort`, which has its own key.
-A project's `default_permission_mode` also applies there.
+The device's `default_permission_mode` also applies there; it is not set per project.
 
 The new-thread draft resolves that physical project's effective model preferences
 before sending an implicit selection. A model picked in the draft wins over a
@@ -552,6 +552,36 @@ through `gh api` and `glab api`. Azure DevOps and Forgejo cover list, read, open
 merge, close and reopen; anything else is `422`. Arguments are passed directly and no
 shell parses them, and comment and thread ids that go into API paths are checked to
 be plain.
+
+The base pull request list asks the forge CLI for exactly the fields it always has, so
+it is as fast as before, and it never waits on anything below. A row's `checks` (total,
+passing, failing, running and up to 20 failing names) are counted from the check data
+that call already carries; a check run counts as running until it is `COMPLETED`, then
+`FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED` and `STARTUP_FAILURE` fail,
+`SKIPPED`, `NEUTRAL` and `STALE` count only in the total, and a commit status of
+`PENDING` or `EXPECTED` is running. `checks_state` is derived from the same counts.
+
+The rest comes from `POST /api/pulls/details`, which the caller makes after it has shown
+the list. The body names the listed rows (`project_id`, `number` and the row's
+`updated_at`) and may set `fresh`. The answer holds, per row, `created_at`,
+`requested_reviewers` (users and teams), `comment_count` (conversation comments plus
+inline review comments) and `viewer_review_state` (the signed-in login's latest review, or
+`none`). GitHub answers all of a project's rows with one batched GraphQL request, which
+also names the viewer, so the review state needs no other call. A field is absent when
+unknown, never zero or partial. A row is left out whole when its project cannot be read,
+its own batch yields no data for it or its forge has no details; only GitHub has them.
+Repeated rows count once, at most 100 rows are read per request (later ones are ignored),
+and a project is asked in queries of at most 25 rows, so one failed or partly erroring
+query costs only the rows it did not return.
+
+Details known for a row are reused while its `updated_at` is unchanged (it moves with every
+comment, review or request) and for at most 10 minutes, so scheduled and background refreshes
+ask only for new or changed rows, and for none when every row is known. A refresh the person
+starts sets `fresh` and asks again for every row. If GitHub's rate limit is spent, the answer has
+no details, `paused` names every withheld field as it appears on the row (`created_at`,
+`requested_reviewers`, `viewer_review_state`, `comment_count`), and details are not asked
+for again for 2 minutes, `fresh` included. `ForgeStatus.viewer` is the login the CLI is
+signed in as, read on each `GET /api/forges` rescan.
 
 A git action runs commit, push and pull request in order, logs each phase as `CUSTOM
 git.phase`, and stops at the first failure; earlier phases stand. These are the
@@ -1248,8 +1278,9 @@ disabling stores null, and numeric drafts commit on blur or Enter. A conflicting
 write refreshes the snapshot while retaining the draft for an explicit retry; it
 never replays the edit. Scope disposal fences late writes and reports. Unmentioned
 fields, including legacy project cleanup objects, remain untouched. Maintenance has
-no worktree-age control or Preview action; the dry-run API remains available for
-verification. Delete now invokes the existing environment cleanup operation, and
+no worktree-age control or Preview action; the dry-run API and `GET
+/api/storage/cleanup/preview` (counts and sizes, which Delete now and Delete settled
+worktrees share, since both run the one cleanup) remain available. Delete now invokes the existing environment cleanup operation, and
 Last run reports its actual removed/kept entries. Action eligibility also reads the
 distinct worktree policy: explicit environment Off suppresses legacy defaults,
 empty environment policy retains a valid global age including zero, and project
@@ -1379,6 +1410,16 @@ mode, and needs a trusted project at that moment. A failed firing records why an
 tries again at the next time. Changing a task by id replaces what it does and keeps
 what it earned: its history, pause, token and, unless replaced, signing secret. It
 stays in its project, and its thread must be in that project too.
+
+Every firing is noted in the task's run history, newest first and bounded to the last
+50: when it started, its source (`schedule`, `manual`, `webhook` or `after_thread`), the
+thread it works in and an outcome. A firing that could not start is `refused` with the
+reason; one put off by `task_skip_near_limit` is `skipped`; a started one is `queued`,
+`running` or the end state of the first run its thread began since, read when listed, so
+it is as current as the thread. `task_skip_near_limit` (off by default) makes a firing
+from the clock, not a manual or webhook one, wait for the next time when the task's
+engine reports a limit window at 90% or more; an engine that reports nothing never
+holds a task back.
 
 `POST /hooks/:id/:token` is public, because a sender cannot hold a session, though the
 `Host` and `Origin` checks still apply. The token is shown once and kept as a digest,
@@ -1801,8 +1842,16 @@ Clone and create are the routes that make a folder, at `<workspace>/repo/<slug>`
 default or at a chosen absolute path that holds nothing yet. A clone works in a
 staging folder beside its destination. Those projects are `managed`.
 
-Removing a project unregisters it and deletes its threads, and leaves the folder
-exactly as it was. `?delete_files=true` is refused for a folder Orbyn did not create.
+Removing a project unregisters it, archives its threads and never deletes them, and
+leaves the folder exactly as it was. Each kept thread carries `project_removed` and the
+project's name as `removed_project_name`, so the archive can say where it came from.
+The project row stays hidden, and anything that would act on it (a new thread, a task
+saved or resumed, a rename, trust, per-project preferences, a pull checkout) is refused
+with `project_removed`. Its scheduled tasks are paused at removal; one that is somehow
+still due is refused and recorded as `refused` in its history. Archived threads still list
+and read. Unarchiving such a thread is refused with
+`project_removed` (409) until the folder is added again, which restores the row
+untrusted and clears the label on its threads. `?delete_files=true` is refused for a folder Orbyn did not create.
 For one it did, dirty or unpushed work needs `confirm`, and files go only when nothing
 is dirty, unpushed, ignored or in a worktree.
 
@@ -1916,9 +1965,23 @@ it does not inspect, rewrite or merge older development packages' per-port WebKi
 or WebView2 stores. Those stores remain untouched.
 
 The product UI has no accepted native commands or Tauri imports. A separate static
-`orbyn-startup` origin shows startup/failure and Try again. Its only capability is
-`restart_core`, whose handler also rejects callers while the top-level window is not
-on that exact startup origin and path; the product asset origin cannot invoke it.
+`orbyn-startup` origin shows startup/failure with Show log, Try again and Quit. Its
+capability is exactly three commands, none taking an argument from the page:
+`restart_core` (Try again), `show_core_log` (Show log) and `quit_core` (Quit). A failed
+start has no service to ask, so these are the only ways out of it: a person can read why,
+try again or leave without a running service. `show_core_log` reveals only the app's own
+log, resolved in Rust, never a path the page sends; `quit_core` only exits the app. Each
+handler also rejects callers while the top-level window is not on that exact startup
+origin and path. That URL check, made when the command is called, is the real guard, and
+the capability alone is not: the product UI can navigate the main window onto the startup
+page, and it already has these actions (quit, restart, show log) through the service's
+shell actions, so this opens nothing new. Preview windows have no capability and a
+remote viewer is no window. The page gets one short reason line for a failed start: the
+first non-empty line of the service's last words, without control or text-direction
+characters, without words that look like a path, an address (`host:port`), an `@` or `=`
+value or a 20-character token, and cut at 160 characters. It is not log text.
+It follows the system light or dark appearance; the app's own theme choice lives in the
+product origin and does not reach this page, and Dim is not offered here.
 There are no default core/plugin command permissions. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
 the service, which asks the shell over stdin/stdout; results return through
@@ -1992,7 +2055,14 @@ never touches `PATH`, and neither replaces nor removes a file the app didn't put
 The service's stderr goes to `orbynd.log` in the app's log folder, new each launch. It is a
 file and not a pipe so the service can still log its own shutdown after the shell dies: a
 write to a dead pipe stops it before it cleans up. When the service stops, the loader
-shows the log's last line with Try again, and threads and runs are kept. Every
+shows the log's last line with Try again, and threads and runs are kept. A service
+that exits without being asked is started again once, automatically, while the loader
+says it is restarting. If the restarted service stops again within ten minutes, the
+loader says it restarted once and stopped again, and waits for Try again, which also
+earns the next crash its one restart. The product UI restarts the service or shows
+its log through the `restart_service` and `show_log` shell actions, which the service
+relays and a remote viewer is refused; the product origin still holds no capability,
+so the three startup commands stay the startup document's alone. Every
 post-spawn startup failure closes the parent pipe and retains child ownership through
 a five-second graceful-exit period, then kills and reaps a service that has not exited.
 Successful readiness transfers that ownership to the running shell.
@@ -2515,7 +2585,9 @@ because browsers cannot set headers on them.
 | `DELETE /api/tasks/:id`, `POST /api/tasks/:id/enabled` | Delete; `TaskEnabled` pauses or resumes |
 | `POST /api/tasks/:id/run` | Fire now (`202`, `{thread_id}`) |
 | `POST /api/tasks/:id/webhook` | `WebhookEndpoint`: issue or rotate the token, shown once |
-| `GET /api/tasks/:id/deliveries` | `WebhookDelivery[]`, newest 200 |
+| `GET /api/tasks/:id/webhook` | `WebhookAddress`: whether a token exists and the address up to it; the token itself is never returned |
+| `GET /api/tasks/:id/runs` | `TaskRun[]`, the last 50 firings, newest first |
+| `GET /api/tasks/:id/deliveries` | `WebhookDelivery[]`, newest 200, each with `from` when the request names a sender |
 | `POST /hooks/:id/:token` | Public webhook; `202` accepted, `200` with a status, `404` otherwise |
 | `GET, PUT /api/preferences?project_id=` | `PreferenceView[]`; `SetPreferences`, where `null` resets |
 | `PUT /api/projects/:id/preferences` | Project overrides |
@@ -2524,6 +2596,7 @@ because browsers cannot set headers on them.
 | `GET /api/diagnostics`, `POST /api/diagnostics/repair` | `Diagnostics`; `409 runs_active` |
 | `POST /api/diagnostics/otlp` | `OtlpCheck` to `OtlpResult` |
 | `GET, POST /api/storage/cleanup?dry_run=` | Last `CleanupReport`; apply the retention rules |
+| `GET /api/storage/cleanup/preview` | `CleanupPreview`: counts and bytes per kind that a run now would remove, and what it would hold back (uncommitted or shared worktrees). Changes and records nothing |
 | `GET /api/shell` | `ShellStatus` |
 | `GET /api/shell/events` | SSE `ShellEvent`, with events held for the first window |
 | `POST /api/shell/actions` | `ShellRequest` (`202`, `422` with no shell) |
@@ -2573,6 +2646,7 @@ because browsers cannot set headers on them.
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |
 | `GET /api/pulls?state=&q=&author=&label=` | `PullList` across trusted projects; `failed` names any it could not read |
+| `POST /api/pulls/details` | `PullDetailsResponse` for listed rows: reviewers, viewer review, comment totals, opened time; `paused` names details withheld by a spent rate limit |
 | `GET /api/projects/:id/pulls?state=&q=&author=&label=` | `PullRequest[]` |
 | `POST /api/projects/:id/pulls/close` | `BulkClosePulls` to `PullBulkResult[]` |
 | `GET /api/projects/:id/pulls/reviewers`, `/labels` | `PullCandidate[]` |
@@ -2625,7 +2699,10 @@ because browsers cannot set headers on them.
 | `PATCH, DELETE /api/threads/:id/terminals/:terminal` | Rename, close |
 | `GET, DELETE /api/threads/:id/terminals/:terminal/scrollback` | `TerminalScrollback`; clear |
 | `GET, POST /api/threads/:id/scripts` | `ProjectFileView`; `RunScript` to `TerminalInfo` |
-| `GET /api/engines`, `POST /api/engines/refresh` | `EngineStatus[]` |
+| `GET /api/engines`, `POST /api/engines/refresh` | `EngineStatus[]`; `account` is the signed-in account when the CLI's own status names one (Claude's email; Codex names none) |
+| `GET /api/health/dependencies` | `DependencyHealth`: one empty `GET` each to `api.github.com` and, for an installed Claude or Codex, its provider's host; any HTTP answer is reachable. Only when asked, listed in `/api/network`; offline mode makes no request and says `checked: false` |
+| `POST /api/engines/probe-binary` | `ProbeBinary` `{path}` to `BinaryProbe`: whether an absolute path is a runnable file and the version `--version` printed. No shell, fixed argument, 5 second limit; a relative path is refused with a `problem` |
+| `GET /api/engines/:id/native-sessions/count` | `NativeSessionCount`: conversation files in the engine's own history folder (`claude`, `codex`); counted, never opened; `422 unsupported` for other engines |
 | `POST /api/engines/:id/update` | Run the owning installer (`409 engine_busy`) |
 | `GET /api/engines/update-events` | SSE `EngineUpdateProgress` while an engine update runs |
 | `POST, DELETE /api/engines/custom[/:id]` | ACP, AG-UI and terminal engines |

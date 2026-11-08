@@ -4,6 +4,7 @@
  * no network. ORBYN_GH_STATE names the file; ORBYN_GH_LOG collects each call.
  */
 import { appendFileSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 const args = process.argv.slice(2);
@@ -18,10 +19,12 @@ const pause = new Int32Array(new SharedArrayBuffer(4));
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  // A killed process that has not been reaped still answers signal 0: its state says Z.
+  const state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "";
+  return !state.trim().startsWith("Z");
 };
 for (;;) {
   try {
@@ -39,6 +42,13 @@ for (;;) {
   }
 }
 process.on("exit", () => rmSync(lock, { force: true }));
+// A call the service gives up on is ended by a signal, which skips "exit": let go of the lock then too.
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(signal, () => {
+    rmSync(lock, { force: true });
+    process.exit(1);
+  });
+}
 
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 appendFileSync(process.env.ORBYN_GH_LOG, `${JSON.stringify(args)}\n`);
@@ -57,7 +67,7 @@ const fail = (message) => {
   process.exit(1);
 };
 const out = (value) => process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value)}\n`);
-const pull = (number) => state.pulls.find((entry) => entry.number === Number(number)) ?? fail("no pull request");
+const pull = (number) => state.pulls.find((entry) => entry.number === Number(number)) ?? fail(`GraphQL: Could not resolve to a PullRequest with the number of ${number}. (repository.pullRequest)`);
 
 /** The fields only `gh pr view` shows, on top of a list row. */
 const view = (entry) => ({
@@ -91,11 +101,34 @@ function apiCall() {
     }
     return undefined;
   };
+  if (args[1] === "user") return out({ login: state.viewer ?? "me" });
   const method = flag("-X") ?? "GET";
   const path = args.find((arg, at) => at > 0 && /^(repos|graphql|user\/starred\/)/.test(arg)) ?? "";
-  if (path === "user/starred/kinqsradio/orbyn-engineering") process.exit(state.starred ? 0 : 1);
+  if (path === "user/starred/orbyn-dev/orbyn-engineering") process.exit(state.starred ? 0 : 1);
   if (path === "graphql") {
     const query = field("query") ?? "";
+    if (query.includes("reviewRequests")) {
+      // The batched details query: one alias `p<number>` per pull request.
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const repository = {};
+      for (const [, number] of query.matchAll(/p(\d+):pullRequest/g)) {
+        const entry = state.pulls.find((candidate) => candidate.number === Number(number));
+        if (!entry) continue;
+        const inline = (entry.threads ?? []).flatMap((thread) => thread.comments.nodes).length;
+        repository[`p${number}`] = {
+          createdAt: entry.createdAt ?? "2026-09-01T00:00:00Z",
+          reviewRequests: {
+            nodes: (entry.reviewers ?? []).map((name) => ({
+              requestedReviewer: name.startsWith("team/") ? { __typename: "Team", slug: name.slice(5) } : { __typename: "User", login: name },
+            })),
+          },
+          latestReviews: { nodes: entry.latestReviews ?? [] },
+          comments: { totalCount: (entry.issueComments ?? []).length },
+          reviews: { nodes: [{ comments: { totalCount: inline } }] },
+        };
+      }
+      return out({ data: { viewer: { login: state.viewer ?? "me" }, repository } });
+    }
     if (query.includes("reviewThreads")) return out(threads(field("number")));
     const thread = allThreads().find((entry) => entry.id === field("id"));
     if (thread) {
@@ -213,6 +246,10 @@ switch (route) {
     save();
     break;
   case "pr merge":
+    // The expected head is checked as GitHub does: a branch that moved on since the page was read is refused.
+    if (flag("--match-head-commit") && flag("--match-head-commit") !== (pull(args[2]).headNow ?? "aaaaaaa")) {
+      fail("X Pull request is not mergeable: Head branch was modified. Review and try the merge again.");
+    }
     if (args.includes("--auto")) pull(args[2]).autoMergeRequest = {};
     else pull(args[2]).state = "MERGED";
     pull(args[2]).mergeBody = flag("--body");
@@ -226,6 +263,7 @@ switch (route) {
   }
   case "pr review":
     pull(args[2]).reviewed = args.find((arg) => /^--(approve|request-changes|comment)$/.test(arg));
+    pull(args[2]).reviewBody = flag("--body");
     save();
     break;
   case "pr revert":

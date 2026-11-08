@@ -1,3 +1,4 @@
+import { useCompacting } from "./ThreadStates";
 import { composerMarkup } from "./composerMarkup";
 import { recordUserPrompt } from "../workspace/GitHubStarPrompt";
 import { ArrowUp, Archive, Folder, GitBranch, ListChecks, Paperclip, ShieldOff, SlidersHorizontal, Square, X,
@@ -18,12 +19,14 @@ import { useCommand as useSharedCommand } from "../../app/shortcuts";
 import type { EngineStatus, PermissionMode, Thread } from "../../api/types";
 import { useLayoutWidth } from "../../lib/useLayout";
 import { toFailure, useAsync } from "../../lib/useAsync";
+import { useConnectionKind } from "../../state/connection";
 import { useDraftStore } from "../../state/draftStore";
 import { navigate } from "../../state/route";
 import { useThreadLogs } from "./threadLogs";
 import { useUi, type StashedPrompt } from "../../state/ui";
 import { IconButton } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
+import { closingProps, Presence } from "../../ui/Presence";
 import { useWorkspace } from "../../state/workspace";
 import { CompactOffer, ComposerBanners, ContextMeter, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import {
@@ -38,6 +41,7 @@ import {
 import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
 import { QuestionPanel } from "./QuestionPanel";
+import { SubagentChips } from "./SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../state/modelStore";
 import { QueuedMessages } from "./QueuedMessages";
 import { openSideChat } from "../panels/sideChat";
@@ -100,6 +104,37 @@ const WIDE = 1000;
 const MENU_LIFT = 150;
 const MAX_HEIGHT_RATIO = 0.4;
 const MENU_ROWS = 6;
+
+/** The @ and # suggestions above the composer. Leaves by fading, so it takes its rows as a snapshot. */
+function MentionMenu({
+  matches,
+  active,
+  marker,
+  closing,
+  onPick,
+}: {
+  matches: Suggestion[];
+  active: number;
+  marker: string;
+  closing?: boolean;
+  onPick(suggestion: Suggestion): void;
+}) {
+  return (
+    <ul className="mention-menu" role="listbox" aria-label="Suggestions" {...closingProps(closing)}>
+      {matches.map((suggestion, at) => (
+        <li key={suggestion.value} role="option" aria-selected={at === active}>
+          <button type="button" tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={() => onPick(suggestion)}>
+            <span className="mention-name">
+              {marker}
+              {suggestion.value}
+            </span>
+            {suggestion.detail ? <span className="mention-detail">{suggestion.detail}</span> : null}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function Composer({
   thread,
@@ -190,7 +225,10 @@ export function Composer({
   const overBy = charactersOver(outbound);
   const styled = useMemo(() => (draft && draft.length <= STYLED_CHARS ? composerMarkup(draft) : null), [draft]);
   const fence = openFenceAt(draft, caret);
-  const canSend = outbound !== "" && !sending && !uploading && overBy === 0;
+  // The draft is kept while the Orbyn service does not answer, and sending waits for it.
+  const serviceDown = useConnectionKind() === "service-down";
+  const compacting = useCompacting(thread);
+  const canSend = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -542,6 +580,9 @@ export function Composer({
     field.current?.focus();
   };
 
+  useOwnCommand(side, "composer.focus", () => {
+    field.current?.focus();
+  });
   useOwnCommand(side, "composer.stash", () => {
     stash();
   });
@@ -710,6 +751,7 @@ export function Composer({
           {error}
         </p>
       ) : null}
+      {busy ? <SubagentChips agents={log?.subagents ?? []} /> : null}
       <QueuedMessages
         threadId={thread.id}
         items={queue.data ?? []}
@@ -735,26 +777,16 @@ export function Composer({
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
       >
-        {menuOpen ? (
-          <ul className="mention-menu" role="listbox" aria-label="Suggestions">
-            {matches.map((suggestion, at) => (
-              <li key={suggestion.value} role="option" aria-selected={at === active}>
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => pick(suggestion)}
-                >
-                  <span className="mention-name">
-                    {trigger?.char}
-                    {suggestion.value}
-                  </span>
-                  {suggestion.detail ? <span className="mention-detail">{suggestion.detail}</span> : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <Presence>
+          {menuOpen ? (
+            <MentionMenu
+              matches={matches}
+              active={active}
+              marker={trigger?.char ?? ""}
+              onPick={pick}
+            />
+          ) : null}
+        </Presence>
         <ComposerChipShelf
           threadId={thread.id}
           chips={chips}
@@ -859,13 +891,17 @@ export function Composer({
           aria-label={`Message ${thread.title}`}
           aria-describedby="composer-help"
           placeholder={
-            pendingHere.length > 0
+            compacting
+              ? "Waiting for compact to finish"
+              : serviceDown
+              ? "Your draft is kept. Sending waits for the Orbyn service."
+              : pendingHere.length > 0
               ? engine?.capabilities.decline_feedback
                 ? "Type a reply to decline with feedback"
                 : "Send a message to decline and redirect the agent"
               : "Ask anything. @ files, $ skills, / commands"
           }
-          data-autofocus={layout === "narrow" ? undefined : true}
+          data-autofocus={layout === "phone" ? undefined : true}
         />
         </div>
         <span id="composer-help" className="sr-only">
@@ -963,7 +999,7 @@ export function Composer({
             <button
               type="submit"
               className="send-btn"
-              aria-label={busy ? "Queue" : "Send"}
+              aria-label={serviceDown ? "Send, unavailable" : busy ? "Queue" : "Send"}
               aria-busy={sending || undefined}
               disabled={!canSend}
             >
@@ -1025,7 +1061,7 @@ export function Composer({
         </dl>
       </div>
       {traits.menu}
-      {overflow ? (
+      <Presence>{overflow ? (
         <Menu
           x={overflow.x}
           y={overflow.y}
@@ -1062,7 +1098,7 @@ export function Composer({
               : []),
           ]}
         />
-      ) : null}
+      ) : null}</Presence>
       </div>
     </form>
   );
