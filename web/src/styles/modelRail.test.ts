@@ -12,3 +12,7 @@ it("fits the two-letter engine glyph inside its tab and the tab inside the rail"
   // The rail holds the tab between its padding.
   expect(px(".model-rail", "width")).toBeGreaterThanOrEqual(px(".model-tab", "width") + 8);
 });
+
+it("insets the side chat's empty state 16px like the other tabs", () => {
+  expect(/\.side-chat-pane > \.empty \{[^}]*padding:\s*12px 16px/.test(css)).toBe(true);
+});
