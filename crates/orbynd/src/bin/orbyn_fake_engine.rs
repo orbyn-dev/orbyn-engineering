@@ -715,7 +715,9 @@ fn codex() {
                     state.thread = thread.to_owned();
                 }
                 state.loaded = true;
-                state.mcp_url = params["config"]["mcp_servers"]["orbyn_engineering"]["url"]
+                // Real Codex takes the server as a dotted key, which leaves a user's own
+                // servers of the same table whole.
+                state.mcp_url = params["config"]["mcp_servers.orbyn_engineering"]["url"]
                     .as_str()
                     .map(str::to_owned);
                 send(&json!({ "id": id, "result": {

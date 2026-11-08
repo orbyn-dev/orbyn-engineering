@@ -252,6 +252,13 @@ async fn a_claude_instance_passes_its_auto_compact_window_to_each_run() {
         !sent.is_empty() && sent.iter().all(|one| one["autoCompactWindow"] == 300000),
         "{sent:?}"
     );
+    // Every run's settings also carry the connector approval guard.
+    assert!(
+        sent.iter().all(|one| one["permissions"]["ask"]
+            .as_array()
+            .is_some_and(|ask| ask.contains(&json!("mcp__*")))),
+        "{sent:?}"
+    );
     let thread = service.thread(&project, "claude-plain").await;
     service.admit(&thread, "hello").await;
     assert_eq!(service.finished(&thread).await, "completed");
