@@ -112,6 +112,24 @@ test("unavailable skills get a quiet line, never a blocking screen", async ({ pa
   await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
 });
 
+test("the Skills page opens from the sidebar, filters by the library's categories and returns focus to the opened card", async ({ page }) => {
+  await page.getByRole("link", { name: /^Skills/ }).click();
+  await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
+  const filters = page.getByRole("group", { name: "Filter skills" });
+  await expect(filters.getByRole("button").first()).toHaveText("All");
+  await filters.getByRole("button", { name: "Product design" }).click();
+  await expect(page.getByRole("button", { name: /orbyn-ui-design/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /architect/ })).toHaveCount(0);
+  await filters.getByRole("button", { name: "All" }).click();
+  await page.getByRole("textbox", { name: "Search skills" }).fill("migrations");
+  await expect(page.getByRole("region", { name: "Skills" }).getByRole("status")).toContainText("No skills match “migrations”");
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await page.getByRole("button", { name: /architect/ }).click();
+  await expect(page).toHaveURL(/#\/skills\/architect$/);
+  await page.goBack();
+  await expect(page.getByRole("button", { name: /architect/ })).toBeFocused();
+});
+
 const openHero = async (page: Page, animationMs: number) => {
   await page.addInitScript(
     (ms) => localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ panelAnimationMs: ms })),

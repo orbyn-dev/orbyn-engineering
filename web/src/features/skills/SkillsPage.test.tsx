@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure } from "../../api/client";
@@ -6,6 +6,7 @@ import type { SkillPackStatus } from "../../generated/SkillPackStatus";
 import { DRAFT_KEY, SCRATCH, useDraftStore } from "../../state/draftStore";
 import { useUi } from "../../state/ui";
 import { SkillsPage } from "./SkillsPage";
+import { resetSkillsStore } from "./skillsStore";
 
 const catalog: SkillPackStatus = {
   version: "123", digest: "123", signature_valid: true, source: "/library",
@@ -17,6 +18,7 @@ const catalog: SkillPackStatus = {
 };
 
 beforeEach(() => {
+  resetSkillsStore();
   vi.spyOn(api, "skills").mockResolvedValue(catalog);
   window.location.hash = "#/skills";
   useUi.getState().setDraft(DRAFT_KEY, "");
@@ -30,16 +32,30 @@ it("renders names, descriptions and the library count from the API", async () =>
   expect(screen.getAllByText("Built in")).toHaveLength(3);
 });
 
-it("filters only known catalog categories and leaves unknown entries in All", async () => {
+it("builds the category pills from the library's own categories, in its order, with All first", async () => {
   render(<SkillsPage />);
   await screen.findByRole("button", { name: /architect/ });
-  await userEvent.click(screen.getByRole("button", { name: "Design" }));
+  const pills = within(screen.getByRole("group", { name: "Filter skills" })).getAllByRole("button").map((button) => button.textContent);
+  expect(pills).toEqual(["All", "Engineering practice", "Product design", "Unrecognized"]);
+  await userEvent.click(screen.getByRole("button", { name: "Product design" }));
   expect(screen.getByRole("button", { name: /design-review/ })).toBeVisible();
   expect(screen.queryByRole("button", { name: /architect/ })).toBeNull();
-  expect(screen.queryByRole("button", { name: /unknown/ })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "All" }));
   expect(screen.getByRole("button", { name: /unknown/ })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Project" })).toBeNull();
+});
+
+it("hides the pills until the skills carry a category", async () => {
+  vi.mocked(api.skills).mockResolvedValue({ ...catalog, skills: catalog.skills.map((entry) => ({ ...entry, category: "" })) });
+  render(<SkillsPage />);
+  await screen.findByRole("button", { name: /architect/ });
+  expect(screen.queryByRole("button", { name: "All" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Search skills" })).toBeVisible();
+});
+
+it("shows each card's category beside its status", async () => {
+  render(<SkillsPage />);
+  const card = await screen.findByRole("button", { name: /architect/ });
+  expect(card).toHaveTextContent("Built inEngineering practice");
 });
 
 it("searches descriptions and names without regard to case", async () => {
@@ -65,12 +81,50 @@ it("opens a card with Space and shows only available detail fields", async () =>
   expect(screen.queryByText("Open folder")).toBeNull();
 });
 
-it("shows the approved message when a search has no matching skills", async () => {
+it("says what was searched, keeps the filters, and Clear search brings the library back", async () => {
   render(<SkillsPage />);
   await screen.findByRole("button", { name: /architect/ });
-  await userEvent.type(screen.getByRole("textbox", { name: "Search skills" }), "no-such-skill");
-  expect(screen.getByRole("status")).toHaveTextContent("No skills match your search.");
+  const status = screen.getByRole("status");
+  await userEvent.type(screen.getByRole("textbox", { name: "Search skills" }), "migrations");
+  // The same element announces it: it was mounted before the text arrived.
+  expect(screen.getByRole("status")).toBe(status);
+  expect(status).toHaveTextContent("No skills match \u201cmigrations\u201d");
+  expect(screen.getByText("0 of 3")).toBeVisible();
+  expect(screen.getByRole("button", { name: "All" })).toBeVisible();
   expect(screen.queryByRole("button", { name: /architect/ })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(screen.getByRole("button", { name: /architect/ })).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Search skills" })).toHaveValue("");
+});
+
+it("shows one quiet line, and no count, filters or grid, when the library has no skills", async () => {
+  vi.mocked(api.skills).mockResolvedValue({ ...catalog, skills: [] });
+  const { container } = render(<SkillsPage />);
+  expect(await screen.findByRole("heading", { name: "Skills" })).toBeVisible();
+  expect(screen.getByText("No skills in this workspace yet.")).toBeVisible();
+  expect(screen.queryByText(/built in/)).toBeNull();
+  expect(screen.queryByText("No skills match your search.")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Search skills" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Filter skills" })).toBeNull();
+  expect(container.querySelector(".skills-grid")).toBeNull();
+});
+
+it("shows the whole description on a skill's own page, with its category", async () => {
+  const long = "Design focused contract tests, failing-before regressions or verification of critical properties; use for requested TDD, model checking and verification drift, with practical boundaries and explicit evidence limits.";
+  vi.mocked(api.skills).mockResolvedValue({ ...catalog, skills: [{ name: "tdd", category: "Engineering practice", description: long, enabled: true }] });
+  render(<SkillsPage skill="tdd" />);
+  expect(await screen.findByText(long)).toBeVisible();
+  expect(screen.getByText("Built in \u00b7 Engineering practice")).toBeVisible();
+});
+
+it("goes back from a skill to focus the card that was opened", async () => {
+  const view = render(<SkillsPage />);
+  const card = await screen.findByRole("button", { name: /design-review/ });
+  await userEvent.click(card);
+  view.rerender(<SkillsPage skill="design-review" />);
+  await screen.findByRole("heading", { name: "design-review" });
+  view.rerender(<SkillsPage />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /design-review/ })).toHaveFocus());
 });
 
 it("preserves the draft when starting a new thread with an enabled skill", async () => {
