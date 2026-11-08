@@ -154,7 +154,19 @@ pub async fn note_activity(
     {
         state.core.updates.note_activity();
     }
+    // Anything that changes a project, thread, pull request or the workspace may move a
+    // branch or a worktree, so the cached workspace status is dropped whether or not
+    // the request succeeded. Reads and the settings queries never do.
+    let changes = request.method() != axum::http::Method::GET
+        && request.uri().path().starts_with("/api/")
+        && !matches!(
+            request.uri().path(),
+            "/api/settings/project-scopes" | "/api/settings/preferences/query"
+        );
     let response = next.run(request).await;
+    if changes {
+        state.core.workspace.invalidate_status();
+    }
     timing.finish(response.status().as_u16() < 400);
     response
 }
@@ -808,10 +820,16 @@ fn period(query: &HashMap<String, String>) -> ApiResult<Option<u32>> {
         .transpose()
 }
 
+/// Set once Usage has been read, which is what makes the next launch warm the scan.
+pub const USAGE_OPENED: &str = "usage_opened";
+
 pub async fn usage(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
+    if state.core.store.setting(USAGE_OPENED)?.is_none() {
+        state.core.store.set_setting(USAGE_OPENED, "1")?;
+    }
     let settings = state.core.store.settings()?;
     let days = period(&query)?;
     Ok(Json(state.core.usage.report(&settings, days).await?))

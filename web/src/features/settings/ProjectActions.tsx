@@ -48,7 +48,7 @@ export function ProjectActions({ value, control }: { value: unknown; control: Pr
     target?.focus();
   }, [editing, control.disabled]);
   const actions = actionsFrom(value);
-  const keys = useAsync("action-keybindings", (signal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal));
+  const keys = useAsync("action-keybindings", (signal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal), { keep: true });
   const shortcut = (id: string | null) => id === null ? undefined
     : [...(keys.data?.rules ?? [])].reverse().find((rule) => !rule.remove && rule.command === actionCommand(id))?.key;
   return <div ref={root} className="project-actions">

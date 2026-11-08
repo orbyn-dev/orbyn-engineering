@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
+mod chrome;
 mod core_process;
 mod desktop_origin;
 mod image_picker;
@@ -320,13 +321,22 @@ fn open_window(app: &AppHandle) -> tauri::Result<()> {
     config.url = tauri::WebviewUrl::External(desktop_origin::startup());
     let navigating = app.clone();
     let opening = app.clone();
-    let window = WebviewWindowBuilder::from_config(app, &config)?
+    let builder = WebviewWindowBuilder::from_config(app, &config)?
         .on_navigation(move |url| links::on_navigation(&navigating, url))
         .on_new_window(move |url, _| {
             links::open_outside(&opening, &url);
             NewWindowResponse::Deny
-        })
-        .build()?;
+        });
+    // One title bar: the web bar, with the native title bar merged into it and the traffic lights over it.
+    #[cfg(target_os = "macos")]
+    let builder = match chrome::frame_for(std::env::consts::OS) {
+        chrome::Frame::Unified { x, y } => builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(x, y)),
+        chrome::Frame::Native => builder,
+    };
+    let window = builder.build()?;
     shell_state::load(app);
     let zoom = *app.state::<Zoom>().0.lock().expect("zoom");
     window.set_zoom(zoom)?;

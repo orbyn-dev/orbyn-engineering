@@ -160,7 +160,7 @@
 
   --sidebar-w: 224px;
   --titlebar-h: 44px;
-  --topbar-h: 56px;
+  --topbar-h: 44px;
   /* The side panel: 380px by default, 320px at the narrowest, and where it overlays the thread it starts under the header. */
   --context-w: 380px;
   --panel-min-w: 320px;
