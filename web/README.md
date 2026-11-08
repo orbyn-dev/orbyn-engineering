@@ -35,12 +35,14 @@ import a feature or `app`, and ESLint fails the change that tries. A file used b
 one feature lives in that feature.
 
 The `usage` feature exposes `UsagePage` through `features/usage/public.ts`.
-All production consumers outside that feature, including `app`, use this entry
-point. ESLint rejects private imports, re-exports, literal dynamic imports and
-type queries into `usage`; files inside `usage` may use their own internals.
+The `platform` feature exposes `PreviewScreen` and `previewScreenRoute` through
+`features/platform/public.ts`, preserving dev-only lazy preview loading.
+All production consumers outside these features, including `app`, use their
+public entry points. ESLint rejects private imports, re-exports, literal dynamic
+imports and type queries into them; each feature may use its own internals.
 Other features will adopt the same boundary one at a time. This follows Luan
 Nguyen's public-entry-point approach in [PR #285](https://github.com/orbyn-dev/orbyn-engineering/pull/285);
-the usage facade is independently designed from its current consumers.
+the usage and platform facades are independently designed from current consumers.
 
 ## Tests
 
@@ -52,11 +54,11 @@ test-only helpers are not product exports.
 
 ## Known limitations
 
-- Features other than `usage` still import each other's internals, most often
+- Features other than `usage` and `platform` still import each other's internals, most often
   `panels` and `thread`. Each such
   import is a candidate for moving the shared piece to its real owner.
 - `src/lib` still holds project image and identity helpers used by both `ui` and
   `settings`.
 - The shared-folder inward rule covers static `import` and `export … from` for
-  all features, and literal dynamic imports and type queries into `usage`.
+  all features, and literal dynamic imports and type queries into `usage` and `platform`.
   Computed dynamic paths and white-box test/fixture imports are not checked.
