@@ -1404,11 +1404,26 @@
   font: inherit;
   resize: vertical;
 }
+/* The comment button sits at the line's right end and stays in view while a long line scrolls under it. It shows on
+   hover, keyboard focus or the selected lines, not on every line. */
 .patch-line-number {
+  position: sticky;
+  right: 6px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-background) 85%, transparent);
+  opacity: 0;
+  transition: opacity var(--m-fast) var(--m-io);
+}
+.patch-line:hover .patch-line-number,
+.patch-line[data-selected] .patch-line-number,
+.patch-line-number:focus-visible,
+.patch-line-number[aria-pressed="true"] {
+  opacity: 1;
 }
 .context-action {
   display: inline-flex;
@@ -1973,6 +1988,8 @@ button.detail-row:hover {
   min-width: max-content;
 }
 .patch-line {
+  display: flex;
+  align-items: baseline;
   padding: 0 10px;
   white-space: pre;
 }

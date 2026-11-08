@@ -1401,6 +1401,9 @@ button.folder-row:hover {
   font-size: var(--text-meta);
 }
 .pull-patch {
+  /* A long line scrolls inside the card instead of being cut at its edge. */
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: var(--text-meta);
