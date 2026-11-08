@@ -23,7 +23,7 @@ import { Sidebar } from "../features/workspace/Sidebar";
 import { useDrawnOrder } from "../features/workspace/drawnOrder";
 import { PullsPage } from "../features/pulls/PullsPage";
 import { ScheduledTasksPage } from "../features/settings/ScheduledTasks";
-import { UsagePage } from "../features/usage/UsagePage";
+import { UsagePage } from "../features/usage/public";
 import { SkillsPage } from "../features/skills/SkillsPage";
 import { PreviewFloat } from "../features/panels/PreviewFloat";
 import { Toasts } from "../ui/Toasts";

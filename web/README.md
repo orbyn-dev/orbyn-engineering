@@ -34,18 +34,29 @@ folders (`api`, `state`, `ui`, `lib`, `styles`, `generated`). Shared folders nev
 import a feature or `app`, and ESLint fails the change that tries. A file used by
 one feature lives in that feature.
 
+The `usage` feature exposes `UsagePage` through `features/usage/public.ts`.
+All production consumers outside that feature, including `app`, use this entry
+point. ESLint rejects private imports, re-exports, literal dynamic imports and
+type queries into `usage`; files inside `usage` may use their own internals.
+Other features will adopt the same boundary one at a time. This follows Luan
+Nguyen's public-entry-point approach in [PR #285](https://github.com/orbyn-dev/orbyn-engineering/pull/285);
+the usage facade is independently designed from its current consumers.
+
 ## Tests
 
 Unit tests sit beside their file as `*.test.ts(x)` and run with `npm test`.
 Browser tests are in `e2e/`, against the mock API (`mock/`) or a real service
 (`e2e/real`).
+White-box tests and test/setup/support fixtures retain access to internals;
+test-only helpers are not product exports.
 
 ## Known limitations
 
-- Features still import each other, most often `panels` and `thread`. Each such
+- Features other than `usage` still import each other's internals, most often
+  `panels` and `thread`. Each such
   import is a candidate for moving the shared piece to its real owner.
 - `src/lib` still holds project image and identity helpers used by both `ui` and
   `settings`.
-- ESLint enforces the inward direction for shared folders only, and only for
-  static `import` and `export … from`. Dynamic `import()`, type queries, imports
-  between features and tests are not checked.
+- The shared-folder inward rule covers static `import` and `export … from` for
+  all features, and literal dynamic imports and type queries into `usage`.
+  Computed dynamic paths and white-box test/fixture imports are not checked.
