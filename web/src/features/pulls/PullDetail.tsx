@@ -28,7 +28,7 @@ import { PullsBanner } from "./PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
-import { bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
+import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
 
 type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
 
@@ -441,7 +441,7 @@ export function PullDetail({
           pull.draft
             ? { label: "Ready for review", onSelect: () => void update({ draft: false }, "Ready for review") }
             : { label: "Convert to draft", onSelect: () => void update({ draft: true }, "Converted to draft") },
-          { label: "Change base branch", onSelect: () => setChangingBase(true) },
+          ...(baseChangeAllowed(current) ? [{ label: "Change base branch", onSelect: () => setChangingBase(true) }] : []),
           { label: "Update branch", onSelect: () => void act("update_branch", "Branch updated") },
           { label: "Update with rebase", onSelect: () => void act("rebase", "Branch rebased") },
           {
@@ -481,20 +481,29 @@ export function PullDetail({
       </Button>
     </form>
   );
-  const baseBranch = open ? (
-    <input
-      className="pull-base"
-      aria-label="Base branch"
-      defaultValue={pull.base}
-      key={pull.base}
-      onBlur={(event) => {
-        const base = event.target.value.trim();
-        if (base && base !== pull.base) void update({ base }, "Base branch changed");
-      }}
-    />
-  ) : (
-    pull.base
-  );
+  // Plain text, as the frames draw it (pull-detail, pr-detail-cards). The field appears only after Change base branch,
+  // which is offered only when the service says the base can be changed; it reports no such permission yet.
+  const baseBranch =
+    changingBase && open && baseChangeAllowed(current) ? (
+      <input
+        className="pull-base"
+        aria-label="Base branch"
+        defaultValue={pull.base}
+        key={pull.base}
+        autoFocus
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setChangingBase(false);
+        }}
+        onBlur={(event) => {
+          const base = event.target.value.trim();
+          setChangingBase(false);
+          if (base && base !== pull.base) void update({ base }, "Base branch changed");
+        }}
+      />
+    ) : (
+      pull.base
+    );
   const moreActions = (
     <IconButton
       label="More actions"
@@ -814,30 +823,8 @@ export function PullDetail({
         <div className="pull-card pull-status">
           <Row name="Status">{statusWord}</Row>
           <Row name="Branch">
-            {/* Plain text, as the frames draw it (pull-detail, pr-detail-cards): the service reports no permission to
-                change the base, so the field appears only when the person asks for it under More actions. */}
             <span className="pull-mono">
-              {pull.head} {"\u2192"}{" "}
-              {changingBase && open ? (
-                <input
-                  className="pull-base"
-                  aria-label="Base branch"
-                  defaultValue={pull.base}
-                  key={pull.base}
-                  autoFocus
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                    if (event.key === "Escape") setChangingBase(false);
-                  }}
-                  onBlur={(event) => {
-                    const base = event.target.value.trim();
-                    setChangingBase(false);
-                    if (base && base !== pull.base) void update({ base }, "Base branch changed");
-                  }}
-                />
-              ) : (
-                pull.base
-              )}
+              {pull.head} {"\u2192"} {baseBranch}
             </span>
           </Row>
           <Row name="Review" tone={state === "review" || state === "changes" ? "warn" : undefined}>

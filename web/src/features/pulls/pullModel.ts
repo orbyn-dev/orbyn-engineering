@@ -360,3 +360,6 @@ export function emptyColumns(
     review: rowsWith.every((row) => (yourReview(row, viewers) ?? null) === null),
   };
 }
+
+/** Whether the service says the person can change this pull request's base branch. It reports no such permission yet, so this is false until it does (a `can_change_base` flag on the detail). */
+export const baseChangeAllowed = (detail: object): boolean => (detail as { can_change_base?: unknown }).can_change_base === true;

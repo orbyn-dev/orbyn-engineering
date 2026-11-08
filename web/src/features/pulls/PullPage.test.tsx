@@ -117,8 +117,16 @@ describe("one pull request as a page", () => {
     expect(card.querySelector("input, select")).toBeNull();
   });
 
-  it("offers the base branch as a field only after Change base branch is chosen", async () => {
+  it("offers no base-branch change while the service reports no permission for it", async () => {
     await show(detail());
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Change base branch" })).toBeNull();
+    expect(document.querySelector(".pull-status input")).toBeNull();
+    expect(document.querySelector("input[aria-label='Base branch']")).toBeNull();
+  });
+
+  it("renders the base branch field only after Change base branch is chosen, when the service allows it", async () => {
+    await show({ ...detail(), can_change_base: true } as never);
     const card = document.querySelector(".pull-status") as HTMLElement;
     expect(card.querySelector("input")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
