@@ -64,3 +64,5 @@ if (built.line === "missing" || built.line === "empty") {
   done(buildComment({ units, failed, unknown, over, version: built.version, url: (rel) => `${urlPrefix.replace(/\/$/, "")}/images/${rel}?raw=true`, runUrl, sha, error }), { units, failed, unknown, over, error });
   console.log(`done: ${units.length} frames drawn, ${failed.length} failed`);
 }
+// Every file is written: a leftover browser or server process must not keep the step waiting.
+process.exit(0);

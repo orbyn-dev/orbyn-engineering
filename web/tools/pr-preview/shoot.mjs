@@ -8,6 +8,10 @@ import { createRequire } from "node:module";
 
 export const THEMES = ["light", "dark", "dim"];
 const VIEWPORT = { width: 1400, height: 760 };
+/** No single screen may hold the run: a shot that takes longer than this is given up on and reported. */
+const SHOT_MS = 60_000;
+const within = (work, ms, what) =>
+  Promise.race([work, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} took longer than ${ms / 1000} s`)), ms))]);
 
 const freePort = () =>
   new Promise((resolve, reject) => {
@@ -81,6 +85,40 @@ async function run(page, step) {
   }
 }
 
+/** One frame in one theme: a fresh page, the frame's network set-up, its route, its steps, a screenshot. */
+async function draw({ browser, app, id, frame, theme, out }) {
+  const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: "reduce" });
+  try {
+    const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
+    const prefs = { welcomeDone: true, foldersNotice: false, theme: theme === "light" ? "light" : "dark", darkPreset: theme === "dim" ? "dim" : null };
+    await page.addInitScript((value) => {
+      try {
+        if (!sessionStorage.getItem("__seeded")) {
+          localStorage.setItem("orbyn.prefs.v1", JSON.stringify(value));
+          sessionStorage.setItem("__seeded", "1");
+        }
+      } catch {
+        /* a window with no storage still draws */
+      }
+    }, prefs);
+    for (const spec of frame.pre ?? []) await route(page, spec);
+    const to = encodeURIComponent(`/${frame.route}`).replace("%2F", "/");
+    await page.goto(`${app.origin}/__mock/scenario/${frame.scenario ?? "default"}?to=${to}`);
+    await page.waitForSelector(".sidebar, .main", { timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(frame.wait ?? 1500);
+    await page.evaluate(() => document.querySelectorAll(".folders-notice, .toast").forEach((node) => node.remove()));
+    for (const step of frame.steps ?? []) await run(page, step);
+    await page.waitForTimeout(500);
+    const file = join(out, `${id}-${theme}.png`);
+    mkdirSync(dirname(file), { recursive: true });
+    await page.screenshot({ path: file });
+    return file;
+  } finally {
+    await Promise.race([context.close(), new Promise((resolve) => setTimeout(resolve, 10_000))]);
+  }
+}
+
 /**
  * @param {object} p
  * @param {string} p.web the web folder
@@ -100,44 +138,18 @@ export async function shoot({ web, ids, catalog, out, log = () => {} }) {
   const failed = [];
   try {
     for (const id of ids) {
-      const frame = catalog[id];
       for (const theme of THEMES) {
-        const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: "reduce" });
-        const page = await context.newPage();
         try {
-          const prefs = { welcomeDone: true, foldersNotice: false, theme: theme === "light" ? "light" : "dark", darkPreset: theme === "dim" ? "dim" : null };
-          await page.addInitScript((value) => {
-            try {
-              if (!sessionStorage.getItem("__seeded")) {
-                localStorage.setItem("orbyn.prefs.v1", JSON.stringify(value));
-                sessionStorage.setItem("__seeded", "1");
-              }
-            } catch {
-              /* a window with no storage still draws */
-            }
-          }, prefs);
-          for (const spec of frame.pre ?? []) await route(page, spec);
-          const to = encodeURIComponent(`/${frame.route}`).replace("%2F", "/");
-          await page.goto(`${app.origin}/__mock/scenario/${frame.scenario ?? "default"}?to=${to}`);
-          await page.waitForSelector(".sidebar, .main", { timeout: 20000 }).catch(() => {});
-          await page.waitForTimeout(frame.wait ?? 1500);
-          await page.evaluate(() => document.querySelectorAll(".folders-notice, .toast").forEach((node) => node.remove()));
-          for (const step of frame.steps ?? []) await run(page, step);
-          await page.waitForTimeout(500);
-          const file = join(out, `${id}-${theme}.png`);
-          mkdirSync(dirname(file), { recursive: true });
-          await page.screenshot({ path: file });
-          (files[id] ??= {})[theme] = file;
+          (files[id] ??= {})[theme] = await within(draw({ browser, app, id, frame: catalog[id], theme, out }), SHOT_MS, `${id} (${theme})`);
         } catch (error) {
           log(`${id} (${theme}): ${String(error).split("\n")[0]}`);
-        } finally {
-          await context.close();
         }
       }
-      if (!files[id]) failed.push(id);
+      if (!files[id] || Object.keys(files[id]).length === 0) failed.push(id);
     }
   } finally {
-    await browser.close();
+    // A browser that will not close must not hold the run: it is given a few seconds and then left to the end of the process.
+    await Promise.race([browser.close().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 10_000))]);
     app.stop();
   }
   return { files, failed };
