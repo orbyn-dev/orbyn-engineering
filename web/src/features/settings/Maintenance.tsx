@@ -369,6 +369,8 @@ const reportLine = (report: CleanupReport) => {
 
 /** Sizes as the design writes them: whole megabytes, gigabytes with one decimal. */
 const size = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+/** A process shows under Processes only after it has run this long. */
+export const LONG_RUNNING_SECONDS = 2;
 const DAY_MS = 86_400_000;
 
 /** Today by the clock, yesterday named, anything older by date. */
@@ -403,7 +405,9 @@ function DiagnosticsGroup() {
   if (!data) return <SettingGroup title="Diagnostics">
     <SettingsBanner tone="err">Can’t reach the Orbyn service, so there is nothing to show.</SettingsBanner>
   </SettingGroup>;
-  const stoppable = data.processes.filter((process) => process.pid !== data.pid);
+  // Only processes that have run longer than 2 s: a short-lived one is not something to stop, and listing it only for a
+  // moment made the section flicker.
+  const stoppable = data.processes.filter((process) => process.pid !== data.pid && process.running_seconds > LONG_RUNNING_SECONDS);
   const recent = data.events.filter((event) => Date.now() - Date.parse(event.at) <= DAY_MS);
   const memory = data.history.at(-1)?.memory_bytes;
   const facts: [string, string][] = [
@@ -440,7 +444,7 @@ function DiagnosticsGroup() {
         </div> : null}
       </>}
       <p className="set-grp">Processes</p>
-      {stoppable.length === 0 ? <p className="setting-line-desc">No running processes.</p> : <ul className="setting-list" aria-label="Processes">
+      {stoppable.length === 0 ? <p className="setting-line-desc">Nothing is running long.</p> : <ul className="setting-list" aria-label="Processes">
         {stoppable.map((process) => (
           <li key={process.pid}>
             <SettingRow title={process.name} description={`Running ${duration(process.running_seconds)}`}>
