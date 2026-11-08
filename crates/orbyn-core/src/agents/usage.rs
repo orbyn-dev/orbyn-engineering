@@ -570,15 +570,28 @@ impl Core {
     pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
         let mut engines = Vec::new();
         let mut unavailable = Vec::new();
-        for status in self.engines.statuses(false).await? {
-            if !status.installed {
-                continue;
-            }
-            match self.engine_limits(&status.id, force).await {
+        // Each engine's report may start its own process, so they are asked together.
+        let installed: Vec<String> = self
+            .engines
+            .statuses(false)
+            .await?
+            .into_iter()
+            .filter(|status| status.installed)
+            .map(|status| status.id)
+            .collect();
+        let reads: Vec<_> = installed
+            .iter()
+            .map(|id| self.engine_limits(id, force))
+            .collect();
+        for (id, read) in installed
+            .iter()
+            .zip(futures_util::future::join_all(reads).await)
+        {
+            match read {
                 Ok(limits) => engines.push(limits),
                 Err(CoreError::Unsupported(_)) => {}
                 Err(error) => unavailable.push(LimitsUnavailable {
-                    engine: status.id,
+                    engine: id.clone(),
                     reason: error.public_message(),
                 }),
             }
