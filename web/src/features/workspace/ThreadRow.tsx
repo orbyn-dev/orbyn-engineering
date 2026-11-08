@@ -12,6 +12,8 @@ import { threadRunState } from "./RunState";
 
 const DONE_WINDOW_MS = 5 * 60_000;
 const HOVER_DELAY_MS = 150;
+/** How long a touch stays down before it opens the row's context menu. */
+const LONG_PRESS_MS = 500;
 
 const VERB_BADGE: Record<DropVerb, { label: string; icon: ReactNode }> = {
   pin: { label: "Pin", icon: <Pin size={12} aria-hidden /> },
@@ -231,6 +233,12 @@ export function ThreadRow({
   // the pointer comes back or a key is pressed on it. Another row's or surface's menu
   // does not hold this card back.
   const menuFromRow = useRef(false);
+  // Touch has no hover, so a long press opens the context menu, which carries the same actions as the row's strip.
+  const press = useRef<{ timer?: ReturnType<typeof setTimeout>; x: number; y: number; fired: boolean }>({ x: 0, y: 0, fired: false });
+  const cancelPress = () => {
+    clearTimeout(press.current.timer);
+    press.current.timer = undefined;
+  };
   const startHover = (rect: DOMRect) => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -394,11 +402,36 @@ export function ThreadRow({
         aria-current={selected ? "page" : undefined}
         tabIndex={focusable ? 0 : -1}
         draggable={false}
-        onClick={(event) => actions.onClick(event, thread)}
+        onClick={(event) => {
+          if (press.current.fired) {
+            // The press that opened the menu is not a click on the row.
+            press.current.fired = false;
+            event.preventDefault();
+            return;
+          }
+          actions.onClick(event, thread);
+        }}
         onPointerDown={(event) => {
           stopHover();
+          press.current.fired = false;
+          if (event.pointerType === "touch") {
+            const { clientX, clientY } = event;
+            press.current.x = clientX;
+            press.current.y = clientY;
+            cancelPress();
+            press.current.timer = setTimeout(() => {
+              press.current.fired = true;
+              menuFromRow.current = true;
+              actions.onMenu({ clientX, clientY }, thread);
+            }, LONG_PRESS_MS);
+          }
           actions.onPressStart(event, thread, section);
         }}
+        onPointerMove={(event) => {
+          if (press.current.timer && Math.hypot(event.clientX - press.current.x, event.clientY - press.current.y) > 10) cancelPress();
+        }}
+        onPointerUp={cancelPress}
+        onPointerCancel={cancelPress}
         onFocus={(event) => {
           actions.onRowFocus(thread.id);
           if (!event.currentTarget.matches(":focus-visible")) return;
@@ -416,6 +449,8 @@ export function ThreadRow({
         onPointerLeave={stopHover}
         onContextMenu={(event) => {
           event.preventDefault();
+          // A long press already opened the menu (some touch browsers also send a contextmenu event).
+          if (press.current.fired) return;
           menuFromRow.current = true;
           stopHover();
           actions.onMenu(event, thread);

@@ -86,4 +86,28 @@ describe("followShell", () => {
     expect(fetches).toHaveBeenCalledTimes(5);
     stop();
   });
+
+  it("treats a silent stream that stayed up for a while and then errored as healthy", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        // Comes up, says nothing for 6 s, then the connection breaks.
+        const body = new ReadableStream({
+          start(controller) {
+            setTimeout(() => controller.error(new Error("reset")), 6000);
+          },
+        });
+        return new Response(body, { status: 200 });
+      }
+      throw new Error("down");
+    }));
+    const stop = followShell(() => undefined);
+    await vi.advanceTimersByTimeAsync(6000);
+    // It was healthy, so the next try is the first retry: 250 ms, not a backed-off wait.
+    await vi.advanceTimersByTimeAsync(260);
+    expect(calls).toBe(2);
+    stop();
+  });
 });

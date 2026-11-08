@@ -19,7 +19,7 @@ it("floats the row actions over the row's right edge with a fade, out of the tit
 });
 
 it("shows them on hover, selection and keyboard focus, not by taking the status text's place", () => {
-  expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row\[aria-current="page"\] \.row-actions,\s*\.thread-row:focus-within \.row-actions \{\s*visibility: visible;\s*opacity: 1/);
+  expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row:focus-within \.row-actions \{\s*visibility: visible;\s*opacity: 1/);
   expect(css).not.toMatch(/\.row-rest \{\s*display: none/);
 });
 
@@ -31,4 +31,11 @@ it("drops the project chip on a narrow row so the title keeps the room", () => {
 it("keeps a marked row's trailing end clear of the action strip, so a woke mark or pin is never under Snooze", () => {
   expect(css).toMatch(/\.thread-row:has\(\.row-woke, \.row-pin\) \.row-trailing \{\s*margin-right: 70px;/);
   expect(css).not.toMatch(/\.row-woke,\s*\.row-pin \{[^}]*z-index/);
+});
+
+it("does not keep the strip on the open row, and the drag and highlight fills feed the fade", () => {
+  expect(css).not.toMatch(/aria-current="page"\] \.row-actions/);
+  for (const selector of ["li[data-dragging] .thread-row", "li[data-highlight] .thread-row", "li[data-selected] .thread-row", ".thread-row:hover"]) {
+    expect(rule(selector), selector).toMatch(/--row-state:/);
+  }
 });

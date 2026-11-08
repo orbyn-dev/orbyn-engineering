@@ -467,6 +467,7 @@ li[data-dragging] {
   z-index: 2;
 }
 li[data-dragging] .thread-row {
+  --row-state: var(--color-raised);
   background: var(--color-raised);
   box-shadow: inset 0 0 0 1px var(--color-rowRing);
 }
@@ -542,10 +543,10 @@ input.dialog-field-mono {
     opacity var(--m-fast) var(--m-io),
     visibility 0s linear var(--m-fast);
 }
-/* The row under the pointer, the selected row (multi-select or the open thread), and a row with keyboard focus. */
+/* Only on pointer hover or keyboard focus, the open row included; always for multi-selected rows. Touch has neither:
+   a long press opens the context menu with the same actions. */
 li:hover > .thread-row .row-actions,
 li[data-selected] .thread-row .row-actions,
-.thread-row[aria-current="page"] .row-actions,
 .thread-row:focus-within .row-actions {
   visibility: visible;
   opacity: 1;
@@ -634,6 +635,7 @@ li[data-selected] .thread-row .row-actions,
   color: var(--color-primary);
 }
 li[data-highlight] .thread-row {
+  --row-state: var(--color-rowHover);
   background: var(--color-rowHover);
 }
 .folder-head {

@@ -131,22 +131,43 @@ test("the hovered plus on a project row does not overlap the project name", asyn
   expect(name.right).toBeLessThanOrEqual((plus?.x ?? 0) + 0.5);
 });
 
-/** Row actions are out of the Tab order until a row is under the pointer, selected or focused. */
-test("hidden row actions are not focusable, and the open thread's row shows them", async ({ page }) => {
+/**
+ * Row actions show only on pointer hover or keyboard focus, the open row included, and always for multi-selected rows.
+ * Hidden, they are out of the Tab order and cover nothing: the open row's status text stays visible.
+ */
+test("row actions show on hover and focus only, and leave the Tab order and the status text alone otherwise", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 });
   await page.goto("/__mock/scenario/default");
   await page.goto("/#/threads/t-done");
   await page.mouse.move(700, 400);
-  const current = page.locator(".thread-row[aria-current=page]");
-  await expect(current.getByRole("button", { name: "Settle thread" })).toBeVisible();
-  await expect(current.getByRole("button", { name: "Settle thread" })).toHaveAttribute("title", "Settle");
-  // Every other row's buttons are hidden, so Tab cannot land on them.
-  const others = page.locator(".thread-row:not([aria-current=page]) .row-action");
-  const count = await others.count();
+  const open = page.locator(".thread-row[aria-current=page]");
+  await expect(open).toBeVisible();
+  // The open row: no strip without hover or focus, and its trailing text is not covered.
+  const strip = open.locator(".row-actions");
+  await expect(open.getByRole("button", { name: "Settle thread" })).toBeHidden();
+  const rest = open.locator(".row-rest");
+  if (await rest.count()) await expect(rest).toBeVisible();
+  // Every row's buttons are hidden, so Tab cannot land on them.
+  const all = page.locator(".thread-row .row-action");
+  const count = await all.count();
   expect(count).toBeGreaterThan(3);
-  for (let at = 0; at < Math.min(count, 12); at += 1) await expect(others.nth(at)).toBeHidden();
-  // A row with keyboard focus shows its own.
+  for (let at = 0; at < Math.min(count, 12); at += 1) await expect(all.nth(at)).toBeHidden();
+  // Pointer hover shows them, with the tooltips the frames name.
+  await open.hover();
+  await expect(open.getByRole("button", { name: "Settle thread" })).toBeVisible();
+  await expect(open.getByRole("button", { name: "Settle thread" })).toHaveAttribute("title", "Settle");
+  await expect(open.getByRole("button", { name: "Snooze thread" })).toHaveAttribute("title", "Snooze");
+  await expect(strip).toBeVisible();
+  await page.mouse.move(700, 400);
+  await expect(open.getByRole("button", { name: "Settle thread" })).toBeHidden();
+  // Keyboard focus on another row shows its own strip.
   const other = page.locator(".thread-row:not([aria-current=page])").nth(2);
   await other.focus();
   await expect(other.locator(".row-action").first()).toBeVisible();
+  // A multi-selected row shows them without hover.
+  await page.mouse.move(700, 400);
+  await other.click({ modifiers: ["ControlOrMeta"] });
+  await page.mouse.move(700, 400);
+  const selected = page.locator("li[data-selected] .thread-row").first();
+  if (await selected.count()) await expect(selected.locator(".row-action").first()).toBeVisible();
 });

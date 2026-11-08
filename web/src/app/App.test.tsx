@@ -604,6 +604,30 @@ describe("App against the mock API", () => {
     await waitFor(() => expect(mock.threads.find((t) => t.id === "t-done")?.lifecycle?.settled_at).not.toBeNull());
   });
 
+  it("opens the row's context menu on a long touch press, and not on a short tap or a drag", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const row = (await within(nav).findByText("Explain how the event log resumes")).closest("a") as HTMLElement;
+    const touch = (type: string, over: Record<string, number> = {}) =>
+      fireEvent(row, Object.assign(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 40, clientY: 60, ...over }), { pointerType: "touch" }));
+    // A short tap opens nothing.
+    touch("pointerdown");
+    touch("pointerup");
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(screen.queryByRole("menu")).toBeNull();
+    // A press that moves is a scroll or a drag.
+    touch("pointerdown");
+    touch("pointermove", { clientX: 40, clientY: 120 });
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(screen.queryByRole("menu")).toBeNull();
+    // A long press holds still and opens the menu with the same actions as the strip.
+    touch("pointerdown");
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Settle thread" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Snooze" })).toBeInTheDocument();
+  });
+
   it("shows a hover card for a row after the delay", async () => {
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "Workspace" });

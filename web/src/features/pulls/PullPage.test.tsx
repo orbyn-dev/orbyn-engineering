@@ -134,15 +134,21 @@ describe("one pull request as a page", () => {
     expect(card.querySelector("input[aria-label='Base branch']")).toHaveValue("main");
   });
 
-  it("reads the activity only when the Conversation tab opens, and keeps its count after", async () => {
+  it("reads the activity only when the Conversation tab opens, and keeps its own count after", async () => {
+    // Five events against a comment_count of three, so the two sources cannot be mistaken for each other.
+    vi.mocked(pullsApi.timeline).mockResolvedValue(
+      [1, 2, 3, 4, 5].map((id) => ({ id: String(id), kind: "commented", actor: "sam", created_at: null, text: `Item ${id}` })) as never,
+    );
     await show(detail());
     expect(pullsApi.timeline).not.toHaveBeenCalled();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 3");
     fireEvent.click(screen.getByRole("tab", { name: /^Conversation/ }));
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     expect(pullsApi.timeline).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 5");
     fireEvent.click(screen.getByRole("tab", { name: /^Summary/ }));
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 3");
+    // Back on another tab the count stays the activity's, not the comments'.
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 5");
     expect(pullsApi.timeline).toHaveBeenCalledTimes(1);
   });
 
