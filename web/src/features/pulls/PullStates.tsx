@@ -102,13 +102,31 @@ export const SignedOut = ({ forge, onSignIn, onLater }: { forge: string; onSignI
   </Block>
 );
 
-/** The forge is limiting requests: neutral, with no Retry, which cannot help before the limit resets. */
-export const RateLimitBanner = ({ forge, resumeAt }: { forge: string; resumeAt: string | null }) => {
-  const at = resumeAt ? new Date(resumeAt) : null;
-  const time = at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+const clock = (at: Date | null) =>
+  at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+
+/**
+ * The forge is limiting requests: neutral, with no Retry, because the next check is automatic. The time is an
+ * estimate; when it passes and the forge still limits, the banner says so and gives the next check.
+ */
+export const RateLimitBanner = ({
+  forge,
+  resumeAt,
+  still,
+  nextCheckAt,
+}: {
+  forge: string;
+  resumeAt: string | null;
+  still: boolean;
+  nextCheckAt: number | null;
+}) => {
+  const resume = clock(resumeAt ? new Date(resumeAt) : null);
+  const next = clock(resumeAt || still ? (nextCheckAt === null ? null : new Date(nextCheckAt)) : null);
   return (
     <PullsBanner live icon={<Clock size={14} aria-hidden />} actions={null}>
-      {forge} is limiting requests, so the reviewer and check filters are paused. {time ? `They resume at ${time}.` : "They resume soon."}
+      {still
+        ? `${forge} is still limiting requests, so the reviewer and check filters stay paused. Still limited. ${next ? `Checking again at ${next}.` : "Checking again soon."}`
+        : `${forge} is limiting requests, so the reviewer and check filters are paused. ${resume ? `They resume at ${resume}.` : "They resume soon."}`}
     </PullsBanner>
   );
 };

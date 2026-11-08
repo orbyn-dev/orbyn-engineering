@@ -190,6 +190,44 @@ describe("a filter that needs details", () => {
     expect(vi.mocked(pullsApi.details).mock.calls.length).toBe(calls + 1);
   });
 
+  const limitedList = async () => {
+    render(<PullsPage />);
+    await settle();
+    await act(async () => answer({ details: [details(1, { requested_reviewers: [{ name: "me", kind: "user" }] })], paused: [] }));
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Needs my review" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /^Closed/ }));
+    await settle();
+  };
+
+  it("when the reset passes and the forge still limits, the banner says so with the next time, and goes when a check succeeds", async () => {
+    await limitedList();
+    await act(async () => answer({ details: [], paused: ["requested_reviewers"], resume_at: new Date(Date.now() + 30_000).toISOString() } as never));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(31_000)));
+    // The check at the reset is a plain read, not every row asked for fresh.
+    expect(vi.mocked(pullsApi.details).mock.calls.at(-1)?.[0].fresh).toBe(false);
+    // The banner stays while the check is out.
+    expect(screen.getByText(/is limiting requests/)).toBeInTheDocument();
+    await act(async () => answer({ details: [], paused: ["requested_reviewers"], resume_at: new Date(Date.now() + 120_000).toISOString() } as never));
+    expect(screen.getByText(/GitHub is still limiting requests, so the reviewer and check filters stay paused\. Still limited\. Checking again at \d\d:\d\d\./)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(121_000)));
+    await act(async () => answer({ details: [details(9, { requested_reviewers: [] })], paused: [] }));
+    expect(screen.queryByText(/limiting requests/)).toBeNull();
+  });
+
+  it("checks again after 60 seconds when the service gives no reset time, and does not start the wait over on a render", async () => {
+    await limitedList();
+    await act(async () => answer({ details: [], paused: ["requested_reviewers"] }));
+    const calls = vi.mocked(pullsApi.details).mock.calls.length;
+    await act(async () => void (await vi.advanceTimersByTimeAsync(40_000)));
+    // Anything that renders the page in the meantime must not push the check back.
+    fireEvent.change(screen.getByRole("textbox", { name: "Search pull requests" }), { target: { value: "x" } });
+    await act(async () => void (await vi.advanceTimersByTimeAsync(21_000)));
+    expect(vi.mocked(pullsApi.details).mock.calls.length).toBe(calls + 1);
+  });
+
   it("says they resume soon when the service gives no time", async () => {
     render(<PullsPage />);
     await settle();
