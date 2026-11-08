@@ -1,13 +1,15 @@
-import { Archive, ArchiveRestore, Copy, Ellipsis, Pencil, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { Archive, ArchiveRestore, CircleCheck, Clock, Copy, Ellipsis, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { api } from "../../api/client";
+import type { SnoozePreset } from "../../generated/SnoozePreset";
 import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../state/workspace";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { archiveThreads, copyText, deleteThreadNow, unarchiveThread } from "../workspace/threadActions";
-import { RenameThreadDialog } from "../workspace/threadMenu";
+import { archiveThreads, copyText, deleteThreadNow, settleThreads, unarchiveThread, unsettleThreads, wakeThreads } from "../workspace/threadActions";
+import { RenameThreadDialog, snoozeChildren } from "../workspace/threadMenu";
 
 /** Every thread below this one (side chats, children) and the thread itself. */
 export function familyOf(thread: Thread, threads: Readonly<Record<string, Thread>>): Thread[] {
@@ -23,18 +25,34 @@ export function familyOf(thread: Thread, threads: Readonly<Record<string, Thread
 
 const MENU_WIDTH = 220;
 
-/** The thread's own menu at the right of its header: Rename, Copy folder path, Archive (or Unarchive) and Delete thread. */
+/** The thread's own menu at the right of its header: Settle and Snooze first, then Rename, Copy folder path, Archive (or Unarchive) and Delete thread. */
 export function ThreadHeaderMenu({ thread }: { thread: Thread }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const threads = useWorkspace((state) => state.threads);
   const button = useRef<HTMLDivElement>(null);
+  // The same presets as the sidebar row's Snooze, read from Settings > Threads when the menu is first opened.
+  const [presets, setPresets] = useState<readonly SnoozePreset[]>([]);
+  useEffect(() => {
+    if (!menu || presets.length > 0) return;
+    const abort = new AbortController();
+    api.settings(abort.signal).then((settings) => setPresets(settings.snooze_presets ?? []), () => undefined);
+    return () => abort.abort();
+  }, [menu, presets.length]);
   const archived = Boolean(thread.lifecycle?.archived_at);
+  const settled = Boolean(thread.lifecycle?.settled_at);
+  const snoozed = Boolean(thread.lifecycle?.snoozed_until);
   const busy = familyOf(thread, threads).some((member) => member.active_run !== null);
   const icon = (Glyph: typeof Pencil) => <Glyph size={14} aria-hidden />;
   const items: MenuItem[] = [
-    { label: "Rename", icon: icon(Pencil), onSelect: () => setRenaming(true) },
+    settled
+      ? { label: "Un-settle", icon: icon(CircleCheck), onSelect: () => void unsettleThreads([thread]) }
+      : { label: "Settle", icon: icon(CircleCheck), onSelect: () => void settleThreads([thread]) },
+    snoozed
+      ? { label: "Wake", icon: icon(Clock), onSelect: () => void wakeThreads([thread]) }
+      : { label: "Snooze…", icon: icon(Clock), children: snoozeChildren([thread], presets) },
+    { label: "Rename", icon: icon(Pencil), separatorBefore: true, onSelect: () => setRenaming(true) },
     { label: "Copy folder path", icon: icon(Copy), onSelect: () => void copyText(thread.cwd, "Folder path copied") },
     archived
       ? {

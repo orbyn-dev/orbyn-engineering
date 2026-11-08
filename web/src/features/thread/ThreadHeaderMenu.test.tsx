@@ -16,6 +16,10 @@ vi.mock("../workspace/threadActions", async (original) => ({
   unarchiveThread: vi.fn(),
   copyText: vi.fn(),
   deleteThreadNow: vi.fn(),
+  settleThreads: vi.fn(),
+  unsettleThreads: vi.fn(),
+  snoozeThreads: vi.fn(),
+  wakeThreads: vi.fn(),
 }));
 
 const base: Thread = { id: "t", project_id: "p", title: "Fix login", engine: "codex", model: null,
@@ -43,6 +47,62 @@ beforeEach(() => {
 });
 
 describe("the thread header menu", () => {
+  const presets = [
+    { label: "An hour", minutes: 60 },
+    { label: "Later today", minutes: 240 },
+    { label: "Tomorrow morning", minutes: 900 },
+  ];
+  beforeEach(() => {
+    vi.spyOn(api, "settings").mockResolvedValue({ snooze_presets: presets } as never);
+    vi.mocked(actions.settleThreads).mockClear();
+    vi.mocked(actions.unsettleThreads).mockClear();
+    vi.mocked(actions.snoozeThreads).mockClear();
+    vi.mocked(actions.wakeThreads).mockClear();
+  });
+
+  it("starts with Settle and Snooze…, then a divider, then the existing items, and no other actions", async () => {
+    const { menu } = await open(base);
+    const names = within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim());
+    expect(names).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Archive", "Delete thread"]);
+    for (const absent of ["Copy link", "Open in new window", "Pin", "Fork", "Move to worktree", "Open in terminal"]) {
+      expect(within(menu).queryByRole("menuitem", { name: absent })).toBeNull();
+    }
+  });
+
+  it("settles the thread, and offers Un-settle on a settled one", async () => {
+    const { user, menu } = await open(base);
+    await user.click(within(menu).getByRole("menuitem", { name: "Settle" }));
+    expect(actions.settleThreads).toHaveBeenCalledWith([base]);
+  });
+
+  it("offers Un-settle and Wake in place of Settle and Snooze on a settled, snoozed thread", async () => {
+    const both = { ...base, lifecycle: { ...base.lifecycle!, settled_at: "2026-11-03T00:00:00Z", snoozed_until: "2026-11-09T00:00:00Z" } };
+    const { user, menu } = await open(both);
+    expect(within(menu).queryByRole("menuitem", { name: "Settle" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Snooze…" })).toBeNull();
+    await user.click(within(menu).getByRole("menuitem", { name: "Un-settle" }));
+    expect(actions.unsettleThreads).toHaveBeenCalledWith([both]);
+  });
+
+  it("opens a Snooze… submenu from the Settings presets, by keyboard too, and snoozes with the same action as the row", async () => {
+    const { user, menu } = await open(base);
+    const snooze = within(menu).getByRole("menuitem", { name: "Snooze…" });
+    expect(snooze).toHaveAttribute("aria-haspopup", "menu");
+    snooze.focus();
+    await user.keyboard("{ArrowRight}");
+    const sub = await screen.findByRole("menu", { name: "Snooze…" });
+    const labels = within(sub).getAllByRole("menuitem").map((item) => item.textContent ?? "");
+    expect(labels).toHaveLength(3);
+    expect(labels[0]).toMatch(/^An hour/);
+    expect(labels[2]).toMatch(/^Tomorrow morning/);
+    expect(within(sub).queryByRole("menuitem", { name: /Custom/ })).toBeNull();
+    await user.click(within(sub).getAllByRole("menuitem")[1]!);
+    expect(actions.snoozeThreads).toHaveBeenCalledTimes(1);
+    const [threads, until] = vi.mocked(actions.snoozeThreads).mock.calls[0]!;
+    expect(threads).toEqual([base]);
+    expect((until as Date).getTime() - Date.now()).toBeGreaterThan(239 * 60_000);
+  });
+
   it("copies the folder path", async () => {
     const { user, menu } = await open(base);
     await user.click(within(menu).getByRole("menuitem", { name: "Copy folder path" }));

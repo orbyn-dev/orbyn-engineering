@@ -54,7 +54,7 @@ const whenLabel = (at: Date) =>
 export function snoozeChildren(
   threads: readonly Thread[],
   presets: readonly SnoozePreset[],
-  onCustom: () => void,
+  onCustom?: () => void,
 ): MenuItem[] {
   return [
     ...presets.map((preset) => {
@@ -64,7 +64,7 @@ export function snoozeChildren(
         onSelect: () => void snoozeThreads(threads, new Date(Date.now() + preset.minutes * 60_000)),
       };
     }),
-    { label: "Custom…", separatorBefore: true, onSelect: onCustom },
+    ...(onCustom ? [{ label: "Custom…", separatorBefore: true, onSelect: onCustom }] : []),
   ];
 }
 
