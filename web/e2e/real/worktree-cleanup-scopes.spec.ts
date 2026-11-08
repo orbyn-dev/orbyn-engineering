@@ -3,7 +3,7 @@ import { startProject } from "./service";
 
 const TITLE = "Automatic worktree cleanup";
 
-test("switching cleanup on captures the inherited legacy age for the selected project", async ({ page }) => {
+test("shows the inherited legacy age for the selected project, and On after Off starts at 7", async ({ page }) => {
   const { service, projectId } = await startProject({ fakeEngines: true });
   try {
     await service.api("PUT", "/api/preferences", { values: { storage_cleanup: { worktree_settled_after_days: 12 }, worktree_cleanup: {} } });

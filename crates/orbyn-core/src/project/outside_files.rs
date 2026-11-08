@@ -271,17 +271,20 @@ fn read_target(target: &Path, fence: &Fence) -> Result<OutsideFile> {
         // A folder is never listed from here.
         return Err(refused("That path is not a file."));
     }
+    // Before any path is read back from the open file: a file with several names has no one path, and the
+    // system may hand back any of them (macOS reports whichever name it has cached), so the path checks below
+    // could refuse it for a different reason from one run to the next.
+    if link_count(&file).map_or(true, |count| count != 1) {
+        return Err(refused(
+            "That file has more than one name, so Orbyn can't tell where it lives.",
+        ));
+    }
     let opened = crate::project::files::opened_path(&file)
         .map_err(|_| refused("That file can't be checked."))?;
     if !within(&opened, target) || !within(target, &opened) {
         return Err(refused("That file moved while it was opened."));
     }
     fence.check(&opened)?;
-    if link_count(&file).map_or(true, |count| count != 1) {
-        return Err(refused(
-            "That file has more than one name, so Orbyn can't tell where it lives.",
-        ));
-    }
     let size = meta.len();
     let path = target.to_string_lossy().into_owned();
     let mut bytes = Vec::new();
@@ -468,8 +471,25 @@ mod tests {
         std::fs::write(fixture.root.join("data/service.json"), "token").unwrap();
         let alias = fixture.root.join("elsewhere/copy.json");
         std::fs::hard_link(fixture.root.join("data/service.json"), &alias).unwrap();
-        let error = read(&fixture, &alias).unwrap_err();
-        assert!(error.to_string().contains("more than one name"), "{error}");
+        // The system may report either name for the open file; the answer must not depend on which.
+        for _ in 0..50 {
+            let error = read(&fixture, &alias).unwrap_err();
+            assert!(error.to_string().contains("more than one name"), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_second_name_for_a_file_outside_the_fence_is_refused_too() {
+        let fixture = fixture();
+        let first = fixture.root.join("elsewhere/one.txt");
+        std::fs::write(&first, "text").unwrap();
+        let second = fixture.root.join("elsewhere/two.txt");
+        std::fs::hard_link(&first, &second).unwrap();
+        for name in [&first, &second] {
+            let error = read(&fixture, name).unwrap_err();
+            assert!(error.to_string().contains("more than one name"), "{error}");
+        }
     }
 
     #[cfg(target_os = "macos")]
