@@ -517,6 +517,12 @@ input.dialog-field-mono {
 }
 /* Snooze and Settle are icon-only buttons floating over the row's right edge with a fade: the title keeps its full
    width underneath, and the status text stays where it is. The context menu carries the same actions. */
+.row-woke,
+.row-pin {
+  /* Above the floating row actions, so a woke mark or a pin stays pressable while the row is hovered. */
+  position: relative;
+  z-index: 1;
+}
 .row-actions {
   position: absolute;
   inset-block: 0;

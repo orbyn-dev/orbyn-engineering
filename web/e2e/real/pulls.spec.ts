@@ -206,6 +206,7 @@ test("summary edits the title, description, base, reviewers and labels", async (
   await renamed.getByLabel("Description").fill("A better reason.");
   await renamed.getByRole("button", { name: "Save description" }).click();
   await expect(renamed.getByText("A better reason.")).toBeVisible();
+  await moreAction(page, renamed, "Change base branch");
   await renamed.getByLabel("Base branch").fill("develop");
   await renamed.getByLabel("Base branch").blur();
   await expect.poll(() => service.ghPull(1).baseRefName).toBe("develop");
@@ -219,6 +220,7 @@ test("summary edits the title, description, base, reviewers and labels", async (
   await renamed.getByLabel("Title").fill("First layer");
   await renamed.getByRole("button", { name: "Save", exact: true }).click();
   await expect(detail(page, "First layer")).toBeVisible();
+  await moreAction(page, detail(page, "First layer"), "Change base branch");
   await detail(page, "First layer").getByLabel("Base branch").fill("main");
   await detail(page, "First layer").getByLabel("Base branch").blur();
   await expect.poll(() => service.ghPull(1).baseRefName).toBe("main");

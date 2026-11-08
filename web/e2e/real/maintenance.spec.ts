@@ -143,11 +143,15 @@ test("Maintenance lists the service's processes and can stop one", async ({ page
     await expect(page).toHaveURL(/#\/threads\//);
     const id = threadIdOf(page);
     await expect.poll(async () => (await own.api<{ active_run: { state: string } | null }>("GET", `/api/threads/${id}`)).active_run?.state).toBe("running");
+    // Only a process that has run over 2 s is listed, and the page reads the list when it opens.
+    await expect.poll(async () => (await own.api<{ processes: { name: string; running_seconds: number }[] }>("GET", "/api/diagnostics")).processes.some((one) => one.name.includes("node") && one.running_seconds > 2), { timeout: 20_000 }).toBe(true);
     await page.goto(`${own.page}#/settings/maintenance`);
     const processes = page.getByRole("list", { name: "Processes" });
     // The service itself is never listed as something to stop; its engine is.
     await expect(page.getByText("No problems").or(page.getByText("Recent problems")).first()).toBeVisible();
+    // Only what has run over 2 s is listed, so the engine appears once it has been running that long.
     const engine = processes.getByRole("listitem").filter({ hasText: /node/ }).first();
+    await expect(engine).toBeVisible({ timeout: 15_000 });
     await engine.getByRole("button", { name: /^Stop/ }).click();
     await page.getByRole("dialog", { name: /^Stop / }).getByRole("button", { name: "Stop", exact: true }).click();
     await expect(page.getByText(/^Stopped /)).toBeVisible();

@@ -117,6 +117,15 @@ describe("one pull request as a page", () => {
     expect(card.querySelector("input, select")).toBeNull();
   });
 
+  it("offers the base branch as a field only after Change base branch is chosen", async () => {
+    await show(detail());
+    const card = document.querySelector(".pull-status") as HTMLElement;
+    expect(card.querySelector("input")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change base branch" }));
+    expect(card.querySelector("input[aria-label='Base branch']")).toHaveValue("main");
+  });
+
   it("counts the Conversation tab from everything it lists, commits included", async () => {
     vi.mocked(pullsApi.timeline).mockResolvedValue([
       { id: "a1", kind: "committed", actor: "Ada", created_at: "2026-11-05T01:05:00Z", text: "Fix the redirect" },
