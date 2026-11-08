@@ -1106,16 +1106,34 @@ impl Core {
         forge::publish(forge, cwd, name, request.private).await
     }
 
-    /// Every forge and what its CLI says about itself. This is also the rescan:
-    /// nothing is cached, so asking again finds a CLI installed a moment ago.
-    pub async fn forges(&self) -> Vec<ForgeStatus> {
-        let mut statuses = Vec::with_capacity(ALL_FORGES.len());
-        for forge in ALL_FORGES {
-            statuses.push(forge::forge_status(forge).await);
+    /// Every forge and what its CLI says about itself, reused for a minute. A sign-in
+    /// happens in the CLI, outside this service, so `rescan` asks the CLIs again; that
+    /// also finds one installed a moment ago.
+    pub async fn forges(&self, rescan: bool) -> Vec<ForgeStatus> {
+        if !rescan && let Some(known) = self.known_forges() {
+            return known;
         }
+        let reads: Vec<_> = ALL_FORGES.into_iter().map(forge::forge_status).collect();
+        let statuses = futures_util::future::join_all(reads).await;
+        *self
+            .forge_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((Instant::now(), statuses.clone()));
         statuses
     }
+
+    fn known_forges(&self) -> Option<Vec<ForgeStatus>> {
+        let known = self
+            .forge_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (at, statuses) = known.as_ref()?;
+        (at.elapsed() < FORGES_TTL).then(|| statuses.clone())
+    }
 }
+
+const FORGES_TTL: Duration = Duration::from_secs(60);
 
 fn pull_ref(forge: Forge) -> &'static str {
     match forge {
@@ -1320,5 +1338,39 @@ mod tests {
         assert!(check_opaque("PRRT_kw-1=").is_ok());
         assert!(check_opaque("1/../2").is_err());
         assert!(check_opaque("").is_err());
+    }
+
+    fn forge_stub(name: &str) -> ForgeStatus {
+        ForgeStatus {
+            id: name.into(),
+            name: name.into(),
+            program: None,
+            installed: false,
+            version: None,
+            signed_in: false,
+            accounts: Vec::new(),
+            viewer: None,
+            problem: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn forges_answer_from_memory_until_rescanned_or_expired() {
+        let dir = crate::testing::TempDir::new();
+        let mut config =
+            crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert!(core.known_forges().is_none());
+        *core.forge_statuses.lock().unwrap() = Some((Instant::now(), vec![forge_stub("kept")]));
+        assert_eq!(core.forges(false).await[0].id, "kept");
+        // A rescan asks every CLI again and replaces what was kept.
+        assert_eq!(core.forges(true).await.len(), ALL_FORGES.len());
+        assert_ne!(core.known_forges().unwrap()[0].id, "kept");
+        *core.forge_statuses.lock().unwrap() = Some((
+            Instant::now() - FORGES_TTL - Duration::from_secs(1),
+            vec![forge_stub("old")],
+        ));
+        assert!(core.known_forges().is_none());
     }
 }

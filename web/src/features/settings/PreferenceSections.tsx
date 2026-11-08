@@ -507,7 +507,7 @@ export function WorktreesSection() {
 }
 
 export function SourceControlSection() {
-  const forges = useAsync("forges", (signal) => request<ForgeStatus[]>("GET", "/api/forges", undefined, signal));
+  const forges = useAsync("forges", (signal) => request<ForgeStatus[]>("GET", "/api/forges?rescan=true", undefined, signal));
   const offline = useConnection((state) => state.offline);
   const scannedAt = useRef<number | null>(null);
   if (forges.status === "ready" && !offline) scannedAt.current = Date.now();
