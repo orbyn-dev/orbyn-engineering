@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { SCRIPTED_ENGINE } from "./engine-scripts";
 
 const web = resolve(import.meta.dirname, "../..");
 
@@ -55,7 +56,7 @@ test("selected routes follow lifecycle sections and limit recovery keeps snooze 
     const kept = ["PATH", "Path", "SystemRoot", "TEMP", "TMP", "TMPDIR", "LANG"];
     const env = { ...Object.fromEntries(kept.filter((key) => process.env[key]).map((key) => [key, process.env[key]])),
       HOME: profile, CFFIXED_USER_HOME: profile, USERPROFILE: profile, ORBYN_OFFLINE: "1",
-      ORBYN_CLAUDE_BIN: join(profile, "no-claude"), ORBYN_CODEX_BIN: resolve(web, "e2e/real/scripted-engine.mjs"), ORBYN_E2E_FAKE: fake,
+      ORBYN_CLAUDE_BIN: join(profile, "no-claude"), ORBYN_CODEX_BIN: SCRIPTED_ENGINE, ORBYN_E2E_FAKE: fake,
       CODEX_HOME: join(profile, "codex"), CLAUDE_CONFIG_DIR: join(profile, "claude"),
       GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com" };
     const git = (...args: string[]) => execFileSync("git", args, { cwd: library, env, stdio: "ignore" });
