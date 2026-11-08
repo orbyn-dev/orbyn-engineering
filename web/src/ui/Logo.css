@@ -23,8 +23,10 @@
 }
 /* The splash: the mark alone at 64 px, centred, shown after the 400 ms wait. */
 .logo-splash {
+  position: fixed;
+  inset: 0;
   display: grid;
   place-items: center;
-  padding: 24px 0;
+  background: var(--color-background);
   color: var(--color-textSoft);
 }

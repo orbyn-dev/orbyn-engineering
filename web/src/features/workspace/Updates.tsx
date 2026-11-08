@@ -162,6 +162,7 @@ export function UpdateEverythingDialog({ onClose }: { onClose(): void }) {
             <div key={row.key} role="listitem" className="update-row">
               <div className="update-item">
                 <span className="update-who">
+                  {/* The design draws the tile on the app row only; the CLI and library rows have none. */}
                   {row.key === "app" ? <LogoTile size={28} /> : null}
                   <span>
                     <b className="update-name">{row.name}</b>
@@ -181,7 +182,6 @@ export function UpdateEverythingDialog({ onClose }: { onClose(): void }) {
                         />
                       </>
                     ) : null}
-
                   </span>
                 </span>
                 <span className="update-kind">{row.kind}</span>

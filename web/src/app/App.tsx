@@ -102,9 +102,7 @@ function BootedApp() {
   switch (boot.state) {
     case "loading":
       return (
-        <main className="boot">
-          <Splash label="Connecting to Orbyn" />
-        </main>
+        <Splash label="Connecting to Orbyn" />
       );
     case "sign-in":
       return <SignIn onSignedIn={start} />;

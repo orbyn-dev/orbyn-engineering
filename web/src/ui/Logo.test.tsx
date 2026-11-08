@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Logo, LogoTile, type LogoSize } from "./Logo";
 
 const SIZES: LogoSize[] = [16, 20, 24, 28, 48, 64];
@@ -38,7 +38,7 @@ describe("Logo", () => {
 });
 
 describe("logo tokens", () => {
-  const css = readFileSync(join(process.cwd(), "src/styles/tokens.css"), "utf8");
+  const css = readFileSync(join(import.meta.dirname, "../styles/tokens.css"), "utf8");
   /** The declarations of the first rule whose selector is exactly `selector`. */
   const rule = (selector: string) => {
     const start = css.indexOf(`${selector} {`);

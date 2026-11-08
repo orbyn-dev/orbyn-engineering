@@ -203,6 +203,20 @@ describe("App against the mock API", () => {
       expect(within(dialog).getByText(/\d+ new changes?/)).toBeInTheDocument();
     });
 
+    it("marks the pill with the 16 px mark and gives only the app row a 28 px tile", async () => {
+      idle();
+      const user = userEvent.setup();
+      render(<App />);
+      const pill = await screen.findByRole("button", { name: "Updates available · 3" });
+      expect(pill.querySelector("svg.logo")).toHaveAttribute("data-logo", "16");
+      await user.click(pill);
+      const dialog = await screen.findByRole("dialog", { name: "Update everything" });
+      const rows = within(dialog).getAllByRole("listitem");
+      expect(rows[0]?.querySelector(".logo-tile")).toHaveAttribute("data-size", "28");
+      expect(rows[0]).toHaveTextContent("Orbyn Engineering");
+      expect(dialog.querySelectorAll(".logo-tile")).toHaveLength(1);
+    });
+
     it("keeps the Skills library row, saying it is up to date, when nothing newer exists", async () => {
       mock.patchUpdates({ library: { ...mock.updates.library, behind: 0, incoming: [] } });
       const user = userEvent.setup();

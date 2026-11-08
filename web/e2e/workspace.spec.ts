@@ -352,6 +352,26 @@ test("New thread in opens a draft in the chosen project", async ({ page }) => {
   await expect(page.locator(".hero-project")).toHaveText("marketing-site");
 });
 
+test("a project with no threads opens its empty screen, and New thread opens the composer for it", async ({ page }) => {
+  // The mock's one project without threads is not trusted yet; trust it here.
+  await page.route("**/api/projects", async (route) => {
+    const response = await route.fetch();
+    const projects = (await response.json()) as { id: string; trusted: boolean }[];
+    await route.fulfill({ response, json: projects.map((project) => (project.id === "p-new" ? { ...project, trusted: true } : project)) });
+  });
+  await page.goto("/#/projects/p-new");
+  await expect(page.getByRole("heading", { name: "No threads yet" })).toBeVisible();
+  await expect(page.locator(".empty-project .logo")).toHaveAttribute("data-logo", "48");
+  await page.getByRole("button", { name: "New thread" }).click();
+  await expect(page).toHaveURL(/#\/new\/p-new$/);
+  await expect(page.locator(".hero-project")).toHaveText("vendor-sdk-with-a-rather-long-repository-name-for-layout");
+
+  // A project that has threads goes straight to the composer instead.
+  await page.goto("/#/projects/p-site");
+  await expect(page.getByRole("heading", { name: "No threads yet" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+});
+
 test("the pull requests page lists and filters", async ({ page }) => {
   await page.goto("/#/threads/t-done");
   await page.getByRole("link", { name: "Pull requests" }).click();

@@ -193,6 +193,9 @@ fn app_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     let about = AboutMetadata {
         name: Some(app.package_info().name.clone()),
         version: Some(app.package_info().version.to_string()),
+        // The mark, the name, the version and one copyright line; Licences and orbyn.dev live in Settings > About.
+        icon: Some(tauri::include_image!("icons/icon.png")),
+        copyright: Some("© 2026 Orbyn".into()),
         ..AboutMetadata::default()
     };
     // Its own item rather than the predefined one, so `Cmd+Q` can move to the page.

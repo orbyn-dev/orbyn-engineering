@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { create } from "zustand";
 import { NoProjects } from "../features/onboarding/NoProjects";
 import { DraftView } from "../features/onboarding/DraftView";
+import { EmptyProject } from "../features/onboarding/EmptyProject";
 import { TrustFolder } from "../features/onboarding/TrustFolder";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { ThreadView } from "../features/thread/ThreadView";
@@ -110,6 +111,8 @@ function RouteView({ route, needsProject }: { route: PageRoute; needsProject: bo
       return <ThreadView key={route.id} id={route.id} />;
     case "new":
       return <DraftView key={route.projectId ?? "draft"} projectId={route.projectId} />;
+    case "project":
+      return <EmptyProject key={route.projectId} projectId={route.projectId} />;
     case "trust":
       return <TrustFolder projectId={route.projectId} threadId={route.threadId} />;
   }
