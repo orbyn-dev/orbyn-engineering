@@ -2,6 +2,7 @@ import { useState } from "react";
 import { clockTime, fullTime } from "../../lib/format";
 import { useThreadLogs } from "../thread/threadLogs";
 import { Empty } from "../../ui/states";
+import { ThisRun } from "./ThisRun";
 import { filterActivity, summarizeActivity, type ActivityFilter } from "./activityView";
 
 const FILTERS: { id: ActivityFilter; label: string }[] = [
@@ -19,6 +20,7 @@ export function ActivityPanel({ threadId }: { threadId: string }) {
   const summary = summarizeActivity(timeline);
   return (
     <>
+      <ThisRun threadId={threadId} />
       <div className="activity-head">
         <div className="segment" role="radiogroup" aria-label="Activity filter">
           {FILTERS.map(({ id, label }) => (

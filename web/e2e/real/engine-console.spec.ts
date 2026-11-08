@@ -38,6 +38,8 @@ test("the engine console resumes the thread's session and holds runs until it cl
     await expect(box).toHaveValue("second turn");
 
     await page.getByRole("button", { name: "Close Claude console", exact: true }).click();
+    // The console is alive, so ending it asks first.
+    await page.getByRole("dialog", { name: "End this terminal?" }).getByRole("button", { name: "End", exact: true }).click();
     await expect(tab).toHaveCount(0);
     await send(page, "second turn");
     await settled(service, thread.id);

@@ -16,6 +16,11 @@
       "license": "MIT"
     },
     {
+      "name": "@xterm/addon-search",
+      "version": "0.16.0",
+      "license": "MIT"
+    },
+    {
       "name": "@xterm/xterm",
       "version": "6.0.0",
       "license": "MIT"

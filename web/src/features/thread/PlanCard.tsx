@@ -1,11 +1,13 @@
 import { Ellipsis } from "lucide-react";
 import { use, useState } from "react";
+import { useOpenState } from "../../ui/openState";
 import { request } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../state/ui";
 import { Dialog } from "../../ui/Dialog";
 import { Button, IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
+import { Presence } from "../../ui/Presence";
 import { TimelineThread } from "./items";
 import { Markdown } from "./Markdown";
 import { planFilename, planTitle, stripPlanTitle } from "./proposedPlan";
@@ -75,7 +77,7 @@ function SaveDialog({ threadId, text, name, onClose }: { threadId: string; text:
 /** A plan the agent proposed: long ones start clipped, and it can leave the thread. */
 export function PlanCard({ text }: { text: string }) {
   const threadId = use(TimelineThread);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useOpenState("plan", false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const pushToast = useUi((state) => state.pushToast);
@@ -106,7 +108,7 @@ export function PlanCard({ text }: { text: string }) {
           {expanded ? "Collapse plan" : "Expand plan"}
         </Button>
       ) : null}
-      {menu ? (
+      <Presence>{menu ? (
         <Menu
           x={menu.x}
           y={menu.y}
@@ -121,7 +123,7 @@ export function PlanCard({ text }: { text: string }) {
             ...(threadId ? [{ label: "Save to workspace", onSelect: () => setSaving(true) }] : []),
           ]}
         />
-      ) : null}
+      ) : null}</Presence>
       {saving && threadId ? <SaveDialog threadId={threadId} text={text} name={name} onClose={() => setSaving(false)} /> : null}
     </section>
   );

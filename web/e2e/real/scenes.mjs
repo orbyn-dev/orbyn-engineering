@@ -110,6 +110,19 @@ export const scenes = {
     { method: "item/commandExecution/outputDelta", params: { itemId: "l2", delta: "tick\n" } },
     { hold: true },
   ],
+  // One command that prints forty lines, goes on for a while and then ends, with the turn still open after it:
+  // a person can watch the output follow its end, then see it become a capped block in the same row.
+  "long-live": (() => {
+    const output = Array.from({ length: 40 }, (_, n) => `line ${n + 1}`).join("\n") + "\n";
+    const body = { command: "seq 40", cwd: "/repo", commandActions: [] };
+    return [
+      started(item("ll1", "commandExecution", { ...body, status: "inProgress" })),
+      { method: "item/commandExecution/outputDelta", params: { itemId: "ll1", delta: output } },
+      { wait: 6000 },
+      completed(item("ll1", "commandExecution", { ...body, status: "completed", aggregatedOutput: output, exitCode: 0 })),
+      { hold: true },
+    ];
+  })(),
   "trace-batch": [
     ...Array.from({ length: 43 }, (_, n) => command(`trace${n}`, `echo trace${n}`, `trace${n}\n`, 0)).flat(),
     { hold: true },
@@ -172,3 +185,9 @@ ${Array.from({ length: 30 }, (_, at) => `- Step ${at + 1}`).join("\n")}
     { end: "failed", error: { message: "The engine stopped: disk full" } },
   ],
 };
+
+// Performance baseline (local only): 50 items per turn, half replies and half commands.
+scenes.chunk = Array.from({ length: 25 }, (_, n) => [
+  ...message(`cm${n}`, `Reply ${n}: ${"the agent explains a step of the change in plain words. ".repeat(4)}`),
+  ...command(`cc${n}`, `npm test -- --grep case${n}`, `ok case${n}\n`.repeat(3), 0),
+]).flat();
