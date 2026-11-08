@@ -44,6 +44,9 @@ export function zoomKeyAction(event: KeyboardEvent): ShellAction | null {
 export function followShell(onEvent: (event: ShellEvent) => void): () => void {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // A menu command sent while the stream is down is lost, and Settings (Cmd+,) is such a command. A stream that
+  // ended after delivering something is retried at once, and one that failed backs off from 250 ms up to RETRY_MS.
+  let failures = 0;
 
   const connect = async () => {
     try {
@@ -53,6 +56,7 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
         headers: { ...authHeaders(), Accept: "text/event-stream" },
       });
       if (!response.ok || !response.body) throw new Error("no stream");
+      failures = 0;
       const parser = new SseParser();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       for (;;) {
@@ -69,7 +73,9 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
     } catch {
       // Retried below, unless this stream was stopped.
     }
-    if (!controller.signal.aborted) timer = setTimeout(() => void connect(), RETRY_MS);
+    if (controller.signal.aborted) return;
+    failures += 1;
+    timer = setTimeout(() => void connect(), Math.min(RETRY_MS, 250 * 2 ** (failures - 1)));
   };
 
   void connect();
