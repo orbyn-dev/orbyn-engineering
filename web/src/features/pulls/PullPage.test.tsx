@@ -109,6 +109,13 @@ describe("one pull request as a page", () => {
     finish(detail());
   });
 
+  it("shows the base branch as plain text in the Status card, with no input inside it", async () => {
+    await show(detail());
+    const card = document.querySelector(".pull-status") as HTMLElement;
+    expect(card).toHaveTextContent("main");
+    expect(card.querySelector("input, select")).toBeNull();
+  });
+
   it("counts files, checks and comments in the tab names", async () => {
     await show(detail());
     const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);

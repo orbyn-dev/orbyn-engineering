@@ -804,8 +804,10 @@ export function PullDetail({
         <div className="pull-card pull-status">
           <Row name="Status">{statusWord}</Row>
           <Row name="Branch">
+            {/* Plain text: the service reports no permission to change the base, and an input's chrome does not belong in
+                the grey card (pull-detail and pr-detail-cards). The header sheet keeps its editable field. */}
             <span className="pull-mono">
-              {pull.head} {"\u2192"} {baseBranch}
+              {pull.head} {"\u2192"} {pull.base}
             </span>
           </Row>
           <Row name="Review" tone={state === "review" || state === "changes" ? "warn" : undefined}>
