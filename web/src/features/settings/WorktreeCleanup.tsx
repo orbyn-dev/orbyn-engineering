@@ -18,6 +18,13 @@ import { useUi } from "../../state/ui";
 const DEFAULT_DAYS = 7;
 const TITLE = "Automatic worktree cleanup";
 
+/**
+ * The days a worktree stays when cleanup is turned on. Off has no days, so from Off it is the default, never the
+ * field's text: that text is reset only after the screen has caught up with Off, and a change can land before it.
+ */
+export const daysWhenTurnedOn = (current: number | null, draft: string): number =>
+  current === null ? DEFAULT_DAYS : Number(draft) || DEFAULT_DAYS;
+
 type Policy = { mode?: string; rules?: { settled_after_days?: unknown } };
 const policy = (value: unknown): Policy => value !== null && typeof value === "object" ? value as Policy : {};
 
@@ -33,7 +40,7 @@ function CleanupSelect({ label, current, disabled, mixed, set }: { label: string
   };
   return <span className="set-inline-control">
     <select aria-label={label} disabled={disabled} value={mixed ? "mixed" : current === null ? "off" : "on"}
-      onChange={(event) => set(event.target.value === "on" ? Number(draft) || DEFAULT_DAYS : null)}>
+      onChange={(event) => set(event.target.value === "on" ? daysWhenTurnedOn(current, draft) : null)}>
       {mixed ? <option value="mixed" disabled>Mixed</option> : null}
       <option value="off">Off</option><option value="on">On</option>
     </select>
