@@ -8,6 +8,7 @@ in the same commit as any change to them.
 
 ## Before you start
 
+- Follow the [setup guide](docs/setup.md) for macOS or Windows.
 - Open an issue first for anything larger than a small fix, so the maintainer of
   that area can agree the approach. Use the issue forms; blank issues are off.
 - Features come from the planned list in [docs/parity.md](docs/parity.md). Cite
