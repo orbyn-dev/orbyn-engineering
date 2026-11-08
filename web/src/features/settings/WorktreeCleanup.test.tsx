@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { request } from "../../api/client";
-import { WorktreeCleanup } from "./WorktreeCleanup";
+import { daysWhenTurnedOn, WorktreeCleanup } from "./WorktreeCleanup";
 import { scopedFixture } from "./scopedPreferenceFixture.test-support";
 
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
@@ -40,17 +40,9 @@ it("shows the saved days beside On, saves a new number on leaving it, and Off hi
   await waitFor(() => sent({ mode: "off" }));
 });
 
-it("starts again from seven days after Off, not from the number it had", async () => {
-  const user = userEvent.setup();
-  serve({ mode: "custom", rules: { settled_after_days: 14 } }, "project");
-  render(<WorktreeCleanup />);
-  expect(await screen.findByRole("spinbutton", { name: "Automatic worktree cleanup: days" })).toHaveValue(14);
-  const select = screen.getByRole("combobox", { name: "Automatic worktree cleanup" });
-  serve({ mode: "off" }, "project");
-  await user.selectOptions(select, "off");
-  await waitFor(() => sent({ mode: "off" }));
-  await waitFor(() => expect(screen.queryByRole("spinbutton")).toBeNull());
-  await waitFor(() => expect(select).toBeEnabled());
-  await user.selectOptions(select, "on");
-  await waitFor(() => sent({ mode: "custom", rules: { settled_after_days: 7 } }));
+it("turns on from Off at seven days whatever the field still says, and keeps a set number otherwise", () => {
+  expect(daysWhenTurnedOn(null, "12")).toBe(7);
+  expect(daysWhenTurnedOn(null, "")).toBe(7);
+  expect(daysWhenTurnedOn(14, "30")).toBe(30);
+  expect(daysWhenTurnedOn(14, "")).toBe(7);
 });
