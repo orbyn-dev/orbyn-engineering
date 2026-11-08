@@ -164,6 +164,9 @@ fn seen_servers() -> &'static std::sync::Mutex<std::collections::BTreeSet<String
     SEEN.get_or_init(Default::default)
 }
 
+/// Most server names remembered for the guard; the `mcp__*` rule covers the rest.
+const MAX_SEEN_SERVERS: usize = 64;
+
 /// A server's name as it appears in tool names and permission rules: anything but a
 /// letter, digit, `_` or `-` becomes `_`, so `claude.ai Vercel` is `claude_ai_Vercel`.
 fn rule_name(server: &str) -> String {
@@ -237,8 +240,10 @@ fn init_tools(frame: &Value) -> Option<EngineEvent> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for server in &servers {
+            // Bounded: a name is only a rule string, but the set lives as long as the service.
             if let Some(name) = server["name"].as_str().map(rule_name)
                 && name != MCP_SERVER_NAME
+                && seen.len() < MAX_SEEN_SERVERS
             {
                 seen.insert(name);
             }

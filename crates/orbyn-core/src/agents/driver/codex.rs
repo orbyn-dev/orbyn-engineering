@@ -698,9 +698,12 @@ async fn open_turn(
         "sandbox": if spec.plan { "read-only" } else { sandbox },
         "config": config,
     });
-    if !spec.context.is_empty() {
-        params["developerInstructions"] = json!(format!("{}\n{CONNECTOR_NOTE}", spec.context));
-    }
+    // The note stands without a context too: the connectors are there either way.
+    params["developerInstructions"] = json!(if spec.context.is_empty() {
+        CONNECTOR_NOTE.to_owned()
+    } else {
+        format!("{}\n{CONNECTOR_NOTE}", spec.context)
+    });
     if let Some(model) = &spec.model {
         params["model"] = json!(model);
     }
@@ -881,11 +884,15 @@ fn approval_policy(mode: PermissionMode) -> &'static str {
 
 /// How long Codex waits for a user's optional MCP servers to finish starting before
 /// the first turn, so a slow connector is ready when the model first looks for tools.
-const MCP_STARTUP_GRACE_MS: u64 = 10_000;
+/// It is a ceiling, not a delay: ready servers cost nothing. Each run starts a new
+/// app-server, so a server that never comes up costs every first turn the whole wait.
+/// Measured with a hung server on 0.166.0 (first token): none 3.6 s, 3 s grace 4.7 s,
+/// 10 s grace 11.8 s.
+const MCP_STARTUP_GRACE_MS: u64 = 3_000;
 
 /// A line for the model: connectors Codex loads for the user are not in the top-level
 /// tool list but inside its code-mode `exec` tool.
-const CONNECTOR_NOTE: &str = "Connectors and MCP servers the person installed (for example GitHub, Gmail or Calendar) are available as mcp__* functions inside the exec tool.";
+const CONNECTOR_NOTE: &str = "If you have an exec tool, connectors and MCP servers the person installed (for example GitHub, Gmail or Calendar) are available as mcp__* functions inside it.";
 
 /// The per-run MCP server. Orbyn's tools carry their own policy gate, so Codex
 /// does not ask a second time before calling them. The dotted key sets only this one
@@ -1107,6 +1114,10 @@ fn classify_request(
         "mcpServer/elicitation/request" if is_tool_approval(params) => {
             let server = text(params, "serverName").unwrap_or_else(|| "an MCP server".to_owned());
             let message = text(params, "message").unwrap_or_default();
+            // Remembering an answer is keyed on the target, so it names the tool as well as
+            // the server: allowing one Gmail call must not allow every connector call. A
+            // request that does not name its tool is keyed on its whole message instead.
+            let tool = elicited_tool(params).unwrap_or_else(|| message.clone());
             Some(ClassifiedRequest {
                 kind: ActionKind::Tool,
                 summary: if message.is_empty() {
@@ -1114,7 +1125,7 @@ fn classify_request(
                 } else {
                     format!("{server}: {message}")
                 },
-                target: server,
+                target: format!("{server}/{tool}"),
                 paths: Vec::new(),
             })
         }
@@ -1159,27 +1170,80 @@ fn classify_request(
     }
 }
 
+/// The tool an approval elicitation is about: its meta when Codex gives it, else the
+/// quoted name in the message (`... to run tool "send_email"?`).
+fn elicited_tool(params: &Value) -> Option<String> {
+    for key in ["tool_name", "tool", "toolName"] {
+        if let Some(name) = params
+            .pointer(&format!("/_meta/{key}"))
+            .and_then(Value::as_str)
+            && !name.is_empty()
+        {
+            return Some(name.to_owned());
+        }
+    }
+    let message = params.get("message")?.as_str()?;
+    let after = message.split_once("tool \"")?.1;
+    let name = after.split_once('"')?.0;
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
 /// Codex asks for a connector or MCP tool call through an elicitation. This is one that
 /// only wants a yes or no: it says so in its meta, or it asks for no fields. A form that
-/// collects data from the person is not an approval and is never answered with one.
+/// collects data from the person is not an approval and is never answered with one, and
+/// neither is a URL request, which needs the person to see and open the address.
 fn is_tool_approval(params: &Value) -> bool {
+    if params.get("mode").and_then(Value::as_str) == Some("url") || params.get("url").is_some() {
+        return false;
+    }
     let named = params
         .pointer("/_meta/codex_approval_kind")
         .is_some_and(|kind| !kind.is_null());
-    let fields = params
-        .pointer("/requestedSchema/properties")
+    let schema = params.get("requestedSchema").and_then(Value::as_object);
+    let fields = schema
+        .and_then(|schema| schema.get("properties"))
         .and_then(Value::as_object)
         .map_or(0, serde_json::Map::len);
-    named || fields == 0
+    named || (schema.is_some() && fields == 0)
+}
+
+/// What to send as `content` when an approval is accepted. A form with required fields
+/// is filled only from the defaults its schema gives; with one that has none, there is
+/// nothing honest to send and the request is declined instead (`None`).
+fn approval_content(params: &Value) -> Option<Value> {
+    let Some(schema) = params.get("requestedSchema") else {
+        return Some(Value::Null);
+    };
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let Some(properties) = properties.filter(|properties| !properties.is_empty()) else {
+        return Some(Value::Null);
+    };
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let mut content = serde_json::Map::new();
+    for (name, field) in properties {
+        match field.get("default") {
+            Some(default) => {
+                content.insert(name.clone(), default.clone());
+            }
+            None if required.contains(&name.as_str()) => return None,
+            None => {}
+        }
+    }
+    Some(Value::Object(content))
 }
 
 /// The response shape each approval method's schema requires.
 fn approval_response(method: &str, params: &Value, verdict: &Verdict) -> Value {
     let allowed = verdict.is_allowed();
     match method {
-        "mcpServer/elicitation/request" => {
-            json!({ "action": if allowed { "accept" } else { "decline" }, "content": null })
-        }
+        "mcpServer/elicitation/request" => match approval_content(params) {
+            Some(content) if allowed => json!({ "action": "accept", "content": content }),
+            _ => json!({ "action": "decline", "content": null }),
+        },
         "item/permissions/requestApproval" => {
             if allowed {
                 json!({
@@ -2185,7 +2249,7 @@ mod tests {
         );
         // A dotted key, never a nested table that would replace the user's own servers.
         assert!(config.get("mcp_servers").is_none(), "{config}");
-        assert_eq!(config["mcp_optional_startup_grace_ms"], 10_000);
+        assert_eq!(config["mcp_optional_startup_grace_ms"], 3_000);
     }
 
     #[test]
@@ -2194,7 +2258,7 @@ mod tests {
         spec.mcp_url = None;
         assert_eq!(
             thread_config(&spec),
-            json!({ "mcp_optional_startup_grace_ms": 10_000 })
+            json!({ "mcp_optional_startup_grace_ms": 3_000 })
         );
     }
 
@@ -2248,18 +2312,22 @@ mod tests {
         assert_eq!(approval_policy(PermissionMode::Auto), "on-request");
     }
 
-    #[test]
-    fn a_connector_tool_approval_goes_through_our_approval_flow() {
-        let params = json!({
+    fn elicitation(message: &str) -> Value {
+        json!({
             "serverName": "codex_apps", "threadId": "t", "mode": "form",
             "_meta": { "codex_approval_kind": "mcp_tool_call" },
-            "message": "Allow Gmail to send an email?",
+            "message": message,
             "requestedSchema": { "type": "object", "properties": {} },
-        });
+        })
+    }
+
+    #[test]
+    fn a_connector_tool_approval_goes_through_our_approval_flow() {
+        let params = elicitation("Allow Gmail to run tool \"send_email\"?");
         let request =
             classify_request("mcpServer/elicitation/request", &params, &mapper()).unwrap();
-        assert_eq!(request.target, "codex_apps");
-        assert!(request.summary.contains("Allow Gmail to send an email?"));
+        assert_eq!(request.target, "codex_apps/send_email");
+        assert!(request.summary.contains("send_email"));
         let allow = Verdict::Allow;
         let deny = Verdict::Deny("no".into());
         assert_eq!(
@@ -2268,6 +2336,68 @@ mod tests {
         );
         assert_eq!(
             approval_response("mcpServer/elicitation/request", &params, &deny)["action"],
+            "decline"
+        );
+    }
+
+    #[test]
+    fn remembering_one_tool_does_not_cover_another_tool_or_server() {
+        let target = |params: Value| {
+            classify_request("mcpServer/elicitation/request", &params, &mapper())
+                .unwrap()
+                .target
+        };
+        let send = target(elicitation("Allow Gmail to run tool \"send_email\"?"));
+        let read = target(elicitation("Allow Gmail to run tool \"read_email\"?"));
+        assert_ne!(send, read);
+        let mut other_server = elicitation("Allow Gmail to run tool \"send_email\"?");
+        other_server["serverName"] = json!("github");
+        assert_ne!(target(other_server), send);
+        // The meta names the tool when the message does not.
+        let mut meta = elicitation("Allow this?");
+        meta["_meta"]["tool_name"] = json!("create_issue");
+        assert_eq!(target(meta), "codex_apps/create_issue");
+        // A request that names no tool is keyed on its whole message, not on the server.
+        assert_eq!(target(elicitation("Allow this?")), "codex_apps/Allow this?");
+    }
+
+    #[test]
+    fn a_url_request_is_never_answered_as_a_tool_approval() {
+        let url = json!({
+            "serverName": "x", "mode": "url", "message": "Sign in", "url": "https://evil.example/p",
+            "_meta": { "codex_approval_kind": "mcp_tool_call" },
+        });
+        assert!(!is_tool_approval(&url));
+        assert!(classify_request("mcpServer/elicitation/request", &url, &mapper()).is_none());
+        // No schema and no approval marker is not a plain yes/no either.
+        assert!(!is_tool_approval(
+            &json!({ "serverName": "x", "message": "m" })
+        ));
+    }
+
+    #[test]
+    fn required_fields_are_filled_from_defaults_or_the_request_is_declined() {
+        let with_default = json!({
+            "requestedSchema": { "type": "object", "required": ["scope"],
+                "properties": { "scope": { "type": "string", "default": "once" } } },
+        });
+        assert_eq!(
+            approval_content(&with_default),
+            Some(json!({ "scope": "once" }))
+        );
+        let without = json!({
+            "requestedSchema": { "type": "object", "required": ["reason"],
+                "properties": { "reason": { "type": "string" } } },
+        });
+        assert_eq!(approval_content(&without), None);
+        // An optional field with no default is left out.
+        let optional = json!({
+            "requestedSchema": { "type": "object", "properties": { "note": { "type": "string" } } },
+        });
+        assert_eq!(approval_content(&optional), Some(json!({})));
+        let named = json!({ "_meta": { "codex_approval_kind": "mcp_tool_call" }, "requestedSchema": without["requestedSchema"] });
+        assert_eq!(
+            approval_response("mcpServer/elicitation/request", &named, &Verdict::Allow)["action"],
             "decline"
         );
     }
