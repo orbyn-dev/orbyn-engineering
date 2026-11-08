@@ -22,6 +22,11 @@ const CLAUDE_SETTINGS: &[&str] = &[
     "CLAUDE_CODE_OAUTH_TOKEN",
     "CLAUDE_CODE_GIT_BASH_PATH",
 ];
+/// Switches that point Claude at a development login service. Inherited from a Claude
+/// app or a session it started, they make `claude -p` load no claude.ai connectors at
+/// all, with no message. An engine child never needs them; a person who does sets them
+/// in the provider's own environment, which is applied after this plan.
+const OAUTH_DEV_SWITCHES: &[&str] = &["USE_LOCAL_OAUTH", "USE_STAGING_OAUTH"];
 /// What a Codex session leaves for the commands it runs.
 const CODEX_SESSION: &[&str] = &[
     "CODEX_SANDBOX",
@@ -91,7 +96,15 @@ pub fn plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> 
             && (CLAUDE_CREDENTIALS.contains(&text.as_str())
                 || CODEX_CREDENTIALS.contains(&text.as_str())
                 || ENDPOINTS.contains(&text.as_str()));
-        if host_session || scrubbed_login || CODEX_SESSION.contains(&text.as_str()) {
+        // The endpoint under the marker was set by the host session, not by the person.
+        let host_endpoint = nested && text == "ANTHROPIC_BASE_URL";
+        let dev_login = engine && OAUTH_DEV_SWITCHES.contains(&text.as_str());
+        if host_session
+            || host_endpoint
+            || dev_login
+            || scrubbed_login
+            || CODEX_SESSION.contains(&text.as_str())
+        {
             changes.remove.push(name.clone());
             continue;
         }
@@ -380,6 +393,28 @@ mod tests {
             gone,
             ["CLAUDECODE", "CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SESSION_ID"]
         );
+    }
+
+    #[test]
+    fn a_host_session_endpoint_and_dev_login_switches_never_reach_an_engine() {
+        // Under the marker the endpoint is the host's. Dev login switches go from any engine child.
+        let nested = vars(&[
+            ("CLAUDECODE", "1"),
+            ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9"),
+            ("USE_LOCAL_OAUTH", "1"),
+            ("USE_STAGING_OAUTH", "1"),
+        ]);
+        let gone = removed(&plan(&nested, true, false));
+        for name in ["ANTHROPIC_BASE_URL", "USE_LOCAL_OAUTH", "USE_STAGING_OAUTH"] {
+            assert!(gone.contains(&name.to_owned()), "{name} stays: {gone:?}");
+        }
+        // Not nested: the endpoint is the person's own, and a tool child keeps every switch.
+        let plain = vars(&[
+            ("ANTHROPIC_BASE_URL", "http://proxy"),
+            ("USE_LOCAL_OAUTH", "1"),
+        ]);
+        assert_eq!(removed(&plan(&plain, true, false)), ["USE_LOCAL_OAUTH"]);
+        assert_eq!(plan(&plain, false, false), EnvPlan::default());
     }
 
     #[test]
