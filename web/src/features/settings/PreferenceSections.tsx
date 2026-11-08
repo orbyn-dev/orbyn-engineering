@@ -684,7 +684,7 @@ export function AboutSection() {
     <>
       {heading("About")}
       <div className="set-card">
-        <span className="set-logo" aria-hidden>O</span>
+        <img className="set-logo" src="/favicon.svg" alt="" width={40} height={40} />
         <div>
           <b>Orbyn Engineering {info.data?.version ?? ""}</b>
           <br /><span className="t3 sub">Platform {info.data ? platformName(info.data.platform) : "Unknown"}</span>
