@@ -379,6 +379,10 @@ pub async fn check_watches(State(state): State<AppState>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-pub async fn forges(State(state): State<AppState>) -> impl IntoResponse {
-    Json(state.core.forges().await)
+pub async fn forges(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let rescan = query.get("rescan").is_some_and(|value| value == "true");
+    Json(state.core.forges(rescan).await)
 }

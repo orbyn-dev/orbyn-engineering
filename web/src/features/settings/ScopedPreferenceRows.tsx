@@ -26,7 +26,7 @@ export function ScopedRows({ groups, query, inheritance }: {
   const showInheritance = inheritance ?? scope?.inheritance ?? false;
   const keys = groups.flatMap((group) => group.rows.map((row) => row.key));
   const list = useAsync(JSON.stringify([query, keys]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys }, signal));
+    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys }, signal), { keep: true });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);

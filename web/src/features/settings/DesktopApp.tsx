@@ -24,7 +24,7 @@ const PERMISSIONS: Record<string, { title: string; missing: string; open: ShellA
 
 /** What only the desktop app can do. Nothing shows on a plain server. */
 export function DesktopApp() {
-  const status = useAsync("shell-status", (signal) => api.shell(signal));
+  const status = useAsync("shell-status", (signal) => api.shell(signal), { keep: true });
   const pushToast = useUi((state) => state.pushToast);
   const reload = status.reload;
   useEffect(() => onShellChange(reload), [reload]);

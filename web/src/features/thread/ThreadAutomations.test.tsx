@@ -183,8 +183,8 @@ it("lists only the tasks bound to the thread", async () => {
 it("says there are none for a thread with no automations, and nothing while the list loads", async () => {
   installMockFetch();
   render(<ThreadAutomations threadId="t-empty" />);
-  expect(screen.queryByText("No automations on this thread")).toBeNull();
-  expect(await screen.findByText("No automations on this thread")).toBeVisible();
+  expect(screen.queryByText("None on this thread")).toBeNull();
+  expect(await screen.findByText("None on this thread")).toBeVisible();
 });
 
 it("offers Run now for scheduled work but not for a webhook", async () => {

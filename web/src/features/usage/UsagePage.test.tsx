@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure } from "../../api/client";
 import type { UsageReport } from "../../api/types";
-import { UsagePage } from "./UsagePage";
+import { LIMITS_WAIT_MS, UsagePage } from "./UsagePage";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -215,4 +215,32 @@ it("moves between the Usage and Limits tabs with the arrow keys and reads a mete
   expect(await screen.findByRole("meter", { name: "5 hours" })).toHaveAttribute("aria-valuetext", "15% left");
   await userEvent.keyboard("{Home}");
   expect(usage).toHaveAttribute("aria-selected", "true");
+});
+
+it("says an engine does not report its limits in plain words and never shows the engine's own line", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue({
+    pooled: [], engines: [],
+    unavailable: [{ engine: "claude", reason: "Claude Code did not report a usable context response." }],
+  } as never);
+  render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  expect(await screen.findByText(/doesn\u2019t report its limits\./)).toBeVisible();
+  expect(screen.queryByText(/usable context response/)).toBeNull();
+});
+
+it("stops loading Limits after the wait and offers to try again", async () => {
+  vi.spyOn(api, "limits").mockReturnValue(new Promise(() => {}));
+  render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("tab", { name: "Limits" }));
+    expect(screen.queryByText(/didn\u2019t answer in time/)).toBeNull();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(LIMITS_WAIT_MS + 50)));
+    expect(screen.getByText(/Limits didn\u2019t answer in time\./)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
 });

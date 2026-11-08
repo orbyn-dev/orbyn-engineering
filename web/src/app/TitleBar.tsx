@@ -1,20 +1,18 @@
-import { ChevronLeft, ChevronRight, FileDiff, PanelLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
 import { attentionRank } from "../features/workspace/groups";
 import { EnvironmentIdentity } from "../features/workspace/EnvironmentIdentity";
-import { useThreadLogs } from "../features/thread/threadLogs";
 import { useAsync } from "../lib/useAsync";
-import { labels } from "../features/settings/public";
-import { navigate, type Route } from "../state/route";
-import { usePageLabel } from "../state/pageLabel";
+import { navigate } from "../state/route";
 import { useReadingNav } from "./readingNav";
 import { toggleSidebarDrawer, useSidebarDrawer } from "./sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../state/ui";
 import { useWorkspace } from "../state/workspace";
 import { goBack, goForward, useNavHistory } from "./navHistory";
+import { attachBarDrag } from "./barDrag";
 
 const INTERACTIVE =
   "a,button,input,select,textarea,summary,label,[role=button],[role=tab],[role=menuitem],[contenteditable=true],[tabindex]:not([tabindex='-1'])";
@@ -37,10 +35,35 @@ function useDragStrip(layer: React.RefObject<HTMLDivElement | null>) {
       const under = document.elementsFromPoint?.(event.clientX, event.clientY).find((element) => element !== node);
       if (under?.closest(INTERACTIVE) && !node.contains(under)) node.removeAttribute("data-hot");
       else node.setAttribute("data-hot", "");
+      // The layer takes the pointer over a page heading, so it carries that heading's tooltip (a long title is cut).
+      node.title = (!node.contains(under ?? null) && under?.closest("[title]")?.getAttribute("title")) || "";
     };
     document.addEventListener("pointermove", onMove, { passive: true });
     return () => document.removeEventListener("pointermove", onMove);
   }, [layer]);
+}
+
+/**
+ * Publishes the width the bar's right end takes (the environment pill, the ledger's waiting count) as `--bar-end-w`,
+ * so a page header's own right-hand actions stop short of it instead of sitting under it.
+ */
+function useBarEndWidth(node: React.RefObject<HTMLSpanElement | null>) {
+  useEffect(() => {
+    const element = node.current;
+    if (!element) return;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty("--bar-end-w", `${element.children.length > 0 ? Math.ceil(element.getBoundingClientRect().width) : 0}px`);
+    publish();
+    const watch = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publish);
+    watch?.observe(element);
+    const mutations = new MutationObserver(publish);
+    mutations.observe(element, { childList: true, subtree: true });
+    return () => {
+      watch?.disconnect();
+      mutations.disconnect();
+      root.style.removeProperty("--bar-end-w");
+    };
+  }, [node]);
 }
 
 /** True in the desktop app on macOS, where the window's traffic lights sit over the title bar. */
@@ -76,33 +99,8 @@ function useWaitingCount(): number {
   );
 }
 
-/** Reading's way to the changes: the diff opens in the side drawer. */
-function ReadingDiff({ threadId }: { threadId: string }) {
-  const version = useThreadLogs((state) => state.diffVersion[threadId] ?? 0);
-  const diff = useAsync(`details-diff:${threadId}`, (signal) => api.diff(threadId, signal));
-  const { reload } = diff;
-  const first = useRef(true);
-  useEffect(() => {
-    if (first.current) first.current = false;
-    else void reload();
-  }, [version, reload]);
-  const showing = useUi((state) => state.panelOpen === true && state.panelTab === "diff");
-  const togglePanel = useUi((state) => state.togglePanel);
-  const closePanel = useUi((state) => state.closePanel);
-  const files = diff.data ?? [];
-  if (files.length === 0) return null;
-  const added = files.reduce((sum, file) => sum + file.additions, 0);
-  const removed = files.reduce((sum, file) => sum + file.deletions, 0);
-  return (
-    <button type="button" className="titlebar-diff" aria-pressed={showing} onClick={() => (showing ? closePanel() : togglePanel("diff"))}>
-      <FileDiff size={13} aria-hidden />
-      Diff <span className="diff-add">+{added}</span> <span className="diff-del">−{removed}</span>
-    </button>
-  );
-}
-
 /** The window's top line: the brand, the page it is on and page-level status. */
-export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth }) {
+export function TitleBar({ layout }: { layout: LayoutWidth }) {
   const phone = layout === "phone";
   const small = layout === "small";
   const drawerOpen = useSidebarDrawer((state) => state.open);
@@ -113,26 +111,8 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
   const readingNav = useReadingNav((state) => state.open);
   const toggleReadingNav = useReadingNav((state) => state.toggle);
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
-  const title = useWorkspace((state) => (route.name === "thread" ? state.threads[route.id]?.title : undefined));
   const waiting = useWaitingCount();
-  const pageLabel = usePageLabel((state) => state.label);
 
-  const page =
-    route.name === "thread"
-      ? (title ?? "")
-      : route.name === "pulls"
-        ? (pageLabel ?? "Pull requests")
-        : route.name === "skills"
-          ? (route.skill ?? "Skills")
-        : route.name === "usage"
-          ? "Usage"
-          : route.name === "tasks"
-            ? "Scheduled tasks"
-            : route.name === "settings"
-              ? labels[route.section ?? "general"]
-              : route.name === "trust"
-                ? "Trust folder"
-                : "New thread";
   const shown = small ? drawerOpen : reading ? readingNav : !collapsed;
   // Folding the sidebar away must not strand focus on a row that no longer exists.
   const wasShown = useRef(shown);
@@ -146,11 +126,23 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
   const trail = useNavHistory();
   const dragLayer = useRef<HTMLDivElement>(null);
   useDragStrip(dragLayer);
+  // Only where the system bar is gone: Windows and Linux keep their native frame, and a drag band there would be a second one.
+  useEffect(() => (lights && dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), [lights]);
+  const end = useRef<HTMLSpanElement>(null);
+  useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
 
+  // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
+  // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
+  // whose sidebar is its home page, gives the bar a row of its own, and it holds the buttons alone.
+  const row = phone;
   return (
-    <header className="titlebar" data-nav={shown && !small ? "shown" : "hidden"} data-tauri-drag-region>
-      <div ref={dragLayer} className="titlebar-drag" data-tauri-drag-region aria-hidden />
+    <header className="titlebar"
+      data-nav={shown && !small ? "shown" : "hidden"}
+      data-bar={row ? "row" : "float"}
+      data-lights={lights || undefined}
+    >
+      <div ref={dragLayer} className="titlebar-drag" aria-hidden />
       {lights ? <span className="titlebar-lights" aria-hidden /> : null}
       <button
         type="button"
@@ -178,15 +170,8 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
       <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
-      {shown ? null : (
-        <span className="titlebar-title" title="Orbyn Engineering">
-          <b>Orbyn</b>
-          <span className="titlebar-page-label"> · {page}</span>
-        </span>
-      )}
-      <span className="titlebar-end">
+      <span ref={end} className="titlebar-end">
         <EnvironmentIdentity />
-        {reading && route.name === "thread" ? <ReadingDiff threadId={route.id} /> : null}
         {ledger && waiting > 0 ? (
           <span className="titlebar-waiting" role="status">
             <span className="status-dot" aria-hidden />
