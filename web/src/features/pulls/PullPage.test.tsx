@@ -179,4 +179,155 @@ describe("one pull request as a page", () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     expect(screen.queryByText("Your review is requested")).toBeNull();
   });
+
+});
+
+describe("Request changes", () => {
+  const asked = () =>
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [{ name: "me", kind: "user" }], comment_count: 3 }], paused: [] } as never);
+  const open = async (over: Record<string, unknown> = {}) => {
+    asked();
+    await show(detail({ review_state: "review_required", ...over }));
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+  };
+  const note = () => screen.getByRole("textbox", { name: "What needs to change?" });
+  const card = () => within(screen.getByRole("region", { name: "Request changes" }));
+  const send = () => card().getByRole("button", { name: /^(Request changes|Try again)$/ });
+  const flushAll = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+
+  it("opens a card under the merge row, and sends only once there is a note", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    await open();
+    expect(screen.getByText("Your note is sent to the author.")).toBeInTheDocument();
+    expect(send()).toBeDisabled();
+    fireEvent.change(note(), { target: { value: "Reject //evil.com" } });
+    expect(send()).toBeEnabled();
+    fireEvent.click(send());
+    await flushAll();
+    expect(pullsApi.review).toHaveBeenCalledWith("p", 142, "request_changes", "Reject //evil.com");
+  });
+
+  it("shows a spinner and Requesting… while it waits, with the note and Cancel locked", async () => {
+    vi.spyOn(pullsApi, "review").mockReturnValue(new Promise(() => {}));
+    await open();
+    fireEvent.change(note(), { target: { value: "x" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByRole("button", { name: "Requesting…" })).toBeDisabled();
+    expect(note()).toBeDisabled();
+    expect(card().getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
+  it("becomes a timeline entry, labels the title, and says so on the merge row", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    await open();
+    fireEvent.change(note(), { target: { value: "Fix this" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByRole("region", { name: "You requested changes" })).toBeInTheDocument();
+    expect(screen.getByText("Fix this")).toBeInTheDocument();
+    expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
+    expect(screen.getByText("You requested changes.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "What needs to change?" })).toBeNull();
+  });
+
+  it("keeps the note and says nothing was sent when the forge refuses", async () => {
+    vi.spyOn(pullsApi, "review").mockRejectedValue(new ApiFailure("git_failed", "boom", 409));
+    await open();
+    fireEvent.change(note(), { target: { value: "Keep me" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByText("Couldn’t submit the review. Nothing was sent. Try again.")).toBeInTheDocument();
+    expect(note()).toHaveValue("Keep me");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  });
+
+  it("names the forge when it cannot take a review", async () => {
+    vi.spyOn(pullsApi, "review").mockRejectedValue(new ApiFailure("unsupported", "no", 422));
+    await open();
+    fireEvent.change(note(), { target: { value: "x" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByText("GitHub doesn’t provide that here.")).toBeInTheDocument();
+  });
+
+  it("will not request changes on your own pull request, and Approve is off too", async () => {
+    asked();
+    await show(detail({ review_state: "review_required", author: "me" }));
+    expect(screen.getByText("You opened this pull request.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(screen.getByText("You can’t request changes on your own pull request.")).toBeInTheDocument();
+    expect(send()).toBeDisabled();
+  });
+
+  it("asks before throwing away a note on Escape, and closes at once with none", async () => {
+    await open();
+    fireEvent.keyDown(note(), { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "What needs to change?" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    fireEvent.change(note(), { target: { value: "draft" } });
+    fireEvent.keyDown(note(), { key: "Escape" });
+    expect(note()).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Discard" }));
+    await flushAll();
+    expect(screen.queryByRole("textbox", { name: "What needs to change?" })).toBeNull();
+  });
+
+  it("keeps the Request changes button in the banner, pressed, while the card is open", async () => {
+    await open();
+    expect(screen.getAllByRole("button", { name: "Request changes" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Request changes" })[0]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("closes from any control of the card on Escape, and asks first when there is a note", async () => {
+    await open();
+    fireEvent.keyDown(card().getByRole("button", { name: "Cancel" }), { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Request changes" })).toBeNull();
+  });
+
+  it("keeps the note when the card is closed and opened again", async () => {
+    await open();
+    fireEvent.change(note(), { target: { value: "Remember me" } });
+    fireEvent.click(card().getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Discard" }));
+    await flushAll();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(note()).toHaveValue("Remember me");
+  });
+
+  it("dims the merge row while the card is open, and expands the checks again once it is sent", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    await open();
+    expect(document.querySelector(".pull-merge")).toHaveAttribute("data-dim");
+    expect(screen.queryByText("lint")).toBeNull();
+    fireEvent.change(note(), { target: { value: "x" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(document.querySelector(".pull-merge")).not.toHaveAttribute("data-dim");
+    expect(screen.getByText("lint")).toBeInTheDocument();
+  });
+
+  it("puts the sent note in the left column as an entry, and the label as an amber pill", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    await open();
+    fireEvent.change(note(), { target: { value: "Fix this" } });
+    fireEvent.click(send());
+    await flushAll();
+    const entry = screen.getByRole("region", { name: "You requested changes" });
+    expect(entry.closest(".pull-main")).not.toBeNull();
+    expect(entry).toHaveTextContent("You requested changes · just now");
+    expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
+  });
+
+  it("says the review may have been sent when the forge did not answer, and reads the reviews again", async () => {
+    vi.spyOn(pullsApi, "review").mockRejectedValue(new ApiFailure("bad_gateway", "no", 504));
+    await open();
+    const reads = vi.mocked(pullsApi.detail).mock.calls.length;
+    fireEvent.change(note(), { target: { value: "x" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByText(/It may have been sent/)).toBeInTheDocument();
+    expect(vi.mocked(pullsApi.detail).mock.calls.length).toBeGreaterThan(reads);
+  });
 });

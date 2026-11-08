@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, Pause, Search, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { deriveProjectIdentity } from "../../lib/projectIdentity";
 import { Segmented } from "../../ui/Segmented";
@@ -62,7 +62,7 @@ export interface ToolbarProps {
   /** The signed-in login, which the group offers as Me. */
   viewer?: string | null;
   /** A filter that needs details is chosen and they are on their way, or could not load. */
-  detailsWait?: "waiting" | "failed";
+  detailsWait?: "waiting" | "failed" | "paused";
 }
 
 type Kind = "project" | "filters" | "sort";
@@ -542,14 +542,26 @@ export function PullsToolbar(props: ToolbarProps) {
           {chips.map((chip) => {
             const dependent = props.detailsWait !== undefined && (chip.id === "review:review_required" || chip.id.startsWith("requested:"));
             const waiting = dependent && props.detailsWait === "waiting";
-            return (
+            const chipEl = (
               <span key={chip.id} className="pulls-fchip" data-wait={dependent ? props.detailsWait : undefined}>
                 {dependent && props.detailsWait === "failed" ? <TriangleAlert size={14} className="pulls-chip-alert" aria-hidden /> : null}
+                {dependent && props.detailsWait === "paused" ? <Pause size={14} className="pulls-chip-alert" aria-hidden /> : null}
                 {chip.label}
                 <button type="button" className="pulls-x" aria-label={`Remove filter ${chip.label}`} onClick={() => onFilters(chip.remove(filters))}>
                   {waiting ? <i className="pulls-wait spin" aria-hidden /> : <X size={10} aria-hidden />}
                 </button>
               </span>
+            );
+            // A paused chip says why in the tooltip the rows use, not the browser's.
+            return dependent && props.detailsWait === "paused" ? (
+              <span key={chip.id} className="pulls-chipwrap-tip">
+                {chipEl}
+                <span role="tooltip" className="pull-tip">
+                  Paused
+                </span>
+              </span>
+            ) : (
+              chipEl
             );
           })}
           <button type="button" className="pulls-ghost" onClick={() => onFilters(clearedFilters(filters))}>

@@ -118,6 +118,8 @@ export interface Service {
   ghCalls(): string[][];
   /** What the stand-in holds for one pull request now. */
   ghPull(number: number): Record<string, unknown>;
+  /** Changes what the stand-in holds for one pull request, or for the whole forge with `number` 0. */
+  ghEdit(number: number, patch: Record<string, unknown>): void;
   /** The stand-in's bare remote, for specs that read what was pushed. */
   remote: string;
 }
@@ -239,6 +241,13 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     remote: join(dir, "github.com/o/r.git"),
     ghPull: (number) =>
       (JSON.parse(readFileSync(forge?.state ?? "", "utf8")) as { pulls: PullFixture[] }).pulls.find((pull) => pull.number === number) ?? {},
+    ghEdit: (number, patch) => {
+      const path = forge?.state ?? "";
+      const state = JSON.parse(readFileSync(path, "utf8")) as { pulls: PullFixture[] } & Record<string, unknown>;
+      const target = number === 0 ? state : state.pulls.find((pull) => pull.number === number);
+      if (target) Object.assign(target, patch);
+      writeFileSync(path, JSON.stringify(state));
+    },
     ghCalls: () =>
       forge
         ? readFileSync(forge.log, "utf8")

@@ -56,6 +56,9 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// The forge refused a merge because the pull request gained a commit the person had not seen.
+    #[error("This pull request changed. Review it again before merging.")]
+    PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
     /// A model, effort or option the chosen model does not offer.
@@ -123,6 +126,7 @@ impl CoreError {
             Self::RunsActive => "runs_active",
             Self::Updating => "updating",
             Self::ProjectHasWork { .. } => "project_has_work",
+            Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
             Self::UnsupportedOption(_) => "unsupported_option",
             Self::UpdateUnavailable(_) => "update_unavailable",
@@ -164,6 +168,7 @@ impl CoreError {
             | Self::FileConflict { .. }
             | Self::SharedDirectory(_)
             | Self::RunsActive
+            | Self::PullHeadChanged
             | Self::Git(_)
             | Self::ProjectHasWork { .. }
             | Self::EngineBusy(_)

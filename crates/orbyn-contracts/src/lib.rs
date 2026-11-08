@@ -1012,6 +1012,10 @@ pub struct PullDetailsResponse {
     /// Detail fields withheld because GitHub's rate limit is spent, named as they
     /// appear on `PullDetails`; empty otherwise. No row carries a paused field.
     pub paused: Vec<String>,
+    /// When the pause ends, as an RFC 3339 time, while `paused` is not empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resume_at: Option<String>,
 }
 }
 
@@ -1429,6 +1433,11 @@ pub struct MergePull {
     /// Removes agent credit lines from the merge commit body.
     #[serde(default)]
     pub strip_credits: bool,
+    /// The head commit the person saw. The forge refuses the merge if the branch has moved on.
+    /// GitHub and GitLab take it; it is ignored for Azure, Forgejo and Bitbucket, and for a GitLab rebase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expected_head: Option<String>,
 }
 }
 

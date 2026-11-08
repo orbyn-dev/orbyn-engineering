@@ -13,14 +13,40 @@ export function PullStateBanner({
   pull,
   state,
   failed,
+  own,
+  reviewing,
   actions,
 }: {
   pull: PullRequest;
   state: PageState;
   /** The first failing check, for the failed state. */
   failed?: PullCheck;
+  /** The person opened it: a forge does not let them review it. */
+  own?: boolean;
+  /** The review card is open: the Request changes button stays, pressed. */
+  reviewing?: boolean;
   actions: { reopen(): void; ready(): void; approve(): void; requestChanges(): void; deleteBranch(): void };
 }) {
+  // The person's own pull request: nobody reviews their own, and Request changes is only pressed while its card is open.
+  if (own && ["open", "running", "review", "approved"].includes(state)) {
+    return (
+      <PullsBanner
+        icon={<GitPullRequest size={14} aria-hidden />}
+        actions={
+          <>
+            <Button small tone="quiet" disabled icon={<SquareCheck size={14} aria-hidden />}>
+              Approve
+            </Button>
+            <Button small tone="quiet" aria-pressed={reviewing} data-pressed={reviewing || undefined} onClick={actions.requestChanges}>
+              Request changes
+            </Button>
+          </>
+        }
+      >
+        You opened this pull request.
+      </PullsBanner>
+    );
+  }
   switch (state) {
     case "merged":
       return (
@@ -97,10 +123,10 @@ export function PullStateBanner({
           icon={<TriangleAlert size={14} aria-hidden />}
           actions={
             <>
-              <Button small tone="primary" icon={<SquareCheck size={14} aria-hidden />} onClick={actions.approve}>
+              <Button small tone="primary" disabled={own} icon={<SquareCheck size={14} aria-hidden />} onClick={actions.approve}>
                 Approve
               </Button>
-              <Button small onClick={actions.requestChanges}>
+              <Button small aria-pressed={reviewing} data-pressed={reviewing || undefined} onClick={actions.requestChanges}>
                 Request changes
               </Button>
             </>
@@ -140,11 +166,20 @@ export function checksHead(pull: PullRequest): { text: string; tone?: "danger" |
 const checkWord = (check: PullCheck) =>
   check.state === "pass" ? "Passed" : check.state === "fail" ? "Failed" : check.state === "pending" ? "running" : check.state === "skipped" ? "skipped" : check.state === "neutral" ? "neutral" : "";
 
-export function ChecksCard({ pull, checks }: { pull: PullRequest; checks: PullCheck[] | null }) {
+export function ChecksCard({ pull, checks, collapsed }: { pull: PullRequest; checks: PullCheck[] | null; collapsed?: boolean }) {
   const head = checksHead(pull);
   if (!pull.checks && (!checks || checks.length === 0)) return null;
   const total = pull.checks?.total ?? 0;
   const running = pull.checks?.running ?? 0;
+  // With the review card open there is no room for the list: one line says how they stand.
+  if (collapsed)
+    return (
+      <div className="pull-card pull-checks-card">
+        <Row name="Checks" tone={head.tone}>
+          {head.text}
+        </Row>
+      </div>
+    );
   return (
     <div className="pull-card pull-checks-card">
       <Row name="Checks" tone={head.tone}>
@@ -228,6 +263,7 @@ export function MergeRow({
   onMenu,
   onMerge,
   hidden,
+  dim,
 }: {
   method: string;
   onMethod(value: string): void;
@@ -241,6 +277,8 @@ export function MergeRow({
   onMerge(): void;
   /** A merged pull request has nothing to merge: only the line shows. */
   hidden: boolean;
+  /** The review card is open: the merge row waits, dimmed. */
+  dim?: boolean;
 }) {
   const items: MenuItem[] = [
     ...METHODS.map((entry) => ({ label: entry.label, selected: method === entry.value, onSelect: () => onMethod(entry.value) })),
@@ -251,7 +289,7 @@ export function MergeRow({
   return (
     <>
       {hidden ? null : (
-        <div className="pull-merge" data-off={!gate.enabled || undefined}>
+        <div className="pull-merge" data-off={!gate.enabled || undefined} data-dim={dim || undefined}>
           <button
             type="button"
             className="pull-method"

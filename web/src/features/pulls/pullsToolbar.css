@@ -695,10 +695,14 @@
   width: 8px;
   height: 8px;
 }
-.pulls-fchip[data-wait="failed"] {
+.pulls-fchip[data-wait="failed"],
+.pulls-fchip[data-wait="paused"] {
   color: var(--color-textSoft);
 }
 .pulls-chip-alert {
   flex: none;
+  color: var(--color-muted);
+}
+.pulls-fchip[data-wait="paused"] {
   color: var(--color-muted);
 }

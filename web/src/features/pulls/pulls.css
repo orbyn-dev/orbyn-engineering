@@ -923,3 +923,97 @@
 .pulls-upd-phone {
   margin: 0 16px 8px;
 }
+
+/* The merge dialog when the pull request changed under it: a boxed notice, amber alert, bold title. */
+.merge-stale {
+  align-items: flex-start;
+  margin: 0;
+}
+.merge-stale > svg {
+  margin-top: 2px;
+  color: var(--color-warnText);
+}
+.merge-stale b {
+  font-weight: 500;
+}
+.merge-stale-line {
+  color: var(--color-textSoft);
+}
+
+/* The review card under the merge row, and what it becomes. */
+.pull-review {
+  margin-top: 10px;
+  gap: 8px;
+}
+.pull-review > b,
+.pull-review-head b {
+  font-weight: 500;
+}
+.pull-review textarea {
+  width: 100%;
+  resize: vertical;
+}
+.pull-review-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.pull-review-note[data-tone="danger"] {
+  color: var(--color-danger);
+}
+.pull-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pull-review-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+}
+.pull-changes-label {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: 8px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--color-warnSoft);
+  color: var(--color-warnText);
+  font-size: var(--text-label);
+}
+.pull-merge[data-dim] {
+  opacity: 0.4;
+}
+.pull-review-note[data-tone="t2"] {
+  color: var(--color-textSoft);
+}
+.pull-review-done {
+  gap: 6px;
+}
+.pull-review-done > b {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.pull-review-note-text {
+  color: var(--color-textSoft);
+}
+.pulls-banner [data-pressed] {
+  background: var(--color-selected);
+}
+
+/* A paused chip and its tooltip, the same one the row cells use. */
+.pulls-chipwrap-tip {
+  position: relative;
+  display: inline-flex;
+}
+.pulls-chipwrap-tip:hover > .pull-tip,
+.pulls-chipwrap-tip:focus-within > .pull-tip {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: var(--m-hover), var(--m-hover);
+}

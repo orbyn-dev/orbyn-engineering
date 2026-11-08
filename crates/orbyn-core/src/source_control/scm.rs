@@ -589,12 +589,18 @@ impl Core {
                 None => projects.push((pull.project_id.as_str(), vec![pull])),
             }
         }
-        let paused = || PullDetailsResponse {
+        // `left` is read by the caller, which holds the cache's lock: taking it here would wait on itself.
+        let paused = |left: Option<std::time::Duration>| PullDetailsResponse {
             details: Vec::new(),
             paused: DETAIL_FIELDS
                 .iter()
                 .map(|name| (*name).to_owned())
                 .collect(),
+            resume_at: left.and_then(|left| {
+                let at = time::OffsetDateTime::now_utc() + left;
+                at.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            }),
         };
         let mut found: Vec<PullDetails> = Vec::new();
         for (project_id, refs) in projects {
@@ -610,7 +616,7 @@ impl Core {
             {
                 let cache = self.pull_details.lock().unwrap();
                 if cache.paused(now) {
-                    return Ok(paused());
+                    return Ok(paused(cache.resumes_in(now)));
                 }
                 for pull in refs {
                     let cached = if request.fresh {
@@ -639,8 +645,22 @@ impl Core {
                         }
                     }
                     DetailsOutcome::RateLimited => {
-                        self.pull_details.lock().unwrap().pause(Instant::now());
-                        return Ok(paused());
+                        // GitHub's own reset time, when it will say; else the fixed pause.
+                        let reset = forge::github_graphql_reset(cwd).await.map(|at| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0, |since| since.as_secs());
+                            std::time::Duration::from_secs(at.saturating_sub(now))
+                        });
+                        let left = {
+                            let mut cache = self.pull_details.lock().unwrap();
+                            match reset {
+                                Some(span) => cache.pause_for(Instant::now(), span),
+                                None => cache.pause(Instant::now()),
+                            }
+                            cache.resumes_in(Instant::now())
+                        };
+                        return Ok(paused(left));
                     }
                     // Nothing new; the cached rows below still stand.
                     DetailsOutcome::Unavailable => {}
@@ -651,6 +671,7 @@ impl Core {
         Ok(PullDetailsResponse {
             details: found,
             paused: Vec::new(),
+            resume_at: None,
         })
     }
 
@@ -932,6 +953,7 @@ impl Core {
                     subject: None,
                     body: None,
                     strip_credits: false,
+                    expected_head: None,
                 };
                 self.merge_project_pull(project_id, layer.number, &options, actor)
                     .await

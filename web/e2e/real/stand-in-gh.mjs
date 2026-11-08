@@ -246,6 +246,10 @@ switch (route) {
     save();
     break;
   case "pr merge":
+    // The expected head is checked as GitHub does: a branch that moved on since the page was read is refused.
+    if (flag("--match-head-commit") && flag("--match-head-commit") !== (pull(args[2]).headNow ?? "aaaaaaa")) {
+      fail("X Pull request is not mergeable: Head branch was modified. Review and try the merge again.");
+    }
     if (args.includes("--auto")) pull(args[2]).autoMergeRequest = {};
     else pull(args[2]).state = "MERGED";
     pull(args[2]).mergeBody = flag("--body");
@@ -259,6 +263,7 @@ switch (route) {
   }
   case "pr review":
     pull(args[2]).reviewed = args.find((arg) => /^--(approve|request-changes|comment)$/.test(arg));
+    pull(args[2]).reviewBody = flag("--body");
     save();
     break;
   case "pr revert":

@@ -1,4 +1,4 @@
-import { CloudOff, Copy, GitPullRequest, Lock, RefreshCw, TriangleAlert, X } from "lucide-react";
+import { Clock, CloudOff, Copy, GitPullRequest, Lock, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "../../ui/controls";
 
@@ -101,3 +101,32 @@ export const SignedOut = ({ forge, onSignIn, onLater }: { forge: string; onSignI
     Orbyn needs your {forge} account to list pull requests, checks and reviews. Nothing is posted without you.
   </Block>
 );
+
+const clock = (at: Date | null) =>
+  at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+
+/**
+ * The forge is limiting requests: neutral, with no Retry, because the next check is automatic. The time is an
+ * estimate; when it passes and the forge still limits, the banner says so and gives the next check.
+ */
+export const RateLimitBanner = ({
+  forge,
+  resumeAt,
+  still,
+  nextCheckAt,
+}: {
+  forge: string;
+  resumeAt: string | null;
+  still: boolean;
+  nextCheckAt: number | null;
+}) => {
+  const resume = clock(resumeAt ? new Date(resumeAt) : null);
+  const next = clock(resumeAt || still ? (nextCheckAt === null ? null : new Date(nextCheckAt)) : null);
+  return (
+    <PullsBanner live icon={<Clock size={14} aria-hidden />} actions={null}>
+      {still
+        ? `${forge} is still limiting requests, so the reviewer and check filters stay paused. Still limited. ${next ? `Checking again at ${next}.` : "Checking again soon."}`
+        : `${forge} is limiting requests, so the reviewer and check filters are paused. ${resume ? `They resume at ${resume}.` : "They resume soon."}`}
+    </PullsBanner>
+  );
+};
