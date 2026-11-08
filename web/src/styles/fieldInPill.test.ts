@@ -7,9 +7,19 @@ const walk = (dir: string): string[] =>
 const stripped = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "");
 const sheets = walk(join(process.cwd(), "src")).filter((file) => file.endsWith(".css"));
 const base = stripped(readFileSync(join(process.cwd(), "src/styles/base.css"), "utf8"));
-const rule = /:is\(([^)]*)\)\s+input:not\(\[type="checkbox"\], \[type="radio"\]\)\s*\{([^}]*)\}/.exec(base);
-const shared = rule?.[1] ?? "";
-const sharedBody = rule?.[2] ?? "";
+const rule = /:is\(([^)]*)\)\s+input:not\(\[type="checkbox"\], \[type="radio"\]\):not\(\[type="hidden"\]\),\s*([^{]*)\{([^}]*)\}/.exec(base);
+const shared = `${rule?.[1] ?? ""} ${rule?.[2] ?? ""}`;
+const sharedBody = rule?.[3] ?? "";
+
+/** Wrappers whose input is itself the visible field (it keeps its own fill, radius and padding), or is no pill. */
+const EXEMPT: Record<string, string> = {
+  ".thread-find": "its input is the filled field beside the match count",
+  ".browser-bar": "the address field is the filled input itself",
+  ".diff-find": "the find input is the filled field",
+  ".filter-popup": "the popup's input sits on the popup's own surface",
+  ".question": "an answer field, not a search pill",
+  ".project-image-picker": "a direct child field of the picker",
+};
 
 /** The wrapper of every `.wrapper input { border: 0 }` rule: the pills that draw their own field. */
 function bareInputWrappers(): string[] {
@@ -29,8 +39,9 @@ it("keeps the global input fill, border and padding out of every search or filte
   const wrappers = bareInputWrappers();
   expect(shared).toContain(".set-find");
   expect(wrappers.length).toBeGreaterThan(8);
-  const exempt = new Set([".project-image-picker", ".question"]);
-  expect(wrappers.filter((wrapper) => !exempt.has(wrapper) && !shared.includes(wrapper))).toEqual([]);
+  expect(wrappers.filter((wrapper) => !(wrapper in EXEMPT) && !shared.includes(wrapper))).toEqual([]);
+  // An exemption must still be a wrapper with a bare input, and must not also be in the shared rule.
+  for (const wrapper of Object.keys(EXEMPT)) expect(shared, wrapper).not.toContain(wrapper);
 });
 
 it("resets only what the global rule leaks, so a pill keeps its own type and height", () => {

@@ -30,3 +30,24 @@ test("the thread search in the sidebar is one pill", async ({ page }) => {
   await page.getByRole("button", { name: "Search threads" }).click();
   await bare(page.locator(".search-field input, .set-find input, .palette-search input").first());
 });
+
+/** Fields that are themselves the filled input keep their fill and padding: the shared pill reset must not strip them. */
+const filled = async (input: Locator) => {
+  await expect(input).toBeVisible();
+  const style = await input.evaluate((node) => {
+    const css = getComputedStyle(node);
+    return { bg: css.backgroundColor, pad: css.paddingLeft };
+  });
+  expect(style.bg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(style.pad).not.toBe("0px");
+};
+
+test("the thread find and diff find inputs keep their fill and padding", async ({ page }) => {
+  await page.goto("/#/threads/t-done");
+  await page.keyboard.press("ControlOrMeta+f");
+  await filled(page.locator(".thread-find input").first());
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Show side panel" }).click();
+  await page.getByRole("tab", { name: "Diff" }).first().click();
+  await filled(page.locator(".diff-find input").first());
+});
