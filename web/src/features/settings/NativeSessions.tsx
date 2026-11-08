@@ -12,6 +12,10 @@ import { Button } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { SettingRow } from "../../ui/SettingRow";
 
+/** A turned-away or failed capability read is asked again this many times, a little later each time. */
+const CAPABILITY_TRIES = 6;
+const CAPABILITY_RETRY_MS = 400;
+
 const base = (engine: string) => `/api/engines/${encodeURIComponent(engine)}/native-sessions`;
 
 /** An ACP agent's own saved conversations, offered only when it says it can list them. */
@@ -33,8 +37,21 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     setCaps(null); setSessions([]); setNext(null); setBusy(null);
     if (!active) return;
     const abort = new AbortController();
-    request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then(setCaps, () => undefined);
-    return () => abort.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    // The agent answers one thing at a time, so a second ask while the first is still being answered (the page asking
+    // again, an update running) is turned away as busy. That is not "cannot list sessions": ask again shortly.
+    const ask = () =>
+      request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then(setCaps, () => {
+        if (abort.signal.aborted || tries >= CAPABILITY_TRIES) return;
+        tries += 1;
+        timer = setTimeout(ask, CAPABILITY_RETRY_MS * tries);
+      });
+    void ask();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
   }, [engine.id, active]);
 
   if (!active || !caps?.can_list) return null;
