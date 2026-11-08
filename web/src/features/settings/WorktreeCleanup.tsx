@@ -33,7 +33,8 @@ function CleanupSelect({ label, current, disabled, mixed, set }: { label: string
   };
   return <span className="set-inline-control">
     <select aria-label={label} disabled={disabled} value={mixed ? "mixed" : current === null ? "off" : "on"}
-      onChange={(event) => set(event.target.value === "on" ? Number(draft) || DEFAULT_DAYS : null)}>
+      // Off has no days: turning it on starts from the default, not from a number typed before it was turned off.
+      onChange={(event) => set(event.target.value === "on" ? (current === null ? DEFAULT_DAYS : Number(draft) || DEFAULT_DAYS) : null)}>
       {mixed ? <option value="mixed" disabled>Mixed</option> : null}
       <option value="off">Off</option><option value="on">On</option>
     </select>

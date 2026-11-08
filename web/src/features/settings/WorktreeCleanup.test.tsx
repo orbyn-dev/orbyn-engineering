@@ -33,6 +33,24 @@ it("shows the saved days beside On, saves a new number on leaving it, and Off hi
   expect(days).toHaveValue(14);
   await user.clear(days); await user.type(days, "3"); await user.tab();
   await waitFor(() => sent({ mode: "custom", rules: { settled_after_days: 3 } }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Automatic worktree cleanup" }), "off");
+  // The controls rest while the save and the read after it are under way; a change made then is not taken.
+  const select = screen.getByRole("combobox", { name: "Automatic worktree cleanup" });
+  await waitFor(() => expect(select).toBeEnabled());
+  await user.selectOptions(select, "off");
   await waitFor(() => sent({ mode: "off" }));
+});
+
+it("starts again from seven days after Off, not from the number it had", async () => {
+  const user = userEvent.setup();
+  serve({ mode: "custom", rules: { settled_after_days: 14 } }, "project");
+  render(<WorktreeCleanup />);
+  expect(await screen.findByRole("spinbutton", { name: "Automatic worktree cleanup: days" })).toHaveValue(14);
+  const select = screen.getByRole("combobox", { name: "Automatic worktree cleanup" });
+  serve({ mode: "off" }, "project");
+  await user.selectOptions(select, "off");
+  await waitFor(() => sent({ mode: "off" }));
+  await waitFor(() => expect(screen.queryByRole("spinbutton")).toBeNull());
+  await waitFor(() => expect(select).toBeEnabled());
+  await user.selectOptions(select, "on");
+  await waitFor(() => sent({ mode: "custom", rules: { settled_after_days: 7 } }));
 });
