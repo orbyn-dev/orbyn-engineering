@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { useUi } from "../state/ui";
+import { useWorkspace } from "../state/workspace";
 import { App } from "./App";
 
 beforeEach(() => {
@@ -136,5 +137,17 @@ describe("the Details button and the details card", () => {
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Rename", "Copy folder path", "Archive", "Delete thread"]);
     await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
     expect(await screen.findByRole("dialog", { name: /Delete “/ })).toBeInTheDocument();
+  });
+
+  it("replaces the composer with the read-only banner once the thread is archived", async () => {
+    setViewportWidth(1400);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await details());
+    expect(await screen.findByRole("textbox", { name: /^Message / })).toBeInTheDocument();
+    const thread = useWorkspace.getState().threads["t-done"]!;
+    act(() => useWorkspace.getState().putThread({ ...thread, lifecycle: { ...thread.lifecycle!, archived_at: "2026-11-03T09:00:00Z" } }));
+    expect(await screen.findByText("This thread is archived and read-only.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^Message / })).toBeNull();
   });
 });

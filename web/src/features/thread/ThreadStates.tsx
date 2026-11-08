@@ -1,7 +1,8 @@
 import { Archive, GitFork, Loader2 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
+import { useNow } from "../../lib/useNow";
 import { toFailure } from "../../lib/useAsync";
 import { navigate } from "../../state/route";
 import { useUi } from "../../state/ui";
@@ -9,6 +10,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { unarchiveThread } from "../workspace/threadActions";
 import { usageShare } from "./ComposerExtras";
+import { formatWait } from "./ThreadBanners";
 import { useThreadLogs } from "./threadLogs";
 
 /** A run whose prompt is the compact command, while it runs: the thread is being compacted. */
@@ -56,9 +58,11 @@ export function ArchivedBanner({ thread }: { thread: Thread }) {
     }
   };
   return (
-    <div className="archived-banner" role="status">
-      <Archive size={16} aria-hidden />
-      <span>This thread is archived and read-only.</span>
+    <div className="archived-banner">
+      <span className="archived-text" role="status">
+        <Archive size={16} aria-hidden />
+        This thread is archived and read-only.
+      </span>
       <span className="archived-actions">
         {lastRun ? (
           <Button small tone="quiet" icon={<GitFork size={14} aria-hidden />} onClick={() => void fork()}>
@@ -71,4 +75,35 @@ export function ArchivedBanner({ thread }: { thread: Thread }) {
       </span>
     </div>
   );
+}
+
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+/** What the header says about the thread while it is archived, compacting or waiting out a limit; null when none applies. */
+export function useThreadChip(thread: Thread): ReactNode {
+  const compacting = useCompacting(thread);
+  const limit = thread.lifecycle?.limit;
+  const resetsAt = limit?.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
+  const now = useNow(!Number.isNaN(resetsAt) && Date.now() < resetsAt + 1000);
+  const archivedAt = thread.lifecycle?.archived_at;
+  if (archivedAt) {
+    return (
+      <span className="page-sub-item">
+        <Archive size={13} aria-hidden />
+        Archived {day(archivedAt)}
+      </span>
+    );
+  }
+  if (compacting) {
+    return (
+      <span className="page-sub-item">
+        <Loader2 size={13} className="spin" aria-hidden />
+        Compacting
+      </span>
+    );
+  }
+  if (limit && !thread.active_run && resetsAt > now) {
+    return <span className="page-sub-item limit-label">Waiting · {formatWait(resetsAt - now)}</span>;
+  }
+  return null;
 }

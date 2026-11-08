@@ -37,7 +37,7 @@ import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
-import { ArchivedBanner, CompactingStep } from "./ThreadStates";
+import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "./timeline";
@@ -90,6 +90,7 @@ function TopBar({
   const state = threadRunState(thread);
   const narrow = layout === "phone";
   const connection = useConnectionKind();
+  const chip = useThreadChip(thread);
 
   return (
     <header className="topbar">
@@ -110,7 +111,7 @@ function TopBar({
               {project.name}
             </span>
           ) : null}
-          {connection ? <ConnectionStatus /> : thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null}
+          {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
         {narrow ? <PullChip thread={thread} /> : null}
       </div>

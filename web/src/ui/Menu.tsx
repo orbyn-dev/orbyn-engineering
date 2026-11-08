@@ -9,6 +9,8 @@ export interface MenuItem {
   icon?: ReactNode;
   selected?: boolean;
   disabled?: boolean;
+  /** Why an item is off, or what it does, on hover. */
+  title?: string;
   destructive?: boolean;
   separatorBefore?: boolean;
   /** Shown right-aligned, such as the key that runs the same command. */
@@ -125,6 +127,7 @@ function MenuList({
               aria-haspopup={item.children ? "menu" : undefined}
               aria-expanded={item.children ? open?.item === item : undefined}
               disabled={item.disabled}
+              title={item.title}
               aria-current={item.keepOpen ? undefined : item.selected || undefined}
               data-checked={item.keepOpen && item.selected ? "" : undefined}
               onPointerEnter={(event) => {
