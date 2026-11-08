@@ -80,11 +80,15 @@ impl UpdatePlan {
 pub struct RunSpec {
     pub run_id: String,
     pub thread_id: String,
-    /// Where the engine process starts: the workspace root for native engines,
-    /// so they discover the library themselves; the checkout for all others.
+    /// Where the engine process starts. Claude starts in the checkout, so the project's
+    /// own instructions are the primary ones; Codex's process starts at the workspace
+    /// root and its turns name the checkout; every other engine starts in the checkout.
     pub cwd: PathBuf,
     /// The selected checkout, which is the only place this run may write.
     pub checkout: PathBuf,
+    /// The shared skills library. An engine that does not start there may add it as an
+    /// extra folder, for its skills and reference only.
+    pub library: PathBuf,
     /// The prompt, with its workspace context already in front of it.
     pub prompt: String,
     /// The prompt alone, for engines that cannot take context.
@@ -359,9 +363,20 @@ pub trait EngineDriver: Send + Sync {
     }
 
     /// True when a relative path in this engine's tool calls means the checkout.
-    /// Claude runs at the library, so its relative paths mean the library.
     fn resolves_from_checkout(&self) -> bool {
         true
+    }
+
+    /// Where this engine's process must start for a run, when that depends on the
+    /// session it resumes. `None` leaves the choice to the run manager. Relative
+    /// paths in the engine's tool calls mean this folder.
+    fn start_dir(
+        &self,
+        _root: &std::path::Path,
+        _checkout: &std::path::Path,
+        _session: Option<&str>,
+    ) -> Option<PathBuf> {
+        None
     }
 
     /// The update this driver would run for `probe`, when ownership is provable.

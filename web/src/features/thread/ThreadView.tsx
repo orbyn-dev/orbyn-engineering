@@ -9,7 +9,7 @@ import {
   ShieldAlert,
   Target,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
@@ -412,7 +412,13 @@ export function ThreadView({ id }: { id: string }) {
     thread.last_run_state === null;
   const { mover, anchor, recordStart } = useComposerDock(hero, motion.enabled, motion.durationMs);
 
-  const panelOpen = panelPref ?? layout === "xwide";
+  // Open only when asked or triggered; a wider window gives the panel more room, not an opening.
+  // A phone-width window shows the panel instead of the chat, so it does not take the
+  // remembered choice and does not save its own; the choice returns with the width.
+  useLayoutEffect(() => {
+    useUi.getState().setPanelNarrow(phone);
+  }, [phone]);
+  const panelOpen = panelPref;
   // Over the thread, Escape closes the panel and focus goes back to the header button.
   useEscapeClose(panelOpen && overlays && !maximized, () => setPanelOpen(false), () =>
     document.querySelector<HTMLElement>("[data-panel-toggle]"),

@@ -226,6 +226,18 @@ export function ThreadRow({
     clearTimeout(timer.current);
     setHover(null);
   };
+  // A right-click focuses the row after the menu opens, which would start the card
+  // again over the menu. No card starts after a menu was opened from this row, until
+  // the pointer comes back or a key is pressed on it. Another row's or surface's menu
+  // does not hold this card back.
+  const menuFromRow = useRef(false);
+  const startHover = (rect: DOMRect) => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      if (menuFromRow.current) return;
+      setHover(rect);
+    }, HOVER_DELAY_MS);
+  };
 
   const badge = verb ? (
     <span className="row-drop-badge" role="status">
@@ -391,18 +403,21 @@ export function ThreadRow({
         onFocus={(event) => {
           actions.onRowFocus(thread.id);
           if (!event.currentTarget.matches(":focus-visible")) return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          timer.current = setTimeout(() => setHover(rect), HOVER_DELAY_MS);
+          startHover(event.currentTarget.getBoundingClientRect());
         }}
         onBlur={stopHover}
+        onKeyDown={() => {
+          menuFromRow.current = false;
+        }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse") return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          timer.current = setTimeout(() => setHover(rect), HOVER_DELAY_MS);
+          menuFromRow.current = false;
+          startHover(event.currentTarget.getBoundingClientRect());
         }}
         onPointerLeave={stopHover}
         onContextMenu={(event) => {
           event.preventDefault();
+          menuFromRow.current = true;
           stopHover();
           actions.onMenu(event, thread);
         }}

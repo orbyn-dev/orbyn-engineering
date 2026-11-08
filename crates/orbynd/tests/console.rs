@@ -12,11 +12,20 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 fn options(file: &Path) -> Options {
+    // Claude's history folder decides where a session resumes, so it must be a
+    // temporary one and never the machine's own `~/.claude`.
+    let history = file.with_file_name("claude-config");
     Options {
-        env: vec![(
-            "ORBYN_FAKE_LAUNCH_FILE".into(),
-            file.to_string_lossy().into_owned(),
-        )],
+        env: vec![
+            (
+                "ORBYN_FAKE_LAUNCH_FILE".into(),
+                file.to_string_lossy().into_owned(),
+            ),
+            (
+                "CLAUDE_CONFIG_DIR".into(),
+                history.to_string_lossy().into_owned(),
+            ),
+        ],
         ..Options::default()
     }
 }
@@ -110,16 +119,28 @@ async fn claude_console_resumes_the_thread_session_and_holds_runs() {
             json!("claude-session-1"),
             json!("--permission-mode"),
             json!("default"),
-            json!("--add-dir"),
+            json!("--settings"),
         ]
     );
-    // Claude starts at the library, where its runs keep the session, and reaches
-    // the nested checkout with `--add-dir`.
-    let checkout = std::path::PathBuf::from(args[5].as_str().unwrap());
-    assert!(checkout.ends_with("repo/project"), "{checkout:?}");
+    // The console gets the run's protection: hooks off and every write-capable tool asks, so a checkout's allow
+    // rules never skip the question, and no flag drops the checkout's CLAUDE.md or skills.
+    let settings: serde_json::Value = serde_json::from_str(args[5].as_str().unwrap()).unwrap();
+    assert_eq!(settings["disableAllHooks"], true, "{settings}");
+    assert_eq!(
+        settings["permissions"]["ask"],
+        json!(["Bash", "Edit", "Write", "NotebookEdit", "WebFetch"])
+    );
+    assert!(!args.contains(&json!("--setting-sources")), "{args:?}");
+    // Claude starts in the checkout, where its runs now keep the session, and reaches
+    // the library with `--add-dir`.
+    let at = args.iter().position(|arg| arg == "--add-dir").unwrap();
+    let library = std::path::PathBuf::from(args[at + 1].as_str().unwrap());
     let cwd = std::fs::canonicalize(launched[0]["cwd"].as_str().unwrap()).unwrap();
-    let library = checkout.parent().and_then(Path::parent).unwrap();
-    assert_eq!(cwd, std::fs::canonicalize(library).unwrap());
+    assert!(cwd.ends_with("repo/project"), "{cwd:?}");
+    assert_eq!(
+        std::fs::canonicalize(&library).unwrap(),
+        std::fs::canonicalize(cwd.parent().and_then(Path::parent).unwrap()).unwrap()
+    );
 
     // The console owns the session: no run, and a second open reuses it.
     let (code, body) = service

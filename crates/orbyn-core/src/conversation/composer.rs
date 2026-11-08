@@ -240,8 +240,9 @@ impl Core {
         Ok(commands)
     }
 
-    /// The Claude CLI's own skills for this thread: its config directory, the
-    /// start folder and the checkout. Discovery reads only; the CLI loads them.
+    /// The Claude CLI's own skills for this thread: its config directory, the start
+    /// folder (the checkout) and the library it adds. Discovery reads only; the CLI
+    /// loads them.
     fn claude_skills(&self, checkout: &Path) -> Vec<ClaudeSkill> {
         let Ok(base) = self.workspace.root() else {
             return Vec::new();
@@ -250,7 +251,7 @@ impl Core {
             return Vec::new();
         };
         let plugin_cache = std::env::var_os(claude_skills::PLUGIN_CACHE_ENV).map(PathBuf::from);
-        claude_skills::discover(&config, &base, checkout, plugin_cache.as_deref())
+        claude_skills::discover(&config, checkout, &base, plugin_cache.as_deref())
     }
 }
 
