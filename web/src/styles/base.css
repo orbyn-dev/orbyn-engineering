@@ -118,6 +118,38 @@ select {
   font-size: var(--control-fs);
   line-height: 1.4;
 }
+/*
+ * A search or filter pill draws the field: its wrapper owns the fill, padding and focus ring, and the input inside is
+ * bare. The global input rule above is more specific than a wrapper's own `.x input`, so without this the input
+ * kept its white fill, border and padding and showed as a field inside the pill. Add a new pill's wrapper class
+ * here; fieldInPill.test.ts fails when a stylesheet has a bare input in a wrapper that is missing.
+ */
+:is(
+    .set-find,
+    .pull-filter-field,
+    .pulls-fld .pulls-inp,
+    .skills-search,
+    .pr-link-field,
+    .search-field,
+    .filter-popup,
+    .term-search-field,
+    .model-search,
+    .thread-find,
+    .browser-bar,
+    .branch-find,
+    .settings-search,
+    .pulls-search,
+    .palette-search,
+    .diff-find
+  )
+  input:not([type="checkbox"], [type="radio"]) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
