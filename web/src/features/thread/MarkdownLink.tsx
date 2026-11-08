@@ -5,8 +5,7 @@ import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { PullLinkPreview } from "../pulls/PullLinkPreview";
-import { pullNumberOf } from "../pulls/pullLink";
+import { PullLinkPreview, pullNumberOf } from "../pulls/public";
 
 const HOVER_DELAY_MS = 350;
 

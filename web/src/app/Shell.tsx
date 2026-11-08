@@ -21,7 +21,7 @@ import { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from 
 import { CloneJobs } from "../features/workspace/CloneJobs";
 import { Sidebar } from "../features/workspace/Sidebar";
 import { useDrawnOrder } from "../features/workspace/drawnOrder";
-import { PullsPage } from "../features/pulls/PullsPage";
+import { PullsPage } from "../features/pulls/public";
 import { UsagePage } from "../features/usage/public";
 import { SkillsPage } from "../features/skills/public";
 import { PreviewFloat } from "../features/panels/PreviewFloat";

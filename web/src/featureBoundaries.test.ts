@@ -18,6 +18,8 @@ describe.each([
   ["src/app/probe.ts", "../features/settings", "settings"],
   ["src/features/workspace/probe.ts", "../skills", "skills"],
   ["src/app/probe.ts", "../features/skills", "skills"],
+  ["src/features/thread/probe.ts", "../pulls", "pulls"],
+  ["src/app/probe.ts", "../features/pulls", "pulls"],
 ])("boundary from %s via %s", (filePath, target, feature) => {
   it.each([
     `import { value } from "${target}/private";`,
@@ -66,13 +68,23 @@ it("enforces skills boundaries on existing module paths", async () => {
   expect(await lint("src/features/skills/SkillsPage.test.tsx", 'import { categoriesOf } from "./SkillsPage";')).toHaveLength(0);
 });
 
-it.each(["usage", "platform", "settings", "skills"])("allows %s internals, inward imports and unfinished destinations", async (feature) => {
+it("enforces pulls boundaries on existing module paths", async () => {
+  expect(await lint("src/app/Shell.tsx", 'import { PullsPage } from "../features/pulls/PullsPage";')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/features/thread/PullChip.tsx", 'import "../pulls/pullsToolbar.css";')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/features/thread/MarkdownLink.tsx", 'export * from "../pulls/pullLink";')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/features/thread/pullStore.ts", 'import { checksOf } from "../pulls/public";')).toHaveLength(0);
+  expect(await lint("src/features/pulls/PullsToolbar.tsx", 'import "./pullsToolbar.css";')).toHaveLength(0);
+  expect(await lint("src/state/ui.ts", 'const pulls = import("../features/pulls/public");')).toMatchObject([{ messageId: "inward" }]);
+  expect(await lint("src/features/pulls/pullModel.test.ts", 'import { checksOf } from "./pullModel";')).toHaveLength(0);
+});
+
+it.each(["usage", "platform", "settings", "skills", "pulls"])("allows %s internals, inward imports and unfinished destinations", async (feature) => {
   expect(await lint(`src/features/${feature}/probe.ts`, 'import { value } from "./private";')).toHaveLength(0);
   expect(await lint("src/features/thread/probe.ts", 'import { value } from "../../state/ui";')).toHaveLength(0);
   expect(await lint("src/features/thread/probe.ts", 'import { value } from "../panels/private";')).toHaveLength(0);
 });
 
-it.each(["usage", "platform", "settings", "skills"])("keeps shared folders inward to %s, including public dynamic imports", async (feature) => {
+it.each(["usage", "platform", "settings", "skills", "pulls"])("keeps shared folders inward to %s, including public dynamic imports", async (feature) => {
   for (const folder of ["ui", "state", "lib", "api", "styles"]) {
     for (const code of [
       `import { value } from "../features/${feature}/public";`,
@@ -91,6 +103,9 @@ it.each([
   ["src/features/thread/platform-probe.test.ts", "../platform/private"],
   ["src/features/thread/settings-probe.test.ts", "../settings/SettingsPage"],
   ["src/features/workspace/skills-probe.test.ts", "../skills/SkillsNav"],
+  ["src/features/thread/pulls-probe.test.ts", "../pulls/pullModel"],
+  ["src/test-setup.ts", "./features/pulls/PullsPage"],
+  ["src/test-support.ts", "./features/pulls/pullLink"],
   ["src/test-setup.ts", "./features/skills/skillsStore"],
   ["src/test-support.ts", "./features/skills/SkillsPage"],
   ["src/test-setup.ts", "./features/settings/ScheduledTasks"],
@@ -108,6 +123,7 @@ it.each([
   ["src/state/probe.ts", 'import { value } from "../features/platform/public";'],
   ["src/state/probe.ts", 'import { value } from "../features/settings/public";'],
   ["src/state/probe.ts", 'import { value } from "../features/skills/public";'],
+  ["src/state/probe.ts", 'import { value } from "../features/pulls/public";'],
   ["src/features/usage/probe.ts", 'import { value } from "@tauri-apps/api";'],
   ["src/features/usage/probe.ts", 'import { value } from "../../../mock/api";'],
 ])("preserves existing restrictions in %s: %s", async (filePath, code) => {

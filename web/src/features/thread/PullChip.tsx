@@ -15,7 +15,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { DRow } from "./DetailRows";
 import { captureFocusReturn } from "../../ui/focusReturn";
-import { ToolbarPopover } from "../pulls/ToolbarPopover";
+import { ToolbarPopover } from "../pulls/public";
 import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "./GitControl";
 import {
   agoWords,
@@ -30,7 +30,6 @@ import {
   useThreadPulls,
   WATCH_TIP,
 } from "./pullStore";
-import "../pulls/pullsToolbar.css";
 import "./pullChip.css";
 
 /** Reads the thread's linked pull requests once it shows, and again whenever it changes. */
