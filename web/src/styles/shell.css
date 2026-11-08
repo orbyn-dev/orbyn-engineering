@@ -511,6 +511,10 @@ input.dialog-field-mono {
   flex: none;
   gap: 2px;
 }
+.row-rest {
+  display: inline-flex;
+  align-items: center;
+}
 /* Snooze and Settle are icon-only buttons floating over the row's right edge with a fade: the title keeps its full
    width underneath, and the status text stays where it is. The context menu carries the same actions. */
 .row-actions {

@@ -30,3 +30,13 @@ describe("what sits under the floating title bar", () => {
     expect(readFileSync(join(process.cwd(), "src/styles/tokens.css"), "utf8")).toContain("--titlebar-h: 44px;");
   });
 });
+
+describe("the pull request list's optional columns", () => {
+  it("empties a hidden column's track so the grid keeps no gap for it", () => {
+    const table = rules.filter(({ selector }) => selector === ".pulls-table[data-no-reviewers]" || selector === ".pulls-table[data-no-review]");
+    expect(table.map(({ body }) => body.trim())).toEqual(["--c-rev: ;", "--c-yours: ;"]);
+    const templates = rules.flatMap(({ body }) => [...body.matchAll(/--pulls-cols:\s*([^;]+);/g)].map((match) => match[1] ?? ""));
+    // Every table template that has the two tracks takes them from the variables, wherever the breakpoint.
+    for (const template of templates.filter((one) => /190px|28px/.test(one))) expect(template, template).toMatch(/var\(--c-yours\)/);
+  });
+});

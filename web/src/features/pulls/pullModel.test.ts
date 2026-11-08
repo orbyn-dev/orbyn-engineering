@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PullListEntry } from "../../api/types";
-import { activeChips, bodyOpensWith, checksOf, checksView, mergeGate, noFilters, pageState, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
+import { activeChips, bodyOpensWith, detailsKey, emptyColumns, checksOf, checksView, mergeGate, noFilters, pageState, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
 
 const newest: PullSort = { by: "created", dir: "newest" };
 const oldest: PullSort = { by: "created", dir: "oldest" };
@@ -203,5 +203,24 @@ describe("bodyOpensWith", () => {
     expect(bodyOpensWith("## Summaries", "Summary")).toBe(false);
     expect(bodyOpensWith("", "Summary")).toBe(false);
     expect(bodyOpensWith(null, "Summary")).toBe(false);
+  });
+});
+
+describe("emptyColumns", () => {
+  const list = [entry(1), entry(2)];
+  const row = (number: number, over: Record<string, unknown> = {}) => [detailsKey("p", number), { project_id: "p", number, comment_count: 0, requested_reviewers: [], viewer_review_state: "none", ...over }] as const;
+  const map = (...rows: (readonly [string, unknown])[]) => new Map(rows) as unknown as Parameters<typeof emptyColumns>[1];
+
+  it("leaves out Reviewers and Your review when every row's details are in and none has any", () => {
+    expect(emptyColumns(list, map(row(1), row(2)), ["me"])).toEqual({ reviewers: true, review: true });
+  });
+  it("keeps a column in which any row has data", () => {
+    const reviewers = [{ kind: "user", name: "sam" }];
+    expect(emptyColumns(list, map(row(1, { requested_reviewers: reviewers }), row(2)), ["me"])).toEqual({ reviewers: false, review: true });
+    expect(emptyColumns(list, map(row(1), row(2, { viewer_review_state: "approved" })), ["me"])).toEqual({ reviewers: true, review: false });
+  });
+  it("keeps both while any row's details are still coming, and with no rows", () => {
+    expect(emptyColumns(list, map(row(1)), ["me"])).toEqual({ reviewers: false, review: false });
+    expect(emptyColumns([], map(), [])).toEqual({ reviewers: false, review: false });
   });
 });

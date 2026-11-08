@@ -38,6 +38,7 @@ import {
   type PullData,
   type PullFilters,
   type PullSort,
+  emptyColumns,
 } from "./pullModel";
 import { pullsApi } from "../../api/pulls";
 /** One request per state the service is asked for, merged into one list. */
@@ -199,6 +200,7 @@ export function PullsPage() {
       {loading || refreshing ? <i className="pulls-refresh-spin spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
     </IconButton>
   );
+  const emptyCols = emptyColumns(rows, details.byKey, viewers);
   const env = { status: details.status, waited: details.waited, paused: details.paused, viewers };
   const failure = list.status === "error" && !list.data;
   const unreachable = list.status === "ready" && all.length === 0 && list.data.failed.length > 0;
@@ -302,7 +304,12 @@ export function PullsPage() {
               onRemove={() => setFilters(withoutDetailFilters(filters))}
             />
           ) : null}
-          <div className="pulls-table" aria-busy={filterWaiting || undefined}>
+          <div
+            className="pulls-table"
+            aria-busy={filterWaiting || undefined}
+            data-no-reviewers={emptyCols.reviewers || undefined}
+            data-no-review={emptyCols.review || undefined}
+          >
             <span className="sr-only" aria-live="polite">
               {filterWaiting ? "Loading details" : ""}
             </span>
