@@ -16,6 +16,7 @@ import "./styles/detailsCard.css";
 import "./styles/panelTabs.css";
 import "./styles/pages.css";
 import "./styles/layouts.css";
+import "./styles/selection.css";
 
 captureToken();
 applyTheme(useUi.getState().theme);

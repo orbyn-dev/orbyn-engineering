@@ -37,7 +37,7 @@ one feature lives in that feature.
 The `usage` feature exposes `UsagePage` through `features/usage/public.ts`.
 The `platform` feature exposes `PreviewScreen` and `previewScreenRoute` through
 `features/platform/public.ts`, preserving dev-only lazy preview loading.
-The `settings` feature exposes `SettingsPage`, `labels` and `ScheduledTasksPage`
+The `settings` feature exposes `SettingsPage` and `ScheduledTasksPage`
 through `features/settings/public.ts`.
 All production consumers outside these features, including `app`, use their
 public entry points. ESLint rejects private imports, re-exports, literal dynamic

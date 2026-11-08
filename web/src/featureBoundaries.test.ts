@@ -49,7 +49,7 @@ describe.each([
 it("enforces settings boundaries on existing module paths", async () => {
   expect(await lint("src/app/Shell.tsx", 'import { SettingsPage } from "../features/settings/SettingsPage";')).toMatchObject([{ messageId: "private" }]);
   expect(await lint("src/features/thread/ThreadView.tsx", 'export * from "../settings/ScheduledTasks";')).toMatchObject([{ messageId: "private" }]);
-  expect(await lint("src/app/TitleBar.tsx", 'import { labels } from "../features/settings/public";')).toHaveLength(0);
+  expect(await lint("src/app/Shell.tsx", 'import { SettingsPage } from "../features/settings/public";')).toHaveLength(0);
   expect(await lint("src/features/settings/SettingsPage.tsx", 'import { ScheduledTasksSection } from "./ScheduledTasks";')).toHaveLength(0);
   expect(await lint("src/state/ui.ts", 'const settings = import("../features/settings/public");')).toMatchObject([{ messageId: "inward" }]);
   expect(await lint("src/features/thread/settings-probe.test.ts", 'import { SettingsPage } from "../settings/SettingsPage";')).toHaveLength(0);
