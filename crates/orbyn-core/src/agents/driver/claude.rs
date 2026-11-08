@@ -180,6 +180,8 @@ pub fn console_args(console: &ConsoleSpec<'_>) -> Vec<OsString> {
     // The same protection as a run: a checkout's allow rules and hooks must not decide a tool call that Orbyn's
     // write scope covers, and the library's settings and agents apply as they do to a run. The person at the
     // terminal still answers every write, so a project's `allow` never skips that question.
+    // The `mcp__*` ask rule a run adds in `launch_settings` is left off on purpose: the person is
+    // at the keyboard and answers connector calls in their own CLI as they always have.
     args.extend([
         "--settings".into(),
         Value::Object(base_settings(console.root))
@@ -432,6 +434,198 @@ fn library_agents(library: &Path) -> Option<Value> {
     (!agents.is_empty()).then_some(Value::Object(agents))
 }
 
+/// MCP servers other than our own that a Claude run has seen, by the name its init frame
+/// gave them. Remembered for the life of the service so the next run's approval guard
+/// can name them; the wildcard in the guard covers a server not yet seen.
+fn seen_servers() -> &'static std::sync::Mutex<std::collections::BTreeSet<String>> {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+        std::sync::OnceLock::new();
+    SEEN.get_or_init(Default::default)
+}
+
+/// Most server names remembered for the guard; the `mcp__*` rule covers the rest.
+const MAX_SEEN_SERVERS: usize = 64;
+
+/// A server's name as it appears in tool names and permission rules: anything but a
+/// letter, digit, `_` or `-` becomes `_`, so `claude.ai Vercel` is `claude_ai_Vercel`.
+fn rule_name(server: &str) -> String {
+    server
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Run settings plus the approval guard. The guard is `permissions.ask` for every MCP
+/// server but our own, because an `ask` rule outranks an `allow` rule, so a connector
+/// tool the person allowed in their own settings still reaches our permission tool
+/// instead of running unseen. `mcp__*` covers any server, including one not yet seen
+/// (checked live on 2.1.318, as were the per-server and `mcp__claude_ai_*` forms); the
+/// per-server rules cover a CLI that does not read the wildcard. Our own tools answer
+/// themselves in `approve`, so they pass through the guard unchanged.
+fn launch_settings(spec: &RunSpec, window: Option<u32>) -> Option<Value> {
+    let mut settings = match run_settings(spec, window) {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    let mut ask: Vec<String> = vec!["mcp__*".into()];
+    ask.extend(
+        seen_servers()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|name| **name != MCP_SERVER_NAME)
+            .map(|name| format!("mcp__{name}")),
+    );
+    let permissions = settings
+        .entry("permissions")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()?;
+    let existing = permissions
+        .entry("ask")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()?;
+    for rule in ask {
+        if !existing.iter().any(|entry| entry == &json!(rule)) {
+            existing.push(json!(rule));
+        }
+    }
+    Some(Value::Object(settings))
+}
+
+/// One line of `claude mcp list`: the server's name, and what the CLI says of it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct McpListed {
+    pub name: String,
+    pub state: String,
+}
+
+/// Reads `claude mcp list`. A line is `<name>: <url or command> - <state>`; a name may
+/// hold spaces and colons but not `: `, so the first `: ` ends it. Banner and blank
+/// lines carry no such separator after a name and are skipped.
+pub(crate) fn parse_mcp_list(text: &str) -> Vec<McpListed> {
+    text.lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once(": ")?;
+            if name.trim().is_empty() || name.starts_with("Checking") {
+                return None;
+            }
+            let state = rest
+                .rsplit_once(" - ")
+                .map_or("", |(_, state)| state.trim());
+            Some(McpListed {
+                name: name.trim().to_owned(),
+                state: state.to_owned(),
+            })
+        })
+        .collect()
+}
+
+static SERVERS_LEARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks the CLI which MCP servers it will load and remembers their names for the
+/// approval guard. The init frame of a run that passes `--mcp-config` lists only that
+/// one server, and connectors appear after it, so the frame cannot name them. About
+/// four seconds; only names are kept.
+async fn learn_servers(program: &str) {
+    // Tried once per service life whatever comes of it, so a CLI that cannot list
+    // does not make every run wait.
+    let _tried = scopeguard_flag();
+    let Some(command) = crate::host::process::resolve(program) else {
+        return;
+    };
+    let Some(output) = crate::agents::engines::probe::capture(
+        &command,
+        &["mcp", "list"],
+        std::time::Duration::from_secs(20),
+    )
+    .await
+    else {
+        return;
+    };
+    let mut seen = seen_servers()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for server in parse_mcp_list(&output.stdout) {
+        let name = rule_name(&server.name);
+        if name != MCP_SERVER_NAME && seen.len() < MAX_SEEN_SERVERS {
+            seen.insert(name);
+        }
+    }
+}
+
+/// Marks the server names as tried when dropped.
+struct Tried;
+
+impl Drop for Tried {
+    fn drop(&mut self) {
+        SERVERS_LEARNED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn scopeguard_flag() -> Tried {
+    Tried
+}
+
+/// What the init frame says this run has: server names with their state, plugin names
+/// and how many tools it lists. Names only; a URL or token never leaves the frame.
+fn init_tools(frame: &Value) -> Option<EngineEvent> {
+    let servers: Vec<Value> = frame
+        .get("mcp_servers")?
+        .as_array()?
+        .iter()
+        .filter_map(|server| {
+            let name = server.get("name")?.as_str()?;
+            Some(json!({
+                "name": name,
+                "status": server.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "source": server.get("source").and_then(Value::as_str),
+            }))
+        })
+        .collect();
+    {
+        let mut seen = seen_servers()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for server in &servers {
+            // Bounded: a name is only a rule string, but the set lives as long as the service.
+            if let Some(name) = server["name"].as_str().map(rule_name)
+                && name != MCP_SERVER_NAME
+                && seen.len() < MAX_SEEN_SERVERS
+            {
+                seen.insert(name);
+            }
+        }
+    }
+    let plugins: Vec<&str> = frame
+        .get("plugins")
+        .and_then(Value::as_array)
+        .map(|plugins| {
+            plugins
+                .iter()
+                .filter_map(|plugin| plugin.get("name").and_then(Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(
+        AgUiEvent::Custom {
+            name: "engine.tools".into(),
+            value: json!({
+                "engine": "claude",
+                "mcp_servers": servers,
+                "plugins": plugins,
+                "tools": frame.get("tools").and_then(Value::as_array).map_or(0, Vec::len),
+            }),
+        }
+        .into(),
+    )
+}
+
 /// The command line for reading capabilities. These flags are what keep it inert:
 /// a real 2.1.150 ran a `SessionStart` hook and started a user-level MCP server
 /// without them, even in an empty folder, and did neither with them. Hooks and
@@ -546,6 +740,10 @@ impl EngineDriver for ClaudeDriver {
             probe.account = account;
         }
         probe.sign_in_command = Some("claude auth login".into());
+        if probe.path.is_some() {
+            let program = self.program.clone();
+            tokio::spawn(async move { learn_servers(&program).await });
+        }
         probe
     }
 
@@ -631,6 +829,15 @@ impl EngineDriver for ClaudeDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
+        // An older CLI reads only per-server rules, so a run that comes before the status
+        // probe has named the servers waits for it, once, rather than start unguarded.
+        if !SERVERS_LEARNED.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(8),
+                learn_servers(&self.program),
+            )
+            .await;
+        }
         let process = self.launch(&spec)?;
         Ok(handle_for(process, spec, events, None))
     }
@@ -664,7 +871,7 @@ impl EngineDriver for ClaudeDriver {
                 "args": args,
                 "cwd": spec.cwd,
                 "mcp": spec.mcp_url,
-                "settings": run_settings(spec, self.auto_compact_window),
+                "settings": launch_settings(spec, self.auto_compact_window),
                 "mode": spec.mode,
                 "saved_login": crate::host::child_env::prefers_saved_login(),
             })
@@ -731,7 +938,7 @@ impl ClaudeDriver {
             "mcpServers": { (MCP_SERVER_NAME): { "type": "http", "url": spec.mcp_url } }
         });
         write_private(&mcp_config, config.to_string().as_bytes())?;
-        if let Some(settings) = run_settings(spec, self.auto_compact_window) {
+        if let Some(settings) = launch_settings(spec, self.auto_compact_window) {
             write_private(&run_settings_path(spec), settings.to_string().as_bytes())?;
         }
         let args = run_args(spec, &mcp_config);
@@ -1218,6 +1425,7 @@ impl StreamMapper {
             Some("system") if frame.get("subtype").and_then(Value::as_str) == Some("init") => {
                 let mut events = session(frame);
                 events.extend(init_commands(frame));
+                events.extend(init_tools(frame));
                 events
             }
             Some("stream_event") if !nested => frame
@@ -2728,6 +2936,72 @@ mod tests {
         library.checkout = "/workspace".into();
         let args = run_args(&library, Path::new("/tmp/mcp.json"));
         assert!(!args.iter().any(|arg| arg == "--add-dir"));
+    }
+
+    #[test]
+    fn connector_tools_are_asked_for_even_if_the_person_allowed_them() {
+        let settings = launch_settings(&spec(), None).unwrap();
+        let ask = settings["permissions"]["ask"].as_array().unwrap();
+        assert!(ask.contains(&json!("mcp__*")), "{ask:?}");
+        // A server the init frame named is added per server, never our own.
+        init_tools(&json!({
+            "mcp_servers": [
+                { "name": "claude.ai Vercel", "status": "connected", "source": "claudeai" },
+                { "name": MCP_SERVER_NAME, "status": "connected" }
+            ],
+        }));
+        let ask = launch_settings(&spec(), None).unwrap()["permissions"]["ask"].clone();
+        assert!(
+            ask.as_array()
+                .unwrap()
+                .contains(&json!("mcp__claude_ai_Vercel"))
+        );
+        assert!(
+            !ask.as_array()
+                .unwrap()
+                .contains(&json!(format!("mcp__{MCP_SERVER_NAME}")))
+        );
+        // The guard rides on the settings flag.
+        let args = run_args(&spec(), Path::new("/m"));
+        assert!(args.iter().any(|arg| arg == "--settings"));
+    }
+
+    #[test]
+    fn mcp_list_names_are_read_with_their_state() {
+        let text = "Checking MCP server health…\n\nclaude.ai Claude Docs: https://api.anthropic.com/v1/pages/mcp - ✔ Connected\nclaude.ai Canva: https://mcp.canva.com/mcp - ! Needs authentication\nplugin:foo:bar: npx -y thing - ✘ Failed to connect\n";
+        let listed = parse_mcp_list(text);
+        let names: Vec<_> = listed.iter().map(|one| one.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["claude.ai Claude Docs", "claude.ai Canva", "plugin:foo:bar"]
+        );
+        assert_eq!(listed[1].state, "! Needs authentication");
+        assert_eq!(rule_name("plugin:foo:bar"), "plugin_foo_bar");
+    }
+
+    #[test]
+    fn the_init_frame_is_recorded_by_name_only() {
+        let frame = json!({
+            "type": "system", "subtype": "init",
+            "mcp_servers": [
+                { "name": "claude.ai Vercel", "status": "pending", "source": "claudeai",
+                  "url": "https://secret.example/token=abc" }
+            ],
+            "plugins": [{ "name": "cowork-plugin-management", "path": "/home/me/.claude/x" }],
+            "tools": ["Bash", "Read"],
+        });
+        let Some(EngineEvent::Agui(AgUiEvent::Custom { name, value })) = init_tools(&frame) else {
+            panic!("expected a custom event");
+        };
+        assert_eq!(name, "engine.tools");
+        assert_eq!(value["mcp_servers"][0]["name"], "claude.ai Vercel");
+        assert_eq!(value["plugins"], json!(["cowork-plugin-management"]));
+        assert_eq!(value["tools"], 2);
+        let text = value.to_string();
+        assert!(
+            !text.contains("secret.example") && !text.contains("/home/me"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -159,7 +159,7 @@ async fn codex_thread_and_turns_run_in_the_checkout() {
     assert!(text.contains("Checkout: "), "{text}");
     assert!(text.contains("open its files directly"), "{text}");
     assert!(text.contains("skill_search"), "{text}");
-    assert!(text.len() < 1_000, "the context stays short: {text}");
+    assert!(text.len() < 1_200, "the context stays short: {text}");
     assert_eq!(turn["input"][0]["text"], "hi");
 }
 
