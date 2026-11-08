@@ -45,16 +45,22 @@ import { useReadingNav } from "./readingNav";
 import { toggleSidebarDrawer, useSidebarDrawer } from "./sidebarDrawer";
 import { useEscapeClose } from "../ui/useEscapeClose";
 
+import { POLL_MS, quickFocus, quickTick } from "./pollSchedule";
+
 const HIDDEN_POLL_EVERY = 3;
-const POLL_MS = 4000;
+
 
 // One load at a time: a remount (React's development double mount included) or a
 // slow load meeting the next tick joins the load already running.
 let loading: Promise<void> | null = null;
-const loadAll = () =>
-  (loading ??= useWorkspace.getState().refreshAll().finally(() => {
-    loading = null;
-  }));
+let lastFull = 0;
+const loadAll = (quick = false) =>
+  (loading ??= (() => {
+    if (!quick) lastFull = Date.now();
+    return useWorkspace.getState().refreshAll({ quick }).finally(() => {
+      loading = null;
+    });
+  })());
 let loadingEngines: Promise<void> | null = null;
 const loadEngines = () =>
   (loadingEngines ??= useWorkspace.getState().refreshEngines().finally(() => {
@@ -618,9 +624,15 @@ export function Shell() {
       // A hidden window keeps up while work runs, or its alerts would never fire, and
       // looks in now and then so it hears of work started elsewhere.
       const running = Object.values(useWorkspace.getState().threads).some((thread) => thread.active_run);
-      if (!document.hidden || running || ticks % HIDDEN_POLL_EVERY === 0) void loadAll();
+      if (!document.hidden || running || ticks % HIDDEN_POLL_EVERY === 0) void loadAll(quickTick(ticks));
     }, POLL_MS);
-    return () => clearInterval(timer);
+    // Coming back to the window: what changed while it was away, Git state included.
+    const onFocus = () => void loadAll(quickFocus(Date.now(), lastFull));
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const needsProject = projects !== null && projects.length === 0;

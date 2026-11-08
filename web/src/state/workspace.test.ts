@@ -148,3 +148,36 @@ describe("visible projects", () => {
     expect(result.current?.map((project) => project.id)).toEqual(["mine"]);
   });
 });
+
+describe("the quick refresh", () => {
+  const stub = () => ({
+    projects: vi.spyOn(api, "projects").mockResolvedValue([]),
+    workspace: vi.spyOn(api, "workspace").mockResolvedValue({ configured: true, default_url: "", library: null, targets: [] } as never),
+    updates: vi.spyOn(api, "updates").mockResolvedValue({ library: {}, app: {}, engines: [], checked_at: null, error: null } as never),
+    approvals: vi.spyOn(api, "pendingApprovals").mockResolvedValue([]),
+  });
+
+  it("reads projects and approvals but not the Git-backed workspace and update status", async () => {
+    const spies = stub();
+    try {
+      await useWorkspace.getState().refreshAll({ quick: true });
+      expect(spies.projects).toHaveBeenCalled();
+      expect(spies.approvals).toHaveBeenCalled();
+      expect(spies.workspace).not.toHaveBeenCalled();
+      expect(spies.updates).not.toHaveBeenCalled();
+    } finally {
+      Object.values(spies).forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  it("is still the full refresh when asked for no option", async () => {
+    const spies = stub();
+    try {
+      await useWorkspace.getState().refreshAll();
+      expect(spies.workspace).toHaveBeenCalledTimes(1);
+      expect(spies.updates).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.values(spies).forEach((spy) => spy.mockRestore());
+    }
+  });
+});
