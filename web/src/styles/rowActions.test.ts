@@ -19,7 +19,7 @@ it("floats the row actions over the row's right edge with a fade, out of the tit
 });
 
 it("shows them on hover, selection and keyboard focus, not by taking the status text's place", () => {
-  expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row:focus-within \.row-actions \{\s*visibility: visible;\s*opacity: 1/);
+  expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row:focus-visible \.row-actions,\s*\.thread-row:has\(:focus-visible\) \.row-actions \{\s*visibility: visible;\s*opacity: 1/);
   expect(css).not.toMatch(/\.row-rest \{\s*display: none/);
 });
 
@@ -38,4 +38,10 @@ it("does not keep the strip on the open row, and the drag and highlight fills fe
   for (const selector of ["li[data-dragging] .thread-row", "li[data-highlight] .thread-row", "li[data-selected] .thread-row", ".thread-row:hover"]) {
     expect(rule(selector), selector).toMatch(/--row-state:/);
   }
+});
+
+it("shows the strip on keyboard focus, never on a mouse click's focus, and keeps iOS from its own callout", () => {
+  // :focus-within would keep the strip after a click focused the row and the pointer left.
+  expect(css).not.toMatch(/\.thread-row:focus-within \.row-actions/);
+  expect(rule(".thread-row")).toMatch(/-webkit-touch-callout:\s*none/);
 });

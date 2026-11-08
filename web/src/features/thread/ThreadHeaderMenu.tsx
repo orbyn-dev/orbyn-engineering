@@ -32,14 +32,14 @@ export function ThreadHeaderMenu({ thread }: { thread: Thread }) {
   const [deleting, setDeleting] = useState(false);
   const threads = useWorkspace((state) => state.threads);
   const button = useRef<HTMLDivElement>(null);
-  // The same presets as the sidebar row's Snooze, read from Settings > Threads when the menu is first opened.
+  // The same presets as the sidebar row's Snooze, read from Settings > Threads when the header mounts, so the submenu
+  // is not empty the first time the menu opens.
   const [presets, setPresets] = useState<readonly SnoozePreset[]>([]);
   useEffect(() => {
-    if (!menu || presets.length > 0) return;
     const abort = new AbortController();
     api.settings(abort.signal).then((settings) => setPresets(settings.snooze_presets ?? []), () => undefined);
     return () => abort.abort();
-  }, [menu, presets.length]);
+  }, []);
   const archived = Boolean(thread.lifecycle?.archived_at);
   const settled = Boolean(thread.lifecycle?.settled_at);
   const snoozed = Boolean(thread.lifecycle?.snoozed_until);

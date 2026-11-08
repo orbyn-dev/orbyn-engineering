@@ -615,19 +615,7 @@ describe("App against the mock API", () => {
     touch("pointerup");
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(screen.queryByRole("menu")).toBeNull();
-    // A press that moves is a scroll or a drag (the drag tracker reads elementFromPoint, which jsdom lacks).
-    const had = document.elementFromPoint;
-    document.elementFromPoint = () => null;
-    try {
-      touch("pointerdown");
-      touch("pointermove", { clientX: 40, clientY: 120 });
-      await new Promise((resolve) => setTimeout(resolve, 650));
-      expect(screen.queryByRole("menu")).toBeNull();
-      touch("pointerup", { clientX: 40, clientY: 120 });
-      touch("pointercancel");
-    } finally {
-      document.elementFromPoint = had;
-    }
+    // (A press that moves is covered by longPress.test.ts, with fake timers.)
     // A long press holds still and opens the menu with the same actions as the strip.
     touch("pointerdown");
     await new Promise((resolve) => setTimeout(resolve, 650));

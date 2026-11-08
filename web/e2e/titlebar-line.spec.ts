@@ -145,8 +145,11 @@ test("row actions show on hover and focus only, and leave the Tab order and the 
   // The open row: no strip without hover or focus, and its trailing text is not covered.
   const strip = open.locator(".row-actions");
   await expect(open.getByRole("button", { name: "Settle thread" })).toBeHidden();
-  const rest = open.locator(".row-rest");
-  if (await rest.count()) await expect(rest).toBeVisible();
+  // The status text is there and not covered (the strip is hidden, so nothing paints over it).
+  await expect(strip).toBeHidden();
+  const rowsWithStatus = page.locator(".thread-row").filter({ has: page.locator(".row-rest", { hasText: /\S/ }) });
+  expect(await rowsWithStatus.count()).toBeGreaterThan(0);
+  await expect(rowsWithStatus.first().locator(".row-rest")).toBeVisible();
   // Every row's buttons are hidden, so Tab cannot land on them.
   const all = page.locator(".thread-row .row-action");
   const count = await all.count();
@@ -164,10 +167,35 @@ test("row actions show on hover and focus only, and leave the Tab order and the 
   const other = page.locator(".thread-row:not([aria-current=page])").nth(2);
   await other.focus();
   await expect(other.locator(".row-action").first()).toBeVisible();
-  // A multi-selected row shows them without hover.
-  await page.mouse.move(700, 400);
+  // A multi-selected row shows them with no hover and no focus on it.
   await other.click({ modifiers: ["ControlOrMeta"] });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.mouse.move(700, 400);
-  const selected = page.locator("li[data-selected] .thread-row").first();
-  if (await selected.count()) await expect(selected.locator(".row-action").first()).toBeVisible();
+  const selected = page.locator("li[data-selected] .thread-row");
+  await expect(selected.first()).toBeVisible();
+  await expect(selected.first().locator(".row-action").first()).toBeVisible();
+});
+
+/** A mouse click focuses the row without :focus-visible, so the strip must not stay once the pointer has left. */
+test("after a click the strip goes away with the pointer and the row's status text stays uncovered", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/__mock/scenario/default");
+  await page.goto("/#/threads/t-done");
+  // The open row: clicking it does not navigate away, so the click leaves it the focused element.
+  const row = page.locator(".thread-row[aria-current=page]");
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("thread-row"))).toBe(true);
+  await page.mouse.move(700, 400);
+  await expect(row.locator(".row-action").first()).toBeHidden();
+  // A row with a status or age shows it, uncovered, with its neighbour's pointer long gone.
+  const withStatus = page.locator(".thread-row").filter({ has: page.locator(".row-rest", { hasText: /\S/ }) }).first();
+  await expect(withStatus.locator(".row-rest")).toBeVisible();
+  // Keyboard focus is another matter: Tab shows the strip, and Tab again goes into its buttons without hiding it.
+  await row.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(row.locator(".row-action").first()).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(row.locator(".row-action").first()).toBeVisible();
 });

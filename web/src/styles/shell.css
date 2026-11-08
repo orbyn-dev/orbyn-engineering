@@ -374,6 +374,8 @@
   color: var(--color-muted);
 }
 .thread-row {
+  /* No iOS callout or link preview: a long press is ours (the context menu). */
+  -webkit-touch-callout: none;
   /* The state's own fill, which the floating row actions fade into. */
   --row-state: transparent;
   container: thread-row / inline-size;
@@ -543,11 +545,13 @@ input.dialog-field-mono {
     opacity var(--m-fast) var(--m-io),
     visibility 0s linear var(--m-fast);
 }
-/* Only on pointer hover or keyboard focus, the open row included; always for multi-selected rows. Touch has neither:
-   a long press opens the context menu with the same actions. */
+/* Only on pointer hover or keyboard focus, the open row included; always for multi-selected rows. A mouse click
+   focuses the row without making it :focus-visible, so the strip does not stay once the pointer leaves, and Tab from
+   the row into its buttons keeps it (:has). Touch has neither: a long press opens the context menu with the same actions. */
 li:hover > .thread-row .row-actions,
 li[data-selected] .thread-row .row-actions,
-.thread-row:focus-within .row-actions {
+.thread-row:focus-visible .row-actions,
+.thread-row:has(:focus-visible) .row-actions {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;

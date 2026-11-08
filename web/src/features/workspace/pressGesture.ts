@@ -1,4 +1,4 @@
-const DRAG_DISTANCE = 6;
+export const DRAG_DISTANCE = 6;
 
 export interface PressHandlers {
   onStart(): void;
