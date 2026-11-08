@@ -65,7 +65,7 @@ test("the model picker moves a thread to another engine between turns", async ({
   await settled(service, id);
   const before = (await thread(id)).engine;
   await page.locator(".composer-bar [aria-haspopup]").first().click();
-  await page.getByRole("toolbar", { name: "Providers" }).getByRole("button").last().click();
+  await page.getByRole("tablist", { name: "Provider" }).getByRole("tab").last().click();
   await page.getByRole("listbox", { name: "Models" }).getByRole("option").first().click();
   await expect.poll(async () => (await thread(id)).engine).not.toBe(before);
 });

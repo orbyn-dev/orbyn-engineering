@@ -59,7 +59,7 @@ test("shift-click adds models, and each one starts a thread and a worktree", asy
   const before = (await threads()).length;
   await page.locator("[data-model-trigger]").click();
   const picker = page.getByRole("dialog", { name: "Choose a model" });
-  await picker.getByRole("button", { name: /Codex/ }).click();
+  await picker.getByRole("tab", { name: /Codex/ }).click();
   const options = picker.getByRole("option");
   await expect(options.first()).toBeVisible();
   await options.first().click();

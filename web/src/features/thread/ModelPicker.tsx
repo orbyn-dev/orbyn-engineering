@@ -1,13 +1,13 @@
-import { Check, ChevronDown, Search, Star } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Check, ChevronDown, Search } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { EngineStatus } from "../../api/types";
 import { useCommand } from "../../app/shortcuts";
 import { useUi } from "../../state/ui";
 import { EngineGlyph } from "../../ui/badges";
 import { closingProps, Presence } from "../../ui/Presence";
+import { tabKeys } from "../../ui/tabKeys";
 import { usePopover } from "../../ui/usePopover";
-import { modKeyLabel } from "../workspace/threadUndo";
 import {
   arrangeModels,
   modelKey,
@@ -21,7 +21,6 @@ import {
 
 const MARGIN = 6;
 const GAP = 4;
-const FAVORITES = "favorites";
 
 export type FloatingSide = "below" | "above" | "beside";
 
@@ -94,102 +93,27 @@ export function FloatingPanel({
   );
 }
 
-function useHeldMod() {
-  const [held, setHeld] = useState(false);
-  useEffect(() => {
-    const sync = (event: KeyboardEvent) => setHeld(event.metaKey || event.ctrlKey);
-    window.addEventListener("keydown", sync);
-    window.addEventListener("keyup", sync);
-    return () => {
-      window.removeEventListener("keydown", sync);
-      window.removeEventListener("keyup", sync);
-    };
-  }, []);
-  return held;
-}
-
 interface Selection {
   engine: string;
   model: string | null;
 }
 
-function Rows({
-  rows,
-  active,
-  selected,
-  extra,
-  showEngine,
-  jumps,
-  engineName,
-  favorites,
-  onHover,
-  onPick,
-  onFavorite,
-}: {
-  rows: PickerRow[];
-  active: number;
-  selected: Selection;
-  extra: readonly Selection[];
-  showEngine: boolean;
-  jumps: boolean;
-  engineName(engine: string): string;
-  favorites: readonly string[];
-  onHover(index: number): void;
-  onPick(row: PickerRow, adding: boolean): void;
-  onFavorite(row: PickerRow): void;
-}) {
-  return (
-    <div className="model-rows" role="listbox" aria-label="Models">
-      {rows.map((row, index) => {
-        const key = modelKey(row.engine, row.model.id);
-        const favorite = favorites.includes(key);
-        const isSelected = [selected, ...extra].some(
-          (entry) => row.engine === entry.engine && row.model.id === entry.model,
-        );
-        return (
-          <div
-            key={key}
-            role="option"
-            aria-selected={isSelected}
-            className="model-row"
-            data-active={index === active || undefined}
-            onPointerMove={() => onHover(index)}
-            onClick={(event) => onPick(row, event.shiftKey)}
-          >
-            <div className="model-row-text">
-              <span>{row.model.label}</span>
-              {showEngine ? (
-                <small>
-                  <EngineGlyph name={engineName(row.engine)} />
-                  {engineName(row.engine)}
-                </small>
-              ) : null}
-            </div>
-            {jumps && index < 9 ? (
-              <kbd>
-                {modKeyLabel()}
-                {index + 1}
-              </kbd>
-            ) : null}
-            <button
-              type="button"
-              className="model-star"
-              data-on={favorite || undefined}
-              aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-              title={favorite ? "Remove from favorites" : "Add to favorites"}
-              onClick={(event) => {
-                event.stopPropagation();
-                onFavorite(row);
-              }}
-            >
-              <Star size={12} fill={favorite ? "currentColor" : "none"} aria-hidden />
-            </button>
-            <Check size={14} className="model-check" data-on={isSelected || undefined} aria-hidden />
-          </div>
-        );
-      })}
-    </div>
-  );
+const ALL = "all";
+
+/** The provider headings and rows, in display order; `index` is the row's place in the flat keyboard order. */
+interface Group {
+  engine: string;
+  rows: { row: PickerRow; index: number }[];
+}
+
+function groupRows(rows: readonly PickerRow[], engines: readonly EngineStatus[]): Group[] {
+  const groups: Group[] = [];
+  let index = 0;
+  for (const engine of engines) {
+    const own = rows.filter((row) => row.engine === engine.id);
+    if (own.length > 0) groups.push({ engine: engine.id, rows: own.map((row) => ({ row, index: index++ })) });
+  }
+  return groups;
 }
 
 function ModelPopover({
@@ -198,7 +122,6 @@ function ModelPopover({
   extra,
   anchor,
   portalContainer,
-  disabledReason,
   trigger,
   onPick,
   onToggleExtra,
@@ -211,7 +134,6 @@ function ModelPopover({
   anchor: DOMRect;
   closing?: boolean;
   portalContainer?: HTMLElement | null;
-  disabledReason?(engine: EngineStatus): string | null;
   /** The button that opened it, where focus returns. */
   trigger(): HTMLElement | null | undefined;
   onPick(selection: Selection): void;
@@ -219,23 +141,26 @@ function ModelPopover({
   onToggleExtra?(selection: Selection): void;
   onClose(): void;
 }) {
-  const favorites = useUi((state) => state.modelFavorites);
   const hidden = useUi((state) => state.modelHidden);
   const order = useUi((state) => state.modelOrder);
-  const setPrefs = useUi((state) => state.setPrefs);
   const byEngine = useModelStore((state) => state.byEngine);
   const load = useModelStore((state) => state.load);
-  const [tab, setTab] = useState(selected.engine);
+  const [chip, setChip] = useState(ALL);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(-1);
+  const [more, setMore] = useState({ above: false, below: false });
+  const [chipsMore, setChipsMore] = useState(false);
+  const listId = useId();
   const input = useRef<HTMLInputElement>(null);
-  const rail = useRef<HTMLDivElement>(null);
+  const chips = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const main = useRef<HTMLDivElement>(null);
-  // Two panes, rail then search: Tab goes rail -> search and closes after it; Shift+Tab the reverse.
+  // Two stops in visual order, search then the provider chips: Tab goes search -> chips and closes after
+  // them; Shift+Tab the reverse.
   const panes = [
-    { root: rail, focus: () => rail.current?.querySelector<HTMLElement>("[aria-pressed=true]")?.focus() },
-    { root: main, focus: () => input.current?.focus() },
+    { root: search, focus: () => input.current?.focus() },
+    { root: chips, focus: () => chips.current?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]')?.focus() },
   ];
   const popover = usePopover({
     kind: "menu",
@@ -245,17 +170,15 @@ function ModelPopover({
     panes,
     onClose,
   });
-  const jumps = useHeldMod();
 
   useLayoutEffect(() => input.current?.focus(), []);
   useEffect(() => {
     for (const engine of engines) void load(engine.id);
   }, [engines, load]);
 
-  const engineName = useCallback(
-    (id: string) => engines.find((engine) => engine.id === id)?.name ?? id,
-    [engines],
-  );
+  const searching = query.trim() !== "";
+  // Typing searches every provider, so All is the chip that shows as chosen then.
+  const shownChip = searching ? ALL : chip;
   const allRows = useMemo(
     () =>
       engines.flatMap((engine) =>
@@ -266,13 +189,14 @@ function ModelPopover({
       ),
     [engines, byEngine, hidden, order],
   );
-  const searching = query.trim() !== "";
   const rows = searching
     ? searchRows(allRows, query)
-    : tab === FAVORITES
-      ? allRows.filter((row) => favorites.includes(modelKey(row.engine, row.model.id)))
-      : allRows.filter((row) => row.engine === tab);
-  const tabs = [FAVORITES, ...engines.map((engine) => engine.id)];
+    : chip === ALL
+      ? allRows
+      : allRows.filter((row) => row.engine === chip);
+  const groups = groupRows(rows, engines);
+  const ordered = groups.flatMap((group) => group.rows.map((entry) => entry.row));
+  const ids = [ALL, ...engines.map((engine) => engine.id)];
   const pick = (row: PickerRow, adding = false) => {
     const choice = { engine: row.engine, model: row.model.id };
     if (adding && onToggleExtra) {
@@ -282,121 +206,164 @@ function ModelPopover({
     popover.dismiss("select");
     onPick(choice);
   };
-  const toggleFavorite = (row: PickerRow) => {
-    const key = modelKey(row.engine, row.model.id);
-    setPrefs({
-      modelFavorites: favorites.includes(key) ? favorites.filter((entry) => entry !== key) : [...favorites, key],
-    });
+  const choose = (id: string) => {
+    setChip(id);
+    setActive(-1);
+    list.current?.scrollTo?.({ top: 0 });
   };
 
   const onKey = (event: React.KeyboardEvent) => {
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.shiftKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
-      const at = tabs.indexOf(tab) + (event.key === "ArrowDown" ? 1 : -1);
-      const next = tabs[(at + tabs.length) % tabs.length];
-      if (next) setTab(next);
-      setActive(-1);
+      const at = ids.indexOf(chip) + (event.key === "ArrowDown" ? 1 : -1);
+      const next = ids[(at + ids.length) % ids.length];
+      if (next) choose(next);
     } else if (mod && /^[1-9]$/.test(event.key)) {
       event.preventDefault();
-      const row = rows[Number(event.key) - 1];
+      const row = ordered[Number(event.key) - 1];
       if (row) pick(row);
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
-      setActive((Math.max(active, step > 0 ? -1 : 0) + step + rows.length) % Math.max(rows.length, 1));
-    } else if ((event.key === "ArrowLeft" && !query)) {
+      setActive((Math.max(active, step > 0 ? -1 : 0) + step + ordered.length) % Math.max(ordered.length, 1));
+    } else if (event.key === "ArrowLeft" && !query) {
       event.preventDefault();
-      rail.current?.querySelector<HTMLButtonElement>("[aria-pressed=true]")?.focus();
+      chips.current?.querySelector<HTMLButtonElement>('[role="tab"][tabindex="0"]')?.focus();
     } else if (event.key === "Enter") {
       event.preventDefault();
-      const row = rows[Math.max(active, searching ? 0 : -1)];
+      const row = ordered[Math.max(active, searching ? 0 : -1)];
       if (row) pick(row);
     }
   };
 
-  const tabButton = (id: string, label: string, glyph: ReactNode, disabled: boolean) => (
-    <button
-      key={id}
-      type="button"
-      className="model-tab"
-      aria-label={label}
-      aria-pressed={tab === id}
-      title={label}
-      data-off={disabled || undefined}
-      onClick={() => {
-        setTab(id);
-        setActive(-1);
-        input.current?.focus();
-      }}
-    >
-      {glyph}
-    </button>
-  );
+  // The fades say there is more: below at the top, above at the end, both between. Chips fade at the right.
+  const measure = useCallback(() => {
+    const element = list.current;
+    if (element) {
+      const above = element.scrollTop > 1;
+      const below = element.scrollTop + element.clientHeight < element.scrollHeight - 1;
+      setMore((current) => (current.above === above && current.below === below ? current : { above, below }));
+    }
+    const row = chips.current;
+    if (row) setChipsMore(row.scrollLeft + row.clientWidth < row.scrollWidth - 1);
+  }, []);
+  useLayoutEffect(measure, [measure, rows.length, engines.length, byEngine]);
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    if (chips.current) observer.observe(chips.current);
+    if (list.current) observer.observe(list.current);
+    return () => observer.disconnect();
+  }, [measure]);
+  // The row the keyboard is on stays in view; the chosen model shows when it opens.
+  useLayoutEffect(() => {
+    const target = active >= 0 ? list.current?.querySelector(`[id="${listId}-${active}"]`) : null;
+    target?.scrollIntoView?.({ block: "nearest" });
+  }, [active, listId]);
+  const opened = useRef(false);
+  useLayoutEffect(() => {
+    if (opened.current || ordered.length === 0) return;
+    opened.current = true;
+    list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" });
+  }, [ordered.length]);
 
-  const failure = tab !== FAVORITES && !searching ? byEngine[tab]?.error : null;
-  const listed = tab === FAVORITES || searching || byEngine[tab] !== undefined;
+  const failure = chip !== ALL && !searching ? byEngine[chip]?.error : null;
+  const loading = engines.some((engine) => byEngine[engine.id] === undefined) && ordered.length === 0;
+  const isSelected = (row: PickerRow) => [selected, ...extra].some((entry) => row.engine === entry.engine && row.model.id === entry.model);
+  const engineName = (id: string) => engines.find((engine) => engine.id === id)?.name ?? id;
 
   return (
     <FloatingPanel anchor={anchor} label="Choose a model" className="model-picker" container={portalContainer} closing={closing} panelRef={panel}>
-      <div ref={rail} className="model-rail" role="toolbar" aria-label="Providers">
-        {tabButton(FAVORITES, "Favorites", <Star size={20} fill="currentColor" aria-hidden />, false)}
-        <hr />
-        {engines.map((engine) => {
-          const reason = disabledReason?.(engine) ?? null;
-          return tabButton(
-            engine.id,
-            reason
-              ? `${engine.name}: Unavailable. ${reason}`
-              : engine.capabilities.managed
-                ? engine.name
-                : `${engine.name} (Unmanaged)`,
-            <EngineGlyph name={engine.name} letters={2} />,
-            reason !== null,
-          );
-        })}
+      <div ref={search} className="model-search">
+        <Search size={14} aria-hidden />
+        <input
+          ref={input}
+          role="combobox"
+          aria-label="Search models"
+          aria-expanded="true"
+          aria-controls={listId}
+          aria-activedescendant={active >= 0 && active < ordered.length ? `${listId}-${active}` : undefined}
+          placeholder="Search models"
+          value={query}
+          onKeyDown={onKey}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setActive(0);
+          }}
+        />
       </div>
-      <div ref={main} className="model-main" onKeyDown={onKey}>
-        <div className="model-search">
-          <Search size={14} aria-hidden />
-          <input
-            ref={input}
-            aria-label="Search models"
-            placeholder="Search models..."
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setActive(0);
-            }}
-          />
+      <div className="model-chips-row" data-more={chipsMore || undefined}>
+        <div
+          ref={chips}
+          className="model-chips"
+          role="tablist"
+          aria-label="Provider"
+          onScroll={measure}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") return;
+            tabKeys(event, (index) => {
+              const next = ids[index];
+              if (next) choose(next);
+            });
+          }}
+        >
+          {ids.map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              className="model-chip"
+              aria-label={id !== ALL && engines.find((engine) => engine.id === id)?.capabilities.managed === false ? `${engineName(id)} (Unmanaged)` : undefined}
+              aria-selected={shownChip === id}
+              aria-controls={listId}
+              tabIndex={shownChip === id ? 0 : -1}
+              onClick={() => {
+                choose(id);
+                input.current?.focus();
+              }}
+            >
+              {id === ALL ? "All" : engineName(id)}
+            </button>
+          ))}
         </div>
-        {rows.length > 0 ? (
-          <Rows
-            rows={rows}
-            active={active}
-            selected={selected}
-            extra={extra}
-            showEngine={searching || tab === FAVORITES}
-            jumps={jumps}
-            engineName={engineName}
-            favorites={favorites}
-            onHover={setActive}
-            onPick={pick}
-            onFavorite={toggleFavorite}
-          />
-        ) : (
-          <p className="model-empty" role="status">
-            {!listed
-              ? "Loading models…"
-              : failure
-                ? failure
-                : searching
-                  ? "No models found"
-                  : tab === FAVORITES
-                    ? "No favorites yet"
-                    : "No models listed"}
-          </p>
-        )}
+      </div>
+      <div className="model-list" data-above={more.above || undefined} data-below={more.below || undefined}>
+        <div ref={list} id={listId} className="model-rows" role="listbox" aria-label="Models" onScroll={measure}>
+          {groups.map((group) => (
+            <div key={group.engine} role="group" aria-label={engineName(group.engine)}>
+              <div className="model-heading" aria-hidden>
+                {engineName(group.engine)}
+              </div>
+              {group.rows.map(({ row, index }) => {
+                const on = isSelected(row);
+                return (
+                  <div
+                    key={modelKey(row.engine, row.model.id)}
+                    id={`${listId}-${index}`}
+                    role="option"
+                    aria-selected={on}
+                    className="model-row"
+                    data-active={index === active || undefined}
+                    onPointerMove={() => setActive(index)}
+                    onClick={(event) => pick(row, event.shiftKey)}
+                  >
+                    <span className="model-row-text">
+                      <b>{row.model.label}</b>
+                      {row.model.description ? <small>{row.model.description}</small> : null}
+                    </span>
+                    {on ? <Check size={14} className="model-check" aria-hidden /> : null}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {ordered.length === 0 ? (
+            <p className="model-empty" role="status">
+              {loading ? "Loading models…" : failure ? failure : searching ? "No models found" : "No models listed"}
+            </p>
+          ) : null}
+        </div>
       </div>
     </FloatingPanel>
   );
@@ -408,7 +375,6 @@ export function ModelPickerTrigger({
   selected,
   extra = [],
   disabled,
-  disabledReason,
   triggerLabel,
   onPick,
   onToggleExtra,
@@ -418,7 +384,6 @@ export function ModelPickerTrigger({
   /** Models added beside the selected one. */
   extra?: readonly Selection[];
   disabled?: boolean;
-  disabledReason?(engine: EngineStatus): string | null;
   triggerLabel?: string;
   onPick(selection: Selection): void;
   onToggleExtra?(selection: Selection): void;
@@ -462,7 +427,6 @@ export function ModelPickerTrigger({
           extra={extra}
           anchor={anchor}
           portalContainer={button.current?.closest("dialog")}
-          disabledReason={disabledReason}
           trigger={() => button.current}
           onPick={onPick}
           onToggleExtra={onToggleExtra}

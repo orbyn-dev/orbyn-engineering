@@ -1,0 +1,129 @@
+/* The side panel's tab strip (Engineer Designs v66): every tab an icon in a fixed 32px slot, at every
+   width, so activating a tab never moves another. The open one gets a filled slot and an underline;
+   its name is on the line under the strip. The terminal drawer keeps its own row (panelTabs.css). */
+.ctx-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 8px;
+  background: var(--color-sidebar);
+  border-bottom: 1px solid var(--color-border);
+}
+.ctx-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+.ctx-slot {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.ctx-slot:hover:not([data-selected]) {
+  background: var(--color-hover);
+  color: var(--color-textSoft);
+}
+.ctx-slot[data-selected],
+.ctx-slot[data-open] {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.ctx-slot[data-selected]::before {
+  content: "";
+  position: absolute;
+  right: 7px;
+  bottom: -4px;
+  left: 7px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-text);
+}
+.ctx-slot[data-over] {
+  background: var(--color-hover);
+}
+.ctx-slot[data-dragging] {
+  opacity: 0.5;
+}
+.ctx-slot:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+/* The name on hover or keyboard focus, under the slot. */
+.ctx-slot[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-onAccent);
+  font-size: var(--text-label);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--m-fast) var(--m-io);
+}
+.ctx-slot[data-tip]:focus-visible::after {
+  opacity: 1;
+}
+@media (hover: hover) {
+  .ctx-slot[data-tip]:hover::after {
+    opacity: 1;
+    transition-delay: 400ms;
+  }
+}
+.ctx-slot[data-open]::after {
+  opacity: 0;
+}
+.ctx-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin-left: auto;
+}
+.ctx-end .icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+}
+/* The line under the strip: the open tab's name, and its menu. */
+.ctx-title {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 36px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background);
+  color: var(--color-text);
+  font-size: var(--text-nav);
+}
+.ctx-title b {
+  font-weight: 600;
+}
+.ctx-title .icon-btn {
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+}

@@ -175,7 +175,7 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
     report.thread_switch = { to_short_ms: switches.filter((s) => s.to === "Short thread").map((s) => s.ms), to_long_ms: switches.filter((s) => s.to === "Long thread").map((s) => s.ms) };
 
     // Side panel tabs on the long thread.
-    const tablist = page.getByRole("tablist", { name: "Context" });
+    const tablist = page.getByRole("tablist", { name: "Panel tabs" });
     if (!(await tablist.isVisible())) await page.getByRole("button", { name: "Show side panel" }).click({ timeout: 10_000 });
     await tablist.waitFor({ timeout: 10_000 }).catch(() => {});
     const tabTimes: Record<string, number[]> = {};
