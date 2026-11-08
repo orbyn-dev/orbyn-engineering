@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { api } from "../api/client";
+import { useWorkspace } from "../state/workspace";
 import { useUi } from "../state/ui";
 import { App } from "./App";
 
@@ -139,11 +140,23 @@ describe("the Details button and the details card", () => {
     expect(await screen.findByRole("dialog", { name: /Delete “/ })).toBeInTheDocument();
   });
 
-  it("replaces the composer with the read-only banner once the thread is archived", async () => {
+  it("shows the read-only banner for an archived thread", async () => {
     setViewportWidth(1400);
     // Archived on the service itself, so nothing the app reads again can undo it mid-test.
     await api.patchThread("t-done", { archived: true });
     render(<App />);
+    expect(await screen.findByText("This thread is archived and read-only.", {}, wait)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^Message / })).toBeNull();
+  });
+
+  it("switches the composer to the banner when the open thread is archived", async () => {
+    setViewportWidth(1400);
+    render(<App />);
+    expect(await screen.findByRole("textbox", { name: /^Message / }, wait)).toBeInTheDocument();
+    await api.patchThread("t-done", { archived: true });
+    await act(async () => {
+      await useWorkspace.getState().refreshThread("t-done");
+    });
     expect(await screen.findByText("This thread is archived and read-only.", {}, wait)).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /^Message / })).toBeNull();
   });
