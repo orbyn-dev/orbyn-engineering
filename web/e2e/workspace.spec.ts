@@ -217,8 +217,9 @@ const contextMotion = (page: Page) =>
   });
 
 test("the side panel does not move when the page loads with it open", async ({ page }) => {
-  // An extra-wide window opens the panel by default.
+  // The remembered state is open (the panel is no longer opened by the window's width).
   await page.setViewportSize({ width: 2000, height: 900 });
+  await page.addInitScript(() => localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ panelOpen: true })));
   await page.goto("/__mock/scenario/default?to=/%23/threads/t-done");
   await expect(page.getByRole("complementary", { name: "Thread context" })).toBeVisible();
   expect(await contextMotion(page)).toBeNull();
