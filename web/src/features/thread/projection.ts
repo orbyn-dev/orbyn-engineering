@@ -46,6 +46,8 @@ export interface ToolItem extends ItemBase {
   output: string;
   result: string | null;
   done: boolean;
+  /** When the call's end or result arrived; the row's duration runs from `ts` to here. */
+  endedAt?: string;
   /** What a command exited with, when the engine reports it. */
   exitCode: number | null;
   /** The driver's reported protocol outcome; absent in older logs. */
@@ -321,8 +323,8 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
           key: `notice:${wire.seq}`,
           kind: "notice",
           tone: "neutral",
-          text: "Run cancelled.",
-          code: null,
+          text: "Stopped",
+          code: "run_stopped",
         });
       }
       log(outcome === "cancelled" ? "Run cancelled" : "Run finished", null);
@@ -402,13 +404,14 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
       }));
       break;
     case "TOOL_CALL_END":
-      patch(fold, scoped("tool", event.toolCallId), "tool", (item) => ({ ...item, done: true }));
+      patch(fold, scoped("tool", event.toolCallId), "tool", (item) => ({ ...item, done: true, endedAt: item.endedAt ?? wire.ts }));
       break;
     case "TOOL_CALL_RESULT":
       patch(fold, scoped("tool", event.toolCallId), "tool", (item) => ({
         ...item,
         result: event.content,
         done: true,
+        endedAt: item.endedAt ?? wire.ts,
       }));
       break;
     case "ACTIVITY_SNAPSHOT": {

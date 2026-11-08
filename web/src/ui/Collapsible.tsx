@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useOpenState } from "./openState";
 
 const DURATION_MS = 200;
 
@@ -14,8 +15,10 @@ export function Collapsible({
   summaryClassName,
   panelClassName,
   defaultOpen = false,
+  persistId,
   open: controlled,
   onOpenChange,
+  summaryProps,
   ...rest
 }: {
   summary: ReactNode;
@@ -24,11 +27,15 @@ export function Collapsible({
   summaryClassName?: string;
   panelClassName?: string;
   defaultOpen?: boolean;
+  /** Remembers the open state under this id, per row and thread, while its row is out of the page. */
+  persistId?: string;
   open?: boolean;
   onOpenChange?(open: boolean): void;
+  /** Extra handlers or attributes for the summary button. */
+  summaryProps?: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className" | "type" | "onClick" | "aria-expanded" | "aria-controls">;
   "data-live"?: boolean;
 }) {
-  const [internal, setInternal] = useState(defaultOpen);
+  const [internal, setInternal] = useOpenState(persistId ?? null, defaultOpen);
   const open = controlled ?? internal;
   const panelId = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -65,11 +72,12 @@ export function Collapsible({
     const reveal = () => { setInternal(true); onOpenChange?.(true); };
     element?.addEventListener("reveal-setting", reveal);
     return () => element?.removeEventListener("reveal-setting", reveal);
-  }, [onOpenChange]);
+  }, [onOpenChange, setInternal]);
 
   return (
     <div ref={root} className={className} {...rest}>
       <button
+        {...summaryProps}
         type="button"
         className={summaryClassName}
         aria-expanded={open}

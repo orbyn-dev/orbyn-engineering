@@ -1,7 +1,15 @@
-import { expect, test } from "@playwright/test";
-import { startProject } from "./service";
+import { expect, test, type Page } from "@playwright/test";
+import { openDetails, startProject } from "./service";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+/** The Scripts row opens to the project's scripts; each has a Run button. */
+async function runScript(page: Page, name: string) {
+  const card = await openDetails(page);
+  const row = card.getByRole("button", { name: /^Scripts/ });
+  if ((await row.getAttribute("aria-expanded")) === "false") await row.click();
+  await card.getByRole("button", { name: `Run ${name}`, exact: true }).click();
+}
 
 test("completed action output is visible on first attach and tab return", async ({ page }) => {
   const { service, projectId } = await startProject();
@@ -11,7 +19,7 @@ test("completed action output is visible on first attach and tab return", async 
     } });
     const thread = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Terminal rendering" });
     await page.goto(`${service.page}#/threads/${thread.id}`);
-    await page.getByRole("complementary", { name: "Thread details" }).getByRole("button", { name: "Visible output", exact: true }).click();
+    await runScript(page, "Visible output");
     await expect(page.getByRole("tab", { name: "Visible output", exact: true })).toHaveAttribute("aria-selected", "true");
     const rows = page.locator(".terminal-drawer-body .xterm-rows");
     await expect(rows).toContainText("action-visible-output");
@@ -32,11 +40,11 @@ fs.writeFileSync('counter', String(next)); console.log('action-output-' + next);
     } });
     const thread = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Replacement output" });
     await page.goto(`${service.page}#/threads/${thread.id}`);
-    const run = page.getByRole("complementary", { name: "Thread details" }).getByRole("button", { name: "Counter output", exact: true });
+    const run = () => runScript(page, "Counter output");
     const rows = page.locator(".terminal-drawer-body .xterm-rows");
-    await run.click();
+    await run();
     await expect(rows).toContainText("action-output-1");
-    await run.click();
+    await run();
     await expect.poll(async () => {
       const terminals = await service.api<{ id: string; script: string | null }[]>("GET", `/api/threads/${thread.id}/terminals`);
       const action = terminals.find((terminal) => terminal.script === "Counter output");

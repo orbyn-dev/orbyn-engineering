@@ -31,6 +31,8 @@ pub enum CoreError {
     EngineUnavailable(String),
     #[error("this thread is archived")]
     ThreadArchived,
+    #[error("The project \"{0}\" was removed. Add its folder back to use it again.")]
+    ProjectRemoved(String),
     #[error("set up the workspace first")]
     WorkspaceRequired,
     #[error("{0}")]
@@ -54,6 +56,9 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// The forge refused a merge because the pull request gained a commit the person had not seen.
+    #[error("This pull request changed. Review it again before merging.")]
+    PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
     /// A model, effort or option the chosen model does not offer.
@@ -110,6 +115,7 @@ impl CoreError {
             Self::EngineBusy(_) => "engine_busy",
             Self::EngineUnavailable(_) => "engine_unavailable",
             Self::ThreadArchived => "thread_archived",
+            Self::ProjectRemoved(_) => "project_removed",
             Self::WorkspaceRequired => "workspace_required",
             Self::WorkspaceRefused(_) => "workspace_refused",
             Self::LibraryDirty(_) => "library_dirty",
@@ -120,6 +126,7 @@ impl CoreError {
             Self::RunsActive => "runs_active",
             Self::Updating => "updating",
             Self::ProjectHasWork { .. } => "project_has_work",
+            Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
             Self::UnsupportedOption(_) => "unsupported_option",
             Self::UpdateUnavailable(_) => "update_unavailable",
@@ -154,12 +161,14 @@ impl CoreError {
             | Self::QuestionClosed(_)
             | Self::ProjectExists(_)
             | Self::ThreadArchived
+            | Self::ProjectRemoved(_)
             | Self::WorkspaceRequired
             | Self::LibraryDirty(_)
             | Self::NotFastForward(_)
             | Self::FileConflict { .. }
             | Self::SharedDirectory(_)
             | Self::RunsActive
+            | Self::PullHeadChanged
             | Self::Git(_)
             | Self::ProjectHasWork { .. }
             | Self::EngineBusy(_)

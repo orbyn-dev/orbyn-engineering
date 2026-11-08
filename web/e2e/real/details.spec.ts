@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { send, settled, startProject, threadIdOf, type Service } from "./service";
+import { openDetails, send, settled, startProject, threadIdOf, type Service } from "./service";
 
 /** The thread's surroundings: details rows, relations, new messages, the Working shelf. */
 
@@ -35,16 +35,24 @@ test("details shows linked pull requests, and right-click turns rows off and bac
   await settled(service, id);
   await service.api("POST", `/api/threads/${id}/pulls`, { number: 42 });
   await page.reload();
-  await expect(details(page).getByRole("button", { name: /Fix the login/ })).toBeVisible();
+  await openDetails(page);
+  const pulls = details(page).getByRole("button", { name: "Pull requests" });
+  await expect(pulls).toContainText("#42");
+  await pulls.click();
+  await expect(details(page).getByRole("button", { name: /#42 Fix the login/ })).toBeVisible();
   await details(page).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Pull requests" }).click();
-  await expect(details(page).getByRole("button", { name: /Fix the login/ })).toBeHidden();
+  await page.getByRole("menuitemcheckbox", { name: "Pull requests" }).click();
+  // Each toggle applies at once and the menu stays open.
+  await expect(pulls).toBeHidden();
+  await expect(page.getByRole("menu", { name: "Thread details rows" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await details(page).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Usage" }).click();
-  await expect(details(page).getByText("Usage")).toBeVisible();
+  await page.getByRole("menuitemcheckbox", { name: "Usage" }).click();
+  await page.keyboard.press("Escape");
+  await expect(details(page).getByText("Usage", { exact: true })).toBeVisible();
   await details(page).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Reset" }).click();
-  await expect(details(page).getByRole("button", { name: /Fix the login/ })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Reset to default" }).click();
+  await expect(details(page).getByRole("button", { name: "Pull requests" })).toContainText("#42");
   await page.goto(`${service.page}#/settings/general`);
   await expect(page.getByRole("button", { name: "8 of 9 on" })).toBeVisible();
 });
@@ -94,7 +102,7 @@ test("a watched thread goes to the Working shelf, unless that is off", async ({ 
   await page.goto(`${service.page}#/new/${projectId}`);
   await expect(row(page, id)).toHaveAttribute("data-section", "working");
   await page.goto(`${service.page}#/settings/general`);
-  await page.getByRole("dialog", { name: "Settings" }).getByRole("switch", { name: "Working section" }).click();
+  await page.getByRole("region", { name: "Settings" }).getByRole("switch", { name: "Working section" }).click();
   await page.goto(`${service.page}#/new/${projectId}`);
   await expect(row(page, id)).toHaveAttribute("data-section", "active");
 });
@@ -113,7 +121,7 @@ test("user messages keep same-thread editing and assistant responses keep forks"
   await expect(page.locator(".msg-user")).toHaveCount(1);
 });
 
-test("a pull request link opens in the panel, previews on hover, and its menu offers the host", async ({ page }) => {
+test("a pull request link opens its page, previews on hover, and its menu offers the host", async ({ page }) => {
   const id = await fresh(page, "[scene:pull-link] go");
   await settled(service, id);
   const link = page.getByRole("link", { name: "the pull request" });
@@ -124,8 +132,8 @@ test("a pull request link opens in the panel, previews on hover, and its menu of
   await expect(preview).toContainText("o/r#42 · Open");
   await link.click();
   await expect(preview).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "Pull requests" })).toBeVisible();
-  await expect(page.getByRole("tabpanel").getByText("Fix the login").first()).toBeVisible();
+  await expect(page).toHaveURL(/#\/pulls\/[^/]+\/42$/);
+  await page.goBack();
   await link.click({ button: "right" });
   await expect(page.getByRole("menuitem", { name: "Open on the host" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();

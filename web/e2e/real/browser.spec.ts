@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { startProject, type Service } from "./service";
+import { openPanelTab, startProject, type Service } from "./service";
 
 /** The Browser surface driving the service's headless Chrome. */
 const SITE_PORT = 5293;
@@ -10,14 +10,30 @@ const SITE_PORT = 5293;
 let service: Service;
 let threadId = "";
 let site: Server;
+let site6: Server | undefined;
 let clicks = 0;
 
 test.beforeAll(async () => {
-  site = createServer((request, response) => {
+  const handler = (request: IncomingMessage, response: ServerResponse) => {
     if (request.url === "/clicked") clicks += 1;
     response.setHeader("Content-Type", "text/html");
     response.end(`<body style="margin:0;background:#2a6"><button style="width:100vw;height:100vh" onclick="fetch('/clicked')">${request.url}</button></body>`);
-  }).listen(SITE_PORT);
+  };
+  // The browser resolves `localhost` to ::1 or 127.0.0.1, whichever it tries first, so answer on both
+  // loopback addresses, and wait until the port is open before the service is asked to load it.
+  const listen = (server: Server, host: string) =>
+    new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(SITE_PORT, host, () => resolve());
+    });
+  site = createServer(handler);
+  await listen(site, "127.0.0.1");
+  // Where IPv6 is unavailable the browser can only use 127.0.0.1, which is already open.
+  site6 = createServer(handler);
+  await listen(site6, "::1").catch(() => {
+    site6?.close();
+    site6 = undefined;
+  });
   const started = await startProject({ fakeEngines: true });
   service = started.service;
   const thread = await service.api<{ id: string }>("POST", "/api/threads", {
@@ -39,6 +55,7 @@ test.afterAll(async () => {
   }
   await service.stop();
   site.close();
+  site6?.close();
 });
 
 test("a page opens, streams, takes input under control, and tabs close", async ({ page }) => {
@@ -46,8 +63,7 @@ test("a page opens, streams, takes input under control, and tabs close", async (
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto(`${service.page}#/threads/${threadId}`);
   await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
-  await page.getByRole("button", { name: "Surfaces" }).click().catch(() => undefined);
-  await page.getByRole("button", { name: /^Browser/ }).first().click();
+  await openPanelTab(page, "Browser");
   await expect(page.getByText("No preview yet")).toBeVisible();
 
   const address = page.getByRole("combobox", { name: "Search or enter URL" });
@@ -59,18 +75,19 @@ test("a page opens, streams, takes input under control, and tabs close", async (
   await address.fill(`localhost:${SITE_PORT}/two`);
   await address.press("Enter");
   await expect(address).toHaveValue(new RegExp(`/two$`));
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("region", { name: "Browser panel", exact: true }).getByRole("button", { name: "Back", exact: true }).click();
   await expect(address).toHaveValue(new RegExp(`/one$`));
-  await page.getByRole("button", { name: "Forward", exact: true }).click();
+  await page.getByRole("region", { name: "Browser panel", exact: true }).getByRole("button", { name: "Forward", exact: true }).click();
   await expect(address).toHaveValue(new RegExp(`/two$`));
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("region", { name: "Browser panel", exact: true }).getByRole("button", { name: "Back", exact: true }).click();
   await expect(address).toHaveValue(new RegExp(`/one$`));
 
   const threadUrl = decodeURIComponent(page.url().split("/threads/")[1] ?? "");
   const size = async () => (await service.api<{ width: number }[]>("GET", `/api/threads/${threadUrl}/previews`))[0]?.width;
   const before = await size();
-  await page.setViewportSize({ width: 1700, height: 900 });
-  await expect.poll(size, { timeout: 10_000 }).not.toBe(before);
+  // The panel is a fixed 380px; maximising it gives the preview a wider pane to follow.
+  await page.getByRole("button", { name: "Maximise panel" }).click();
+  await expect.poll(size, { timeout: 10_000 }).toBeGreaterThan(before ?? 0);
 
   const zoom = async () => (await service.api<{ zoom: number }[]>("GET", `/api/threads/${threadUrl}/previews`))[0]?.zoom;
   await frame.focus();
@@ -98,8 +115,7 @@ test("the device toolbar resizes the page from its edges", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto(`${service.page}#/threads/${threadId}`);
   await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
-  await page.getByRole("button", { name: "Surfaces" }).click().catch(() => undefined);
-  await page.getByRole("button", { name: /^Browser/ }).first().click();
+  await openPanelTab(page, "Browser");
   const address = page.getByRole("combobox", { name: "Search or enter URL" });
   await address.fill(`localhost:${SITE_PORT}/one`);
   await address.press("Enter");

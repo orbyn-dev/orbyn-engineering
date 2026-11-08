@@ -5,6 +5,7 @@ import {
   type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   type ReactNode,
+  type Ref,
 } from "react";
 
 export type ButtonTone = "primary" | "secondary" | "quiet" | "danger";
@@ -59,6 +60,7 @@ export function LinkButton({ tone = "secondary", small, icon, children, classNam
 }
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  ref?: Ref<HTMLButtonElement>;
   label: string;
   pressed?: boolean;
 }

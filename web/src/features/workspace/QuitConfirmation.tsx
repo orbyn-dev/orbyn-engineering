@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "../../app/shortcuts";
 import { api, request } from "../../api/client";
 import { inDesktopApp, readShellStatus } from "../../api/shell";
 import type { PreferenceView } from "../../api/types";
 import { useUi } from "../../state/ui";
+import { useWorkspace } from "../../state/workspace";
 import { HOLD_MS, isQuitKey, quitTracker, type QuitMode, type QuitState } from "./quitTracker";
 
 const MODES: readonly QuitMode[] = ["direct", "hold", "double_press"];
@@ -17,6 +18,8 @@ export function QuitConfirmation() {
   const [state, setState] = useState<QuitState>({ prompt: null });
   const mode = useRef<QuitMode>("direct");
   const pushToast = useUi((ui) => ui.pushToast);
+  // Counted from the threads the sidebar has loaded; there is no separate running-agent feed.
+  const working = useWorkspace((state) => Object.values(state.threads).filter((thread) => thread.active_run).length);
   // Settings saves the mode in this window; read it again at once rather than on focus.
   useCommand("quitConfirmation.reload", () => {
     window.dispatchEvent(new Event(RELOAD_EVENT));
@@ -67,16 +70,51 @@ export function QuitConfirmation() {
     };
   }, [pushToast]);
 
-  if (!state.prompt) return null;
+  // The bar fills linearly while the key is held. A release before the end lets the overlay
+  // stay for the short reset, so the bar visibly runs back to empty.
+  const holding = state.prompt === "hold";
+  const [fill, setFill] = useState<"idle" | "holding" | "releasing">("idle");
+  const bar = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!holding) {
+      setFill((current) => (current === "holding" ? "releasing" : "idle"));
+      return;
+    }
+    const frame = requestAnimationFrame(() => setFill("holding"));
+    return () => cancelAnimationFrame(frame);
+  }, [holding]);
+  useEffect(() => {
+    if (fill !== "releasing") return;
+    const seconds = bar.current ? Number.parseFloat(getComputedStyle(bar.current).transitionDuration) : 0;
+    const timer = setTimeout(() => setFill("idle"), Number.isFinite(seconds) ? seconds * 1000 : 0);
+    return () => clearTimeout(timer);
+  }, [fill]);
+
+  const prompt = state.prompt ?? (fill === "releasing" ? "hold" : null);
+  if (!prompt) return null;
+  const agents = `${working} ${working === 1 ? "agent is" : "agents are"} working`;
+  const holdNote = `${working > 0 ? `${agents}. ` : ""}Keep holding ⌘Q.`;
+  const againNote = working > 0 ? `${agents} and will stop.` : null;
   return (
     <div className="quit-overlay" role="status" aria-live="assertive">
-      {state.prompt === "hold" ? (
+      <kbd className="quit-key">⌘ Q</kbd>
+      {prompt === "hold" ? (
         <>
-          Hold ⌘Q to quit
-          <span className="quit-progress" style={{ animationDuration: `${HOLD_MS}ms` }} aria-hidden />
+          <b>Hold to quit</b>
+          <span className="quit-note">{holdNote}</span>
+          <span
+            ref={bar}
+            className="quit-progress"
+            data-holding={fill === "holding" || undefined}
+            style={{ "--hold-ms": `${HOLD_MS}ms` } as CSSProperties}
+            aria-hidden
+          />
         </>
       ) : (
-        "Press ⌘Q again to quit"
+        <>
+          <b>Press ⌘Q again to quit</b>
+          {againNote ? <span className="quit-note">{againNote}</span> : null}
+        </>
       )}
     </div>
   );
