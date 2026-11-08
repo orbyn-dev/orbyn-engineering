@@ -319,3 +319,9 @@
   align-items: center;
   gap: 10px;
 }
+/* Links under a value may need the room: a clipped link cannot be pressed. */
+.drow .dv small:has(> .dlinks) {
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
