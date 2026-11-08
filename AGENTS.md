@@ -16,6 +16,10 @@ same commit as any change to them.
 - `web`: React UI. No Tauri imports, no lifecycle rules.
 - `desktop/src-tauri`: thin shell.
 
+## Designs
+
+Designs: the UI follows the private repository orbyn-dev/orbyn-designs, the one source of truth: `artifacts/` holds the published designs, `artifacts.json` indexes them, and `briefs/` holds the design-match brief. Read it from a current clone (`git pull` first), never from a copy in a temp folder, and never edit `artifacts/` here. Match the designs exactly, in Light, Dark and Dim, including copy and motion; take every value from the design source. A UI change cites the artifact version and frame ids it builds, or links the design pull request there. Anything not designed or not in the plan goes to the Orbyn Product UI/UX Designer before it is built; never invent it. The repository is private, so a contributor without access gets the frames they need in their issue. Public files never link the private plan or the design artifact pages.
+
 ## Checks
 
 ```bash
