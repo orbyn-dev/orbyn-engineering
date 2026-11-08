@@ -41,6 +41,8 @@ export function MergeDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  // The head the person was looking at when the dialog opened, whatever the page reads since.
+  const [seenHead] = useState(detail.head_sha);
   const merge = async () => {
     setBusy(true);
     setError(null);
@@ -52,7 +54,7 @@ export function MergeDialog({
         strip_credits: strip,
         ...(method === "rebase" ? {} : { body }),
         // The commit the person saw, so a push since then is refused rather than merged unseen.
-        ...(detail.head_sha ? { expected_head: detail.head_sha } : {}),
+        ...(seenHead ? { expected_head: seenHead } : {}),
       });
       rememberDeleteBranch(projectId, deleteBranch);
       onMerged();
@@ -66,7 +68,9 @@ export function MergeDialog({
   };
   if (stale) {
     return (
+      // A key, so the dialog opens afresh and focus lands on Reload.
       <Dialog
+        key="stale"
         title="Merge pull request"
         onClose={onClose}
         footer={
@@ -86,10 +90,13 @@ export function MergeDialog({
           </>
         }
       >
-        <div className="merge-stale" role="alert">
-          <TriangleAlert size={16} aria-hidden />
-          <b>This pull request changed</b>
-          <p>A new commit was added after you opened this page. Review it again before merging.</p>
+        <div className="pulls-banner merge-stale" role="alert">
+          <TriangleAlert size={14} aria-hidden />
+          <span>
+            <b>This pull request changed</b>
+            <br />
+            <span className="merge-stale-line">A new commit was added after you opened this page. Review it again before merging.</span>
+          </span>
         </div>
       </Dialog>
     );

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../api/client";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequestDetail } from "../../api/types";
-import { RowMergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
+import { MergeDialog, RowMergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 
 const detail = { pull: { number: 7, base: "main", title: "T" }, body: "Message", head_sha: "abc" } as unknown as PullRequestDetail;
 const flush = () => act(async () => void (await Promise.resolve()));
@@ -98,5 +98,22 @@ describe("the merge dialog from a row", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalled();
     expect(onStale).not.toHaveBeenCalled();
+  });
+
+  it("sends the head it was opened with, not one the page read since", async () => {
+    const props = { projectId: "p", initialMethod: "squash", onClose: vi.fn(), onMerged: vi.fn(), onStale: vi.fn() };
+    const { rerender } = render(<MergeDialog {...props} detail={detail} />);
+    rerender(<MergeDialog {...props} detail={{ ...detail, head_sha: "newer" } as PullRequestDetail} />);
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ expected_head: "abc" });
+  });
+
+  it("puts focus on Reload when the notice replaces the form", async () => {
+    vi.mocked(pullsApi.merge).mockRejectedValueOnce(new ApiFailure("pull_head_changed", "x", 409));
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
   });
 });
