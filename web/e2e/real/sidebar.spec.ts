@@ -205,7 +205,7 @@ test("the composer picks model and effort, sets access, and keeps favourites", a
   await service.api("PATCH", `/api/threads/${id}`, { permission_mode: "supervised" });
 });
 
-test("each thread restores its own panel across switches and a reload", async ({ page }) => {
+test("the side panel is one open or closed state across thread switches and a reload, and phone width ignores it", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const open = (title: string) => row(page, title).click();
   const pane = page.getByRole("complementary", { name: "Thread context" });
@@ -224,25 +224,38 @@ test("each thread restores its own panel across switches and a reload", async ({
   await page.mouse.up();
   const wide = (await pane.boundingBox())?.width ?? 0;
 
+  // Open stays open on every thread, and survives a reload.
+  await open(second);
+  await expect(page.getByRole("heading", { name: second })).toBeVisible();
+  await expect(pane).toBeVisible();
+  await open(third);
+  await expect(page.getByRole("heading", { name: third })).toBeVisible();
+  await expect(pane).toBeVisible();
+  await open(first);
+  await expect(pane).toBeVisible();
+  await expect.poll(async () => (await pane.boundingBox())?.width).toBe(wide);
+  await page.reload();
+  await expect(pane).toBeVisible();
+  await expect.poll(async () => (await pane.boundingBox())?.width).toBe(wide);
+
+  // Closing closes it everywhere: on the other threads and after a reload.
+  await page.getByRole("button", { name: "Show side panel", exact: true }).click();
+  await expect(pane).toBeHidden();
   await open(second);
   await expect(page.getByRole("heading", { name: second })).toBeVisible();
   await expect(pane).toBeHidden();
-  await page.getByRole("button", { name: "Terminal" }).click();
-
   await open(third);
-  await expect(page.getByRole("heading", { name: third })).toBeVisible();
   await expect(pane).toBeHidden();
-  await expect(page.getByRole("region", { name: /Terminal/ })).toBeHidden();
-
-  await open(first);
-  await expect(pane).toBeVisible();
-  expect((await pane.boundingBox())?.width).toBe(wide);
-
   await page.reload();
-  await expect(pane).toBeVisible();
-  expect((await pane.boundingBox())?.width).toBe(wide);
-  await open(third);
   await expect(pane).toBeHidden();
+
+  // Phone width has no side panel, whatever the state says.
+  await openPanelTab(page);
+  await expect(pane).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(pane).toBeHidden();
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await expect(pane).toBeVisible();
 });
 
 test("the terminal drawer opens tabs, and files and diff sources read the checkout", async ({ page }) => {
