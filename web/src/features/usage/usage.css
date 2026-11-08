@@ -46,6 +46,10 @@
   gap: 24px;
   padding: 6px 28px 24px;
 }
+/* Limits: 16px above the first group label (the usage-limits frame). */
+.usage-body[data-limits] {
+  padding-top: 16px;
+}
 .usage-note {
   color: var(--color-muted);
   font-size: var(--text-body);

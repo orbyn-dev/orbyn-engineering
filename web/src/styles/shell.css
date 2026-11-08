@@ -376,6 +376,7 @@
 .thread-row {
   /* The state's own fill, which the floating row actions fade into. */
   --row-state: transparent;
+  container: thread-row / inline-size;
   position: relative;
   display: flex;
   align-items: center;
@@ -416,6 +417,13 @@
   font-size: var(--text-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Titles win: on a narrow row the project chip goes (its name stays in the row's tooltip and in Details), and a row
+   never takes a second line for it. */
+@container thread-row (max-width: 240px) {
+  .thread-row-project {
+    display: none;
+  }
 }
 .row-age {
   flex: none;

@@ -98,3 +98,18 @@ test("the settings search sits 12px below the title bar", async ({ page }) => {
   const field = await page.locator(".settings-search").boundingBox();
   expect(field?.y).toBeCloseTo(56, 0);
 });
+
+/** shell-ledger: thread titles win over the project chip on a narrow row, and a row stays one line. */
+test("a narrow sidebar row hides the project chip and keeps one line", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ workspaceLayout: "ledger", sidebarWidth: 180 })));
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/__mock/scenario/default");
+  await page.goto("/#/threads/t-done");
+  const rows = page.locator(".thread-row");
+  await expect(rows.first()).toBeVisible();
+  const narrow = await rows.first().evaluate((row) => row.getBoundingClientRect().width);
+  expect(narrow).toBeLessThanOrEqual(240);
+  await expect(page.locator(".thread-row-project:visible")).toHaveCount(0);
+  const heights = await rows.evaluateAll((all) => all.map((row) => Math.round(row.getBoundingClientRect().height)));
+  expect(Math.max(...heights)).toBeLessThanOrEqual(36);
+});

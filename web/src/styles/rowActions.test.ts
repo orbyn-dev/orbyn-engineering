@@ -19,3 +19,8 @@ it("shows them on hover, selection and keyboard focus, not by taking the status 
   expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row:focus-within \.row-actions \{\s*opacity: 1/);
   expect(css).not.toMatch(/\.row-rest \{\s*display: none/);
 });
+
+it("drops the project chip on a narrow row so the title keeps the room", () => {
+  expect(rule(".thread-row")).toMatch(/container:\s*thread-row \/ inline-size/);
+  expect(css).toMatch(/@container thread-row \(max-width: 240px\) \{\s*\.thread-row-project \{\s*display: none;/);
+});

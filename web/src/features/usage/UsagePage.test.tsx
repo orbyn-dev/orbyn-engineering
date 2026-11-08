@@ -244,3 +244,14 @@ it("stops loading Limits after the wait and offers to try again", async () => {
     vi.useRealTimers();
   }
 });
+
+it("sets Limits 16px below the tabs, with the group label first", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue({ pooled: [{ label: "5 hours", used_percent: 40, resets_at: null }], engines: [], unavailable: [] } as never);
+  const { container } = render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  await screen.findByRole("heading", { name: "Pooled" });
+  expect(container.querySelector(".usage-body[data-limits]")).not.toBeNull();
+  const css = (await import("node:fs")).readFileSync("src/features/usage/usage.css", "utf8");
+  expect(css).toMatch(/\.usage-body\[data-limits\] \{\s*padding-top: 16px/);
+});

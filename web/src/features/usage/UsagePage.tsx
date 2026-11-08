@@ -187,7 +187,7 @@ function LimitRow({ label, used, resets }: { label: string; used: number; resets
 function LimitsView({ data, nameOf }: { data: LimitsOverview; nameOf(engine: string): string }) {
   const empty = data.pooled.length === 0 && data.engines.length === 0;
   return (
-    <div className="usage-body">
+    <div className="usage-body" data-limits>
       {/* The engine's own reason is for logs: the page says one plain thing, muted, as the usage-limits-unreported frame does. */}
       {data.unavailable.map((entry) => (
         <p key={entry.engine} className="usage-note" data-unreported>
