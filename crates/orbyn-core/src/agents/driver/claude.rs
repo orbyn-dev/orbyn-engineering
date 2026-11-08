@@ -92,6 +92,17 @@ pub fn run_args(spec: &RunSpec, mcp_config: &Path, window: Option<u32>) -> Vec<O
     .map(OsString::from)
     .collect();
     args.push(mcp_config.into());
+    // Only the user's own settings load. A checkout's `.claude/settings.json` or
+    // `settings.local.json` could carry `permissions.allow` rules, hooks that answer
+    // allow, or `env`, all decided before the permission tool is asked, so an edit
+    // outside the checkout would skip Orbyn's write scope. The library's own settings
+    // and agents are passed below instead, because `--add-dir` loads only skills.
+    args.push("--setting-sources".into());
+    args.push("user".into());
+    if let Some(agents) = library_agents(&spec.library) {
+        args.push("--agents".into());
+        args.push(agents.to_string().into());
+    }
     // The run starts in the checkout, so the project's own instructions, hooks and
     // `.mcp.json` are the primary ones, and the library comes in with `--add-dir`:
     // on 2.1.150 that loads its skills and nothing else. A session begun before this
@@ -187,7 +198,9 @@ fn run_settings_path(spec: &RunSpec) -> std::path::PathBuf {
 /// in print mode. It reaches only a model that reports `supportsFastMode`, because
 /// admission refuses the option anywhere else.
 fn run_settings(spec: &RunSpec, window: Option<u32>) -> Option<Value> {
-    let mut settings = serde_json::Map::new();
+    // The library's `.claude/settings.json` (fast mode off, subagent limits), which a
+    // run no longer starts beside, under the keys Orbyn sets for this run.
+    let mut settings = library_settings(&spec.library).unwrap_or_default();
     if let Some(fast) = spec.options.get(FAST_MODE) {
         settings.insert("fastMode".into(), json!(fast == "on"));
     }
@@ -195,6 +208,71 @@ fn run_settings(spec: &RunSpec, window: Option<u32>) -> Option<Value> {
         settings.insert("autoCompactWindow".into(), json!(window));
     }
     (!settings.is_empty()).then_some(Value::Object(settings))
+}
+
+/// The library's own Claude settings, as the library tracks them.
+fn library_settings(library: &Path) -> Option<serde_json::Map<String, Value>> {
+    let text = std::fs::read_to_string(library.join(".claude/settings.json")).ok()?;
+    match serde_json::from_str::<Value>(&text).ok()? {
+        Value::Object(map) if !map.is_empty() => Some(map),
+        _ => None,
+    }
+}
+
+/// The library's subagents (`.claude/agents/*.md`) as the `--agents` JSON, since
+/// `--add-dir` loads skills and nothing else. Only the fields that option takes are
+/// carried over; `effort` is not among them.
+fn library_agents(library: &Path) -> Option<Value> {
+    let mut files: Vec<_> = std::fs::read_dir(library.join(".claude/agents"))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    files.sort();
+    let mut agents = serde_json::Map::new();
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Some(rest) = text.strip_prefix("---\n") else {
+            continue;
+        };
+        let Some((front, body)) = rest.split_once("\n---\n") else {
+            continue;
+        };
+        let mut fields = std::collections::BTreeMap::new();
+        for line in front.lines() {
+            if let Some((key, value)) = line.split_once(':') {
+                fields.insert(key.trim(), value.trim());
+            }
+        }
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        let Some(name) = fields.get("name").copied().or(stem) else {
+            continue;
+        };
+        let mut agent = serde_json::Map::new();
+        agent.insert(
+            "description".into(),
+            json!(fields.get("description").copied().unwrap_or(name)),
+        );
+        agent.insert("prompt".into(), json!(body.trim()));
+        if let Some(model) = fields.get("model") {
+            agent.insert("model".into(), json!(model));
+        }
+        for key in ["tools", "disallowedTools"] {
+            if let Some(list) = fields.get(key) {
+                let names: Vec<&str> = list
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .collect();
+                agent.insert(key.into(), json!(names));
+            }
+        }
+        agents.insert(name.to_owned(), Value::Object(agent));
+    }
+    (!agents.is_empty()).then_some(Value::Object(agents))
 }
 
 /// The command line for reading capabilities. These flags are what keep it inert:
@@ -2071,6 +2149,8 @@ mod tests {
                 "default",
                 "--mcp-config",
                 "/run/mcp.json",
+                "--setting-sources",
+                "user",
                 "--add-dir",
                 "/workspace",
                 "--permission-prompt-tool",
@@ -2252,6 +2332,91 @@ mod tests {
         assert_eq!(
             run_settings(&fast, None),
             Some(json!({ "fastMode": false }))
+        );
+    }
+
+    fn library_with_claude_files(dir: &Path) {
+        std::fs::create_dir_all(dir.join(".claude/agents")).unwrap();
+        std::fs::write(
+            dir.join(".claude/settings.json"),
+            r#"{"model":"opus","fastMode":false,"env":{"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS":"3"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".claude/agents/orbyn-worker.md"),
+            "---\nname: orbyn-worker\ndescription: Assigned implementation\nmodel: sonnet\neffort: medium\ndisallowedTools: Agent, Task\n---\n\nFollow AGENTS.md.\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn project_settings_never_load_whatever_the_checkout_carries() {
+        let dir = crate::testing::TempDir::new();
+        let checkout = dir.path().join("app");
+        std::fs::create_dir_all(checkout.join(".claude")).unwrap();
+        std::fs::write(
+            checkout.join(".claude/settings.json"),
+            r#"{"permissions":{"allow":["Bash","Edit","Write(//**)"]},"hooks":{"PreToolUse":[]}}"#,
+        )
+        .unwrap();
+        let mut run = spec();
+        run.cwd = checkout.clone();
+        run.checkout = checkout;
+        let args: Vec<String> = run_args(&run, Path::new("/tmp/mcp.json"), None)
+            .into_iter()
+            .map(|arg| arg.into_string().unwrap())
+            .collect();
+        let at = args
+            .iter()
+            .position(|arg| arg == "--setting-sources")
+            .unwrap();
+        assert_eq!(
+            args[at + 1],
+            "user",
+            "only user settings; no project or local"
+        );
+    }
+
+    #[test]
+    fn the_librarys_settings_and_agents_ride_along_explicitly() {
+        let dir = crate::testing::TempDir::new();
+        let library = dir.path().join("lib");
+        library_with_claude_files(&library);
+        let mut run = spec();
+        run.library = library;
+        let settings = run_settings(&run, Some(300_000)).unwrap();
+        assert_eq!(settings["fastMode"], false);
+        assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"], "3");
+        assert_eq!(settings["autoCompactWindow"], 300_000);
+        let args: Vec<String> = run_args(&run, Path::new("/tmp/mcp.json"), Some(300_000))
+            .into_iter()
+            .map(|arg| arg.into_string().unwrap())
+            .collect();
+        assert!(args.iter().any(|arg| arg == "--settings"));
+        let at = args.iter().position(|arg| arg == "--agents").unwrap();
+        let agents: Value = serde_json::from_str(&args[at + 1]).unwrap();
+        assert_eq!(agents["orbyn-worker"]["model"], "sonnet");
+        assert_eq!(
+            agents["orbyn-worker"]["description"],
+            "Assigned implementation"
+        );
+        assert_eq!(
+            agents["orbyn-worker"]["disallowedTools"],
+            json!(["Agent", "Task"])
+        );
+        assert_eq!(agents["orbyn-worker"]["prompt"], "Follow AGENTS.md.");
+    }
+
+    #[test]
+    fn a_library_without_claude_files_adds_neither() {
+        let args: Vec<String> = run_args(&spec(), Path::new("/tmp/mcp.json"), None)
+            .into_iter()
+            .map(|arg| arg.into_string().unwrap())
+            .collect();
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--agents" || arg == "--settings")
         );
     }
 

@@ -1730,7 +1730,15 @@ Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
   primary ones, and gets the library with `--add-dir <library>`, which loads its
-  skills. It has no `--plugin-dir`, and gets a per-run `--mcp-config` and
+  skills only. A run passes `--setting-sources user`: a checkout's
+  `.claude/settings.json` or `settings.local.json` can hold `permissions.allow` rules,
+  `PreToolUse` hooks that answer allow, and `env`, all decided before Claude asks the
+  permission tool, so an edit outside the checkout would skip the write scope. The
+  library's own `.claude/settings.json` (fast mode off, subagent limits) is merged
+  into the run's `--settings` file, and its `.claude/agents/*.md` go in `--agents`
+  (description, prompt, model, tools, disallowedTools; `effort` is not carried),
+  because `--add-dir` loads neither. A checkout's `.mcp.json` is not a setting source
+  and still loads; folder trust is its gate. It has no `--plugin-dir`, and gets a per-run `--mcp-config` and
   `--permission-prompt-tool mcp__orbyn_engineering__approve`. Its working directory is
   the checkout, so a relative path means the checkout and the write scope is
   unchanged: the checkout only, the library denied. The bootstrap says the checkout

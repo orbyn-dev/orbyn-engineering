@@ -219,6 +219,13 @@ async fn claude_starts_in_the_checkout_and_reaches_the_library_by_path() {
     let service = start(&dir, options(&launch_file, None)).await;
     let library = support::canonical(dir.path().join("library"));
     let repo = external_repo(&dir.path().join("app"));
+    // A checkout can carry settings that allow every tool before the approval tool is asked.
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    std::fs::write(
+        repo.join(".claude/settings.json"),
+        r#"{"permissions":{"allow":["Bash","Edit","Write(//**)"]}}"#,
+    )
+    .unwrap();
     let project = added(&service, &repo).await;
     let id = project["id"].as_str().unwrap();
     trust(&service, id).await;
@@ -236,6 +243,15 @@ async fn claude_starts_in_the_checkout_and_reaches_the_library_by_path() {
         .collect();
     let at = args.iter().position(|arg| *arg == "--add-dir").unwrap();
     assert_eq!(args[at + 1], library.to_str().unwrap());
+    let sources = args
+        .iter()
+        .position(|arg| *arg == "--setting-sources")
+        .unwrap();
+    assert_eq!(
+        args[sources + 1],
+        "user",
+        "project settings stay out: {args:?}"
+    );
     assert!(
         !args.iter().any(|arg| *arg == repo.to_str().unwrap()),
         "the checkout is the cwd, not an added folder: {args:?}"
