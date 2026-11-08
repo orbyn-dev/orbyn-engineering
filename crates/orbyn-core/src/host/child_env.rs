@@ -76,6 +76,12 @@ fn name_of(name: &OsStr) -> String {
     name.to_string_lossy().into_owned()
 }
 
+/// Whether an inherited `ANTHROPIC_BASE_URL` belongs to the host Claude session rather
+/// than to the person: it is nested, and no key or token for a gateway is set beside it.
+fn drops_host_endpoint(nested: bool, set: impl Fn(&str) -> bool) -> bool {
+    nested && !set("ANTHROPIC_AUTH_TOKEN") && !set("ANTHROPIC_API_KEY")
+}
+
 /// Works out what to change. `engine` is true for a spawn that runs a coding engine,
 /// the only one a login preference applies to.
 pub fn plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> EnvPlan {
@@ -96,8 +102,11 @@ pub fn plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> 
             && (CLAUDE_CREDENTIALS.contains(&text.as_str())
                 || CODEX_CREDENTIALS.contains(&text.as_str())
                 || ENDPOINTS.contains(&text.as_str()));
-        // The endpoint under the marker was set by the host session, not by the person.
-        let host_endpoint = nested && text == "ANTHROPIC_BASE_URL";
+        // The endpoint under the marker was set by the host session, not by the person,
+        // unless a credential for it travels with it: that is a gateway of their own, and
+        // dropping the URL would send its token to the default host.
+        let host_endpoint =
+            engine && text == "ANTHROPIC_BASE_URL" && drops_host_endpoint(nested, |name| has(name));
         let dev_login = engine && OAUTH_DEV_SWITCHES.contains(&text.as_str());
         if host_session
             || host_endpoint
@@ -187,8 +196,14 @@ pub fn inherited_login(engine: &str) -> (Vec<String>, Option<String>) {
     }
     let set = |name: &&&str| std::env::var_os(**name).is_some_and(|value| !value.is_empty());
     let found = names.iter().filter(set).map(|name| (*name).to_owned());
+    // The origin an engine really inherits: a host session's endpoint is removed from it.
+    let dropped = engine == "claude"
+        && drops_host_endpoint(std::env::var_os(NESTED_MARKER).is_some(), |name| {
+            std::env::var_os(name).is_some()
+        });
     let origin = std::env::var(endpoint)
         .ok()
+        .filter(|_| !dropped)
         .and_then(|url| url_origin(&url));
     (found.collect(), origin)
 }
@@ -415,6 +430,40 @@ mod tests {
         ]);
         assert_eq!(removed(&plan(&plain, true, false)), ["USE_LOCAL_OAUTH"]);
         assert_eq!(plan(&plain, false, false), EnvPlan::default());
+    }
+
+    #[test]
+    fn a_gateway_url_survives_when_its_key_or_token_is_set_beside_it() {
+        for credential in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+            let inherited = vars(&[
+                ("CLAUDECODE", "1"),
+                ("ANTHROPIC_BASE_URL", "https://litellm.example"),
+                (credential, "k"),
+            ]);
+            let gone = removed(&plan(&inherited, true, false));
+            assert!(
+                !gone.contains(&"ANTHROPIC_BASE_URL".to_owned()),
+                "{credential}: {gone:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_host_endpoint_never_leaves_git_forge_tools_or_a_terminal() {
+        let nested = vars(&[
+            ("CLAUDECODE", "1"),
+            ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9"),
+        ]);
+        let gone = removed(&plan(&nested, false, false));
+        assert!(!gone.contains(&"ANTHROPIC_BASE_URL".to_owned()), "{gone:?}");
+    }
+
+    #[test]
+    fn the_endpoint_rule_is_one_decision_for_the_plan_and_the_login_report() {
+        assert!(drops_host_endpoint(true, |_| false));
+        assert!(!drops_host_endpoint(false, |_| false));
+        assert!(!drops_host_endpoint(true, |name| name == "ANTHROPIC_API_KEY"));
+        assert!(!drops_host_endpoint(true, |name| name == "ANTHROPIC_AUTH_TOKEN"));
     }
 
     #[test]
