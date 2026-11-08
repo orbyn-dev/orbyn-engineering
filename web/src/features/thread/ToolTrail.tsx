@@ -165,26 +165,36 @@ function OutputBlock({ item, running }: { item: ToolItem; running: boolean }) {
   const [wrap, setWrap] = useOpenState(`out-wrap:${item.key}`, true);
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
-  // Only a running call follows its end; a finished one starts at its first line.
+  const lines = lineCount(text ?? "");
+  const capped = !running && lines > LINES_SHOWN && !all;
+  const mode = running ? "tail scr" : capped ? "cap" : lines > LINES_SHOWN ? "scr" : "";
+  // Only a running call follows its end. A capped block is clipped, so whatever it had scrolled to would
+  // stay hidden under it: it always starts at its first line, also after a run ends and after "Show less".
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (running && element && following.current) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    if (mode === "cap") element.scrollTop = 0;
+    else if (running && following.current) element.scrollTop = element.scrollHeight;
   });
-  // A line wider than the block would scroll sideways with wrapping off; measure that, not a count of characters.
+  // A line wider than the block would scroll sideways with wrapping off; measure that, and again when the block resizes.
   const [wide, setWide] = useState(false);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    const before = element.style.whiteSpace;
-    element.style.whiteSpace = "pre";
-    const overflows = element.scrollWidth > element.clientWidth + 1;
-    element.style.whiteSpace = before;
-    setWide(overflows);
-  }, [text, all]);
+    const measure = () => {
+      const before = element.style.whiteSpace;
+      element.style.whiteSpace = "pre";
+      const overflows = element.scrollWidth > element.clientWidth + 1;
+      element.style.whiteSpace = before;
+      setWide(overflows);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text, all, mode]);
   if (!text) return running ? null : <div className="co mute tool-empty">No output</div>;
-  const lines = lineCount(text);
-  const capped = !running && lines > LINES_SHOWN && !all;
-  const mode = running ? "tail scr" : capped ? "cap" : lines > LINES_SHOWN ? "scr" : "";
   return (
     <>
       <div
@@ -291,13 +301,11 @@ function FooterText({ children }: { children: ReactNode }) {
 
 const Dot = () => <span className="dot"> · </span>;
 
-function stopNote(state: CallState, cancelled: boolean): ReactNode {
-  if (state === "failed") return null;
-  if (state === "stopped") return cancelled ? "Stopped by you" : "Stopped";
-  return null;
+function stopNote(state: CallState): ReactNode {
+  return state === "stopped" ? "Stopped" : null;
 }
 
-function Block({ item, running, state, cancelled, ms, cwd }: { item: ToolItem; running: boolean; state: CallState; cancelled: boolean; ms: number | null; cwd: string | null }) {
+function Block({ item, running, state, ms, cwd }: { item: ToolItem; running: boolean; state: CallState; ms: number | null; cwd: string | null }) {
   const kind = callKind(item);
   const origin = { threadId: useThreadOfTimeline() ?? "", cwd: cwd ?? "" };
   const revealFile = useUi((s) => s.revealFile);
@@ -310,7 +318,7 @@ function Block({ item, running, state, cancelled, ms, cwd }: { item: ToolItem; r
   const out = item.result ?? item.output;
   const path = callPath(item);
   const shown = path ? shownPath(path, cwd) : null;
-  const stopped = stopNote(state, cancelled);
+  const stopped = stopNote(state);
   const timing = (...parts: ReactNode[]) => (
     <FooterText>
       {[...parts, duration].filter(Boolean).map((part, at) => (
@@ -632,6 +640,8 @@ function Duration({ ms, state, item }: { ms: number | null; state: CallState; it
 
 /** The row's status for a reader who cannot see its mark: the label replaces the button's own content. */
 function withState(label: string, state: CallState): string {
+  // A label that already says "Running" does not say it twice.
+  if (state === "running" && label.startsWith("Running")) return label;
   const word = state === "running" ? "running" : state === "failed" ? "failed" : state === "stopped" ? "stopped" : "";
   return word ? `${label}, ${word}` : label;
 }
@@ -710,7 +720,7 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
           </>
         }
       >
-        <Block item={item} running={running} state={state} cancelled={cancelled} ms={ms} cwd={cwd} />
+        <Block item={item} running={running} state={state} ms={ms} cwd={cwd} />
       </Collapsible>
       {/* A published page is the result, so it stays visible with the details closed. */}
       <HtmlRender item={item} threadId={threadId} />
@@ -738,12 +748,11 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
   }, null);
   const cwd = useWorkspace((s) => (threadId ? s.threads[threadId]?.cwd ?? null : null));
   // When a second call joins a row someone opened, the new group opens with it rather than hiding it.
+  // Keyed off what the thread remembers, not what is mounted: a group nobody has opened or closed yet.
   const count = run.items.length;
-  const before = useRef(count);
   useEffect(() => {
-    if (before.current < 2 && count >= 2 && run.items.some((item) => peek(`tool:${item.key}`) === true)) setOpen(true);
-    before.current = count;
-  }, [count, run.items, peek, setOpen]);
+    if (count >= 2 && peek(`tg:${run.key}`) === undefined && run.items.some((item) => peek(`tool:${item.key}`) === true)) setOpen(true);
+  }, [count, run.key, run.items, peek, setOpen]);
   if (!only) return null;
   if (count === 1) return <ToolCallRow item={only} live={live} />;
   const label = runLabel(run, running);

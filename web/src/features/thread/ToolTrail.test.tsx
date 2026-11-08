@@ -97,6 +97,23 @@ describe("the trail of tool calls", () => {
     expect(screen.getByRole("button", { name: /Show less/ })).toBeInTheDocument();
   });
 
+  it("resets a capped block to its first line when a watched run ends, and after Show less", async () => {
+    const output = Array.from({ length: 20 }, (_, n) => `line ${n}`).join("\n");
+    const live = make("Bash", { command: "seq 20" }, { result: null, done: false, endedAt: undefined, output });
+    const view = render(<Trail items={[live]} live />);
+    await openAll();
+    const block = () => document.querySelector(".co") as HTMLElement;
+    block().scrollTop = 400;
+    view.rerender(<Trail items={[{ ...live, result: output, done: true, exitCode: 0, endedAt: "2026-11-08T10:00:04.000Z" }]} />);
+    expect(block()).toHaveClass("cap");
+    expect(block().scrollTop).toBe(0);
+    await userEvent.click(screen.getByRole("button", { name: /Show all 20 lines/ }));
+    block().scrollTop = 120;
+    await userEvent.click(screen.getByRole("button", { name: /Show less/ }));
+    expect(block()).toHaveClass("cap");
+    expect(block().scrollTop).toBe(0);
+  });
+
   it("offers Wrap lines only when a line is wider than the block", async () => {
     const width = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get");
     width.mockReturnValue(0);
@@ -257,6 +274,22 @@ describe("the trail of tool calls", () => {
     expect(rows()[1]).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("opens a new group for an open row after the rows remounted, and leaves a group someone closed shut", async () => {
+    const first = make("Read", { file_path: "/p/a.ts" }, { result: "    1→a" });
+    const second = make("Read", { file_path: "/p/b.ts" }, { result: "    1→b" });
+    const alone = render(<Trail items={[first]} />);
+    await userEvent.click(rows()[0]!);
+    alone.unmount();
+    // The thread's open state is kept; the rows mount again, now as a group.
+    const joined = render(<Trail items={[first, second]} />);
+    expect(rows()[0]).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(rows()[0]!);
+    expect(rows()[0]).toHaveAttribute("aria-expanded", "false");
+    joined.unmount();
+    render(<Trail items={[first, second]} />);
+    expect(rows()[0]).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("opens the call's raw result from the footer, on every kind that has one", async () => {
     render(<Trail items={[make("Bash", { command: "ls" }, { exitCode: 0 })]} />);
     await openAll();
@@ -296,6 +329,20 @@ describe("Expand all and Collapse all", () => {
     expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true", "true", "true", "true"]);
     await userEvent.click(screen.getByRole("button", { name: "Collapse all" }));
     expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["false", "false", "false", "false"]);
+  });
+
+  it("targets the rows the view shows when reasoning splits a run, and counts them as groups", async () => {
+    const reasoning = { kind: "reasoning" as const, key: "think", seq: 3, runId: "r", ts: "", text: "hm", done: true };
+    const a = make("Read", { file_path: "/p/a.ts" });
+    const b = make("Read", { file_path: "/p/b.ts" });
+    renderTurn([a, reasoning, b, make("Bash", { command: "x" }, { exitCode: 0 }), make("Grep", { pattern: "q" })] as never);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls in 4 groups")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    const open = rows().filter((row) => row.getAttribute("aria-expanded") === "true");
+    expect(open.some((row) => row.textContent?.includes("a.ts"))).toBe(true);
+    expect(open.some((row) => row.textContent?.includes("b.ts"))).toBe(true);
+    expect(open.some((row) => row.textContent?.includes("Read 2 files"))).toBe(false);
   });
 
   it("is not offered for a turn with fewer than four groups", async () => {

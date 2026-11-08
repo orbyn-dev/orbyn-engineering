@@ -323,7 +323,7 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
           key: `notice:${wire.seq}`,
           kind: "notice",
           tone: "neutral",
-          text: "Stopped by you",
+          text: "Stopped",
           code: "run_stopped",
         });
       }

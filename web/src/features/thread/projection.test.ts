@@ -142,7 +142,7 @@ describe("applyEvents", () => {
     ]);
     expect(log.items.map((item) => item.kind === "notice" && item.text)).toEqual([
       "Engine exited",
-      "Stopped by you",
+      "Stopped",
     ]);
     expect(log.timeline.at(0)).toMatchObject({ tone: "error" });
   });

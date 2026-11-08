@@ -29,7 +29,7 @@ import {
   type WorkingRow,
   type WorkItem,
 } from "./timeline";
-import { callRuns, type CallRun } from "./toolCalls";
+import { workSegments } from "./toolCalls";
 import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
 import { TimelineThread, useThreadOfTimeline } from "./timelineThread";
 import type {
@@ -242,24 +242,7 @@ export function WorkGroupView({ group, live }: { group: WorkGroup; live: boolean
   const [focus, setFocus] = useState<{ copy: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   // Reasoning stands where it happened; the calls between are read as rows by kind, once per change.
-  const segments = useMemo(() => {
-    const list: ({ reasoning: ReasoningItem } | { runs: CallRun[] })[] = [];
-    let tools: ToolItem[] = [];
-    const flush = () => {
-      if (tools.length > 0) list.push({ runs: callRuns(tools) });
-      tools = [];
-    };
-    for (const item of group.items) {
-      if (item.kind === "reasoning") {
-        flush();
-        list.push({ reasoning: item });
-      } else {
-        tools.push(item);
-      }
-    }
-    flush();
-    return list;
-  }, [group.items]);
+  const segments = useMemo(() => workSegments(group.items), [group.items]);
   const several = group.items.length > 1;
   const rows = segments.map((segment) =>
     "reasoning" in segment ? (
@@ -371,11 +354,13 @@ function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: n
       groups += inner.groups;
       calls += inner.calls;
     } else if (entry.kind === "work") {
-      const tools = entry.items.filter((item): item is ToolItem => item.kind === "tool");
-      for (const run of callRuns(tools)) {
-        groups += 1;
-        calls += run.items.length;
-        ids.push(run.items.length === 1 ? `tool:${run.key}` : `tg:${run.key}`);
+      for (const segment of workSegments(entry.items)) {
+        if (!("runs" in segment)) continue;
+        for (const run of segment.runs) {
+          groups += 1;
+          calls += run.items.length;
+          ids.push(run.items.length === 1 ? `tool:${run.key}` : `tg:${run.key}`);
+        }
       }
     }
   }

@@ -473,7 +473,7 @@ describe("App against the mock API", () => {
     await user.click(await screen.findByRole("button", { name: "Stop" }));
     // The stopped turn folds; its rows mount when the fold is opened.
     await user.click(await screen.findByRole("button", { name: /^You stopped/ }));
-    await waitFor(() => expect(screen.getByText("Stopped by you")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Stopped")).toBeInTheDocument());
     expect(await screen.findByText("Expired")).toBeInTheDocument();
     await waitFor(() => expect(document.querySelector(".thread-state")).toHaveTextContent("Cancelled"));
   });

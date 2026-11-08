@@ -1,6 +1,6 @@
 import { prettyJson } from "../../lib/format";
 import { outputSpans } from "./ansi";
-import type { ToolItem } from "./projection";
+import type { ReasoningItem, ToolItem } from "./projection";
 import { baseName, parsed, paths, toolFailed, traceTool } from "./toolTrace";
 
 /** The kind of row a tool call is drawn as; each has its own icon, words and block. */
@@ -444,3 +444,25 @@ export function runLabel(run: CallRun, running: boolean): RunLabel {
 
 /** Only http and https pages open in the Browser panel; an agent can name any address. */
 export const isWebAddress = (url: string): boolean => /^https?:/i.test(url.trim());
+
+/** A work group as the view reads it: reasoning where it happened, and the calls between as rows by kind. */
+export type WorkSegment = { reasoning: ReasoningItem } | { runs: CallRun[] };
+
+export function workSegments(items: readonly (ToolItem | ReasoningItem)[]): WorkSegment[] {
+  const list: WorkSegment[] = [];
+  let tools: ToolItem[] = [];
+  const flush = () => {
+    if (tools.length > 0) list.push({ runs: callRuns(tools) });
+    tools = [];
+  };
+  for (const item of items) {
+    if (item.kind === "reasoning") {
+      flush();
+      list.push({ reasoning: item });
+    } else {
+      tools.push(item);
+    }
+  }
+  flush();
+  return list;
+}

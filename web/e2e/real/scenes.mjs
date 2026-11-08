@@ -110,6 +110,12 @@ export const scenes = {
     { method: "item/commandExecution/outputDelta", params: { itemId: "l2", delta: "tick\n" } },
     { hold: true },
   ],
+  // One command that has printed forty lines and is still going, so a person can watch it end.
+  "long-live": [
+    started(item("ll1", "commandExecution", { command: "seq 40", cwd: "/repo", commandActions: [], status: "inProgress" })),
+    { method: "item/commandExecution/outputDelta", params: { itemId: "ll1", delta: Array.from({ length: 40 }, (_, n) => `line ${n + 1}`).join("\n") + "\n" } },
+    { hold: true },
+  ],
   "trace-batch": [
     ...Array.from({ length: 43 }, (_, n) => command(`trace${n}`, `echo trace${n}`, `trace${n}\n`, 0)).flat(),
     { hold: true },
