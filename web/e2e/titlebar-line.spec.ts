@@ -17,3 +17,33 @@ test("the page heading sits on the title bar's centre line", async ({ page }) =>
     expect((title?.y ?? 0) + (title?.height ?? 0) / 2, hash).toBeCloseTo(bar, 0);
   }
 });
+
+const centreOf = async (page: import("@playwright/test").Page, locator: import("@playwright/test").Locator) => {
+  const box = await locator.boundingBox();
+  return box ? box.y + box.height / 2 : NaN;
+};
+
+/** shell-console, and the same thread with the sidebar hidden and in a small window: one bar band, one title. */
+for (const [name, width, hideSidebar] of [["wide", 1280, false], ["sidebar hidden", 1280, true], ["small window", 800, false]] as const) {
+  test(`thread header actions share the bar's centre line, and the title appears once (${name})`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 820 });
+    await page.goto("/__mock/scenario/default");
+    await page.goto("/#/threads/t-done");
+    if (hideSidebar) await page.getByRole("button", { name: "Hide sidebar" }).click();
+    const heading = page.locator(".main h1").first();
+    await expect(heading).toBeVisible();
+    const bar = await centreOf(page, page.locator(".titlebar .tbi").first());
+    for (const action of [page.getByRole("button", { name: "Details" }), page.getByRole("button", { name: "Terminal" }), page.getByRole("button", { name: /^Git/ })]) {
+      if (await action.count()) expect(await centreOf(page, action.first())).toBeCloseTo(bar, 0);
+    }
+    expect(await centreOf(page, heading)).toBeCloseTo(bar, 0);
+    // The bar's own centred title appears only where the frames draw it (reading layout, phone).
+    await expect(page.locator(".titlebar-title")).toHaveCount(0);
+    const text = (await heading.textContent())?.trim() ?? "";
+    expect(await page.locator(".main, .titlebar").getByText(text, { exact: true }).count(), "one place for the title").toBe(1);
+    // The header's first thing is right of the bar's buttons and never under them.
+    const lead = await page.locator(".titlebar .tbi").last().boundingBox();
+    const first = await heading.boundingBox();
+    if (lead && first) expect(first.x).toBeGreaterThanOrEqual(lead.x + lead.width);
+  });
+}

@@ -3971,13 +3971,14 @@ button.context-meter:hover:not(:disabled) {
   align-items: center;
   flex: none;
   gap: 4px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 9px;
   border: 0;
   border-radius: var(--radius-md);
-  background: var(--color-chip);
+  /* Like Details beside it (the frames' .dbtn): no fill until hovered or pressed. */
+  background: transparent;
   color: var(--color-textSoft);
-  font-size: var(--text-nav);
+  font-size: 12.5px;
 }
 .git-trigger:hover {
   background: var(--color-hover);

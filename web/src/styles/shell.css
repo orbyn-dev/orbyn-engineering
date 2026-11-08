@@ -45,6 +45,29 @@
 .shell[data-layout="phone"] > .titlebar[data-nav="shown"] {
   background: var(--color-sidebar);
 }
+/* Floating with the sidebar away: no row of its own, the page's header sits in the bar's band, after the buttons. */
+.titlebar[data-nav="hidden"][data-bar="float"] {
+  position: absolute;
+  grid-area: auto;
+  width: auto;
+  background: transparent;
+  pointer-events: none;
+}
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) {
+  --bar-lead: calc(16px + 3 * 28px + 2 * 2px + 12px);
+}
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"][data-lights]) {
+  --bar-lead: calc(16px + var(--lights-w) + 3 * 28px + 2 * 2px + 12px);
+}
+.shell[data-nav="hidden"]:has(> .titlebar[data-bar="float"]) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.shell[data-nav="hidden"]:has(> .titlebar[data-bar="float"]) > .main {
+  grid-area: 1 / 1;
+}
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .settings-head, .skills-heading) {
+  padding-left: max(28px, var(--bar-lead, 0px));
+}
 /* The full 44px strip drags the window; see useDragStrip for when it takes the pointer. */
 .titlebar > .titlebar-drag {
   position: absolute;

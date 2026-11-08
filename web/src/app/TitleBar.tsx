@@ -150,9 +150,15 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
   useEffect(() => (dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), []);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
 
+  // Only the reading layout and the phone give the bar a row of its own with the title centred (the shell-reading
+  // frame). Every other layout keeps the bar floating over the top of the page, where the page's own header
+  // carries the title and its actions on the same centre line, with the sidebar shown or not.
+  const row = reading || phone;
   return (
     <header className="titlebar"
-      data-nav={shown && !small ? "shown" : "hidden"}>
+      data-nav={shown && !small ? "shown" : "hidden"}
+      data-bar={row ? "row" : "float"}
+      data-lights={lights || undefined}>
       <div ref={dragLayer} className="titlebar-drag" aria-hidden />
       {lights ? <span className="titlebar-lights" aria-hidden /> : null}
       <button
@@ -181,7 +187,7 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
       <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
-      {shown ? null : (
+      {shown || !row ? null : (
         <span className="titlebar-title" title="Orbyn Engineering">
           <b>Orbyn</b>
           <span className="titlebar-page-label"> · {page}</span>
