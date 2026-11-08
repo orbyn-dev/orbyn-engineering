@@ -19,11 +19,11 @@ test("a watched command that ends opens its capped output at the first line, not
   const tail = page.locator(".co.tail");
   await expect(tail).toBeVisible();
   await expect.poll(() => tail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  // Stopping ends the call; its output is now capped.
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  // The call ends while the turn is still open, so the same row now holds a capped block.
   const capped = page.locator(".co.cap");
-  await expect(capped).toBeVisible({ timeout: 15_000 });
-  expect(await capped.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(capped).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => capped.evaluate((element) => element.scrollTop)).toBe(0);
   await expect(capped).toContainText("line 1");
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
   await settled(service, threadIdOf(page));
 });

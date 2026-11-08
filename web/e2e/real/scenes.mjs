@@ -110,12 +110,19 @@ export const scenes = {
     { method: "item/commandExecution/outputDelta", params: { itemId: "l2", delta: "tick\n" } },
     { hold: true },
   ],
-  // One command that has printed forty lines and is still going, so a person can watch it end.
-  "long-live": [
-    started(item("ll1", "commandExecution", { command: "seq 40", cwd: "/repo", commandActions: [], status: "inProgress" })),
-    { method: "item/commandExecution/outputDelta", params: { itemId: "ll1", delta: Array.from({ length: 40 }, (_, n) => `line ${n + 1}`).join("\n") + "\n" } },
-    { hold: true },
-  ],
+  // One command that prints forty lines, goes on for a while and then ends, with the turn still open after it:
+  // a person can watch the output follow its end, then see it become a capped block in the same row.
+  "long-live": (() => {
+    const output = Array.from({ length: 40 }, (_, n) => `line ${n + 1}`).join("\n") + "\n";
+    const body = { command: "seq 40", cwd: "/repo", commandActions: [] };
+    return [
+      started(item("ll1", "commandExecution", { ...body, status: "inProgress" })),
+      { method: "item/commandExecution/outputDelta", params: { itemId: "ll1", delta: output } },
+      { wait: 6000 },
+      completed(item("ll1", "commandExecution", { ...body, status: "completed", aggregatedOutput: output, exitCode: 0 })),
+      { hold: true },
+    ];
+  })(),
   "trace-batch": [
     ...Array.from({ length: 43 }, (_, n) => command(`trace${n}`, `echo trace${n}`, `trace${n}\n`, 0)).flat(),
     { hold: true },
