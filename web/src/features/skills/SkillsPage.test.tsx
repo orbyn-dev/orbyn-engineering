@@ -6,7 +6,7 @@ import type { SkillPackStatus } from "../../generated/SkillPackStatus";
 import { DRAFT_KEY, SCRATCH, useDraftStore } from "../../state/draftStore";
 import { useUi } from "../../state/ui";
 import { SkillsPage } from "./SkillsPage";
-import { resetSkillsStore } from "./skillsStore";
+import { resetSkillsStore, useSkillsStore } from "./skillsStore";
 
 const catalog: SkillPackStatus = {
   version: "123", digest: "123", signature_valid: true, source: "/library",
@@ -89,12 +89,40 @@ it("says what was searched, keeps the filters, and Clear search brings the libra
   // The same element announces it: it was mounted before the text arrived.
   expect(screen.getByRole("status")).toBe(status);
   expect(status).toHaveTextContent("No skills match \u201cmigrations\u201d");
+  expect(status).not.toHaveTextContent(" in ");
   expect(screen.getByText("0 of 3")).toBeVisible();
   expect(screen.getByRole("button", { name: "All" })).toBeVisible();
   expect(screen.queryByRole("button", { name: /architect/ })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
   expect(screen.getByRole("button", { name: /architect/ })).toBeVisible();
   expect(screen.getByRole("textbox", { name: "Search skills" })).toHaveValue("");
+});
+
+it("names the selected category when a search finds nothing in it, and Clear search keeps the category", async () => {
+  render(<SkillsPage />);
+  await screen.findByRole("button", { name: /architect/ });
+  await userEvent.click(screen.getByRole("button", { name: "Product design" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Search skills" }), "migrations");
+  expect(screen.getByRole("status")).toHaveTextContent("No skills match \u201cmigrations\u201d in Product design");
+  await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(screen.getByRole("textbox", { name: "Search skills" })).toHaveValue("");
+  // The pill stays selected; the person changes it separately.
+  expect(screen.getByRole("button", { name: "Product design" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: /design-review/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /architect/ })).toBeNull();
+});
+
+it("says No skills in {Category}, with no button, when the selected category has none and nothing is searched", async () => {
+  render(<SkillsPage />);
+  await screen.findByRole("button", { name: /architect/ });
+  await userEvent.click(screen.getByRole("button", { name: "Product design" }));
+  // The library is read again and that category is gone from it.
+  vi.mocked(api.skills).mockResolvedValue({ ...catalog, skills: catalog.skills.filter((entry) => entry.category !== "Product design") });
+  await act(async () => {
+    await useSkillsStore.getState().load();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("No skills in Product design");
+  expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
 });
 
 it("shows one quiet line, and no count, filters or grid, when the library has no skills", async () => {

@@ -120,6 +120,12 @@ test("the Skills page opens from the sidebar, filters by the library's categorie
   await filters.getByRole("button", { name: "Product design" }).click();
   await expect(page.getByRole("button", { name: /orbyn-ui-design/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /architect/ })).toHaveCount(0);
+  // A search that finds nothing in the selected category says which, and Clear search keeps the category.
+  await page.getByRole("textbox", { name: "Search skills" }).fill("migrations");
+  await expect(page.getByRole("region", { name: "Skills" }).getByRole("status")).toContainText("No skills match “migrations” in Product design");
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await expect(filters.getByRole("button", { name: "Product design" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /orbyn-ui-design/ })).toBeVisible();
   await filters.getByRole("button", { name: "All" }).click();
   await page.getByRole("textbox", { name: "Search skills" }).fill("migrations");
   await expect(page.getByRole("region", { name: "Skills" }).getByRole("status")).toContainText("No skills match “migrations”");

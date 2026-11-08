@@ -149,17 +149,17 @@ export function SkillsPage({ skill }: { skill?: string }) {
           {shown.length === 0 ? (
             <div className="skills-empty">
               <Search size={16} aria-hidden />
-              <b>{query ? `No skills match “${search.trim()}”` : "No skills in this category"}</b>
-              <p>Try a skill name or a word from what it does.</p>
-              <Button
-                icon={<X size={14} aria-hidden />}
-                onClick={() => {
-                  setSearch("");
-                  setCategory("All");
-                }}
-              >
-                Clear search
-              </Button>
+              {query ? (
+                <>
+                  <b>{`No skills match \u201c${search.trim()}\u201d${category === "All" ? "" : ` in ${category}`}`}</b>
+                  <p>Try a skill name or a word from what it does.</p>
+                  <Button icon={<X size={14} aria-hidden />} onClick={() => setSearch("")}>
+                    Clear search
+                  </Button>
+                </>
+              ) : (
+                <b>{`No skills in ${category}`}</b>
+              )}
             </div>
           ) : null}
         </div>
