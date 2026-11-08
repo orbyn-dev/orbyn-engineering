@@ -7,11 +7,13 @@ const thread = read("src/styles/thread.css");
 const pages = read("src/styles/pages.css");
 const rule = (css: string, selector: string) => css.split("}").find((block) => block.trim().startsWith(`${selector} {`)) ?? "";
 
-it("shows the diff comment button on hover, focus and selection only, and keeps it in view beside a long line", () => {
+it("keeps the diff line number visible and fades only the comment icon, always showing it where there is no hover", () => {
   const button = rule(thread, ".patch-line-number");
-  expect(button).toMatch(/opacity:\s*0/);
   expect(button).toMatch(/position:\s*sticky/);
-  expect(thread).toMatch(/\.patch-line:hover \.patch-line-number,\s*\.patch-line\[data-selected\] \.patch-line-number,\s*\.patch-line-number:focus-visible,\s*\.patch-line-number\[aria-pressed="true"\] \{\s*opacity: 1/);
+  expect(button).not.toMatch(/opacity/);
+  expect(rule(thread, ".patch-line-number > svg")).toMatch(/opacity:\s*0/);
+  expect(thread).toMatch(/\.patch-line:hover \.patch-line-number > svg,\s*\.patch-line\[data-selected\] \.patch-line-number > svg,\s*\.patch-line-number:focus-visible > svg,\s*\.patch-line-number\[aria-pressed="true"\] > svg \{\s*opacity: 1/);
+  expect(thread).toMatch(/@media \(hover: none\), \(pointer: coarse\) \{\s*\.patch-line-number > svg \{\s*opacity: 1/);
 });
 
 it("scrolls long diff lines sideways instead of cutting them, in the panel and on the pull request page", () => {
