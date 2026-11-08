@@ -25,7 +25,7 @@ function ModelDefaults({ query, disabled }: { query: ProjectScopesQuery; disable
   const engines = useWorkspace((state) => state.engines.data) ?? [];
   const modelsByEngine = useModelStore((state) => state.byEngine);
   const result = useAsync("project-model-defaults", (signal) => request<ScopedPreferencesResult>("POST",
-    "/api/settings/preferences/query", { scope: query, keys: MODEL_DEFAULT_KEYS }, signal));
+    "/api/settings/preferences/query", { scope: query, keys: MODEL_DEFAULT_KEYS }, signal), { keep: true });
   const [draft, setDraft] = useState<Edit | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);

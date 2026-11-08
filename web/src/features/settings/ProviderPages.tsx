@@ -40,7 +40,7 @@ export function AcpRegistryPage({ onBack }: { onBack(): void }) {
     const entries = await request<AcpRegistryEntry[]>("GET", "/api/acp/registry?q=", undefined, signal);
     loadedAt.current = Date.now();
     return entries;
-  });
+  }, { keep: true });
   const needle = text.trim().toLowerCase();
   const rows = (found.data ?? []).filter((entry) => `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
   const act = async (entry: AcpRegistryEntry, work: Promise<unknown>, done: string) => {

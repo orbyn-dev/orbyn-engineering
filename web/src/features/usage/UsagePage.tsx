@@ -157,6 +157,9 @@ function resetsIn(iso: string): string {
   return hours < 48 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`;
 }
 
+/** How long Limits may load before the page stops waiting for the engine. */
+export const LIMITS_WAIT_MS = 8000;
+
 function LimitRow({ label, used, resets }: { label: string; used: number; resets: string | null }) {
   const left = Math.max(0, Math.round(100 - used));
   return (
@@ -185,9 +188,10 @@ function LimitsView({ data, nameOf }: { data: LimitsOverview; nameOf(engine: str
   const empty = data.pooled.length === 0 && data.engines.length === 0;
   return (
     <div className="usage-body">
+      {/* The engine's own reason is for logs: the page says one plain thing, muted, as the usage-limits-unreported frame does. */}
       {data.unavailable.map((entry) => (
-        <p key={entry.engine} className="usage-note">
-          {nameOf(entry.engine)}: {entry.reason}
+        <p key={entry.engine} className="usage-note" data-unreported>
+          {nameOf(entry.engine)} doesn{"\u2019"}t report its limits.
         </p>
       ))}
       {empty ? <p className="usage-note">No engine reports limits.</p> : null}
@@ -464,10 +468,10 @@ function ModelPriceDialog({ model, onClose, onSaved }: { model: string; onClose(
     const priced = RATES.some((rate) => shown(rate.key) !== "");
     const number = (key: (typeof RATES)[number]["key"]) => Number(shown(key));
     try {
-      await api.putSettings({
-        ...settings.data,
+      await api.updateSettings((current) => ({
+        ...current,
         model_prices: [
-          ...(settings.data.model_prices ?? []).filter((price) => price.model !== model || !sameTier(price.tier, tier)),
+          ...(current.model_prices ?? []).filter((price) => price.model !== model || !sameTier(price.tier, tier)),
           ...(priced
             ? [{
                 model,
@@ -480,10 +484,10 @@ function ModelPriceDialog({ model, onClose, onSaved }: { model: string; onClose(
             : []),
         ],
         model_aliases: [
-          ...(settings.data.model_aliases ?? []).filter((entry) => entry.model !== model),
+          ...(current.model_aliases ?? []).filter((entry) => entry.model !== model),
           ...(target ? [{ model, counts_as: target }] : []),
         ],
-      });
+      }));
       onSaved();
       onClose();
     } catch (failure) {
@@ -561,7 +565,6 @@ export function UsagePage() {
   const tabsId = useId();
   const lastMetric = useRef<"cost" | "tokens">(saved?.metric && saved.metric !== "limits" ? saved.metric : "tokens");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [nonce, setNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const engines = useWorkspace((state) => state.engines.data);
   const pushToast = useUi((state) => state.pushToast);
@@ -578,9 +581,13 @@ export function UsagePage() {
   }, [loadingFirst, skeletonShown]);
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
-  const limits = useAsync(`limits:${metric === "limits"}:${nonce}`, (signal) =>
+  const limits = useAsync(`limits:${metric === "limits"}`, (signal) =>
     metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
-  );
+  { keep: true },
+);
+
+  // An engine that never answers must not leave the tab loading for good.
+  const limitsSlow = useWaited(metric === "limits" && limits.status === "loading", LIMITS_WAIT_MS);
 
   useEffect(() => {
     if (metric !== "limits") lastMetric.current = metric;
@@ -611,7 +618,7 @@ export function UsagePage() {
     setRefreshing(true);
     try {
       await api.limits(true);
-      setNonce(nonce + 1);
+      void limits.reload();
     } catch (failure) {
       pushToast(`Couldn't refresh. ${toFailure(failure).message}`);
     } finally {
@@ -694,6 +701,13 @@ export function UsagePage() {
             <ErrorState title="Couldn't load limits" failure={limits.error} onRetry={limits.reload} />
           ) : limits.status === "ready" && limits.data ? (
             <LimitsView data={limits.data} nameOf={nameOf} />
+          ) : limitsSlow ? (
+            <div className="usage-body">
+              <p className="usage-note" role="status">
+                Limits didn{"\u2019"}t answer in time.{" "}
+                <Button small onClick={limits.reload}>Try again</Button>
+              </p>
+            </div>
           ) : (
             <div className="usage-body">
               <Loading label="Loading limits" rows={3} />

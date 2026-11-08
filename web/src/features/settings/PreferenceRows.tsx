@@ -77,7 +77,7 @@ function ProjectPreferenceGroups({ groups, projectId }: {
   projectId: string;
 }) {
   const catalog = useAsync(`project-preference-scope:${projectId}`, (signal) =>
-    request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", {}, signal));
+    request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", {}, signal), { keep: true });
   if (catalog.status === "loading") return <Loading label="Loading settings" rows={3} />;
   if (catalog.status === "error") return <ErrorState title="Couldn't load settings" failure={catalog.error} onRetry={catalog.reload} />;
   const group = catalog.data.groups.find((candidate) => candidate.members.some((member) => member.project_id === projectId));
