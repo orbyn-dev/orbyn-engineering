@@ -61,6 +61,13 @@ describe("surface tabs", () => {
     expect(screen.getByRole("button", { name: "Open a tab" })).toHaveAttribute("data-tip", "Open a tab");
   });
 
+  it("slots the Tools tab in last once it is open, as one more icon-only slot", () => {
+    useUi.setState({ panelTabsClosed: [] });
+    pane();
+    expect(names()).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat", "Tools"]);
+    expect(screen.getByRole("tab", { name: "Tools" })).toHaveAttribute("data-tip", "Tools");
+  });
+
   it("shows the first surface until another is chosen, and keeps the chosen one when its tab is pressed again", async () => {
     const user = userEvent.setup();
     pane();
