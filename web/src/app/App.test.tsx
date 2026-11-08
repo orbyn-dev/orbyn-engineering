@@ -437,7 +437,7 @@ describe("App against the mock API", () => {
     go("#/threads/t-approval");
     render(<App />);
     expect(await screen.findByText(/the engine hangs/)).toBeInTheDocument();
-    expect(await screen.findByText(/Searched code for expire_open/)).toBeInTheDocument();
+    expect(await screen.findByText(/Searched for “expire_open”/)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Plan" })).toBeInTheDocument();
     expect(await screen.findByRole("article", { name: "Run the core test suite" })).toBeInTheDocument();
     expect(document.querySelector(".thread-state")).toHaveTextContent("Approval");
@@ -473,7 +473,7 @@ describe("App against the mock API", () => {
     await user.click(await screen.findByRole("button", { name: "Stop" }));
     // The stopped turn folds; its rows mount when the fold is opened.
     await user.click(await screen.findByRole("button", { name: /^You stopped/ }));
-    await waitFor(() => expect(screen.getByText("Run cancelled.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Stopped")).toBeInTheDocument());
     expect(await screen.findByText("Expired")).toBeInTheDocument();
     await waitFor(() => expect(document.querySelector(".thread-state")).toHaveTextContent("Cancelled"));
   });
@@ -540,10 +540,10 @@ describe("App against the mock API", () => {
     })) as unknown as typeof window.matchMedia;
     render(<App />);
     const details = await screen.findByRole("complementary", { name: "Thread details" });
-    await waitFor(() => expect(details).toHaveTextContent("+42 -3"));
+    await waitFor(() => expect(details).toHaveTextContent("+42 −3"));
     expect(within(details).getByText("approval-timeout")).toBeInTheDocument();
     expect(within(details).queryByText("Commit")).toBeNull();
-    expect(within(details).queryByText(/Open in editor/)).toBeNull();
+    expect(within(details).getByText("Open in editor")).toBeInTheDocument();
   });
 
   it("opens the command palette and goes to a result", async () => {

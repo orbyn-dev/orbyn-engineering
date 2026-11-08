@@ -14,7 +14,7 @@ import { flushSync } from "react-dom";
 import { api } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
 import { runHandlers, useCommand } from "../../app/shortcuts";
-import type { EngineStatus, Project, RunState, Thread } from "../../api/types";
+import type { Project, RunState, Thread } from "../../api/types";
 import { relativeTime, runStateLabels } from "../../lib/format";
 import { useLingering, usePanelMotion, useSettledAfter } from "../../lib/panelAnimations";
 import { isWide, panelOverlays, useLayoutWidth } from "../../lib/useLayout";
@@ -36,6 +36,8 @@ import { threadRunState } from "../workspace/RunState";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";
+import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
+import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "./timeline";
@@ -50,12 +52,12 @@ import { FavoriteEditorShortcut } from "./OpenInEditor";
 import { ProjectActionShortcuts } from "./ProjectActionShortcuts";
 
 /** The details card under the Details button while the side panel is closed. Escape or a press outside dismisses it. */
-function DetailsPopover({ thread, engine, compact, onClose }: { thread: Thread; engine: EngineStatus | null; compact: boolean; onClose(): void }) {
+function DetailsPopover({ thread, onClose }: { thread: Thread; onClose(): void }) {
   const root = useRef<HTMLDivElement>(null);
   usePopover({ kind: "fields", root, trigger: () => document.querySelector<HTMLElement>("[data-details-toggle]"), onClose });
   return (
     <div ref={root} className="details-popover">
-      <DetailsCard thread={thread} engine={engine} compact={compact} onClose={onClose} />
+      <DetailsCard thread={thread} />
     </div>
   );
 }
@@ -88,6 +90,7 @@ function TopBar({
   const state = threadRunState(thread);
   const narrow = layout === "phone";
   const connection = useConnectionKind();
+  const chip = useThreadChip(thread);
 
   return (
     <header className="topbar">
@@ -108,7 +111,7 @@ function TopBar({
               {project.name}
             </span>
           ) : null}
-          {connection ? <ConnectionStatus /> : thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null}
+          {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
         {narrow ? <PullChip thread={thread} /> : null}
       </div>
@@ -128,6 +131,7 @@ function TopBar({
             <PanelRight size={16} aria-hidden />
           </IconButton>
         )}
+        <ThreadHeaderMenu thread={thread} />
       </div>
     </header>
   );
@@ -513,6 +517,7 @@ export function ThreadView({ id }: { id: string }) {
           <WorktreeSetupCard thread={thread} />
           <ThreadErrorBanner thread={thread} />
           <LimitBanner thread={thread} />
+          <CompactingStep thread={thread} />
           <ServiceDownBanner />
           <div className="composer-lane">
             <div ref={mover} className="composer-group">
@@ -522,6 +527,8 @@ export function ThreadView({ id }: { id: string }) {
                 <div ref={anchor}>
                   {thread.lifecycle?.relation === "subagent" ? (
                     <SubagentBar thread={thread} />
+                  ) : thread.lifecycle?.archived_at ? (
+                    <ArchivedBanner thread={thread} />
                   ) : (
                     <Composer
                       thread={thread}
@@ -538,9 +545,9 @@ export function ThreadView({ id }: { id: string }) {
         </div>
         <TerminalDrawer threadId={id} open={terminalOpen} moves={paneMoves} onClose={() => togglePanel("terminal")} />
         {terminalOpen ? null : <TerminalBar threadId={id} onOpen={() => togglePanel("terminal")} />}
-        {rail && detailsShown ? <DetailsCard thread={thread} engine={engine} compact={false} onClose={toggleDetailsPref} /> : null}
+        {rail && detailsShown ? <DetailsCard thread={thread} /> : null}
         {!rail && !inPanel && detailsPopover ? (
-          <DetailsPopover thread={thread} engine={engine} compact={phone} onClose={() => setDetailsPopover(false)} />
+          <DetailsPopover thread={thread} onClose={() => setDetailsPopover(false)} />
         ) : null}
       </section>
       {panelPresent ? (
@@ -550,7 +557,7 @@ export function ThreadView({ id }: { id: string }) {
           closing={!panelOpen}
           moves={paneMoves}
           maximized={maximized}
-          details={inPanel && detailsPref ? <DetailsCard thread={thread} engine={engine} compact={false} onClose={toggleDetailsPref} /> : null}
+          details={inPanel && detailsPref ? <DetailsCard thread={thread} /> : null}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {
             setMaximized(false);

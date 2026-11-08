@@ -69,11 +69,11 @@ test("thread details show what's left, and checks stay five minutes apart", asyn
   });
   await page.goto(`${service.page}#/threads/${first.id}`);
   await openDetails(page);
-  await expect(page.getByText(/% left/)).toBeVisible();
+  await expect(page.getByText(/5 hours \d+% left/)).toBeVisible();
   await page.locator("li[data-thread-item]").filter({ hasText: "Two" }).click();
   await expect(page.getByRole("heading", { name: "Two" })).toBeVisible();
   await openDetails(page);
-  await expect(page.getByText(/% left/)).toBeVisible();
+  await expect(page.getByText(/5 hours \d+% left/)).toBeVisible();
   expect(checks).toBe(1);
 });
 

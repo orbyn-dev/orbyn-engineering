@@ -48,7 +48,7 @@ test("the details card opens the favorite editor and shows its shortcut", async 
   await settled(service, id);
 
   const details = await openDetails(page);
-  await expect(details.getByRole("button", { name: "Open in VS Code" })).toBeVisible();
+  await expect(details.getByRole("button", { name: /^Open in editor/ })).toHaveAttribute("title", "Open in VS Code");
 
   await details.getByRole("button", { name: "Choose editor" }).click();
   const menu = page.getByRole("menu", { name: "Open in" });

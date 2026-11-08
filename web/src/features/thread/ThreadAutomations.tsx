@@ -1,10 +1,12 @@
-import { AlertTriangle, CalendarClock, Pencil, Play, Settings2 } from "lucide-react";
+import { CalendarClock, CirclePlay, Pause, Pencil, Play } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { request } from "../../api/client";
 import type { ScheduledTask } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
-import { scheduleLine, taskTone, type TaskTone } from "../../lib/taskSchedule";
+import { scheduleLabel, taskTone } from "../../lib/taskSchedule";
+import { useWaited } from "../../lib/motion";
+import { DRow } from "./DetailRows";
 import { navigate, useRoute } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { Button, IconButton } from "../../ui/controls";
@@ -60,25 +62,39 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
     void reload();
   }, [dueAt, now, reload]);
 
-  if (tasks.status === "loading") return null;
+  const [expanded, setExpanded] = useState(false);
+  const timestampFormat = useUi((state) => state.timestampFormat);
+  const waited = useWaited(tasks.status === "loading");
+  const icon = <CalendarClock size={16} aria-hidden />;
+  if (tasks.status === "loading") return <DRow icon={icon} label="Automations" loading waited={waited} skeleton={80} />;
   if (tasks.status === "error" && bound.length === 0) {
     return (
-      <div className="details-section">
-        <div className="details-head">
-          <span>Automations</span>
-          <ManageButton />
-        </div>
-        <div className="detail-row detail-row-static" title={tasks.error.message}>
-          <AlertTriangle size={16} aria-hidden />
-          <span>Couldn't load automations</span>
+      <DRow
+        icon={icon}
+        label="Automations"
+        title={tasks.error.message}
+        value={<span className="t3">Couldn’t load automations.</span>}
+        extra={
           <Button small tone="quiet" onClick={tasks.reload}>
             Retry
           </Button>
-        </div>
-      </div>
+        }
+      >
+        <ManageLink />
+      </DRow>
     );
   }
-  if (bound.length === 0) return null;
+  if (bound.length === 0) return <DRow icon={icon} label="Automations" value={<span className="t3">No automations on this thread</span>} />;
+  const clock = (iso: string) =>
+    new Date(iso).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: timestampFormat === "locale" ? undefined : timestampFormat === "12-hour",
+    });
+  const upcoming = bound
+    .filter((task) => (pending[task.id] ?? task.enabled) && task.next_run_at)
+    .map((task) => task.next_run_at as string)
+    .sort()[0];
 
   const toggle = async (task: ScheduledTask, enabled: boolean) => {
     setBusy(task.id);
@@ -134,73 +150,81 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
   };
 
   return (
-    <div className="details-section">
-      <div className="details-head">
-        <span>Automations</span>
-        <ManageButton />
-      </div>
-      <ul className="detail-automations" aria-label="Automations">
-        {bound.map((task) => {
-          const tone = taskTone(task);
-          const line = scheduleLine(task, now);
-          const enabled = pending[task.id] ?? task.enabled;
-          return (
-            <li key={task.id} className="detail-row detail-row-static">
-              <div className="detail-automation-icon">
-                <CalendarClock size={16} aria-hidden />
-                <span className={`detail-dot detail-dot-${tone}`} role="img" aria-label={toneLabel(tone)} />
-              </div>
-              <span title={`${task.name} — ${line}`}>
-                <span className="detail-automation-name">{task.name}</span>
-                <span className={`detail-automation-when${tone === "fail" ? " is-failed" : ""}`}>{line}</span>
-              </span>
-              <IconButton
-                label={`Edit ${task.name}`}
-                disabled={busy !== null}
-                onClick={() => navigate({ name: "settings", section: "tasks", task: task.id, edit: true })}
-              >
-                <Pencil size={14} aria-hidden />
-              </IconButton>
-              {task.schedule.kind === "webhook" ? null : (
-                <IconButton label={`Run ${task.name} now`} disabled={busy !== null} onClick={() => void run(task)}>
-                  <Play size={14} aria-hidden />
-                </IconButton>
-              )}
-              <input
-                type="checkbox"
-                role="switch"
-                aria-label={`Enable ${task.name}`}
-                checked={enabled}
-                disabled={busy !== null}
-                onChange={(event) => void toggle(task, event.target.checked)}
-              />
-            </li>
-          );
-        })}
-      </ul>
-      {tasks.status === "error" ? (
-        <p className="detail-automation-error" role="alert">
-          {saved?.threadId === threadId && saved.rows === tasks.data
-            ? `${saved.enabled ? "Resumed" : "Paused"} ${saved.name}. `
-            : ""}
-          Couldn't refresh automations. {tasks.error.message}
-        </p>
+    <DRow
+      icon={icon}
+      label="Automations"
+      ariaLabel="Automations"
+      expanded={expanded}
+      onClick={() => setExpanded(!expanded)}
+      value={<span className="t2">{bound.length === 1 ? "1 task" : `${bound.length} tasks`}</span>}
+      sub={
+        tasks.status === "error"
+          ? "Couldn’t refresh automations."
+          : upcoming
+            ? `Next run ${clock(upcoming)}`
+            : bound.every((task) => !(pending[task.id] ?? task.enabled))
+              ? "Paused"
+              : undefined
+      }
+    >
+      {expanded ? (
+        <>
+          <ul className="dauto" aria-label="Automations">
+            {bound.map((task) => {
+              const tone = taskTone(task);
+              const enabled = pending[task.id] ?? task.enabled;
+              const when = tone === "fail" ? task.last_status : !enabled ? "Paused" : task.next_run_at ? `Next run ${clock(task.next_run_at)}` : null;
+              return (
+                <li key={task.id} className="dtask" role="group" aria-label={task.name}>
+                  <span className="dtext">
+                    <b title={task.name}>{task.name}</b>
+                    <small className={tone === "fail" ? "is-failed" : undefined}>{[scheduleLabel(task.schedule), when].filter(Boolean).join(" · ")}</small>
+                  </span>
+                  <span className="end">
+                    <IconButton label={enabled ? "Pause" : "Resume"} disabled={busy !== null} onClick={() => void toggle(task, !enabled)}>
+                      {enabled ? <Pause size={14} aria-hidden /> : <CirclePlay size={14} aria-hidden />}
+                    </IconButton>
+                    {task.schedule.kind === "webhook" ? null : (
+                      <IconButton label="Run now" disabled={busy !== null} onClick={() => void run(task)}>
+                        <Play size={14} aria-hidden />
+                      </IconButton>
+                    )}
+                    <IconButton
+                      label="Edit"
+                      disabled={busy !== null}
+                      onClick={() => navigate({ name: "settings", section: "tasks", task: task.id, edit: true })}
+                    >
+                      <Pencil size={14} aria-hidden />
+                    </IconButton>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <ManageLink />
+          {tasks.status === "error" ? (
+            <p className="detail-automation-error" role="alert">
+              {saved?.threadId === threadId && saved.rows === tasks.data
+                ? `${saved.enabled ? "Resumed" : "Paused"} ${saved.name}. `
+                : ""}
+              Couldn't refresh automations. {tasks.error.message}
+            </p>
+          ) : null}
+        </>
       ) : null}
-    </div>
+    </DRow>
   );
 }
 
-/** The dot's meaning, for readers who cannot see its colour. */
-function toneLabel(tone: TaskTone): string {
-  if (tone === "idle") return "Not run yet";
-  if (tone === "ok") return "Last run started";
-  return "Last run failed";
-}
-
-function ManageButton() {
+/** The last row of the open Automations row: Scheduled tasks in Settings. */
+function ManageLink() {
   return (
-    <IconButton label="Manage scheduled tasks" onClick={() => navigate({ name: "settings", section: "tasks" })}>
-      <Settings2 size={14} aria-hidden />
-    </IconButton>
+    <div className="dauto">
+      <div className="dmanage">
+        <button type="button" className="dlink" onClick={() => navigate({ name: "settings", section: "tasks" })}>
+          Manage scheduled tasks
+        </button>
+      </div>
+    </div>
   );
 }

@@ -612,11 +612,11 @@ describe("Everything a row opens is kept while it is away", () => {
     scrollThread(foldedTurns(1), "t-tool");
     const fold = document.querySelector<HTMLElement>('[data-entry="fold:r0"]')!;
     await userEvent.click(fold.querySelector("button.work-summary")!);
-    const card = () => document.querySelector<HTMLElement>('[data-entry="fold:r0"] .trace button.trace-summary')!;
-    await userEvent.click(card());
-    expect(card()).toHaveAttribute("aria-expanded", "true");
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-entry="fold:r0"] button.tcr')];
+    await userEvent.click(rows()[0]!);
+    expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true"]);
     awayAndBack("fold:r0");
-    expect(card()).toHaveAttribute("aria-expanded", "true");
+    expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true"]);
   });
 
   it("a plan card", async () => {
@@ -679,7 +679,7 @@ describe("Open state is keyed by the item, not the row that holds it", () => {
     const running: ThreadItem[] = [message("u0", "user", "Go", "r0"), tool("tool0", "r0", "output")];
     load("t-move", running);
     const view = render(<Transcript threadId="t-move" active activeRunId="r0" />);
-    const card = () => document.querySelector<HTMLElement>("button.trace-summary")!;
+    const card = () => document.querySelector<HTMLElement>("button.tcr")!;
     await userEvent.click(card());
     expect(card()).toHaveAttribute("aria-expanded", "true");
     act(() => load("t-move", [...running, message("a0", "assistant", "Done", "r0")]));
@@ -764,13 +764,13 @@ describe("Find skips what the cards add around their text", () => {
     await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
     const entries = arrangeTimeline(items, {}, null);
     const rows = [...document.querySelectorAll<HTMLElement>(".transcript-inner > .item")];
-    // The page has "No output.", "None" and "Exit code 0" in it; none of them is counted or painted.
+    // The page has "No output", "None" and "exit 0" in it; none of them is counted or painted.
     for (const word of ["output", "code", "none"]) {
       const painted = rows.flatMap((row) => rangesIn(row, word)).length;
       expect(findMatches(entries, word)).toHaveLength(painted);
     }
-    expect(document.body.textContent).toContain("No output.");
-    expect(document.body.textContent).toContain("Exit code 0");
+    expect(document.body.textContent).toContain("No output");
+    expect(document.body.textContent).toContain("exit 0");
     expect(findMatches(entries, "output")).toHaveLength(1);
   });
 });

@@ -160,8 +160,11 @@ test("a task bound to a thread pauses, runs and edits from the details card", as
   await page.goto(`${service.page}#/threads/${thread.id}`);
   let details = await openDetails(page);
   const automations = () => details.getByRole("list", { name: "Automations" });
+  await details.getByRole("button", { name: "Automations" }).click();
+  const nightly = () => details.getByRole("group", { name: "Nightly review" });
+  const toggle = () => nightly().getByRole("button", { name: /^(Pause|Resume)$/ });
   await expect(automations()).toContainText("Nightly review");
-  await expect(automations().getByRole("listitem")).toHaveCount(1);
+  await expect(automations().getByRole("group")).toHaveCount(1);
   await expect(automations()).not.toContainText("On pushes");
 
   // The mutation reaches the real service; only the browser's subsequent read
@@ -171,22 +174,22 @@ test("a task bound to a thread pauses, runs and edits from the details card", as
       ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "unavailable", message: "Refresh unavailable." }) })
       : route.continue(),
   );
-  await details.getByRole("switch", { name: "Enable Nightly review" }).click();
+  await toggle().click();
   await expect.poll(async () => (await stored())?.enabled).toBe(false);
   await expect(details.getByRole("alert")).toContainText(/Paused Nightly review.*refresh/);
-  await expect(details.getByRole("switch", { name: "Enable Nightly review" })).toBeEnabled();
-  await expect(details.getByRole("switch", { name: "Enable Nightly review" })).not.toBeChecked();
-  await expect(automations()).toContainText("paused");
+  await expect(toggle()).toBeEnabled();
+  await expect(toggle()).toHaveAccessibleName("Resume");
+  await expect(automations()).toContainText("Paused");
   await page.unroute("**/api/tasks");
-  await details.getByRole("switch", { name: "Enable Nightly review" }).click();
+  await toggle().click();
   await expect.poll(async () => (await stored())?.enabled).toBe(true);
-  await expect(details.getByRole("switch", { name: "Enable Nightly review" })).toBeChecked();
+  await expect(toggle()).toHaveAccessibleName("Pause");
   await expect(details.getByRole("alert")).toHaveCount(0);
 
-  await details.getByRole("button", { name: "Run Nightly review now" }).click();
+  await nightly().getByRole("button", { name: "Run now" }).click();
   await expect.poll(async () => (await stored())?.last_status).toBe("started");
 
-  await details.getByRole("button", { name: "Edit Nightly review" }).click();
+  await nightly().getByRole("button", { name: "Edit" }).click();
   await expect(page).toHaveURL((url) => url.hash === `#/settings/tasks?task=${task.id}&edit=1`);
   const edit = page.getByRole("dialog", { name: "Edit scheduled task" });
   await expect(edit.getByLabel("Name")).toHaveValue("Nightly review");
@@ -198,11 +201,8 @@ test("a task bound to a thread pauses, runs and edits from the details card", as
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect(page).toHaveURL((url) => url.hash === `#/threads/${thread.id}`);
   details = await openDetails(page);
+  await details.getByRole("button", { name: "Automations" }).click();
   await expect(automations()).toContainText("Nightly check");
   await details.getByRole("button", { name: "Manage scheduled tasks" }).click();
   await expect(page).toHaveURL((url) => url.hash === "#/settings/tasks");
-  // The thread details behind Settings has an Edit button with the same name.
-  await expect(
-    page.getByRole("region", { name: "Settings" }).getByRole("button", { name: "Edit Nightly check" }),
-  ).toBeVisible();
 });

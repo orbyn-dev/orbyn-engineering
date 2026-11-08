@@ -26,21 +26,19 @@ test("a finished turn folds, groups its tools and shows command output", async (
 
   await fold.click();
   await expect(page.getByText("I'll look around first.")).toBeVisible();
-  const group = page.locator(".work-rows").getByRole("button", {
-    name: "Ran 1 command and changed 2 files; 1 tool call failed; 1 tool call finished without a reported outcome",
-    exact: true,
-  });
+  // The two commands are one group; collapsed, it names the one that failed.
+  const group = page.locator(".steps.tc").getByRole("button", { name: /^Ran 2 commands cat missing\.txt exit 1/ });
   await group.click();
   await page.getByRole("button", { name: /^cat missing\.txt/ }).click();
   await expect(page.getByText("cat: missing.txt: No such file")).toBeVisible();
-  await expect(page.getByText("Exit code 1")).toBeVisible();
+  await expect(page.locator(".cf").getByText("exit 1")).toBeVisible();
   await page.getByRole("button", { name: /^ls -la/ }).click();
-  const colored = page.locator(".tool-output span", { hasText: "README.md" });
+  const colored = page.locator(".co span", { hasText: "README.md" });
   await expect(colored).toHaveAttribute("style", /--ansi-green/);
 
   // An opened fold mounts its rows on first open, so highlighting and heights land after the
   // click: wait until the button has not moved for a few frames.
-  const inspect = page.getByRole("button", { name: "Inspect item" }).first();
+  const inspect = page.getByRole("button", { name: "Raw result" }).first();
   await inspect.evaluate(
     (button) =>
       new Promise<void>((resolve) => {
@@ -58,7 +56,7 @@ test("a finished turn folds, groups its tools and shows command output", async (
     undefined,
     { timeout: 10_000 },
   );
-  await page.getByRole("button", { name: "Inspect item" }).first().click();
+  await page.getByRole("button", { name: "Raw result" }).first().click();
   const details = page.getByRole("dialog", { name: "Item details" });
   await expect(details).toContainText("exit");
   await page.keyboard.press("Escape");
@@ -68,7 +66,7 @@ test("a running turn shows its header and streams output; Stop folds it as stopp
   await page.goto(`${service.page}#/new/${projectId}`);
   await send(page, "[scene:live]");
   await expect(page.getByRole("status").filter({ hasText: /^Working for/ })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: /^Ran 1 command/ }).or(page.locator(".trace-summary").first()).first().click();
+  await page.getByRole("button", { name: /^Ran 1 command/ }).or(page.locator("button.tcr").first()).first().click();
   await page.getByRole("button", { name: /Stop/ }).first().click();
   await expect(page.getByRole("button", { name: /^You stopped after/ })).toBeVisible({ timeout: 15_000 });
 });
@@ -91,12 +89,12 @@ test("a long live tool trace groups in fives and defers rows beyond thirty", asy
       for (let at = 0; ; at += Math.max(200, log.clientHeight - 200)) {
         log.scrollTop = at;
         await settle();
-        for (const section of log.querySelectorAll<HTMLElement>("section.work-rows")) {
+        for (const section of log.querySelectorAll<HTMLElement>("section.steps.tc")) {
           const row = section.closest<HTMLElement>("[data-entry]");
-          const sections = [...(row?.querySelectorAll("section.work-rows") ?? [])];
+          const sections = [...(row?.querySelectorAll("section.steps.tc") ?? [])];
           const key = `${row?.dataset.entry ?? ""}/${sections.indexOf(section)}`;
-          section.querySelectorAll(".work-log > .trace").forEach((_, index) => rows.add(`${key}#${index}`));
-          const label = section.querySelector(".trace-label")?.textContent ?? "";
+          section.querySelectorAll(".tk > .tcw").forEach((_, index) => rows.add(`${key}#${index}`));
+          const label = section.querySelector(".tg .tla")?.textContent ?? "";
           if (!seen.has(key) && /^Ran \d+ commands?$/.test(label)) {
             seen.add(key);
             labels.push(label);
@@ -127,7 +125,6 @@ test("a failed non-command tool is excluded from completed action counts", async
   const fold = page.getByRole("button", { name: /^Changed 2 files; 1 tool call failed ·/ });
   await expect(fold).toBeVisible();
   await fold.click();
-  await page.getByRole("button", { name: "Changed 2 files; 1 tool call failed", exact: true }).click();
   await expect(page.getByRole("button", { name: /^files.Write/ })).toBeVisible();
 });
 
@@ -297,7 +294,7 @@ test("a failed turn keeps its error in view and a command with no output says so
   await send(page, "[scene:empty]");
   await page.getByRole("button", { name: /^Ran 1 command ·/ }).last().click();
   await page.getByRole("button", { name: /^true/ }).click();
-  await expect(page.getByText("No output.")).toBeVisible();
+  await expect(page.getByText("No output", { exact: true })).toBeVisible();
 });
 
 test("a link to a commit here opens it in Diff", async ({ page }) => {

@@ -17,7 +17,7 @@ let projectId = "";
 
 const thread = (id: string) => service.api<Listed>("GET", `/api/threads/${id}`);
 const row = (page: Page, id: string) => page.locator(`li[data-thread-item="${id}"]`);
-const banner = (page: Page) => page.getByRole("status", { name: "Limited" });
+const banner = (page: Page) => page.getByRole("group", { name: "Limited" });
 const started = async (page: Page, prompt: string) => {
   await page.goto(`${service.page}#/new/${projectId}`);
   await send(page, prompt);

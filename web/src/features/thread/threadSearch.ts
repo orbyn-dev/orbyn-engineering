@@ -1,8 +1,6 @@
-import { prettyJson } from "../../lib/format";
-import { outputSpans } from "./ansi";
 import { markdownText } from "./Markdown";
 import type { ThreadItem } from "./projection";
-import { traceTool } from "./toolTrace";
+import { callFindText } from "./toolCalls";
 import type { TimelineEntry } from "./timeline";
 
 /**
@@ -20,17 +18,9 @@ function itemText(item: ThreadItem): string {
     case "notice":
       return item.text;
     case "tool":
-      // Exactly the card's body: the command (or the arguments as pretty JSON), then the result,
-      // or the streamed output until there is one, without terminal escape codes. The summary
-      // line repeats the command inside a button, which find skips.
-      return [
-        traceTool(item).command || prettyJson(item.args),
-        outputSpans(item.result ?? item.output)
-          .map((span) => span.text)
-          .join(""),
-      ]
-        .filter(Boolean)
-        .join("\n");
+      // Exactly the card's body, kind by kind: the strings its block renders as text. The row's
+      // label sits inside a button, which find skips, and so do a block's header and footer.
+      return callFindText(item).join("\n");
     case "approval":
       return item.approval.summary;
     case "plan":
