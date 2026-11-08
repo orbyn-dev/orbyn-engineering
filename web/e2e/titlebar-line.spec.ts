@@ -130,3 +130,23 @@ test("the hovered plus on a project row does not overlap the project name", asyn
   expect(plus).not.toBeNull();
   expect(name.right).toBeLessThanOrEqual((plus?.x ?? 0) + 0.5);
 });
+
+/** Row actions are out of the Tab order until a row is under the pointer, selected or focused. */
+test("hidden row actions are not focusable, and the open thread's row shows them", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/__mock/scenario/default");
+  await page.goto("/#/threads/t-done");
+  await page.mouse.move(700, 400);
+  const current = page.locator(".thread-row[aria-current=page]");
+  await expect(current.getByRole("button", { name: "Settle thread" })).toBeVisible();
+  await expect(current.getByRole("button", { name: "Settle thread" })).toHaveAttribute("title", "Settle");
+  // Every other row's buttons are hidden, so Tab cannot land on them.
+  const others = page.locator(".thread-row:not([aria-current=page]) .row-action");
+  const count = await others.count();
+  expect(count).toBeGreaterThan(3);
+  for (let at = 0; at < Math.min(count, 12); at += 1) await expect(others.nth(at)).toBeHidden();
+  // A row with keyboard focus shows its own.
+  const other = page.locator(".thread-row:not([aria-current=page])").nth(2);
+  await other.focus();
+  await expect(other.locator(".row-action").first()).toBeVisible();
+});

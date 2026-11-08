@@ -298,7 +298,7 @@ export function ThreadRow({
                   type="button"
                   className="row-action"
                   aria-label="Snooze thread"
-                  title="Snooze thread"
+                  title="Snooze"
                   onClick={(event) => {
                     event.preventDefault();
                     actions.onSnooze(event, thread);
@@ -310,7 +310,7 @@ export function ThreadRow({
                   type="button"
                   className="row-action"
                   aria-label="Settle thread"
-                  title="Settle thread"
+                  title="Settle"
                   onPointerDown={(event) => actions.onActionPress(event, thread, section)}
                   onClick={(event) => {
                     event.preventDefault();

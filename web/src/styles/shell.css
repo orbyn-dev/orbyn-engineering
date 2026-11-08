@@ -517,11 +517,10 @@ input.dialog-field-mono {
 }
 /* Snooze and Settle are icon-only buttons floating over the row's right edge with a fade: the title keeps its full
    width underneath, and the status text stays where it is. The context menu carries the same actions. */
-.row-woke,
-.row-pin {
-  /* Above the floating row actions, so a woke mark or a pin stays pressable while the row is hovered. */
-  position: relative;
-  z-index: 1;
+/* A row with a woke mark or a pin keeps the action strip's width clear at its right end, so neither is ever under
+   Snooze and Settle (70px: the strip's two buttons and its fade). */
+.thread-row:has(.row-woke, .row-pin) .row-trailing {
+  margin-right: 70px;
 }
 .row-actions {
   position: absolute;
@@ -535,15 +534,23 @@ input.dialog-field-mono {
   background:
     linear-gradient(to right, transparent, var(--row-state) 20px),
     linear-gradient(to right, transparent, var(--color-sidebar) 20px);
+  /* Hidden means out of the Tab order as well: visibility goes after the fade, and comes back at once on show. */
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--m-fast) var(--m-io);
+  transition:
+    opacity var(--m-fast) var(--m-io),
+    visibility 0s linear var(--m-fast);
 }
+/* The row under the pointer, the selected row (multi-select or the open thread), and a row with keyboard focus. */
 li:hover > .thread-row .row-actions,
 li[data-selected] .thread-row .row-actions,
+.thread-row[aria-current="page"] .row-actions,
 .thread-row:focus-within .row-actions {
+  visibility: visible;
   opacity: 1;
   pointer-events: auto;
+  transition-delay: 0s;
 }
 .row-action {
   display: inline-flex;
