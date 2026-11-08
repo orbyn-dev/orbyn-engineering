@@ -62,8 +62,6 @@ pub struct ClaudeDriver {
     named: Option<(String, String)>,
     /// Tokens before Claude compacts, from the instance.
     auto_compact_window: Option<u32>,
-    /// What `claude mcp list` said, shared by every thread of this engine.
-    mcp_list: Arc<crate::agents::tools_report::Probed<Vec<McpListed>>>,
 }
 
 impl ClaudeDriver {
@@ -72,7 +70,6 @@ impl ClaudeDriver {
             program,
             named: None,
             auto_compact_window: None,
-            mcp_list: Arc::default(),
         }
     }
 }
@@ -553,8 +550,8 @@ pub(crate) fn parse_mcp_list(text: &str) -> Vec<McpListed> {
         .collect()
 }
 
-/// `claude mcp list` parsed, or `None` when the CLI could not be asked.
-async fn list_mcp(program: &str) -> Option<Vec<McpListed>> {
+/// `claude mcp list` parsed and timed, or `None` when the CLI could not be asked.
+async fn list_mcp(program: &str) -> Option<crate::agents::tools_report::ListedServers> {
     let command = crate::host::process::resolve(program)?;
     let output = crate::agents::engines::probe::capture(
         &command,
@@ -562,7 +559,10 @@ async fn list_mcp(program: &str) -> Option<Vec<McpListed>> {
         std::time::Duration::from_secs(20),
     )
     .await?;
-    (output.status == 0).then(|| parse_mcp_list(&output.stdout))
+    (output.status == 0).then(|| crate::agents::tools_report::ListedServers {
+        at: crate::util::now(),
+        servers: parse_mcp_list(&output.stdout),
+    })
 }
 
 const CLAUDE_CONNECTORS_PAGE: &str = "https://claude.ai/settings/connectors";
@@ -571,7 +571,7 @@ const CLAUDE_CONNECTORS_PAGE: &str = "https://claude.ai/settings/connectors";
 /// failing that, the ones the last run's frame named), the plugins, built-in tools and
 /// skills that frame reported, and the count of Orbyn's own tools.
 fn claude_tools(
-    listed: Option<&[McpListed]>,
+    listed: Option<&crate::agents::tools_report::ListedServers>,
     init: Option<&Value>,
 ) -> orbyn_contracts::EngineTools {
     use crate::agents::tools_report::{assemble, counted, detail, entry, group, reason};
@@ -620,6 +620,7 @@ fn claude_tools(
     match listed {
         Some(listed) => {
             for server in listed
+                .servers
                 .iter()
                 .filter(|server| server.name != MCP_SERVER_NAME)
             {
@@ -673,12 +674,16 @@ fn claude_tools(
     {
         groups.push(counted("skills", usize::try_from(count).unwrap_or(0)));
     }
-    let mut tools = assemble(
-        "claude",
-        if init.is_some() { "run" } else { "check" },
-        groups,
-        init.is_some(),
-    );
+    // Where the list came from: a run's frame alone, the CLI alone, or the CLI for servers
+    // and the frame for what only a run reports.
+    let source = match (listed.is_some(), init.is_some()) {
+        (true, true) => "check+run",
+        (true, false) => "check",
+        (false, _) => "run",
+    };
+    let mut tools = assemble("claude", source, groups, init.is_some());
+    // The time `claude mcp list` ran, not the time this answer was put together.
+    tools.checked_at = listed.map(|listed| listed.at.clone());
     if listed.is_none() {
         // The CLI could not be asked, which says nothing about whether it has servers.
         tools.error = Some("Claude Code did not list its servers.".into());
@@ -885,7 +890,6 @@ impl EngineDriver for ClaudeDriver {
                 .auto_compact_window
                 .as_deref()
                 .and_then(|window| window.parse().ok()),
-            mcp_list: Arc::default(),
         }))
     }
 
@@ -911,18 +915,19 @@ impl EngineDriver for ClaudeDriver {
         _cwd: &Path,
         init: Option<&Value>,
         refresh: bool,
+        probe: &crate::agents::tools_report::ToolsProbe,
     ) -> Result<Option<orbyn_contracts::EngineTools>> {
         // Asked in a neutral folder on purpose: `claude mcp list` starts the servers it
         // checks, and a project's `.mcp.json` must not run just because a page was opened.
         // A project's own servers show through the frame its runs report. The answer is
-        // shared by every thread of this engine for half a minute.
-        let listed = self
-            .mcp_list
+        // kept per engine id, so every thread of the engine shares it for half a minute.
+        let listed = probe
+            .claude
             .get(refresh, std::time::Duration::from_secs(30), || {
                 list_mcp(&self.program)
             })
             .await;
-        Ok(Some(claude_tools(listed.as_deref(), init)))
+        Ok(Some(claude_tools(listed.as_ref(), init)))
     }
 
     fn check_launch_available(&self) -> Result<()> {
@@ -3189,10 +3194,39 @@ mod tests {
         tools.groups.iter().find(|one| one.id == id)
     }
 
+    const LISTED_AT: &str = "2026-11-08T10:00:00Z";
+
+    fn listed_at(text: &str) -> crate::agents::tools_report::ListedServers {
+        crate::agents::tools_report::ListedServers {
+            at: LISTED_AT.into(),
+            servers: parse_mcp_list(text),
+        }
+    }
+
+    #[test]
+    fn claude_tools_say_when_the_cli_was_asked_and_where_the_list_came_from() {
+        let listed = listed_at("claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n");
+        let both = claude_tools(Some(&listed), Some(&json!({ "plugins": [] })));
+        assert_eq!(
+            both.source, "check+run",
+            "servers asked, the rest from a run's frame"
+        );
+        assert_eq!(
+            both.checked_at.as_deref(),
+            Some(LISTED_AT),
+            "the time the CLI ran, not now"
+        );
+        let only = claude_tools(Some(&listed), None);
+        assert_eq!(only.source, "check");
+        let frame_only = claude_tools(None, Some(&json!({ "plugins": [] })));
+        assert_eq!(frame_only.source, "run");
+        assert_eq!(frame_only.checked_at, None);
+    }
+
     #[test]
     fn claude_tools_sort_servers_connectors_and_states() {
         use orbyn_contracts::ToolState;
-        let listed = parse_mcp_list(
+        let listed = listed_at(
             "github: npx -y gh-mcp - ✔ Connected\n\
              postgres-dev: pg-mcp - ✘ Failed to connect — Command not found: pg-mcp\n\
              claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n\
@@ -3225,7 +3259,7 @@ mod tests {
 
     #[test]
     fn claude_tools_before_any_run_leave_out_what_only_a_run_reports() {
-        let listed = parse_mcp_list("claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n");
+        let listed = listed_at("claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n");
         let tools = claude_tools(Some(&listed), None);
         assert!(!tools.reported);
         assert!(group(&tools, "connectors").is_some());

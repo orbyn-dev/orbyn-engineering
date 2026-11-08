@@ -45,7 +45,7 @@ it("Settings › Agents lists Tools and connectors, one tab per engine, read-onl
   render(<App />);
   const claude = await screen.findByRole("tab", { name: "Claude Code" });
   expect(claude).toHaveAttribute("aria-selected", "true");
-  expect(await screen.findByText(/Read from Claude Code when each run starts/)).toBeInTheDocument();
+  expect(await screen.findByText(/Servers and connectors are read from Claude Code when this page opens/)).toBeInTheDocument();
   expect((await screen.findAllByText("claude.ai connector", { exact: false })).length).toBeGreaterThan(0);
   expect(screen.queryByRole("switch")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Check again" }));

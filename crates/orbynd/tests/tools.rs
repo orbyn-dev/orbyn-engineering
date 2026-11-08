@@ -2,7 +2,7 @@
 
 mod support;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use support::{Options, TempDir, setup};
 
 fn group<'a>(tools: &'a Value, id: &str) -> Option<&'a Value> {
@@ -48,7 +48,9 @@ async fn a_claude_thread_reports_servers_connectors_and_what_its_run_reported() 
     assert_eq!(service.finished(&thread).await, "completed");
     let after = service.json(&format!("{path}?refresh=1")).await;
     assert_eq!(after["reported"], true);
-    assert_eq!(after["source"], "run");
+    // Servers were asked of the CLI; plugins and built-ins came from the run's frame.
+    assert_eq!(after["source"], "check+run");
+    assert!(after["checked_at"].is_string());
     let mcp = group(&after, "mcp").unwrap();
     assert_eq!(names(mcp), ["github", "postgres-dev"]);
     assert_eq!(mcp["items"][1]["state"], "failed");
@@ -131,5 +133,59 @@ async fn asking_again_reads_the_engine_again_and_the_answer_stays_whole() {
     assert_eq!(group(&first, "connectors"), group(&again, "connectors"));
     assert_eq!(group(&first, "connectors"), group(&forced, "connectors"));
     assert!(forced.get("error").is_none(), "{forced}");
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn an_engine_instance_shares_one_read_between_its_threads() {
+    let dir = TempDir::new();
+    let launches = dir.path().join("launches");
+    let options = Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            launches.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, _) = setup(&dir, options, "claude").await;
+    let put = service
+        .client
+        .put(format!("{}/api/preferences", service.url))
+        .bearer_auth(&service.token)
+        .json(&json!({ "values": { "provider_instances": [
+            { "id": "claude-wide", "driver": "claude", "program": support::FAKE },
+        ] } }))
+        .send()
+        .await
+        .unwrap();
+    assert!(put.status().is_success());
+    let project = service.json("/api/projects").await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let count = || {
+        std::fs::read_to_string(&launches)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains("claude-mcp-list"))
+            .count()
+    };
+    // The service's own startup probe may have listed once already; only what this test asks counts.
+    let before = count();
+    for _ in 0..3 {
+        let thread = service.thread(&project, "claude-wide").await;
+        let tools = service.json(&format!("/api/threads/{thread}/tools")).await;
+        assert_eq!(
+            names(group(&tools, "connectors").unwrap()),
+            ["Vercel", "Google Drive"]
+        );
+    }
+    // Three threads of one instance, one `claude mcp list`: a new driver on each lookup
+    // must not mean a new read.
+    assert_eq!(
+        count() - before,
+        1,
+        "the instance's answer is kept per engine id"
+    );
     service.stop().await;
 }

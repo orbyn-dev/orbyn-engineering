@@ -29,8 +29,18 @@ impl ToolsCache {
     }
 }
 
-/// The answer to show, given what the engine just said and the last good list: a check that
-/// came back with an error keeps the list the person already had, marked with that error.
+/// Whether a list holds any entry at all (counted-only groups such as Orbyn's count too).
+fn has_content(tools: &EngineTools) -> bool {
+    tools
+        .groups
+        .iter()
+        .any(|group| group.count > 0 || !group.items.is_empty())
+}
+
+/// The answer to show, given what the engine just said and the last good list, and whether it
+/// becomes the new last good one. A check that came back with an error keeps the list the person
+/// already had, marked with that error. A list that was merely cut short is shown, marked
+/// incomplete, because it is newer; it becomes the last good one only when it holds something.
 fn settle(answer: EngineTools, last: Option<EngineTools>) -> (EngineTools, bool) {
     match (answer.error.clone(), last) {
         (Some(error), Some(mut last)) => {
@@ -38,7 +48,10 @@ fn settle(answer: EngineTools, last: Option<EngineTools>) -> (EngineTools, bool)
             (last, false)
         }
         (Some(_), None) => (answer, false),
-        (None, _) => (answer, true),
+        (None, _) => {
+            let keep = !answer.incomplete || has_content(&answer);
+            (answer, keep)
+        }
     }
 }
 
@@ -77,8 +90,12 @@ impl Core {
         // loads its folder's `.codex` config and servers, and a project's must not run
         // because a tab was opened. A project's own servers show through a run's frame.
         let cwd: PathBuf = std::env::temp_dir();
+        let probe = lock(&self.tool_probes)
+            .entry(engine.to_owned())
+            .or_default()
+            .clone();
         let answered = driver
-            .tools(&cwd, init.as_ref().map(|(_, value)| value), refresh)
+            .tools(&cwd, init.as_ref().map(|(_, value)| value), refresh, &probe)
             .await;
         let mut tools = match answered {
             Ok(Some(tools)) => tools,
@@ -132,6 +149,8 @@ fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     fn list(error: Option<&str>, names: &[&str]) -> EngineTools {
@@ -147,6 +166,7 @@ mod tests {
             not_reported: Vec::new(),
             error: error.map(str::to_owned),
             reported: true,
+            incomplete: false,
         }
     }
 
@@ -173,5 +193,35 @@ mod tests {
         let (shown, keep) = settle(list(Some("did not list"), &[]), None);
         assert_eq!(shown.error.as_deref(), Some("did not list"));
         assert!(!keep);
+    }
+
+    #[test]
+    fn a_cut_short_list_is_shown_marked_and_kept_only_if_it_holds_something() {
+        let mut partial = list(None, &["a"]);
+        partial.incomplete = true;
+        let (shown, keep) = settle(partial.clone(), Some(list(None, &["a", "b", "c"])));
+        assert!(shown.incomplete, "the newer, partial list is what is shown");
+        assert_eq!(shown.groups[0].count, 1);
+        assert!(keep);
+        let mut empty = list(None, &[]);
+        empty.incomplete = true;
+        let (_, keep) = settle(empty, Some(list(None, &["a"])));
+        assert!(!keep, "an empty cut-short list never replaces a good one");
+    }
+
+    #[test]
+    fn engine_ids_each_get_their_own_probe_so_an_instance_is_cached_too() {
+        let probes: Mutex<
+            std::collections::HashMap<
+                String,
+                std::sync::Arc<crate::agents::tools_report::ToolsProbe>,
+            >,
+        > = Mutex::default();
+        let get = |id: &str| lock(&probes).entry(id.to_owned()).or_default().clone();
+        assert!(std::sync::Arc::ptr_eq(
+            &get("claude-wide"),
+            &get("claude-wide")
+        ));
+        assert!(!std::sync::Arc::ptr_eq(&get("claude-wide"), &get("claude")));
     }
 }

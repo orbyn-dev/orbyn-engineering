@@ -117,6 +117,7 @@ export function ToolsList({ tools, engineName, mode }: { tools: EngineTools; eng
       {tools.groups.map((group) => (
         <GroupBlock key={group.id} group={group} mode={mode} />
       ))}
+      {tools.incomplete ? <p className="tg-note">The list may be incomplete.</p> : null}
       {notReportedNotes(engineName, tools).map((line) => (
         <p key={line} className="tg-note">
           {line}

@@ -7,43 +7,81 @@ const REASON_CHARS: usize = 140;
 const DETAIL_CHARS: usize = 1500;
 const DESCRIPTION_CHARS: usize = 120;
 
+/// Words that name a credential: the word after one of these, written `name: value`, is hidden.
+const SECRET_NAMES: &[&str] = &[
+    "token",
+    "key",
+    "secret",
+    "password",
+    "authorization",
+    "bearer",
+    "cookie",
+];
+
+/// One address, found anywhere in `word` (after a bracket or quote), cut to scheme and host:
+/// any user and password in front of the host go, and so do the path, query and fragment.
+fn trim_address(word: &str) -> String {
+    let lower = word.to_ascii_lowercase();
+    let Some(start) = ["https://", "http://"]
+        .iter()
+        .filter_map(|scheme| lower.find(scheme))
+        .min()
+    else {
+        return word.to_owned();
+    };
+    let scheme_end = start + word[start..].find("://").map_or(0, |at| at + 3);
+    let rest = &word[scheme_end..];
+    // The address runs to the first character an address cannot hold; what follows
+    // (a closing bracket, a quote, a full stop) belongs to the sentence and stays.
+    let url_end = rest
+        .find(|c: char| !(c.is_alphanumeric() || "/?#=&%._~:@+-![]*'$,;".contains(c)))
+        .unwrap_or(rest.len());
+    let (url, after) = rest.split_at(url_end);
+    let authority_end = url.find(['/', '?', '#']).unwrap_or(url.len());
+    let authority = &url[..authority_end];
+    // `user:password@host` keeps only `host`.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{}{}{}", &word[..scheme_end], host, after)
+}
+
 /// `text` with every address cut down to its scheme and host, and anything that looks
 /// like a credential masked, so a server's own error message can be shown without the
-/// path, query or token it came with.
+/// user, path, query or token it came with.
 pub(crate) fn redact(text: &str) -> String {
     let mut out = Vec::new();
-    let mut after_bearer = false;
+    let mut hide_next = false;
     for word in text.split_inclusive(char::is_whitespace) {
         let bare = word.trim_end();
         let tail = &word[bare.len()..];
         let lower = bare.to_ascii_lowercase();
-        let cleaned = if after_bearer {
+        let cleaned = if hide_next && !bare.is_empty() {
             "[hidden]".to_owned()
-        } else if lower.starts_with("http://") || lower.starts_with("https://") {
-            let scheme_end = bare.find("://").map_or(0, |at| at + 3);
-            let rest = &bare[scheme_end..];
-            // The address runs to the first character an address cannot hold; what follows
-            // (a closing bracket, a full stop) is the sentence's and stays.
-            let url_end = rest
-                .find(|c: char| !(c.is_alphanumeric() || "/?#=&%._~:@+-".contains(c)))
-                .unwrap_or(rest.len());
-            let host_end = rest[..url_end].find(['/', '?', '#']).unwrap_or(url_end);
-            format!(
-                "{}{}{}",
-                &bare[..scheme_end],
-                &rest[..host_end],
-                &rest[url_end..]
-            )
-        } else if ["token=", "key=", "secret=", "password=", "authorization="]
-            .iter()
-            .any(|name| lower.contains(name))
+        } else if lower.contains("http://") || lower.contains("https://") {
+            trim_address(bare)
+        } else if [
+            "token=",
+            "key=",
+            "secret=",
+            "password=",
+            "authorization=",
+            "cookie=",
+        ]
+        .iter()
+        .any(|name| lower.contains(name))
         {
             let at = bare.find('=').map_or(bare.len(), |at| at + 1);
             format!("{}[hidden]", &bare[..at])
         } else {
             bare.to_owned()
         };
-        after_bearer = lower == "bearer" || lower == "bearer:";
+        // `Authorization: Bearer abc`, `token: abc`, `X-Api-Key: abc`: a credential name
+        // ending in a colon (or `bearer` on its own) hides the word after it.
+        let name = lower.trim_end_matches(':');
+        let names_secret = SECRET_NAMES.iter().any(|secret| name.ends_with(secret));
+        hide_next =
+            !bare.is_empty() && (lower == "bearer" || (lower.ends_with(':') && names_secret));
         out.push(format!("{cleaned}{tail}"));
     }
     out.concat()
@@ -133,7 +171,25 @@ pub(crate) fn assemble(
         not_reported,
         error: None,
         reported,
+        incomplete: false,
     }
+}
+
+/// Everything an engine's tools check keeps between calls: one read for the engine's server
+/// list and one for Codex's reduced lists. One of these lives per engine id in `Core`, so an
+/// engine instance, which the registry rebuilds as a fresh driver on every lookup, shares its
+/// read, its 30 seconds and its short memory of a failure with every thread that asks.
+#[derive(Default)]
+pub struct ToolsProbe {
+    pub(crate) claude: Probed<ListedServers>,
+    pub(crate) codex: Probed<orbyn_contracts::EngineTools>,
+}
+
+/// `claude mcp list`, parsed, with the time it was read.
+#[derive(Clone)]
+pub struct ListedServers {
+    pub(crate) at: String,
+    pub(crate) servers: Vec<crate::agents::driver::claude::McpListed>,
 }
 
 /// An engine-wide answer kept for a short while. Callers that arrive while it is being
@@ -240,6 +296,52 @@ mod tests {
             redact("Command not found: pg-mcp"),
             "Command not found: pg-mcp"
         );
+    }
+
+    #[test]
+    fn user_and_password_in_front_of_a_host_are_dropped() {
+        let text =
+            redact("failed: https://user:pass@host.example/x and http://me@other.example:9/y");
+        assert!(text.contains("https://host.example"), "{text}");
+        assert!(text.contains("http://other.example:9"), "{text}");
+        for leak in ["user", "pass", "me@", "/x", "/y"] {
+            assert!(!text.contains(leak), "{leak} in {text}");
+        }
+    }
+
+    #[test]
+    fn an_address_after_a_bracket_or_quote_is_cut_too() {
+        for open in ["(", "\"", "<", "[", "'"] {
+            let text = redact(&format!(
+                "see {open}https://host.example/secret/path?token=zzz and more"
+            ));
+            assert!(text.contains("https://host.example"), "{open}: {text}");
+            assert!(
+                !text.contains("secret/path") && !text.contains("zzz"),
+                "{open}: {text}"
+            );
+        }
+        assert_eq!(redact("<https://h.example/p>"), "<https://h.example>");
+    }
+
+    #[test]
+    fn a_credential_written_as_name_colon_value_is_hidden() {
+        for line in [
+            "token: abc123 next",
+            "X-Api-Key: abc123 next",
+            "Authorization: Bearer abc123 next",
+            "password: abc123 next",
+            "secret: abc123 next",
+        ] {
+            let text = redact(line);
+            assert!(!text.contains("abc123"), "{line} -> {text}");
+            assert!(text.ends_with("next"), "{text}");
+        }
+        assert_eq!(
+            redact("Command not found: pg-mcp"),
+            "Command not found: pg-mcp"
+        );
+        assert_eq!(redact("key not found in cache"), "key not found in cache");
     }
 
     #[tokio::test]

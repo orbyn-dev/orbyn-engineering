@@ -90,6 +90,11 @@ pub struct NewProject<'a> {
     pub scratch: bool,
 }
 
+/// Events read from the end of a thread when looking for one named event: a run reports its
+/// tools near its start, so a recent run is found well inside this, and a lookup never
+/// reads a whole thread's history.
+const LATEST_EVENT_SCAN: i64 = 5000;
+
 impl Store {
     /// Opens the database and applies migrations. `epoch` identifies this
     /// process as the owner of the runs it admits.
@@ -582,11 +587,13 @@ impl Store {
         for id in threads {
             let row: Option<(String, String)> = conn
                 .query_row(
-                    "SELECT ts, event FROM thread_events
-                     WHERE thread_id = ?1 AND json_extract(event, '$.name') = ?2
+                    "SELECT ts, event FROM (
+                         SELECT ts, event, seq FROM thread_events
+                         WHERE thread_id = ?1 ORDER BY seq DESC LIMIT ?4)
+                     WHERE json_extract(event, '$.name') = ?2
                        AND (?3 IS NULL OR json_extract(event, '$.value.engine') = ?3)
                      ORDER BY seq DESC LIMIT 1",
-                    params![id, name, engine],
+                    params![id, name, engine, LATEST_EVENT_SCAN],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?;

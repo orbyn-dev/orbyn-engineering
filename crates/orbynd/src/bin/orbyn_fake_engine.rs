@@ -35,6 +35,7 @@ fn main() {
             std::process::exit(if state.trim() == "starred" { 0 } else { 1 });
         }
         "mcp" if args.get(1).map(String::as_str) == Some("list") => {
+            record_launch("claude-mcp-list", &args);
             // `claude mcp list` as 2.1.318 prints it.
             let text = std::env::var("ORBYN_FAKE_MCP_LIST").unwrap_or_else(|_| {
                 "Checking MCP server health…\n\n\

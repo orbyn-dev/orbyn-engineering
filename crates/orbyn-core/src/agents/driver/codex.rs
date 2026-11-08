@@ -59,8 +59,6 @@ pub struct CodexDriver {
     sandbox: String,
     /// The id and name of an instance, when this is one.
     named: Option<(String, String)>,
-    /// The tools Codex last reported, shared by every thread of this engine.
-    tools_list: Arc<crate::agents::tools_report::Probed<orbyn_contracts::EngineTools>>,
 }
 
 impl CodexDriver {
@@ -70,7 +68,6 @@ impl CodexDriver {
             program,
             sandbox,
             named: None,
-            tools_list: Arc::default(),
         }
     }
 }
@@ -115,7 +112,6 @@ impl EngineDriver for CodexDriver {
                 instance.id.clone(),
                 instance.name.clone().unwrap_or(instance.id.clone()),
             )),
-            tools_list: Arc::default(),
         }))
     }
 
@@ -309,11 +305,12 @@ impl EngineDriver for CodexDriver {
         cwd: &std::path::Path,
         _init: Option<&Value>,
         refresh: bool,
+        probe: &crate::agents::tools_report::ToolsProbe,
     ) -> Result<Option<orbyn_contracts::EngineTools>> {
-        // Shared by every thread of this engine, and one overall deadline covers starting
-        // the app-server and all three lists.
-        let answer = self
-            .tools_list
+        // Kept per engine id in the probe, so every thread shares it, and one overall
+        // deadline covers starting the app-server and all three lists.
+        let answer = probe
+            .codex
             .get(refresh, std::time::Duration::from_secs(30), || async {
                 tokio::time::timeout(TOOLS_DEADLINE, self.read_tools(cwd))
                     .await
@@ -423,9 +420,7 @@ impl CodexDriver {
             return None;
         }
         let mut tools = codex_tools(servers.as_ref(), apps.as_ref(), plugins.as_ref());
-        if servers_cut || apps_cut {
-            tools.error = Some("Codex's list may be incomplete.".into());
-        }
+        tools.incomplete = servers_cut || apps_cut;
         Some(tools)
     }
 

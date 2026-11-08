@@ -61,7 +61,9 @@ function EnginePanel({ engine, name }: { engine: string; name: string }) {
           <p className="tg-note tg-lead">
             {data.source === "run"
               ? `Read from ${name} when each run starts; projects can differ. Orbyn shows what the engine reports and changes nothing: to turn a tool on or off, use the engine’s own settings.`
-              : `Read from ${name} when this page opens. Orbyn shows what ${name} reports and changes nothing: to turn a tool on or off, use ${name}’s own settings.`}
+              : data.source === "check+run"
+                ? `Servers and connectors are read from ${name} when this page opens; plugins, built-in tools and skills when each run starts, so projects can differ. Orbyn shows what the engine reports and changes nothing: to turn a tool on or off, use the engine’s own settings.`
+                : `Read from ${name} when this page opens. Orbyn shows what ${name} reports and changes nothing: to turn a tool on or off, use ${name}’s own settings.`}
           </p>
           <ToolsList tools={data} engineName={name} mode="settings" />
         </div>

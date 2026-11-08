@@ -6,7 +6,8 @@ import type { ToolGroup } from "./ToolGroup";
  */
 export type EngineTools = { engine: string, 
 /**
- * `run` when read from the frame a run reported, `check` when the engine was asked.
+ * `run` when everything came from the frame a run reported, `check` when the engine was
+ * asked, `check+run` when the servers were asked and the rest came from a run's frame.
  */
 source: string, checked_at?: string, 
 /**
@@ -24,4 +25,8 @@ error?: string,
 /**
  * False before the first run of a thread whose engine reports on a run.
  */
-reported: boolean, };
+reported: boolean, 
+/**
+ * True when a list was cut short (a deadline or page cap), so what is shown may not be all.
+ */
+incomplete: boolean, };

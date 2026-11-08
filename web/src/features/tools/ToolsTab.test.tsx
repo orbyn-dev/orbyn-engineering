@@ -102,3 +102,27 @@ it("keeps the list and says why when the engine's check came back with an error"
   expect(await screen.findByText(/Codex's list may be incomplete/)).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument();
 });
+
+it("says a list was reported at run start only when nothing was asked of the engine, and keeps Check again otherwise", async () => {
+  const read = vi.spyOn(api, "threadTools");
+  read.mockResolvedValue({ ...engineTools("claude"), source: "run" });
+  const first = render(<ToolsTab threadId="t" engine="claude" />);
+  await screen.findByRole("region", { name: "Connectors" });
+  expect(screen.getByText(/reported when this run started/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+  first.unmount();
+  // Servers read from a live `claude mcp list`, the rest from a run's frame: it was checked, not just reported.
+  read.mockResolvedValue({ ...engineTools("claude"), source: "check+run" });
+  render(<ToolsTab threadId="t2" engine="claude" />);
+  await screen.findByRole("region", { name: "Connectors" });
+  expect(screen.queryByText(/reported when this run started/)).toBeNull();
+  expect(screen.getByText(/Claude Code · checked/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
+});
+
+it("shows a list that was cut short, marked incomplete, not dimmed", async () => {
+  vi.spyOn(api, "threadTools").mockResolvedValue({ ...engineTools("codex"), incomplete: true });
+  const { container } = render(<ToolsTab threadId="t" engine="codex" />);
+  expect(await screen.findByText("The list may be incomplete.")).toBeInTheDocument();
+  expect(container.querySelector(".tg-stale")).toBeNull();
+});

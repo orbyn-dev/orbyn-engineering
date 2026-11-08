@@ -3650,7 +3650,8 @@ wire! {
 /// What an engine reports as available, for the thread Tools tab and the Settings page.
 pub struct EngineTools {
     pub engine: String,
-    /// `run` when read from the frame a run reported, `check` when the engine was asked.
+    /// `run` when everything came from the frame a run reported, `check` when the engine was
+    /// asked, `check+run` when the servers were asked and the rest came from a run's frame.
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -3665,6 +3666,9 @@ pub struct EngineTools {
     pub error: Option<String>,
     /// False before the first run of a thread whose engine reports on a run.
     pub reported: bool,
+    /// True when a list was cut short (a deadline or page cap), so what is shown may not be all.
+    #[serde(default)]
+    pub incomplete: bool,
 }
 }
 

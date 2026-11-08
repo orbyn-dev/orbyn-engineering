@@ -1146,7 +1146,7 @@ export function engineTools(engine: string): EngineTools {
   const entry = (name: string, state: ToolState, extra: Partial<ToolEntry> = {}): ToolEntry => ({ name, state, ...extra });
   if (engine.startsWith("codex")) {
     return {
-      engine, source: "check", checked_at: "2026-11-08T14:02:00Z", reported: true,
+      engine, source: "check", checked_at: "2026-11-08T14:02:00Z", reported: true, incomplete: false,
       not_reported: ["builtin"],
       groups: [
         { id: "orbyn", count: 5, items: [] },
@@ -1162,7 +1162,7 @@ export function engineTools(engine: string): EngineTools {
     };
   }
   return {
-    engine, source: "run", checked_at: "2026-11-08T14:02:00Z", reported: true, not_reported: [],
+    engine, source: "check+run", checked_at: "2026-11-08T14:02:00Z", reported: true, incomplete: false, not_reported: [],
     groups: [
       { id: "builtin", count: 3, items: ["Bash", "Read", "Edit"].map((name) => entry(name, "ready")) },
       { id: "orbyn", count: 5, items: [] },

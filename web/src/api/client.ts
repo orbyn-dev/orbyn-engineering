@@ -254,7 +254,7 @@ export const api = {
   /** What the thread's engine has available. `refresh` asks the engine again. */
   threadTools: (threadId: string, refresh = false, signal?: AbortSignal) =>
     request<EngineTools>("GET", `/api/threads/${q(threadId)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
-  /** The same for Settings, in a project's folder when one is named. */
+  /** The same for Settings: an engine, without a thread. */
   engineTools: (engine: string, refresh = false, signal?: AbortSignal) =>
     request<EngineTools>("GET", `/api/engines/${q(engine)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
   threadLimits: (threadId: string, signal?: AbortSignal) =>
