@@ -892,7 +892,7 @@ const MCP_STARTUP_GRACE_MS: u64 = 3_000;
 
 /// A line for the model: connectors Codex loads for the user are not in the top-level
 /// tool list but inside its code-mode `exec` tool.
-const CONNECTOR_NOTE: &str = "If you have an exec tool, connectors and MCP servers the person installed (for example GitHub, Gmail or Calendar) are available as mcp__* functions inside it.";
+const CONNECTOR_NOTE: &str = "With an exec tool, the person's connectors and MCP servers (GitHub, Gmail, Calendar) are mcp__* functions inside it.";
 
 /// The per-run MCP server. Orbyn's tools carry their own policy gate, so Codex
 /// does not ask a second time before calling them. The dotted key sets only this one
