@@ -195,6 +195,19 @@ describe("Transcript windowing", () => {
     expect(scroller().scrollTop).toBe(reading);
   });
 
+  it("lets go of the end for a jump to the top even when no earlier scroll event was seen", () => {
+    load("t-first", turns(300));
+    // The scroll events of opening at the end never reach the view, as when a frame coalesces them.
+    const dispatch = vi.spyOn(HTMLElement.prototype, "dispatchEvent");
+    dispatch.mockImplementation(function (this: HTMLElement, event: Event) {
+      return event.type === "scroll" ? true : Object.getPrototypeOf(HTMLElement.prototype).dispatchEvent.call(this, event);
+    });
+    render(<Transcript threadId="t-first" active={false} />);
+    dispatch.mockRestore();
+    scrollTo(0);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+
   it("Jump to latest returns to the end from a far scroll", async () => {
     load("t-jump", turns(300));
     render(<Transcript threadId="t-jump" active={false} />);
