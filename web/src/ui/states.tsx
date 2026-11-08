@@ -6,6 +6,7 @@ import { routeHref, type Route } from "../state/route";
 import { useLayoutWidth } from "../lib/useLayout";
 import { useWaited } from "../lib/motion";
 import { Button } from "./controls";
+import { Logo } from "./Logo";
 
 /** A static skeleton, drawn only if the wait outlasts 400 ms. The label is read at once. */
 export function Loading({ label, rows = 4 }: { label: string; rows?: number }) {
@@ -16,6 +17,17 @@ export function Loading({ label, rows = 4 }: { label: string; rows?: number }) {
       {slow
         ? Array.from({ length: rows }, (_, at) => <div key={at} className="skeleton" aria-hidden />)
         : null}
+    </div>
+  );
+}
+
+/** The splash while the app opens: the mark alone, drawn only if the wait outlasts 400 ms and gone with the real screen. */
+export function Splash({ label }: { label: string }) {
+  const slow = useWaited(true);
+  return (
+    <div className="logo-splash" role="status">
+      <span className="sr-only">{label}</span>
+      {slow ? <Logo size={64} /> : null}
     </div>
   );
 }

@@ -1126,6 +1126,12 @@ details[open] > summary > .chev {
   border-top: 1px solid var(--color-divider);
   font-size: var(--text-small);
 }
+.update-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .update-row {
   border-top: 1px solid var(--color-divider);
 }

@@ -72,12 +72,13 @@ it("lists the installed agent CLIs and their versions on About", async () => {
   expect(await screen.findByText("Claude Code 2.1.318 · Codex 0.98")).toBeVisible();
 });
 
-it("shows the app icon on About, not a lettered placeholder tile", async () => {
+it("leads the About card with the 40 px mark tile, not a lettered placeholder", async () => {
   vi.mocked(request).mockResolvedValue({ version: "1.0.0", platform: "macos", remote: false });
   const { container } = render(<AboutSection />);
-  const logo = container.querySelector("img.set-logo");
-  expect(logo).toHaveAttribute("src", "/favicon.svg");
-  expect(container.querySelector("span.set-logo")).toBeNull();
+  const tile = container.querySelector(".set-card .logo-tile");
+  expect(tile).toHaveAttribute("data-size", "40");
+  expect(tile?.querySelector("svg.logo")).toHaveAttribute("data-logo", "28");
+  expect(container.querySelector(".set-card img")).toBeNull();
 });
 
 it("labels every action and context in words, keeps the ids in a tooltip, copies an id from the row menu, and searches both", async () => {

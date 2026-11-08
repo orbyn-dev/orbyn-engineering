@@ -184,6 +184,10 @@
   --color-dangerFill: #d42a2a;
   --color-dangerFillHover: #b91c1c;
   --color-dangerFillPress: #991b1b;
+  /* The Orbyn Engineering mark (Engineer Designs, Brand): the dot, and the tile behind the full mark. */
+  --logo-accent: #3b82f6;
+  --logo-tile-bg: #f4f3ee;
+  --logo-tile-ink: #1a1a1a;
   --color-onDangerFill: #ffffff;
 }
 
@@ -287,6 +291,9 @@
   --color-dangerFill: #dc2626;
   --color-dangerFillHover: #c81e1e;
   --color-dangerFillPress: #b91c1c;
+  --logo-accent: #60a5fa;
+  --logo-tile-bg: #101010;
+  --logo-tile-ink: #f4f3ee;
   --color-onDangerFill: #ffffff;
 }
 
@@ -347,6 +354,9 @@
   --color-dangerFill: #c93a33;
   --color-dangerFillHover: #b8322b;
   --color-dangerFillPress: #a82a24;
+  --logo-accent: #60a5fa;
+  --logo-tile-bg: #101010;
+  --logo-tile-ink: #f4f3ee;
   --color-onDangerFill: #ffffff;
 }
 

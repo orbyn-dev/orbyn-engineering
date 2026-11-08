@@ -221,15 +221,6 @@
 .set-card b {
   font-weight: 500;
 }
-.set-logo {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-11);
-  object-fit: contain;
-}
 /* Layout reads as a block heading above its cards. */
 .settings-page .setting-line-stacked {
   gap: 0;

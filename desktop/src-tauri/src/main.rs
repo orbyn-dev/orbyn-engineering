@@ -439,6 +439,15 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         });
+    // macOS: the one-colour mark, as a template image so the menu bar tints it for light, dark and a
+    // highlighted bar (Engineer Designs, "Menu bar and tray mark"). Elsewhere the app icon stays.
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray
+            .icon(tauri::include_image!("icons/tray-template@2x.png"))
+            .icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
