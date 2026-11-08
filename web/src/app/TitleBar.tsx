@@ -15,6 +15,7 @@ import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../state/ui";
 import { useWorkspace } from "../state/workspace";
 import { goBack, goForward, useNavHistory } from "./navHistory";
+import { attachBarDrag } from "./barDrag";
 
 const INTERACTIVE =
   "a,button,input,select,textarea,summary,label,[role=button],[role=tab],[role=menuitem],[contenteditable=true],[tabindex]:not([tabindex='-1'])";
@@ -146,11 +147,13 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
   const trail = useNavHistory();
   const dragLayer = useRef<HTMLDivElement>(null);
   useDragStrip(dragLayer);
+  useEffect(() => (dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), []);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
 
   return (
-    <header className="titlebar" data-nav={shown && !small ? "shown" : "hidden"} data-tauri-drag-region>
-      <div ref={dragLayer} className="titlebar-drag" data-tauri-drag-region aria-hidden />
+    <header className="titlebar"
+      data-nav={shown && !small ? "shown" : "hidden"}>
+      <div ref={dragLayer} className="titlebar-drag" aria-hidden />
       {lights ? <span className="titlebar-lights" aria-hidden /> : null}
       <button
         type="button"
