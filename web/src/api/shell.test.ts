@@ -44,21 +44,46 @@ describe("followShell", () => {
     expect(fetches).toHaveBeenCalledTimes(4);
   });
 
-  it("starts over at 250 ms once a stream has connected", async () => {
+  it("starts over at 250 ms after a stream that delivered something", async () => {
     vi.useFakeTimers();
     let calls = 0;
     vi.stubGlobal("fetch", vi.fn(async () => {
       calls += 1;
       if (calls < 3) throw new Error("down");
-      return new Response(new ReadableStream({ start: (controller) => controller.close() }), { status: 200 });
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"changed"}\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200 });
     }));
     const stop = followShell(() => undefined);
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(250 + 500);
     expect(calls).toBe(3);
-    // The third call connected and ended; the next try comes in 250 ms, not 1 s.
+    // The third call delivered an event and ended; the next try comes in 250 ms, not 1 s.
     await vi.advanceTimersByTimeAsync(260);
     expect(calls).toBe(4);
+    stop();
+  });
+
+  it("backs off from a server that accepts the stream and closes it at once", async () => {
+    vi.useFakeTimers();
+    const fetches = vi.fn(async () => new Response(new ReadableStream({ start: (controller) => controller.close() }), { status: 200 }));
+    vi.stubGlobal("fetch", fetches);
+    const stop = followShell(() => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetches).toHaveBeenCalledTimes(1);
+    // 250, 500, 1000, 2000 ms between tries: not a retry every 250 ms for ever.
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetches).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(fetches).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(fetches).toHaveBeenCalledTimes(5);
     stop();
   });
 });
