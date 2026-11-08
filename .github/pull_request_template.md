@@ -12,6 +12,15 @@ Closes #
 
 <!-- Row IDs from docs/parity.md, such as I13, or "none". -->
 
+## Frames built
+
+<!-- A change to the web app names the screens it draws and the design version, for example:
+Frames built: pr-list-failed, pr-detail-running @ v56
+Ids are in docs/match-kit.md. A change that draws nothing says "Frames built: none". A bot reads this line and posts screenshots of those
+screens (ours only, from the dev mock, Light first, up to 12), so write it; nothing is blocked if you do not. -->
+
+Frames built:
+
 ## Testing
 
 - CI covers the rest.
