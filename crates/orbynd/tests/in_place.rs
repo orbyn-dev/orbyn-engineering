@@ -243,15 +243,13 @@ async fn claude_starts_in_the_checkout_and_reaches_the_library_by_path() {
         .collect();
     let at = args.iter().position(|arg| *arg == "--add-dir").unwrap();
     assert_eq!(args[at + 1], library.to_str().unwrap());
-    let sources = args
-        .iter()
-        .position(|arg| *arg == "--setting-sources")
-        .unwrap();
-    assert_eq!(
-        args[sources + 1],
-        "user",
-        "project settings stay out: {args:?}"
+    // Every settings source still loads (CLAUDE.md and skills depend on it); the checkout's allow rules are
+    // outweighed by the run's own `--settings`, which is passed.
+    assert!(
+        !args.contains(&"--setting-sources"),
+        "no source is dropped: {args:?}"
     );
+    assert!(args.contains(&"--settings"), "{args:?}");
     assert!(
         !args.iter().any(|arg| *arg == repo.to_str().unwrap()),
         "the checkout is the cwd, not an added folder: {args:?}"

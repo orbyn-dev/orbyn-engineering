@@ -119,12 +119,22 @@ async fn claude_console_resumes_the_thread_session_and_holds_runs() {
             json!("claude-session-1"),
             json!("--permission-mode"),
             json!("default"),
-            json!("--add-dir"),
+            json!("--settings"),
         ]
     );
+    // The console gets the run's protection: hooks off and every write-capable tool asks, so a checkout's allow
+    // rules never skip the question, and no flag drops the checkout's CLAUDE.md or skills.
+    let settings: serde_json::Value = serde_json::from_str(args[5].as_str().unwrap()).unwrap();
+    assert_eq!(settings["disableAllHooks"], true, "{settings}");
+    assert_eq!(
+        settings["permissions"]["ask"],
+        json!(["Bash", "Edit", "Write", "NotebookEdit", "WebFetch"])
+    );
+    assert!(!args.contains(&json!("--setting-sources")), "{args:?}");
     // Claude starts in the checkout, where its runs now keep the session, and reaches
     // the library with `--add-dir`.
-    let library = std::path::PathBuf::from(args[5].as_str().unwrap());
+    let at = args.iter().position(|arg| arg == "--add-dir").unwrap();
+    let library = std::path::PathBuf::from(args[at + 1].as_str().unwrap());
     let cwd = std::fs::canonicalize(launched[0]["cwd"].as_str().unwrap()).unwrap();
     assert!(cwd.ends_with("repo/project"), "{cwd:?}");
     assert_eq!(
