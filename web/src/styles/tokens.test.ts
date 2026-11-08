@@ -26,6 +26,25 @@ const allCss = Object.fromEntries(stylesheets(srcDir).map((path) => [
 const SCALE = new Set(["8", "10.5", "11", "11.5", "12", "12.5", "13", "13.5", "14", "14.5", "15", "16", "18", "20", "22", "26", "30", "36"]);
 const RADII = new Set(["2", "4", "5", "6", "7", "8", "9", "10", "12", "14", "16", "20", "999"]);
 
+/**
+ * Badge glyphs drawn below the 11px floor, by selector. They are decorative letters inside a
+ * fixed-size badge, not reading text; everything that reads as text stays on the scale.
+ */
+const GLYPH_SIZES: Record<string, string> = {
+  ".pull-av": "avatar initials, 20 px circle",
+  ".welcome-avatar": "project letter tile, 18 px",
+  ".set-mark": "project letter tile, 18 px",
+};
+
+/** The font-size declarations the scale applies to: those outside the allow-listed glyph selectors. */
+function textFontSizes(text: string): string {
+  const bare = text.replace(/\/\*[\s\S]*?\*\//g, "");
+  return Array.from(bare.matchAll(/([^{}]+)\{([^{}]*)\}/g))
+    .filter(([, selector = ""]) => !selector.split(",").every((part) => part.trim() in GLYPH_SIZES))
+    .map(([, , body = ""]) => body)
+    .join("\n");
+}
+
 function violations(text: string, pattern: RegExp, allowed: Set<string>, name: string): string[] {
   return Array.from(text.matchAll(pattern), ([declaration, value]) =>
     value !== undefined && allowed.has(value) ? null : `${name}: ${declaration}`,
@@ -67,9 +86,22 @@ describe("design tokens", () => {
 
   it("keeps font sizes on the type scale", () => {
     for (const [name, text] of Object.entries(allCss)) {
-      expect(violations(text, /font-size:\s*([\d.]+)px/g, SCALE, name)).toEqual([]);
+      expect(violations(textFontSizes(text), /font-size:\s*([\d.]+)px/g, SCALE, name)).toEqual([]);
       expect(violations(text, /--(?:text-[a-z]+|control-fs(?:-sm)?|button-fs):\s*([\d.]+)px/g, SCALE, name)).toEqual([]);
     }
+  });
+
+  it("allows a size under 11px only on a named badge glyph, with its reason", () => {
+    for (const [selector, reason] of Object.entries(GLYPH_SIZES)) expect(reason, selector).not.toBe("");
+    const css = (selector: string) => `${selector} { font-size: 10px; }`;
+    expect(violations(textFontSizes(css(".pull-av")), /font-size:\s*([\d.]+)px/g, SCALE, "x")).toEqual([]);
+    expect(violations(textFontSizes(css(".caption, .pull-av")), /font-size:\s*([\d.]+)px/g, SCALE, "x")).toEqual(["x: font-size: 10px"]);
+    expect(violations(textFontSizes(css(".some-label")), /font-size:\s*([\d.]+)px/g, SCALE, "x")).toEqual(["x: font-size: 10px"]);
+  });
+
+  it("keeps every glyph exception in use", () => {
+    const all = Object.values(allCss).join("\n");
+    for (const selector of Object.keys(GLYPH_SIZES)) expect(all, selector).toContain(`${selector} {`);
   });
 
   it("keeps corners on the radius set", () => {
