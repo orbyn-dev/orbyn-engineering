@@ -4,6 +4,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startService } from "./service";
 import type { ProjectScopeCatalog } from "../../src/generated/ProjectScopeCatalog";
+import type { ScopedPreferencesQuery } from "../../src/generated/ScopedPreferencesQuery";
+import type { ScopedPreferencesResult } from "../../src/generated/ScopedPreferencesResult";
 
 test("logical project settings resolve Mixed and reset explicit overrides through real orbynd", async ({ page }, info) => {
   const service = await startService();
@@ -53,7 +55,16 @@ test("logical project settings resolve Mixed and reset explicit overrides throug
     await prefix.fill("one-only"); await prefix.press("Tab");
     await expect.poll(async () => (await pref(one.id, "branch_name_prefix"))?.value).toBe("one-only");
     expect((await pref(two.id, "branch_name_prefix"))?.value).toBe("shared");
-    await page.goto(`${service.page}#/settings/worktrees`);
+    const branchPreferences = page.waitForResponse(async (response) => {
+      if (response.request().method() !== "POST" || new URL(response.url()).pathname !== "/api/settings/preferences/query" || !response.ok()) return false;
+      const query = response.request().postDataJSON() as ScopedPreferencesQuery;
+      if (query.scope.selection !== undefined || !query.keys?.includes("branch_name_prefix")) return false;
+      const result = await response.json() as ScopedPreferencesResult;
+      const branch = result.rows.find((entry) => entry.key === "branch_name_prefix");
+      return result.catalog.selection.kind === "all_projects"
+        && [one.id, two.id].every((id) => branch?.overrides.some((entry) => entry.project_id === id));
+    }, { timeout: 10_000 });
+    await Promise.all([branchPreferences, page.goto(`${service.page}#/settings/worktrees`)]);
     const row = page.locator("#worktrees-branch-prefix");
     await row.getByRole("button", { name: "Default", exact: true }).click();
     await expect(row.getByText("Overridden by", { exact: true })).toBeVisible();
