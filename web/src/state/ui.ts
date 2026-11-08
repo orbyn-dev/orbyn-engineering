@@ -318,6 +318,10 @@ interface UiState extends Prefs {
   showInBrowser(url: string | { tabId: string } | null): void;
   closePanel(): void;
   setPanelOpen(open: boolean): void;
+  /** On a phone-width window the panel starts closed and what happens there is not remembered. */
+  setPanelNarrow(narrow: boolean): void;
+  /** The remembered choice, held aside while a phone-width window uses its own. */
+  desktopPanelOpen: boolean | null;
   setPanelAnimationMs(ms: number): void;
   toggleDetails(): void;
   setPanelMaximized(maximized: boolean): void;
@@ -365,9 +369,9 @@ function withLayout(layouts: Record<string, ThreadLayout>, key: string, layout: 
   return Object.fromEntries(entries.slice(-MAX_LAYOUTS));
 }
 
-const prefsOf = (state: Prefs): Prefs => ({
+const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): Prefs => ({
   theme: state.theme,
-  panelOpen: state.panelOpen,
+  panelOpen: state.desktopPanelOpen ?? state.panelOpen,
   panelTab: state.panelTab,
   panelTabOrder: state.panelTabOrder,
   panelTabsClosed: state.panelTabsClosed,
@@ -651,6 +655,15 @@ export const useUi = create<UiState>((set, get) => {
     closePanel() {
       set({ panelOpen: false });
       savePrefs();
+    },
+    desktopPanelOpen: null,
+    setPanelNarrow(narrow) {
+      const { desktopPanelOpen, panelOpen } = get();
+      if (narrow && desktopPanelOpen === null) {
+        set({ desktopPanelOpen: panelOpen, panelOpen: false });
+      } else if (!narrow && desktopPanelOpen !== null) {
+        set({ panelOpen: desktopPanelOpen, desktopPanelOpen: null });
+      }
     },
     setPanelOpen(open) {
       set({ panelOpen: open });

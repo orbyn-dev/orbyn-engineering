@@ -48,18 +48,19 @@ fn home() -> Option<PathBuf> {
 }
 
 /// Every user-invocable skill the CLI would load for a run that starts at
-/// `base` and adds `checkout`. A name found earlier wins: config, then the start
-/// folder, then the added one, then plugins. `base` is where the engine starts (the
-/// project checkout) and `checkout` is the directory the run adds (the library). `plugin_cache` is the CLI's `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
+/// `start` and adds `extra`. A name found earlier wins: config, then the start
+/// folder, then the added one, then plugins. `start` is where the engine starts (the
+/// project checkout) and `extra` is the directory the run adds (the library).
+/// `plugin_cache` is the CLI's `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
 pub fn discover(
     config: &Path,
-    base: &Path,
-    checkout: &Path,
+    start: &Path,
+    extra: &Path,
     plugin_cache: Option<&Path>,
 ) -> Vec<ClaudeSkill> {
-    let settings = read_settings(config, base);
+    let settings = read_settings(config, start);
     let mut found = BTreeMap::new();
-    for root in skill_roots(config, base, checkout, plugin_cache, &settings) {
+    for root in skill_roots(config, start, extra, plugin_cache, &settings) {
         read_root(&root, &settings, &mut found);
     }
     found.into_values().collect()
@@ -82,8 +83,8 @@ struct SkillSettings {
 
 fn skill_roots(
     config: &Path,
-    base: &Path,
-    checkout: &Path,
+    start: &Path,
+    extra: &Path,
     plugin_cache: Option<&Path>,
     settings: &SkillSettings,
 ) -> Vec<SkillRoot> {
@@ -94,12 +95,12 @@ fn skill_roots(
             overrides: true,
         },
         SkillRoot {
-            directory: base.join(".claude/skills"),
+            directory: start.join(".claude/skills"),
             prefix: None,
             overrides: true,
         },
     ];
-    let added = checkout.join(".claude/skills");
+    let added = extra.join(".claude/skills");
     if added != roots[1].directory {
         roots.push(SkillRoot {
             directory: added,
@@ -107,7 +108,7 @@ fn skill_roots(
             overrides: true,
         });
     }
-    roots.extend(plugin_roots(config, base, checkout, plugin_cache, settings));
+    roots.extend(plugin_roots(config, start, extra, plugin_cache, settings));
     roots
 }
 

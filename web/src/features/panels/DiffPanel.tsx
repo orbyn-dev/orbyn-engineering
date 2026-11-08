@@ -477,6 +477,12 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     scope ? api.diff(threadId, signal, scope) : Promise.resolve([]),
   );
   const { reload } = diff;
+  // Whether a pull request has anything to carry is the branch's question, not this view's:
+  // a clean working tree after a commit, or Hide tests filtering a test-only change, still
+  // leaves commits ahead of the base. The branch diff is read only where a pull could be made.
+  const branchAhead = useAsync(`diff-branch-any:${threadId}:${base}:${canCreate}`, (signal) =>
+    canCreate ? api.diff(threadId, signal, `branch&base=${encodeURIComponent(base)}`) : Promise.resolve([]),
+  );
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   const [find, setFind] = useState("");
   const collapsed = useUi((state) => state.diffFilesCollapsed);
@@ -541,7 +547,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const removed = files.reduce((sum, file) => sum + file.deletions, 0);
 
   // Nothing changed means nothing to open a pull request for; the empty state offers Files instead.
-  const offerPull = canCreate && files.length > 0;
+  const offerPull = canCreate && ((diff.data?.length ?? 0) > 0 || (branchAhead.data?.length ?? 0) > 0);
   return (
     <div ref={root}>
       <JjChange threadId={threadId} version={version} />

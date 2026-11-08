@@ -74,6 +74,21 @@ describe("thread layouts", () => {
     }
   });
 
+  it("sets the remembered choice aside on a phone-width window and does not save what happens there", () => {
+    ui().setPanelOpen(true);
+    ui().setPanelNarrow(true);
+    expect(ui().panelOpen).toBe(false);
+    ui().togglePanel("files");
+    expect(ui().panelOpen).toBe(true);
+    // What was saved is still the choice made on the wide window.
+    expect(JSON.parse(localStorage.getItem("orbyn.prefs.v1") ?? "{}").panelOpen).toBe(true);
+    ui().closePanel();
+    expect(JSON.parse(localStorage.getItem("orbyn.prefs.v1") ?? "{}").panelOpen).toBe(true);
+    ui().setPanelNarrow(false);
+    expect(ui().panelOpen).toBe(true);
+    expect(ui().desktopPanelOpen).toBeNull();
+  });
+
   it("ignores an older saved per-thread open state and a saved null", async () => {
     localStorage.setItem(
       "orbyn.prefs.v1",

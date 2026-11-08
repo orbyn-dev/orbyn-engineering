@@ -12,11 +12,20 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 fn options(file: &Path) -> Options {
+    // Claude's history folder decides where a session resumes, so it must be a
+    // temporary one and never the machine's own `~/.claude`.
+    let history = file.with_file_name("claude-config");
     Options {
-        env: vec![(
-            "ORBYN_FAKE_LAUNCH_FILE".into(),
-            file.to_string_lossy().into_owned(),
-        )],
+        env: vec![
+            (
+                "ORBYN_FAKE_LAUNCH_FILE".into(),
+                file.to_string_lossy().into_owned(),
+            ),
+            (
+                "CLAUDE_CONFIG_DIR".into(),
+                history.to_string_lossy().into_owned(),
+            ),
+        ],
         ..Options::default()
     }
 }

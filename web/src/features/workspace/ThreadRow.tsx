@@ -227,12 +227,14 @@ export function ThreadRow({
     setHover(null);
   };
   // A right-click focuses the row after the menu opens, which would start the card
-  // again over the menu. No card starts while a menu is up or was just opened from here.
+  // again over the menu. No card starts after a menu was opened from this row, until
+  // the pointer comes back or a key is pressed on it. Another row's or surface's menu
+  // does not hold this card back.
   const menuFromRow = useRef(false);
   const startHover = (rect: DOMRect) => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      if (menuFromRow.current || document.querySelector('[role="menu"]')) return;
+      if (menuFromRow.current) return;
       setHover(rect);
     }, HOVER_DELAY_MS);
   };
@@ -403,19 +405,16 @@ export function ThreadRow({
           if (!event.currentTarget.matches(":focus-visible")) return;
           startHover(event.currentTarget.getBoundingClientRect());
         }}
-        onBlur={() => {
+        onBlur={stopHover}
+        onKeyDown={() => {
           menuFromRow.current = false;
-          stopHover();
         }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse") return;
           menuFromRow.current = false;
           startHover(event.currentTarget.getBoundingClientRect());
         }}
-        onPointerLeave={() => {
-          menuFromRow.current = false;
-          stopHover();
-        }}
+        onPointerLeave={stopHover}
         onContextMenu={(event) => {
           event.preventDefault();
           menuFromRow.current = true;

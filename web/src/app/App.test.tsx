@@ -640,6 +640,18 @@ describe("App against the mock API", () => {
     expect(useUi.getState().panelOpen).toBe(false);
   });
 
+  it("shows the chat, not the panel, on a phone-width window when the panel was opened on a wide one", async () => {
+    setViewportWidth(1700);
+    useUi.setState({ panelOpen: true });
+    setViewportWidth(420);
+    go("#/threads/t-done");
+    const { container } = render(<App />);
+    await waitFor(() => expect(container.querySelector(".thread-main")).not.toBeNull());
+    await waitFor(() => expect(useUi.getState().desktopPanelOpen).toBe(true));
+    expect(container.querySelector(".thread-main")).not.toHaveAttribute("hidden");
+    expect(useUi.getState().panelOpen).toBe(false);
+  });
+
   it("keeps the panel open from one thread to the next once it was opened, at any width", async () => {
     setViewportWidth(1700);
     useUi.setState({ panelOpen: true, panelTab: "diff" });
