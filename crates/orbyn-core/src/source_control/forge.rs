@@ -496,7 +496,9 @@ pub const DETAIL_FIELDS: [&str; 4] = [
 
 /// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
 pub async fn github_graphql_reset(cwd: &Path) -> Option<u64> {
-    let output = call(Forge::GitHub, cwd, &["api", "rate_limit"]).await.ok()?;
+    let output = call(Forge::GitHub, cwd, &["api", "rate_limit"])
+        .await
+        .ok()?;
     graphql_reset(&output)
 }
 
@@ -1877,7 +1879,10 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         Forge::GitHub | Forge::GitLab => {
             let args = merge_args(forge, &id, options, body.as_deref());
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            call(forge, cwd, &args).await.map(|_| ()).map_err(|error| head_moved(forge, error))
+            call(forge, cwd, &args)
+                .await
+                .map(|_| ())
+                .map_err(|error| head_moved(forge, error))
         }
         Forge::Azure => {
             let squash = if options.method == "squash" {
@@ -2266,7 +2271,10 @@ mod tests {
 
     #[test]
     fn the_graphql_reset_is_read_from_the_rate_limit_answer() {
-        assert_eq!(graphql_reset(r#"{"resources":{"core":{"reset":1},"graphql":{"reset":1762600000}}}"#), Some(1_762_600_000));
+        assert_eq!(
+            graphql_reset(r#"{"resources":{"core":{"reset":1},"graphql":{"reset":1762600000}}}"#),
+            Some(1_762_600_000)
+        );
         assert_eq!(graphql_reset("not json"), None);
         assert_eq!(graphql_reset(r#"{"resources":{}}"#), None);
     }
@@ -2283,29 +2291,77 @@ mod tests {
             expected_head: Some("abc123".into()),
         };
         let github = merge_args(Forge::GitHub, "7", &options, None);
-        assert_eq!(github, ["pr", "merge", "7", "--squash", "--match-head-commit", "abc123"]);
+        assert_eq!(
+            github,
+            [
+                "pr",
+                "merge",
+                "7",
+                "--squash",
+                "--match-head-commit",
+                "abc123"
+            ]
+        );
         let gitlab = merge_args(Forge::GitLab, "7", &options, None);
-        assert_eq!(gitlab, ["mr", "merge", "7", "--yes", "--squash", "--sha", "abc123"]);
-        let rebase = MergePull { method: "rebase".into(), ..options.clone() };
-        assert!(!merge_args(Forge::GitLab, "7", &rebase, None).iter().any(|arg| arg == "--sha"));
-        assert!(merge_args(Forge::GitHub, "7", &rebase, None).iter().any(|arg| arg == "--match-head-commit"));
-        let none = MergePull { expected_head: None, ..options };
-        assert!(!merge_args(Forge::GitHub, "7", &none, None).iter().any(|arg| arg.contains("head")));
+        assert_eq!(
+            gitlab,
+            ["mr", "merge", "7", "--yes", "--squash", "--sha", "abc123"]
+        );
+        let rebase = MergePull {
+            method: "rebase".into(),
+            ..options.clone()
+        };
+        assert!(
+            !merge_args(Forge::GitLab, "7", &rebase, None)
+                .iter()
+                .any(|arg| arg == "--sha")
+        );
+        assert!(
+            merge_args(Forge::GitHub, "7", &rebase, None)
+                .iter()
+                .any(|arg| arg == "--match-head-commit")
+        );
+        let none = MergePull {
+            expected_head: None,
+            ..options
+        };
+        assert!(
+            !merge_args(Forge::GitHub, "7", &none, None)
+                .iter()
+                .any(|arg| arg.contains("head"))
+        );
     }
 
     #[test]
     fn a_refusal_for_a_moved_head_is_its_own_error() {
         let github = Forge::GitHub;
-        assert!(head_changed(github, "X Pull request #4 is not mergeable: Head branch was modified. Review and try the merge again."));
+        assert!(head_changed(
+            github,
+            "X Pull request #4 is not mergeable: Head branch was modified. Review and try the merge again."
+        ));
         assert!(matches!(
-            head_moved(github, CoreError::Git("GraphQL: Head branch was modified. Review and try the merge again.".into())),
+            head_moved(
+                github,
+                CoreError::Git(
+                    "GraphQL: Head branch was modified. Review and try the merge again.".into()
+                )
+            ),
             CoreError::PullHeadChanged
         ));
         // Other failures keep their own words.
-        assert!(matches!(head_moved(github, CoreError::Git("merge conflict".into())), CoreError::Git(_)));
-        assert!(head_changed(Forge::GitLab, "405: SHA does not match HEAD of source branch"));
+        assert!(matches!(
+            head_moved(github, CoreError::Git("merge conflict".into())),
+            CoreError::Git(_)
+        ));
+        assert!(head_changed(
+            Forge::GitLab,
+            "405: SHA does not match HEAD of source branch"
+        ));
         // A message that only mentions a head commit is not a moved head.
-        assert!(!head_changed(Forge::GitHub, "could not find the head commit"));
+        assert!(!head_changed(
+            Forge::GitHub,
+            "could not find the head commit"
+        ));
         assert!(!head_changed(Forge::Forgejo, "Head branch was modified"));
         assert_eq!(CoreError::PullHeadChanged.code(), "pull_head_changed");
         assert_eq!(CoreError::PullHeadChanged.status(), 409);

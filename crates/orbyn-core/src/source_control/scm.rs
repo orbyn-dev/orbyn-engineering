@@ -598,7 +598,8 @@ impl Core {
                 .collect(),
             resume_at: left.and_then(|left| {
                 let at = time::OffsetDateTime::now_utc() + left;
-                at.format(&time::format_description::well_known::Rfc3339).ok()
+                at.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
             }),
         };
         let mut found: Vec<PullDetails> = Vec::new();

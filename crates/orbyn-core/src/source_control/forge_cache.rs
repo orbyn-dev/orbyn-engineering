@@ -33,7 +33,9 @@ impl DetailCache {
 
     /// How long the pause still has to run, while it does.
     pub fn resumes_in(&self, now: Instant) -> Option<Duration> {
-        self.paused_until.and_then(|until| until.checked_duration_since(now)).filter(|left| !left.is_zero())
+        self.paused_until
+            .and_then(|until| until.checked_duration_since(now))
+            .filter(|left| !left.is_zero())
     }
 
     pub fn pause(&mut self, now: Instant) {
