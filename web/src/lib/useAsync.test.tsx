@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readKept } from "./keptData";
 import { useAsync } from "./useAsync";
 
 describe("useAsync", () => {
@@ -52,5 +53,57 @@ describe("useAsync", () => {
       await result.current.reload();
     });
     await waitFor(() => expect(result.current.status).toBe("ready"));
+  });
+
+  describe("revisiting a key", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    const slow = (value: string, ms = 1000) => () =>
+      new Promise<string>((resolve) => setTimeout(() => resolve(value), ms));
+
+    it("draws the kept data at once, then replaces it when the read finishes", async () => {
+      const first = renderHook(() => useAsync("screen", slow("first")));
+      expect(first.result.current.status).toBe("loading");
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      expect(first.result.current.data).toBe("first");
+      first.unmount();
+
+      const revisit = renderHook(() => useAsync("screen", slow("second")));
+      expect(revisit.result.current).toMatchObject({ status: "ready", data: "first", refreshing: true });
+      await act(() => vi.advanceTimersByTimeAsync(999));
+      expect(revisit.result.current).toMatchObject({ data: "first", refreshing: true });
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(revisit.result.current).toMatchObject({ status: "ready", data: "second", refreshing: false });
+    });
+
+    it("starts a key it never read as loading, and shows kept data when switching back", async () => {
+      const { result, rerender } = renderHook(({ id }) => useAsync(id, slow(id)), { initialProps: { id: "a" } });
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      rerender({ id: "b" });
+      expect(result.current.status).toBe("loading");
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      rerender({ id: "a" });
+      expect(result.current).toMatchObject({ status: "ready", data: "a", refreshing: true });
+    });
+
+    it("lets data go after ten minutes", async () => {
+      const { result } = renderHook(() => useAsync("old", slow("x")));
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      expect(result.current.data).toBe("x");
+      vi.advanceTimersByTime(10 * 60_000 + 1);
+      expect(readKept("old")).toBeUndefined();
+    });
+
+    it("keeps a failed read from replacing the kept data with nothing", async () => {
+      const { result, unmount } = renderHook(() => useAsync("flaky", slow("good")));
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      unmount();
+      const again = renderHook(() => useAsync("flaky", () => Promise.reject(new Error("down"))));
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      expect(again.result.current.status).toBe("error");
+      expect(again.result.current.data).toBe("good");
+      expect(result.current.data).toBe("good");
+    });
   });
 });

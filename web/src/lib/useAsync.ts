@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiFailure } from "../api/client";
+import { readKept, writeKept } from "./keptData";
 
 export type AsyncState<T> =
   | { status: "loading"; data: null; error: null; refreshing: boolean }
@@ -17,14 +18,22 @@ const isAbort = (error: unknown) => error instanceof DOMException && error.name 
 /**
  * One read owned by a screen. `key` is the resource identity: changing it drops
  * the old data. A result is applied only while its generation is current, so a
- * slow earlier response can never overwrite a later one.
+ * slow earlier response can never overwrite a later one. A key read before shows
+ * its last good data at once as `ready` with `refreshing` true, and the read runs
+ * again; only a key with nothing kept starts as `loading`.
  */
+const startState = <T,>(key: string): AsyncState<T> => {
+  const data = readKept<T>(key);
+  return data === undefined
+    ? { status: "loading", data: null, error: null, refreshing: true }
+    : { status: "ready", data, error: null, refreshing: true };
+};
+
 export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<T>) {
-  const [state, setState] = useState<AsyncState<T>>({
-    status: "loading",
-    data: null,
-    error: null,
-    refreshing: true,
+  const [state, setState] = useState<AsyncState<T>>(() => startState<T>(key));
+  const keyRef = useRef(key);
+  useLayoutEffect(() => {
+    keyRef.current = key;
   });
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -35,6 +44,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
 
   const reload = useCallback(() => {
     const id = ++generation.current;
+    const asked = keyRef.current;
     controller.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
@@ -42,6 +52,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
     return loader.current(abort.signal).then(
       (data) => {
         if (id === generation.current) {
+          writeKept(asked, data);
           setState({ status: "ready", data, error: null, refreshing: false });
         }
       },
@@ -61,7 +72,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
   useEffect(() => {
     if (firstKey.current !== key) {
       firstKey.current = key;
-      setState({ status: "loading", data: null, error: null, refreshing: true });
+      setState(startState<T>(key));
     }
     reload();
     return () => {
@@ -72,6 +83,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
 
   const setData = useCallback((data: T) => {
     generation.current += 1;
+    writeKept(keyRef.current, data);
     setState({ status: "ready", data, error: null, refreshing: false });
   }, []);
 

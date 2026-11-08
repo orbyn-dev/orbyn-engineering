@@ -561,7 +561,6 @@ export function UsagePage() {
   const tabsId = useId();
   const lastMetric = useRef<"cost" | "tokens">(saved?.metric && saved.metric !== "limits" ? saved.metric : "tokens");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [nonce, setNonce] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const engines = useWorkspace((state) => state.engines.data);
   const pushToast = useUi((state) => state.pushToast);
@@ -578,7 +577,7 @@ export function UsagePage() {
   }, [loadingFirst, skeletonShown]);
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
-  const limits = useAsync(`limits:${metric === "limits"}:${nonce}`, (signal) =>
+  const limits = useAsync(`limits:${metric === "limits"}`, (signal) =>
     metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
   );
 
@@ -611,7 +610,7 @@ export function UsagePage() {
     setRefreshing(true);
     try {
       await api.limits(true);
-      setNonce(nonce + 1);
+      void limits.reload();
     } catch (failure) {
       pushToast(`Couldn't refresh. ${toFailure(failure).message}`);
     } finally {
