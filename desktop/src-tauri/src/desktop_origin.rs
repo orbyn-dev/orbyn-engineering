@@ -330,7 +330,10 @@ mod tests {
             [
                 "allow-quit-core",
                 "allow-restart-core",
-                "allow-show-core-log"
+                "allow-show-core-log",
+                // Dragging and zooming the window by the unified title bar.
+                "core:window:allow-internal-toggle-maximize",
+                "core:window:allow-start-dragging"
             ]
         );
         // No other capability file grants any of them.
