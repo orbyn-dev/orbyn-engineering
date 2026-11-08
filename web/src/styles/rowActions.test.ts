@@ -6,7 +6,7 @@ const css = readFileSync(join(process.cwd(), "src/styles/shell.css"), "utf8").re
 const rule = (selector: string) => css.split("}").find((block) => block.trim().startsWith(`${selector} {`)) ?? "";
 
 it("floats the row actions over the row's right edge with a fade, out of the title's way", () => {
-  const actions = rule(".row-actions");
+  const actions = rule(".thread-row .row-actions");
   expect(actions).toMatch(/position:\s*absolute/);
   expect(actions).toMatch(/opacity:\s*0/);
   // Hidden actions are out of the Tab order: visibility, delayed past the fade.
@@ -44,4 +44,10 @@ it("shows the strip on keyboard focus, never on a mouse click's focus, and keeps
   // :focus-within would keep the strip after a click focused the row and the pointer left.
   expect(css).not.toMatch(/\.thread-row:focus-within \.row-actions/);
   expect(rule(".thread-row")).toMatch(/-webkit-touch-callout:\s*none/);
+});
+
+it("hides nothing outside the sidebar: only a thread row's own strip is floating and hidden", () => {
+  // Settings tables (Archive, the ACP registry) call their button cells row-actions as well.
+  expect(rule(".row-actions")).toBe("");
+  expect(rule(".thread-row .row-actions")).toMatch(/visibility:\s*hidden/);
 });

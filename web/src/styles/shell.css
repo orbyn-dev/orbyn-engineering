@@ -525,7 +525,8 @@ input.dialog-field-mono {
 .thread-row:has(.row-woke, .row-pin) .row-trailing {
   margin-right: 70px;
 }
-.row-actions {
+/* Scoped to the sidebar row: Settings tables name their own button cells `row-actions` too, and must not be hidden. */
+.thread-row .row-actions {
   position: absolute;
   inset-block: 0;
   right: 0;
