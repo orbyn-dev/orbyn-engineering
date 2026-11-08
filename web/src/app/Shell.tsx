@@ -9,7 +9,7 @@ import { WelcomeHost, NoProjects, DraftView, TrustFolder } from "../features/onb
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { create } from "zustand";
 import { SettingsPage, ScheduledTasksPage } from "../features/settings/public";
-import { ThreadView } from "../features/thread/ThreadView";
+import { ThreadView } from "../features/thread/public";
 import type { ShellEvent, Thread } from "../api/types";
 import { PullsPage } from "../features/pulls/public";
 import { UsagePage } from "../features/usage/public";

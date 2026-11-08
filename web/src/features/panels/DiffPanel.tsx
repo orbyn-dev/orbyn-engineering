@@ -5,15 +5,10 @@ import type { FileDiff } from "../../api/types";
 import { useAsync } from "../../lib/useAsync";
 import { pullsApi } from "../../api/pulls";
 import { useWorkspace } from "../../state/workspace";
-import { useThreadLogs } from "../thread/threadLogs";
+import { useThreadLogs, useComposerChips, CHIP_EXCERPT_LIMIT, charactersOver, chipId, chipLabel, promptWithChips, RestoreFilesDialog, GitActionDialog, createPullRequestPlan, useGitAvailable, useResolvedThreadPath, type ReviewChip } from "../thread/public";
 import { useUi } from "../../state/ui";
-import { useComposerChips } from "../thread/composerChipStore";
-import { CHIP_EXCERPT_LIMIT, charactersOver, chipId, chipLabel, promptWithChips, type ReviewChip } from "../thread/composerContext";
 import { Button, IconButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../ui/states";
-import { RestoreFilesDialog } from "../thread/MessageActions";
-import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "../thread/GitControl";
-import { useResolvedThreadPath } from "../thread/useResolvedThreadPath";
 
 const LINE_LIMIT = 2000;
 /** A large diff renders files in pages, so a huge change set never mounts at once. */

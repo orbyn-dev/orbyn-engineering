@@ -56,6 +56,40 @@ describe.each([
   });
 });
 
+describe.each([
+  ["src/features/onboarding/DraftView.tsx", "../thread"],
+  ["src/features/onboarding/WelcomeWizard.tsx", "../thread"],
+  ["src/features/panels/ActivityPanel.tsx", "../thread"],
+  ["src/features/panels/activityView.ts", "../thread"],
+  ["src/features/panels/BrowserPanel.tsx", "../thread"],
+  ["src/features/panels/DiffPanel.tsx", "../thread"],
+  ["src/features/panels/FileComments.tsx", "../thread"],
+  ["src/features/panels/FilePreview.tsx", "../thread"],
+  ["src/features/panels/FilesPanel.tsx", "../thread"],
+  ["src/features/panels/sideChat.ts", "../thread"],
+  ["src/features/panels/SideChatPane.tsx", "../thread"],
+  ["src/features/panels/terminalChip.ts", "../thread"],
+  ["src/app/Shell.tsx", "../features/thread"],
+])("thread cohort from %s", (filePath, target) => {
+  it.each([
+    `import { value } from "${target}/private";`,
+    `export * from "${target}/private";`,
+    `const value = import("${target}/private");`,
+    `type Value = import("${target}/private").Value;`,
+  ])("rejects private access: %s", async (code) => {
+    expect(await lint(filePath, code)).toMatchObject([{ messageId: "private" }]);
+  });
+  it("allows the public entry point", async () => {
+    expect(await lint(filePath, `import { value } from "${target}/public";`)).toHaveLength(0);
+  });
+});
+
+it("retains thread access for remaining consumers, internals and tests", async () => {
+  expect(await lint("src/features/panels/TerminalDrawerBody.tsx", 'import { runProjectAction } from "../thread/runProjectAction";')).toHaveLength(0);
+  expect(await lint("src/features/thread/Composer.tsx", 'import { useThreadLogs } from "./threadLogs";')).toHaveLength(0);
+  expect(await lint("src/features/panels/DiffPanel.test.tsx", 'import { useThreadLogs } from "../thread/threadLogs";')).toHaveLength(0);
+});
+
 it("enforces settings boundaries on existing module paths", async () => {
   expect(await lint("src/app/Shell.tsx", 'import { SettingsPage } from "../features/settings/SettingsPage";')).toMatchObject([{ messageId: "private" }]);
   expect(await lint("src/features/thread/ThreadView.tsx", 'export * from "../settings/ScheduledTasks";')).toMatchObject([{ messageId: "private" }]);

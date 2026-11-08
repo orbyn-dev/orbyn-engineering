@@ -5,6 +5,21 @@ import path from "node:path";
 
 const sourceRoot = path.join(import.meta.dirname, "src");
 const publicFeatures = new Set(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels", "workspace"]);
+const threadCohort = new Set([
+  "features/onboarding/DraftView.tsx",
+  "features/onboarding/WelcomeWizard.tsx",
+  "features/panels/ActivityPanel.tsx",
+  "features/panels/activityView.ts",
+  "features/panels/BrowserPanel.tsx",
+  "features/panels/DiffPanel.tsx",
+  "features/panels/FileComments.tsx",
+  "features/panels/FilePreview.tsx",
+  "features/panels/FilesPanel.tsx",
+  "features/panels/sideChat.ts",
+  "features/panels/SideChatPane.tsx",
+  "features/panels/terminalChip.ts",
+  "app/Shell.tsx",
+]);
 const sharedFolders = new Set(["ui", "state", "lib", "api", "styles"]);
 const boundaryRule = {
   meta: {
@@ -22,7 +37,8 @@ const boundaryRule = {
       if (typeof source?.value !== "string" || !source.value.startsWith(".")) return;
       const target = path.relative(sourceRoot, path.resolve(path.dirname(context.filename), source.value))
         .split(path.sep);
-      if (target[0] !== "features" || !publicFeatures.has(target[1])) return;
+      if (target[0] !== "features" || !(publicFeatures.has(target[1]) ||
+          (target[1] === "thread" && threadCohort.has(importer.join("/"))))) return;
       if (sharedFolders.has(importer[0])) {
         context.report({ node: source, messageId: "inward" });
       } else if (!(importer[0] === "features" && importer[1] === target[1]) &&

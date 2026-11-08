@@ -52,12 +52,17 @@ The `panels` feature exposes `mediaKind`, `rawUrl`, `previewWindowRoute`,
 `PreviewFloat` and `PreviewWindow` through `features/panels/public.ts`.
 The `workspace` feature exposes its current shell and cross-feature components,
 actions and helpers through `features/workspace/public.ts`.
-All production consumers outside these features, including `app`, use their
-public entry points. ESLint rejects private imports, re-exports, literal dynamic
-imports and type queries into them; each feature may use its own internals.
+The `thread` public entry point is partially adopted: 13 of 24 outside
+production consumers use it. The remaining 11 still use internal imports;
+ESLint enforces the thread boundary only for the migrated 13.
+For the eight fully adopted features, all outside production consumers, including
+`app`, use their public entry points. ESLint rejects private imports, re-exports,
+literal dynamic imports and type queries into those features and from the migrated
+thread consumers; each feature may use its own internals.
 Other features will adopt the same boundary one at a time. This follows Luan
 Nguyen's public-entry-point approach in [PR #285](https://github.com/orbyn-dev/orbyn-engineering/pull/285);
-the earlier panels facade included `SurfacePane` and `TerminalDrawerBody`. The current
+the earlier panels facade included `SurfacePane` and `TerminalDrawerBody`; its thread
+facade included `Composer`, `ThreadScope`, `Transcript`, traits and `ModelPickerTrigger`. The current
 facades follow current consumers; the other panels exports and workspace facade are
 independently selected.
 

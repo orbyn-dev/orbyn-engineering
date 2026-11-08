@@ -5,7 +5,7 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { EngineStatus, PermissionMode, Project } from "../../api/types";
 import { AddProjectPalette } from "../workspace/public";
-import { ACCESS, offeredModes, shownAccess } from "../thread/ComposerTraits";
+import { ACCESS, offeredModes, shownAccess } from "../thread/public";
 import { navigate, routeHref } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
