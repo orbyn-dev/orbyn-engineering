@@ -33,6 +33,8 @@ use crate::governance::approvals::Verdict;
 use crate::util::new_id;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The status lists can be large (thousands of apps), so they get longer than a plain call.
+const TOOLS_CALL_TIMEOUT: Duration = Duration::from_secs(45);
 /// An upload is slower than a read, so it does not share the read allowance.
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERRUPT_GRACE: Duration = Duration::from_secs(5);
@@ -298,6 +300,40 @@ impl EngineDriver for CodexDriver {
     /// Codex 0.166.0's `thread/revert` keeps the turns before `before_turn` as the
     /// thread's durable history and leaves files alone. It answers only for a thread
     /// it has loaded, so a short-lived app-server in the checkout resumes it first.
+    async fn tools(
+        &self,
+        cwd: &std::path::Path,
+        _init: Option<&Value>,
+    ) -> Result<Option<orbyn_contracts::EngineTools>> {
+        let session = self.short_session_experimental(cwd).await?;
+        // Each list is read on its own: one that does not answer leaves its group out
+        // rather than hiding the rest. The app and plugin lists are very large, so they are
+        // reduced to names and states here and never leave this function whole.
+        let servers = session
+            .rpc
+            .call("mcpServerStatus/list", json!({}), TOOLS_CALL_TIMEOUT)
+            .await
+            .ok();
+        let apps = session
+            .rpc
+            .call("app/list", json!({}), TOOLS_CALL_TIMEOUT)
+            .await
+            .ok();
+        let plugins = session
+            .rpc
+            .call("plugin/list", json!({}), TOOLS_CALL_TIMEOUT)
+            .await
+            .ok();
+        if servers.is_none() && apps.is_none() && plugins.is_none() {
+            return Err(CoreError::Internal("Codex did not answer.".into()));
+        }
+        Ok(Some(codex_tools(
+            servers.as_ref(),
+            apps.as_ref(),
+            plugins.as_ref(),
+        )))
+    }
+
     async fn revert_session(
         &self,
         cwd: &std::path::Path,
@@ -369,6 +405,28 @@ impl CodexDriver {
         self.short_session_in(&std::env::temp_dir()).await
     }
 
+    /// A short app-server that takes the experimental calls the status lists need.
+    async fn short_session_experimental(&self, cwd: &std::path::Path) -> Result<ShortSession> {
+        let command = resolve_engine(&self.program)?;
+        let args = [OsString::from("app-server")];
+        let process = spawn_engine(&command, &args, cwd)?;
+        let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, false);
+        rpc.call(
+            "initialize",
+            json!({
+                "clientInfo": { "name": "orbyn", "version": env!("CARGO_PKG_VERSION") },
+                "capabilities": { "experimentalApi": true },
+            }),
+            CALL_TIMEOUT,
+        )
+        .await?;
+        rpc.notify("initialized", None).await?;
+        Ok(ShortSession {
+            rpc,
+            _process: process.child,
+        })
+    }
+
     async fn short_session_in(&self, cwd: &std::path::Path) -> Result<ShortSession> {
         let command = resolve_engine(&self.program)?;
         let args = [OsString::from("app-server")];
@@ -386,6 +444,127 @@ impl CodexDriver {
             _process: process.child,
         })
     }
+}
+
+/// The Tools list for Codex, from what `mcpServerStatus/list`, `app/list` and `plugin/list`
+/// answered. MCP servers other than Orbyn's own and Codex's connector bridge are the
+/// person's; connectors are the apps the person can reach; plugins are the installed and
+/// enabled ones. Codex does not report built-in tools or skills here.
+fn codex_tools(
+    servers: Option<&Value>,
+    apps: Option<&Value>,
+    plugins: Option<&Value>,
+) -> orbyn_contracts::EngineTools {
+    use crate::agents::tools_report::{
+        assemble, counted, description, detail, entry, group, reason,
+    };
+    use orbyn_contracts::ToolState;
+    let mut groups = Vec::new();
+    if let Some(list) = servers
+        .and_then(|value| value.get("data"))
+        .and_then(Value::as_array)
+    {
+        let mut mine = Vec::new();
+        let mut orbyn = None;
+        for server in list {
+            let Some(name) = text(server, "name") else {
+                continue;
+            };
+            let tools = server
+                .get("tools")
+                .and_then(Value::as_object)
+                .map_or(0, serde_json::Map::len);
+            if name == MCP_SERVER_NAME {
+                orbyn = Some(tools);
+                continue;
+            }
+            // The bridge to connectors and the bundled app server are not the person's.
+            if name == "codex_apps" || name == "codex_app" {
+                continue;
+            }
+            let failure = server
+                .get("toolsError")
+                .and_then(Value::as_str)
+                .filter(|why| !why.is_empty());
+            let signed_out =
+                server.get("authStatus").and_then(Value::as_str) == Some("notLoggedIn");
+            let state = match (failure, signed_out) {
+                (_, true) => ToolState::NeedsSignIn,
+                (Some(_), false) => ToolState::Failed,
+                (None, false) => ToolState::Ready,
+            };
+            let mut one = entry(&name, state);
+            one.tools = u32::try_from(tools).ok().filter(|count| *count > 0);
+            one.description = server
+                .pointer("/serverInfo/description")
+                .and_then(Value::as_str)
+                .and_then(description);
+            if let Some(why) = failure {
+                one.reason = Some(reason(why));
+                one.detail = Some(detail(why));
+            }
+            mine.push(one);
+        }
+        if let Some(count) = orbyn {
+            groups.push(counted("orbyn", count));
+        }
+        groups.push(group("mcp", mine));
+    }
+    if let Some(list) = apps
+        .and_then(|value| value.get("data"))
+        .and_then(Value::as_array)
+    {
+        // Thousands of apps are on offer; only the ones the person can reach are theirs.
+        let mut mine = Vec::new();
+        for app in list.iter().filter(|app| {
+            app.get("isAccessible").and_then(Value::as_bool) == Some(true)
+                && app.get("isEnabled").and_then(Value::as_bool) != Some(false)
+        }) {
+            let Some(name) = text(app, "name") else {
+                continue;
+            };
+            let mut one = entry(&name, ToolState::Ready);
+            one.description = app
+                .get("description")
+                .and_then(Value::as_str)
+                .and_then(description);
+            one.source = Some("Codex app".into());
+            mine.push(one);
+        }
+        groups.push(group("connectors", mine));
+    }
+    if let Some(markets) = plugins
+        .and_then(|value| value.get("marketplaces"))
+        .and_then(Value::as_array)
+    {
+        let mut mine = Vec::new();
+        for plugin in markets
+            .iter()
+            .filter_map(|market| market.get("plugins").and_then(Value::as_array))
+            .flatten()
+            .filter(|plugin| {
+                plugin.get("installed").and_then(Value::as_bool) == Some(true)
+                    && plugin.get("enabled").and_then(Value::as_bool) == Some(true)
+            })
+        {
+            let Some(name) = plugin
+                .pointer("/interface/displayName")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| text(plugin, "name"))
+            else {
+                continue;
+            };
+            let mut one = entry(&name, ToolState::Ready);
+            one.description = plugin
+                .pointer("/interface/shortDescription")
+                .and_then(Value::as_str)
+                .and_then(description);
+            mine.push(one);
+        }
+        groups.push(group("plugins", mine));
+    }
+    assemble("codex", "check", groups, true)
 }
 
 /// Reads one `model/list` entry. Hidden models stay out of the picker.
@@ -2411,6 +2590,58 @@ mod tests {
         });
         assert!(!is_tool_approval(&form));
         assert!(classify_request("mcpServer/elicitation/request", &form, &mapper()).is_none());
+    }
+
+    #[test]
+    fn codex_tools_reduce_three_big_lists_to_names_and_states() {
+        use orbyn_contracts::ToolState;
+        let servers = json!({ "data": [
+            { "name": "orbyn_engineering", "tools": { "a": {}, "b": {} }, "authStatus": "unsupported" },
+            { "name": "codex_apps", "tools": { "x": {} }, "authStatus": "bearerToken" },
+            { "name": "filesystem", "tools": { "read": {}, "write": {} }, "authStatus": "unsupported" },
+            { "name": "computer-use", "tools": {}, "toolsError": "MCP startup failed: No such file", "authStatus": "unsupported" },
+            { "name": "notion", "tools": {}, "toolsError": "needs login", "authStatus": "notLoggedIn" },
+        ] });
+        let apps = json!({ "data": [
+            { "name": "GitHub", "description": "Repos and issues. More.", "isAccessible": true, "isEnabled": true },
+            { "name": "Gmail", "isAccessible": false, "isEnabled": true },
+            { "name": "Off", "isAccessible": true, "isEnabled": false },
+        ] });
+        let plugins = json!({ "marketplaces": [ { "plugins": [
+            { "name": "documents", "installed": true, "enabled": true, "interface": { "displayName": "Documents", "shortDescription": "Edit documents" } },
+            { "name": "other", "installed": false, "enabled": false },
+        ] } ] });
+        let tools = codex_tools(Some(&servers), Some(&apps), Some(&plugins));
+        let find = |id: &str| tools.groups.iter().find(|one| one.id == id).unwrap();
+        assert_eq!(find("orbyn").count, 2);
+        let mcp = find("mcp");
+        let names: Vec<_> = mcp.items.iter().map(|one| one.name.as_str()).collect();
+        assert_eq!(names, ["filesystem", "computer-use", "notion"]);
+        assert_eq!(mcp.items[0].state, ToolState::Ready);
+        assert_eq!(mcp.items[0].tools, Some(2));
+        assert_eq!(mcp.items[1].state, ToolState::Failed);
+        assert_eq!(mcp.items[2].state, ToolState::NeedsSignIn);
+        let connectors = find("connectors");
+        assert_eq!(
+            connectors.items.len(),
+            1,
+            "only the apps the person can reach"
+        );
+        assert_eq!(
+            connectors.items[0].description.as_deref(),
+            Some("Repos and issues")
+        );
+        assert_eq!(find("plugins").items[0].name, "Documents");
+        // Codex reports neither built-in tools nor skills here.
+        assert_eq!(tools.not_reported, ["builtin", "skills"]);
+    }
+
+    #[test]
+    fn a_list_codex_did_not_answer_leaves_its_group_out() {
+        let tools = codex_tools(None, Some(&json!({ "data": [] })), None);
+        let ids: Vec<_> = tools.groups.iter().map(|one| one.id.as_str()).collect();
+        assert_eq!(ids, ["connectors"]);
+        assert!(tools.not_reported.contains(&"mcp".to_owned()));
     }
 
     #[test]

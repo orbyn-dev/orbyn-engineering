@@ -557,6 +557,33 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The newest custom event called `name`, with its time, for one thread or, with
+    /// `thread_id` unset, across all of them. `engine` narrows it to events whose value
+    /// names that engine.
+    pub fn latest_custom_event(
+        &self,
+        thread_id: Option<&str>,
+        name: &str,
+        engine: Option<&str>,
+    ) -> Result<Option<(String, serde_json::Value)>> {
+        let conn = self.reader();
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT ts, event FROM thread_events
+                 WHERE (?1 IS NULL OR thread_id = ?1)
+                   AND json_extract(event, '$.name') = ?2
+                   AND (?3 IS NULL OR json_extract(event, '$.value.engine') = ?3)
+                 ORDER BY ts DESC, seq DESC LIMIT 1",
+                params![thread_id, name, engine],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(ts, text)| {
+            let event: serde_json::Value = serde_json::from_str(&text).ok()?;
+            Some((ts, event.get("value")?.clone()))
+        }))
+    }
+
     pub fn latest_seq(&self, thread_id: &str) -> Result<i64> {
         Ok(self.reader().query_row(
             "SELECT COALESCE(MAX(seq), 0) FROM thread_events WHERE thread_id = ?1",

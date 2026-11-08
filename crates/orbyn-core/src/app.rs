@@ -126,6 +126,8 @@ pub struct Core {
     /// What each forge's CLI said, reused briefly: asking costs a process per forge.
     pub(crate) forge_statuses:
         Mutex<Option<(std::time::Instant, Vec<orbyn_contracts::ForgeStatus>)>>,
+    /// The last lists of tools and connectors each engine reported.
+    pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
     _lock: File,
 }
@@ -233,6 +235,7 @@ impl Core {
             keybinding_writer: Mutex::new(()),
             pull_details: Mutex::new(Default::default()),
             forge_statuses: Mutex::new(None),
+            tool_lists: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             _lock: lock,
         };
