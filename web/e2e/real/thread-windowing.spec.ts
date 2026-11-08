@@ -46,6 +46,22 @@ test("a long thread stays small in the page, and scroll, find and Jump to latest
   expect(await nodes(page)).toBeLessThan(4000);
   await expect(log.getByText("alpha-needle").first()).toBeVisible();
 
+  // Rows measure as they mount and the view keeps to the end while they do; scrolling away is a person's act, so
+  // wait for the layout to hold still for a while before doing it from a script.
+  await log.evaluate(
+    (element) =>
+      new Promise<void>((resolve) => {
+        let height = element.scrollHeight;
+        let still = 0;
+        const check = () => {
+          still = element.scrollHeight === height ? still + 1 : 0;
+          height = element.scrollHeight;
+          if (still >= 30) resolve();
+          else requestAnimationFrame(check);
+        };
+        requestAnimationFrame(check);
+      }),
+  );
   // Scrolling to the top brings the first prompt in and lets go of the end.
   await log.evaluate((element) => { element.scrollTop = 0; });
   await expect(log.locator(".msg-user", { hasText: "alpha-needle" }).first()).toBeVisible();
