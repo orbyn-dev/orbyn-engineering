@@ -280,3 +280,18 @@ it("says the history is being read, once: the first visit only, after the wait",
     vi.useRealTimers();
   }
 });
+
+it("shows Checking your limits… after the wait while Limits loads, and the skeleton before", async () => {
+  vi.spyOn(api, "limits").mockReturnValue(new Promise(() => {}));
+  render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("tab", { name: "Limits" }));
+    expect(screen.queryByText("Checking your limits…")).toBeNull();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(500)));
+    expect(screen.getByText("Checking your limits…")).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
+});

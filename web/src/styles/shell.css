@@ -716,14 +716,13 @@ li[data-highlight] .thread-row {
 .folder-head:has(:focus-visible) > .folder-new {
   opacity: 1;
 }
-/* The plus floats over the row's right end, so the name stops short of it while it shows (it used to run under it),
-   and so does the waiting count. */
-.folder-head:hover .folder-name,
-.folder-head:has(:focus-visible) .folder-name {
+/* The plus floats over the row's right end, so the name and the waiting count stop short of it (the name used to run
+   under it). */
+/* Reserved always, so the name does not shift when the plus appears. */
+.folder-head .folder-name {
   padding-right: 26px;
 }
-.folder-head:hover .folder-needs,
-.folder-head:has(:focus-visible) .folder-needs {
+.folder-head .folder-needs {
   margin-right: 24px;
 }
 .folder-head > .folder-new:focus-visible {

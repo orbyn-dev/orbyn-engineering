@@ -593,6 +593,7 @@ export function UsagePage() {
 );
 
   // An engine that never answers must not leave the tab loading for good.
+  const limitsChecking = useWaited(metric === "limits" && limits.status === "loading");
   const limitsSlow = useWaited(metric === "limits" && limits.status === "loading", LIMITS_WAIT_MS);
 
   useEffect(() => {
@@ -713,6 +714,11 @@ export function UsagePage() {
                 Limits didn{"\u2019"}t answer in time.{" "}
                 <Button small onClick={limits.reload}>Try again</Button>
               </p>
+            </div>
+          ) : limitsChecking ? (
+            // Limits can take a few seconds: after the 400 ms wait a line says so (usage-first-load).
+            <div className="usage-body usage-first" role="status">
+              <p>Checking your limits…</p>
             </div>
           ) : (
             <div className="usage-body">
