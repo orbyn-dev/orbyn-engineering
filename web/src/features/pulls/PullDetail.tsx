@@ -174,11 +174,17 @@ function Description({
   );
 }
 
+/** The pull request's activity: comments, reviews, commits and the rest, read once for the tab and its count. */
+function useTimelineEvents(projectId: string, number: number) {
+  return useAsync(`pull-timeline:${projectId}:${number}`, (signal) => pullsApi.timeline(projectId, number, signal), { keep: true });
+}
+type TimelineRead = ReturnType<typeof useTimelineEvents>;
+
 function Timeline({ projectId, number }: { projectId: string; number: number }) {
-  const events = useAsync(`pull-timeline:${projectId}:${number}`, (signal) =>
-    pullsApi.timeline(projectId, number, signal),
-  { keep: true },
-);
+  return <TimelineList events={useTimelineEvents(projectId, number)} />;
+}
+
+function TimelineList({ events }: { events: TimelineRead }) {
   const [kind, setKind] = useState("all");
   const kinds = useMemo(() => [...new Set((events.data ?? []).map((event) => event.kind))].sort(), [events.data]);
   if (events.status === "loading") return <Loading label="Loading timeline" rows={4} />;
@@ -199,8 +205,8 @@ function Timeline({ projectId, number }: { projectId: string; number: number }) 
       <ol className="pull-timeline">
         {events.data
           .filter((event) => kind === "all" || event.kind === kind)
-          .map((event) => (
-            <li key={event.id}>
+          .map((event, at) => (
+            <li key={event.id || `${event.kind}:${at}`}>
               <span className="pull-actor">{event.actor ?? "Someone"}</span> {event.text ?? event.kind}
               {event.created_at ? <time>{relativeTime(event.created_at)}</time> : null}
             </li>
@@ -667,6 +673,7 @@ export function PullDetail({
   const offline = connection === "offline";
   const viewers = (forges.data ?? []).flatMap((one) => (one.signed_in && one.viewer ? [one.viewer] : []));
   const mine = extras.data?.details[0];
+  const activity = useTimelineEvents(projectId, number);
   const reviewAsked = reviewAskedOf(mine, viewers);
   const own = Boolean(pull.author && viewers.some((login) => login.toLowerCase() === (pull.author ?? "").toLowerCase()));
   const state = pageState(pull, mergeable, reviewAsked);
@@ -681,7 +688,8 @@ export function PullDetail({
   );
   const pageOrder = ["summary", "guide", "timeline", "code", "checks"] as const;
   const counts: Partial<Record<Tab, number | null | undefined>> = {
-    timeline: mine?.comment_count,
+    // What the tab lists: comments, reviews and commits alike. Until it has loaded, the comments alone.
+    timeline: activity.data ? activity.data.length : mine?.comment_count,
     code: files === null ? undefined : Number(files),
     checks: pull.checks?.total,
   };
@@ -771,7 +779,7 @@ export function PullDetail({
               ) : tab === "timeline" ? (
                 <>
                   <PullConversation projectId={projectId} number={number} />
-                  <Timeline projectId={projectId} number={number} />
+                  <TimelineList events={activity} />
                 </>
               ) : (
                 <Checks projectId={projectId} number={number} />

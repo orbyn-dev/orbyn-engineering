@@ -116,6 +116,18 @@ describe("one pull request as a page", () => {
     expect(card.querySelector("input, select")).toBeNull();
   });
 
+  it("counts the Conversation tab from everything it lists, commits included", async () => {
+    vi.spyOn(pullsApi, "timeline").mockResolvedValue([
+      { id: "a1", kind: "committed", actor: "Ada", created_at: "2026-11-05T01:05:00Z", text: "Fix the redirect" },
+      { id: "b2", kind: "committed", actor: "Ada", created_at: "2026-11-05T01:06:00Z", text: "Add a test" },
+      { id: "7", kind: "commented", actor: "sam", created_at: "2026-11-05T02:00:00Z", text: "Looks good" },
+    ] as never);
+    await show({ ...detail(), pull: { ...detail().pull } });
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+    expect(tabs).toContain("Conversation · 3");
+  });
+
   it("counts files, checks and comments in the tab names", async () => {
     await show(detail());
     const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
