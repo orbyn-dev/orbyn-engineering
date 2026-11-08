@@ -1,14 +1,11 @@
-import { ChevronLeft, ChevronRight, FileDiff, PanelLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
 import { attentionRank } from "../features/workspace/groups";
 import { EnvironmentIdentity } from "../features/workspace/EnvironmentIdentity";
-import { useThreadLogs } from "../features/thread/threadLogs";
 import { useAsync } from "../lib/useAsync";
-import { labels } from "../features/settings/SettingsPage";
 import { navigate, type Route } from "../state/route";
-import { usePageLabel } from "../state/pageLabel";
 import { useReadingNav } from "./readingNav";
 import { toggleSidebarDrawer, useSidebarDrawer } from "./sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
@@ -77,33 +74,8 @@ function useWaitingCount(): number {
   );
 }
 
-/** Reading's way to the changes: the diff opens in the side drawer. */
-function ReadingDiff({ threadId }: { threadId: string }) {
-  const version = useThreadLogs((state) => state.diffVersion[threadId] ?? 0);
-  const diff = useAsync(`details-diff:${threadId}`, (signal) => api.diff(threadId, signal));
-  const { reload } = diff;
-  const first = useRef(true);
-  useEffect(() => {
-    if (first.current) first.current = false;
-    else void reload();
-  }, [version, reload]);
-  const showing = useUi((state) => state.panelOpen === true && state.panelTab === "diff");
-  const togglePanel = useUi((state) => state.togglePanel);
-  const closePanel = useUi((state) => state.closePanel);
-  const files = diff.data ?? [];
-  if (files.length === 0) return null;
-  const added = files.reduce((sum, file) => sum + file.additions, 0);
-  const removed = files.reduce((sum, file) => sum + file.deletions, 0);
-  return (
-    <button type="button" className="titlebar-diff" aria-pressed={showing} onClick={() => (showing ? closePanel() : togglePanel("diff"))}>
-      <FileDiff size={13} aria-hidden />
-      Diff <span className="diff-add">+{added}</span> <span className="diff-del">−{removed}</span>
-    </button>
-  );
-}
-
 /** The window's top line: the brand, the page it is on and page-level status. */
-export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth }) {
+export function TitleBar({ layout }: { route: Route; layout: LayoutWidth }) {
   const phone = layout === "phone";
   const small = layout === "small";
   const drawerOpen = useSidebarDrawer((state) => state.open);
@@ -114,26 +86,8 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
   const readingNav = useReadingNav((state) => state.open);
   const toggleReadingNav = useReadingNav((state) => state.toggle);
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
-  const title = useWorkspace((state) => (route.name === "thread" ? state.threads[route.id]?.title : undefined));
   const waiting = useWaitingCount();
-  const pageLabel = usePageLabel((state) => state.label);
 
-  const page =
-    route.name === "thread"
-      ? (title ?? "")
-      : route.name === "pulls"
-        ? (pageLabel ?? "Pull requests")
-        : route.name === "skills"
-          ? (route.skill ?? "Skills")
-        : route.name === "usage"
-          ? "Usage"
-          : route.name === "tasks"
-            ? "Scheduled tasks"
-            : route.name === "settings"
-              ? labels[route.section ?? "general"]
-              : route.name === "trust"
-                ? "Trust folder"
-                : "New thread";
   const shown = small ? drawerOpen : reading ? readingNav : !collapsed;
   // Folding the sidebar away must not strand focus on a row that no longer exists.
   const wasShown = useRef(shown);
@@ -150,10 +104,10 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
   useEffect(() => (dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), []);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
 
-  // Only the reading layout and the phone give the bar a row of its own with the title centred (the shell-reading
-  // frame). Every other layout keeps the bar floating over the top of the page, where the page's own header
-  // carries the title and its actions on the same centre line, with the sidebar shown or not.
-  const row = reading || phone;
+  // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
+  // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
+  // whose sidebar is its home page, gives the bar a row of its own, and it holds the buttons alone.
+  const row = phone;
   return (
     <header className="titlebar"
       data-nav={shown && !small ? "shown" : "hidden"}
@@ -187,16 +141,9 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
       <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
-      {shown || !row ? null : (
-        <span className="titlebar-title" title="Orbyn Engineering">
-          <b>Orbyn</b>
-          <span className="titlebar-page-label"> · {page}</span>
-        </span>
-      )}
       <span className="titlebar-end">
         <EnvironmentIdentity />
-        {reading && route.name === "thread" ? <ReadingDiff threadId={route.id} /> : null}
-        {ledger && waiting > 0 ? (
+                {ledger && waiting > 0 ? (
           <span className="titlebar-waiting" role="status">
             <span className="status-dot" aria-hidden />
             {waiting} waiting on you

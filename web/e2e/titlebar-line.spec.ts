@@ -37,7 +37,7 @@ for (const [name, width, hideSidebar] of [["wide", 1280, false], ["sidebar hidde
       if (await action.count()) expect(await centreOf(action.first())).toBeCloseTo(bar, 0);
     }
     expect(await centreOf(heading)).toBeCloseTo(bar, 0);
-    // The bar's own centred title appears only where the frames draw it (reading layout, phone).
+    // The bar never carries a title of its own: the page header is the one place (v60).
     await expect(page.locator(".titlebar-title")).toHaveCount(0);
     const text = (await heading.textContent())?.trim() ?? "";
     expect(await page.locator(".main, .titlebar").getByText(text, { exact: true }).count(), "one place for the title").toBe(1);
@@ -47,3 +47,22 @@ for (const [name, width, hideSidebar] of [["wide", 1280, false], ["sidebar hidde
     if (lead && first) expect(first.x).toBeGreaterThanOrEqual(lead.x + lead.width);
   });
 }
+
+/** shell-reading and thread-details-reading (v60): the same single bar band, with only the text column narrower. */
+test("the reading layout has one 44px bar band and no second row or duplicate heading", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ workspaceLayout: "reading" })));
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/__mock/scenario/default");
+  await page.goto("/#/threads/t-done");
+  const heading = page.locator(".main h1").first();
+  await expect(heading).toBeVisible();
+  const bar = await centreOf(page.locator(".titlebar .tbi").first());
+  expect(bar).toBeCloseTo(22, 0);
+  expect(await centreOf(heading)).toBeCloseTo(bar, 0);
+  for (const name of ["Details", "Terminal"]) expect(await centreOf(page.getByRole("button", { name }).first())).toBeCloseTo(bar, 0);
+  await expect(page.locator(".titlebar-title")).toHaveCount(0);
+  const text = (await heading.textContent())?.trim() ?? "";
+  expect(await page.locator(".main, .titlebar").getByText(text, { exact: true }).count(), "one place for the title").toBe(1);
+  const header = await page.locator(".thread-main > .topbar").boundingBox();
+  expect(header?.height).toBeLessThanOrEqual(46);
+});
