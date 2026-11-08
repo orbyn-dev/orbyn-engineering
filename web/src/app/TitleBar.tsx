@@ -6,7 +6,7 @@ import { attentionRank } from "../features/workspace/groups";
 import { EnvironmentIdentity } from "../features/workspace/EnvironmentIdentity";
 import { useThreadLogs } from "../features/thread/threadLogs";
 import { useAsync } from "../lib/useAsync";
-import { labels } from "../features/settings/SettingsPage";
+import { labels } from "../features/settings/public";
 import { navigate, type Route } from "../state/route";
 import { usePageLabel } from "../state/pageLabel";
 import { useReadingNav } from "./readingNav";
