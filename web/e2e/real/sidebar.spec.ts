@@ -164,7 +164,7 @@ test("usage reads the real report and limits", async ({ page }) => {
   await expect(usage.getByText(/reports limits|left|:/).first()).toBeVisible({ timeout: 15_000 });
 });
 
-test("the composer picks model and effort, sets access, and keeps favourites", async ({ page }) => {
+test("the composer picks model and effort and sets access", async ({ page }) => {
   const id = ids.Delta ?? "";
   await page.goto(`${service.page}#/threads/${id}`);
   await expect(page.getByRole("textbox", { name: /^Message Delta/ })).toBeVisible();
@@ -173,14 +173,15 @@ test("the composer picks model and effort, sets access, and keeps favourites", a
   await trigger.click();
   const picker = page.getByRole("dialog", { name: "Choose a model" });
   await expect(picker.getByRole("option").first()).toBeVisible({ timeout: 15_000 });
-  await expect(picker.getByRole("button", { name: "Favorites", exact: true })).toBeVisible();
   const choice = picker.getByRole("option").nth(1);
-  const label = (await choice.locator(".model-row-text span").first().innerText()).trim();
-  await choice.hover();
-  await choice.getByRole("button", { name: "Add to favorites" }).click();
-  await picker.getByRole("button", { name: "Favorites", exact: true }).click();
-  await expect(picker.getByRole("option")).toHaveCount(1);
-  await picker.getByRole("textbox", { name: "Search models" }).press("ControlOrMeta+1");
+  const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
+  // The thread.jump shortcuts are listed in Keybindings and belong to the page: the open picker keeps them off it.
+  await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+2");
+  await expect(picker).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`#/threads/${id}$`));
+  const exact = picker.getByRole("option").filter({ has: page.locator("b", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
+  await expect(exact).toHaveCount(1);
+  await exact.click();
   await expect.poll(async () => (await thread(id) as unknown as { model: string | null }).model).not.toBeNull();
   await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
 

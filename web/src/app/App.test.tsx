@@ -55,7 +55,7 @@ describe("App against the mock API", () => {
     await user.click(side);
     expect(useUi.getState().panelOpen).toBe(true);
     expect(side).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByRole("tablist", { name: "Context" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tablist", { name: "Panel tabs" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
   });
 
   it("creates the thread on first send from the draft", async () => {
@@ -73,7 +73,7 @@ describe("App against the mock API", () => {
     const picker = await screen.findByRole("dialog", { name: "Choose a model" });
     expect(within(picker).getByRole("button", { name: /Aider \(terminal\) \(Unmanaged\)/ })).toBeInTheDocument();
     expect(within(picker).queryByRole("button", { name: /Cursor Agent/ })).toBeNull();
-    await user.click(within(picker).getByRole("option", { name: /Claude Opus/ }));
+    await user.click(within(picker).getAllByRole("option", { name: /Claude Opus/ })[0]!);
     expect(await screen.findByRole("button", { name: "Claude Opus" })).toBeInTheDocument();
   });
 
@@ -651,7 +651,7 @@ describe("App against the mock API", () => {
     go("#/threads/t-done");
     render(<App />);
     await screen.findByRole("button", { name: "Show side panel" });
-    expect(screen.queryByRole("tablist", { name: "Context" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Panel tabs" })).toBeNull();
     expect(useUi.getState().panelOpen).toBe(false);
   });
 
@@ -672,7 +672,7 @@ describe("App against the mock API", () => {
     useUi.setState({ panelOpen: true, panelTab: "diff" });
     go("#/threads/t-done");
     render(<App />);
-    const row = await screen.findByRole("tablist", { name: "Context" });
+    const row = await screen.findByRole("tablist", { name: "Panel tabs" });
     expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });

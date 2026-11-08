@@ -1,6 +1,5 @@
 /* Browser-style tab rows (Engineer Designs v51): the side panel's and the terminal drawer's.
    The open tab lifts into the body below it; closed tabs return from the "+". */
-.context-head,
 .term-head {
   display: flex;
   flex: none;
@@ -11,12 +10,6 @@
   background: var(--color-sidebar);
   border-bottom: 1px solid var(--color-border);
   container-type: inline-size;
-}
-.tabs {
-  display: flex;
-  flex: 0 1 auto;
-  align-items: flex-end;
-  min-width: 0;
 }
 .ptab {
   position: relative;
@@ -123,21 +116,6 @@
   margin: 0 4px 2px;
   border-radius: var(--radius-7);
   color: var(--color-muted);
-}
-.head-end {
-  display: flex;
-  flex: none;
-  align-items: center;
-  align-self: center;
-  margin: 0 0 2px auto;
-}
-.head-end .icon-btn {
-  width: 24px;
-  height: 24px;
-  color: var(--color-muted);
-}
-.head-end .icon-btn[aria-pressed="true"] {
-  color: var(--color-selectedText);
 }
 /* A narrow row: the tabs that are not open show only their icon. */
 @container (max-width: 440px) {

@@ -75,7 +75,6 @@ interface Prefs {
   threadSort: "updated_at" | "created_at";
   projectSort: "updated_at" | "created_at";
   /** `engine:model` keys. */
-  modelFavorites: string[];
   modelHidden: string[];
   modelOrder: string[];
   effortDisplay: "label" | "bars";
@@ -219,7 +218,6 @@ const defaults: Prefs = {
   multilineRows: false,
   threadSort: "updated_at",
   projectSort: "updated_at",
-  modelFavorites: [],
   modelHidden: [],
   modelOrder: [],
   effortDisplay: "label",
@@ -397,7 +395,6 @@ const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): Prefs =>
   multilineRows: state.multilineRows,
   threadSort: state.threadSort,
   projectSort: state.projectSort,
-  modelFavorites: state.modelFavorites,
   modelHidden: state.modelHidden,
   modelOrder: state.modelOrder,
   effortDisplay: state.effortDisplay,
@@ -495,6 +492,8 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
 function savedPrefs(): Partial<Prefs> {
   const stored = readJson<unknown>(PREFS_KEY);
   const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
+  // The favourites list was removed; an old save still carries it.
+  delete (saved as Record<string, unknown>).modelFavorites;
   const panelTab = RIGHT_TAB_IDS.includes(saved.panelTab as RightTab) ? (saved.panelTab as RightTab) : null;
   const tabs = cleanTabs(saved.panelTabOrder, saved.panelTabsClosed);
   const grouping = saved.projectGrouping;

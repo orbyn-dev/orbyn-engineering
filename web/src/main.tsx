@@ -15,6 +15,7 @@ import "./styles/toolcalls.css";
 import "./styles/detailsCard.css";
 import "./styles/tools.css";
 import "./styles/panelTabs.css";
+import "./styles/panelStrip.css";
 import "./styles/pages.css";
 import "./styles/layouts.css";
 import "./styles/selection.css";

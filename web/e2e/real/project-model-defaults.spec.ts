@@ -135,11 +135,11 @@ test("Escape closes only the model picker inside the settings page, including fr
       await trigger.click();
       const picker = page.getByRole("dialog", { name: "Choose a model" });
       await expect(picker).toBeVisible();
-      const search = picker.getByRole("textbox", { name: "Search models" });
+      const search = picker.getByRole("combobox", { name: "Search models" });
       await expect(search).toBeFocused();
       if (focus === "provider") {
-        await search.press("Shift+Tab");
-        await expect(picker.getByRole("toolbar", { name: "Providers" }).locator("[aria-pressed=true]")).toBeFocused();
+        await search.press("Tab");
+        await expect(picker.getByRole("button", { pressed: true })).toBeFocused();
       }
       await page.keyboard.press("Escape");
       await expect(picker).toHaveCount(0);

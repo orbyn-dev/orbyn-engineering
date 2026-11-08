@@ -12,18 +12,15 @@ import { DiffPanel } from "./DiffPanel";
 import { FilesPanel } from "./FilesPanel";
 import { SideChatPane } from "./SideChatPane";
 import { ToolsTab } from "../tools/ToolsTab";
-import { fitTabs, tabOf, tabsChanged } from "./tabs";
+import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./panelWidth";
 import { useConnectionKind } from "../../state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 
-/** The More button: a 24px icon button. */
-const MORE_WIDTH = 24;
-/** The header's side padding, and the room the "+" takes with its margins. */
-const HEAD_PAD = 12;
-const PLUS_SPACE = 34;
-const MORE_MENU_WIDTH = 210;
+/** The strip's side padding (8 px each side), and the width of the "..." menu. */
+const STRIP_PAD = 16;
+const MORE_MENU_WIDTH = 190;
 /** The one line under "Waiting for the Orbyn service", by tab. The Browser is not here: it stays usable. */
 const WAITING_LINE: Partial<Record<RightTab, string>> = {
   diff: "The diff comes back when the service does.",
@@ -203,58 +200,59 @@ export function SurfacePane({
   const drawer = mode === "sheet" || (reading && mode === "docked");
 
   const list = useRef<HTMLDivElement>(null);
+  const strip = useRef<HTMLElement>(null);
   const kind = useConnectionKind();
-  // When the row is narrow, the tabs that don't fit fold into More; the open tab always stays.
-  const widths = useRef(new Map<RightTab, number>());
-  const [shown, setShown] = useState<readonly RightTab[]>(() => rowIds);
+  // Every tab is a fixed slot. When they don't fit, the last ones fold into "..."; the open tab always shows.
+  const [slots, setSlots] = useState(Number.POSITIVE_INFINITY);
+  const [promoted, setPromoted] = useState<RightTab | null>(null);
   const [plusMenu, setPlusMenu] = useState<{ x: number; y: number } | null>(null);
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState<RightTab | null>(null);
   const [over, setOver] = useState<RightTab | null>(null);
-  const folded = rowIds.some((id) => !shown.includes(id));
-  const changed = tabsChanged(order, closedTabs);
-  const latest = useRef({ tab, folded, ids: rowIds });
-  latest.current = { tab, folded, ids: rowIds };
+  const count = rowIds.length;
+  const latest = useRef({ count });
+  latest.current = { count };
   const refit = useCallback(() => {
-    const row = list.current;
-    if (!row) return;
-    // A tab is wider while it is the open one, so only the widths of tabs that are not open are kept for later.
-    const measured = new Map(widths.current);
-    for (const element of row.querySelectorAll<HTMLElement>("[data-tab]")) {
-      const id = element.dataset.tab as RightTab;
-      if (element.offsetWidth <= 0) continue;
-      if (id !== latest.current.tab) widths.current.set(id, element.offsetWidth);
-      measured.set(id, element.offsetWidth);
-    }
-    // What the tabs may take: the header less its padding, the "+" and the buttons at the end (the More button among them while it shows).
-    const head = row.parentElement;
-    const end = head?.querySelector<HTMLElement>(".head-end");
-    // A header with no width yet (not laid out, or hidden) folds nothing.
-    const room = !head || head.clientWidth === 0 ? Number.POSITIVE_INFINITY : head.clientWidth - HEAD_PAD - PLUS_SPACE - (end?.offsetWidth ?? 0) + (latest.current.folded ? MORE_WIDTH : 0);
-    const next = fitTabs(latest.current.ids, measured, room, MORE_WIDTH, latest.current.tab);
-    setShown((current) => (current.length === next.length && current.every((id, i) => id === next[i]) ? current : next));
+    const head = strip.current;
+    if (!head) return;
+    // A strip with no width yet (not laid out, or hidden) folds nothing.
+    if (head.clientWidth === 0) return setSlots(Number.POSITIVE_INFINITY);
+    const end = head.querySelector<HTMLElement>(".ctx-end");
+    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0);
+    setSlots(tabSlots(room, latest.current.count));
   }, []);
   useLayoutEffect(() => {
-    const row = list.current;
-    if (!row) return;
+    const head = strip.current;
+    if (!head) return;
     refit();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refit);
-    observer?.observe(row);
+    observer?.observe(head);
     return () => observer?.disconnect();
   }, [refit]);
-  const rowKey = rowIds.join();
-  useLayoutEffect(refit, [tab, rowKey, refit]);
+  useLayoutEffect(refit, [count, refit]);
+  // A hidden tab that became the open one by any route keeps the slot it took.
+  const { shown, hidden, holder } = visibleTabs(rowIds, tab, promoted, slots);
+  useLayoutEffect(() => {
+    if (holder !== promoted) setPromoted(holder);
+  }, [holder, promoted]);
+  const folded = hidden.length > 0;
+  const changed = tabsChanged(order, closedTabs);
 
   const reset: MenuItem = { label: "Reset tab order", icon: <RefreshCw size={14} aria-hidden />, separatorBefore: true, onSelect: resetTabs };
-  const hiddenTabs: MenuItem[] = [
-    ...rowIds
-      .filter((id) => !shown.includes(id))
-      .map((id) => {
-        const { label, icon: Icon } = tabOf(id);
-        return { label, icon: <Icon size={14} aria-hidden />, onSelect: () => toggle(id) };
-      }),
-    ...(changed ? [reset] : []),
-  ];
+  // The "..." menu: the tabs that do not fit, by name. The one chosen takes the last visible slot.
+  const hiddenTabs: MenuItem[] = hidden.map((id) => {
+    const { label, icon: Icon } = tabOf(id);
+    return {
+      label,
+      icon: <Icon size={14} aria-hidden />,
+      onSelect: () => {
+        setPromoted(id);
+        toggle(id);
+        focusTab(id);
+      },
+    };
+  });
   // The "+" lists the closed surfaces, and Reset tab order once the row has changed.
   const closedItems: MenuItem[] = [
     ...order
@@ -274,20 +272,23 @@ export function SurfacePane({
   const closeWithFocus = (id: RightTab) => {
     const at = rowIds.indexOf(id);
     const neighbour = rowIds[at + 1] ?? rowIds[at - 1];
+    // A neighbour folded into "..." has no slot to hold focus: the tab that opens takes the last slot.
+    const hiddenNext = neighbour !== undefined && !shown.includes(neighbour);
     const target =
       (neighbour ? list.current?.querySelector<HTMLElement>(`#${TAB_ID}${neighbour}`) : null) ?? plusButton.current ?? list.current;
     const back = captureFocusReturn(target);
     flushSync(() => closeTab(id));
     back.restore();
+    if (hiddenNext) requestAnimationFrame(() => list.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus());
     setSaid("Tab closed");
   };
   // One Tab stop: the chosen tab. Arrows move between tabs, Delete closes one, Alt+Shift+Arrow moves it.
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    const at = rowIds.indexOf(tab);
+    const at = shown.indexOf(tab);
     const current = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as RightTab | undefined;
     if (!current) return;
     if (event.altKey && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-      const neighbour = rowIds[rowIds.indexOf(current) + (event.key === "ArrowLeft" ? -1 : 1)];
+      const neighbour = shown[shown.indexOf(current) + (event.key === "ArrowLeft" ? -1 : 1)];
       if (!neighbour) return;
       event.preventDefault();
       moveTab(current, order.indexOf(neighbour));
@@ -301,18 +302,20 @@ export function SurfacePane({
       return;
     }
     const next =
-      event.key === "ArrowRight" ? (at + 1) % rowIds.length
-      : event.key === "ArrowLeft" ? (at - 1 + rowIds.length) % rowIds.length
+      event.key === "ArrowRight" ? (at + 1) % shown.length
+      : event.key === "ArrowLeft" ? (at - 1 + shown.length) % shown.length
       : event.key === "Home" ? 0
-      : event.key === "End" ? rowIds.length - 1
+      : event.key === "End" ? shown.length - 1
       : -1;
-    const target = rowIds[next];
+    const target = shown[next];
     if (!target) return;
     event.preventDefault();
+    // The tab already open stays open: toggle would close the panel.
+    if (target === tab) return;
     toggle(target);
     focusTab(target);
   };
-  const onDrop = (event: DragEvent<HTMLDivElement>, onto: RightTab) => {
+  const onDrop = (event: DragEvent<HTMLElement>, onto: RightTab) => {
     event.preventDefault();
     if (dragging && dragging !== onto) {
       moveTab(dragging, order.indexOf(onto));
@@ -351,21 +354,30 @@ export function SurfacePane({
         </header>
       ) : null}
       {details}
-      <header className="context-head">
-        <div ref={list} className="tabs" role="tablist" aria-label="Context" onKeyDown={onTabKey}>
-          {rowIds.filter((id) => shown.includes(id)).map((id) => {
+      <header ref={strip} className="ctx-strip">
+        <div ref={list} className="ctx-tabs" role="tablist" aria-label="Panel tabs" onKeyDown={onTabKey}>
+          {shown.map((id) => {
             const { label, icon: Icon } = tabOf(id);
-            const offline = kind === "offline" && NEEDS_NETWORK.includes(id);
             return (
-              <div
+              <button
                 key={id}
-                className="ptab"
+                type="button"
+                role="tab"
+                className="ctx-slot"
+                id={`${TAB_ID}${id}`}
                 data-tab={id}
+                data-tip={label}
                 data-selected={tab === id || undefined}
                 data-dragging={dragging === id || undefined}
                 data-over={over === id && dragging !== id ? "" : undefined}
-                data-offline={offline ? "" : undefined}
+                aria-label={label}
+                aria-selected={tab === id}
+                aria-controls={tab === id ? `context-${id}` : undefined}
+                tabIndex={tab === id ? 0 : -1}
                 draggable
+                onClick={() => {
+                  if (tab !== id) toggle(id);
+                }}
                 onDragStart={(event) => {
                   setDragging(id);
                   event.dataTransfer?.setData("text/plain", id);
@@ -384,86 +396,89 @@ export function SurfacePane({
                 }}
                 onDrop={(event) => onDrop(event, id)}
               >
-                <button
-                  type="button"
-                  role="tab"
-                  id={`${TAB_ID}${id}`}
-                  aria-label={label}
-                  aria-selected={tab === id}
-                  tabIndex={tab === id ? 0 : -1}
-                  aria-controls={tab === id ? `context-${id}` : undefined}
-                  onClick={() => {
-                    if (tab !== id) toggle(id);
-                  }}
-                >
-                  <Icon size={14} aria-hidden />
-                  <span className="ptl">{label}</span>
-                  {offline ? <CloudOff size={12} aria-hidden /> : null}
-                </button>
-                {rowIds.length > 1 ? (
-                  <button type="button" className="ptx" tabIndex={-1} aria-label={`Close ${label} tab`} title={`Close ${label}`} onClick={() => closeWithFocus(id)}>
-                    <X size={11} aria-hidden />
-                  </button>
-                ) : null}
-              </div>
+                <Icon size={14} aria-hidden />
+              </button>
             );
           })}
         </div>
-        {(
-          <IconButton
-            ref={plusButton}
-            className="padd"
-            label="Open a tab"
-            pressed={plusMenu !== null}
+        {folded ? (
+          <button
+            type="button"
+            className="ctx-slot"
+            data-tip="More tabs"
+            aria-label="More tabs"
             aria-haspopup="menu"
+            aria-expanded={moreMenu !== null}
+            data-open={moreMenu !== null || undefined}
             onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
-              setPlusMenu(plusMenu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
+              setMoreMenu(moreMenu ? null : { x: rect.right - MORE_MENU_WIDTH, y: rect.bottom + 4 });
             }}
           >
-            <Plus size={14} aria-hidden />
-          </IconButton>
-        )}
-        <div className="head-end">
-          {folded ? (
-            <IconButton
-              label="More tabs"
-              pressed={moreMenu !== null}
-              aria-haspopup="menu"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setMoreMenu(moreMenu ? null : { x: rect.right - MORE_MENU_WIDTH, y: rect.bottom + 4 });
-              }}
-            >
-              <MoreHorizontal size={16} aria-hidden />
-            </IconButton>
-          ) : null}
+            <MoreHorizontal size={14} aria-hidden />
+          </button>
+        ) : null}
+        <button
+          ref={plusButton}
+          type="button"
+          className="ctx-slot"
+          data-tip="Open a tab"
+          aria-label="Open a tab"
+          aria-haspopup="menu"
+          aria-expanded={plusMenu !== null}
+          data-open={plusMenu !== null || undefined}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setPlusMenu(plusMenu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
+          }}
+        >
+          <Plus size={14} aria-hidden />
+        </button>
+        <div className="ctx-end">
           {drawer ? null : (
             <>
               <IconButton label={maximized ? "Restore" : "Maximise panel"} onClick={onToggleMaximize}>
-                {maximized ? <Minimize2 size={16} aria-hidden /> : <Maximize2 size={16} aria-hidden />}
+                {maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
               </IconButton>
               <IconButton label="Close side panel" onClick={onReturn}>
-                <X size={16} aria-hidden />
+                <X size={14} aria-hidden />
               </IconButton>
             </>
           )}
         </div>
       </header>
+      <div className="ctx-title">
+        <b>{tabOf(tab).label}</b>
+        {rowIds.length > 1 ? (
+          <IconButton
+            label="Tab menu"
+            pressed={tabMenu !== null}
+            aria-haspopup="menu"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setTabMenu(tabMenu ? null : { x: rect.right - 160, y: rect.bottom + 4 });
+            }}
+          >
+            <MoreHorizontal size={14} aria-hidden />
+          </IconButton>
+        ) : null}
+      </div>
       <Presence>
         {plusMenu ? (
           <Menu x={plusMenu.x} y={plusMenu.y} label="Open a tab" items={closedItems} onClose={() => setPlusMenu(null)} />
         ) : null}
       </Presence>
       <Presence>
-        {moreMenu ? (
+        {moreMenu ? <Menu x={moreMenu.x} y={moreMenu.y} label="More tabs" items={hiddenTabs} onClose={() => setMoreMenu(null)} /> : null}
+      </Presence>
+      <Presence>
+        {tabMenu ? (
           <Menu
-            x={moreMenu.x}
-            y={moreMenu.y}
-            label="Hidden tabs"
-            heading="Hidden tabs"
-            items={hiddenTabs}
-            onClose={() => setMoreMenu(null)}
+            x={tabMenu.x}
+            y={tabMenu.y}
+            label="Tab menu"
+            items={[{ label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) }]}
+            onClose={() => setTabMenu(null)}
           />
         ) : null}
       </Presence>

@@ -103,6 +103,18 @@ describe("thread layouts", () => {
   });
 });
 
+describe("saved preferences", () => {
+  it("load with the removed modelFavorites field, ignore it and do not save it again", async () => {
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ modelFavorites: ["codex:x"], panelOpen: true }));
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi;
+    expect(fresh.getState().panelOpen).toBe(true);
+    expect("modelFavorites" in fresh.getState()).toBe(false);
+    fresh.getState().setPanelWidth(400);
+    expect(localStorage.getItem("orbyn.prefs.v1")).not.toContain("modelFavorites");
+  });
+});
+
 describe("panel tab row", () => {
   it("remembers each thread's order and closed set", () => {
     ui().setLayoutKey("a");

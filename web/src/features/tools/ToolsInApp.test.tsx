@@ -27,7 +27,8 @@ it("the details card's Tools row counts what is ready, names what is not, and op
   expect(tab).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("region", { name: "Your MCP servers" })).toBeInTheDocument();
   // It closes like any other tab.
-  await user.click(screen.getByRole("button", { name: "Close Tools tab" }));
+  await user.click(screen.getByRole("button", { name: "Tab menu" }));
+  await user.click(screen.getByRole("menuitem", { name: "Close tab" }));
   expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
 });
 
