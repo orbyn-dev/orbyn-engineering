@@ -17,8 +17,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function setup() {
-  const view = render(<div data-testid="pane"><PaneResizer /></div>);
+function setup(drawer = false) {
+  const view = render(<div data-testid="pane"><PaneResizer drawer={drawer} /></div>);
   const pane = screen.getByTestId("pane");
   vi.spyOn(pane, "getBoundingClientRect").mockImplementation(() => ({ right: 1200, width: Number.parseFloat(pane.style.width) || 500 }) as DOMRect);
   return { ...view, pane, handle: screen.getByRole("separator", { name: "Resize panel" }) };
@@ -88,6 +88,16 @@ it("does not save a drag into a different thread layout", () => {
   act(() => useUi.setState({ layoutKey: "another-thread" }));
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(useUi.getState().panelWidth).toBeNull();
+  // The destination has no saved width, so the pane shows the default it renders with.
+  expect(pane.style.width).toBe("380px");
+});
+
+it("leaves a drawer's width to its stylesheet when the destination has no saved width", () => {
+  const { pane, handle } = setup(true);
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
+  act(() => useUi.setState({ layoutKey: "another-thread" }));
+  fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(pane.style.width).toBe("");
 });
 

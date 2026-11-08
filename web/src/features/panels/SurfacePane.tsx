@@ -50,11 +50,18 @@ interface PaneDrag {
  * and staying between 320 px and 60% of the window; a pill shows the width and faint ticks mark the
  * snap points while it moves. Double click returns to 380 px. The width is saved when the drag ends.
  */
-export function PaneResizer() {
+export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
   const setWidth = useUi((state) => state.setPanelWidth);
   const layoutKey = useUi((state) => state.layoutKey);
   const [dragging, setDragging] = useState<number | null>(null);
   const drag = useRef<PaneDrag | null>(null);
+  // What the pane renders for a thread's width: the same rule as its style, so a restore never differs from a render.
+  const widthOf = (panelWidth: number | null) => {
+    const width = panelWidth ?? (drawer ? undefined : PANEL_DEFAULT);
+    return width === undefined ? "" : `${width}px`;
+  };
+  const widthOfRef = useRef(widthOf);
+  widthOfRef.current = widthOf;
 
   /** Lets go of the pointer and clears the drag's marks on the pane. */
   const release = (active: PaneDrag) => {
@@ -72,7 +79,7 @@ export function PaneResizer() {
     setDragging(null);
     const current = useUi.getState();
     if (current.layoutKey !== active.layoutKey) {
-      active.pane.style.width = current.panelWidth === null ? "" : `${current.panelWidth}px`;
+      active.pane.style.width = widthOfRef.current(current.panelWidth);
     } else if (active.writtenWidth !== null && active.pane.style.width === active.writtenWidth) {
       active.pane.style.width = active.startWidth;
     }
@@ -85,7 +92,7 @@ export function PaneResizer() {
     setDragging(null);
     const current = useUi.getState();
     if (current.layoutKey === active.layoutKey) setWidth(active.current);
-    else active.pane.style.width = current.panelWidth === null ? "" : `${current.panelWidth}px`;
+    else active.pane.style.width = widthOfRef.current(current.panelWidth);
   };
 
   return (
@@ -323,7 +330,7 @@ export function SurfacePane({
       data-mode={mode}
       style={mode !== "sheet" && !maximized ? { width: width ?? (drawer ? undefined : PANEL_DEFAULT) } : undefined}
     >
-      {mode === "sheet" || maximized ? null : <PaneResizer />}
+      {mode === "sheet" || maximized ? null : <PaneResizer drawer={drawer} />}
       {drawer ? (
         <header className="drawer-head">
           <Button small onClick={onReturn}>
