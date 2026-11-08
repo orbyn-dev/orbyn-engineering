@@ -661,7 +661,7 @@ export function Shell() {
       }}>
         Skip to content
       </a>
-      <TitleBar route={route} layout={layout} />
+      <TitleBar layout={layout} />
       {small && drawerOpen ? <div className="drawer-scrim" aria-hidden onClick={dismissDrawer} /> : null}
       {showNav ? (
         small ? (
