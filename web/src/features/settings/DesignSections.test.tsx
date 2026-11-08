@@ -79,3 +79,29 @@ it("shows the app icon on About, not a lettered placeholder tile", async () => {
   expect(logo).toHaveAttribute("src", "/favicon.svg");
   expect(container.querySelector("span.set-logo")).toBeNull();
 });
+
+it("labels every action and context in words, keeps the ids in a tooltip, copies an id from the row menu, and searches both", async () => {
+  vi.mocked(request).mockResolvedValue({
+    path: "/tmp/keybindings.json", issues: [], conflicts: [],
+    rules: [
+      { key: "mod+b", command: "sidebar.toggle", when: null, remove: false },
+      { key: "mod+j", command: "rightPanel.new", when: "rightPanelOpen && terminalFocus", remove: false },
+    ],
+  });
+  const user = userEvent.setup();
+  // user-event installs its own clipboard on setup, so the stand-in goes in after it.
+  const write = vi.fn(async () => undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
+  render(<KeybindingsSection />);
+  const label = await screen.findByText("Toggle sidebar");
+  expect(label).toHaveAttribute("title", "sidebar.toggle");
+  expect(screen.queryByText("sidebar.toggle")).toBeNull();
+  expect(screen.getByText("New right panel tab")).toBeVisible();
+  expect(screen.getByText("Anywhere")).toBeVisible();
+  expect(screen.getByText("When the right panel is open and the terminal is focused")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "More for New right panel tab" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Copy id" }));
+  expect(write).toHaveBeenCalledWith("rightPanel.new");
+  await user.type(screen.getByRole("textbox", { name: "Filter keybindings" }), "rightPanel.new");
+  expect(screen.queryByText("Toggle sidebar")).toBeNull();
+});
