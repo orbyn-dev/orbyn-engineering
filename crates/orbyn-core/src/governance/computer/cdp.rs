@@ -1,6 +1,7 @@
 //! Chrome DevTools Protocol against an installed Chrome or Edge, using a
 //! dedicated profile directory so the user's own browser data is never touched.
 
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -221,6 +222,8 @@ pub struct BrowserSession {
     _child: Option<ManagedChild>,
     /// Events a caller asked to keep, which would otherwise pass unread between replies.
     kept: Vec<Value>,
+    /// Navigation signals received before the corresponding command reply.
+    navigation_events: VecDeque<Value>,
 }
 
 /// The events a preview's bridge reads: a file chooser and a download's progress.
@@ -252,6 +255,52 @@ fn keep_event(kept: &mut Vec<Value>, event: Value) {
     kept.push(event);
 }
 
+/// Follows one `Page.navigate` to its `load`. A page may redirect before that load (a
+/// `location.replace`, a meta refresh, an auth bounce), so a main-frame commit with a newer
+/// loader moves the wait to that loader; the first loader would never load.
+struct NavigationWait {
+    frame: String,
+    /// None for a same-document navigation, which ends on `Page.navigatedWithinDocument`.
+    loader: Option<String>,
+}
+
+impl NavigationWait {
+    fn new(frame: &str, loader: Option<&str>) -> Self {
+        Self {
+            frame: frame.to_owned(),
+            loader: loader.map(str::to_owned),
+        }
+    }
+
+    /// Whether this event says the navigation is ready.
+    fn observe(&mut self, event: &Value) -> bool {
+        let params = &event["params"];
+        match event["method"].as_str() {
+            Some("Page.frameNavigated") => {
+                let frame = &params["frame"];
+                if self.loader.is_some()
+                    && frame.get("parentId").is_none()
+                    && frame["id"].as_str() == Some(self.frame.as_str())
+                    && let Some(loader) = frame["loaderId"].as_str()
+                {
+                    self.loader = Some(loader.to_owned());
+                }
+                false
+            }
+            Some("Page.lifecycleEvent") => {
+                params["frameId"].as_str() == Some(self.frame.as_str())
+                    && params["name"] == "load"
+                    && self.loader.is_some()
+                    && params["loaderId"].as_str() == self.loader.as_deref()
+            }
+            Some("Page.navigatedWithinDocument") => {
+                self.loader.is_none() && params["frameId"].as_str() == Some(self.frame.as_str())
+            }
+            _ => false,
+        }
+    }
+}
+
 impl BrowserSession {
     pub async fn launch(path: &Path, profile: &Path, options: LaunchOptions) -> Result<Self> {
         std::fs::create_dir_all(profile)?;
@@ -274,10 +323,8 @@ impl BrowserSession {
         #[cfg(unix)]
         command.process_group(0);
         crate::host::child_env::for_tool(command.as_std_mut());
-        let child = ManagedChild::spawn(command)?;
-        let url = tokio::time::timeout(START_TIMEOUT, read_port_file(&port_file))
-            .await
-            .map_err(|_| failed("the browser did not open its debugging port"))?;
+        let mut child = ManagedChild::spawn(command)?;
+        let url = wait_for_port(&mut child, &port_file).await?;
         Self::connect(&url, Some(child)).await
     }
 
@@ -292,6 +339,7 @@ impl BrowserSession {
             on_document_change: None,
             _child: child,
             kept: Vec::new(),
+            navigation_events: VecDeque::new(),
         };
         let targets = session.browser_call("Target.getTargets", json!({})).await?;
         let page = targets
@@ -325,6 +373,9 @@ impl BrowserSession {
             .ok_or_else(|| failed("no page session"))?
             .to_owned();
         session.call("Page.enable", json!({})).await?;
+        session
+            .call("Page.setLifecycleEventsEnabled", json!({ "enabled": true }))
+            .await?;
         let tree = session.call("Page.getFrameTree", json!({})).await?;
         if let Some(id) = tree.pointer("/frameTree/frame/id").and_then(Value::as_str) {
             session.document.frame = id.to_owned();
@@ -341,11 +392,32 @@ impl BrowserSession {
     }
 
     fn note_document(&mut self, event: &Value) {
-        if event.get("sessionId").and_then(Value::as_str) == Some(self.session_id.as_str())
-            && self.document.note(event)
-            && let Some(notify) = &self.on_document_change
-        {
-            notify();
+        if event.get("sessionId").and_then(Value::as_str) == Some(self.session_id.as_str()) {
+            if self.document.note(event)
+                && let Some(notify) = &self.on_document_change
+            {
+                notify();
+            }
+            if self.is_navigation_signal(event) {
+                if self.navigation_events.len() == MAX_KEPT {
+                    self.navigation_events.pop_front();
+                }
+                self.navigation_events.push_back(event.clone());
+            }
+        }
+    }
+
+    /// Only the main frame's signals can end a navigation, so a busy iframe cannot push
+    /// them out of the buffer.
+    fn is_navigation_signal(&self, event: &Value) -> bool {
+        let params = &event["params"];
+        let main = self.document.frame.as_str();
+        match event.get("method").and_then(Value::as_str) {
+            Some("Page.frameNavigated") => params["frame"].get("parentId").is_none(),
+            Some("Page.lifecycleEvent" | "Page.navigatedWithinDocument") => {
+                main.is_empty() || params["frameId"].as_str() == Some(main)
+            }
+            _ => false,
         }
     }
 
@@ -450,12 +522,48 @@ impl BrowserSession {
     }
 
     pub async fn navigate(&mut self, url: &str) -> Result<Value> {
+        self.navigation_events.clear();
         let reply = self.call("Page.navigate", json!({ "url": url })).await?;
         if let Some(error) = reply.get("errorText").and_then(Value::as_str) {
             return Err(failed(error));
         }
-        self.wait_for_load(LOAD_TIMEOUT).await;
+        // A reply without a frame is the main frame.
+        let frame = reply
+            .get("frameId")
+            .and_then(Value::as_str)
+            .map_or_else(|| self.document.frame.clone(), str::to_owned);
+        let loader = reply.get("loaderId").and_then(Value::as_str);
+        self.wait_for_navigation(&frame, loader).await;
         Ok(json!({ "url": self.current_url().await? }))
+    }
+
+    /// Correlate readiness with this navigation, including signals received while
+    /// awaiting Page.navigate's reply. A stale load from another loader is not readiness.
+    async fn wait_for_navigation(&mut self, frame: &str, loader: Option<&str>) {
+        let mut wait = NavigationWait::new(frame, loader);
+        let buffered = std::mem::take(&mut self.navigation_events);
+        if buffered.iter().any(|event| wait.observe(event)) {
+            return;
+        }
+        let _ = tokio::time::timeout(LOAD_TIMEOUT, async {
+            while let Some(Ok(message)) = self.socket.next().await {
+                let Ok(text) = message.to_text() else {
+                    continue;
+                };
+                let Ok(event) = serde_json::from_str::<Value>(text) else {
+                    continue;
+                };
+                self.note_document(&event);
+                if event.get("sessionId").and_then(Value::as_str) == Some(self.session_id.as_str())
+                    && wait.observe(&event)
+                {
+                    return;
+                }
+                keep_event(&mut self.kept, event);
+            }
+        })
+        .await;
+        self.navigation_events.clear();
     }
 
     /// Load completion is best effort; a slow page is still navigated.
@@ -720,9 +828,275 @@ async fn read_port_file(path: &Path) -> String {
     }
 }
 
+async fn wait_for_port(child: &mut ManagedChild, path: &Path) -> Result<String> {
+    tokio::time::timeout(START_TIMEOUT, async {
+        tokio::select! {
+            biased;
+            status = child.wait() => Err(failed(format!("the browser exited before opening its debugging port: {}", status.map_err(failed)?))),
+            url = read_port_file(path) => Ok(url),
+        }
+    })
+    .await
+    .map_err(|_| failed("the browser did not open its debugging port"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn navigation_observes_load_before_the_command_reply() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while let Some(Ok(frame)) = socket.next().await {
+                let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                let result = match request["method"].as_str().unwrap() {
+                    "Target.getTargets" => {
+                        json!({"targetInfos": [{"type": "page", "targetId": "target"}]})
+                    }
+                    "Target.attachToTarget" => json!({"sessionId": "session"}),
+                    "Page.getFrameTree" => json!({"frameTree": {"frame": {"id": "main"}}}),
+                    "Page.navigate" => {
+                        socket.send(Message::text(json!({"sessionId":"session", "method":"Page.loadEventFired", "params":{}}).to_string())).await.unwrap();
+                        socket.send(Message::text(json!({"sessionId":"session", "method":"Page.lifecycleEvent", "params":{"frameId":"main", "loaderId":"old", "name":"load"}}).to_string())).await.unwrap();
+                        socket.send(Message::text(json!({"sessionId":"session", "method":"Page.lifecycleEvent", "params":{"frameId":"main", "loaderId":"loader", "name":"load"}}).to_string())).await.unwrap();
+                        json!({"frameId":"main", "loaderId":"loader"})
+                    }
+                    "Runtime.evaluate" => json!({"result":{"value":"http://example.test/"}}),
+                    _ => json!({}),
+                };
+                socket
+                    .send(Message::text(
+                        json!({"id":request["id"], "result":result}).to_string(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut session = BrowserSession::connect(&format!("ws://{address}"), None)
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            session.navigate("http://example.test/"),
+        )
+        .await;
+        drop(session);
+        server.await.unwrap();
+        assert_eq!(result.unwrap().unwrap()["url"], "http://example.test/");
+    }
+
+    #[test]
+    fn navigation_readiness_matches_its_frame_and_loader() {
+        let load = |frame: &str, loader: &str| json!({"method":"Page.lifecycleEvent", "params":{"frameId":frame, "loaderId":loader, "name":"load"}});
+        assert!(NavigationWait::new("main", Some("current")).observe(&load("main", "current")));
+        assert!(!NavigationWait::new("main", Some("old")).observe(&load("main", "current")));
+        assert!(!NavigationWait::new("main", Some("current")).observe(&load("child", "current")));
+        let same = json!({"method":"Page.navigatedWithinDocument", "params":{"frameId":"main"}});
+        assert!(NavigationWait::new("main", None).observe(&same));
+        assert!(!NavigationWait::new("child", None).observe(&same));
+        // A same-document event does not end a wait for a loader.
+        assert!(!NavigationWait::new("main", Some("current")).observe(&same));
+    }
+
+    #[test]
+    fn navigation_follows_a_main_frame_redirect_to_its_new_loader() {
+        let committed = |frame: &str, loader: &str, parent: Option<&str>| {
+            let mut frame = json!({"id":frame, "loaderId":loader});
+            if let Some(parent) = parent {
+                frame["parentId"] = json!(parent);
+            }
+            json!({"method":"Page.frameNavigated", "params":{"frame":frame}})
+        };
+        let load = |loader: &str| json!({"method":"Page.lifecycleEvent", "params":{"frameId":"main", "loaderId":loader, "name":"load"}});
+        let mut wait = NavigationWait::new("main", Some("first"));
+        // An iframe's commit never moves the wait.
+        assert!(!wait.observe(&committed("main", "frame", Some("parent"))));
+        assert!(!wait.observe(&committed("child", "other", None)));
+        assert!(!wait.observe(&committed("main", "second", None)));
+        assert!(!wait.observe(&load("first")));
+        assert!(wait.observe(&load("second")));
+    }
+
+    #[tokio::test]
+    async fn navigation_waits_for_its_own_later_load_or_same_document_event() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut navigation = 0;
+            while let Some(Ok(frame)) = socket.next().await {
+                let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                let result = match request["method"].as_str().unwrap() {
+                    "Target.getTargets" => {
+                        json!({"targetInfos":[{"type":"page","targetId":"target"}]})
+                    }
+                    "Target.attachToTarget" => json!({"sessionId":"session"}),
+                    "Page.getFrameTree" => json!({"frameTree":{"frame":{"id":"main"}}}),
+                    "Page.navigate" => {
+                        navigation += 1;
+                        let result = if navigation == 1 {
+                            json!({"frameId":"main","loaderId":"new"})
+                        } else {
+                            json!({"frameId":"main"})
+                        };
+                        socket
+                            .send(Message::text(
+                                json!({"id":request["id"],"result":result}).to_string(),
+                            ))
+                            .await
+                            .unwrap();
+                        let unrelated = if navigation == 1 {
+                            json!({"sessionId":"session","method":"Page.lifecycleEvent","params":{"frameId":"main","loaderId":"old","name":"load"}})
+                        } else {
+                            json!({"sessionId":"other","method":"Page.navigatedWithinDocument","params":{"frameId":"main"}})
+                        };
+                        socket
+                            .send(Message::text(unrelated.to_string()))
+                            .await
+                            .unwrap();
+                        assert!(
+                            tokio::time::timeout(Duration::from_millis(50), socket.next())
+                                .await
+                                .is_err(),
+                            "unrelated event completed navigation"
+                        );
+                        let matching = if navigation == 1 {
+                            json!({"sessionId":"session","method":"Page.lifecycleEvent","params":{"frameId":"main","loaderId":"new","name":"load"}})
+                        } else {
+                            json!({"sessionId":"session","method":"Page.navigatedWithinDocument","params":{"frameId":"main"}})
+                        };
+                        socket
+                            .send(Message::text(matching.to_string()))
+                            .await
+                            .unwrap();
+                        continue;
+                    }
+                    "Runtime.evaluate" => json!({"result":{"value":"http://example.test/"}}),
+                    _ => json!({}),
+                };
+                socket
+                    .send(Message::text(
+                        json!({"id":request["id"],"result":result}).to_string(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut session = BrowserSession::connect(&format!("ws://{address}"), None)
+            .await
+            .unwrap();
+        for url in ["http://example.test/", "http://example.test/#anchor"] {
+            tokio::time::timeout(Duration::from_secs(3), session.navigate(url))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        drop(session);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn navigation_that_redirects_before_load_is_ready_on_the_new_loader() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut navigation = 0;
+            while let Some(Ok(frame)) = socket.next().await {
+                let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                let signal = |method: &str, params: Value| {
+                    Message::text(
+                        json!({"sessionId":"session","method":method,"params":params}).to_string(),
+                    )
+                };
+                let result = match request["method"].as_str().unwrap() {
+                    "Target.getTargets" => {
+                        json!({"targetInfos":[{"type":"page","targetId":"target"}]})
+                    }
+                    "Target.attachToTarget" => json!({"sessionId":"session"}),
+                    "Page.getFrameTree" => json!({"frameTree":{"frame":{"id":"main"}}}),
+                    "Page.navigate" => {
+                        navigation += 1;
+                        let reply = Message::text(
+                            json!({"id":request["id"],"result":{"frameId":"main","loaderId":"first"}})
+                                .to_string(),
+                        );
+                        let redirect = signal(
+                            "Page.frameNavigated",
+                            json!({"frame":{"id":"main","loaderId":"second","url":"http://example.test/next"}}),
+                        );
+                        let load = signal(
+                            "Page.lifecycleEvent",
+                            json!({"frameId":"main","loaderId":"second","name":"load"}),
+                        );
+                        // The redirect either follows the reply or beats it.
+                        if navigation == 1 {
+                            socket.send(reply).await.unwrap();
+                            socket.send(redirect).await.unwrap();
+                            socket.send(load).await.unwrap();
+                        } else {
+                            socket.send(redirect).await.unwrap();
+                            socket.send(load).await.unwrap();
+                            socket.send(reply).await.unwrap();
+                        }
+                        continue;
+                    }
+                    "Runtime.evaluate" => json!({"result":{"value":"http://example.test/next"}}),
+                    _ => json!({}),
+                };
+                socket
+                    .send(Message::text(
+                        json!({"id":request["id"],"result":result}).to_string(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut session = BrowserSession::connect(&format!("ws://{address}"), None)
+            .await
+            .unwrap();
+        // Well inside LOAD_TIMEOUT: a wait on the first loader would stall for all of it.
+        for _ in 0..2 {
+            let result = tokio::time::timeout(
+                Duration::from_secs(3),
+                session.navigate("http://example.test/start"),
+            )
+            .await
+            .expect("a redirected navigation stalled until the load timeout")
+            .unwrap();
+            assert_eq!(result["url"], "http://example.test/next");
+        }
+        drop(session);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_exit_during_startup_is_reported_without_waiting_for_timeout() {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("--list")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = ManagedChild::spawn(command).unwrap();
+        let path = std::env::temp_dir().join(format!("missing-port-{}", crate::util::new_id()));
+        let result = tokio::time::timeout(Duration::from_secs(5), wait_for_port(&mut child, &path))
+            .await
+            .unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("exited before opening its debugging port")
+        );
+    }
 
     #[tokio::test]
     async fn navigation_during_dispatch_and_capture_is_seen_before_the_reply() {
