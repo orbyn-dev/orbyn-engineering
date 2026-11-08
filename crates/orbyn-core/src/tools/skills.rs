@@ -276,6 +276,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn each_skill_carries_the_category_the_catalog_gives_it_in_the_catalogs_order() {
+        let (_dir, service) = fixture().await;
+        let status = service.status().await.unwrap();
+        let listed: Vec<(&str, &str)> = status
+            .skills
+            .iter()
+            .map(|skill| (skill.name.as_str(), skill.category.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("how", "Engineering practice"),
+                ("social-content", "Social content and visuals"),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn default_profile_filters_but_nothing_is_copied() {
         let (dir, service) = fixture().await;
         assert_eq!(service.profiles().unwrap()[0].skills, ["how"]);
