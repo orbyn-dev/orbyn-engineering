@@ -246,10 +246,18 @@ async fn a_claude_instance_passes_its_auto_compact_window_to_each_run() {
     assert_eq!(service.finished(&thread).await, "completed");
     // The completed turn may already have started the next one's process, with the
     // same settings.
-    let wide = json!({ "autoCompactWindow": 300000 });
+    // Every run's settings also carry the connector approval guard, so the window is
+    // read as a field.
+    let window = |one: &Value| one.get("autoCompactWindow").cloned();
     let sent = settings(&launches(&launch));
     assert!(
-        !sent.is_empty() && sent.iter().all(|one| *one == wide),
+        !sent.is_empty() && sent.iter().all(|one| window(one) == Some(json!(300000))),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter().all(|one| one["permissions"]["ask"]
+            .as_array()
+            .is_some_and(|ask| ask.contains(&json!("mcp__*")))),
         "{sent:?}"
     );
     let thread = service.thread(&project, "claude-plain").await;
@@ -257,8 +265,8 @@ async fn a_claude_instance_passes_its_auto_compact_window_to_each_run() {
     assert_eq!(service.finished(&thread).await, "completed");
     let sent = settings(&launches(&launch));
     assert!(
-        sent.iter().all(|one| *one == wide),
-        "an instance without a window passes no settings: {sent:?}"
+        sent.iter().any(|one| window(one).is_none()),
+        "an instance without a window passes none: {sent:?}"
     );
     // Out-of-range, malformed and non-Claude values never reach a launch.
     for bad in [
