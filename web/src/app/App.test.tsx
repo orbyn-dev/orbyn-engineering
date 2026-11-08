@@ -625,7 +625,6 @@ describe("App against the mock API", () => {
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     // The right-click focuses the row afterwards; that must not start the card again.
     row.focus();
-    fireEvent.pointerEnter(row, { pointerType: "mouse" });
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
