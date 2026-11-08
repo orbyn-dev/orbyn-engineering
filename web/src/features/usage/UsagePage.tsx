@@ -34,6 +34,8 @@ import {
 } from "./usageModel";
 
 const PREFS_KEY = "orbyn.usage.v1";
+/** Set once a usage report has loaded, so only the first visit says the history is being read. */
+const SEEN_KEY = "orbyn.usage.seen.v1";
 const CHART_COLORS = ["var(--color-text)", "var(--color-textSoft)", "var(--color-muted)", "var(--color-faint)"];
 
 const METRICS: { id: "cost" | "tokens"; label: string }[] = [
@@ -571,6 +573,10 @@ export function UsagePage() {
   const nameOf = (id: string) => engines?.find((engine) => engine.id === id)?.name ?? id;
 
   const usage = useUsageReport(days);
+  const [firstVisit] = useState(() => readJson<boolean>(SEEN_KEY) !== true);
+  useEffect(() => {
+    if (usage.data) writeJson(SEEN_KEY, true);
+  }, [usage.data]);
   // A load that finishes inside 400 ms shows the report with no motion. A longer one shows
   // the static skeleton first, and the report then fades in over it.
   const loadingFirst = usage.pending && !usage.data;
@@ -728,6 +734,12 @@ export function UsagePage() {
                 <div className="usage-data" data-reveal={revealed || undefined}>
                   <UsageView report={usage.data} metric={metric} days={days} only={only} nameOf={nameOf} onSaved={() => void usage.reload()} />
                   <ScanStatus report={usage.data} nameOf={nameOf} />
+                </div>
+              ) : usage.pending && firstVisit && skeletonShown ? (
+                // The first scan reads the whole history, which takes a while and happens once (usage-first-load).
+                <div className="usage-body usage-first" role="status">
+                  <p>Reading your history…</p>
+                  <p className="usage-note">This happens once.</p>
                 </div>
               ) : usage.pending ? (
                 <div className="usage-body"><Loading label="Loading usage" rows={4} /></div>

@@ -255,3 +255,28 @@ it("sets Limits 16px below the tabs, with the group label first", async () => {
   const css = (await import("node:fs")).readFileSync("src/features/usage/usage.css", "utf8");
   expect(css).toMatch(/\.usage-body\[data-limits\] \{\s*padding-top: 16px/);
 });
+
+it("says the history is being read, once: the first visit only, after the wait", async () => {
+  localStorage.removeItem("orbyn.usage.seen.v1");
+  const slow = deferred<UsageReport>();
+  vi.mocked(api.usage).mockReturnValue(slow.promise);
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const first = render(<UsagePage />);
+    expect(screen.queryByText("Reading your history…")).toBeNull();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(500)));
+    expect(screen.getByText("Reading your history…")).toBeVisible();
+    expect(screen.getByText("This happens once.")).toBeVisible();
+    await act(async () => slow.resolve(report(5)));
+    await waitFor(() => expect(localStorage.getItem("orbyn.usage.seen.v1")).toBe("true"));
+    first.unmount();
+    // A later visit uses the normal skeleton, not the sentence.
+    const again = deferred<UsageReport>();
+    vi.mocked(api.usage).mockReturnValue(again.promise);
+    render(<UsagePage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(500)));
+    expect(screen.queryByText("Reading your history…")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
