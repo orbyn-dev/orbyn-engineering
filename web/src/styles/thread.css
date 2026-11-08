@@ -2964,7 +2964,7 @@ button.detail-row:hover {
 .thread-find {
   position: absolute;
   z-index: 8;
-  top: 56px;
+  top: var(--topbar-h);
   right: 16px;
   display: flex;
   align-items: center;

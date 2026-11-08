@@ -27,10 +27,15 @@ export function doubleClickTracker(now: () => number = () => performance.now()) 
 }
 
 /**
- * The title bar's empty space drags the window, and a real double click on it zooms the window. This is ours
- * rather than Tauri's `data-tauri-drag-region` script, which takes the browser's click count: that count can
- * reach 2 across a button and the empty space, so two quick clicks at different spots zoomed the window.
- * Buttons and menus never reach the layer, and a click anywhere else forgets the first click.
+ * The title bar's empty space drags the window, and a real double click on it zooms the window, on the second
+ * press's release and only if the pointer has not moved, as macOS does. This is ours rather than Tauri's
+ * `data-tauri-drag-region` script, which takes the browser's click count: that count can reach 2 across a button
+ * and the empty space, so two quick clicks at different spots zoomed the window. Buttons and menus never reach the
+ * layer, and a click anywhere else forgets the first click.
+ *
+ * Two things the web view cannot read: the system's double-click interval (500 ms is the macOS default) and the
+ * "double-click a window's title bar" preference (AppleActionOnDoubleClick: Zoom, Minimize or None). A double click
+ * always zooms, the default; someone who set Minimize or None gets Zoom here.
  * Returns a stop function.
  */
 export function attachBarDrag(
@@ -39,13 +44,26 @@ export function attachBarDrag(
   now?: () => number,
 ): () => void {
   const tracker = doubleClickTracker(now);
+  /** Where the second press of a double click went down, until its release. */
+  let armed: { x: number; y: number } | null = null;
   const onDown = (event: MouseEvent) => {
+    armed = null;
     if (event.target !== layer) { tracker.reset(); return; }
     if (event.button !== 0 || !invoke) return;
     event.preventDefault();
-    if (tracker.click(event.clientX, event.clientY)) void invoke("plugin:window|internal_toggle_maximize");
+    if (tracker.click(event.clientX, event.clientY)) armed = { x: event.clientX, y: event.clientY };
     else void invoke("plugin:window|start_dragging");
   };
+  const onUp = (event: MouseEvent) => {
+    const down = armed;
+    armed = null;
+    if (!down || event.button !== 0 || !invoke) return;
+    if (Math.hypot(event.clientX - down.x, event.clientY - down.y) <= DOUBLE_CLICK_PX) void invoke("plugin:window|internal_toggle_maximize");
+  };
   document.addEventListener("mousedown", onDown, true);
-  return () => document.removeEventListener("mousedown", onDown, true);
+  document.addEventListener("mouseup", onUp, true);
+  return () => {
+    document.removeEventListener("mousedown", onDown, true);
+    document.removeEventListener("mouseup", onUp, true);
+  };
 }

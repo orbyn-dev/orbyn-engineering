@@ -66,3 +66,24 @@ test("the reading layout has one 44px bar band and no second row or duplicate he
   const header = await page.locator(".thread-main > .topbar").boundingBox();
   expect(header?.height).toBeLessThanOrEqual(46);
 });
+
+/** The bar's right end (environment pill, ledger's waiting count) never sits under the header's own actions. */
+for (const layout of ["console", "ledger"] as const) {
+  test(`the environment pill and the waiting count do not overlap the header actions (${layout})`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem("orbyn.prefs.v1", JSON.stringify(value)), { workspaceLayout: layout, environmentIdentification: "pill" });
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.goto("/__mock/scenario/default");
+    await page.goto("/#/threads/t-done");
+    const pill = page.locator(".titlebar-end .environment-identity");
+    await expect(pill).toBeVisible();
+    if (layout === "ledger") await expect(page.locator(".titlebar-waiting")).toBeVisible();
+    const end = await page.locator(".titlebar-end").boundingBox();
+    expect(end).not.toBeNull();
+    for (const action of [page.getByRole("button", { name: "Details" }), page.getByRole("button", { name: "Terminal" }), page.getByRole("button", { name: /^Git/ }), page.getByRole("button", { name: "More actions" })]) {
+      if (!(await action.count())) continue;
+      const box = await action.first().boundingBox();
+      if (box && end) expect(box.x + box.width, "an action stops short of the bar's right end").toBeLessThanOrEqual(end.x);
+    }
+    expect(await centreOf(pill)).toBeCloseTo(22, 0);
+  });
+}

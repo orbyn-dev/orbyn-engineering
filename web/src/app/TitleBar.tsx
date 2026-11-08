@@ -5,7 +5,7 @@ import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
 import { attentionRank } from "../features/workspace/groups";
 import { EnvironmentIdentity } from "../features/workspace/EnvironmentIdentity";
 import { useAsync } from "../lib/useAsync";
-import { navigate, type Route } from "../state/route";
+import { navigate } from "../state/route";
 import { useReadingNav } from "./readingNav";
 import { toggleSidebarDrawer, useSidebarDrawer } from "./sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
@@ -35,10 +35,35 @@ function useDragStrip(layer: React.RefObject<HTMLDivElement | null>) {
       const under = document.elementsFromPoint?.(event.clientX, event.clientY).find((element) => element !== node);
       if (under?.closest(INTERACTIVE) && !node.contains(under)) node.removeAttribute("data-hot");
       else node.setAttribute("data-hot", "");
+      // The layer takes the pointer over a page heading, so it carries that heading's tooltip (a long title is cut).
+      node.title = (!node.contains(under ?? null) && under?.closest("[title]")?.getAttribute("title")) || "";
     };
     document.addEventListener("pointermove", onMove, { passive: true });
     return () => document.removeEventListener("pointermove", onMove);
   }, [layer]);
+}
+
+/**
+ * Publishes the width the bar's right end takes (the environment pill, the ledger's waiting count) as `--bar-end-w`,
+ * so a page header's own right-hand actions stop short of it instead of sitting under it.
+ */
+function useBarEndWidth(node: React.RefObject<HTMLSpanElement | null>) {
+  useEffect(() => {
+    const element = node.current;
+    if (!element) return;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty("--bar-end-w", `${element.children.length > 0 ? Math.ceil(element.getBoundingClientRect().width) : 0}px`);
+    publish();
+    const watch = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publish);
+    watch?.observe(element);
+    const mutations = new MutationObserver(publish);
+    mutations.observe(element, { childList: true, subtree: true });
+    return () => {
+      watch?.disconnect();
+      mutations.disconnect();
+      root.style.removeProperty("--bar-end-w");
+    };
+  }, [node]);
 }
 
 /** True in the desktop app on macOS, where the window's traffic lights sit over the title bar. */
@@ -75,7 +100,7 @@ function useWaitingCount(): number {
 }
 
 /** The window's top line: the brand, the page it is on and page-level status. */
-export function TitleBar({ layout }: { route: Route; layout: LayoutWidth }) {
+export function TitleBar({ layout }: { layout: LayoutWidth }) {
   const phone = layout === "phone";
   const small = layout === "small";
   const drawerOpen = useSidebarDrawer((state) => state.open);
@@ -101,7 +126,10 @@ export function TitleBar({ layout }: { route: Route; layout: LayoutWidth }) {
   const trail = useNavHistory();
   const dragLayer = useRef<HTMLDivElement>(null);
   useDragStrip(dragLayer);
-  useEffect(() => (dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), []);
+  // Only where the system bar is gone: Windows and Linux keep their native frame, and a drag band there would be a second one.
+  useEffect(() => (lights && dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), [lights]);
+  const end = useRef<HTMLSpanElement>(null);
+  useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
 
   // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
@@ -112,7 +140,8 @@ export function TitleBar({ layout }: { route: Route; layout: LayoutWidth }) {
     <header className="titlebar"
       data-nav={shown && !small ? "shown" : "hidden"}
       data-bar={row ? "row" : "float"}
-      data-lights={lights || undefined}>
+      data-lights={lights || undefined}
+    >
       <div ref={dragLayer} className="titlebar-drag" aria-hidden />
       {lights ? <span className="titlebar-lights" aria-hidden /> : null}
       <button
@@ -141,9 +170,9 @@ export function TitleBar({ layout }: { route: Route; layout: LayoutWidth }) {
       <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
-      <span className="titlebar-end">
+      <span ref={end} className="titlebar-end">
         <EnvironmentIdentity />
-                {ledger && waiting > 0 ? (
+        {ledger && waiting > 0 ? (
           <span className="titlebar-waiting" role="status">
             <span className="status-dot" aria-hidden />
             {waiting} waiting on you

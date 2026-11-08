@@ -65,6 +65,10 @@
 .shell[data-nav="hidden"]:has(> .titlebar[data-bar="float"]) > .main {
   grid-area: 1 / 1;
 }
+/* The bar's right end (environment pill, waiting count) takes the corner; the page header's actions stop short of it. */
+.shell :is(.topbar, .settings-head, .skills-heading) {
+  padding-right: max(28px, calc(var(--bar-end-w, 0px) + 14px + 12px));
+}
 .shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .settings-head, .skills-heading) {
   padding-left: max(28px, var(--bar-lead, 0px));
 }
@@ -105,8 +109,9 @@
 }
 .titlebar-end {
   position: absolute;
-  top: 8px;
+  top: 0;
   right: 14px;
+  height: var(--titlebar-h);
   display: flex;
   align-items: center;
   gap: 8px;
