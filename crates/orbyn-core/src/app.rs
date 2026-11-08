@@ -123,6 +123,9 @@ pub struct Core {
     pub(crate) keybinding_writer: Mutex<()>,
     /// Pull request details asked of GitHub, reused while a pull request is unchanged.
     pub(crate) pull_details: Mutex<crate::source_control::forge_cache::DetailCache>,
+    /// What each forge's CLI said, reused briefly: asking costs a process per forge.
+    pub(crate) forge_statuses:
+        Mutex<Option<(std::time::Instant, Vec<orbyn_contracts::ForgeStatus>)>>,
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
     _lock: File,
 }
@@ -229,6 +232,7 @@ impl Core {
             recovery,
             keybinding_writer: Mutex::new(()),
             pull_details: Mutex::new(Default::default()),
+            forge_statuses: Mutex::new(None),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             _lock: lock,
         };

@@ -27,9 +27,12 @@
       button:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
       button:disabled { opacity: .45; cursor: default; }
       [hidden] { display: none; }
+      /* The window's title bar is merged into the page on macOS, so the top strip drags it. */
+      .drag { position: fixed; top: 0; left: 0; right: 0; height: 44px; }
     </style>
   </head>
   <body>
+    <div class="drag" data-tauri-drag-region aria-hidden="true"></div>
     <main role="status">
       <i id="ring" class="ring" aria-hidden="true"></i>
       <h1 id="title">Starting Orbyn…</h1>

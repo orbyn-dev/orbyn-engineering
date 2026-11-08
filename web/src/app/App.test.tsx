@@ -27,12 +27,14 @@ describe("App against the mock API", () => {
     expect(within(nav).queryByRole("link", { name: /Approvals/ })).toBeNull();
   });
 
-  it("marks the whole title bar strip as the window drag region", async () => {
+  it("covers the whole title bar strip with the window drag layer, handled by our own code", async () => {
     const { container } = render(<App />);
     await screen.findByRole("navigation", { name: "Workspace" });
     const bar = container.querySelector(".titlebar");
-    expect(bar).toHaveAttribute("data-tauri-drag-region");
-    expect(bar?.querySelector(".titlebar-drag")).toHaveAttribute("data-tauri-drag-region");
+    expect(bar?.querySelector(".titlebar-drag")).toBeInTheDocument();
+    // Tauri's own script would count clicks across different spots as a double click and zoom the window.
+    expect(bar?.querySelector("[data-tauri-drag-region]")).toBeNull();
+    expect(bar).not.toHaveAttribute("data-tauri-drag-region");
   });
 
   it("heads a thread with Terminal then Show side panel, each pressed while its panel is open", async () => {
