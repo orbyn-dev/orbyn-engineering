@@ -1306,6 +1306,12 @@ impl RunManager {
             self.mcp.revoke(&token);
             return Ok(());
         };
+        // Starting fires the checkout's SessionStart hooks and `.mcp.json`, so trust is
+        // read again here, after the awaits above, rather than relied on from the top.
+        if !self.store.project(&thread.project_id)?.trusted {
+            self.mcp.revoke(&token);
+            return Ok(());
+        }
         let started = driver.start_warm(spec).await;
         let process = match started {
             Ok(Some(process)) => process,
@@ -1557,8 +1563,17 @@ impl RunManager {
         let handoff = self.store.run_handoff(&scope.run_id)?;
         let resume = self.store.run_engine_session(&scope.run_id)?;
         let native = descriptor.tier == EngineTier::Native;
-        let (start, at_checkout) =
+        let (mut start, mut at_checkout) =
             engine_start(driver.as_ref(), native, &root, &checkout, resume.as_deref());
+        // The write scope was fixed at admission from the start folder chosen then. A run
+        // starts where that scope says its relative paths land, so the two cannot
+        // disagree if the session record changed in between.
+        if driver.start_dir(&root, &checkout, None).is_some()
+            && let Some(engine_cwd) = scope.write_scope.as_ref().map(|s| s.engine_cwd.clone())
+        {
+            at_checkout = engine_cwd == checkout;
+            start = engine_cwd;
+        }
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
