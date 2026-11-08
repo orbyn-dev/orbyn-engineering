@@ -29,26 +29,33 @@ export function SkillsPage({ skill }: { skill?: string }) {
   const [category, setCategory] = useState<string>("All");
   const [search, setSearch] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
-  /** The card that was opened, so going back lands on it. */
+  /** The card that was pressed, so going back lands on it. */
   const opened = useRef<string | null>(null);
   const grid = useRef<HTMLDivElement>(null);
+  const entries = result.data?.skills;
+  const known = entries?.some((entry) => entry.name === skill);
+  // A stale bookmark must not remain behind the catalog in the Back trail.
   useEffect(() => {
-    if (!result.data) return;
-    if (skill !== undefined && !result.data.skills.some((entry) => entry.name === skill)) {
-      // A stale bookmark must not remain behind the catalog in the Back trail.
-      window.history.replaceState(window.history.state, "", routeHref({ name: "skills" }));
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-      return;
-    }
+    if (!entries || skill === undefined || known) return;
+    window.history.replaceState(window.history.state, "", routeHref({ name: "skills" }));
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  }, [entries, skill, known]);
+  // The shell moves focus into every new page after its own effects run, and prefers an element marked
+  // data-autofocus: the card that was opened is marked, so the shell and this page agree on where focus lands.
+  // Focus follows the route, once the library is there: into a skill's heading, or back to the card that was opened.
+  // It does not depend on the library's data itself: a later read of the same library (a slow workspace read changes its
+  // revision) must not pull focus away from where the person is.
+  const ready = entries !== undefined;
+  useEffect(() => {
+    if (!ready) return;
     if (skill !== undefined) {
-      opened.current = skill;
+      if (!known) return;
       heading.current?.focus();
       return;
     }
     const card = opened.current ? grid.current?.querySelector<HTMLElement>(`[data-skill="${CSS.escape(opened.current)}"]`) : null;
     (card ?? heading.current)?.focus();
-    opened.current = null;
-  }, [skill, result.data]);
+  }, [skill, ready, known]);
 
   if (!result.data && !result.error) {
     return slow ? (
@@ -62,8 +69,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
   if (!result.data && result.error) {
     return <ErrorState title="Couldn't load skills" failure={result.error} onRetry={() => void result.reload()} />;
   }
-  if (!result.data) return null;
-  const entries = result.data.skills;
+  if (!result.data || !entries) return null;
   const selected = skill === undefined ? undefined : entries.find((entry) => entry.name === skill);
   const query = search.trim().toLowerCase();
   const shown = entries.filter(
@@ -77,7 +83,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skill">
         <header className="skills-heading">
-          <h1 ref={heading} tabIndex={-1}>
+          <h1 ref={heading} tabIndex={-1} data-page-title>
             {selected.name}
           </h1>
           <span className="skills-subtitle">{label ? `Built in · ${label}` : "Built in"}</span>
@@ -106,7 +112,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skills">
         <header className="skills-heading">
-          <h1 ref={heading} tabIndex={-1}>
+          <h1 ref={heading} tabIndex={-1} data-page-title>
             Skills
           </h1>
         </header>
@@ -123,7 +129,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
   return (
     <section className="skills-page" aria-label="Skills">
       <header className="skills-heading">
-        <h1 ref={heading} tabIndex={-1}>
+        <h1 ref={heading} tabIndex={-1} data-page-title>
           Skills
         </h1>
         <span className="skills-subtitle">{shown.length === 0 ? `0 of ${entries.length}` : `${entries.length} built in`}</span>
@@ -165,7 +171,11 @@ export function SkillsPage({ skill }: { skill?: string }) {
         </div>
         <div className="skills-grid" ref={grid}>
           {shown.map((entry) => (
-            <button type="button" className="skills-card" key={entry.name} data-skill={entry.name} onClick={() => navigate({ name: "skills", skill: entry.name })}>
+            <button type="button" className="skills-card" key={entry.name} data-skill={entry.name} data-autofocus={entry.name === opened.current || undefined} onClick={() => {
+                // Noted at the press, not when the page opens: going back may come before the page has drawn.
+                opened.current = entry.name;
+                navigate({ name: "skills", skill: entry.name });
+              }}>
               <strong>{entry.name}</strong>
               <span className="skills-description">{entry.description}</span>
               <span className="skills-foot">

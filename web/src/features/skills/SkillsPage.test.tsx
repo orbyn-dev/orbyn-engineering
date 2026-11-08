@@ -125,6 +125,32 @@ it("says No skills in {Category}, with no button, when the selected category has
   expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
 });
 
+it("marks the opened card for the shell's own route focus, which runs after the page's effects", async () => {
+  const view = render(<SkillsPage />);
+  await userEvent.click(await screen.findByRole("button", { name: /design-review/ }));
+  view.rerender(<SkillsPage skill="design-review" />);
+  await screen.findByRole("heading", { name: "design-review" });
+  expect(screen.getByRole("heading", { name: "design-review" })).toHaveAttribute("data-page-title");
+  view.rerender(<SkillsPage />);
+  const card = await screen.findByRole("button", { name: /design-review/ });
+  expect(card).toHaveAttribute("data-autofocus");
+  expect(screen.getByRole("button", { name: /architect/ })).not.toHaveAttribute("data-autofocus");
+});
+
+it("keeps focus on the card when the library is read again after going back", async () => {
+  const view = render(<SkillsPage />);
+  await userEvent.click(await screen.findByRole("button", { name: /design-review/ }));
+  view.rerender(<SkillsPage skill="design-review" />);
+  await screen.findByRole("heading", { name: "design-review" });
+  view.rerender(<SkillsPage />);
+  await waitFor(() => expect(screen.getByRole("button", { name: /design-review/ })).toHaveFocus());
+  // A slow workspace read changes the library's revision, and the library arrives again as a new object.
+  await act(async () => {
+    useSkillsStore.setState({ data: { ...catalog, skills: [...catalog.skills] } });
+  });
+  expect(screen.getByRole("button", { name: /design-review/ })).toHaveFocus();
+});
+
 it("shows one quiet line, and no count, filters or grid, when the library has no skills", async () => {
   vi.mocked(api.skills).mockResolvedValue({ ...catalog, skills: [] });
   const { container } = render(<SkillsPage />);
