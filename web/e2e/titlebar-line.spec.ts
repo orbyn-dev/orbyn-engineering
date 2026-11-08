@@ -18,7 +18,7 @@ test("the page heading sits on the title bar's centre line", async ({ page }) =>
   }
 });
 
-const centreOf = async (page: import("@playwright/test").Page, locator: import("@playwright/test").Locator) => {
+const centreOf = async (locator: import("@playwright/test").Locator) => {
   const box = await locator.boundingBox();
   return box ? box.y + box.height / 2 : NaN;
 };
@@ -32,11 +32,11 @@ for (const [name, width, hideSidebar] of [["wide", 1280, false], ["sidebar hidde
     if (hideSidebar) await page.getByRole("button", { name: "Hide sidebar" }).click();
     const heading = page.locator(".main h1").first();
     await expect(heading).toBeVisible();
-    const bar = await centreOf(page, page.locator(".titlebar .tbi").first());
+    const bar = await centreOf(page.locator(".titlebar .tbi").first());
     for (const action of [page.getByRole("button", { name: "Details" }), page.getByRole("button", { name: "Terminal" }), page.getByRole("button", { name: /^Git/ })]) {
-      if (await action.count()) expect(await centreOf(page, action.first())).toBeCloseTo(bar, 0);
+      if (await action.count()) expect(await centreOf(action.first())).toBeCloseTo(bar, 0);
     }
-    expect(await centreOf(page, heading)).toBeCloseTo(bar, 0);
+    expect(await centreOf(heading)).toBeCloseTo(bar, 0);
     // The bar's own centred title appears only where the frames draw it (reading layout, phone).
     await expect(page.locator(".titlebar-title")).toHaveCount(0);
     const text = (await heading.textContent())?.trim() ?? "";
