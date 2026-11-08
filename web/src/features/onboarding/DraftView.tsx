@@ -199,7 +199,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   };
 
   /** Creates and starts one thread, leaving the draft and the route alone. */
-  const launch = async (choice: ModelChoice, purpose: string | null, text: string, picked: boolean) => {
+  const launch = async (choice: ModelChoice, purpose: string | null, text: string) => {
     const thread = await api.createThread({
       ...(project ? { project_id: project.id } : {}),
       engine: choice.engine,
@@ -216,12 +216,9 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       text,
       attached.map((file) => file.id),
       {
-        ...(picked && pickedEffort ? { effort: pickedEffort } : {}),
-        ...(picked && Object.keys(extras).length > 0 ? { options: extras } : {}),
-        // The draft's engine saves what it shows; another engine in a fan-out narrows the choice itself.
-        ...((choice.engine === engine?.id ? access : chosenAccess) === "supervised"
-          ? {}
-          : { permission_mode: choice.engine === engine?.id ? access : chosenAccess }),
+        ...(pickedEffort ? { effort: pickedEffort } : {}),
+        ...(Object.keys(extras).length > 0 ? { options: extras } : {}),
+        ...(access === "supervised" ? {} : { permission_mode: access }),
       },
     );
     addPrompt(thread.id, { runId: run.id, text });
@@ -235,7 +232,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     setError(null);
     try {
       const purpose = worktree === null ? null : worktree === reused ? worktree : slugify(worktree) || uniquePurpose(text, null);
-      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text, true);
+      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       recordUserPrompt();
       setPrefs({ lastModel: { engine: engine.id, model: pickedModel, effort: pickedEffort } });
       adoptLayout(thread.id);
@@ -258,7 +255,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     try {
       const purpose =
         worktree === null ? null : worktree === reused ? worktree : uniquePurpose(worktree, null);
-      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text, true);
+      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       setPrompt("");
       setFiles([]);
       useUi.getState().pushToast(`Started ${thread.title}`);
