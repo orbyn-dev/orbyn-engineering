@@ -118,6 +118,8 @@ export interface Service {
   ghCalls(): string[][];
   /** What the stand-in holds for one pull request now. */
   ghPull(number: number): Record<string, unknown>;
+  /** Changes what the stand-in holds for one pull request, or for the whole forge with `number` 0. */
+  ghEdit(number: number, patch: Record<string, unknown>): void;
   /** The stand-in's bare remote, for specs that read what was pushed. */
   remote: string;
 }
@@ -239,6 +241,13 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     remote: join(dir, "github.com/o/r.git"),
     ghPull: (number) =>
       (JSON.parse(readFileSync(forge?.state ?? "", "utf8")) as { pulls: PullFixture[] }).pulls.find((pull) => pull.number === number) ?? {},
+    ghEdit: (number, patch) => {
+      const path = forge?.state ?? "";
+      const state = JSON.parse(readFileSync(path, "utf8")) as { pulls: PullFixture[] } & Record<string, unknown>;
+      const target = number === 0 ? state : state.pulls.find((pull) => pull.number === number);
+      if (target) Object.assign(target, patch);
+      writeFileSync(path, JSON.stringify(state));
+    },
     ghCalls: () =>
       forge
         ? readFileSync(forge.log, "utf8")
@@ -323,4 +332,38 @@ export async function projectSettingsUrl(service: Service, projectId: string, se
   const group = catalog.groups.find((entry) => entry.members.some((member) => member.project_id === projectId));
   if (!group) throw new Error("Fixture project is missing from its settings catalog");
   return `${service.page}#/settings/${section}?project=${encodeURIComponent(group.key)}&checkout=${encodeURIComponent(projectId)}`;
+}
+
+/**
+ * Opens the thread's Details card and returns it. The card is a popover under the Details button while the side
+ * panel is closed and sits at the top of the panel while it is open; either way the button shows whether it is on.
+ */
+export async function openDetails(page: Page) {
+  const toggle = page.getByRole("button", { name: "Details", exact: true });
+  // A freshly started dev server compiles the page on its first load.
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+  const card = page.getByRole("complementary", { name: "Thread details" });
+  await expect(card).toBeVisible();
+  return card;
+}
+
+/**
+ * Opens the thread's side panel if it is closed and, when a tab is named ("Diff", "Files", "Browser", "Activity",
+ * "Pull requests", "Side chat"), selects it. Returns the panel. The panel is closed on a narrower window until the
+ * title bar's Show side panel button turns it on.
+ */
+export async function openPanelTab(page: Page, name?: string) {
+  const toggle = page.getByRole("button", { name: "Show side panel", exact: true });
+  // A freshly started dev server compiles the page on its first load.
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+  const panel = page.getByRole("complementary", { name: "Thread context" });
+  await expect(panel).toBeVisible();
+  if (name === undefined) return panel;
+  const tab = panel.getByRole("tab", { name, exact: true });
+  await expect(tab).toBeVisible();
+  if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  return panel;
 }

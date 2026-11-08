@@ -1,4 +1,5 @@
-import { Check, ChevronDown, CloudUpload, GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Upload, X } from "lucide-react";
+import { DRow } from "./DetailRows";
+import { Check, ChevronDown, CloudUpload, GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Search, Upload, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "../../api/client";
 import { useCommand } from "../../app/shortcuts";
@@ -10,6 +11,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { Menu, type MenuItem } from "../../ui/Menu";
+import { Presence } from "../../ui/Presence";
 
 export interface Plan {
   title: string;
@@ -248,7 +250,7 @@ export function GitActions({ thread }: { thread: Thread }) {
         Git
         <ChevronDown size={12} aria-hidden />
       </button>
-      {anchor ? <Menu x={anchor.x} y={anchor.y} label="Git actions" items={items} onClose={() => setAnchor(null)} /> : null}
+      <Presence>{anchor ? <Menu x={anchor.x} y={anchor.y} label="Git actions" items={items} onClose={() => setAnchor(null)} /> : null}</Presence>
       {plan ? <GitActionDialog thread={thread} plan={plan} onClose={() => setPlan(null)} /> : null}
       {publishing ? <PublishDialog thread={thread} onClose={() => setPublishing(false)} /> : null}
     </>
@@ -270,6 +272,8 @@ function BranchDialog({ thread, onClose }: { thread: Thread; onClose(): void }) 
   const rows = useMemo(() => rowsFor(branches.data ?? [], query), [branches.data, query]);
   const name = query.trim();
   const exists = (branches.data ?? []).some((branch) => branch.name === name);
+  /** Nothing matches the text, so Enter creates it. */
+  const creating = Boolean(name) && !exists && rows.length === 0 && branches.status === "ready";
   const act = async (effect: Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -284,33 +288,46 @@ function BranchDialog({ thread, onClose }: { thread: Thread; onClose(): void }) 
     }
   };
   return (
-    <Dialog title="Switch branch" onClose={onClose} busy={busy}>
-      <input
-        aria-label="Search branches"
-        placeholder="Search or name a new branch"
-        value={query}
-        autoFocus
-        onChange={(event) => setQuery(event.target.value)}
-      />
+    <Dialog title="Switch branch" className="branch-dialog" onClose={onClose} busy={busy}>
+      <label className="branch-find">
+        <Search size={14} aria-hidden />
+        <input
+          aria-label="Search branches"
+          placeholder="Find a branch"
+          value={query}
+          autoFocus
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && creating && !busy) {
+              event.preventDefault();
+              void act(api.createBranch(thread.id, name));
+            }
+          }}
+        />
+      </label>
       <ul className="branch-list" aria-label="Branches">
         {rows.map((branch) => (
           <li key={branch.name}>
             <button type="button" disabled={busy || branch.current} onClick={() => void act(api.switchBranch(thread.id, branch.name))}>
-              <GitBranch size={14} aria-hidden />
-              <span>{branch.name}</span>
-              {branch.current ? <Check size={14} aria-label="Current branch" /> : null}
+              <span className="branch-mark">{branch.current ? <Check size={14} aria-label="Current branch" /> : null}</span>
+              <span className="branch-name">{branch.name}</span>
+              <span className="branch-note">{branch.current ? "Current" : branch.remote ? "Remote only" : ""}</span>
             </button>
           </li>
         ))}
         {name && !exists ? (
           <li>
-            <button type="button" disabled={busy} onClick={() => void act(api.createBranch(thread.id, name))}>
-              <Plus size={14} aria-hidden />
-              <span>Create {name}</span>
+            <button type="button" data-active={creating || undefined} disabled={busy} onClick={() => void act(api.createBranch(thread.id, name))}>
+              <span className="branch-mark"><Plus size={14} aria-hidden /></span>
+              <span className="branch-create">Create branch “{name}”</span>
+              {creating ? <span className="branch-note">Enter</span> : null}
             </button>
           </li>
         ) : null}
       </ul>
+      <p className="branch-hint">
+        {creating ? "No branch matches. Enter creates it from the current branch and switches to it." : "Choosing a branch switches to it."}
+      </p>
       {error ? (
         <p className="field-error" role="alert">
           {error}
@@ -320,26 +337,31 @@ function BranchDialog({ thread, onClose }: { thread: Thread; onClose(): void }) 
   );
 }
 
-/** The branch row of the details card, which opens the switcher. */
-export function BranchRow({ thread, branch }: { thread: Thread; branch: string }) {
+/** The branch switcher's key, kept on the thread's title bar: the details card that holds the branch row is often closed. */
+export function BranchShortcut({ thread }: { thread: Thread }) {
   const [open, setOpen] = useState(false);
   useCommand("composer.branch", () => {
     if (thread.active_run) return false;
     setOpen(true);
   });
+  return open ? <BranchDialog thread={thread} onClose={() => setOpen(false)} /> : null;
+}
+
+/** The branch row of the details card, which opens the switcher. */
+export function BranchRow({ thread, branch }: { thread: Thread; branch: string }) {
+  const [open, setOpen] = useState(false);
   return (
     <>
-      <button
-        type="button"
-        className="detail-row"
+      <DRow
+        icon={<GitBranch size={16} aria-hidden />}
+        label="Branch"
+        ariaLabel={`Branch ${branch}`}
+        value={<span className="mono">{branch}</span>}
+        sub={thread.cwd}
         title={thread.cwd}
-        aria-label={`Branch ${branch}`}
         disabled={thread.active_run !== null}
         onClick={() => setOpen(true)}
-      >
-        <GitBranch size={16} aria-hidden />
-        <span>{branch}</span>
-      </button>
+      />
       {open ? <BranchDialog thread={thread} onClose={() => setOpen(false)} /> : null}
     </>
   );

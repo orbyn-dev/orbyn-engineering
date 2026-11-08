@@ -225,6 +225,23 @@ async fn run_owned(builder: Command, input: Option<&str>) -> Result<std::process
     child.output().await
 }
 
+/// True when a forge CLI's failure says the pull request does not exist, by the phrases that forge
+/// uses for it. Anything else (auth, network, rate limit, a server error) is not matched.
+pub fn no_such_pull(forge: Forge, message: &str) -> bool {
+    let message = message.to_lowercase();
+    let any = |phrases: &[&str]| phrases.iter().any(|phrase| message.contains(phrase));
+    match forge {
+        Forge::GitHub => any(&["could not resolve to a pullrequest with the number of"]),
+        // A bare 404 may be a proxy's page; GitLab's own answer names the merge request it looked for.
+        Forge::GitLab => {
+            (message.contains("merge_requests/") && message.contains("404 not found"))
+                || any(&["merge request not found"])
+        }
+        Forge::Azure => any(&["tf401180", "pull request does not exist"]),
+        Forge::Forgejo | Forge::Bitbucket => false,
+    }
+}
+
 pub async fn call(forge: Forge, cwd: &Path, args: &[&str]) -> Result<String> {
     let output = spawn(forge, cwd, args, None).await?;
     if output.success {
@@ -476,6 +493,20 @@ pub const DETAIL_FIELDS: [&str; 4] = [
     "viewer_review_state",
     "comment_count",
 ];
+
+/// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
+pub async fn github_graphql_reset(cwd: &Path) -> Option<u64> {
+    let output = call(Forge::GitHub, cwd, &["api", "rate_limit"])
+        .await
+        .ok()?;
+    graphql_reset(&output)
+}
+
+/// The GraphQL reset time in a `rate_limit` answer.
+pub fn graphql_reset(answer: &str) -> Option<u64> {
+    let value: Value = serde_json::from_str(answer).ok()?;
+    value.pointer("/resources/graphql/reset")?.as_u64()
+}
 
 /// How the batched details request ended.
 #[derive(Debug, PartialEq)]
@@ -1845,40 +1876,13 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         }
     });
     match forge {
-        Forge::GitHub => {
-            let flag = format!("--{}", options.method);
-            let mut args = vec!["pr", "merge", id.as_str(), flag.as_str()];
-            if options.auto {
-                args.push("--auto");
-            }
-            if options.delete_branch {
-                args.push("--delete-branch");
-            }
-            if let Some(subject) = &options.subject {
-                args.extend(["--subject", subject]);
-            }
-            if let Some(body) = &body {
-                args.extend(["--body", body]);
-            }
-            call(forge, cwd, &args).await.map(|_| ())
-        }
-        Forge::GitLab => {
-            let mut args = vec!["mr", "merge", id.as_str(), "--yes"];
-            match options.method.as_str() {
-                "squash" => args.push("--squash"),
-                "rebase" => args.push("--rebase"),
-                _ => {}
-            }
-            if options.auto {
-                args.push("--auto-merge");
-            }
-            if options.delete_branch {
-                args.push("--remove-source-branch");
-            }
-            if let Some(body) = &body {
-                args.extend(["--message", body]);
-            }
-            call(forge, cwd, &args).await.map(|_| ())
+        Forge::GitHub | Forge::GitLab => {
+            let args = merge_args(forge, &id, options, body.as_deref());
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            call(forge, cwd, &args)
+                .await
+                .map(|_| ())
+                .map_err(|error| head_moved(forge, error))
         }
         Forge::Azure => {
             let squash = if options.method == "squash" {
@@ -1923,6 +1927,76 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         .await
         .map(|_| ()),
         Forge::Bitbucket => Err(forge.unsupported("merge")),
+    }
+}
+
+/// The merge command for the forges whose CLI takes the options as flags. The head the person saw
+/// goes with it, so the forge refuses a branch that has moved on.
+fn merge_args(forge: Forge, id: &str, options: &MergePull, body: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut push = |words: &[&str]| args.extend(words.iter().map(|word| (*word).to_owned()));
+    if forge == Forge::GitHub {
+        push(&["pr", "merge", id, &format!("--{}", options.method)]);
+        if options.auto {
+            push(&["--auto"]);
+        }
+        if options.delete_branch {
+            push(&["--delete-branch"]);
+        }
+        if let Some(subject) = &options.subject {
+            push(&["--subject", subject]);
+        }
+        if let Some(body) = body {
+            push(&["--body", body]);
+        }
+        if let Some(head) = &options.expected_head {
+            push(&["--match-head-commit", head]);
+        }
+    } else {
+        push(&["mr", "merge", id, "--yes"]);
+        match options.method.as_str() {
+            "squash" => push(&["--squash"]),
+            "rebase" => push(&["--rebase"]),
+            _ => {}
+        }
+        if options.auto {
+            push(&["--auto-merge"]);
+        }
+        if options.delete_branch {
+            push(&["--remove-source-branch"]);
+        }
+        if let Some(body) = body {
+            push(&["--message", body]);
+        }
+        // glab rebases before it merges, which moves the head the person saw: with --sha every rebase
+        // merge would be refused as "changed". Whether it checks first is not documented, so a rebase
+        // goes without the check.
+        if options.method != "rebase"
+            && let Some(head) = &options.expected_head
+        {
+            push(&["--sha", head]);
+        }
+    }
+    args
+}
+
+/// True when a forge's refusal says the head moved after the person looked, by the phrases that forge uses.
+pub fn head_changed(forge: Forge, message: &str) -> bool {
+    let message = message.to_lowercase();
+    match forge {
+        // GitHub: "Head branch was modified. Review and try the merge again."
+        Forge::GitHub => message.contains("head branch was modified"),
+        // GitLab: "SHA does not match HEAD of source branch"
+        Forge::GitLab => message.contains("sha does not match head of source branch"),
+        _ => false,
+    }
+}
+
+/// A merge the forge refused because the head moved is its own error, not a generic failure.
+fn head_moved(forge: Forge, error: CoreError) -> CoreError {
+    match &error {
+        CoreError::Git(message) if head_changed(forge, message) => CoreError::PullHeadChanged,
+        _ => error,
     }
 }
 
@@ -2194,6 +2268,143 @@ fn auth_accounts(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_graphql_reset_is_read_from_the_rate_limit_answer() {
+        assert_eq!(
+            graphql_reset(r#"{"resources":{"core":{"reset":1},"graphql":{"reset":1762600000}}}"#),
+            Some(1_762_600_000)
+        );
+        assert_eq!(graphql_reset("not json"), None);
+        assert_eq!(graphql_reset(r#"{"resources":{}}"#), None);
+    }
+
+    #[test]
+    fn the_head_the_person_saw_goes_to_the_forge() {
+        let options = MergePull {
+            method: "squash".into(),
+            auto: false,
+            delete_branch: false,
+            subject: None,
+            body: None,
+            strip_credits: false,
+            expected_head: Some("abc123".into()),
+        };
+        let github = merge_args(Forge::GitHub, "7", &options, None);
+        assert_eq!(
+            github,
+            [
+                "pr",
+                "merge",
+                "7",
+                "--squash",
+                "--match-head-commit",
+                "abc123"
+            ]
+        );
+        let gitlab = merge_args(Forge::GitLab, "7", &options, None);
+        assert_eq!(
+            gitlab,
+            ["mr", "merge", "7", "--yes", "--squash", "--sha", "abc123"]
+        );
+        let rebase = MergePull {
+            method: "rebase".into(),
+            ..options.clone()
+        };
+        assert!(
+            !merge_args(Forge::GitLab, "7", &rebase, None)
+                .iter()
+                .any(|arg| arg == "--sha")
+        );
+        assert!(
+            merge_args(Forge::GitHub, "7", &rebase, None)
+                .iter()
+                .any(|arg| arg == "--match-head-commit")
+        );
+        let none = MergePull {
+            expected_head: None,
+            ..options
+        };
+        assert!(
+            !merge_args(Forge::GitHub, "7", &none, None)
+                .iter()
+                .any(|arg| arg.contains("head"))
+        );
+    }
+
+    #[test]
+    fn a_refusal_for_a_moved_head_is_its_own_error() {
+        let github = Forge::GitHub;
+        assert!(head_changed(
+            github,
+            "X Pull request #4 is not mergeable: Head branch was modified. Review and try the merge again."
+        ));
+        assert!(matches!(
+            head_moved(
+                github,
+                CoreError::Git(
+                    "GraphQL: Head branch was modified. Review and try the merge again.".into()
+                )
+            ),
+            CoreError::PullHeadChanged
+        ));
+        // Other failures keep their own words.
+        assert!(matches!(
+            head_moved(github, CoreError::Git("merge conflict".into())),
+            CoreError::Git(_)
+        ));
+        assert!(head_changed(
+            Forge::GitLab,
+            "405: SHA does not match HEAD of source branch"
+        ));
+        // A message that only mentions a head commit is not a moved head.
+        assert!(!head_changed(
+            Forge::GitHub,
+            "could not find the head commit"
+        ));
+        assert!(!head_changed(Forge::Forgejo, "Head branch was modified"));
+        assert_eq!(CoreError::PullHeadChanged.code(), "pull_head_changed");
+        assert_eq!(CoreError::PullHeadChanged.status(), 409);
+    }
+
+    #[test]
+    fn only_a_forges_no_such_pull_request_answer_is_matched() {
+        let github = Forge::GitHub;
+        assert!(no_such_pull(
+            github,
+            "GraphQL: Could not resolve to a PullRequest with the number of 5. (repository.pullRequest)"
+        ));
+        // The branch form is not a numbered answer, and a proxy's bare 404 page is not GitLab's.
+        assert!(!no_such_pull(
+            github,
+            "no pull requests found for branch \"x\""
+        ));
+        assert!(!no_such_pull(
+            Forge::GitLab,
+            "<html>404 Not Found</html> from a proxy"
+        ));
+        assert!(no_such_pull(
+            Forge::GitLab,
+            "GET https://x/api/v4/projects/1/merge_requests/9: 404 Not Found"
+        ));
+        assert!(no_such_pull(
+            Forge::Azure,
+            "TF401180: The requested pull request was not found."
+        ));
+        // Auth, rate limit and server failures keep their own wording.
+        assert!(!no_such_pull(
+            github,
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)"
+        ));
+        assert!(!no_such_pull(github, "API rate limit exceeded"));
+        assert!(!no_such_pull(github, "HTTP 502: Bad Gateway"));
+        assert!(!no_such_pull(Forge::GitLab, "401 Unauthorized"));
+        assert!(!no_such_pull(
+            Forge::Azure,
+            "Please run 'az login' to setup account."
+        ));
+        assert!(!no_such_pull(Forge::Forgejo, "404 Not Found"));
+    }
 
     #[tokio::test]
     async fn a_finished_forge_cli_does_not_leave_helpers_running() {

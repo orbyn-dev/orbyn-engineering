@@ -28,7 +28,8 @@ pull() {
 case "$1 $2" in
   "pr create") [ -f "$GH_FAIL" ] && { echo "no permission" >&2; exit 1; }
     echo "https://github.com/o/r/pull/12" ;;
-  "pr view") pull 12 T feature main ',"body":"Details","comments":[{"body":"hi"}],"reviews":[],"mergeable":"MERGEABLE","headRefOid":"abc","baseRefOid":"def","additions":3,"reviewRequests":[{"login":"sam"}]' ;;
+  "pr view") [ "$3" = 99999 ] && { echo "GraphQL: Could not resolve to a PullRequest with the number of 99999. (repository.pullRequest)" >&2; exit 1; }
+    pull 12 T feature main ',"body":"Details","comments":[{"body":"hi"}],"reviews":[],"mergeable":"MERGEABLE","headRefOid":"abc","baseRefOid":"def","additions":3,"reviewRequests":[{"login":"sam"}]' ;;
   "pr checks") echo '[{"name":"ci","state":"SUCCESS","link":"x","bucket":"pass"},{"name":"lint","state":"FAILURE","link":"y","bucket":"fail"}]'; exit 1 ;;
   "pr list") case "$*" in
       *--head*) echo "[$(pull 12 T feature main)]" ;;
@@ -345,6 +346,14 @@ async fn branches_list_create_switch_and_refuse_bad_names() {
         std::fs::read_to_string(f.checkout.join("base.txt")).unwrap(),
         "local edit\n"
     );
+}
+
+#[tokio::test]
+async fn linking_a_pull_request_that_does_not_exist_answers_404() {
+    let f = fixture().await;
+    let pulls = format!("/api/threads/{}/pulls", f.thread);
+    let (code, body) = f.service.send(&pulls, json!({ "number": 99999 })).await;
+    assert_eq!(code, 404, "{body}");
 }
 
 #[tokio::test]
@@ -1054,6 +1063,12 @@ async fn a_spent_rate_limit_withholds_every_detail_and_names_them() {
         .map(|n| n.as_str().unwrap())
         .collect();
     assert!(paused.contains(&"comment_count") && paused.contains(&"requested_reviewers"));
+    assert!(
+        limited["resume_at"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "{limited}"
+    );
     // The pause holds without asking GitHub again.
     std::fs::remove_file(f._dir.path().join("gh-rate")).unwrap();
     let before = f.log();
