@@ -15,6 +15,8 @@ import { useAnnounce } from "./useAnnounce";
 import { useHeldRows } from "./useHeldRows";
 import { useRowWindow, type Anchor } from "./useRowWindow";
 
+/** Farther than this many viewports from the end, a scroll has left it, whatever was last seen. */
+const FAR_FROM_END = 2;
 const NEAR_BOTTOM = 80;
 const NO_RUNS = {};
 const REVEAL_MS = 2000;
@@ -184,7 +186,10 @@ export function Transcript({
     const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_BOTTOM;
     const shrunk = lastHeight.current - element.scrollHeight;
     const clamped = wasAtEnd.current && shrunk > 1 && lastTop.current - element.scrollTop <= shrunk + 1;
-    const movedUp = element.scrollTop < lastTop.current - 1 && !clamped;
+    // A jump straight from the end to far above it can arrive as the first scroll event this view has seen, with
+    // nothing remembered to compare against; being well away from the end is a move up all the same.
+    const farFromEnd = element.scrollHeight - element.scrollTop - element.clientHeight > FAR_FROM_END * element.clientHeight;
+    const movedUp = (element.scrollTop < lastTop.current - 1 || farFromEnd) && !clamped;
     lastTop.current = element.scrollTop;
     lastHeight.current = element.scrollHeight;
     wasAtEnd.current = atEnd;
