@@ -134,6 +134,18 @@ describe("one pull request as a page", () => {
     expect(card.querySelector("input[aria-label='Base branch']")).toHaveValue("main");
   });
 
+  it("reads the activity only when the Conversation tab opens, and keeps its count after", async () => {
+    await show(detail());
+    expect(pullsApi.timeline).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 3");
+    fireEvent.click(screen.getByRole("tab", { name: /^Conversation/ }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(pullsApi.timeline).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("tab", { name: /^Summary/ }));
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 3");
+    expect(pullsApi.timeline).toHaveBeenCalledTimes(1);
+  });
+
   it("counts the Conversation tab from everything it lists, commits included", async () => {
     vi.mocked(pullsApi.timeline).mockResolvedValue([
       { id: "a1", kind: "committed", actor: "Ada", created_at: "2026-11-05T01:05:00Z", text: "Fix the redirect" },
@@ -142,6 +154,7 @@ describe("one pull request as a page", () => {
       { id: "8", kind: "reviewed", actor: "sam", created_at: "2026-11-05T03:00:00Z", text: "approved" },
     ] as never);
     await show({ ...detail(), pull: { ...detail().pull } });
+    fireEvent.click(screen.getByRole("tab", { name: /^Conversation/ }));
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
     expect(tabs).toContain("Conversation · 4");

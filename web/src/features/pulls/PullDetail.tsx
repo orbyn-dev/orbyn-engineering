@@ -174,24 +174,31 @@ function Description({
   );
 }
 
-/** The pull request's activity: comments, reviews, commits and the rest, read once for the tab and its count. */
-function useTimelineEvents(projectId: string, number: number) {
-  return useAsync(`pull-timeline:${projectId}:${number}`, (signal) => pullsApi.timeline(projectId, number, signal), { keep: true });
+/**
+ * The pull request's activity: comments, reviews, commits and the rest. It is paginated on the forge, so it is read
+ * only when something shows it (the Conversation tab); until then the tab's count is the comments' count.
+ */
+function useTimelineEvents(projectId: string, number: number, enabled: boolean) {
+  return useAsync(
+    `pull-timeline:${projectId}:${number}:${enabled}`,
+    (signal) => (enabled ? pullsApi.timeline(projectId, number, signal) : Promise.resolve(null)),
+    { keep: true },
+  );
 }
-type TimelineRead = ReturnType<typeof useTimelineEvents>;
+type TimelineRead = ReturnType<typeof useAsync<import("../../api/types").PullTimelineEvent[]>>;
 
 function Timeline({ projectId, number }: { projectId: string; number: number }) {
-  return <TimelineList events={useTimelineEvents(projectId, number)} />;
+  return <TimelineList events={useTimelineEvents(projectId, number, true) as TimelineRead} />;
 }
 
 function TimelineList({ events }: { events: TimelineRead }) {
   const [kind, setKind] = useState("all");
   const kinds = useMemo(() => [...new Set((events.data ?? []).map((event) => event.kind))].sort(), [events.data]);
-  if (events.status === "loading") return <Loading label="Loading timeline" rows={4} />;
+  if (events.status === "loading" || (events.status === "ready" && !events.data)) return <Loading label="Loading timeline" rows={4} />;
   if (events.status === "error") {
     return <ErrorState compact title="Couldn't load the timeline" failure={events.error} onRetry={events.reload} />;
   }
-  if (events.data.length === 0) return <p className="muted">No activity yet.</p>;
+  if (!events.data || events.data.length === 0) return <p className="muted">No activity yet.</p>;
   return (
     <>
       <select aria-label="Filter activity" value={kind} onChange={(event) => setKind(event.target.value)}>
@@ -322,7 +329,12 @@ export function PullDetail({
   const refreshAll = useWorkspace((state) => state.refreshAll);
   const engines = useWorkspace((state) => state.engines.data);
   const tabsId = useId();
-  const activity = useTimelineEvents(projectId, number);
+  // Once the Conversation tab has been opened the activity stays loaded, so its count does not fall back.
+  const [activityWanted, setActivityWanted] = useState(false);
+  useEffect(() => {
+    if (tab === "timeline") setActivityWanted(true);
+  }, [tab]);
+  const activity = useTimelineEvents(projectId, number, activityWanted);
   const setPageLabel = usePageLabel((state) => state.set);
   const shownTitle = detail.status === "ready" ? detail.data.pull.title : null;
   useEffect(() => {
@@ -790,7 +802,7 @@ export function PullDetail({
               ) : tab === "timeline" ? (
                 <>
                   <PullConversation projectId={projectId} number={number} />
-                  <TimelineList events={activity} />
+                  <TimelineList events={activity as TimelineRead} />
                 </>
               ) : (
                 <Checks projectId={projectId} number={number} />
