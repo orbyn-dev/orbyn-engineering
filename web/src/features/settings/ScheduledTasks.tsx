@@ -370,7 +370,7 @@ function TaskDefaults() {
 }
 
 function TasksView({ page }: { page: boolean }) {
-  const tasks = useAsync("tasks", listTasks);
+  const tasks = useAsync("tasks", listTasks, { keep: true });
   const [editing, setEditing] = useState<ScheduledTask | "new" | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
   const offline = useConnection((state) => state.offline);

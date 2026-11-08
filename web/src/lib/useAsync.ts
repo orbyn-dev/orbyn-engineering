@@ -20,20 +20,29 @@ const isAbort = (error: unknown) => error instanceof DOMException && error.name 
  * the old data. A result is applied only while its generation is current, so a
  * slow earlier response can never overwrite a later one. A key read before shows
  * its last good data at once as `ready` with `refreshing` true, and the read runs
- * again; only a key with nothing kept starts as `loading`.
+ * again; only a key with nothing kept starts as `loading`. Keeping is opt-in
+ * (`keep: true`) for the reads a screen wants to show again at once; files, diffs,
+ * documents and anything that must be fresh before it is acted on never keep.
  */
-const startState = <T,>(key: string): AsyncState<T> => {
-  const data = readKept<T>(key);
+export interface AsyncOptions {
+  keep?: boolean;
+}
+
+const startState = <T,>(key: string, keep: boolean): AsyncState<T> => {
+  const data = keep ? readKept<T>(key) : undefined;
   return data === undefined
     ? { status: "loading", data: null, error: null, refreshing: true }
     : { status: "ready", data, error: null, refreshing: true };
 };
 
-export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<T>) {
-  const [state, setState] = useState<AsyncState<T>>(() => startState<T>(key));
+export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<T>, options: AsyncOptions = {}) {
+  const keep = options.keep === true;
+  const [state, setState] = useState<AsyncState<T>>(() => startState<T>(key, keep));
   const keyRef = useRef(key);
+  const keepRef = useRef(keep);
   useLayoutEffect(() => {
     keyRef.current = key;
+    keepRef.current = keep;
   });
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -52,7 +61,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
     return loader.current(abort.signal).then(
       (data) => {
         if (id === generation.current) {
-          writeKept(asked, data);
+          if (keepRef.current) writeKept(asked, data);
           setState({ status: "ready", data, error: null, refreshing: false });
         }
       },
@@ -72,7 +81,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
   useEffect(() => {
     if (firstKey.current !== key) {
       firstKey.current = key;
-      setState(startState<T>(key));
+      setState(startState<T>(key, keepRef.current));
     }
     reload();
     return () => {
@@ -81,11 +90,17 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal) => Promise<
     };
   }, [key, reload]);
 
-  const setData = useCallback((data: T) => {
-    generation.current += 1;
-    writeKept(keyRef.current, data);
-    setState({ status: "ready", data, error: null, refreshing: false });
-  }, []);
+  // Bound to the key it was made for: a mutation that resolves after the screen moved to
+  // another key must not put its answer under that key or on its screen.
+  const setData = useCallback(
+    (data: T) => {
+      if (keep) writeKept(key, data);
+      if (key !== keyRef.current) return;
+      generation.current += 1;
+      setState({ status: "ready", data, error: null, refreshing: false });
+    },
+    [key, keep],
+  );
 
   return { ...state, reload, setData };
 }

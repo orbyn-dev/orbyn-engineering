@@ -475,3 +475,10 @@ export function useVisibleProjects(): Project[] | null {
 /** The engine record for a thread, if the engine list has loaded. */
 export const engineById = (engines: readonly EngineStatus[] | null, id: string) =>
   engines?.find((engine) => engine.id === id) ?? null;
+
+// A run that ends may have committed, switched branch or added a worktree, and the
+// managed status is otherwise read only every few minutes.
+useWorkspace.subscribe((state, before) => {
+  const ended = Object.values(state.threads).some((thread) => before.threads[thread.id]?.active_run && !thread.active_run);
+  if (ended) void state.refreshManaged();
+});

@@ -464,10 +464,10 @@ function ModelPriceDialog({ model, onClose, onSaved }: { model: string; onClose(
     const priced = RATES.some((rate) => shown(rate.key) !== "");
     const number = (key: (typeof RATES)[number]["key"]) => Number(shown(key));
     try {
-      await api.putSettings({
-        ...settings.data,
+      await api.updateSettings((current) => ({
+        ...current,
         model_prices: [
-          ...(settings.data.model_prices ?? []).filter((price) => price.model !== model || !sameTier(price.tier, tier)),
+          ...(current.model_prices ?? []).filter((price) => price.model !== model || !sameTier(price.tier, tier)),
           ...(priced
             ? [{
                 model,
@@ -480,10 +480,10 @@ function ModelPriceDialog({ model, onClose, onSaved }: { model: string; onClose(
             : []),
         ],
         model_aliases: [
-          ...(settings.data.model_aliases ?? []).filter((entry) => entry.model !== model),
+          ...(current.model_aliases ?? []).filter((entry) => entry.model !== model),
           ...(target ? [{ model, counts_as: target }] : []),
         ],
-      });
+      }));
       onSaved();
       onClose();
     } catch (failure) {
@@ -579,7 +579,8 @@ export function UsagePage() {
   const dimmed = useWaited(usage.pending && usage.data !== null);
   const limits = useAsync(`limits:${metric === "limits"}`, (signal) =>
     metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
-  );
+  { keep: true },
+);
 
   useEffect(() => {
     if (metric !== "limits") lastMetric.current = metric;

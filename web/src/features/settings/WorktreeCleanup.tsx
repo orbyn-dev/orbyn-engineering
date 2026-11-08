@@ -62,7 +62,7 @@ export function WorktreeCleanup() {
 function CleanupRules({ query }: { query: ProjectScopesQuery }) {
   const scope = useSettingsScope();
   const read = useAsync("worktree-cleanup", (signal) => request<ScopedPreferencesResult>(
-    "POST", "/api/settings/preferences/query", { scope: query, keys: ["worktree_cleanup", "storage_cleanup"] }, signal));
+    "POST", "/api/settings/preferences/query", { scope: query, keys: ["worktree_cleanup", "storage_cleanup"] }, signal), { keep: true });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);

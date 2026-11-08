@@ -181,3 +181,21 @@ describe("the quick refresh", () => {
     }
   });
 });
+
+describe("a run that ends", () => {
+  it("reads the Git-backed workspace status again, since the agent may have committed or switched branch", async () => {
+    const workspace = vi.spyOn(api, "workspace").mockResolvedValue({ configured: true, default_url: "", library: null, targets: [] } as never);
+    try {
+      const running = { id: "t1", active_run: { id: "r1" } } as never;
+      useWorkspace.setState({ threads: { t1: running } });
+      expect(workspace).not.toHaveBeenCalled();
+      useWorkspace.setState({ threads: { t1: { id: "t1", active_run: null } as never } });
+      await vi.waitFor(() => expect(workspace).toHaveBeenCalledTimes(1));
+      // A thread that merely changes while idle does not.
+      useWorkspace.setState({ threads: { t1: { id: "t1", active_run: null, title: "x" } as never } });
+      expect(workspace).toHaveBeenCalledTimes(1);
+    } finally {
+      workspace.mockRestore();
+    }
+  });
+});

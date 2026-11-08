@@ -43,7 +43,7 @@ export function SettingsScopeProvider({ section, children }: { section: Settings
     } catch (error) {
       return { key, catalog: null, error: toFailure(error) };
     }
-  });
+  }, { keep: true });
   // Never expose the preceding selection while its replacement request starts.
   const current = result.data?.key === key;
   const select = useCallback((next: ProjectSettingsSelection | undefined) => {

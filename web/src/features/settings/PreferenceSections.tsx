@@ -619,7 +619,7 @@ function LicenceLists({ onBack }: { onBack(): void }) {
 
 /** Whether the service looks for an app update on its own. Nothing is applied without a click. */
 function AutomaticUpdateChecks() {
-  const settings = useAsync("server-settings", (signal) => api.settings(signal));
+  const settings = useAsync("server-settings", (signal) => api.settings(signal), { keep: true });
   const [error, setError] = useState<string | null>(null);
   return (
     <>
@@ -629,7 +629,7 @@ function AutomaticUpdateChecks() {
         on={settings.data?.background_update_checks !== false}
         set={(on) => {
           if (!settings.data) return;
-          void api.putSettings({ ...settings.data, background_update_checks: on }).then(settings.setData, (failure: unknown) => setError(toFailure(failure).message));
+          void api.updateSettings((current) => ({ ...current, background_update_checks: on })).then(settings.setData, (failure: unknown) => setError(toFailure(failure).message));
         }}
       />
       {error ? <p className="field-error" role="alert">{error}</p> : null}
@@ -677,7 +677,7 @@ const PLATFORM_NAMES: Record<string, string> = { macos: "macOS", windows: "Windo
 export const platformName = (id: string) => PLATFORM_NAMES[id] ?? id;
 
 export function AboutSection() {
-  const info = useAsync("about-info", (signal) => api.info(signal));
+  const info = useAsync("about-info", (signal) => api.info(signal), { keep: true });
   const [licences, setLicences] = useState(false);
   if (licences) return <><h1 className="sr-only" tabIndex={-1} data-page-title>About</h1><LicenceLists onBack={() => setLicences(false)} /></>;
   return (
