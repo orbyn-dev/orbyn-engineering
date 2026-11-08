@@ -1,0 +1,71 @@
+/*
+ * The app is an application, not a page: dragging across its chrome selects nothing and the pointer stays an
+ * arrow. Text people read and copy opts back in below. user-select is not inherited past an explicit value, so an
+ * opted-in container keeps any inner element (a diff's line numbers) that sets none itself.
+ * Keep the opt-in list in sync with selection.test.ts.
+ */
+html,
+body,
+#root {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* Transcript, markdown, code, tool output, diffs and previews. */
+.msg-bubble,
+.md,
+.code-card,
+.tool-output,
+.tool-inspect,
+.command,
+.diff-view,
+.diff-card,
+.diff-comment,
+.file-preview,
+.plan-card-body,
+.review-comment,
+.review-chip-excerpt,
+/* Pull requests: descriptions, comments, review text, check names and logs, patches. */
+.pull-body,
+.pull-comment,
+.pull-review-note-text,
+.pull-check-name,
+.pull-patch,
+.pull-mono,
+/* Errors and values meant to be copied. */
+.error-text,
+.error-state,
+.detail-automation-error,
+.pr-link-error,
+.set-path,
+.set-fallback-id,
+.diff-path,
+.browser-path,
+.trust-path,
+.workflow-path,
+.folder-path,
+.terminal-host,
+/* Fields. */
+input,
+textarea,
+[contenteditable],
+[contenteditable] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.msg-bubble,
+.md,
+.code-card,
+.tool-output,
+.tool-inspect,
+.diff-view,
+.file-preview,
+.pull-body,
+.pull-comment,
+.error-text {
+  cursor: text;
+}
+
+/* Links and buttons keep the pointers they already have: the browser gives links a pointer and every button rule here sets its own. */
