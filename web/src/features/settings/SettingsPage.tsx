@@ -27,6 +27,7 @@ import {
 } from "./PreferenceSections";
 import { ScheduledTasksSection } from "./ScheduledTasks";
 import { ThreadsSection } from "./Threads";
+import { ToolsConnectorsSection } from "./ToolsConnectors";
 import "./settingsDesign.css";
 
 export const labels: Record<SettingsSection, string> = {
@@ -36,6 +37,7 @@ export const labels: Record<SettingsSection, string> = {
   diffs: "Diffs & pull requests",
   keybindings: "Keybindings",
   providers: "Providers",
+  tools: "Tools and connectors",
   threads: "Threads",
   tasks: "Scheduled tasks",
   projects: "Projects",
@@ -50,7 +52,7 @@ export const labels: Record<SettingsSection, string> = {
 /** The reference product's order. Sections without a backend here stay out. */
 const groups: { label: string | null; sections: SettingsSection[] }[] = [
   { label: null, sections: ["general", "appearance", "chat", "diffs", "keybindings"] },
-  { label: "Agents", sections: ["providers", "threads", "tasks"] },
+  { label: "Agents", sections: ["providers", "tools", "threads", "tasks"] },
   { label: "Code", sections: ["projects", "source-control", "worktrees"] },
   { label: null, sections: ["maintenance", "labs", "about", "archive"] },
 ];
@@ -68,6 +70,7 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
   archive: ArchiveSection,
   keybindings: KeybindingsSection,
   providers: ProvidersSection,
+  tools: ToolsConnectorsSection,
   threads: ThreadsSection,
   projects: ProjectsSection,
   maintenance: MaintenanceSection,

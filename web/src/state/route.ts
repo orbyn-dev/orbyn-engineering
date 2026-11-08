@@ -8,6 +8,7 @@ export const SETTINGS_SECTIONS = [
   "diffs",
   "keybindings",
   "providers",
+  "tools",
   "threads",
   "tasks",
   "projects",

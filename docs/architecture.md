@@ -644,6 +644,25 @@ after a minute. Named terminals stay until closed. Settling or archiving closes 
 all. `?observe=true` attaches read-only: input and resizes are dropped. Fish starts
 with `no-query-term` so it does not wait on terminal replies.
 
+Tools and connectors are read-only. `GET /api/threads/:id/tools` and `GET /api/engines/:id/tools`
+(`?refresh=1` asks the engine again) return `EngineTools`: groups
+`builtin`, `orbyn`, `mcp`, `connectors`, `plugins` and `skills`, each with entries whose state is
+`ready`, `starting`, `needs_sign_in` or `failed`, and `not_reported` naming the groups the engine
+cannot report. A group an engine does not report is left out, never shown empty. Claude Code is asked
+with `claude mcp list` in a neutral folder (it starts the servers it checks, so a project's `.mcp.json`
+must not run for a page view) and the thread's last `engine.tools` event supplies what only a run
+reports: plugins, built-in tool names, Orbyn's tool count and skills. The frame alone under-reports,
+because a run that passes `--mcp-config` lists only that server at init. Codex is asked on a short
+app-server with `mcpServerStatus/list`, `app/list` and `plugin/list`; the app and plugin lists are very
+large, so they are reduced to names, states and short descriptions inside the driver, apps to those the
+person can reach and plugins to the installed and enabled. Only names, states and short reasons leave the
+engine's reply: no address, token or request body. Both checks run in a neutral folder, never a project's, so no project config or server starts for a page view.
+Each driver keeps its engine-wide answer for 30 seconds and shares one read between callers, so opening
+threads does not start `claude mcp list` or a Codex app-server each time. A check that fails, or comes back
+with an error, returns the last good list marked with that error, and `error` is never set just because a
+group is absent. There is no per-tool switch:
+the engine decides what is enabled.
+
 The engine console (`POST /api/threads/:id/console`) opens the engine's own
 interactive CLI, unmodified, in the thread's `engine-console` terminal on the session
 Orbyn's runs resume: `claude --resume <session> --permission-mode default|plan`, from

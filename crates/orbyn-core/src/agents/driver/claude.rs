@@ -499,10 +499,34 @@ fn launch_settings(spec: &RunSpec, window: Option<u32>) -> Option<Value> {
 }
 
 /// One line of `claude mcp list`: the server's name, and what the CLI says of it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct McpListed {
     pub name: String,
     pub state: String,
+}
+
+impl McpListed {
+    /// The state in the terms the Tools list uses, and a reason when it is not ready.
+    fn tool_state(&self) -> (orbyn_contracts::ToolState, Option<String>) {
+        use orbyn_contracts::ToolState;
+        let text = self
+            .state
+            .trim_start_matches(|c: char| !c.is_alphanumeric());
+        let lower = text.to_lowercase();
+        if lower.starts_with("connected") {
+            (ToolState::Ready, None)
+        } else if lower.contains("authentication") || lower.contains("sign in") {
+            (ToolState::NeedsSignIn, None)
+        } else if lower.starts_with("connecting") || lower.starts_with("pending") {
+            (ToolState::Starting, None)
+        } else {
+            let why = text
+                .split_once(" — ")
+                .map_or(text, |(_, rest)| rest)
+                .to_owned();
+            (ToolState::Failed, Some(why))
+        }
+    }
 }
 
 /// Reads `claude mcp list`. A line is `<name>: <url or command> - <state>`; a name may
@@ -524,6 +548,150 @@ pub(crate) fn parse_mcp_list(text: &str) -> Vec<McpListed> {
             })
         })
         .collect()
+}
+
+/// `claude mcp list` parsed and timed, or `None` when the CLI could not be asked.
+async fn list_mcp(program: &str) -> Option<crate::agents::tools_report::ListedServers> {
+    let command = crate::host::process::resolve(program)?;
+    let output = crate::agents::engines::probe::capture(
+        &command,
+        &["mcp", "list"],
+        std::time::Duration::from_secs(20),
+    )
+    .await?;
+    (output.status == 0).then(|| crate::agents::tools_report::ListedServers {
+        at: crate::util::now(),
+        servers: parse_mcp_list(&output.stdout),
+    })
+}
+
+const CLAUDE_CONNECTORS_PAGE: &str = "https://claude.ai/settings/connectors";
+
+/// What the Tools list shows for Claude Code: the servers the CLI says it will load (or,
+/// failing that, the ones the last run's frame named), the plugins, built-in tools and
+/// skills that frame reported, and the count of Orbyn's own tools.
+fn claude_tools(
+    listed: Option<&crate::agents::tools_report::ListedServers>,
+    init: Option<&Value>,
+) -> orbyn_contracts::EngineTools {
+    use crate::agents::tools_report::{assemble, counted, detail, entry, group, reason};
+    use orbyn_contracts::ToolState;
+    let mut mcp = Vec::new();
+    let mut connectors = Vec::new();
+    let mut place = |name: &str, state: ToolState, why: Option<String>, more: Option<String>| {
+        let connector = name.strip_prefix("claude.ai ");
+        let mut one = entry(connector.unwrap_or(name), state);
+        one.reason = why.as_deref().map(reason);
+        one.detail = more.as_deref().map(detail);
+        if connector.is_some() {
+            one.source = Some("claude.ai connector".into());
+            if state == ToolState::NeedsSignIn {
+                one.sign_in_url = Some(CLAUDE_CONNECTORS_PAGE.into());
+            }
+            connectors.push(one);
+        } else {
+            if name.starts_with("plugin:") {
+                one.source = Some("plugin".into());
+            }
+            mcp.push(one);
+        }
+    };
+    let from_frame: Vec<(String, ToolState)> = init
+        .and_then(|frame| frame.get("mcp_servers"))
+        .and_then(Value::as_array)
+        .map(|servers| {
+            servers
+                .iter()
+                .filter_map(|server| {
+                    let name = server.get("name")?.as_str()?;
+                    let state = match server.get("status").and_then(Value::as_str) {
+                        Some("connected") => ToolState::Ready,
+                        Some("pending") => ToolState::Starting,
+                        Some("needs-auth") => ToolState::NeedsSignIn,
+                        _ => ToolState::Failed,
+                    };
+                    Some((name.to_owned(), state))
+                })
+                .filter(|(name, _)| name != MCP_SERVER_NAME)
+                .collect()
+        })
+        .unwrap_or_default();
+    let reported_servers = listed.is_some() || !from_frame.is_empty();
+    match listed {
+        Some(listed) => {
+            for server in listed
+                .servers
+                .iter()
+                .filter(|server| server.name != MCP_SERVER_NAME)
+            {
+                let (state, why) = server.tool_state();
+                let more = why.clone();
+                place(&server.name, state, why, more);
+            }
+        }
+        None => {
+            for (name, state) in &from_frame {
+                place(name, *state, None, None);
+            }
+        }
+    }
+    let mut groups = Vec::new();
+    if reported_servers {
+        groups.push(group("mcp", mcp));
+        groups.push(group("connectors", connectors));
+    }
+    let string_list = |key: &str| -> Option<Vec<String>> {
+        init?.get(key)?.as_array().map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+    };
+    if let Some(names) = string_list("plugins") {
+        let items = names
+            .iter()
+            .map(|name| entry(name, ToolState::Ready))
+            .collect();
+        groups.push(group("plugins", items));
+    }
+    if let Some(names) = string_list("builtin") {
+        let items = names
+            .iter()
+            .map(|name| entry(name, ToolState::Ready))
+            .collect();
+        groups.push(group("builtin", items));
+    }
+    if let Some(count) = init
+        .and_then(|frame| frame.get("orbyn_tools"))
+        .and_then(Value::as_u64)
+    {
+        groups.push(counted("orbyn", usize::try_from(count).unwrap_or(0)));
+    }
+    if let Some(count) = init
+        .and_then(|frame| frame.get("skills"))
+        .and_then(Value::as_u64)
+    {
+        groups.push(counted("skills", usize::try_from(count).unwrap_or(0)));
+    }
+    // Where the list came from: a run's frame alone, the CLI alone, or the CLI for servers
+    // and the frame for what only a run reports.
+    let source = match (listed.is_some(), init.is_some()) {
+        (true, true) => "check+run",
+        (true, false) => "check",
+        (false, _) => "run",
+    };
+    let mut tools = assemble("claude", source, groups, init.is_some());
+    // The time `claude mcp list` ran, not the time this answer was put together.
+    tools.checked_at = listed.map(|listed| listed.at.clone());
+    if listed.is_none() {
+        // The CLI could not be asked, which says nothing about whether it has servers.
+        tools.error = Some("Claude Code did not list its servers.".into());
+        tools
+            .not_reported
+            .retain(|id| id != "mcp" && id != "connectors");
+    }
+    tools
 }
 
 static SERVERS_LEARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -602,16 +770,33 @@ fn init_tools(frame: &Value) -> Option<EngineEvent> {
             }
         }
     }
+    // The CLI's own plugins say `builtin` for a path; only the person's are listed.
     let plugins: Vec<&str> = frame
         .get("plugins")
         .and_then(Value::as_array)
         .map(|plugins| {
             plugins
                 .iter()
+                .filter(|plugin| plugin.get("path").and_then(Value::as_str) != Some("builtin"))
                 .filter_map(|plugin| plugin.get("name").and_then(Value::as_str))
                 .collect()
         })
         .unwrap_or_default();
+    let tools: Vec<&str> = frame
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| tools.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let own_prefix = format!("mcp__{MCP_SERVER_NAME}__");
+    let builtin: Vec<&str> = tools
+        .iter()
+        .copied()
+        .filter(|name| !name.starts_with("mcp__"))
+        .collect();
+    let orbyn_tools = tools
+        .iter()
+        .filter(|name| name.starts_with(&own_prefix))
+        .count();
     Some(
         AgUiEvent::Custom {
             name: "engine.tools".into(),
@@ -619,7 +804,10 @@ fn init_tools(frame: &Value) -> Option<EngineEvent> {
                 "engine": "claude",
                 "mcp_servers": servers,
                 "plugins": plugins,
-                "tools": frame.get("tools").and_then(Value::as_array).map_or(0, Vec::len),
+                "tools": tools.len(),
+                "builtin": builtin,
+                "orbyn_tools": orbyn_tools,
+                "skills": frame.get("skills").and_then(Value::as_array).map_or(0, Vec::len),
             }),
         }
         .into(),
@@ -720,6 +908,26 @@ impl EngineDriver for ClaudeDriver {
 
     fn sign_in_command(&self) -> Option<String> {
         Some("claude auth login".into())
+    }
+
+    async fn tools(
+        &self,
+        _cwd: &Path,
+        init: Option<&Value>,
+        refresh: bool,
+        probe: &crate::agents::tools_report::ToolsProbe,
+    ) -> Result<Option<orbyn_contracts::EngineTools>> {
+        // Asked in a neutral folder on purpose: `claude mcp list` starts the servers it
+        // checks, and a project's `.mcp.json` must not run just because a page was opened.
+        // A project's own servers show through the frame its runs report. The answer is
+        // kept per engine id, so every thread of the engine shares it for half a minute.
+        let listed = probe
+            .claude
+            .get(refresh, std::time::Duration::from_secs(30), || {
+                list_mcp(&self.program)
+            })
+            .await;
+        Ok(Some(claude_tools(listed.as_ref(), init)))
     }
 
     fn check_launch_available(&self) -> Result<()> {
@@ -2977,6 +3185,106 @@ mod tests {
         );
         assert_eq!(listed[1].state, "! Needs authentication");
         assert_eq!(rule_name("plugin:foo:bar"), "plugin_foo_bar");
+    }
+
+    fn group<'a>(
+        tools: &'a orbyn_contracts::EngineTools,
+        id: &str,
+    ) -> Option<&'a orbyn_contracts::ToolGroup> {
+        tools.groups.iter().find(|one| one.id == id)
+    }
+
+    const LISTED_AT: &str = "2026-11-08T10:00:00Z";
+
+    fn listed_at(text: &str) -> crate::agents::tools_report::ListedServers {
+        crate::agents::tools_report::ListedServers {
+            at: LISTED_AT.into(),
+            servers: parse_mcp_list(text),
+        }
+    }
+
+    #[test]
+    fn claude_tools_say_when_the_cli_was_asked_and_where_the_list_came_from() {
+        let listed = listed_at("claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n");
+        let both = claude_tools(Some(&listed), Some(&json!({ "plugins": [] })));
+        assert_eq!(
+            both.source, "check+run",
+            "servers asked, the rest from a run's frame"
+        );
+        assert_eq!(
+            both.checked_at.as_deref(),
+            Some(LISTED_AT),
+            "the time the CLI ran, not now"
+        );
+        let only = claude_tools(Some(&listed), None);
+        assert_eq!(only.source, "check");
+        let frame_only = claude_tools(None, Some(&json!({ "plugins": [] })));
+        assert_eq!(frame_only.source, "run");
+        assert_eq!(frame_only.checked_at, None);
+    }
+
+    #[test]
+    fn claude_tools_sort_servers_connectors_and_states() {
+        use orbyn_contracts::ToolState;
+        let listed = listed_at(
+            "github: npx -y gh-mcp - ✔ Connected\n\
+             postgres-dev: pg-mcp - ✘ Failed to connect — Command not found: pg-mcp\n\
+             claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n\
+             claude.ai Google Drive: https://x - ! Needs authentication\n",
+        );
+        let init = json!({
+            "plugins": ["orbyn-skills"], "builtin": ["Bash", "Read"],
+            "orbyn_tools": 5, "skills": 39,
+        });
+        let tools = claude_tools(Some(&listed), Some(&init));
+        assert!(tools.reported);
+        let mcp = group(&tools, "mcp").unwrap();
+        assert_eq!(mcp.count, 2);
+        assert_eq!(mcp.items[0].state, ToolState::Ready);
+        assert_eq!(mcp.items[1].state, ToolState::Failed);
+        assert_eq!(
+            mcp.items[1].reason.as_deref(),
+            Some("Command not found: pg-mcp")
+        );
+        let connectors = group(&tools, "connectors").unwrap();
+        assert_eq!(connectors.items[0].name, "Vercel");
+        assert_eq!(connectors.items[1].state, ToolState::NeedsSignIn);
+        assert!(connectors.items[1].sign_in_url.is_some());
+        assert_eq!(group(&tools, "plugins").unwrap().count, 1);
+        assert_eq!(group(&tools, "builtin").unwrap().count, 2);
+        assert_eq!(group(&tools, "orbyn").unwrap().count, 5);
+        assert_eq!(group(&tools, "skills").unwrap().count, 39);
+        assert!(tools.not_reported.is_empty(), "{:?}", tools.not_reported);
+    }
+
+    #[test]
+    fn claude_tools_before_any_run_leave_out_what_only_a_run_reports() {
+        let listed = listed_at("claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n");
+        let tools = claude_tools(Some(&listed), None);
+        assert!(!tools.reported);
+        assert!(group(&tools, "connectors").is_some());
+        for id in ["builtin", "orbyn", "plugins", "skills"] {
+            assert!(tools.not_reported.contains(&id.to_owned()), "{id}");
+        }
+    }
+
+    #[test]
+    fn claude_tools_fall_back_to_the_frame_when_the_cli_cannot_list() {
+        use orbyn_contracts::ToolState;
+        let init = json!({ "mcp_servers": [
+            { "name": "claude.ai Canva", "status": "needs-auth" },
+            { "name": "claude.ai Vercel", "status": "pending" },
+            { "name": MCP_SERVER_NAME, "status": "connected" },
+        ] });
+        let tools = claude_tools(None, Some(&init));
+        let connectors = group(&tools, "connectors").unwrap();
+        assert_eq!(connectors.items[0].state, ToolState::NeedsSignIn);
+        assert_eq!(connectors.items[1].state, ToolState::Starting);
+        assert_eq!(
+            group(&tools, "mcp").unwrap().count,
+            0,
+            "our own server is not the person's"
+        );
     }
 
     #[test]

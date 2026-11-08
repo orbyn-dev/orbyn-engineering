@@ -850,6 +850,34 @@ fn forced(query: &HashMap<String, String>) -> bool {
     query.get("force").is_some_and(|value| value == "true")
 }
 
+/// What the thread's engine has available: servers, connectors, plugins and tools.
+pub async fn thread_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .thread_tools(&id, query.contains_key("refresh"))
+            .await?,
+    ))
+}
+
+/// The same for Settings: an engine, without a thread.
+pub async fn engine_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .engine_tools(&id, query.contains_key("refresh"))
+            .await?,
+    ))
+}
+
 pub async fn limits_overview(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,

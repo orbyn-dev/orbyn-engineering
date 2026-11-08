@@ -17,6 +17,7 @@ import { OpenInEditor } from "./OpenInEditor";
 import { PullsRow } from "./PullChip";
 import { runProjectAction } from "./runProjectAction";
 import { ThreadAutomations } from "./ThreadAutomations";
+import { ToolsRow } from "../tools/ToolsRow";
 import { useThreadLogs } from "./threadLogs";
 import { pluralize } from "./toolCalls";
 
@@ -25,6 +26,7 @@ export const DETAIL_ROWS: { id: string; label: string }[] = [
   { id: "changes", label: "Changes" },
   { id: "pulls", label: "Pull requests" },
   { id: "automations", label: "Automations" },
+  { id: "tools", label: "Tools" },
   { id: "servers", label: "Local servers" },
   { id: "limits", label: "Limits" },
   { id: "usage", label: "Usage" },
@@ -286,6 +288,7 @@ export function DetailsCard({ thread }: { thread: Thread }) {
             {shows("changes") ? <ChangesRow threadId={thread.id} /> : null}
             {shows("pulls") ? <PullsRow thread={thread} /> : null}
             {shows("automations") ? <ThreadAutomations threadId={thread.id} /> : null}
+            {shows("tools") ? <ToolsRow thread={thread} /> : null}
             {shows("servers") ? <ServersRow threadId={thread.id} /> : null}
             {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
             {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
