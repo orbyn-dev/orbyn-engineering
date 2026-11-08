@@ -4,15 +4,18 @@ import type { ApiFailure } from "../api/client";
 import { NETWORK_ERROR } from "../api/client";
 import { routeHref, type Route } from "../state/route";
 import { useLayoutWidth } from "../lib/useLayout";
+import { useWaited } from "../lib/motion";
 import { Button } from "./controls";
 
+/** A static skeleton, drawn only if the wait outlasts 400 ms. The label is read at once. */
 export function Loading({ label, rows = 4 }: { label: string; rows?: number }) {
+  const slow = useWaited(true);
   return (
     <div className="loading" role="status">
       <span className="sr-only">{label}</span>
-      {Array.from({ length: rows }, (_, at) => (
-        <div key={at} className="skeleton" aria-hidden />
-      ))}
+      {slow
+        ? Array.from({ length: rows }, (_, at) => <div key={at} className="skeleton" aria-hidden />)
+        : null}
     </div>
   );
 }
@@ -62,12 +65,14 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 }
 
 /** Screen identity, plus the explicit way back on one-surface layouts. */
-/** In the narrow layout a page has no sidebar beside it, so its topbar leads back to the thread list. */
-export function NarrowBack() {
+/** In the phone layout a page has no sidebar beside it, so its topbar leads back to the thread list. */
+export function NarrowBack({ to }: { to?: Route }) {
   const layout = useLayoutWidth();
-  if (layout !== "narrow") return null;
+  if (layout !== "phone") return null;
+  // A page inside a section goes back to that section's list; the rest go to the threads.
+  const label = to?.name === "pulls" ? "Back to pull requests" : "Back to threads";
   return (
-    <a className="icon-btn" href={routeHref({ name: "home" })} aria-label="Back to threads" title="Back to threads">
+    <a className="icon-btn" href={routeHref(to ?? { name: "home" })} aria-label={label} title={label}>
       <ArrowLeft size={16} aria-hidden />
     </a>
   );
@@ -87,7 +92,7 @@ export function PageHeader({
   children?: ReactNode;
 }) {
   const layout = useLayoutWidth();
-  const showBack = back && (layout === "narrow" || back.name !== "home");
+  const showBack = back && (layout === "phone" || back.name !== "home");
   return (
     <header className="page-head">
       {showBack ? (

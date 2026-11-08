@@ -16,7 +16,6 @@ export interface TurnFold {
   key: string;
   label: string;
   entries: TimelineEntry[];
-  lazy?: boolean;
 }
 
 /** The live header while a turn runs. */
@@ -70,7 +69,7 @@ function liveWork(items: readonly ThreadItem[], runId: string): TimelineEntry[] 
   const flush = () => {
     const first = older[0];
     if (first) entries.push({ kind: "fold", key: `earlier:${runId}:${first.key}`,
-      label: `Show ${older.reduce((sum, group) => sum + group.items.length, 0)} earlier activities`, entries: older, lazy: true });
+      label: `Show ${older.reduce((sum, group) => sum + group.items.length, 0)} earlier activities`, entries: older });
     older = [];
   };
   for (const group of groups) {
@@ -87,7 +86,7 @@ const staysVisible = (item: ThreadItem): boolean => {
     case "approval":
       return item.approval.state === "pending";
     case "notice":
-      return item.tone === "error";
+      return item.tone === "error" || item.code === "run_stopped";
     case "diff":
       return true;
     case "message":
