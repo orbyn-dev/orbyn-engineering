@@ -132,6 +132,7 @@ it("lists running processes with a red Stop that asks first, and says when there
 });
 
 it("lists only processes that have run over 2 s, and says nothing is running long otherwise", async () => {
+  const proc = (pid: number, name: string, running_seconds: number) => ({ pid, parent: 1, name, memory_bytes: 1, running_seconds });
   serve(() => ({ ...diagnostics([]), processes: [proc(1, "orbynd", 9000), proc(7, "claude", 5), proc(8, "git", 1), proc(9, "sh", 2)] }));
   render(<MaintenanceSection />);
   expect(await screen.findByRole("button", { name: "Stop claude" })).toBeVisible();
