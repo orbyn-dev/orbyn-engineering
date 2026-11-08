@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { request } from "../../api/client";
@@ -30,8 +30,12 @@ it("shows the saved days beside On, saves a new number on leaving it, and Off hi
   const user = userEvent.setup();
   render(<WorktreeCleanup />);
   const days = await screen.findByRole("spinbutton", { name: "Automatic worktree cleanup: days" });
+  await waitFor(() => expect(days).toBeEnabled());
   expect(days).toHaveValue(14);
-  await user.clear(days); await user.type(days, "3"); await user.tab();
+  // One change event rather than keystrokes: typing into a field that is briefly disabled drops characters under load.
+  days.focus();
+  fireEvent.change(days, { target: { value: "3" } });
+  await user.tab();
   await waitFor(() => sent({ mode: "custom", rules: { settled_after_days: 3 } }));
   // The controls rest while the save and the read after it are under way; a change made then is not taken.
   const select = screen.getByRole("combobox", { name: "Automatic worktree cleanup" });

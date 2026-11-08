@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { request } from "../../api/client";
@@ -37,9 +37,11 @@ it("keeps the prefix without a slash, previews the branch name, and saves it tri
   render(<WorktreesSection />);
   expect(await screen.findByText("A / is added after the prefix.")).toBeVisible();
   const field = screen.getByRole("textbox", { name: "Branch prefix" });
+  await waitFor(() => expect(field).toBeEnabled());
   expect(screen.getByText("orbyn/fix-login")).toBeVisible();
-  await user.clear(field); await user.type(field, "feat/"); 
-  expect(screen.getByText("feat/fix-login")).toBeVisible();
+  fireEvent.change(field, { target: { value: "feat/" } });
+  expect(await screen.findByText("feat/fix-login")).toBeVisible();
+  field.focus();
   await user.tab();
   await waitFor(() => expect(request).toHaveBeenCalledWith("PUT", "/api/settings/preferences", expect.objectContaining({
     edits: { branch_name_prefix: { op: "set", value: "feat" } } })));
