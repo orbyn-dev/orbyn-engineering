@@ -812,7 +812,7 @@ export function createMockApi(options: MockOptions = {}) {
             digest: "0".repeat(40),
             signature_valid: true,
             source: null,
-            skills: Array.from({ length: 64 }, (_, at) => ({ name: `skill-${at + 1}`, category: "core", description: "", enabled: true })),
+            skills: fixtures.skills,
           },
         };
       case "GET /api/engines":

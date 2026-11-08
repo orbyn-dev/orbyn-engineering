@@ -35,6 +35,7 @@ export type Route =
       edit?: boolean;
     }
   | { name: "usage" }
+  | { name: "skills"; skill?: string }
   | { name: "tasks" }
   /** The list, or one pull request of one project. */
   | { name: "pulls"; project?: string; number?: number };
@@ -53,6 +54,8 @@ export function routeHref(route: Route): string {
       return `#/trust/${enc(route.projectId)}${route.threadId ? `/${enc(route.threadId)}` : ""}`;
     case "usage":
       return "#/usage";
+    case "skills":
+      return route.skill === undefined ? "#/skills" : `#/skills/${enc(route.skill)}`;
     case "tasks":
       return "#/tasks";
     case "pulls":
@@ -96,6 +99,8 @@ export function parseRoute(hash: string): Route {
       return first ? { name: "trust", projectId: first, threadId: second ?? null } : { name: "home" };
     case "usage":
       return { name: "usage" };
+    case "skills":
+      return first ? { name: "skills", skill: first } : { name: "skills" };
     case "tasks":
       return { name: "tasks" };
     case "pulls": {

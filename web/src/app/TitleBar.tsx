@@ -122,6 +122,8 @@ export function TitleBar({ route, layout }: { route: Route; layout: LayoutWidth 
       ? (title ?? "")
       : route.name === "pulls"
         ? (pageLabel ?? "Pull requests")
+        : route.name === "skills"
+          ? (route.skill ?? "Skills")
         : route.name === "usage"
           ? "Usage"
           : route.name === "tasks"
