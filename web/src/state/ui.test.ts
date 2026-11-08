@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DRAFT_LAYOUT, useUi } from "./ui";
 
 const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: null, panelTab: null, openSurfaces: [], terminalOpen: false, panelWidth: null });
+  useUi.setState({ layouts: {}, panelOpen: null, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
 });
 
 describe("thread layouts", () => {
@@ -43,5 +43,39 @@ describe("thread layouts", () => {
     expect(ui().panelOpen).toBeNull();
     ui().setLayoutKey("t1");
     expect(ui().panelOpen).toBe(true);
+  });
+});
+
+describe("panel tab row", () => {
+  it("remembers each thread's order and closed set", () => {
+    ui().setLayoutKey("a");
+    ui().movePanelTab("side", 0);
+    ui().closePanelTab("files");
+    ui().setLayoutKey("b");
+    expect(ui().panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side"]);
+    expect(ui().panelTabsClosed).toEqual([]);
+    ui().setLayoutKey("a");
+    expect(ui().panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
+    expect(ui().panelTabsClosed).toEqual(["files"]);
+  });
+
+  it("drops stale ids from a saved row and never leaves it empty", async () => {
+    localStorage.setItem(
+      "orbyn.prefs.v1",
+      JSON.stringify({ panelTab: "pulls", panelTabOrder: ["pulls", "side", "side", "diff"], panelTabsClosed: ["diff", "files", "browser", "activity", "side"] }),
+    );
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(fresh.panelTab).toBeNull();
+    expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
+    expect(fresh.panelTabsClosed).toEqual([]);
+  });
+
+  it("skips a saved layout that is not an object instead of failing to load", async () => {
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ layouts: { a: null, b: 7, c: "x", d: { panelTab: "files" } } }));
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(Object.keys(fresh.layouts)).toEqual(["d"]);
+    expect(fresh.layouts["d"]?.panelTab).toBe("files");
   });
 });

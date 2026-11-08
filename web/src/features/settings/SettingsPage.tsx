@@ -1,4 +1,4 @@
-import { SettingsScopeProvider } from "./SettingsScopeContext";
+import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./SettingsScopeContext";
 import { ScopeSentence } from "./ScopeSentence";
 import { SettingRowIds } from "../../ui/SettingRow";
 import { searchSettings, settingSearchId } from "./settingsSearch";
@@ -6,8 +6,8 @@ import { api } from "../../api/client";
 import { onShellChange } from "../../api/shell";
 import { useAsync } from "../../lib/useAsync";
 import { navigate, useRoute } from "../../state/route";
-import { Search, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Info, Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { routeHref, type SettingsSection } from "../../state/route";
 import { IconButton } from "../../ui/controls";
 import { AppearanceSection } from "./Appearance";
@@ -27,8 +27,9 @@ import {
 } from "./PreferenceSections";
 import { ScheduledTasksSection } from "./ScheduledTasks";
 import { ThreadsSection } from "./Threads";
+import "./settingsDesign.css";
 
-const labels: Record<SettingsSection, string> = {
+export const labels: Record<SettingsSection, string> = {
   general: "General",
   appearance: "Appearance",
   chat: "Chat",
@@ -72,7 +73,7 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
   maintenance: MaintenanceSection,
 };
 
-/** Settings float over the workspace, which stays as it was underneath. */
+/** Settings fill the main area of the frame: a section list on the left, the open section on the right. */
 export function SettingsPage({ section, onClose }: { section: SettingsSection | null; onClose(): void }) {
   return <SettingsScopeProvider section={section ?? "general"}><SettingsPageContent section={section} onClose={onClose} /></SettingsScopeProvider>;
 }
@@ -80,20 +81,31 @@ export function SettingsPage({ section, onClose }: { section: SettingsSection | 
 function SettingsPageContent({ section, onClose }: { section: SettingsSection | null; onClose(): void }) {
   const route = useRoute();
   const sectionRoute = (next: SettingsSection) => ({ name: "settings" as const, section: next, selection: route.name === "settings" ? route.selection : undefined, machine: route.name === "settings" ? route.machine : undefined });
-  const ref = useRef<HTMLDialogElement>(null);
+  const ref = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string } | null>(null);
   const shell = useAsync("settings-search-shell", (signal) => api.shell(signal));
   const current = section ?? "general";
   const View = views[current];
 
-  useLayoutEffect(() => {
-    const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    return () => {
-      if (dialog?.open) dialog.close();
+  // Escape closes settings from anywhere, unless a dialog, menu or field is handling its own.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // A dialog owns Escape even when its focused button has just been disabled and focus fell to the page.
+      if (document.querySelector("dialog[open]")) return;
+      const target = event.target;
+      if (target instanceof Element) {
+        if (target.closest('dialog[open], [role="dialog"], [role="menu"], [role="listbox"], [role="combobox"], [contenteditable="true"]')) return;
+        if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+        if (target instanceof HTMLInputElement && !["checkbox", "radio", "range", "button"].includes(target.type)) return;
+      }
+      event.preventDefault();
+      onClose();
     };
-  }, []);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const sectionResults = groups.flatMap((group) => group.sections).filter((entry) => labels[entry].toLowerCase().includes(query.trim().toLowerCase()));
   const reloadShell = shell.reload;
@@ -109,13 +121,13 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
 
   useEffect(() => {
     if (!target) return;
-    const dialog = ref.current;
-    if (!dialog) return;
+    const page = ref.current;
+    if (!page) return;
     let frame = 0;
     let finished = false;
     const reveal = () => {
       if (finished) return;
-      const row = dialog.querySelector<HTMLElement>(`[id="${target.id}"]`);
+      const row = page.querySelector<HTMLElement>(`[id="${target.id}"]`);
       if (!row) return;
       row.dispatchEvent(new Event("reveal-setting", { bubbles: true }));
       cancelAnimationFrame(frame);
@@ -128,7 +140,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
       });
     };
     const observer = new MutationObserver(reveal);
-    observer.observe(dialog, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    observer.observe(page, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
     reveal();
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
   }, [target, current]);
@@ -141,16 +153,11 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
   }, [current, searching]);
 
   return (
-    <dialog
+    <section
       ref={ref}
-      className="settings-panel"
+      className="settings-page"
+      role="region"
       aria-label="Settings"
-      onCancel={(event) => {
-        // A dialog opened from a section reports its own cancel through React too.
-        if (event.target !== ref.current) return;
-        event.preventDefault();
-        onClose();
-      }}
     >
       <div className="settings-side">
         <div className="settings-search">
@@ -158,25 +165,32 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
           <input
             type="search"
             aria-label="Search settings"
-            placeholder="Search"
+            placeholder="Find a setting"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") ref.current?.querySelector<HTMLElement>(".settings-search-menu a")?.click();
+            }}
           />
         </div>
-        <nav className="settings-nav" aria-label="Settings sections" data-searching={Boolean(query.trim())}>
-          {query.trim() ? (
-            <div className="settings-group">
-              {results.length || sectionResults.length ? <>
-              {sectionResults.map((section) => <a key={section} onClick={() => setTarget(null)} href={routeHref(sectionRoute(section))}>{labels[section]}</a>)}
+        {searching ? (
+          <div className="settings-search-menu" aria-label="Search results">
+            {results.length || sectionResults.length ? <>
+              {results.length ? <p className="mh">Settings</p> : null}
               {results.map((item) => (
                 <a className="settings-search-result" key={item.id} aria-label={`${item.title} · ${labels[item.section]}`} href={routeHref(sectionRoute(item.section))}
                   onClick={(event) => { event.preventDefault(); setTarget({ id: item.id }); navigate({ name: "settings", section: item.section }); }}>
                   <span>{item.title}</span><small>{labels[item.section]}</small>
                 </a>
-              ))}</> : <p role="status">No settings found</p>}
-            </div>
-          ) : groups.map((group) => (
-            <div key={group.label ?? group.sections[0]}>
+              ))}
+              {sectionResults.length ? <p className="mh">Sections</p> : null}
+              {sectionResults.map((section) => <a key={section} onClick={() => setTarget(null)} href={routeHref(sectionRoute(section))}>{labels[section]}</a>)}
+            </> : <p role="status">No settings found</p>}
+          </div>
+        ) : null}
+        <nav className="settings-nav" aria-label="Settings sections">
+          {groups.map((group) => (
+            <div key={group.label ?? group.sections[0]} className="settings-group-list">
               {group.label ? <p className="settings-group">{group.label}</p> : null}
               {group.sections.map((entry) => (
                 <a
@@ -194,24 +208,22 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
       </div>
       <div className="settings-main">
         <header className="settings-head">
-          <span>
-            <span className="crumb-project">Settings</span>
-            <span className="crumb-slash"> / </span>
-            {labels[current]}
-          </span>
+          <span className="settings-title" aria-hidden>{labels[current]}</span>
           <IconButton label="Close settings" onClick={onClose}>
             <X size={16} aria-hidden />
           </IconButton>
         </header>
         <div className="settings-scroll">
           <div className="settings-body">
-            <ScopeSentence />
+            {SCOPE_LINE_SECTIONS.has(current) ? <ScopeSentence /> : null}
+            {current === "general" ? <p className="settings-scope"><Info size={13} aria-hidden />{shell.data?.attached ? "Desktop app · applies to this computer" : "Applies to this computer"}</p> : null}
+            {current === "maintenance" ? <p className="settings-scope"><Info size={13} aria-hidden />Applies to this computer</p> : null}
             <SettingRowIds.Provider value={(title) => settingSearchId(current, title)}>
               <View key={current} />
             </SettingRowIds.Provider>
           </div>
         </div>
       </div>
-    </dialog>
+    </section>
   );
 }

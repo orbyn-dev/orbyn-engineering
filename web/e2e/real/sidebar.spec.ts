@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { type Service, libraryReady, startService } from "./service";
+import { type Service, libraryReady, openPanelTab, startService } from "./service";
 
 
 interface Thread {
@@ -80,6 +80,13 @@ test("the menu pins, snoozes through Custom and wakes", async ({ page }) => {
 });
 
 test("dragging reorders, pins and settles with an action badge", async ({ page }) => {
+  // Reordering is for the flat list: project folders sort by activity, so they have nothing to reorder.
+  await page.evaluate(() => {
+    const key = "orbyn.prefs.v1";
+    localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), projectFolders: false }));
+  });
+  await page.reload();
+  await expect(row(page, "Alpha")).toBeVisible();
   const list = page.locator("li[data-section=active]");
   await expect(list).toHaveCount(4);
   const titles = await list.locator(".thread-row-title").allInnerTexts();
@@ -149,14 +156,12 @@ test("multi-select settles in bulk, and press-drag settles a range", async ({ pa
 
 test("usage reads the real report and limits", async ({ page }) => {
   await page.getByRole("link", { name: "Usage" }).click();
-  const usage = page.getByRole("dialog", { name: "Usage" });
+  const usage = page.getByRole("region", { name: "Usage" });
   await expect(usage.getByRole("radio", { name: "30 days" })).toBeChecked();
   await usage.getByRole("radio", { name: "7 days" }).click();
   await usage.getByRole("button", { name: "Refresh usage" }).click();
-  await usage.getByRole("radio", { name: "Limits" }).click();
+  await usage.getByRole("tab", { name: "Limits" }).click();
   await expect(usage.getByText(/reports limits|left|:/).first()).toBeVisible({ timeout: 15_000 });
-  await page.keyboard.press("Escape");
-  await expect(usage).toBeHidden();
 });
 
 test("the composer picks model and effort, sets access, and keeps favourites", async ({ page }) => {
@@ -210,7 +215,7 @@ test("each thread restores its own panel across switches and a reload", async ({
 
   await open(first);
   await expect(page.getByRole("heading", { name: first })).toBeVisible();
-  await page.getByRole("button", { name: "Surfaces" }).click();
+  await openPanelTab(page);
   await expect(pane).toBeVisible();
   const handle = await pane.getByRole("separator", { name: "Resize panel" }).boundingBox();
   await page.mouse.move((handle?.x ?? 0) + 3, 300);
@@ -240,7 +245,7 @@ test("each thread restores its own panel across switches and a reload", async ({
   await expect(pane).toBeHidden();
 });
 
-test("the terminal drawer opens tabs and splits, and files and diff sources read the checkout", async ({ page }) => {
+test("the terminal drawer opens tabs, and files and diff sources read the checkout", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const id = ids.Bravo ?? "";
   await page.goto(`${service.page}#/threads/${id}`);
@@ -249,13 +254,9 @@ test("the terminal drawer opens tabs and splits, and files and diff sources read
   await expect(drawer.getByText("Connected")).toBeVisible({ timeout: 10_000 });
   await drawer.getByRole("button", { name: "New terminal" }).click();
   await expect(drawer.getByRole("tab")).toHaveCount(2);
-  await drawer.getByRole("button", { name: "Split terminal horizontally" }).click();
-  await expect(drawer.locator(".terminal-panel")).toHaveCount(2);
   await drawer.getByRole("button", { name: /^Close Terminal|^Close [^t]/ }).first().click();
 
-  await page.getByRole("button", { name: "Surfaces" }).click();
-  const pane = page.getByRole("complementary", { name: "Thread context" });
-  await pane.getByRole("button", { name: /^Files/ }).click();
+  const pane = await openPanelTab(page, "Files");
   await expect(pane.locator(".file-tree button").first()).toBeVisible({ timeout: 10_000 });
   await page.keyboard.press("ControlOrMeta+f");
   await expect(page.getByRole("textbox", { name: "Find in thread" })).toBeFocused();
@@ -274,11 +275,11 @@ test("every settings section loads from the real service", async ({ page }) => {
     await expect(page.locator(".settings-head")).toContainText(name);
     await expect(page.getByText(/^Loading/)).toHaveCount(0, { timeout: 10_000 });
   }
-  await nav.getByRole("link", { name: "Threads", exact: true }).click();
-  await page.getByRole("combobox", { name: "Default permissions" }).selectOption("auto");
+  await nav.getByRole("link", { name: "Chat", exact: true }).click();
+  await page.getByRole("combobox", { name: "Default access mode" }).selectOption("auto");
   await expect
     .poll(async () => (await service.api<{ key: string; value: unknown }[]>("GET", "/api/preferences")).find((p) => p.key === "default_permission_mode")?.value)
     .toBe("auto");
-  await page.getByRole("combobox", { name: "Default permissions" }).selectOption("supervised");
+  await page.getByRole("combobox", { name: "Default access mode" }).selectOption("supervised");
   expect(failures).toEqual([]);
 });

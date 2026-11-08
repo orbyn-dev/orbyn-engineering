@@ -36,7 +36,7 @@ test("composer keys open the model picker, effort and the branch switcher", asyn
   await expect(page.getByRole("dialog", { name: "Switch branch" })).toBeVisible();
 });
 
-test("alt+up takes the last queued message back, and terminal keys split and close", async ({ page }) => {
+test("alt+up takes the last queued message back, and a terminal key opens one", async ({ page }) => {
   await fresh(page, "[hang]");
   await expect(page.getByRole("button", { name: "Stop" })).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => (await service.api<{ active_run: { state: string } | null }>("GET", `/api/threads/${threadIdOf(page)}`)).active_run?.state).toBe("running");
@@ -54,13 +54,8 @@ test("alt+up takes the last queued message back, and terminal keys split and clo
   await page.locator(".terminal-drawer-body .xterm-helper-textarea").first().focus();
   await page.keyboard.press("ControlOrMeta+n");
   await expect.poll(async () => (await service.api<unknown[]>("GET", `/api/threads/${threadIdOf(page)}/terminals`)).length).toBeGreaterThan(1);
-  // The new tab's terminal loads after its row appears, and takes focus when it does.
-  await expect(async () => {
-    await page.locator(".terminal-splits .xterm-helper-textarea").first().focus();
-    await expect(page.locator(".terminal-splits .xterm-helper-textarea").first()).toBeFocused({ timeout: 500 });
-    await page.keyboard.press("ControlOrMeta+d");
-    await expect(page.locator(".terminal-splits .xterm")).toHaveCount(2, { timeout: 1000 });
-  }).toPass();
+  // The new tab takes focus on its own once its terminal has loaded.
+  await expect(page.locator(".terminal-splits .xterm-helper-textarea").first()).toBeFocused({ timeout: 15_000 });
 });
 
 test("Shift+PageUp reads scrollback without leaving the terminal", async ({ page }) => {
@@ -95,7 +90,16 @@ test("an address in the terminal opens in the Browser panel", async ({ page }) =
     await page.keyboard.type("printf 'http://%s\\n' localhost:1/x\n");
     await expect(line).toBeVisible({ timeout: 4000 });
   }).toPass({ timeout: 25_000 });
-  const place = await line.boundingBox();
+  // The shell can still be printing (a lost first attempt scrolls the rows), so the line is measured once it has stopped moving.
+  let place = await line.boundingBox();
+  let still = 0;
+  await expect.poll(async () => {
+    await page.waitForTimeout(150);
+    const next = await line.boundingBox();
+    still = next !== null && place !== null && next.y === place.y ? still + 1 : 0;
+    place = next;
+    return still;
+  }).toBeGreaterThanOrEqual(4);
   if (!place) throw new Error("no line");
   await page.mouse.move(place.x + 40, place.y + place.height / 2);
   await page.mouse.move(place.x + 44, place.y + place.height / 2);
@@ -116,7 +120,7 @@ test("F6 walks the window's areas", async ({ page }) => {
 
 test("usage period keys come from the rules", async ({ page }) => {
   await page.goto(`${service.page}#/usage`);
-  const usage = page.getByRole("dialog", { name: "Usage" });
+  const usage = page.getByRole("region", { name: "Usage" });
   await expect(usage).toBeVisible();
   // The rules arrive just after the page does.
   await expect(async () => {
@@ -138,7 +142,7 @@ test("a keybindings file that changes or breaks says so when you come back", asy
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.getByText("Keybindings reloaded")).toBeVisible();
   await page.keyboard.press("ControlOrMeta+Shift+y");
-  await expect(page.getByRole("button", { name: "Expand sidebar" }).or(page.locator(".sidebar[data-collapsed]")).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show sidebar" })).toBeVisible();
   writeFileSync(view.path, "{ not json");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.getByText(/The keybindings file has a problem/)).toBeVisible();

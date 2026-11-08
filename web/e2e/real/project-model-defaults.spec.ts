@@ -7,7 +7,7 @@ import type { ProjectScopeCatalog } from "../../src/generated/ProjectScopeCatalo
 import { projectSettingsUrl, startProject, settled, type Service } from "./service";
 
 const modelRow = (page: Page) => page.locator(".setting-line").filter({
-  has: page.locator(".setting-line-title").filter({ hasText: /^Model$/ }),
+  has: page.locator(".setting-line-title").filter({ hasText: /^Default model$/ }),
 });
 const values = async (service: Service, project?: string) => Object.fromEntries(
   (await service.api<{ key: string; value: unknown }[]>("GET", project ? `/api/preferences?project_id=${project}` : "/api/preferences"))
@@ -124,17 +124,16 @@ test("a Mixed project group changes both captured checkouts while a checkout cho
   } finally { await service.stop(); }
 });
 
-test("Escape closes only the model picker inside native modal settings, including from its provider rail", async ({ page }) => {
+test("Escape closes only the model picker inside the settings page, including from its provider rail", async ({ page }) => {
   const { service, projectId } = await startProject({ fakeEngines: true });
   try {
     for (const focus of ["search", "provider"]) {
       await page.goto(await projectSettingsUrl(service, projectId));
-      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+      const settings = page.getByRole("region", { name: "Settings", exact: true });
       await expect(settings).toBeVisible();
-      expect(await settings.evaluate((element) => element.matches(":modal"))).toBe(true);
       const trigger = modelRow(page).locator("[data-model-trigger]");
       await trigger.click();
-      const picker = settings.getByRole("dialog", { name: "Choose a model" });
+      const picker = page.getByRole("dialog", { name: "Choose a model" });
       await expect(picker).toBeVisible();
       const search = picker.getByRole("textbox", { name: "Search models" });
       await expect(search).toBeFocused();
@@ -194,7 +193,8 @@ test("default effort, options and fallback save for the project and reach a new 
     }).toEqual([tuned.id, deep.id, { service_tier: tier.values[0]!.id }]);
 
     // The fallback model is the project's own; the environment keeps none.
-    const fallback = page.getByRole("textbox", { name: "Fallback model" });
+    await page.getByRole("combobox", { name: "Fallback model" }).selectOption("__other");
+    const fallback = page.getByRole("textbox", { name: "Model id" });
     saved = put();
     await fallback.fill(" fake-small ");
     await fallback.blur();

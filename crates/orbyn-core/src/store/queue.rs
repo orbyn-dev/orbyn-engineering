@@ -121,6 +121,7 @@ fn pull_row(row: &Row<'_>) -> rusqlite::Result<PullRequest> {
         labels: Vec::new(),
         review_state: None,
         checks_state: None,
+        checks: None,
     })
 }
 
@@ -297,6 +298,10 @@ impl Store {
                 },
             )?;
             tx.execute("DELETE FROM queued_messages WHERE id = ?1", [&message.id])?;
+            tx.execute(
+                "UPDATE runs SET queued_message_id = ?2 WHERE id = ?1",
+                params![run.id, message.id],
+            )?;
             apply_selection(
                 tx,
                 appended,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiFailure, api, setUnauthorizedHandler } from "../api/client";
 import { followShell, readShellStatus } from "../api/shell";
 import { SignIn } from "../features/onboarding/SignIn";
@@ -7,9 +7,11 @@ import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../state/ui";
 import { ErrorState, Loading } from "../ui/states";
 import { onShellEvent, Shell } from "./Shell";
+import { useConnection, watchConnection } from "../state/connection";
 import { upgradeToast } from "../state/healthToasts";
 import { PreviewWindow } from "../features/panels/PreviewWindow";
 import { previewWindowRoute } from "../features/panels/browserPanels";
+import { PreviewScreen, previewScreenRoute } from "../features/platform/previews";
 
 type Boot =
   | { state: "loading" }
@@ -17,7 +19,27 @@ type Boot =
   | { state: "sign-in" }
   | { state: "failed"; failure: ApiFailure };
 
+const subscribeHash = (notify: () => void) => {
+  window.addEventListener("hashchange", notify);
+  return () => window.removeEventListener("hashchange", notify);
+};
+const readHash = () => window.location.hash;
+
+/** A platform design screen (dev builds only) skips the boot and makes no request. */
 export function App() {
+  const hash = useSyncExternalStore(subscribeHash, readHash);
+  const screen = previewScreenRoute(hash);
+  if (screen && PreviewScreen) {
+    return (
+      <Suspense fallback={null}>
+        <PreviewScreen name={screen} />
+      </Suspense>
+    );
+  }
+  return <BootedApp />;
+}
+
+function BootedApp() {
   const [boot, setBoot] = useState<Boot>({ state: "loading" });
   const theme = useUi((state) => state.theme);
 
@@ -36,6 +58,7 @@ export function App() {
     api.info(abort.signal).then(
       (info) => {
         adoptEnvironmentTheme(info.environment_theme);
+        useConnection.setState({ remote: info.remote });
         const upgraded = upgradeToast(info);
         if (upgraded) useUi.getState().pushToast(upgraded);
         setBoot({ state: "ready" });
@@ -61,6 +84,10 @@ export function App() {
     const recheck = () => void api.info().then((info) => adoptEnvironmentTheme(info.environment_theme), () => undefined);
     window.addEventListener("focus", recheck);
     return () => window.removeEventListener("focus", recheck);
+  }, [ready]);
+  useEffect(() => {
+    if (!ready) return;
+    return watchConnection((signal) => api.info(signal));
   }, [ready]);
   useEffect(() => {
     if (!ready) return;

@@ -8,6 +8,8 @@ revision, not the later documentation commit; reconcile any newer main before ac
 
 ## Goal
 
+> Superseded: "a working replica of T3 Code" is no longer the goal. The internal design set now defines the screens; see [design.md](design.md).
+
 A working replica of T3 Code's desktop and local web experience: its features,
 screens and motion, on our own Rust core and our own code, wrapped around the
 orbyn-fullstack-skills library as the harness. Windows and macOS.
@@ -22,7 +24,7 @@ Treat these as settled. Earlier ideas that contradict them are superseded.
 | --- | --- |
 | Stack | Rust core (`orbynd`), React UI, thin Tauri 2 shell. Not a fork of T3 Code or PandaCode. |
 | Own code | Study T3 Code and PandaCode for behaviour; write independent code. PandaCode's license requires a public fork statement if its code is reused. |
-| No invented surfaces | Every screen, name, control, status word and motion comes from T3 Code. If T3 has no such surface, ours gets none. Safety enforcement and audit stay server-side and invisible. |
+| No invented surfaces (superseded: the design set now defines the screens, see [design.md](design.md)) | Every screen, name, control, status word and motion comes from T3 Code. If T3 has no such surface, ours gets none. Safety enforcement and audit stay server-side and invisible. |
 | Skills library | Built in, with no setup step. `orbynd` provisions it from a snapshot bundled in the app, then upgrades to a clone in the background. |
 | Projects | Added in place from any path, as in T3. Nothing is cloned or moved. The engine starts from the library or is pointed at the project by path. Threads can start with no project. |
 | Worktrees | `<repo>-wt/<purpose>/` sibling of the primary clone. No custom location. |
@@ -138,7 +140,8 @@ missing cleanup rules and scheduling. The former 365/573 calculation is not a
 valid completion percentage.
 
 Required checks remain Rust on macos-15 and windows-2022, Web, unsigned desktop
-builds on both, and E2E. The repository is public and has no license yet.
+builds on both, and E2E. The repository is public and licensed under PolyForm
+Strict 1.0.0 (see `LICENSE`).
 
 ### Current local section
 
@@ -688,7 +691,6 @@ These block release, not development. Do not work around them.
 
 - `claude auth login` on a test machine, for a live Claude turn.
 - A real Windows machine for a hands-on run.
-- A license choice.
 - Apple Developer ID, Azure Trusted Signing, update hosting and an updater key.
 
 The tested-versions signing key is not in the repository. It lives only on the

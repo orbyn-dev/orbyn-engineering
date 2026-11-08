@@ -10,16 +10,20 @@ import { ErrorState, Loading } from "../../ui/states";
 import { SettingGroup, SettingRow } from "../../ui/SettingRow";
 import { Button } from "../../ui/controls";
 import { PreferenceInheritance, type PreferenceRow, type PreferenceControl, type PreferenceSaveResult } from "./PreferenceRows";
+import { Segmented } from "../../ui/Segmented";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { runHandlers } from "../../app/shortcuts";
 import { useUi } from "../../state/ui";
 
 /** Read and mutation identities stay attached to the scope that produced them. */
-export function ScopedRows({ groups, query }: {
+export function ScopedRows({ groups, query, inheritance }: {
   groups: { title: string; rows: PreferenceRow[] }[];
   query: ProjectScopesQuery;
+  /** Shows where each value comes from; defaults to the pages that are project-scoped. */
+  inheritance?: boolean;
 }) {
   const scope = useSettingsScope();
+  const showInheritance = inheritance ?? scope?.inheritance ?? false;
   const keys = groups.flatMap((group) => group.rows.map((row) => row.key));
   const list = useAsync(JSON.stringify([query, keys]), (signal) =>
     request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys }, signal));
@@ -60,20 +64,21 @@ export function ScopedRows({ groups, query }: {
   const save = (row: ScopedPreferenceRow, edit: PreferenceEdit) => { void commit(row, edit); };
   return <>
     {error ? <p className="field-error" role="alert">{error} <button type="button" disabled={busy} onClick={list.reload}>Retry</button></p> : null}
-    {groups.map((group) => <SettingGroup key={group.title} title={group.title}>
+    {groups.filter((group) => group.rows.some((row) => result.rows.some((entry) => entry.key === row.key))).map((group) => <SettingGroup key={group.title} title={group.title}>
       {group.rows.map((row) => {
         const value = result.rows.find((entry) => entry.key === row.key);
         if (!value) return null;
+        if (row.showWhen && !row.showWhen((key) => result.rows.find((entry) => entry.key === key)?.value)) return null;
         const hasOverride = value.members.some((member) => member.view.source === "project");
         return <SettingRow key={row.key} title={row.title} description={row.description} actions={
           <div className="setting-inheritance-actions">
-            <PreferenceInheritance row={row} view={value.members[0]?.view ?? value.environment} global={value.environment}
+            {showInheritance && (inheritance === true || value.project_scoped) ? <PreferenceInheritance row={row} view={value.members[0]?.view ?? value.environment} global={value.environment}
               members={value.members} mixed={value.mixed} overrides={all ? value.overrides : []} disabled={disabled}
               onResetOverrides={(ids) => save(value, { op: "reset_overrides", project_ids: ids })}
               onOpenOverride={(id) => {
                 const group = result.catalog.groups.find((entry) => entry.members.some((member) => member.project_id === id));
                 if (group) scope?.select({ kind: "checkout", group_key: group.key, project_id: id });
-              }} />
+              }} /> : null}
             {!all && hasOverride ? <Button small tone="quiet" disabled={disabled}
               aria-label={`Reset ${row.title} to default`} title="Reset to inherited value" onClick={() => save(value, { op: "inherit" })}>Inherit</Button> : null}
             {all && value.environment.source === "global" ? <Button small tone="quiet" disabled={disabled}
@@ -97,6 +102,8 @@ function ValueControl({ row, value, save, control }: { row: PreferenceRow; value
     {value.mixed ? <span>Mixed</span> : null}
     {row.render(value.value, (next) => { if (!value.mixed || touched.current) save(next); }, control)}
   </div>;
+  if (row.options && row.segmented && !value.mixed) return <Segmented label={row.title} value={String(value.value ?? "")} options={row.options}
+    onChange={(next) => save(row.parse ? row.parse(next) : next)} />;
   if (row.options) return <select aria-label={row.title} value={value.mixed ? "__mixed__" : String(value.value ?? "")}
     onChange={(event) => save(row.parse ? row.parse(event.target.value) : event.target.value)}>
     {value.mixed ? <option value="__mixed__" disabled>Mixed</option> : null}

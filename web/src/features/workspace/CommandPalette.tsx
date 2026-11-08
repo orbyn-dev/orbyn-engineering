@@ -66,7 +66,8 @@ function useMessageSearch(query: string, enabled: boolean) {
 export function CommandPalette({ start, onClose }: { start: PaletteStart; onClose(): void }) {
   const threads = useWorkspace((state) => state.threads);
   const allProjects = useWorkspace((state) => state.projects.data);
-  const [adding, setAdding] = useState(start === "add-project");
+  const [adding, setAdding] = useState(start === "add-project" || start === "add-project-url" || start === "add-project-new");
+  const [subdialog, setSubdialog] = useState(false);
   const ref = useRef<HTMLDialogElement>(null);
   const [newIn, setNewIn] = useState(false);
   const projects = useVisibleProjects();
@@ -103,7 +104,9 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       { key: "new-in", group: "Actions", label: "New thread in...", icon: <SquarePen size={16} aria-hidden />, route: "new-in" },
       { key: "add", group: "Actions", label: "Add project", icon: <FolderPlus size={16} aria-hidden />, route: "add-project" },
       ...(parseRoute(window.location.hash).name === "thread"
-        ? [{ key: "restart", group: "Actions", label: "Restart agent session", icon: <RotateCcw size={16} aria-hidden />, route: "restart-session" as const }]
+        ? [
+            { key: "restart", group: "Actions", label: "Restart agent session", icon: <RotateCcw size={16} aria-hidden />, route: "restart-session" as const },
+          ]
         : []),
       ...SETTINGS_SECTIONS.map((section) => ({
         key: `settings:${section}`,
@@ -212,6 +215,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
     <dialog
       ref={ref}
       className="palette"
+      data-subdialog={subdialog || undefined}
       aria-label="Command palette"
       onCancel={(event) => {
         event.preventDefault();
@@ -222,7 +226,11 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       }}
     >
       {adding ? (
-        <AddProjectPalette onBack={() => (start === "add-project" ? onClose() : setAdding(false))} onClose={onClose} />
+        <AddProjectPalette
+          initialView={start === "add-project-url" ? "clone" : start === "add-project-new" ? "new" : "folders"}
+          onClose={onClose}
+          onSubdialog={setSubdialog}
+        />
       ) : (
         <>
       <div className="palette-search">
