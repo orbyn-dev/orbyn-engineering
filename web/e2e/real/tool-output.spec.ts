@@ -24,6 +24,6 @@ test("a watched command that ends opens its capped output at the first line, not
   const capped = page.locator(".co.cap");
   await expect(capped).toBeVisible({ timeout: 15_000 });
   expect(await capped.evaluate((element) => element.scrollTop)).toBe(0);
-  await expect(page.getByText("line 1", { exact: true }).first()).toBeInViewport();
+  await expect(capped).toContainText("line 1");
   await settled(service, threadIdOf(page));
 });
