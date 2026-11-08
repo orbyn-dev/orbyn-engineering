@@ -212,3 +212,22 @@ it("shows the two task defaults on the settings page, with Run while closed gone
   expect(screen.getByRole("switch", { name: "Notify when a run finishes or fails" })).toBeChecked();
   expect(screen.queryByText(/while closed/i)).toBeNull();
 });
+
+it("shows New task once while the list is empty (the empty state's) and in the header once tasks exist", async () => {
+  ready();
+  window.location.hash = "#/settings/tasks";
+  installMockFetch();
+  const mockFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) =>
+    input === "/api/tasks" && (init?.method ?? "GET") === "GET"
+      ? new Response("[]", { status: 200, headers: { "content-type": "application/json" } })
+      : mockFetch(input, init)));
+  const empty = render(<ScheduledTasksSection />);
+  expect(await screen.findByText("No scheduled tasks")).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "New task" })).toHaveLength(1);
+  empty.unmount();
+  vi.stubGlobal("fetch", mockFetch);
+  render(<ScheduledTasksSection />);
+  await screen.findByRole("table", { name: "Tasks" });
+  expect(screen.getAllByRole("button", { name: "New task" })).toHaveLength(1);
+});

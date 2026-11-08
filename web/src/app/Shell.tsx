@@ -1,3 +1,4 @@
+import { useClearSelectionOnLeave } from "../lib/clearSelection";
 import { WelcomeHost } from "../features/onboarding/WelcomeWizard";
 import { QuitConfirmation } from "../features/workspace/QuitConfirmation";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
@@ -607,6 +608,7 @@ export function Shell() {
   useTaskRunNotifications();
   usePanelMotionRoot(routeKey);
   useRouteFocus(routeKey, route.name, threadReady, main);
+  useClearSelectionOnLeave(routeKey);
   useToastClearance(`${routeKey}:${threadReady}`);
 
   useEffect(() => {

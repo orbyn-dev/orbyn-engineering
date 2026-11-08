@@ -192,8 +192,11 @@ export function EffortTrigger({
   const display = useUi((state) => state.effortDisplay);
   const option = effortOption(model);
   const current = effortValue(model, effort);
+  // No effort setting: nothing is drawn. With one, the pill names the level, or "Default" when none is chosen:
+  // never a bare "Effort", and the way to pick one never disappears.
   if (!option) return null;
-  const parts = [`Effort: ${current?.label ?? "Default"}`, access ? `Permissions: ${ACCESS[access].label}` : null];
+  const level = current?.label ?? "Default";
+  const parts = [`Effort: ${level}`, access ? `Permissions: ${ACCESS[access].label}` : null];
   const levels = option.values;
   const at = levels.findIndex((value) => value.id === current?.id);
   const named = current === null || current.id === "max";
@@ -210,7 +213,7 @@ export function EffortTrigger({
       {display === "bars" && !named ? (
         <EffortGlyph count={levels.filter((value) => value.id !== "max").length} filled={at + 1} />
       ) : (
-        (current?.label ?? option.label)
+        level
       )}
     </button>
   );

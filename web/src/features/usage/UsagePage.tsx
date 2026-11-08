@@ -157,6 +157,9 @@ function resetsIn(iso: string): string {
   return hours < 48 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`;
 }
 
+/** How long Limits may load before the page stops waiting for the engine. */
+export const LIMITS_WAIT_MS = 8000;
+
 function LimitRow({ label, used, resets }: { label: string; used: number; resets: string | null }) {
   const left = Math.max(0, Math.round(100 - used));
   return (
@@ -185,9 +188,10 @@ function LimitsView({ data, nameOf }: { data: LimitsOverview; nameOf(engine: str
   const empty = data.pooled.length === 0 && data.engines.length === 0;
   return (
     <div className="usage-body">
+      {/* The engine's own reason is for logs: the page says one plain thing, muted, as the usage-limits-unreported frame does. */}
       {data.unavailable.map((entry) => (
-        <p key={entry.engine} className="usage-note">
-          {nameOf(entry.engine)}: {entry.reason}
+        <p key={entry.engine} className="usage-note" data-unreported>
+          {nameOf(entry.engine)} doesn{"\u2019"}t report its limits.
         </p>
       ))}
       {empty ? <p className="usage-note">No engine reports limits.</p> : null}
@@ -582,6 +586,9 @@ export function UsagePage() {
     metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
   );
 
+  // An engine that never answers must not leave the tab loading for good.
+  const limitsSlow = useWaited(metric === "limits" && limits.status === "loading", LIMITS_WAIT_MS);
+
   useEffect(() => {
     if (metric !== "limits") lastMetric.current = metric;
     writeJson(PREFS_KEY, { days, metric });
@@ -694,6 +701,13 @@ export function UsagePage() {
             <ErrorState title="Couldn't load limits" failure={limits.error} onRetry={limits.reload} />
           ) : limits.status === "ready" && limits.data ? (
             <LimitsView data={limits.data} nameOf={nameOf} />
+          ) : limitsSlow ? (
+            <div className="usage-body">
+              <p className="usage-note" role="status">
+                Limits didn{"\u2019"}t answer in time.{" "}
+                <Button small onClick={limits.reload}>Try again</Button>
+              </p>
+            </div>
           ) : (
             <div className="usage-body">
               <Loading label="Loading limits" rows={3} />

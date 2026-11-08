@@ -317,30 +317,21 @@ export function MergeRow({
 /** What stands in for the page while it loads, drawn only once the wait passes 400 ms. */
 export function PullPageSkeleton() {
   const shown = useWaited(true);
+  // Line widths as the pr-detail-loading frame draws them.
+  const card = (widths: number[]) => (
+    <div className="pull-card pull-skel-card">
+      {widths.map((width, at) => <i key={at} style={{ width: `${width}%` }} />)}
+    </div>
+  );
   return (
     <div className="pull-page-skel" role="status" aria-label="Loading pull request">
       {shown ? (
         <div className="pull-cols" aria-hidden>
           <div className="pull-main">
-            <div className="pull-card pull-skel-card">
-              <i />
-              <i />
-              <i />
-            </div>
-            <div className="pull-card pull-skel-card">
-              <i />
-              <i />
-              <i />
-            </div>
+            {card([40, 100, 82])}
+            {card([30, 90, 64])}
           </div>
-          <div className="pull-side">
-            <div className="pull-card pull-skel-card">
-              <i />
-              <i />
-              <i />
-              <i />
-            </div>
-          </div>
+          <div className="pull-side">{card([100, 100, 100, 100])}</div>
         </div>
       ) : null}
     </div>

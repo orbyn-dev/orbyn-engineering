@@ -23,7 +23,7 @@ type Block =
   | { type: "paragraph"; text: string }
   | { type: "code"; lang: string; text: string }
   | { type: "quote"; blocks: Block[] }
-  | { type: "list"; ordered: boolean; start: number; items: Block[][] }
+  | { type: "list"; ordered: boolean; start: number; items: Block[][]; tasks: (boolean | null)[] }
   | { type: "table"; head: string[]; rows: string[][]; aligns: Align[] }
   | { type: "details"; summary: string; blocks: Block[] }
   | { type: "math"; source: string }
@@ -35,6 +35,8 @@ const FENCE = /^ {0,3}(```+|~~~+)\s*([\w+-]*)/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const RULE = /^ {0,3}([-*_])(\s*\1){2,}\s*$/;
 const LIST_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+/** A GFM task list item's box at the start of its first line. */
+const TASK_BOX = /^\[([ xX])\]\s+/;
 const QUOTE = /^ {0,3}>\s?(.*)$/;
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
 
@@ -151,10 +153,14 @@ function parseBlocks(lines: string[]): Block[] {
       const marker = item[2] ?? "-";
       const ordered = /\d/.test(marker);
       const items: Block[][] = [];
+      const tasks: (boolean | null)[] = [];
       while (at < lines.length) {
         const current = LIST_ITEM.exec(lines[at] ?? "");
         if (!current || (current[1] ?? "").length !== indent || /\d/.test(current[2] ?? "") !== ordered) break;
-        const body = [current[3] ?? ""];
+        const first = current[3] ?? "";
+        const box = TASK_BOX.exec(first);
+        tasks.push(box ? box[1] !== " " : null);
+        const body = [box ? first.slice(box[0].length) : first];
         at += 1;
         while (at < lines.length) {
           const next = lines[at] ?? "";
@@ -179,7 +185,7 @@ function parseBlocks(lines: string[]): Block[] {
         }
         items.push(parseBlocks(body));
       }
-      blocks.push({ type: "list", ordered, start: ordered ? Number.parseInt(marker, 10) : 1, items });
+      blocks.push({ type: "list", ordered, start: ordered ? Number.parseInt(marker, 10) : 1, items, tasks });
       continue;
     }
 
@@ -371,7 +377,17 @@ function renderBlock(block: Block, key: number): ReactNode {
     case "details":
       return <Details key={key} block={block} at={key} />;
     case "list": {
-      const children = block.items.map((item, at) => <li key={at} dir="auto">{item.map(renderBlock)}</li>);
+      const children = block.items.map((item, at) => {
+        const done = block.tasks[at];
+        return done === null || done === undefined ? (
+          <li key={at} dir="auto">{item.map(renderBlock)}</li>
+        ) : (
+          <li key={at} dir="auto" className="md-task" id={`${key}-task-${at}`}>
+            <input type="checkbox" checked={done} disabled aria-labelledby={`${key}-task-${at}`} onChange={() => undefined} />
+            {item.map(renderBlock)}
+          </li>
+        );
+      });
       return block.ordered ? (
         <ol key={key} start={block.start === 1 ? undefined : block.start}>
           {children}

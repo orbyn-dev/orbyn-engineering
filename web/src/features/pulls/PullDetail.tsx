@@ -28,7 +28,7 @@ import { PullsBanner } from "./PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
-import { mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
+import { bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
 
 type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
 
@@ -774,7 +774,7 @@ export function PullDetail({
           <div className="pull-cols">
             <div className="pull-main">
               <div className="pull-card pull-summary">
-                <b>Summary</b>
+                {bodyOpensWith(current.body, "Summary") ? null : <b>Summary</b>}
                 {description}
               </div>
               {requested !== null ? <RequestedChangesEntry note={requested} /> : null}

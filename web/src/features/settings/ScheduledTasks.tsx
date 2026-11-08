@@ -410,13 +410,15 @@ function TasksView({ page }: { page: boolean }) {
       New task
     </Button>
   );
+  // The empty state carries its own New task, so the header's waits until there are tasks.
+  const empty = tasks.status === "ready" && tasks.data.length === 0;
   const openTask = opened === null ? undefined : tasks.data?.find((entry) => entry.id === opened);
   const content = openTask ? (
     <TaskPage task={openTask} onBack={() => setOpened(null)} onChanged={tasks.reload} onEdit={() => setEditing(openTask)} />
   ) : (
     <>
       {page ? (
-        <PageBar actions={newTask}>
+        <PageBar actions={empty ? undefined : newTask}>
           <h1 tabIndex={-1} data-page-title>
             Scheduled tasks
           </h1>
@@ -429,7 +431,7 @@ function TasksView({ page }: { page: boolean }) {
           <TaskDefaults />
           <div className="tasks-head">
             <p className="set-grp">Tasks</p>
-            {newTask}
+            {empty ? null : newTask}
           </div>
         </>
       )}

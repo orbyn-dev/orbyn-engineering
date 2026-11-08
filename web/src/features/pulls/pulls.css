@@ -656,7 +656,7 @@
   width: 320px;
   height: 22px;
   border-radius: 6px;
-  background: var(--color-sunken);
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
 }
 .pulls-banner[data-tone="warn"] {
   background: var(--color-warnSoft);
@@ -787,14 +787,12 @@
 .pull-page-skel .pull-skel-card {
   gap: 10px;
 }
+/* The cards are the chip colour, so bars in the sunken colour vanished into them. */
 .pull-skel-card i {
   display: block;
   height: 12px;
   border-radius: 6px;
-  background: var(--color-sunken);
-}
-.pull-skel-card i:first-child {
-  width: 30%;
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
 }
 .pull-block {
   padding: 0 28px 40px;
