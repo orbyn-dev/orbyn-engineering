@@ -18,7 +18,7 @@ function useProvidersInUse() {
   const scope = useSettingsScope();
   const query = scope?.active ? scope.query : {};
   const list = useAsync(JSON.stringify(["in-use", query]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: [KEY] }, signal));
+    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: [KEY] }, signal), { keep: true });
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
   const row = list.data?.rows.find((entry) => entry.key === KEY);

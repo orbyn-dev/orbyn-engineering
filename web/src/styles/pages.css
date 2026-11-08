@@ -102,7 +102,7 @@
   justify-content: space-between;
   gap: 12px;
   flex: none;
-  padding: 22px 28px 6px;
+  padding: 8px 28px 6px;
 }
 .settings-title {
   font-size: var(--text-page);

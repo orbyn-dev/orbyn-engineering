@@ -84,7 +84,7 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
       </DRow>
     );
   }
-  if (bound.length === 0) return <DRow icon={icon} label="Automations" value={<span className="t3">No automations on this thread</span>} />;
+  if (bound.length === 0) return <DRow icon={icon} label="Automations" value={<span className="t3">None on this thread</span>} />;
   const clock = (iso: string) =>
     new Date(iso).toLocaleTimeString(undefined, {
       hour: "2-digit",

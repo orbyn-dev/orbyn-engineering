@@ -102,7 +102,8 @@ export function useCustomModels(engine: EngineStatus) {
   const scope = useSettingsScope();
   const preferences = useAsync("custom-models", (signal) =>
     request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: {}, keys: ["custom_models"] }, signal),
-  );
+  { keep: true },
+);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
