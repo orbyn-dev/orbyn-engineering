@@ -1,0 +1,6 @@
+.skills-nav-count {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}

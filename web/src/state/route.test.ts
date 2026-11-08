@@ -5,6 +5,8 @@ describe("routes", () => {
   it.each<Route>([
     { name: "home" },
     { name: "tasks" },
+    { name: "skills" },
+    { name: "skills", skill: "a/b x?#" },
     { name: "pulls" },
     { name: "pulls", project: "p/1 x", number: 42 },
     { name: "thread", id: "t/1 x" },

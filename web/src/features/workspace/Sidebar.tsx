@@ -77,6 +77,7 @@ import { ThreadRow, type RowActions } from "./ThreadRow";
 import { useDrawnOrder } from "./drawnOrder";
 import { pushUndo, undoLabel, undoLatest, useUndoNotice } from "./threadUndo";
 import { UpdatePill } from "./Updates";
+import { SkillsNav } from "../skills/SkillsNav";
 
 const SETTLED_PAGE = 10;
 
@@ -330,6 +331,7 @@ function SidebarNav({ route, ledger }: { route: Route; ledger: boolean }) {
       {navRows.map((row) => (
         <NavRow key={row.label} label={row.label} icon={row.icon} route={row.route} current={row.current(route)} />
       ))}
+      <SkillsNav route={route} />
     </div>
   );
 }

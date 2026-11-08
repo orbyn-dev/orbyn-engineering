@@ -1124,3 +1124,16 @@ export const pulls = () => [
     },
   },
 ];
+
+/** Skills shown only by the development mock API. */
+export const skills = [
+  { name: "orbyn-workflow", category: "Workflow and planning", description: "Coordinate the stages of engineering work.", enabled: true },
+  { name: "architect", category: "Engineering practice", description: "Shape interfaces and responsibilities.", enabled: true },
+  { name: "tdd", category: "Engineering practice", description: "Plan and verify focused behavior tests.", enabled: true },
+  { name: "orbyn-security-audit", category: "Artifact investigation and REA maintenance", description: "Review a specified design or source boundary.", enabled: true },
+  { name: "stack-diagram", category: "Product design", description: "Illustrate components and their relationships.", enabled: true },
+  { name: "reflect", category: "Workflow and planning", description: "Manage approved local engineering notes.", enabled: true },
+  { name: "orbyn-ui-design", category: "Product design", description: "Shape product flows and interfaces.", enabled: true },
+  { name: "social-preview", category: "Social content and visuals", description: "Prepare previews for an announcement.", enabled: true },
+  { name: "orbyn-upstream-review", category: "Engineering practice", description: "Inspect changes in upstream references.", enabled: true },
+];

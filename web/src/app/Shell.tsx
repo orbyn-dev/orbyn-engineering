@@ -24,6 +24,7 @@ import { useDrawnOrder } from "../features/workspace/drawnOrder";
 import { PullsPage } from "../features/pulls/PullsPage";
 import { ScheduledTasksPage } from "../features/settings/ScheduledTasks";
 import { UsagePage } from "../features/usage/UsagePage";
+import { SkillsPage } from "../features/skills/SkillsPage";
 import { PreviewFloat } from "../features/panels/PreviewFloat";
 import { Toasts } from "../ui/Toasts";
 import { GitHubStarPrompt } from "../features/workspace/GitHubStarPrompt";
@@ -81,6 +82,8 @@ function RouteView({ route, needsProject }: { route: PageRoute; needsProject: bo
       return <PullsPage />;
     case "usage":
       return <UsagePage />;
+    case "skills":
+      return <SkillsPage skill={route.skill} />;
     case "tasks":
       return <ScheduledTasksPage />;
     case "thread":
