@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { useOpenState } from "./openState";
 
 const DURATION_MS = 200;
@@ -18,6 +18,7 @@ export function Collapsible({
   persistId,
   open: controlled,
   onOpenChange,
+  summaryProps,
   ...rest
 }: {
   summary: ReactNode;
@@ -30,6 +31,8 @@ export function Collapsible({
   persistId?: string;
   open?: boolean;
   onOpenChange?(open: boolean): void;
+  /** Extra handlers or attributes for the summary button. */
+  summaryProps?: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className" | "type" | "onClick" | "aria-expanded" | "aria-controls">;
   "data-live"?: boolean;
 }) {
   const [internal, setInternal] = useOpenState(persistId ?? null, defaultOpen);
@@ -74,6 +77,7 @@ export function Collapsible({
   return (
     <div ref={root} className={className} {...rest}>
       <button
+        {...summaryProps}
         type="button"
         className={summaryClassName}
         aria-expanded={open}

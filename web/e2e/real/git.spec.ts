@@ -52,7 +52,7 @@ test("the Git menu commits, pushes and opens a pull request, phase by phase", as
   expect(git(service.remote, "rev-parse", "feature")).toBe(git(service.repo, "rev-parse", "HEAD"));
   const created = service.ghCalls().find((call) => call[1] === "create");
   expect(created).toEqual(expect.arrayContaining(["--title", "Add the change", "--body", "Why it matters", "--base", "main"]));
-  await expect((await openDetails(page)).getByRole("button", { name: "Changes +0 -0" })).toBeVisible();
+  await expect((await openDetails(page)).getByRole("button", { name: /^Changes/ })).toContainText("No changes");
   const linked = await service.api<{ number: number }[]>("GET", `/api/threads/${threadIdOf(page)}/pulls`);
   expect(linked.map((pull) => pull.number)).toEqual([100]);
   git(service.repo, "switch", "-q", "main");

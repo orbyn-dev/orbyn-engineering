@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Check } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { captureFocusReturn, moveFocus, watchOutside, type CloseCause } from "./focusReturn";
@@ -9,10 +9,14 @@ export interface MenuItem {
   icon?: ReactNode;
   selected?: boolean;
   disabled?: boolean;
+  /** Why an item is off, or what it does, on hover. */
+  title?: string;
   destructive?: boolean;
   separatorBefore?: boolean;
   /** Shown right-aligned, such as the key that runs the same command. */
   shortcut?: string;
+  /** A checkable item: choosing it toggles at once and the menu stays open. */
+  keepOpen?: boolean;
   /** Opens a submenu instead of acting. */
   children?: MenuItem[];
   onSelect?(): void;
@@ -116,13 +120,16 @@ function MenuList({
           <FragmentRow key={item.label} separator={item.separatorBefore === true && index > 0}>
             <button
               type="button"
-              role="menuitem"
+              role={item.keepOpen ? "menuitemcheckbox" : "menuitem"}
+              aria-checked={item.keepOpen ? item.selected === true : undefined}
               data-label={item.label}
               data-destructive={item.destructive || undefined}
               aria-haspopup={item.children ? "menu" : undefined}
               aria-expanded={item.children ? open?.item === item : undefined}
               disabled={item.disabled}
-              aria-current={item.selected || undefined}
+              title={item.title}
+              aria-current={item.keepOpen ? undefined : item.selected || undefined}
+              data-checked={item.keepOpen && item.selected ? "" : undefined}
               onPointerEnter={(event) => {
                 clearTimeout(hoverTimer.current);
                 const button = event.currentTarget;
@@ -137,13 +144,14 @@ function MenuList({
                   return;
                 }
                 // Focus is back on the opener before the action runs, so a dialog it opens returns there.
-                onClose("select");
+                if (!item.keepOpen) onClose("select");
                 item.onSelect?.();
               }}
             >
               {item.icon}
               <span>{item.label}</span>
               {item.shortcut ? <span className="menu-shortcut">{item.shortcut}</span> : null}
+              {item.keepOpen && item.selected ? <Check size={14} className="menu-check" aria-hidden /> : null}
               {item.children ? <ChevronRight size={14} className="menu-chev" aria-hidden /> : null}
             </button>
           </FragmentRow>

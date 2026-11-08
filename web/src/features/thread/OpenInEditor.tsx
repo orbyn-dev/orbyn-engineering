@@ -7,6 +7,7 @@ import { useUi } from "../../state/ui";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
+import { DRow } from "./DetailRows";
 import { launchableEditors, primaryEditor } from "./editorPreferences";
 
 /** Opens the thread's checkout in an editor; a revealed path is not a choice of editor, so it does not become the favorite. */
@@ -67,30 +68,29 @@ export function OpenInEditor({ threadId }: { threadId: string }) {
       : []),
   ];
   return (
-    <div className="detail-row detail-row-static" role="group" aria-label="Open in editor">
-      <SquareArrowOutUpRight size={16} aria-hidden />
-      <button type="button" className="detail-open" onClick={() => void open(primary.id)}>
-        Open in {primary.name}
-      </button>
-      {items.length > 1 ? (
-        <IconButton
-          label="Choose editor"
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            setMenu({ x: rect.left, y: rect.bottom + 4 });
-          }}
-        >
-          <ChevronDown size={14} aria-hidden />
-        </IconButton>
-      ) : null}
-      <Presence>{menu ? (
-        <Menu
-          {...menu}
-          label="Open in"
-          onClose={() => setMenu(null)}
-          items={items}
-        />
-      ) : null}</Presence>
-    </div>
+    <DRow
+      icon={<SquareArrowOutUpRight size={16} aria-hidden />}
+      label="Open in editor"
+      action
+      title={`Open in ${primary.name}`}
+      value={shortcut ?? undefined}
+      onClick={() => void open(primary.id)}
+      extra={
+        <>
+          {items.length > 1 ? (
+            <IconButton
+              label="Choose editor"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setMenu({ x: rect.left, y: rect.bottom + 4 });
+              }}
+            >
+              <ChevronDown size={14} aria-hidden />
+            </IconButton>
+          ) : null}
+          <Presence>{menu ? <Menu {...menu} label="Open in" onClose={() => setMenu(null)} items={items} /> : null}</Presence>
+        </>
+      }
+    />
   );
 }

@@ -131,6 +131,13 @@ export function regenerateTitles(threads: readonly Thread[]) {
   );
 }
 
+/** Deletes one thread and only then leaves it: a refusal reaches the caller, and nothing moves. */
+export async function deleteThreadNow(thread: Thread) {
+  await api.deleteThread(thread.id);
+  moveOff(new Set([thread.id]));
+  useWorkspace.getState().dropThread(thread);
+}
+
 export async function deleteThreads(threads: readonly Thread[]) {
   moveOff(new Set(threads.map((thread) => thread.id)));
   await Promise.all(

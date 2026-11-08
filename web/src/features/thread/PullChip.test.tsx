@@ -340,13 +340,12 @@ describe("details card Pull requests row", () => {
     expect(screen.getByRole("button", { name: "Link by number" })).toBeInTheDocument();
   });
 
-  it("says it could not load, with Retry, and still offers Link by number", async () => {
+  it("says the host did not answer and offers Try again", async () => {
     vi.spyOn(pullsApi, "linked").mockRejectedValue(new Error("no"));
     vi.spyOn(pullsApi, "watches").mockResolvedValue([]);
     render(<PullsRow thread={thread} />);
-    expect(await screen.findByText("Couldn’t load pull requests")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Link by number" })).toBeInTheDocument();
+    expect(await screen.findByText("The host didn’t answer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });
 

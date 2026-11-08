@@ -224,7 +224,7 @@ test("disclosures animate height over 200 ms", async ({ page }) => {
     return { property: style.transitionProperty, duration: style.transitionDuration };
   });
   expect(transition).toEqual({ property: "height", duration: "0.2s" });
-  await expect(page.locator(".work .trace").first()).toBeVisible();
+  await expect(page.locator(".work button.tcr").first()).toBeVisible();
 });
 
 test("settings float over the workspace and close back to it", async ({ page }) => {
