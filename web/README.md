@@ -52,14 +52,13 @@ The `panels` feature exposes `mediaKind`, `rawUrl`, `previewWindowRoute`,
 `PreviewFloat` and `PreviewWindow` through `features/panels/public.ts`.
 The `workspace` feature exposes its current shell and cross-feature components,
 actions and helpers through `features/workspace/public.ts`.
-The `thread` public entry point is partially adopted: 13 of 24 outside
-production consumers use it. The remaining 11 still use internal imports;
-ESLint enforces the thread boundary only for the migrated 13.
-For the eight fully adopted features, all outside production consumers, including
-`app`, use their public entry points. ESLint rejects private imports, re-exports,
-literal dynamic imports and type queries into those features and from the migrated
-thread consumers; each feature may use its own internals.
-Other features will adopt the same boundary one at a time. This follows Luan
+The `thread` feature exposes its current cross-feature components, hooks, helpers
+and types through `features/thread/public.ts`.
+All outside production consumers, including `app`, use each feature's public
+entry point. ESLint enforces this for existing and future feature directories,
+including static imports, re-exports, literal dynamic imports and type queries;
+each feature may use its own internals.
+This follows Luan
 Nguyen's public-entry-point approach in [PR #285](https://github.com/orbyn-dev/orbyn-engineering/pull/285);
 the earlier panels facade included `SurfacePane` and `TerminalDrawerBody`; its thread
 facade included `Composer`, `ThreadScope`, `Transcript`, traits and `ModelPickerTrigger`. The current
@@ -76,11 +75,7 @@ test-only helpers are not product exports.
 
 ## Known limitations
 
-- Features other than `usage`, `platform`, `settings`, `skills`, `pulls`, `onboarding`, `panels` and `workspace` still import each other's internals, most often
-  `thread`. Each such
-  import is a candidate for moving the shared piece to its real owner.
 - `src/lib` still holds project image and identity helpers used by both `ui` and
   `settings`.
-- The shared-folder inward rule covers static `import` and `export … from` for
-  all features, and literal dynamic imports and type queries into `usage`, `platform`, `settings`, `skills`, `pulls`, `onboarding`, `panels` and `workspace`.
-  Computed dynamic paths and white-box test/fixture imports are not checked.
+- Computed dynamic import paths are not checked. White-box test and fixture
+  imports are exempt from the boundary rule.

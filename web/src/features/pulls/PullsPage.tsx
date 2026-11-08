@@ -13,7 +13,7 @@ import { useUi } from "../../state/ui";
 import { useVisibleProjects } from "../../state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { checkConnectionNow, useConnectionKind } from "../../state/connection";
-import { agoWords } from "../thread/pullStore";
+import { agoWords } from "../thread/public";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { PageBar } from "../../ui/PageBar";
 import { ErrorState } from "../../ui/states";
