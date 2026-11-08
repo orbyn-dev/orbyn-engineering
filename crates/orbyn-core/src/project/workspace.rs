@@ -43,6 +43,22 @@ const CLONE_SYMLINKS: &str = "core.symlinks=true";
 const STATUS_TTL: Duration = Duration::from_secs(15);
 /// Checkouts and worktrees read at the same time.
 const STATUS_PARALLEL: usize = 6;
+/// Git processes a status read has running at once, across all its checkouts and
+/// worktrees: each holds a few file descriptors, and a desktop app's soft limit is low.
+const STATUS_GIT_PROCESSES: usize = 6;
+
+fn status_git() -> &'static tokio::sync::Semaphore {
+    static GATE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| tokio::sync::Semaphore::new(STATUS_GIT_PROCESSES))
+}
+
+/// Runs one Git read of a status once a slot is free. Git itself is started with
+/// `GIT_OPTIONAL_LOCKS=0`, so a background read never takes the index lock an agent's
+/// commit needs.
+async fn gated<T>(read: impl std::future::Future<Output = T>) -> T {
+    let _slot = status_git().acquire().await;
+    read.await
+}
 
 /// A status answer and what it was computed for.
 struct CachedStatus {
@@ -797,13 +813,16 @@ async fn library_status(state: &WorkspaceState) -> LibraryStatus {
         if plain_snapshot {
             None
         } else {
-            validate_library(root).await.err().map(|e| e.to_string())
+            gated(validate_library(root))
+                .await
+                .err()
+                .map(|e| e.to_string())
         }
     };
     let position = async {
-        let upstream = upstream_of(root).await;
+        let upstream = gated(upstream_of(root)).await;
         let counts = if upstream.is_some() {
-            ahead_behind(root).await.unwrap_or((0, 0))
+            gated(ahead_behind(root)).await.unwrap_or((0, 0))
         } else {
             (0, 0)
         };
@@ -811,10 +830,10 @@ async fn library_status(state: &WorkspaceState) -> LibraryStatus {
     };
     let (problem, dirty, (upstream, (ahead, behind)), revision, branch) = tokio::join!(
         validate,
-        async { dirty_files(root).await.unwrap_or_default() },
+        async { gated(dirty_files(root)).await.unwrap_or_default() },
         position,
-        revision_of(state),
-        branch_of(root)
+        gated(revision_of(state)),
+        gated(branch_of(root))
     );
     let native_skills = native_skills_available(root);
     let problem = problem.or_else(|| {
@@ -873,7 +892,7 @@ async fn worktree_status(
     worktree: crate::source_control::git::RegisteredWorktree,
 ) -> TargetWorktree {
     TargetWorktree {
-        dirty: dirty_files(&worktree.path)
+        dirty: gated(dirty_files(&worktree.path))
             .await
             .map_or(true, |files| !files.is_empty()),
         path: worktree.path.to_string_lossy().into_owned(),
@@ -896,7 +915,7 @@ async fn target_status(root: &Path, project: &orbyn_contracts::Project) -> Targe
         same_name_skills: Vec::new(),
         problem: None,
     };
-    match check_target(root, path).await {
+    match gated(check_target(root, path)).await {
         Ok(checked) => {
             status.git_root = is_git_repo(path).then(|| checked.to_string_lossy().into_owned());
         }
@@ -906,10 +925,10 @@ async fn target_status(root: &Path, project: &orbyn_contracts::Project) -> Targe
         }
     }
     let (revision, branch, dirty, worktrees) = tokio::join!(
-        head(path),
-        branch_of(path),
-        dirty_files(path),
-        linked_worktrees(path)
+        gated(head(path)),
+        gated(branch_of(path)),
+        gated(dirty_files(path)),
+        gated(linked_worktrees(path))
     );
     status.revision = revision.ok();
     status.branch = branch;
@@ -1317,5 +1336,23 @@ mod tests {
         let after = workspace.status_generation.load(Ordering::SeqCst);
         workspace.keep_status(after, Vec::new(), &slow);
         assert!(workspace.cached_status(&[]).is_some());
+    }
+
+    #[tokio::test]
+    async fn status_git_reads_never_exceed_the_shared_limit() {
+        use std::sync::atomic::AtomicUsize;
+        let (now, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let reads = (0..40).map(|_| {
+            let (now, most) = (now.clone(), most.clone());
+            gated(async move {
+                let running = now.fetch_add(1, Ordering::SeqCst) + 1;
+                most.fetch_max(running, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                now.fetch_sub(1, Ordering::SeqCst);
+            })
+        });
+        futures_util::future::join_all(reads).await;
+        assert!(most.load(Ordering::SeqCst) <= STATUS_GIT_PROCESSES);
+        assert!(most.load(Ordering::SeqCst) > 1, "reads still overlap");
     }
 }
