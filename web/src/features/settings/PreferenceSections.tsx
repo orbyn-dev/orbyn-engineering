@@ -13,7 +13,7 @@ import licenses from "./licenses.json";
 import { Empty, ErrorState, Loading } from "../../ui/states";
 import { Segmented } from "../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-import { unarchiveThread } from "../workspace/threadActions";
+import { unarchiveThread } from "../workspace/public";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { BaseDirectoryDialog } from "./BaseDirectoryDialog";
 import { Menu } from "../../ui/Menu";

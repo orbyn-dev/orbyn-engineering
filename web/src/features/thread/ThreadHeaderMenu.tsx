@@ -6,8 +6,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { archiveThreads, copyText, deleteThreadNow, unarchiveThread } from "../workspace/threadActions";
-import { RenameThreadDialog } from "../workspace/threadMenu";
+import { archiveThreads, copyText, deleteThreadNow, unarchiveThread, RenameThreadDialog } from "../workspace/public";
 
 /** Every thread below this one (side chats, children) and the thread itself. */
 export function familyOf(thread: Thread, threads: Readonly<Record<string, Thread>>): Thread[] {

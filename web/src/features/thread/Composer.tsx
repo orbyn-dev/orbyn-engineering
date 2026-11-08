@@ -1,6 +1,6 @@
 import { useCompacting } from "./ThreadStates";
 import { composerMarkup } from "./composerMarkup";
-import { recordUserPrompt } from "../workspace/GitHubStarPrompt";
+import { recordUserPrompt } from "../workspace/public";
 import { ArrowUp, Archive, Folder, GitBranch, ListChecks, Paperclip, ShieldOff, SlidersHorizontal, Square, X,
   RotateCcw,
 } from "lucide-react";

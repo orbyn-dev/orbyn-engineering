@@ -3,7 +3,7 @@ import type { Thread } from "../../api/types";
 import { runStateLabels } from "../../lib/format";
 import { navigate } from "../../state/route";
 import { Button } from "../../ui/controls";
-import { threadRunState } from "../workspace/RunState";
+import { threadRunState } from "../workspace/public";
 import type { SubagentActivity } from "./projection";
 
 const DONE = /^(completed|done|finished|success)/i;

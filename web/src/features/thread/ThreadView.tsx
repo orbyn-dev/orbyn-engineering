@@ -31,7 +31,7 @@ import { engineById, useWorkspace } from "../../state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../ui/states";
 import { SurfacePane, TerminalBar, TerminalDrawerBody } from "../panels/public";
-import { threadRunState } from "../workspace/RunState";
+import { threadRunState } from "../workspace/public";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";

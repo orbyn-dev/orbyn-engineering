@@ -8,7 +8,7 @@ import { navigate } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
-import { unarchiveThread } from "../workspace/threadActions";
+import { unarchiveThread } from "../workspace/public";
 import { usageShare } from "./ComposerExtras";
 import { formatWait } from "./ThreadBanners";
 import { useThreadLogs } from "./threadLogs";

@@ -1,4 +1,4 @@
-import { recordUserPrompt } from "../workspace/GitHubStarPrompt";
+import { recordUserPrompt } from "../workspace/public";
 import { useDraftModelDefaults } from "./useDraftModelDefaults";
 import { useDraftCheckout } from "./useDraftCheckout";
 import { ArrowUp, Bot, Eye, Folder, GitBranch, GitPullRequest, Paperclip, Sparkles, X, XCircle } from "lucide-react";

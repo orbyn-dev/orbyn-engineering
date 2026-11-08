@@ -7,7 +7,7 @@ import { useUi } from "../../state/ui";
 import { EngineGlyph } from "../../ui/badges";
 import { closingProps, Presence } from "../../ui/Presence";
 import { usePopover } from "../../ui/usePopover";
-import { modKeyLabel } from "../workspace/threadUndo";
+import { modKeyLabel } from "../workspace/public";
 import {
   arrangeModels,
   modelKey,

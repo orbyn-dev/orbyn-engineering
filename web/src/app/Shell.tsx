@@ -1,30 +1,20 @@
+import {
+  QuitConfirmation, CommandPalette, arrangeThreads, threadsFlat, copyReference,
+  pinThreads, settleThreads, unpinThreads, unsettleThreads, releaseUndoShortcut,
+  undoHasShortcut, undoLatest, useUndoNotice, CloneJobs, Sidebar, useDrawnOrder,
+  GitHubStarPrompt, FoldersNotice,
+} from "../features/workspace/public";
 import { WelcomeHost, NoProjects, DraftView, TrustFolder } from "../features/onboarding/public";
-import { QuitConfirmation } from "../features/workspace/QuitConfirmation";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { create } from "zustand";
 import { SettingsPage, ScheduledTasksPage } from "../features/settings/public";
 import { ThreadView } from "../features/thread/ThreadView";
-import { CommandPalette } from "../features/workspace/CommandPalette";
 import type { ShellEvent, Thread } from "../api/types";
-import { arrangeThreads, threadsFlat } from "../features/workspace/groups";
-import {
-  copyReference,
-  pinThreads,
-  settleThreads,
-  unpinThreads,
-  unsettleThreads,
-} from "../features/workspace/threadActions";
-import { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from "../features/workspace/threadUndo";
-import { CloneJobs } from "../features/workspace/CloneJobs";
-import { Sidebar } from "../features/workspace/Sidebar";
-import { useDrawnOrder } from "../features/workspace/drawnOrder";
 import { PullsPage } from "../features/pulls/public";
 import { UsagePage } from "../features/usage/public";
 import { SkillsPage } from "../features/skills/public";
 import { PreviewFloat } from "../features/panels/public";
 import { Toasts } from "../ui/Toasts";
-import { GitHubStarPrompt } from "../features/workspace/GitHubStarPrompt";
-import { FoldersNotice } from "../features/workspace/FoldersNotice";
 import { api, setSlowRequestHandler } from "../api/client";
 import { usePanelMotionRoot } from "../lib/panelAnimations";
 import { inDesktopApp, shellChanged, zoomKeyAction } from "../api/shell";

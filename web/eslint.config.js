@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 import path from "node:path";
 
 const sourceRoot = path.join(import.meta.dirname, "src");
-const publicFeatures = new Set(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels"]);
+const publicFeatures = new Set(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels", "workspace"]);
 const sharedFolders = new Set(["ui", "state", "lib", "api", "styles"]);
 const boundaryRule = {
   meta: {
