@@ -58,7 +58,8 @@ describe("project preference inheritance", () => {
     expect(overrides).toEqual({ b: true }); expect(globalValue).toBe(true);
     first.unmount(); globalValue = false;
     render(<PreferenceGroups groups={groups} projectId="a" />);
-    expect(await screen.findByRole("switch")).not.toBeChecked();
+    // The kept answer draws first; the fresh read then follows the global change.
+    await waitFor(() => expect(screen.getByRole("switch")).not.toBeChecked());
     expect(screen.queryByRole("button", { name: "Reset Auto pull to default" })).toBeNull();
   });
 

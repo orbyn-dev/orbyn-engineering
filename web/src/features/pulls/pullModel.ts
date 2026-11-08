@@ -333,3 +333,10 @@ export function reviewWords(pull: PullRequest, reviewers: readonly string[]): st
   if (pull.review_state === "changes_requested") return "Changes requested";
   return reviewers.length > 0 ? `Requested from ${reviewers.map((name) => `@${name}`).join(", ")}` : "Not requested";
 }
+
+/** True when the markdown's first line is a heading with this text (any level, any case), so a card titled the same would say it twice. */
+export function bodyOpensWith(body: string | null | undefined, title: string): boolean {
+  const first = (body ?? "").split("\n").find((line) => line.trim() !== "");
+  const heading = first?.match(/^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/);
+  return heading !== undefined && heading !== null && (heading[1] ?? "").trim().toLowerCase() === title.toLowerCase();
+}

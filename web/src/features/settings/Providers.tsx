@@ -35,7 +35,7 @@ function NativeSessionsRow({ engines, onReview }: { engines: EngineStatus[]; onR
     const settled = await Promise.allSettled(ids.map((id) => api.nativeSessionCount(id, signal)));
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     return settled.flatMap((entry) => (entry.status === "fulfilled" ? [entry.value] : []));
-  });
+  }, { keep: true });
   if (counts.status !== "ready") return null;
   const total = counts.data.reduce((sum, entry) => sum + entry.count, 0);
   if (total === 0) return null;

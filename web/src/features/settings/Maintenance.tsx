@@ -43,7 +43,7 @@ const isHttpUrl = (url: string) => /^https?:\/\/./i.test(url);
 
 function TelemetryEnvironmentNotice() {
   const scope = useSettingsScope();
-  const info = useAsync("telemetry-environment", (signal) => api.info(signal));
+  const info = useAsync("telemetry-environment", (signal) => api.info(signal), { keep: true });
   return <div className="setting-row">
     <p className="setting-line-desc">Choose one environment to configure its telemetry exports.</p>
     {info.error ? <ErrorState title="Couldn't load settings" failure={info.error} onRetry={info.reload} compact /> :
@@ -74,7 +74,7 @@ function endpointValue(value: JsonValue | undefined, key: SignalKey): string {
 /** One local environment snapshot owns these drafts and every later response. */
 function TelemetryForm({ query, disabled }: { query: ProjectScopesQuery; disabled: boolean }) {
   const preferences = useAsync(JSON.stringify(["observability", query]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: ["observability"] }, signal));
+    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: ["observability"] }, signal), { keep: true });
   const pushToast = useUi((state) => state.pushToast);
   const [draft, setDraft] = useState<Partial<Record<SignalKey, string>>>({});
   const [checks, setChecks] = useState<Partial<Record<SignalKey, EndpointCheck>>>({});
@@ -189,10 +189,10 @@ function CleanupGroup() {
 
 export function EnvironmentCleanup({ query, disabled }: { query: ProjectScopesQuery; disabled: boolean }) {
   const preferences = useAsync(JSON.stringify(["storage-cleanup", query]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: ["storage_cleanup", "worktree_cleanup"] }, signal));
+    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: ["storage_cleanup", "worktree_cleanup"] }, signal), { keep: true });
   const last = useAsync("cleanup-report", (signal) =>
-    request<CleanupReport | null>("GET", "/api/storage/cleanup", undefined, signal));
-  const preview = useAsync(JSON.stringify(["cleanup-preview", query]), (signal) => api.storageCleanupPreview(signal));
+    request<CleanupReport | null>("GET", "/api/storage/cleanup", undefined, signal), { keep: true });
+  const preview = useAsync(JSON.stringify(["cleanup-preview", query]), (signal) => api.storageCleanupPreview(signal), { keep: true });
   const [draft, setDraft] = useState<Partial<Record<RetentionKey, string>>>({});
   const [report, setReport] = useState<CleanupReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -381,7 +381,7 @@ function problemTime(iso: string, now = new Date()): string {
 }
 
 function DiagnosticsGroup() {
-  const info = useAsync("diagnostics", (signal) => request<Diagnostics>("GET", "/api/diagnostics", undefined, signal));
+  const info = useAsync("diagnostics", (signal) => request<Diagnostics>("GET", "/api/diagnostics", undefined, signal), { keep: true });
   const offline = useConnection((state) => state.offline);
   const pushToast = useUi((state) => state.pushToast);
   const [note, setNote] = useState<string | null>(null);
@@ -468,7 +468,7 @@ export function MaintenanceSection() {
   const library = useWorkspace((state) => state.managed.data?.library);
   const unsupported = useWorkspace((state) => state.updatesUnsupported);
   const putUpdates = useWorkspace((state) => state.putUpdates);
-  const settings = useAsync("server-settings", (signal) => api.settings(signal));
+  const settings = useAsync("server-settings", (signal) => api.settings(signal), { keep: true });
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const offline = useConnection((state) => state.offline);
@@ -533,8 +533,8 @@ export function MaintenanceSection() {
             disabled={!settings.data}
             onChange={(event) => {
               if (!settings.data) return;
-              const next = { ...settings.data, background_update_checks: event.target.checked };
-              void api.putSettings(next).then(settings.setData, (failure: unknown) => {
+              const on = event.target.checked;
+              void api.updateSettings((current) => ({ ...current, background_update_checks: on })).then(settings.setData, (failure: unknown) => {
                 setError(toFailure(failure).message);
               });
             }}

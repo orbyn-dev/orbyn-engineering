@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PullListEntry } from "../../api/types";
-import { activeChips, checksOf, checksView, mergeGate, noFilters, pageState, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
+import { activeChips, bodyOpensWith, checksOf, checksView, mergeGate, noFilters, pageState, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
 
 const newest: PullSort = { by: "created", dir: "newest" };
 const oldest: PullSort = { by: "created", dir: "oldest" };
@@ -189,5 +189,19 @@ describe("the pull request page", () => {
 
   it("lets Merge wait for checks once auto-merge is chosen", () => {
     expect(mergeGate(pull({ checks_state: "pending" }), "mergeable", { offline: false, auto: true, forge: "GitHub" }).enabled).toBe(true);
+  });
+});
+
+describe("bodyOpensWith", () => {
+  it("is true for a first heading of the same text at any level and in any case", () => {
+    expect(bodyOpensWith("## Summary\n\n- a", "Summary")).toBe(true);
+    expect(bodyOpensWith("\n\n# summary #\ntext", "Summary")).toBe(true);
+  });
+  it("is false for another heading, a heading further down, plain text, or no body", () => {
+    expect(bodyOpensWith("## Why\n## Summary", "Summary")).toBe(false);
+    expect(bodyOpensWith("Summary of the change", "Summary")).toBe(false);
+    expect(bodyOpensWith("## Summaries", "Summary")).toBe(false);
+    expect(bodyOpensWith("", "Summary")).toBe(false);
+    expect(bodyOpensWith(null, "Summary")).toBe(false);
   });
 });
