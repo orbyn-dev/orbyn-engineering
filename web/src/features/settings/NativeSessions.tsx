@@ -33,7 +33,13 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     setCaps(null); setSessions([]); setNext(null); setBusy(null);
     if (!active) return;
     const abort = new AbortController();
-    request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then(setCaps, () => undefined);
+    // Let Strict Mode retire its first effect before starting an engine operation.
+    queueMicrotask(() => {
+      if (abort.signal.aborted) return;
+      request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then((value) => {
+        if (!abort.signal.aborted) setCaps(value);
+      }, () => undefined);
+    });
     return () => abort.abort();
   }, [engine.id, active]);
 
