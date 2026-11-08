@@ -2207,7 +2207,7 @@ button.detail-row:hover {
 
 .model-picker {
   display: flex;
-  width: min(362px, calc(100vw - 12px));
+  width: min(366px, calc(100vw - 12px));
   max-height: 348px;
   overflow: hidden;
 }
@@ -2216,7 +2216,7 @@ button.detail-row:hover {
   flex-direction: column;
   flex: none;
   gap: 4px;
-  width: 44px;
+  width: 48px;
   padding: 4px;
   overflow-y: auto;
   background: color-mix(in srgb, var(--color-text) 1%, transparent);
@@ -2234,7 +2234,7 @@ button.detail-row:hover {
   display: inline-grid;
   place-items: center;
   flex: none;
-  width: 36px;
+  width: 40px;
   height: 36px;
   padding: 0;
   border: 0;
@@ -2259,10 +2259,13 @@ button.detail-row:hover {
   border-radius: 999px;
   background: var(--color-primary);
 }
+/* Two letters (Ol, Op) need a circle wide enough that neither is clipped. */
 .model-tab .engine-glyph {
-  width: 20px;
-  height: 20px;
-  font-size: var(--text-small);
+  width: 26px;
+  height: 26px;
+  overflow: visible;
+  font-size: 11px;
+  letter-spacing: -0.01em;
 }
 .model-main {
   display: flex;
