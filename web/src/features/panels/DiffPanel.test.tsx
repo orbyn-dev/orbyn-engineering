@@ -67,6 +67,46 @@ it("hides Create pull request where the header's Git menu hides, outside a Git r
   expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
 });
 
+it("shows the designed empty state, with Open Files and no Create pull request", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "diff").mockResolvedValue([]);
+  vi.spyOn(api, "checkpoints").mockResolvedValue([]);
+  useWorkspace.setState({ threads: { t: { id: "t", active_run: null } as never } });
+  vi.spyOn(pullsApi, "linked").mockResolvedValue([]);
+  vi.spyOn(api, "branches").mockResolvedValue([]);
+  render(<DiffPanel threadId="t" />);
+  expect(await screen.findByText("No changes yet")).toBeInTheDocument();
+  expect(screen.getByText("Files the agent edits show up here, with a diff for each one.")).toBeInTheDocument();
+  await waitFor(() => expect(api.branches).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Open Files" }));
+  expect(useUi.getState().panelTab).toBe("files");
+});
+
+it("offers Create pull request from the branch once the working tree is clean after a commit", async () => {
+  const file = { path: "a.txt", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n-old\n+new\n" };
+  vi.spyOn(api, "diff").mockImplementation(async (_thread, _signal, scope) => (String(scope).startsWith("branch") ? [file] : []));
+  vi.spyOn(api, "checkpoints").mockResolvedValue([]);
+  useWorkspace.setState({ threads: { t: { id: "t", active_run: null } as never } });
+  vi.spyOn(pullsApi, "linked").mockResolvedValue([]);
+  vi.spyOn(api, "branches").mockResolvedValue([]);
+  render(<DiffPanel threadId="t" />);
+  expect(await screen.findByText("No changes yet")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Create pull request" })).toBeInTheDocument();
+});
+
+it("keeps Create pull request when Hide tests filters a test-only change out of view", async () => {
+  useUi.getState().setPrefs({ diffHideTests: true });
+  vi.spyOn(api, "diff").mockResolvedValue([{ path: "a.test.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n-old\n+new\n" }]);
+  vi.spyOn(api, "checkpoints").mockResolvedValue([]);
+  useWorkspace.setState({ threads: { t: { id: "t", active_run: null } as never } });
+  vi.spyOn(pullsApi, "linked").mockResolvedValue([]);
+  vi.spyOn(api, "branches").mockResolvedValue([]);
+  render(<DiffPanel threadId="t" />);
+  expect(await screen.findByRole("button", { name: "Create pull request" })).toBeInTheDocument();
+  useUi.getState().setPrefs({ diffHideTests: false });
+});
+
 it("numbers new lines and adds a review comment chip for one", async () => {
   const user = userEvent.setup();
   vi.spyOn(api, "diff").mockResolvedValue([{ path: "notes.txt", status: "modified", additions: 1,

@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
+  // The side panel no longer opens by itself: it is one remembered open or closed state. These tests start open.
+  await page.addInitScript(() => localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ panelOpen: true })));
   await page.goto("/__mock/scenario/default?to=/%23/threads/t-done");
   await expect(page.locator(".transcript-inner")).toBeVisible();
   await expect(page.locator(".composer-box")).toBeVisible();
@@ -19,7 +21,7 @@ async function settledBox(handle: Locator) {
   return last;
 }
 
-/** At this width the panel opens on its own. */
+/** The panel is open from the remembered state set above. */
 async function openPanel(page: Page) {
   await expect(page.getByRole("separator", { name: "Resize panel" })).toBeVisible();
 }

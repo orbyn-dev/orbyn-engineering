@@ -2224,6 +2224,7 @@ mod tests {
             thread_id: "t".into(),
             cwd: "/workspace".into(),
             checkout: "/workspace/repo/app".into(),
+            library: "/workspace".into(),
             prompt: "p".into(),
             user_prompt: "p".into(),
             context: "<orbyn_context>c</orbyn_context>".into(),

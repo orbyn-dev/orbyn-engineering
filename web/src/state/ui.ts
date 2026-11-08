@@ -31,8 +31,9 @@ export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
 interface Prefs {
   theme: ThemeChoice;
-  /** The surface pane. Null follows the layout: open only when there's room. */
-  panelOpen: boolean | null;
+  /** The surface pane, one choice for every thread. It opens only when asked, or for
+   * something the person triggered (a diff, file or pull request chip), at any width. */
+  panelOpen: boolean;
   /** The surface showing; null when none is. */
   panelTab: RightTab | null;
   /** The tab row's order for this thread. */
@@ -162,7 +163,6 @@ export interface StashedPrompt {
 
 /** What each thread remembers of its layout. Drafts share the `draft` key until sent. */
 export interface ThreadLayout {
-  panelOpen: boolean | null;
   panelTab: RightTab | null;
   panelTabOrder: RightTab[];
   panelTabsClosed: RightTab[];
@@ -193,7 +193,7 @@ const DRAFTS_KEY = "orbyn.drafts.v1";
 
 const defaults: Prefs = {
   theme: "dark",
-  panelOpen: null,
+  panelOpen: false,
   panelTab: null,
   panelTabOrder: [...RIGHT_TAB_IDS],
   panelTabsClosed: [],
@@ -318,6 +318,10 @@ interface UiState extends Prefs {
   showInBrowser(url: string | { tabId: string } | null): void;
   closePanel(): void;
   setPanelOpen(open: boolean): void;
+  /** On a phone-width window the panel starts closed and what happens there is not remembered. */
+  setPanelNarrow(narrow: boolean): void;
+  /** The remembered choice, held aside while a phone-width window uses its own. */
+  desktopPanelOpen: boolean | null;
   setPanelAnimationMs(ms: number): void;
   toggleDetails(): void;
   setPanelMaximized(maximized: boolean): void;
@@ -337,7 +341,6 @@ interface UiState extends Prefs {
 }
 
 const layoutDefaults: ThreadLayout = {
-  panelOpen: defaults.panelOpen,
   panelTab: defaults.panelTab,
   panelTabOrder: defaults.panelTabOrder,
   panelTabsClosed: defaults.panelTabsClosed,
@@ -349,7 +352,6 @@ const layoutDefaults: ThreadLayout = {
 };
 
 const currentLayout = (state: Prefs): ThreadLayout => ({
-  panelOpen: state.panelOpen,
   panelTab: state.panelTab,
   panelTabOrder: state.panelTabOrder,
   panelTabsClosed: state.panelTabsClosed,
@@ -367,9 +369,9 @@ function withLayout(layouts: Record<string, ThreadLayout>, key: string, layout: 
   return Object.fromEntries(entries.slice(-MAX_LAYOUTS));
 }
 
-const prefsOf = (state: Prefs): Prefs => ({
+const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): Prefs => ({
   theme: state.theme,
-  panelOpen: state.panelOpen,
+  panelOpen: state.desktopPanelOpen ?? state.panelOpen,
   panelTab: state.panelTab,
   panelTabOrder: state.panelTabOrder,
   panelTabsClosed: state.panelTabsClosed,
@@ -478,7 +480,9 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
       .map(([key, layout]) => {
         const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
         const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
-        return [key, { ...layout, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
+        // Open or closed is one global choice now; an older per-thread value must not override it.
+        const { panelOpen: _global, ...rest } = layout as ThreadLayout & { panelOpen?: unknown };
+        return [key, { ...rest, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
       }),
   );
 }
@@ -500,7 +504,7 @@ function savedPrefs(): Partial<Prefs> {
     ),
   );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
+  return { ...saved, panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
 }
 
 export const useUi = create<UiState>((set, get) => {
@@ -651,6 +655,15 @@ export const useUi = create<UiState>((set, get) => {
     closePanel() {
       set({ panelOpen: false });
       savePrefs();
+    },
+    desktopPanelOpen: null,
+    setPanelNarrow(narrow) {
+      const { desktopPanelOpen, panelOpen } = get();
+      if (narrow && desktopPanelOpen === null) {
+        set({ desktopPanelOpen: panelOpen, panelOpen: false });
+      } else if (!narrow && desktopPanelOpen !== null) {
+        set({ panelOpen: desktopPanelOpen, desktopPanelOpen: null });
+      }
     },
     setPanelOpen(open) {
       set({ panelOpen: open });

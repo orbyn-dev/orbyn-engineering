@@ -115,8 +115,11 @@ describe("layouts by window width", () => {
 
   it("is the phone layout under 600 px: the panel is a sheet that replaces the thread", async () => {
     setViewportWidth(599);
-    useUi.setState({ layoutKey: "t-done", panelOpen: true, panelTab: "files" });
+    useUi.setState({ layoutKey: "t-done", panelOpen: false, panelTab: "files" });
     render(<App />);
+    // A phone-width window does not take the remembered choice; the person opens the sheet.
+    await waitFor(() => expect(thread()).not.toBeNull(), { timeout: 8000 });
+    act(() => useUi.getState().togglePanel("files"));
     await screen.findByRole("button", { name: "Back to thread" }, { timeout: 8000 });
     expect(panel()).toHaveAttribute("data-mode", "sheet");
     expect(thread()).toHaveAttribute("hidden");

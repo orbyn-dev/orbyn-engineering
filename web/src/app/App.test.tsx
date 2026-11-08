@@ -109,6 +109,18 @@ describe("App against the mock API", () => {
     expect(settled).toHaveAttribute("aria-expanded", "true");
   });
 
+  it.each([true, false])("keeps the Working shelf above the project list (folders %s)", async (folders) => {
+    useUi.setState({ projectFolders: folders });
+    const running = mock.threads.find((thread) => thread.active_run)!;
+    running.active_run = { ...running.active_run!, state: "running" };
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const shelf = await within(nav).findByRole("button", { name: /^Working/ });
+    const other = mock.threads.find((thread) => thread.id !== running.id && !thread.active_run)!;
+    const row = await within(nav).findByText(other.title);
+    expect(shelf.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("searches threads from the sidebar", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -533,6 +545,8 @@ describe("App against the mock API", () => {
   });
 
   it("shows the thread details with real data only", async () => {
+    // The card sits at the top of the side panel, which is open because it was asked for.
+    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     window.matchMedia = ((query: string) => ({
       matches: query.includes("min-width"),
@@ -602,13 +616,50 @@ describe("App against the mock API", () => {
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   });
 
-  it("opens the panel on its first tab, with the plus drawn, when the window is wide enough to open it itself", async () => {
+  it("closes the hover card on a right-click and does not bring it back over the menu", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const row = (await within(nav).findByText("Explain how the event log resumes")).closest("a") as HTMLElement;
+    fireEvent.pointerEnter(row, { pointerType: "mouse" });
+    await screen.findByRole("tooltip");
+    fireEvent.contextMenu(row);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    // The right-click focuses the row afterwards; that must not start the card again.
+    row.focus();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it.each([1100, 1700, 2400])("does not open the panel by itself when a thread opens at %i px", async (width) => {
+    setViewportWidth(width);
+    useUi.setState({ panelOpen: false });
+    go("#/threads/t-done");
+    render(<App />);
+    await screen.findByRole("button", { name: "Show side panel" });
+    expect(screen.queryByRole("tablist", { name: "Context" })).toBeNull();
+    expect(useUi.getState().panelOpen).toBe(false);
+  });
+
+  it("shows the chat, not the panel, on a phone-width window when the panel was opened on a wide one", async () => {
     setViewportWidth(1700);
+    useUi.setState({ panelOpen: true });
+    setViewportWidth(420);
+    go("#/threads/t-done");
+    const { container } = render(<App />);
+    await waitFor(() => expect(container.querySelector(".thread-main")).not.toBeNull());
+    await waitFor(() => expect(useUi.getState().desktopPanelOpen).toBe(true));
+    expect(container.querySelector(".thread-main")).not.toHaveAttribute("hidden");
+    expect(useUi.getState().panelOpen).toBe(false);
+  });
+
+  it("keeps the panel open from one thread to the next once it was opened, at any width", async () => {
+    setViewportWidth(1700);
+    useUi.setState({ panelOpen: true, panelTab: "diff" });
     go("#/threads/t-done");
     render(<App />);
     const row = await screen.findByRole("tablist", { name: "Context" });
     expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByLabelText("Open a surface")).toBeNull();
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });
 
