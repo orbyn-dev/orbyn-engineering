@@ -374,6 +374,9 @@
   color: var(--color-muted);
 }
 .thread-row {
+  /* The state's own fill, which the floating row actions fade into. */
+  --row-state: transparent;
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -385,9 +388,11 @@
   transition: background-color var(--m-fast) var(--m-io);
 }
 .thread-row:hover {
+  --row-state: var(--color-rowHover);
   background: var(--color-rowHover);
 }
 .thread-row[aria-current="page"] {
+  --row-state: var(--color-selected);
   background: var(--color-selected);
   color: var(--color-text);
 }
@@ -458,6 +463,7 @@ li[data-dragging] .thread-row {
   box-shadow: inset 0 0 0 1px var(--color-rowRing);
 }
 li[data-selected] .thread-row {
+  --row-state: var(--color-selected);
   background: var(--color-selected);
   color: var(--color-text);
 }
@@ -492,24 +498,34 @@ input.dialog-field-mono {
   font-size: var(--text-nav);
 }
 .row-trailing {
-  position: relative;
   display: inline-flex;
   align-items: center;
   flex: none;
   gap: 2px;
 }
+/* Snooze and Settle are icon-only buttons floating over the row's right edge with a fade: the title keeps its full
+   width underneath, and the status text stays where it is. The context menu carries the same actions. */
 .row-actions {
-  display: none;
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
+  padding: 0 6px 0 22px;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background:
+    linear-gradient(to right, transparent, var(--row-state) 20px),
+    linear-gradient(to right, transparent, var(--color-sidebar) 20px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--m-fast) var(--m-io);
 }
 li:hover > .thread-row .row-actions,
+li[data-selected] .thread-row .row-actions,
 .thread-row:focus-within .row-actions {
-  display: inline-flex;
-}
-li:hover > .thread-row .row-rest,
-.thread-row:focus-within .row-rest {
-  display: none;
+  opacity: 1;
+  pointer-events: auto;
 }
 .row-action {
   display: inline-flex;

@@ -318,7 +318,6 @@ export function ThreadRow({
                   }}
                 >
                   <Check size={14} aria-hidden />
-                  Settle
                 </button>
               </>
             )}
