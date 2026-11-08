@@ -90,6 +90,8 @@ pub struct Workspace {
     installing: AtomicBool,
     /// The last computed status; dropped when the library or its position changes.
     status_cache: Mutex<Option<CachedStatus>>,
+    /// Bumped by every invalidation, so a slow read that began before one cannot store.
+    status_generation: std::sync::atomic::AtomicU64,
 }
 
 fn refused(message: impl Into<String>) -> CoreError {
@@ -353,6 +355,7 @@ impl Workspace {
             moving: Mutex::new(false),
             installing: AtomicBool::new(false),
             status_cache: Mutex::new(None),
+            status_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -372,6 +375,7 @@ impl Workspace {
     /// Forgets the cached status so the next read looks at Git again. Callers that
     /// change a checkout (setup, update, rollback, a project's own Git actions) use it.
     pub fn invalidate_status(&self) {
+        self.status_generation.fetch_add(1, Ordering::SeqCst);
         *self
             .status_cache
             .lock()
@@ -701,16 +705,26 @@ impl Workspace {
         if let Some(cached) = self.cached_status(&key) {
             return Ok(cached);
         }
+        let generation = self.status_generation.load(Ordering::SeqCst);
         let status = self.compute_status(projects).await?;
-        *self
+        self.keep_status(generation, key, &status);
+        Ok(status)
+    }
+
+    /// Keeps a computed status unless something invalidated while it was being read,
+    /// since it may then describe the old state.
+    fn keep_status(&self, generation: u64, key: Vec<(String, String)>, status: &WorkspaceStatus) {
+        let mut cache = self
             .status_cache
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CachedStatus {
-            at: Instant::now(),
-            projects: key,
-            status: status.clone(),
-        });
-        Ok(status)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.status_generation.load(Ordering::SeqCst) == generation {
+            *cache = Some(CachedStatus {
+                at: Instant::now(),
+                projects: key,
+                status: status.clone(),
+            });
+        }
     }
 
     fn cached_status(&self, key: &[(String, String)]) -> Option<WorkspaceStatus> {
@@ -1285,5 +1299,23 @@ mod tests {
         workspace.status_cache.lock().unwrap().as_mut().unwrap().at =
             Instant::now() - STATUS_TTL - Duration::from_secs(1);
         assert!(workspace.status(&[]).await.unwrap().library.unwrap().dirty);
+    }
+
+    #[tokio::test]
+    async fn a_status_read_that_an_invalidation_overtook_is_not_kept() {
+        let dir = TempDir::new();
+        let path = library(&dir.path().join("mine"));
+        let workspace = service(&dir).await;
+        workspace.setup(adopt(&path)).await.unwrap();
+        let before = workspace.status_generation.load(Ordering::SeqCst);
+        let slow = workspace.compute_status(&[]).await.unwrap();
+        // A branch switch lands while that read was still running.
+        workspace.invalidate_status();
+        workspace.keep_status(before, Vec::new(), &slow);
+        assert!(workspace.cached_status(&[]).is_none());
+        // A read that began after the invalidation is kept.
+        let after = workspace.status_generation.load(Ordering::SeqCst);
+        workspace.keep_status(after, Vec::new(), &slow);
+        assert!(workspace.cached_status(&[]).is_some());
     }
 }

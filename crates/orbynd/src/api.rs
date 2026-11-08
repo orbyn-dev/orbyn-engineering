@@ -154,7 +154,19 @@ pub async fn note_activity(
     {
         state.core.updates.note_activity();
     }
+    // Anything that changes a project, thread, pull request or the workspace may move a
+    // branch or a worktree, so the cached workspace status is dropped whether or not
+    // the request succeeded. Reads and the settings queries never do.
+    let changes = request.method() != axum::http::Method::GET
+        && request.uri().path().starts_with("/api/")
+        && !matches!(
+            request.uri().path(),
+            "/api/settings/project-scopes" | "/api/settings/preferences/query"
+        );
     let response = next.run(request).await;
+    if changes {
+        state.core.workspace.invalidate_status();
+    }
     timing.finish(response.status().as_u16() < 400);
     response
 }
@@ -688,10 +700,7 @@ pub async fn git_action(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<GitAction>,
 ) -> ApiResult<impl IntoResponse> {
-    let result = state.core.git_action(&id, &body, LOCAL_USER).await;
-    // Committing, switching or removing a worktree changes what the status reads.
-    state.core.workspace.invalidate_status();
-    Ok(Json(result?))
+    Ok(Json(state.core.git_action(&id, &body, LOCAL_USER).await?))
 }
 
 pub async fn branches(
