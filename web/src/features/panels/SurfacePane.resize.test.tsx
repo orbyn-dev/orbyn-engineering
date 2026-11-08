@@ -4,6 +4,7 @@ import { useUi } from "../../state/ui";
 import { PaneResizer } from "./SurfacePane";
 
 beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1400 });
   useUi.setState({ panelWidth: null });
   Object.assign(Element.prototype, { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(), hasPointerCapture: () => true });
 });
@@ -29,12 +30,12 @@ it("prevents selection and saves the bounded width on pointer up", () => {
   fireEvent(handle, down);
   expect(down.defaultPrevented).toBe(true);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 0 });
-  expect(pane.style.width).toBe("780px");
+  expect(pane.style.width).toBe("840px");
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(useUi.getState().panelWidth).toBe(780);
+  expect(useUi.getState().panelWidth).toBe(840);
   expect(handle.releasePointerCapture).toHaveBeenCalledWith(1);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 1000 });
-  expect(pane.style.width).toBe("780px");
+  expect(pane.style.width).toBe("840px");
 });
 
 it("ignores non-primary buttons and other pointers", () => {
@@ -47,7 +48,7 @@ it("ignores non-primary buttons and other pointers", () => {
   fireEvent.pointerMove(handle, { pointerId: 3, clientX: 1000 });
   expect(pane.style.width).toBe("");
   fireEvent.pointerMove(handle, { pointerId: 2, clientX: 1000 });
-  expect(pane.style.width).toBe("360px");
+  expect(pane.style.width).toBe("320px");
 });
 
 it.each(["pointerCancel", "lostPointerCapture"] as const)("ends a drag on %s", (eventName) => {
@@ -60,11 +61,11 @@ it.each(["pointerCancel", "lostPointerCapture"] as const)("ends a drag on %s", (
   expect(pane.style.width).toBe("600px");
 });
 
-it("releases capture when unmounted and preserves double-click reset", () => {
+it("releases capture when unmounted and keeps the double-click reset to 380 px", () => {
   const { unmount, handle } = setup();
   useUi.setState({ panelWidth: 600 });
   fireEvent.doubleClick(handle);
-  expect(useUi.getState().panelWidth).toBeNull();
+  expect(useUi.getState().panelWidth).toBe(380);
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   unmount();
   expect(handle.releasePointerCapture).toHaveBeenCalledWith(1);

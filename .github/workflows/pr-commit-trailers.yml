@@ -1,0 +1,29 @@
+name: Commit trailers
+# Fails a pull request when any commit it adds credits an AI tool: a Co-Authored-By
+# trailer naming an assistant, or a "Generated with" line. AI use belongs in the pull
+# request's AI usage section. It reads commit messages only and runs nothing from the
+# pull request, apart from this repository's own checker script and its tests.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  trailers:
+    name: Commit trailers
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      # The whole history is needed so BASE..HEAD holds exactly the commits this pull
+      # request adds, however many there are.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check the commit checker
+        run: python3 scripts/test_check_commit_trailers.py
+      - name: Check the commit messages
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_commit_trailers.py --base "$BASE" --head "$HEAD"

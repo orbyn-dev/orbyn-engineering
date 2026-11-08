@@ -1,14 +1,31 @@
 import { create } from "zustand";
 import { presetById, THEME_TOKENS, type ThemeColors } from "../styles/themes";
 import type { ProjectGroupingMode } from "../generated/ProjectGroupingMode";
+import { MOTION } from "../lib/motion";
 import { readJson, writeJson } from "../lib/storage";
 import { useWorkspace } from "./workspace";
 
 export type ThemeChoice = "system" | "light" | "dark";
 /** How the workspace is arranged: by project, by what needs you, or as one reading column. */
+/** What a toast leads with: a thread needs you, finished or failed, or a copy was made. Others are text only. */
+export type ToastKind = "needs" | "done" | "failed" | "copied";
+/** A button on a toast, such as View. Using it closes the toast. */
+export interface ToastAction { label: string; run(): void }
+
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
-export type RightTab = "diff" | "files" | "activity" | "pulls" | "browser" | "side";
+export type RightTab = "diff" | "files" | "activity" | "browser" | "side";
+/** The panel's surfaces in their default order. Terminal is the header button and the drawer, never a tab. */
+export const RIGHT_TAB_IDS: readonly RightTab[] = ["diff", "files", "browser", "activity", "side"];
+
+/** A saved order or closed set may be stale: unknown and repeated ids go, missing ones return at the end, and one tab always stays. */
+export function cleanTabs(order: unknown, closed: unknown): { order: RightTab[]; closed: RightTab[] } {
+  const valid = (list: unknown): RightTab[] =>
+    (Array.isArray(list) ? list : []).filter((id, at, all): id is RightTab => RIGHT_TAB_IDS.includes(id as RightTab) && all.indexOf(id) === at);
+  const first = valid(order);
+  const shut = valid(closed);
+  return { order: [...first, ...RIGHT_TAB_IDS.filter((id) => !first.includes(id))], closed: shut.length >= RIGHT_TAB_IDS.length ? [] : shut };
+}
 export type ContextTab = RightTab | "terminal";
 export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
@@ -16,10 +33,13 @@ interface Prefs {
   theme: ThemeChoice;
   /** The surface pane. Null follows the layout: open only when there's room. */
   panelOpen: boolean | null;
-  /** The surface showing; null is the launcher. */
+  /** The surface showing; null when none is. */
   panelTab: RightTab | null;
-  openSurfaces: RightTab[];
-  /** Panel and hero motion in ms, 0 to 400. 0 is off, upstream's default. */
+  /** The tab row's order for this thread. */
+  panelTabOrder: RightTab[];
+  /** Surfaces closed in this thread's tab row; the "+" brings them back. */
+  panelTabsClosed: RightTab[];
+  /** Panel and hero motion in ms, 0 to 400. 0 is off; the default is the --m-slow token. */
   panelAnimationMs: number;
   /** The floating details card on wide layouts. */
   detailsOpen: boolean;
@@ -98,6 +118,8 @@ interface Prefs {
   /** A short tone for the same events, with or without the system alert. */
   threadSound: boolean;
   inAppNotifications: boolean;
+  /** Tells you when a scheduled task's run finishes or fails. The service keeps no such setting, so it lives here. */
+  taskRunNotifications: boolean;
   confirmUnpin: boolean;
   confirmArchive: boolean;
   confirmDelete: boolean;
@@ -112,7 +134,6 @@ interface Prefs {
   /** Moves working threads, and ones waiting on delegated work, to their own shelf. */
   workingSection: boolean;
   /** Provider updates already dismissed, as `engine:version`. */
-  dismissedProviderUpdates: string[];
   /** The environment theme's `set_at` this viewer last applied; 0 is never. */
   environmentThemeAppliedAt: number;
   /** How the sidebar marks this environment's build: channel artwork, a version pill or nothing. */
@@ -143,7 +164,8 @@ export interface StashedPrompt {
 export interface ThreadLayout {
   panelOpen: boolean | null;
   panelTab: RightTab | null;
-  openSurfaces: RightTab[];
+  panelTabOrder: RightTab[];
+  panelTabsClosed: RightTab[];
   detailsOpen: boolean;
   terminalOpen: boolean;
   panelMaximized: boolean;
@@ -154,21 +176,28 @@ export interface ThreadLayout {
 export const DRAFT_LAYOUT = "draft";
 const MAX_LAYOUTS = 200;
 
-export type PaletteStart = "root" | "add-project" | "files" | "search";
+export type PaletteStart = "root" | "add-project" | "add-project-url" | "add-project-new" | "files" | "search";
 
-export const DEFAULT_SIDEBAR_WIDTH = 208;
+export const DEFAULT_SIDEBAR_WIDTH = 224;
 const TOAST_MS = 4000;
 let toastCounter = 0;
 
 const PREFS_KEY = "orbyn.prefs.v1";
+/** Own key, so a stale tab from an older build that rewrites the prefs cannot undo the migration. */
+const MIGRATED_KEY = "orbyn.prefs.migrated";
+const OLD_SIDEBAR_WIDTH = 208;
+
+/** Set when this load's migration turned project folders on; the notice offers to undo it. */
+let foldersMigrated = false;
 const DRAFTS_KEY = "orbyn.drafts.v1";
 
 const defaults: Prefs = {
   theme: "dark",
   panelOpen: null,
   panelTab: null,
-  openSurfaces: [],
-  panelAnimationMs: 0,
+  panelTabOrder: [...RIGHT_TAB_IDS],
+  panelTabsClosed: [],
+  panelAnimationMs: MOTION.slow,
   detailsOpen: true,
   terminalOpen: false,
   panelMaximized: false,
@@ -180,7 +209,7 @@ const defaults: Prefs = {
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   groups: {},
   projectFilter: [],
-  projectFolders: false,
+  projectFolders: true,
   projectGrouping: "separate",
   projectGroupingOverrides: {},
   multilineRows: false,
@@ -221,6 +250,7 @@ const defaults: Prefs = {
   threadNotifications: false,
   threadSound: false,
   inAppNotifications: false,
+  taskRunNotifications: true,
   confirmUnpin: false,
   confirmArchive: false,
   confirmDelete: true,
@@ -229,7 +259,6 @@ const defaults: Prefs = {
   pullLinksInApp: true,
   detailsHidden: ["usage"],
   workingSection: true,
-  dismissedProviderUpdates: [],
   environmentThemeAppliedAt: 0,
   environmentIdentification: "artwork",
   welcomeDone: false,
@@ -245,12 +274,16 @@ interface UiState extends Prefs {
   palette: PaletteStart | null;
   setPalette(palette: PaletteStart | null): void;
   lastThreadId: string | null;
-  toasts: { id: number; text: string }[];
-  pushToast(text: string): void;
+  toasts: { id: number; text: string; kind?: ToastKind; action?: ToastAction }[];
+  pushToast(text: string, kind?: ToastKind, action?: ToastAction): void;
   dismissToast(id: number): void;
   /** The open welcome step, or null; not saved, so it lasts while the app runs. */
   welcomeStep: number | null;
   setWelcomeStep(step: number | null): void;
+  /** True once, when the migration turned project folders on; not saved. */
+  foldersNotice: boolean;
+  /** Closes the notice; with `undo`, also turns project folders back off. */
+  closeFoldersNotice(undo: boolean): void;
   setTheme(theme: ThemeChoice): void;
   /** Opens `tab`, or closes its surface if `tab` is already showing. */
   /** A file the Files surface should open next, with the line to reveal. */
@@ -261,9 +294,6 @@ interface UiState extends Prefs {
   messageReveal: { threadId: string; messageId: string } | null;
   revealMessage(threadId: string, messageId: string): void;
   clearMessageReveal(): void;
-  /** A pull request the panel should open. */
-  pullReveal: number | null;
-  revealPull(number: number | null): void;
   /** A file the Diff surface should scroll to. */
   diffReveal: ThreadNavigationOrigin & { path: string; nonce: number } | null;
   /** A commit the Diff surface should show next. */
@@ -272,6 +302,14 @@ interface UiState extends Prefs {
   revealDiff(path: string, origin: ThreadNavigationOrigin): void;
   consumeDiffReveal(nonce: number): void;
   togglePanel(tab: ContextTab): void;
+  /** Takes a surface out of this thread's tab row. The last tab stays; closing the open one opens its neighbour. */
+  closePanelTab(tab: RightTab): void;
+  /** Puts a closed surface back in the row, opens it and shows the panel. */
+  reopenPanelTab(tab: RightTab): void;
+  /** Moves a tab to `index` in the row's order. */
+  movePanelTab(tab: RightTab, index: number): void;
+  /** The default order, with every tab back in the row. */
+  resetPanelTabs(): void;
   /** A page floating over the chat, if any. */
   previewFloat: { threadId: string; tabId: string } | null;
   /** A URL to open, or an existing tab to reveal in the Browser panel. */
@@ -280,9 +318,6 @@ interface UiState extends Prefs {
   showInBrowser(url: string | { tabId: string } | null): void;
   closePanel(): void;
   setPanelOpen(open: boolean): void;
-  /** Back to the launcher, keeping open surfaces. */
-  showLauncher(): void;
-  closeSurface(tab: RightTab): void;
   setPanelAnimationMs(ms: number): void;
   toggleDetails(): void;
   setPanelMaximized(maximized: boolean): void;
@@ -304,7 +339,8 @@ interface UiState extends Prefs {
 const layoutDefaults: ThreadLayout = {
   panelOpen: defaults.panelOpen,
   panelTab: defaults.panelTab,
-  openSurfaces: defaults.openSurfaces,
+  panelTabOrder: defaults.panelTabOrder,
+  panelTabsClosed: defaults.panelTabsClosed,
   detailsOpen: defaults.detailsOpen,
   terminalOpen: defaults.terminalOpen,
   panelMaximized: defaults.panelMaximized,
@@ -315,7 +351,8 @@ const layoutDefaults: ThreadLayout = {
 const currentLayout = (state: Prefs): ThreadLayout => ({
   panelOpen: state.panelOpen,
   panelTab: state.panelTab,
-  openSurfaces: state.openSurfaces,
+  panelTabOrder: state.panelTabOrder,
+  panelTabsClosed: state.panelTabsClosed,
   detailsOpen: state.detailsOpen,
   terminalOpen: state.terminalOpen,
   panelMaximized: state.panelMaximized,
@@ -334,7 +371,8 @@ const prefsOf = (state: Prefs): Prefs => ({
   theme: state.theme,
   panelOpen: state.panelOpen,
   panelTab: state.panelTab,
-  openSurfaces: state.openSurfaces,
+  panelTabOrder: state.panelTabOrder,
+  panelTabsClosed: state.panelTabsClosed,
   panelAnimationMs: state.panelAnimationMs,
   detailsOpen: state.detailsOpen,
   terminalOpen: state.terminalOpen,
@@ -388,6 +426,7 @@ const prefsOf = (state: Prefs): Prefs => ({
   threadNotifications: state.threadNotifications,
   threadSound: state.threadSound,
   inAppNotifications: state.inAppNotifications,
+  taskRunNotifications: state.taskRunNotifications,
   confirmUnpin: state.confirmUnpin,
   confirmArchive: state.confirmArchive,
   confirmDelete: state.confirmDelete,
@@ -396,19 +435,60 @@ const prefsOf = (state: Prefs): Prefs => ({
   pullLinksInApp: state.pullLinksInApp,
   detailsHidden: state.detailsHidden,
   workingSection: state.workingSection,
-  dismissedProviderUpdates: state.dismissedProviderUpdates,
   environmentThemeAppliedAt: state.environmentThemeAppliedAt,
   environmentIdentification: state.environmentIdentification,
   welcomeDone: state.welcomeDone,
 });
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The frame's one-time migration: the previous default sidebar width (exactly 208) becomes
+ * 224 and project folders turn on. It records itself under its own key, and only after the
+ * migrated prefs were saved: a failed write leaves it to run again, without a notice.
+ */
+function migratePrefs(saved: Partial<Prefs>): Partial<Prefs> {
+  try {
+    if (localStorage.getItem(MIGRATED_KEY) === "1") return saved;
+  } catch {
+    return saved;
+  }
+  const existing = Object.keys(saved).length > 0;
+  const next: Partial<Prefs> = { ...saved, projectFolders: true };
+  if (saved.sidebarWidth === OLD_SIDEBAR_WIDTH) next.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+    localStorage.setItem(MIGRATED_KEY, "1");
+  } catch {
+    return saved;
+  }
+  // A first run starts on the new defaults; only someone with saved prefs is told.
+  foldersMigrated = existing && saved.projectFolders !== true;
+  return next;
+}
+
+/** Each thread's saved layout may predate the tab fields or name the removed Pull requests tab. */
+function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
+  if (!isPlainObject(layouts)) return {};
+  return Object.fromEntries(
+    Object.entries(layouts as Record<string, unknown>)
+      // A damaged entry is dropped; the thread starts from the defaults.
+      .filter((entry): entry is [string, ThreadLayout] => isPlainObject(entry[1]))
+      .map(([key, layout]) => {
+        const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
+        const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
+        return [key, { ...layout, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
+      }),
+  );
+}
+
 /** Saved preferences may predate a field or carry a removed value. */
 function savedPrefs(): Partial<Prefs> {
-  const saved = readJson<Partial<Prefs>>(PREFS_KEY) ?? {};
-  const panelTab =
-    saved.panelTab === "diff" || saved.panelTab === "files" || saved.panelTab === "activity" || saved.panelTab === "pulls" || saved.panelTab === "side"
-      ? saved.panelTab
-      : null;
+  const stored = readJson<unknown>(PREFS_KEY);
+  const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
+  const panelTab = RIGHT_TAB_IDS.includes(saved.panelTab as RightTab) ? (saved.panelTab as RightTab) : null;
+  const tabs = cleanTabs(saved.panelTabOrder, saved.panelTabsClosed);
   const grouping = saved.projectGrouping;
   const projectGrouping =
     grouping === "repository" || grouping === "repository_path" || grouping === "separate"
@@ -420,7 +500,7 @@ function savedPrefs(): Partial<Prefs> {
     ),
   );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelTab, layouts: saved.layouts ?? {}, projectGrouping, projectGroupingOverrides, workspaceLayout };
+  return { ...saved, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
 }
 
 export const useUi = create<UiState>((set, get) => {
@@ -434,6 +514,11 @@ export const useUi = create<UiState>((set, get) => {
   return {
     ...defaults,
     ...savedPrefs(),
+    foldersNotice: foldersMigrated,
+    closeFoldersNotice(undo) {
+      set({ foldersNotice: false });
+      if (undo) get().setPrefs({ projectFolders: false });
+    },
     welcomeStep: null,
     setWelcomeStep(welcomeStep) {
       set({ welcomeStep });
@@ -449,9 +534,9 @@ export const useUi = create<UiState>((set, get) => {
     },
     lastThreadId: null,
     toasts: [],
-    pushToast(text) {
+    pushToast(text, kind, action) {
       const id = ++toastCounter;
-      set((state) => ({ toasts: [...state.toasts, { id, text }] }));
+      set((state) => ({ toasts: [...state.toasts, { id, text, kind, ...(action ? { action } : {}) }] }));
       setTimeout(() => get().dismissToast(id), TOAST_MS);
     },
     dismissToast(id) {
@@ -461,39 +546,23 @@ export const useUi = create<UiState>((set, get) => {
       set({ theme });
       savePrefs();
     },
-    pullReveal: null,
-    revealPull(number) {
-      if (number === null) {
-        set({ pullReveal: null });
-        return;
-      }
-      const { openSurfaces } = get();
-      set({
-        pullReveal: number,
-        panelOpen: true,
-        panelTab: "pulls",
-        openSurfaces: openSurfaces.includes("pulls") ? openSurfaces : [...openSurfaces, "pulls"],
-      });
-    },
     diffReveal: null,
     commitReveal: null,
     revealCommit(sha) {
-      const { openSurfaces } = get();
       set({
         commitReveal: { sha, nonce: Date.now() },
         panelOpen: true,
         panelTab: "diff",
-        openSurfaces: openSurfaces.includes("diff") ? openSurfaces : [...openSurfaces, "diff"],
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "diff"),
       });
     },
     revealDiff(path, origin) {
-      const { openSurfaces } = get();
       set({
         diffReveal: { ...origin, path, nonce: ++navigationNonce },
         fileReveal: null,
         panelOpen: true,
         panelTab: "diff",
-        openSurfaces: openSurfaces.includes("diff") ? openSurfaces : [...openSurfaces, "diff"],
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "diff"),
       });
     },
     consumeDiffReveal(nonce) {
@@ -508,13 +577,12 @@ export const useUi = create<UiState>((set, get) => {
       set({ messageReveal: null });
     },
     revealFile(path, line, origin) {
-      const { openSurfaces } = get();
       set({
         fileReveal: { ...origin, path, line, nonce: ++navigationNonce },
         diffReveal: null,
         panelOpen: true,
         panelTab: "files",
-        openSurfaces: openSurfaces.includes("files") ? openSurfaces : [...openSurfaces, "files"],
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "files"),
       });
     },
     consumeFileReveal(nonce) {
@@ -530,29 +598,54 @@ export const useUi = create<UiState>((set, get) => {
         set({ previewRequest: null });
         return;
       }
-      const { openSurfaces } = get();
       set({
         previewRequest: url,
         panelOpen: true,
         panelTab: "browser",
-        openSurfaces: openSurfaces.includes("browser") ? openSurfaces : [...openSurfaces, "browser"],
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "browser"),
       });
     },
     togglePanel(tab) {
       if (tab === "terminal") {
         set((state) => ({ terminalOpen: !state.terminalOpen }));
       } else {
-        const { panelOpen, panelTab, openSurfaces } = get();
+        const { panelOpen, panelTab } = get();
         set(
           panelOpen === true && panelTab === tab
             ? { panelOpen: false }
             : {
                 panelOpen: true,
                 panelTab: tab,
-                openSurfaces: openSurfaces.includes(tab) ? openSurfaces : [...openSurfaces, tab],
+                panelTabsClosed: get().panelTabsClosed.filter((id) => id !== tab),
               },
         );
       }
+      savePrefs();
+    },
+    closePanelTab(tab) {
+      const { panelTabOrder, panelTabsClosed, panelTab } = get();
+      const row = panelTabOrder.filter((id) => !panelTabsClosed.includes(id));
+      if (!row.includes(tab) || row.length < 2) return;
+      const at = row.indexOf(tab);
+      const shown = panelTab && row.includes(panelTab) ? panelTab : row[0];
+      set({
+        panelTabsClosed: [...panelTabsClosed, tab],
+        ...(shown === tab ? { panelTab: row[at + 1] ?? row[at - 1] ?? null } : {}),
+      });
+      savePrefs();
+    },
+    reopenPanelTab(tab) {
+      set({ panelTabsClosed: get().panelTabsClosed.filter((id) => id !== tab), panelOpen: true, panelTab: tab });
+      savePrefs();
+    },
+    movePanelTab(tab, index) {
+      const order = get().panelTabOrder.filter((id) => id !== tab);
+      order.splice(Math.max(0, Math.min(index, order.length)), 0, tab);
+      set({ panelTabOrder: order });
+      savePrefs();
+    },
+    resetPanelTabs() {
+      set({ panelTabOrder: [...RIGHT_TAB_IDS], panelTabsClosed: [] });
       savePrefs();
     },
     closePanel() {
@@ -561,20 +654,6 @@ export const useUi = create<UiState>((set, get) => {
     },
     setPanelOpen(open) {
       set({ panelOpen: open });
-      savePrefs();
-    },
-    showLauncher() {
-      set({ panelOpen: true, panelTab: null });
-      savePrefs();
-    },
-    closeSurface(tab) {
-      set((state) => {
-        const openSurfaces = state.openSurfaces.filter((surface) => surface !== tab);
-        return {
-          openSurfaces,
-          panelTab: state.panelTab === tab ? (openSurfaces.at(-1) ?? null) : state.panelTab,
-        };
-      });
       savePrefs();
     },
     setPanelAnimationMs(ms) {
@@ -668,8 +747,11 @@ export function applyTheme(choice: ThemeChoice): void {
   const { lightPreset, darkPreset, customColors, typography, contrast, fontSmoothing, workspaceLayout } = useUi.getState();
   root.dataset.workspace = LAYOUT_CHOICES.includes(workspaceLayout) ? workspaceLayout : "console";
   const preset = presetById(scheme === "dark" ? darkPreset : lightPreset);
+  if (preset) root.dataset.preset = preset.id;
+  else delete root.dataset.preset;
   for (const [token] of THEME_TOKENS) {
-    const value = customColors[token] ?? preset?.colors[token];
+    // A preset with a full token set in tokens.css is styled there; only custom colours override it.
+    const value = customColors[token] ?? (preset?.tokens ? undefined : preset?.colors[token]);
     if (value) root.style.setProperty(token, value);
     else root.style.removeProperty(token);
   }

@@ -1,3 +1,4 @@
+import { useNow } from "../../lib/useNow";
 import { CircleAlert, Clock, Gauge, RotateCcw, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "../../api/client";
@@ -21,19 +22,28 @@ export function LimitBanner({ thread }: { thread: Thread }) {
   const putThread = useWorkspace((state) => state.putThread);
   const pushToast = useUi((state) => state.pushToast);
   const limit = thread.lifecycle?.limit;
+  const resetsAt = limit?.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
+  // The clock ticks only while a wait is still ahead, and stops once it is over.
+  const now = useNow(!Number.isNaN(resetsAt) && Date.now() < resetsAt + 1000);
   if (!limit || thread.active_run) return null;
   const failed = (error: unknown) => pushToast(`Couldn't do that. ${toFailure(error).message}`);
   const patch = (body: UpdateThread) => api.patchThread(thread.id, body).then(putThread, failed);
-  const future = limit.resets_at !== null && new Date(limit.resets_at).getTime() > Date.now();
+  const future = !Number.isNaN(resetsAt) && resetsAt > now;
+  const over = !Number.isNaN(resetsAt) && !future;
   const snoozedUntilReset = future && thread.lifecycle?.snoozed_until != null &&
-    Date.parse(thread.lifecycle.snoozed_until) === Date.parse(limit.resets_at ?? "");
+    Date.parse(thread.lifecycle.snoozed_until) === resetsAt;
+  const minutes = Math.ceil((resetsAt - now) / 60_000);
   return (
-    <div className="thread-error" role="status" aria-label="Limited">
+    <div className="thread-error thread-limit" role="group" aria-label="Limited">
       <Gauge size={14} aria-hidden />
-      <span>
-        {limit.message}
+      {/* Only text that does not change each second is announced; the countdown itself is not. */}
+      <span role="status">
+        <span className="limit-label">Rate limited</span> {limit.message}
         {limit.resets_at ? ` Resets ${resetLabel(limit.resets_at)}.` : ""}
+        {over ? " The wait is over." : ""}
+        {future ? <span className="sr-only">{` Try again in about ${minutes === 1 ? "a minute" : `${minutes} minutes`}.`}</span> : null}
       </span>
+      {future ? <LimitCountdown limit={limit} now={now} /> : null}
       <Button
         small
         tone="quiet"
@@ -128,4 +138,27 @@ export function PreparationRetryButton({ threadId, runId }: { threadId: string; 
     });
   };
   return <Button small tone="quiet" disabled={retrying} icon={<RotateCcw size={12} aria-hidden />} onClick={retry}>Retry</Button>;
+}
+
+/** The time left on a wait: 2m 14s, or 1h 5m. */
+export function formatWait(ms: number): string {
+  const seconds = Math.max(Math.ceil(ms / 1000), 0);
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${seconds}s`;
+}
+
+/** "Try again in 2m 14s", counting down, with a bar for how much of the wait has passed. Not a live region. */
+function LimitCountdown({ limit, now }: { limit: { stopped_at: string; resets_at: string | null }; now: number }) {
+  const end = limit.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
+  const start = Date.parse(limit.stopped_at);
+  const share = Number.isNaN(start) || end <= start ? 0 : Math.min(Math.max((now - start) / (end - start), 0), 1);
+  return (
+    <span className="limit-wait" aria-hidden>
+      Try again in <b className="limit-left">{formatWait(end - now)}</b>.
+      <span className="xbar" role="presentation">
+        <i style={{ width: `${Math.round(share * 100)}%` }} />
+      </span>
+    </span>
+  );
 }

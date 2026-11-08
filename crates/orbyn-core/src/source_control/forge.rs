@@ -4,14 +4,16 @@
 //! DevOps and Forgejo cover the basics their CLIs have, and Bitbucket has no CLI to
 //! go through, so it reports that instead of asking for a token.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
 use orbyn_contracts::{
-    AddPullComment, MergePull, PullCandidate, PullCheck, PullComment, PullConversation, PullFile,
-    PullRequest, PullRequestDetail, PullRevision, PullThread, PullTimelineEvent, ReviewLineComment,
-    SetPullPeople, SubmitReview, UpdatePull,
+    AddPullComment, MergePull, PullCandidate, PullCheck, PullChecks, PullComment, PullConversation,
+    PullDetails, PullFile, PullRequest, PullRequestDetail, PullRevision, PullThread,
+    PullTimelineEvent, RequestedReviewer, ReviewLineComment, SetPullPeople, SubmitReview,
+    UpdatePull,
 };
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
@@ -24,6 +26,12 @@ use crate::util::tail;
 
 const FORGE_TIMEOUT: Duration = Duration::from_secs(120);
 const LIST_LIMIT: &str = "100";
+/// The details request must not hold a refresh up for long.
+const DETAILS_TIMEOUT: Duration = Duration::from_secs(20);
+/// Pull requests asked in one GraphQL query, to stay inside its node and cost limits.
+const DETAILS_BATCH: usize = 25;
+/// Rows one details request may ask about, the size of a project's list.
+pub const DETAILS_ROW_LIMIT: usize = 100;
 
 impl crate::app::Core {
     /// A fixed, read-only product-repository check through the person's own CLI.
@@ -40,7 +48,7 @@ impl crate::app::Core {
                     "GET",
                     "--hostname",
                     "github.com",
-                    "user/starred/kinqsradio/orbyn-engineering",
+                    "user/starred/orbyn-dev/orbyn-engineering",
                     "--silent",
                 ])
                 .current_dir(&self.config.data_dir)
@@ -70,6 +78,8 @@ updatedAt,labels,reviewDecision,statusCheckRollup";
 const GH_VIEW_FIELDS: &str = "number,title,url,state,headRefName,baseRefName,author,isDraft,\
 updatedAt,labels,reviewDecision,statusCheckRollup,body,comments,reviews,mergeable,reviewRequests,\
 headRefOid,baseRefOid,additions,deletions,changedFiles,maintainerCanModify,autoMergeRequest";
+/// Failing check names kept per pull request, so a list stays small.
+const MAX_FAILING_NAMES: usize = 20;
 const THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
 repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{\
 id isResolved path line comments(first:100){nodes{databaseId body createdAt author{login}}}}}}}}";
@@ -215,6 +225,23 @@ async fn run_owned(builder: Command, input: Option<&str>) -> Result<std::process
     child.output().await
 }
 
+/// True when a forge CLI's failure says the pull request does not exist, by the phrases that forge
+/// uses for it. Anything else (auth, network, rate limit, a server error) is not matched.
+pub fn no_such_pull(forge: Forge, message: &str) -> bool {
+    let message = message.to_lowercase();
+    let any = |phrases: &[&str]| phrases.iter().any(|phrase| message.contains(phrase));
+    match forge {
+        Forge::GitHub => any(&["could not resolve to a pullrequest with the number of"]),
+        // A bare 404 may be a proxy's page; GitLab's own answer names the merge request it looked for.
+        Forge::GitLab => {
+            (message.contains("merge_requests/") && message.contains("404 not found"))
+                || any(&["merge request not found"])
+        }
+        Forge::Azure => any(&["tf401180", "pull request does not exist"]),
+        Forge::Forgejo | Forge::Bitbucket => false,
+    }
+}
+
 pub async fn call(forge: Forge, cwd: &Path, args: &[&str]) -> Result<String> {
     let output = spawn(forge, cwd, args, None).await?;
     if output.success {
@@ -293,27 +320,83 @@ fn check_state(status: &str, conclusion: &str) -> &'static str {
     }
 }
 
-/// One word for a whole check list: a failure wins, then anything unfinished.
-fn rollup(states: impl Iterator<Item = String>) -> String {
-    let states: Vec<String> = states.collect();
-    if states.is_empty() {
-        "none"
-    } else if states.iter().any(|state| state == "fail") {
-        "fail"
-    } else if states.iter().any(|state| state == "pending") {
-        "pending"
-    } else {
-        "pass"
-    }
-    .to_owned()
+/// What one entry of GitHub's check rollup counts as.
+#[derive(Debug, PartialEq, Eq)]
+enum CheckBucket {
+    Pass,
+    Fail,
+    Running,
+    /// Skipped, neutral or stale: only in the total.
+    Other,
 }
 
+/// A check run is running until it is `COMPLETED`; then its conclusion decides. A
+/// commit status has only a `state`, where `EXPECTED` and `PENDING` are still to come.
+fn check_bucket(entry: &Value) -> CheckBucket {
+    let status = field(entry, "status").to_uppercase();
+    let conclusion = field(entry, "conclusion").to_uppercase();
+    if status.is_empty() && conclusion.is_empty() {
+        return match field(entry, "state").to_uppercase().as_str() {
+            "SUCCESS" => CheckBucket::Pass,
+            "FAILURE" | "ERROR" => CheckBucket::Fail,
+            _ => CheckBucket::Running,
+        };
+    }
+    if !status.is_empty() && status != "COMPLETED" {
+        return CheckBucket::Running;
+    }
+    match conclusion.as_str() {
+        "SUCCESS" => CheckBucket::Pass,
+        "FAILURE" | "CANCELLED" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE" => {
+            CheckBucket::Fail
+        }
+        _ => CheckBucket::Other,
+    }
+}
+
+/// One word for the counts: a failure wins, then anything unfinished.
 fn github_rollup(value: &Value) -> Option<String> {
-    let checks = value.get("statusCheckRollup")?.as_array()?;
-    Some(rollup(checks.iter().map(|check| {
-        let status = [field(check, "status"), field(check, "state")].concat();
-        check_state(&status, field(check, "conclusion")).to_owned()
-    })))
+    let checks = github_checks(value)?;
+    Some(
+        if checks.total == 0 {
+            "none"
+        } else if checks.failing > 0 {
+            "fail"
+        } else if checks.running > 0 {
+            "pending"
+        } else {
+            "pass"
+        }
+        .to_owned(),
+    )
+}
+
+/// Per-state counts over GitHub's check rollup, which holds check runs and commit
+/// statuses. Skipped, neutral and stale checks count only in the total.
+fn github_checks(value: &Value) -> Option<PullChecks> {
+    let entries = value.get("statusCheckRollup")?.as_array()?;
+    let mut checks = PullChecks {
+        total: u32::try_from(entries.len()).unwrap_or(u32::MAX),
+        passing: 0,
+        failing: 0,
+        running: 0,
+        failing_names: Vec::new(),
+    };
+    for entry in entries {
+        match check_bucket(entry) {
+            CheckBucket::Pass => checks.passing += 1,
+            CheckBucket::Fail => {
+                checks.failing += 1;
+                let name = [field(entry, "name"), field(entry, "context")].concat();
+                if !name.is_empty() && checks.failing_names.len() < MAX_FAILING_NAMES {
+                    checks.failing_names.push(name);
+                }
+            }
+            CheckBucket::Running => checks.running += 1,
+            CheckBucket::Other => {}
+        }
+    }
+    Some(checks)
 }
 
 fn review_word(decision: &str) -> String {
@@ -399,7 +482,231 @@ pub fn parse_pull(value: &Value) -> Option<PullRequest> {
             .get("reviewDecision")
             .map(|decision| review_word(decision.as_str().unwrap_or_default())),
         checks_state: github_rollup(value),
+        checks: github_checks(value),
     })
+}
+
+/// The `PullDetails` fields one batched request supplies, by wire name.
+pub const DETAIL_FIELDS: [&str; 4] = [
+    "created_at",
+    "requested_reviewers",
+    "viewer_review_state",
+    "comment_count",
+];
+
+/// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
+pub async fn github_graphql_reset(cwd: &Path) -> Option<u64> {
+    let output = call(Forge::GitHub, cwd, &["api", "rate_limit"])
+        .await
+        .ok()?;
+    graphql_reset(&output)
+}
+
+/// The GraphQL reset time in a `rate_limit` answer.
+pub fn graphql_reset(answer: &str) -> Option<u64> {
+    let value: Value = serde_json::from_str(answer).ok()?;
+    value.pointer("/resources/graphql/reset")?.as_u64()
+}
+
+/// How the batched details request ended.
+#[derive(Debug, PartialEq)]
+pub enum DetailsOutcome {
+    Details(HashMap<u64, PullDetails>),
+    /// GitHub's GraphQL limit is spent, so no detail may be reported.
+    RateLimited,
+    Unavailable,
+}
+
+/// One GraphQL request for every listed pull request, aliased `p<number>`: when it was
+/// opened, who is asked to review, the viewer's latest review (the viewer comes from
+/// the same request), and conversation comments plus the comments inside each review.
+fn details_query(numbers: &[u64]) -> String {
+    let aliases: String = numbers
+        .iter()
+        .map(|number| {
+            format!(
+                "p{number}:pullRequest(number:{number}){{createdAt \
+reviewRequests(first:50){{nodes{{requestedReviewer{{__typename ...on User{{login}} \
+...on Mannequin{{login}} ...on Team{{slug}}}}}}}} \
+latestReviews(first:50){{nodes{{state author{{login}}}}}} \
+comments{{totalCount}} reviews(first:100){{nodes{{comments{{totalCount}}}}}}}}"
+            )
+        })
+        .collect();
+    format!(
+        "query($owner:String!,$repo:String!){{viewer{{login}} \
+repository(owner:$owner,name:$repo){{{aliases}}}}}"
+    )
+}
+
+/// Reads the response. A pull request whose comments cannot be totalled is left out
+/// whole, so a row never carries a partial set. The viewer's review state is absent
+/// when the response names no viewer.
+fn parse_details(response: &Value, project_id: &str, numbers: &[u64]) -> HashMap<u64, PullDetails> {
+    let viewer = response
+        .pointer("/data/viewer/login")
+        .and_then(Value::as_str);
+    let total = |value: &Value| {
+        value
+            .pointer("/comments/totalCount")
+            .and_then(Value::as_u64)
+    };
+    numbers
+        .iter()
+        .filter_map(|number| {
+            let pull = response.pointer(&format!("/data/repository/p{number}"))?;
+            let in_reviews: u64 = pull
+                .pointer("/reviews/nodes")?
+                .as_array()?
+                .iter()
+                .filter_map(total)
+                .sum();
+            let comments = total(pull)? + in_reviews;
+            let requested_reviewers = pull
+                .pointer("/reviewRequests/nodes")
+                .and_then(Value::as_array)
+                .map(|nodes| {
+                    nodes
+                        .iter()
+                        .filter_map(|node| {
+                            let who = node.get("requestedReviewer")?;
+                            let team = optional(who, "slug");
+                            let (name, kind) = match team {
+                                Some(slug) => (slug, "team"),
+                                None => (optional(who, "login")?, "user"),
+                            };
+                            Some(RequestedReviewer {
+                                name,
+                                kind: kind.into(),
+                            })
+                        })
+                        .collect()
+                });
+            let viewer_review_state = viewer.and_then(|viewer| {
+                let reviews = pull.pointer("/latestReviews/nodes")?.as_array()?;
+                let mine = reviews.iter().find(|review| {
+                    review
+                        .pointer("/author/login")
+                        .and_then(Value::as_str)
+                        .is_some_and(|login| login.eq_ignore_ascii_case(viewer))
+                });
+                Some(mine.map_or("none".to_owned(), |review| {
+                    field(review, "state").to_lowercase()
+                }))
+            });
+            Some((
+                *number,
+                PullDetails {
+                    project_id: project_id.to_owned(),
+                    number: *number,
+                    created_at: optional(pull, "createdAt"),
+                    requested_reviewers,
+                    comment_count: Some(u32::try_from(comments).unwrap_or(u32::MAX)),
+                    viewer_review_state,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn classify_details(
+    _success: bool,
+    stdout: &str,
+    stderr: &str,
+    project_id: &str,
+    numbers: &[u64],
+) -> DetailsOutcome {
+    let said = format!("{stderr}\n{stdout}").to_lowercase();
+    if said.contains("rate limit") || said.contains("rate_limited") {
+        return DetailsOutcome::RateLimited;
+    }
+    // GraphQL can answer some pull requests and report errors for others, and `gh`
+    // then exits non-zero; every row that came back whole is kept.
+    let Ok(response) = serde_json::from_str::<Value>(stdout) else {
+        return DetailsOutcome::Unavailable;
+    };
+    let mut found = parse_details(&response, project_id, numbers);
+    // An error inside a pull request can null a node of an otherwise complete row, which
+    // would leave a short reviewer list or an undercounted total, so the row goes whole.
+    for error in response
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some([Value::String(root), Value::String(alias), ..]) = error
+            .get("path")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            && root == "repository"
+            && let Some(number) = alias.strip_prefix('p').and_then(|n| n.parse().ok())
+        {
+            found.remove(&number);
+        }
+    }
+    if found.is_empty() {
+        DetailsOutcome::Unavailable
+    } else {
+        DetailsOutcome::Details(found)
+    }
+}
+
+/// Details for GitHub pull requests, in requests of at most `DETAILS_BATCH` aliases. A
+/// batch that fails leaves only its own rows out; a spent limit ends the whole call.
+/// Other forges have none.
+pub async fn github_details(
+    forge: Forge,
+    cwd: &Path,
+    project_id: &str,
+    numbers: &[u64],
+) -> DetailsOutcome {
+    if forge != Forge::GitHub || numbers.is_empty() {
+        return DetailsOutcome::Unavailable;
+    }
+    let mut all = HashMap::new();
+    for batch in numbers.chunks(DETAILS_BATCH) {
+        match details_batch(forge, cwd, project_id, batch).await {
+            DetailsOutcome::Details(found) => all.extend(found),
+            DetailsOutcome::RateLimited => return DetailsOutcome::RateLimited,
+            DetailsOutcome::Unavailable => {}
+        }
+    }
+    if all.is_empty() {
+        DetailsOutcome::Unavailable
+    } else {
+        DetailsOutcome::Details(all)
+    }
+}
+
+async fn details_batch(
+    forge: Forge,
+    cwd: &Path,
+    project_id: &str,
+    numbers: &[u64],
+) -> DetailsOutcome {
+    let query = format!("query={}", details_query(numbers));
+    let args = [
+        "api",
+        "graphql",
+        "-F",
+        "owner={owner}",
+        "-F",
+        "repo={repo}",
+        "-f",
+        query.as_str(),
+    ];
+    let Ok(Ok(output)) =
+        tokio::time::timeout(DETAILS_TIMEOUT, spawn(forge, cwd, &args, None)).await
+    else {
+        return DetailsOutcome::Unavailable;
+    };
+    classify_details(
+        output.success,
+        &output.stdout,
+        &output.stderr,
+        project_id,
+        numbers,
+    )
 }
 
 pub async fn fetch_pull(forge: Forge, cwd: &Path, number: u64) -> Result<PullRequest> {
@@ -1569,40 +1876,13 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         }
     });
     match forge {
-        Forge::GitHub => {
-            let flag = format!("--{}", options.method);
-            let mut args = vec!["pr", "merge", id.as_str(), flag.as_str()];
-            if options.auto {
-                args.push("--auto");
-            }
-            if options.delete_branch {
-                args.push("--delete-branch");
-            }
-            if let Some(subject) = &options.subject {
-                args.extend(["--subject", subject]);
-            }
-            if let Some(body) = &body {
-                args.extend(["--body", body]);
-            }
-            call(forge, cwd, &args).await.map(|_| ())
-        }
-        Forge::GitLab => {
-            let mut args = vec!["mr", "merge", id.as_str(), "--yes"];
-            match options.method.as_str() {
-                "squash" => args.push("--squash"),
-                "rebase" => args.push("--rebase"),
-                _ => {}
-            }
-            if options.auto {
-                args.push("--auto-merge");
-            }
-            if options.delete_branch {
-                args.push("--remove-source-branch");
-            }
-            if let Some(body) = &body {
-                args.extend(["--message", body]);
-            }
-            call(forge, cwd, &args).await.map(|_| ())
+        Forge::GitHub | Forge::GitLab => {
+            let args = merge_args(forge, &id, options, body.as_deref());
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            call(forge, cwd, &args)
+                .await
+                .map(|_| ())
+                .map_err(|error| head_moved(forge, error))
         }
         Forge::Azure => {
             let squash = if options.method == "squash" {
@@ -1647,6 +1927,76 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
         .await
         .map(|_| ()),
         Forge::Bitbucket => Err(forge.unsupported("merge")),
+    }
+}
+
+/// The merge command for the forges whose CLI takes the options as flags. The head the person saw
+/// goes with it, so the forge refuses a branch that has moved on.
+fn merge_args(forge: Forge, id: &str, options: &MergePull, body: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut push = |words: &[&str]| args.extend(words.iter().map(|word| (*word).to_owned()));
+    if forge == Forge::GitHub {
+        push(&["pr", "merge", id, &format!("--{}", options.method)]);
+        if options.auto {
+            push(&["--auto"]);
+        }
+        if options.delete_branch {
+            push(&["--delete-branch"]);
+        }
+        if let Some(subject) = &options.subject {
+            push(&["--subject", subject]);
+        }
+        if let Some(body) = body {
+            push(&["--body", body]);
+        }
+        if let Some(head) = &options.expected_head {
+            push(&["--match-head-commit", head]);
+        }
+    } else {
+        push(&["mr", "merge", id, "--yes"]);
+        match options.method.as_str() {
+            "squash" => push(&["--squash"]),
+            "rebase" => push(&["--rebase"]),
+            _ => {}
+        }
+        if options.auto {
+            push(&["--auto-merge"]);
+        }
+        if options.delete_branch {
+            push(&["--remove-source-branch"]);
+        }
+        if let Some(body) = body {
+            push(&["--message", body]);
+        }
+        // glab rebases before it merges, which moves the head the person saw: with --sha every rebase
+        // merge would be refused as "changed". Whether it checks first is not documented, so a rebase
+        // goes without the check.
+        if options.method != "rebase"
+            && let Some(head) = &options.expected_head
+        {
+            push(&["--sha", head]);
+        }
+    }
+    args
+}
+
+/// True when a forge's refusal says the head moved after the person looked, by the phrases that forge uses.
+pub fn head_changed(forge: Forge, message: &str) -> bool {
+    let message = message.to_lowercase();
+    match forge {
+        // GitHub: "Head branch was modified. Review and try the merge again."
+        Forge::GitHub => message.contains("head branch was modified"),
+        // GitLab: "SHA does not match HEAD of source branch"
+        Forge::GitLab => message.contains("sha does not match head of source branch"),
+        _ => false,
+    }
+}
+
+/// A merge the forge refused because the head moved is its own error, not a generic failure.
+fn head_moved(forge: Forge, error: CoreError) -> CoreError {
+    match &error {
+        CoreError::Git(message) if head_changed(forge, message) => CoreError::PullHeadChanged,
+        _ => error,
     }
 }
 
@@ -1851,6 +2201,7 @@ pub async fn forge_status(forge: Forge) -> orbyn_contracts::ForgeStatus {
         version: None,
         signed_in: false,
         accounts: Vec::new(),
+        viewer: None,
         problem: None,
     };
     let Some(program) = forge.program() else {
@@ -1881,6 +2232,9 @@ pub async fn forge_status(forge: Forge) -> orbyn_contracts::ForgeStatus {
     if let Ok(output) = spawn(forge, &cwd, auth, None).await {
         status.signed_in = output.success;
         status.accounts = auth_accounts(&format!("{}\n{}", output.stdout, output.stderr));
+        if output.success {
+            status.viewer = viewer(forge, &cwd).await;
+        }
     }
     status
 }
@@ -1914,6 +2268,143 @@ fn auth_accounts(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_graphql_reset_is_read_from_the_rate_limit_answer() {
+        assert_eq!(
+            graphql_reset(r#"{"resources":{"core":{"reset":1},"graphql":{"reset":1762600000}}}"#),
+            Some(1_762_600_000)
+        );
+        assert_eq!(graphql_reset("not json"), None);
+        assert_eq!(graphql_reset(r#"{"resources":{}}"#), None);
+    }
+
+    #[test]
+    fn the_head_the_person_saw_goes_to_the_forge() {
+        let options = MergePull {
+            method: "squash".into(),
+            auto: false,
+            delete_branch: false,
+            subject: None,
+            body: None,
+            strip_credits: false,
+            expected_head: Some("abc123".into()),
+        };
+        let github = merge_args(Forge::GitHub, "7", &options, None);
+        assert_eq!(
+            github,
+            [
+                "pr",
+                "merge",
+                "7",
+                "--squash",
+                "--match-head-commit",
+                "abc123"
+            ]
+        );
+        let gitlab = merge_args(Forge::GitLab, "7", &options, None);
+        assert_eq!(
+            gitlab,
+            ["mr", "merge", "7", "--yes", "--squash", "--sha", "abc123"]
+        );
+        let rebase = MergePull {
+            method: "rebase".into(),
+            ..options.clone()
+        };
+        assert!(
+            !merge_args(Forge::GitLab, "7", &rebase, None)
+                .iter()
+                .any(|arg| arg == "--sha")
+        );
+        assert!(
+            merge_args(Forge::GitHub, "7", &rebase, None)
+                .iter()
+                .any(|arg| arg == "--match-head-commit")
+        );
+        let none = MergePull {
+            expected_head: None,
+            ..options
+        };
+        assert!(
+            !merge_args(Forge::GitHub, "7", &none, None)
+                .iter()
+                .any(|arg| arg.contains("head"))
+        );
+    }
+
+    #[test]
+    fn a_refusal_for_a_moved_head_is_its_own_error() {
+        let github = Forge::GitHub;
+        assert!(head_changed(
+            github,
+            "X Pull request #4 is not mergeable: Head branch was modified. Review and try the merge again."
+        ));
+        assert!(matches!(
+            head_moved(
+                github,
+                CoreError::Git(
+                    "GraphQL: Head branch was modified. Review and try the merge again.".into()
+                )
+            ),
+            CoreError::PullHeadChanged
+        ));
+        // Other failures keep their own words.
+        assert!(matches!(
+            head_moved(github, CoreError::Git("merge conflict".into())),
+            CoreError::Git(_)
+        ));
+        assert!(head_changed(
+            Forge::GitLab,
+            "405: SHA does not match HEAD of source branch"
+        ));
+        // A message that only mentions a head commit is not a moved head.
+        assert!(!head_changed(
+            Forge::GitHub,
+            "could not find the head commit"
+        ));
+        assert!(!head_changed(Forge::Forgejo, "Head branch was modified"));
+        assert_eq!(CoreError::PullHeadChanged.code(), "pull_head_changed");
+        assert_eq!(CoreError::PullHeadChanged.status(), 409);
+    }
+
+    #[test]
+    fn only_a_forges_no_such_pull_request_answer_is_matched() {
+        let github = Forge::GitHub;
+        assert!(no_such_pull(
+            github,
+            "GraphQL: Could not resolve to a PullRequest with the number of 5. (repository.pullRequest)"
+        ));
+        // The branch form is not a numbered answer, and a proxy's bare 404 page is not GitLab's.
+        assert!(!no_such_pull(
+            github,
+            "no pull requests found for branch \"x\""
+        ));
+        assert!(!no_such_pull(
+            Forge::GitLab,
+            "<html>404 Not Found</html> from a proxy"
+        ));
+        assert!(no_such_pull(
+            Forge::GitLab,
+            "GET https://x/api/v4/projects/1/merge_requests/9: 404 Not Found"
+        ));
+        assert!(no_such_pull(
+            Forge::Azure,
+            "TF401180: The requested pull request was not found."
+        ));
+        // Auth, rate limit and server failures keep their own wording.
+        assert!(!no_such_pull(
+            github,
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)"
+        ));
+        assert!(!no_such_pull(github, "API rate limit exceeded"));
+        assert!(!no_such_pull(github, "HTTP 502: Bad Gateway"));
+        assert!(!no_such_pull(Forge::GitLab, "401 Unauthorized"));
+        assert!(!no_such_pull(
+            Forge::Azure,
+            "Please run 'az login' to setup account."
+        ));
+        assert!(!no_such_pull(Forge::Forgejo, "404 Not Found"));
+    }
 
     #[tokio::test]
     async fn a_finished_forge_cli_does_not_leave_helpers_running() {
@@ -1976,6 +2467,30 @@ mod tests {
             Forge::of_remote("https://git.corp.example/a/b"),
             Forge::GitHub
         );
+    }
+
+    #[test]
+    fn a_github_row_carries_check_counts_from_its_own_rollup() {
+        let row = json!({
+            "number": 7, "title": "T", "url": "u", "state": "OPEN",
+            "headRefName": "a", "baseRefName": "b",
+            "statusCheckRollup": [
+                { "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                { "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE" },
+                { "name": "e2e", "status": "IN_PROGRESS", "conclusion": "" },
+                { "context": "ci/legacy", "state": "ERROR" },
+            ],
+        });
+        let pull = parse_pull(&row).unwrap();
+        let checks = pull.checks.unwrap();
+        assert_eq!(
+            (checks.total, checks.passing, checks.failing, checks.running),
+            (4, 1, 2, 1)
+        );
+        assert_eq!(checks.failing_names, ["lint", "ci/legacy"]);
+        assert_eq!(pull.checks_state.as_deref(), Some("fail"));
+        let bare = json!({ "number": 1, "title": "T", "url": "u", "state": "OPEN" });
+        assert!(parse_pull(&bare).unwrap().checks.is_none());
     }
 
     #[test]
@@ -2046,11 +2561,75 @@ mod tests {
         assert_eq!(check_state("IN_PROGRESS", ""), "pending");
         assert_eq!(check_state("SUCCESS", ""), "pass");
         assert_eq!(check_state("failed", ""), "fail");
+    }
+
+    fn rolled(entries: Value) -> (PullChecks, String) {
+        let row = json!({ "statusCheckRollup": entries });
+        (github_checks(&row).unwrap(), github_rollup(&row).unwrap())
+    }
+
+    #[test]
+    fn rollup_entries_count_by_completion_then_conclusion() {
+        let run = |status: &str, conclusion: &str| json!({ "name": "c", "status": status, "conclusion": conclusion });
+        let context = |state: &str| json!({ "context": "c", "state": state });
+        // (entry, passing, failing, running) with a total of one each.
+        let table = [
+            (run("COMPLETED", "SUCCESS"), 1, 0, 0),
+            (run("COMPLETED", "FAILURE"), 0, 1, 0),
+            (run("COMPLETED", "TIMED_OUT"), 0, 1, 0),
+            (run("COMPLETED", "CANCELLED"), 0, 1, 0),
+            (run("COMPLETED", "ACTION_REQUIRED"), 0, 1, 0),
+            (run("COMPLETED", "STARTUP_FAILURE"), 0, 1, 0),
+            (run("COMPLETED", "STALE"), 0, 0, 0),
+            (run("COMPLETED", "NEUTRAL"), 0, 0, 0),
+            (run("COMPLETED", "SKIPPED"), 0, 0, 0),
+            (run("IN_PROGRESS", ""), 0, 0, 1),
+            (run("QUEUED", ""), 0, 0, 1),
+            (run("WAITING", ""), 0, 0, 1),
+            // Not completed, so a stale conclusion does not count.
+            (run("IN_PROGRESS", "FAILURE"), 0, 0, 1),
+            (context("SUCCESS"), 1, 0, 0),
+            (context("FAILURE"), 0, 1, 0),
+            (context("ERROR"), 0, 1, 0),
+            (context("PENDING"), 0, 0, 1),
+            (context("EXPECTED"), 0, 0, 1),
+        ];
+        for (entry, passing, failing, running) in table {
+            let (checks, _) = rolled(json!([entry.clone()]));
+            assert_eq!(
+                (checks.total, checks.passing, checks.failing, checks.running),
+                (1, passing, failing, running),
+                "{entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rollup_word_follows_the_counts() {
+        let run = |status: &str, conclusion: &str| json!({ "name": "c", "status": status, "conclusion": conclusion });
+        assert_eq!(rolled(json!([])).1, "none");
+        assert_eq!(rolled(json!([run("COMPLETED", "SKIPPED")])).1, "pass");
         assert_eq!(
-            rollup(["pass".into(), "pending".into()].into_iter()),
+            rolled(json!([run("COMPLETED", "SUCCESS"), run("QUEUED", "")])).1,
             "pending"
         );
-        assert_eq!(rollup(std::iter::empty()), "none");
+        assert_eq!(
+            rolled(json!([
+                run("COMPLETED", "ACTION_REQUIRED"),
+                run("QUEUED", "")
+            ]))
+            .1,
+            "fail"
+        );
+    }
+
+    #[test]
+    fn failing_names_are_capped() {
+        let many: Vec<Value> = (0..30)
+            .map(|n| json!({ "name": format!("c{n}"), "status": "COMPLETED", "conclusion": "FAILURE" }))
+            .collect();
+        let (checks, _) = rolled(json!(many));
+        assert_eq!((checks.failing, checks.failing_names.len()), (30, 20));
     }
 
     #[test]
@@ -2102,5 +2681,140 @@ mod tests {
         let output =
             "github.com\n  ✓ Logged in to github.com account octo (keyring)\n  - Token: gho_****\n";
         assert_eq!(auth_accounts(output), ["octo"]);
+    }
+
+    fn details_response() -> Value {
+        json!({ "data": {
+            "viewer": { "login": "Me" },
+            "repository": {
+                "p3": {
+                    "createdAt": "2026-01-02T03:04:05Z",
+                    "reviewRequests": { "nodes": [
+                        { "requestedReviewer": { "__typename": "User", "login": "sam" } },
+                        { "requestedReviewer": { "__typename": "Team", "slug": "core" } },
+                        { "requestedReviewer": { "__typename": "Bot" } },
+                    ] },
+                    "latestReviews": { "nodes": [
+                        { "author": null, "state": "APPROVED" },
+                        { "author": { "login": "me" }, "state": "CHANGES_REQUESTED" },
+                    ] },
+                    "comments": { "totalCount": 2 },
+                    "reviews": { "nodes": [
+                        { "comments": { "totalCount": 3 } },
+                        { "comments": { "totalCount": 0 } },
+                    ] },
+                },
+                "p4": {
+                    "createdAt": "2026-02-02T00:00:00Z",
+                    "reviewRequests": { "nodes": [] },
+                    "latestReviews": { "nodes": [] },
+                    "comments": { "totalCount": 0 },
+                    "reviews": { "nodes": [] },
+                },
+                "p5": null,
+                "p6": { "comments": { "totalCount": 1 } },
+            },
+        } })
+    }
+
+    #[test]
+    fn the_details_response_merges_per_pull_request() {
+        let details = parse_details(&details_response(), "proj", &[3, 4, 5, 6, 7]);
+        // A pull request that is missing, null or incomplete has no entry at all.
+        assert_eq!(
+            details
+                .keys()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            [3, 4].into()
+        );
+        let three = &details[&3];
+        assert_eq!(three.project_id, "proj");
+        assert_eq!(three.created_at.as_deref(), Some("2026-01-02T03:04:05Z"));
+        // Conversation comments plus every review's comments.
+        assert_eq!(three.comment_count, Some(5));
+        let reviewers = three.requested_reviewers.as_ref().unwrap();
+        assert_eq!(
+            reviewers
+                .iter()
+                .map(|r| (r.name.as_str(), r.kind.as_str()))
+                .collect::<Vec<_>>(),
+            [("sam", "user"), ("core", "team")]
+        );
+        // The viewer is matched ignoring case, and a null author is skipped.
+        assert_eq!(
+            three.viewer_review_state.as_deref(),
+            Some("changes_requested")
+        );
+        let four = &details[&4];
+        assert_eq!(four.requested_reviewers.as_deref(), Some(&[][..]));
+        assert_eq!(four.viewer_review_state.as_deref(), Some("none"));
+        assert_eq!(four.comment_count, Some(0));
+    }
+
+    #[test]
+    fn without_a_viewer_the_review_state_is_absent_not_none() {
+        let mut response = details_response();
+        response["data"]["viewer"] = Value::Null;
+        let details = parse_details(&response, "proj", &[3]);
+        assert_eq!(details[&3].viewer_review_state, None);
+        assert_eq!(details[&3].comment_count, Some(5));
+    }
+
+    #[test]
+    fn details_are_absent_when_the_batch_fails_or_the_limit_is_spent() {
+        let ok = details_response().to_string();
+        assert!(matches!(
+            classify_details(true, &ok, "", "p", &[3]),
+            DetailsOutcome::Details(found) if found.len() == 1
+        ));
+        for (success, stdout, stderr) in [
+            (false, "", "GraphQL: API rate limit already exceeded"),
+            (false, r#"{"errors":[{"type":"RATE_LIMITED"}]}"#, ""),
+        ] {
+            assert_eq!(
+                classify_details(success, stdout, stderr, "p", &[3]),
+                DetailsOutcome::RateLimited
+            );
+        }
+        for (success, stdout) in [
+            (false, ""),
+            (true, "not json"),
+            (
+                true,
+                r#"{"data":{},"errors":[{"message":"Could not resolve"}]}"#,
+            ),
+        ] {
+            assert_eq!(
+                classify_details(success, stdout, "", "p", &[3]),
+                DetailsOutcome::Unavailable
+            );
+        }
+    }
+
+    #[test]
+    fn errors_beside_data_keep_every_row_that_came_back() {
+        let mut response = details_response();
+        // p5 is null, and an error inside p4 nulled a node of an otherwise whole row.
+        response["errors"] = json!([
+            { "type": "NOT_FOUND", "path": ["repository", "p5"] },
+            { "type": "FORBIDDEN", "path": ["repository", "p4", "reviewRequests", "nodes", 0, "requestedReviewer"] },
+        ]);
+        let outcome = classify_details(false, &response.to_string(), "", "p", &[3, 4, 5]);
+        let DetailsOutcome::Details(found) = outcome else {
+            panic!("rows with data are kept: {outcome:?}");
+        };
+        assert_eq!(found.keys().copied().collect::<Vec<_>>(), [3]);
+    }
+
+    #[test]
+    fn the_details_query_names_one_alias_per_pull_request() {
+        let query = details_query(&[3, 40]);
+        assert!(query.contains("viewer{login}"));
+        assert!(
+            query.contains("p3:pullRequest(number:3)")
+                && query.contains("p40:pullRequest(number:40)")
+        );
+        assert_eq!(query.matches("pullRequest(").count(), 2);
     }
 }

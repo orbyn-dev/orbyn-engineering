@@ -12,4 +12,9 @@ auto: boolean, delete_branch: boolean, subject?: string, body?: string,
 /**
  * Removes agent credit lines from the merge commit body.
  */
-strip_credits: boolean, };
+strip_credits: boolean, 
+/**
+ * The head commit the person saw. The forge refuses the merge if the branch has moved on.
+ * GitHub and GitLab take it; it is ignored for Azure, Forgejo and Bitbucket, and for a GitLab rebase.
+ */
+expected_head?: string, };

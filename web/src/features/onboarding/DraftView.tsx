@@ -1,7 +1,7 @@
 import { recordUserPrompt } from "../workspace/GitHubStarPrompt";
 import { useDraftModelDefaults } from "./useDraftModelDefaults";
 import { useDraftCheckout } from "./useDraftCheckout";
-import { ArrowUp, Bot, Folder, GitBranch, PanelRight, Paperclip, SquareDashed, X } from "lucide-react";
+import { ArrowUp, Bot, Eye, Folder, GitBranch, GitPullRequest, Paperclip, Sparkles, X, XCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { useCommand } from "../../app/shortcuts";
@@ -13,12 +13,11 @@ import { useThreadLogs } from "../thread/threadLogs";
 import { useUi } from "../../state/ui";
 import { useVisibleProjects, useWorkspace } from "../../state/workspace";
 import { SkillsNotice } from "./SkillsNotice";
+import "./onboarding.css";
 import { NoProjects } from "./NoProjects";
-import { useLayoutWidth } from "../../lib/useLayout";
 import { IconButton } from "../../ui/controls";
-import { ProjectBadge } from "../../ui/badges";
-import { PaneResizer } from "../panels/SurfacePane";
 import { Menu } from "../../ui/Menu";
+import { Presence } from "../../ui/Presence";
 import { Loading, NarrowBack } from "../../ui/states";
 import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "../thread/ComposerTraits";
 import { ModelPickerTrigger } from "../thread/ModelPicker";
@@ -106,6 +105,14 @@ function DraftModelControls({
   );
 }
 
+/** Starting points that only fill the message; sending is still the person's call. */
+const SUGGESTIONS = [
+  { icon: XCircle, label: "Fix a failing test", text: "Find and fix a failing test." },
+  { icon: GitPullRequest, label: "Review an open pull request", text: "Review the open pull request." },
+  { icon: Eye, label: "Explain this codebase", text: "Explain how this codebase is organised." },
+  { icon: Sparkles, label: "Use a skill", text: "$" },
+] as const;
+
 /** The default screen: a composer for a thread that doesn't exist until you send. */
 export function DraftView({ projectId }: { projectId: string | null }) {
   const projects = useVisibleProjects();
@@ -130,11 +137,6 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const setReused = useDraftStore((state) => state.setReuseWorktree);
   const fileInput = useRef<HTMLInputElement>(null);
   const adoptLayout = useUi((state) => state.adoptDraftLayout);
-  const panelPref = useUi((state) => state.panelOpen);
-  const setPanelOpen = useUi((state) => state.setPanelOpen);
-  const panelWidth = useUi((state) => state.panelWidth);
-  const layoutWidth = useLayoutWidth();
-  const paneShown = panelPref === true && layoutWidth !== "narrow";
   const [picker, setPicker] = useState<DOMRect | null>(null);
   const [openTraits, setOpenTraits] = useState<((element: HTMLElement) => void) | null>(null);
   const scratch = chosenProject === SCRATCH;
@@ -164,19 +166,20 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The frame is mounted before projects and engines arrive, so the composer takes focus once it shows.
+  const pending = !projects || !engines;
   useLayoutEffect(() => {
-    field.current?.focus();
-  }, []);
+    if (!pending) field.current?.focus();
+  }, [pending]);
   useEffect(() => {
     setPrefs({ draftProject: chosenProject });
   }, [chosenProject, setPrefs]);
 
-  if (!projects || !engines) return <div className="page"><Loading label="Loading" rows={3} /></div>;
   const unmanaged = engine !== null && !engine.capabilities.managed;
   // A mode the chosen engine does not offer would run Supervised, so it starts that way.
   const access = shownAccess(engine, chosenAccess);
 
-  if (!project && !scratch) return <NoProjects />;
+  if (!pending && !project && !scratch) return <NoProjects />;
 
   const branch = targets?.find((target) => target.project_id === project?.id)?.branch ?? null;
   const setPrompt = (text: string) => setDraft(DRAFT_KEY, text);
@@ -316,24 +319,22 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   };
 
   return (
-    <div className="draft-layout">
+    <div className="draft-layout" data-pending={pending ? "" : undefined} aria-busy={pending || undefined}>
+      {pending ? (
+        <div className="draft-pending">
+          <Loading label="Loading" rows={3} />
+        </div>
+      ) : null}
       <section className="draft-main thread-main" aria-label="New thread">
         <header className="topbar">
           <NarrowBack />
           <div className="crumbs">
-            {project ? <ProjectBadge name={project.name} project={project} /> : <SquareDashed size={14} aria-hidden />}
-            <span className="crumb-project">{project?.name ?? "No project"}</span>
-            <span className="crumb-slash" aria-hidden>
-              /
+            <span className="crumb-title">
+              New thread
             </span>
-            <span className="crumb-title">New thread</span>
-          </div>
-          <div className="layout-toggles" role="group" aria-label="Layout">
-            {paneShown ? null : (
-              <IconButton label="Surfaces" onClick={() => setPanelOpen(true)}>
-                <PanelRight size={16} aria-hidden />
-              </IconButton>
-            )}
+            <span className="page-sub">
+              <span className="page-sub-item">{project?.name ?? "No project"}</span>
+            </span>
           </div>
         </header>
     <div className="thread-stage draft-stage" data-hero>
@@ -378,6 +379,23 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                 )}
               </p>
               <SkillsNotice />
+              {(project || pending) && !prompt ? (
+                <div className="draft-suggestions" role="group" aria-label="Suggestions">
+                  {SUGGESTIONS.map(({ icon: Icon, label, text }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => {
+                        setPrompt(text);
+                        field.current?.focus();
+                      }}
+                    >
+                      <Icon size={14} aria-hidden />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <form
               className="composer"
@@ -589,7 +607,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
           </div>
         </div>
       </div>
-      {menu ? (
+      <Presence>{menu ? (
         <Menu
           x={menu.x}
           y={menu.y}
@@ -618,10 +636,10 @@ export function DraftView({ projectId }: { projectId: string | null }) {
             })),
           ]}
         />
-      ) : null}
+      ) : null}</Presence>
       {picker ? (
         <DraftProjectPicker
-          projects={projects}
+          projects={projects ?? []}
           current={project?.id ?? ""}
           anchor={picker}
           onClose={() => setPicker(null)}
@@ -639,29 +657,6 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       ) : null}
     </div>
       </section>
-      {paneShown ? (
-        <aside
-          className="context"
-          aria-label="Thread context"
-          style={panelWidth !== null ? { width: panelWidth } : undefined}
-        >
-          <PaneResizer />
-          <header className="context-head">
-            <div className="layout-toggles">
-              <IconButton label="Close surfaces" pressed onClick={() => setPanelOpen(false)}>
-                <PanelRight size={16} aria-hidden />
-              </IconButton>
-            </div>
-          </header>
-          <div className="context-body">
-            <div className="launcher">
-              <div className="launcher-inner">
-                <h2>Open a surface</h2>
-              </div>
-            </div>
-          </div>
-        </aside>
-      ) : null}
     </div>
   );
 }
