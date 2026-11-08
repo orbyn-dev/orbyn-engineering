@@ -109,7 +109,7 @@ test("selected routes follow lifecycle sections and limit recovery keeps snooze 
     await api("POST", `/api/threads/${limited.id}/runs`, { prompt: "[scene:limit]" });
     await expect.poll(async () => (await thread(limited.id)).active_run).toBeNull();
     await page.goto(`http://localhost:${port}/?token=${ready.token}#/threads/${limited.id}`);
-    const banner = page.getByRole("status", { name: "Limited" });
+    const banner = page.getByRole("group", { name: "Limited" });
     await banner.getByRole("button", { name: "Resume at reset", exact: true }).click();
     await expect.poll(async () => (await thread(limited.id)).lifecycle.limit?.resume_at).toBe("2100-01-01T00:00:00Z");
     await expect(banner.getByRole("button", { name: "Cancel auto-resume", exact: true })).toBeVisible();
