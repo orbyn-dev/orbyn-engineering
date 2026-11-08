@@ -5,7 +5,7 @@ const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
+  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"] });
 });
 
 describe("thread layouts", () => {
@@ -109,11 +109,11 @@ describe("panel tab row", () => {
     ui().movePanelTab("side", 0);
     ui().closePanelTab("files");
     ui().setLayoutKey("b");
-    expect(ui().panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side"]);
-    expect(ui().panelTabsClosed).toEqual([]);
+    expect(ui().panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["tools"]);
     ui().setLayoutKey("a");
-    expect(ui().panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
-    expect(ui().panelTabsClosed).toEqual(["files"]);
+    expect(ui().panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["tools", "files"]);
   });
 
   it("drops stale ids from a saved row and never leaves it empty", async () => {
@@ -124,7 +124,7 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBeNull();
-    expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
+    expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity", "tools"]);
     expect(fresh.panelTabsClosed).toEqual([]);
   });
 

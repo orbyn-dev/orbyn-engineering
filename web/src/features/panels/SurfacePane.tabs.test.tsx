@@ -19,7 +19,7 @@ const thread = { id: "thread-1" } as Thread;
 beforeEach(() => {
   vi.spyOn(api, "diff").mockResolvedValue([]);
   useConnection.setState({ offline: false, serviceDown: false });
-  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
+  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "files", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"] });
 });
 
 function pane(props: { mode?: PaneMode; onReturn?: () => void; onToggleMaximize?: () => void; maximized?: boolean } = {}) {
@@ -123,12 +123,15 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTab).toBe("diff");
   });
 
-  it("always draws the plus; with nothing closed its menu says All tabs are open", async () => {
+  it("always draws the plus; Tools starts closed there, and once opened the menu offers only Reset tab order", async () => {
     const user = userEvent.setup();
     pane();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["All tabs are open."]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Tools"]);
     expect(screen.queryByRole("menuitem", { name: "Reset tab order" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Tools" }));
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Reset tab order"]);
   });
 
   it("moves focus to the neighbouring tab after a pointer close, and announces it", async () => {
@@ -145,7 +148,7 @@ describe("surface tabs", () => {
     pane();
     screen.getByRole("tab", { name: "Side chat" }).focus();
     await user.keyboard("{Backspace}");
-    expect(useUi.getState().panelTabsClosed).toEqual(["side"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "side"]);
     expect(screen.getByRole("tab", { name: "Activity" })).toHaveFocus();
   });
 
@@ -157,21 +160,21 @@ describe("surface tabs", () => {
     expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
     expect(useUi.getState().panelTab).toBe("browser");
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Reset tab order"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Tools", "Reset tab order"]);
     await user.click(screen.getByRole("menuitem", { name: "Files" }));
     expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     expect(useUi.getState().panelTab).toBe("files");
-    expect(useUi.getState().panelTabsClosed).toEqual([]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools"]);
   });
 
   it("keeps the last tab: it has no close button", async () => {
     const user = userEvent.setup();
-    useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side"] });
+    useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side", "tools"] });
     pane();
     expect(screen.getAllByRole("tab")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^Close (Diff|Files)/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Browser", "Activity", "Side chat", "Reset tab order"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Browser", "Activity", "Side chat", "Tools", "Reset tab order"]);
   });
 
   it("reorders by drag, and Reset tab order puts the default back", async () => {
@@ -197,7 +200,7 @@ describe("surface tabs", () => {
     screen.getByRole("tab", { name: "Files" }).focus();
     await user.keyboard("{Delete}");
     expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTabsClosed).toEqual(["files"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "files"]);
   });
 
   it("opens a closed surface when something reveals it", () => {

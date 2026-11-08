@@ -24,6 +24,7 @@ import type {
   RunChanges,
   SearchHit,
   EngineLimits,
+  EngineTools,
   KeybindingsView,
   ApplyAllResult,
   Approval,
@@ -250,6 +251,12 @@ export const api = {
   restartSession: (threadId: string) => request<void>("POST", `/api/threads/${q(threadId)}/restart-session`),
   patchThread: (id: string, body: UpdateThread) =>
     request<Thread>("PATCH", `/api/threads/${q(id)}`, body),
+  /** What the thread's engine has available. `refresh` asks the engine again. */
+  threadTools: (threadId: string, refresh = false, signal?: AbortSignal) =>
+    request<EngineTools>("GET", `/api/threads/${q(threadId)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
+  /** The same for Settings, in a project's folder when one is named. */
+  engineTools: (engine: string, refresh = false, signal?: AbortSignal) =>
+    request<EngineTools>("GET", `/api/engines/${q(engine)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
   threadLimits: (threadId: string, signal?: AbortSignal) =>
     request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits`, undefined, signal),
   searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal) =>

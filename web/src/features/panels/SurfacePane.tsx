@@ -11,6 +11,7 @@ import { BrowserPanel } from "./BrowserPanel";
 import { DiffPanel } from "./DiffPanel";
 import { FilesPanel } from "./FilesPanel";
 import { SideChatPane } from "./SideChatPane";
+import { ToolsTab } from "../tools/ToolsTab";
 import { fitTabs, tabOf, tabsChanged } from "./tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./panelWidth";
 import { useConnectionKind } from "../../state/connection";
@@ -29,6 +30,7 @@ const WAITING_LINE: Partial<Record<RightTab, string>> = {
   files: "Files open again as soon as it is back.",
   activity: "Activity shows again as soon as it is back.",
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
+  tools: "The tools list comes back when the service does.",
 };
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
 const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
@@ -487,6 +489,8 @@ export function SurfacePane({
               <FilesPanel threadId={thread.id} />
             ) : tab === "activity" ? (
               <ActivityPanel key={thread.id} threadId={thread.id} />
+            ) : tab === "tools" ? (
+              <ToolsTab key={thread.id} threadId={thread.id} engine={thread.engine} />
             ) : (
               <SideChatPane parent={thread} />
             )}
