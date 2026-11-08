@@ -15,6 +15,8 @@ auto: boolean, delete_branch: boolean, subject?: string, body?: string,
 strip_credits: boolean, 
 /**
  * The head commit the person saw. The forge refuses the merge if the branch has moved on.
- * GitHub and GitLab take it; it is ignored for Azure, Forgejo and Bitbucket, and for a GitLab rebase.
+ * Only GitHub and GitLab (not a rebase) are fully guarded: the forge itself refuses a moved head.
+ * For Azure, Forgejo, Bitbucket and a GitLab rebase the service reads the head just before the
+ * merge and refuses a mismatch, which leaves a small window between that read and the merge.
  */
 expected_head?: string, };
