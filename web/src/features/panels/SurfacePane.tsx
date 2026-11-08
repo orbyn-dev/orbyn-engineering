@@ -12,7 +12,7 @@ import { DiffPanel } from "./DiffPanel";
 import { FilesPanel } from "./FilesPanel";
 import { SideChatPane } from "./SideChatPane";
 import { ToolsTab } from "../tools/ToolsTab";
-import { SLOT_GAP, tabOf, tabSlots, tabsChanged, visibleTabs } from "./tabs";
+import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./panelWidth";
 import { useConnectionKind } from "../../state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
@@ -219,7 +219,7 @@ export function SurfacePane({
     // A strip with no width yet (not laid out, or hidden) folds nothing.
     if (head.clientWidth === 0) return setSlots(Number.POSITIVE_INFINITY);
     const end = head.querySelector<HTMLElement>(".ctx-end");
-    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0) - SLOT_GAP;
+    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0);
     setSlots(tabSlots(room, latest.current.count));
   }, []);
   useLayoutEffect(() => {
@@ -310,6 +310,8 @@ export function SurfacePane({
     const target = shown[next];
     if (!target) return;
     event.preventDefault();
+    // The tab already open stays open: toggle would close the panel.
+    if (target === tab) return;
     toggle(target);
     focusTab(target);
   };

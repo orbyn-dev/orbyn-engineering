@@ -223,6 +223,26 @@ describe("surface tabs", () => {
     expect(names()).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
   });
 
+  it("leaves the panel open when Home or an arrow lands on the tab that is already open", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTab: "diff" });
+    pane();
+    screen.getByRole("tab", { name: "Diff" }).focus();
+    await user.keyboard("{Home}");
+    expect(useUi.getState().panelOpen).toBe(true);
+    expect(useUi.getState().panelTab).toBe("diff");
+  });
+
+  it("leaves the panel open when an arrow key is pressed on the only tab", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side", "tools"], panelTab: "diff" });
+    pane();
+    screen.getByRole("tab", { name: "Diff" }).focus();
+    await user.keyboard("{ArrowRight}{ArrowLeft}{End}{Home}");
+    expect(useUi.getState().panelOpen).toBe(true);
+    expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("moves the focused tab with Alt+Shift+Arrow and closes it with Delete", async () => {
     const user = userEvent.setup();
     pane();
@@ -374,6 +394,15 @@ describe("tabs that do not fit", () => {
     await user.click(screen.getByRole("menuitem", { name: "Close tab" }));
     await waitFor(() => expect(screen.getByRole("tab", { selected: true })).toHaveFocus());
     expect(screen.getByRole("tab", { selected: true })).toHaveAttribute("aria-label", "Activity");
+  });
+
+  it("fits all six tabs at 320px with Tools open, with no more button", () => {
+    // The strip is 319px inside the panel's left border; the end buttons take 58.
+    restore = narrow(319);
+    useUi.setState({ panelTabsClosed: [] });
+    pane();
+    expect(ids()).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(screen.queryByRole("button", { name: "More tabs" })).not.toBeInTheDocument();
   });
 
   it("walks the arrow keys over the visible tabs only", async () => {

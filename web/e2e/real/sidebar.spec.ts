@@ -176,7 +176,7 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   const choice = picker.getByRole("option").nth(1);
   const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
   // The thread.jump shortcuts are listed in Keybindings and belong to the page: the open picker keeps them off it.
-  await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+1");
+  await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+2");
   await expect(picker).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`#/threads/${id}$`));
   const exact = picker.getByRole("option").filter({ has: page.locator("b", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });

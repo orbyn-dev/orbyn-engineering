@@ -21,15 +21,16 @@ export const tabsChanged = (order: readonly RightTab[], closed: readonly RightTa
 
 /** One tab slot: 32 px wide, at every panel width, so an icon never moves when another tab opens. */
 export const SLOT = 32;
-/** The gap between slots in the strip. */
-export const SLOT_GAP = 2;
+/** A slot and the gap after it. */
+export const SLOT_PITCH = 34;
 
 /**
- * How many tab slots the strip has, from the room it leaves for slots and the "+" (and the "..." when
- * tabs fold). With room for every tab and the "+", all show; otherwise one slot goes to "...".
+ * How many tab slots the strip has. `room` is the strip's width less its padding and the end buttons;
+ * every slot, the "+" and the "..." takes 34 px (32 and a 2 px gap). With room for every tab and the
+ * "+", all show; otherwise one slot goes to "...".
  */
 export function tabSlots(room: number, count: number): number {
-  const items = Math.max(0, Math.floor((room + SLOT_GAP) / (SLOT + SLOT_GAP)));
+  const items = Math.max(0, Math.floor(room / SLOT_PITCH));
   const plain = items - 1;
   if (count <= plain) return count;
   return Math.max(1, plain - 1);

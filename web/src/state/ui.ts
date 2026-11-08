@@ -492,6 +492,8 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
 function savedPrefs(): Partial<Prefs> {
   const stored = readJson<unknown>(PREFS_KEY);
   const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
+  // The favourites list was removed; an old save still carries it.
+  delete (saved as Record<string, unknown>).modelFavorites;
   const panelTab = RIGHT_TAB_IDS.includes(saved.panelTab as RightTab) ? (saved.panelTab as RightTab) : null;
   const tabs = cleanTabs(saved.panelTabOrder, saved.panelTabsClosed);
   const grouping = saved.projectGrouping;

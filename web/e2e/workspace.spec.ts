@@ -507,6 +507,19 @@ for (const width of [380, 320]) {
   });
 }
 
+test("with Tools open all six tabs fit at 320px, so there is no ... button", async ({ page }) => {
+  await openPanel(page);
+  await resize(page, 320);
+  await page.getByRole("button", { name: "Open a tab" }).click();
+  await page.getByRole("menuitem", { name: "Tools" }).click();
+  await expect(page.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
+  const names = await page.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label")));
+  expect(names).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat", "Tools"]);
+  await expect(page.getByRole("button", { name: "More tabs" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open a tab" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close side panel" })).toBeVisible();
+});
+
 test("a tab picked from the ... menu takes the last visible slot, and the open tab always shows", async ({ page }) => {
   await openPanel(page);
   await resize(page, 240);

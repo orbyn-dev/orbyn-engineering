@@ -43,8 +43,7 @@ const useThreadList = () => {
 
 
 /** A worktree purpose nothing else has, so each background send gets its own checkout. */
-const uniquePurpose = (base: string, tag: string | null) =>
-  [slugify(base) || "thread", tag ? slugify(tag) : null, crypto.randomUUID().slice(0, 6)].filter(Boolean).join("-");
+const uniquePurpose = (base: string) => [slugify(base) || "thread", crypto.randomUUID().slice(0, 6)].join("-");
 
 function DraftModelControls({
   engines,
@@ -231,7 +230,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     setBusy(true);
     setError(null);
     try {
-      const purpose = worktree === null ? null : worktree === reused ? worktree : slugify(worktree) || uniquePurpose(text, null);
+      const purpose = worktree === null ? null : worktree === reused ? worktree : slugify(worktree) || uniquePurpose(text);
       const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       recordUserPrompt();
       setPrefs({ lastModel: { engine: engine.id, model: pickedModel, effort: pickedEffort } });
@@ -254,7 +253,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     setError(null);
     try {
       const purpose =
-        worktree === null ? null : worktree === reused ? worktree : uniquePurpose(worktree, null);
+        worktree === null ? null : worktree === reused ? worktree : uniquePurpose(worktree);
       const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       setPrompt("");
       setFiles([]);

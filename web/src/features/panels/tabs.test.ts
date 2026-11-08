@@ -5,10 +5,24 @@ import { tabSlots, visibleTabs } from "./tabs";
 const ids: RightTab[] = ["diff", "files", "browser", "activity", "side", "tools"];
 
 it("counts slots from the room: all of them when they fit with the plus, else one fewer for the more button", () => {
-  // Five tabs and the plus need 6 x 32 + 5 x 2 = 202.
-  expect(tabSlots(202, 5)).toBe(5);
-  expect(tabSlots(201, 5)).toBe(3);
+  // A slot, the plus and the more button each take 34px. Six tabs and the plus need seven.
+  expect(tabSlots(238, 6)).toBe(6);
+  expect(tabSlots(237, 6)).toBe(4);
   expect(tabSlots(0, 5)).toBe(1);
+});
+
+it("matches the designer's rule at 320 and 380px: room is the width less 2px border, 16px padding and 58px of end buttons", () => {
+  const room = (width: number) => width - 2 - 16 - 58;
+  // 7 slots at 320 and 8 at 380; with six tabs there is no more button at either width.
+  expect(Math.floor(room(320) / 34)).toBe(7);
+  expect(Math.floor(room(380) / 34)).toBe(8);
+  expect(tabSlots(room(320), 6)).toBe(6);
+  expect(tabSlots(room(380), 6)).toBe(6);
+  // Nine tabs at 320: 7 slots less the plus and the more button leave 5 tab slots.
+  expect(tabSlots(room(320), 9)).toBe(5);
+  // One pixel under the width six tabs need (238 + 76): the sixth folds into the more button.
+  expect(tabSlots(room(313), 6)).toBe(4);
+  expect(tabSlots(room(314), 6)).toBe(6);
 });
 
 it("shows the first tabs that fit, and the open one in the last slot when it is hidden", () => {
@@ -16,7 +30,7 @@ it("shows the first tabs that fit, and the open one in the last slot when it is 
   expect(visibleTabs(ids, "side", null, 3)).toMatchObject({ shown: ["diff", "files", "side"], hidden: ["browser", "activity", "tools"], holder: "side" });
 });
 
-it("keeps a tab picked from the menu in the last slot until the width changes", () => {
+it("keeps a tab picked from the menu in the last slot until the width has room for every tab", () => {
   expect(visibleTabs(ids, "diff", "side", 3).shown).toEqual(["diff", "files", "side"]);
   expect(visibleTabs(ids, "diff", "side", 6).shown).toEqual(ids);
 });

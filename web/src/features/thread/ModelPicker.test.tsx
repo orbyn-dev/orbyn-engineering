@@ -197,6 +197,16 @@ it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-cl
   const picker = await screen.findByRole("dialog", { name: "Choose a model" });
   await user.keyboard("{Control>}1{/Control}");
   expect(pick).not.toHaveBeenCalled();
+  // On the chips and by physical key too (AZERTY types "&" on the digit row), the page behind gets no jump.
+  const chip = within(picker).getByRole("button", { name: "Codex" });
+  for (const init of [{ key: "1", code: "Digit1" }, { key: "&", code: "Digit1" }]) {
+    for (const target of [chip, within(picker).getByRole("combobox", { name: "Search models" })]) {
+      const event = new KeyboardEvent("keydown", { ...init, ctrlKey: true, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  }
+  expect(pick).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Small model" }));
   await user.keyboard("{Shift>}");
@@ -204,7 +214,6 @@ it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-cl
   await user.keyboard("{/Shift}");
   expect(pick).toHaveBeenCalledTimes(1);
   expect(pick).toHaveBeenCalledWith({ engine: "claude", model: "opus" });
-  expect(picker).toBeDefined();
 });
 
 it("keeps a row highlighted when the search clears, so Enter picks what is shown as active", async () => {
@@ -221,4 +230,13 @@ it("keeps a row highlighted when the search clears, so Enter picks what is shown
   expect(search).toHaveAttribute("aria-activedescendant", rows[0]!.id);
   await user.keyboard("{Enter}");
   expect(pick).toHaveBeenCalledWith({ engine: "claude", model: "opus" });
+});
+
+it("a chip click clears the search and lists that provider's models", async () => {
+  const { user, picker, search } = await openTwo();
+  await user.type(search, "big");
+  expect(within(picker).getAllByRole("option")).toHaveLength(1);
+  await user.click(within(picker).getByRole("button", { name: "Claude Code" }));
+  expect(search).toHaveValue("");
+  expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Opus 5.5", "Sonnet 5.5"]);
 });

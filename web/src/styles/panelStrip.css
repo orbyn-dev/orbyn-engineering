@@ -95,6 +95,7 @@
 }
 .ctx-end {
   display: flex;
+  gap: 2px;
   flex: none;
   align-items: center;
   margin-left: auto;

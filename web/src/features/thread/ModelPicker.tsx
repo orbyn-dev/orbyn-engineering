@@ -53,6 +53,7 @@ export function FloatingPanel({
   container,
   closing,
   panelRef,
+  onKeyDown,
   children,
 }: {
   anchor: DOMRect;
@@ -63,6 +64,7 @@ export function FloatingPanel({
   closing?: boolean;
   /** The panel's element, for `usePopover`, which owns closing and focus. */
   panelRef: RefObject<HTMLDivElement | null>;
+  onKeyDown?(event: React.KeyboardEvent<HTMLDivElement>): void;
   children: ReactNode;
 }) {
   const ref = panelRef;
@@ -85,7 +87,7 @@ export function FloatingPanel({
     element.style.transformOrigin = place.origin;
   });
   return createPortal(
-    <div ref={ref} className={className} role="dialog" aria-label={label} {...closingProps(closing)}>
+    <div ref={ref} className={className} role="dialog" aria-label={label} onKeyDown={onKeyDown} {...closingProps(closing)}>
       {children}
     </div>,
     container ?? document.body,
@@ -197,15 +199,19 @@ function ModelPopover({
   };
   const choose = (id: string) => {
     setChip(id);
+    // A chip applies to the whole list, so it clears what was typed.
+    setQuery("");
     setActive(-1);
     list.current?.scrollTo?.({ top: 0 });
   };
 
+  // ⌘ or Ctrl and a digit is the listed thread.jump shortcut, which the page behind a popover does not get.
+  // Both the typed key and the physical key count: on some layouts (AZERTY) the digit row types symbols.
+  const keepJumps = (event: React.KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && (/^[1-9]$/.test(event.key) || /^Digit[1-9]$/.test(event.code))) event.preventDefault();
+  };
   const onKey = (event: React.KeyboardEvent) => {
-    if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
-      // The listed thread.jump shortcuts, not this popover's: it does not let them act on the page behind it.
-      event.preventDefault();
-    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActive((Math.max(active, step > 0 ? -1 : 0) + step + ordered.length) % Math.max(ordered.length, 1));
@@ -256,7 +262,7 @@ function ModelPopover({
   const engineName = (id: string) => engines.find((engine) => engine.id === id)?.name ?? id;
 
   return (
-    <FloatingPanel anchor={anchor} label="Choose a model" className="model-picker" container={portalContainer} closing={closing} panelRef={panel}>
+    <FloatingPanel anchor={anchor} label="Choose a model" className="model-picker" container={portalContainer} closing={closing} panelRef={panel} onKeyDown={keepJumps}>
       <div ref={search} className="model-search">
         <Search size={14} aria-hidden />
         <input
