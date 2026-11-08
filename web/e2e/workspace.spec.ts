@@ -352,6 +352,32 @@ test("New thread in opens a draft in the chosen project", async ({ page }) => {
   await expect(page.locator(".hero-project")).toHaveText("marketing-site");
 });
 
+test("a project with no threads opens its empty screen, and New thread opens the composer for it", async ({ page }) => {
+  // The mock's one project without threads is not trusted yet; trust it here.
+  await page.route("**/api/projects", async (route) => {
+    const response = await route.fetch();
+    const projects = (await response.json()) as { id: string; trusted: boolean }[];
+    await route.fulfill({ response, json: projects.map((project) => (project.id === "p-new" ? { ...project, trusted: true } : project)) });
+  });
+  await page.goto("/#/projects/p-new");
+  await expect(page.getByRole("heading", { name: "No threads yet" })).toBeVisible();
+  await expect(page.locator(".empty-project .logo")).toHaveAttribute("data-logo", "48");
+  await page.getByRole("button", { name: "New thread" }).click();
+  await expect(page).toHaveURL(/#\/new\/p-new$/);
+  await expect(page.locator(".hero-project")).toHaveText("vendor-sdk-with-a-rather-long-repository-name-for-layout");
+});
+
+test("a project with threads goes straight to the composer, and the empty text never flashes", async ({ page }) => {
+  // The empty screen must never appear, even for a frame, while the thread list is still loading (the sidebar has its own rows).
+  await page.addInitScript(`window.__seen = []; new MutationObserver(() => { const h = document.querySelector(".empty-project h1"); if (h) window.__seen.push(h.textContent); }).observe(document, { childList: true, subtree: true });`);
+  // The scenario page is already loaded, so a reload is what runs the script in a fresh document.
+  await page.goto("/#/projects/p-site");
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+  await expect(page).toHaveURL(/#\/new\/p-site$/);
+  expect(await page.evaluate("window.__seen")).toEqual([]);
+});
+
 test("the pull requests page lists and filters", async ({ page }) => {
   await page.goto("/#/threads/t-done");
   await page.getByRole("link", { name: "Pull requests" }).click();

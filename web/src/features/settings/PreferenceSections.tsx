@@ -25,6 +25,7 @@ import { WorktreeCleanup } from "./WorktreeCleanup";
 import { SourceControlWriting } from "./SourceControlWriting";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 import { navigate } from "../../state/route";
+import { LogoTile } from "../../ui/Logo";
 import { DRAFT_KEY, SCRATCH } from "../../state/draftStore";
 
 const heading = (title: string) => (
@@ -684,7 +685,7 @@ export function AboutSection() {
     <>
       {heading("About")}
       <div className="set-card">
-        <img className="set-logo" src="/favicon.svg" alt="" width={40} height={40} />
+        <LogoTile size={40} />
         <div>
           <b>Orbyn Engineering {info.data?.version ?? ""}</b>
           <br /><span className="t3 sub">Platform {info.data ? platformName(info.data.platform) : "Unknown"}</span>

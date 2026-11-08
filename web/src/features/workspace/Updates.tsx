@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronDown, ChevronRight, CircleDashed, Download, Loader2 } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronRight, CircleDashed, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 import type { UpdateStatus } from "../../api/types";
 import {
@@ -11,6 +11,7 @@ import {
 import { Button } from "../../ui/controls";
 import { Markdown } from "../thread/Markdown";
 import { Dialog } from "../../ui/Dialog";
+import { Logo, LogoTile } from "../../ui/Logo";
 
 const short = (value: string | null) =>
   value && /^[0-9a-f]{12,}$/.test(value) ? value.slice(0, 8) : (value ?? "Unknown");
@@ -160,24 +161,28 @@ export function UpdateEverythingDialog({ onClose }: { onClose(): void }) {
           {rows.map((row) => (
             <div key={row.key} role="listitem" className="update-row">
               <div className="update-item">
-                <span>
-                  <b className="update-name">{row.name}</b>
-                  <br />
-                  {row.latest === null && row.key === "library" ? (
-                    <span className="update-versions">{short(row.current)} · Up to date</span>
-                  ) : (
-                    <Versions current={row.current} latest={row.latest} />
-                  )}
-                  {hasNotes(row.key) ? (
-                    <>
-                      <br />
-                      <WhatsNew
-                        id={`${notesId}-${row.key}`}
-                        open={expanded === row.key}
-                        onToggle={() => setExpanded(expanded === row.key ? null : row.key)}
-                      />
-                    </>
-                  ) : null}
+                <span className="update-who">
+                  {/* The design draws the tile on the app row only; the CLI and library rows have none. */}
+                  {row.key === "app" ? <LogoTile size={28} /> : null}
+                  <span>
+                    <b className="update-name">{row.name}</b>
+                    <br />
+                    {row.latest === null && row.key === "library" ? (
+                      <span className="update-versions">{short(row.current)} · Up to date</span>
+                    ) : (
+                      <Versions current={row.current} latest={row.latest} />
+                    )}
+                    {hasNotes(row.key) ? (
+                      <>
+                        <br />
+                        <WhatsNew
+                          id={`${notesId}-${row.key}`}
+                          open={expanded === row.key}
+                          onToggle={() => setExpanded(expanded === row.key ? null : row.key)}
+                        />
+                      </>
+                    ) : null}
+                  </span>
                 </span>
                 <span className="update-kind">{row.kind}</span>
               </div>
@@ -240,7 +245,7 @@ export function UpdatePill() {
         </button>
       ) : (
         <button type="button" className="update-pill" onClick={() => setOpen(true)}>
-          <Download size={13} aria-hidden />
+          <Logo size={16} />
           Updates available{count > 0 ? ` · ${count}` : ""}
         </button>
       )}
