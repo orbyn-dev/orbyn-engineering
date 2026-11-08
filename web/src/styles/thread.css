@@ -2290,6 +2290,9 @@ button.detail-row:hover {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  /* The picker is height-limited; the list inside scrolls to its last row instead of being cut. */
+  min-height: 0;
+  overflow: hidden;
   background: color-mix(in srgb, var(--color-text) 1%, transparent);
 }
 .model-search {
@@ -2321,9 +2324,11 @@ button.detail-row:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1 1 auto;
   min-height: 0;
-  padding: 10px 12px 6px;
+  padding: 10px 12px 12px;
   overflow-y: auto;
+  scroll-padding-block: 12px;
 }
 .model-row {
   display: flex;

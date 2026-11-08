@@ -16,3 +16,10 @@ it("fits the two-letter engine glyph inside its tab and the tab inside the rail"
 it("insets the side chat's empty state 16px like the other tabs", () => {
   expect(/\.side-chat-pane > \.empty \{[^}]*padding:\s*12px 16px/.test(css)).toBe(true);
 });
+
+it("lets the model list scroll to its last row inside the height-limited picker", () => {
+  expect(rule(".model-main")).toMatch(/min-height:\s*0/);
+  expect(rule(".model-main")).toMatch(/overflow:\s*hidden/);
+  expect(rule(".model-rows")).toMatch(/overflow-y:\s*auto/);
+  expect(rule(".model-rows")).toMatch(/flex:\s*1 1 auto/);
+});
