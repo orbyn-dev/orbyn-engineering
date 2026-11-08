@@ -1,6 +1,6 @@
 import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Loading } from "../ui/states";
+import { Loading, Splash } from "../ui/states";
 import { MOTION, useWaited } from "./motion";
 
 beforeEach(() => vi.useFakeTimers());
@@ -37,4 +37,12 @@ it("draws the static skeleton only after the wait, with the label read at once",
   expect(container.querySelectorAll(".skeleton")).toHaveLength(0);
   act(() => vi.advanceTimersByTime(MOTION.wait));
   expect(container.querySelectorAll(".skeleton")).toHaveLength(3);
+});
+
+it("draws the 64 px splash mark only after the wait, with the label read at once", () => {
+  const { container } = render(<Splash label="Connecting to Orbyn" />);
+  expect(screen.getByRole("status")).toHaveTextContent("Connecting to Orbyn");
+  expect(container.querySelector("svg.logo")).toBeNull();
+  act(() => vi.advanceTimersByTime(MOTION.wait));
+  expect(container.querySelector("svg.logo")).toHaveAttribute("data-logo", "64");
 });

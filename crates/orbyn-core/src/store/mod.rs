@@ -90,6 +90,11 @@ pub struct NewProject<'a> {
     pub scratch: bool,
 }
 
+/// Events read from the end of a thread when looking for one named event: a run reports its
+/// tools near its start, so a recent run is found well inside this, and a lookup never
+/// reads a whole thread's history.
+const LATEST_EVENT_SCAN: i64 = 5000;
+
 impl Store {
     /// Opens the database and applies migrations. `epoch` identifies this
     /// process as the owner of the runs it admits.
@@ -555,6 +560,57 @@ impl Store {
         )?;
         let rows = statement.query_map(params![thread_id, after, limit], event_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The newest custom event called `name`, with its time, for one thread or, with
+    /// `thread_id` unset, across the most recently active ones. `engine` narrows it to
+    /// events whose value names that engine. Each thread is read from its newest event
+    /// backwards, so the first match ends the walk, and a lookup across threads is bounded
+    /// to the last 50 that moved rather than scanning every event ever stored.
+    pub fn latest_custom_event(
+        &self,
+        thread_id: Option<&str>,
+        name: &str,
+        engine: Option<&str>,
+    ) -> Result<Option<(String, serde_json::Value)>> {
+        let conn = self.reader();
+        let threads: Vec<String> = match thread_id {
+            Some(id) => vec![id.to_owned()],
+            None => {
+                let mut recent = conn
+                    .prepare_cached("SELECT id FROM threads ORDER BY updated_at DESC LIMIT 50")?;
+                let ids = recent.query_map([], |row| row.get(0))?;
+                ids.collect::<Result<_, _>>()?
+            }
+        };
+        let mut newest: Option<(String, serde_json::Value)> = None;
+        for id in threads {
+            let row: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT ts, event FROM (
+                         SELECT ts, event, seq FROM thread_events
+                         WHERE thread_id = ?1 ORDER BY seq DESC LIMIT ?4)
+                     WHERE json_extract(event, '$.name') = ?2
+                       AND (?3 IS NULL OR json_extract(event, '$.value.engine') = ?3)
+                     ORDER BY seq DESC LIMIT 1",
+                    params![id, name, engine, LATEST_EVENT_SCAN],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let Some((ts, text)) = row else {
+                continue;
+            };
+            let Some(value) = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|event| event.get("value").cloned())
+            else {
+                continue;
+            };
+            if newest.as_ref().is_none_or(|(at, _)| ts > *at) {
+                newest = Some((ts, value));
+            }
+        }
+        Ok(newest)
     }
 
     pub fn latest_seq(&self, thread_id: &str) -> Result<i64> {

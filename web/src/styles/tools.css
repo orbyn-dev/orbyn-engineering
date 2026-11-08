@@ -1,0 +1,213 @@
+/* The Tools tab and Settings › Tools and connectors, from the Engineer Designs v61 frames
+   (thread-tools, thread-tools-problem, thread-tools-codex, thread-tools-empty,
+   thread-tools-loading, s-tools-claude, s-tools-codex, s-tools-error). Colours are tokens
+   so Light, Dark and Dim each get their own values. */
+.tg-tools {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 6px 10px;
+}
+.tg-eng {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 2px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.tg-eng > :nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.tg-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--color-selected);
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.tg-group {
+  display: flex;
+  flex-direction: column;
+}
+.tg-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-textSoft);
+}
+.tg-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.tg-toggle:disabled {
+  cursor: default;
+}
+.tg-nochev {
+  display: inline-block;
+  width: 13px;
+}
+.tg-count {
+  color: var(--color-muted);
+}
+.tg-open-skills {
+  margin-left: auto;
+  color: var(--color-textSoft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tg-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tg-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.tg-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-muted);
+}
+.tg-name {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+.tg-name b {
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--color-text);
+}
+.tg-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.tg-name small.tg-why {
+  white-space: normal;
+  color: var(--color-textSoft);
+}
+.tg-detail {
+  display: block;
+  margin-top: 4px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--color-textSoft);
+}
+.tg-status {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.tg-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tg-amber {
+  color: var(--color-warnText);
+}
+.tg-bad {
+  color: var(--color-danger);
+}
+.tg-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tg-row-bad {
+  background: var(--color-dangerSoft);
+}
+.tg-row-amber {
+  background: var(--color-warnSoft);
+}
+.tg-note {
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.tg-lead {
+  padding-left: 0;
+}
+.tg-footlink {
+  align-self: flex-start;
+  margin: 8px 8px 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.tg-skel {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  background: var(--color-sunken);
+}
+.tg-card-bad {
+  color: var(--color-danger);
+}
+.tg-card-chev {
+  align-self: center;
+  margin-right: 10px;
+  color: var(--color-muted);
+}
+/* Settings keeps each row on a rule rather than a tint, and a stale list is dimmed. */
+.tg-set-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-bottom: 8px;
+  font-size: 12px;
+}
+.set-tabs + [role="tabpanel"] .tg-list .tg-row {
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: 6px 4px;
+}
+.tg-fail {
+  border-radius: 10px;
+  margin-top: 6px;
+  align-items: center;
+}
+.tg-stale {
+  opacity: 0.6;
+  pointer-events: none;
+}

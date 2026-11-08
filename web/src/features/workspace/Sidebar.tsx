@@ -90,14 +90,14 @@ const GROUPING_LABELS: Record<ProjectGroupingMode, string> = {
 /** A project with no threads yet still needs a way in, and its trust state shown. */
 function EmptyProjectRow({ project }: { project: Project }) {
   const target: Route = project.trusted
-    ? { name: "new", projectId: project.id }
+    ? { name: "project", projectId: project.id }
     : { name: "trust", projectId: project.id, threadId: null };
   return (
     <li>
       <a
         className="thread-row"
         href={routeHref(target)}
-        aria-label={project.trusted ? `New thread in ${project.name}` : `Review trust for ${project.name}`}
+        aria-label={project.trusted ? `Open ${project.name}` : `Review trust for ${project.name}`}
       >
         <ProjectBadge name={project.name} project={project} />
         <span className="thread-row-title">{project.name}</span>

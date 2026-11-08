@@ -99,6 +99,7 @@
   --radius-9: 9px;
   --radius-10: 10px;
   --radius-11: 11px;
+  --radius-13: 13px;
   --radius-14: 14px;
   --radius-20: 20px;
 
@@ -176,6 +177,10 @@
   --color-greenSoft: rgb(16 185 129 / 9%);
   --color-blue: #1d4ed8;
   --color-blueSoft: rgb(59 130 246 / 9%);
+  /* The Orbyn Engineering mark: the dot, and the tile behind the full mark. */
+  --logo-accent: #3b82f6;
+  --logo-tile-bg: #f4f3ee;
+  --logo-tile-ink: #1a1a1a;
   --color-amberSolid: #f59e0b;
   --color-greenSolid: #10b981;
   --color-blueSolid: #3b82f6;
@@ -283,6 +288,9 @@
   --color-greenSoft: rgb(16 185 129 / 12%);
   --color-blue: #60a5fa;
   --color-blueSoft: rgb(59 130 246 / 13%);
+  --logo-accent: #60a5fa;
+  --logo-tile-bg: #101010;
+  --logo-tile-ink: #f4f3ee;
   /* Filled red buttons, white text (Orbyn Components v4). Red text stays on --color-danger. */
   --color-dangerFill: #dc2626;
   --color-dangerFillHover: #c81e1e;
@@ -343,6 +351,9 @@
   --color-greenSoft: rgb(16 185 129 / 12%);
   --color-blue: #93c5fd;
   --color-blueSoft: rgb(59 130 246 / 13%);
+  --logo-accent: #60a5fa;
+  --logo-tile-bg: #101010;
+  --logo-tile-ink: #f4f3ee;
   /* Filled red buttons, white text (Orbyn Components v4). Red text stays on --color-danger. */
   --color-dangerFill: #c93a33;
   --color-dangerFillHover: #b8322b;

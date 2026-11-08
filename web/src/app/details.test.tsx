@@ -68,7 +68,7 @@ describe("the Details button and the details card", () => {
     await user.click(await screen.findByRole("button", { name: "Show side panel" }, wait));
     const inside = panel()!;
     expect(inside).toContainElement(card());
-    const tabs = screen.getByRole("tablist", { name: "Context" });
+    const tabs = screen.getByRole("tablist", { name: "Panel tabs" });
     expect(card()!.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector(".details-popover")).toBeNull();
     // The same button hides and shows it there.

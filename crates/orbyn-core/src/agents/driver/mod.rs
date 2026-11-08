@@ -405,6 +405,19 @@ pub trait EngineDriver: Send + Sync {
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle>;
 
+    /// What this engine reports as available (servers, connectors, plugins, tools), asked
+    /// of the engine itself. `init` is what its last run reported, for what only a run
+    /// shows. `Ok(None)` means it has no way to say. Names and states only.
+    async fn tools(
+        &self,
+        _cwd: &std::path::Path,
+        _init: Option<&Value>,
+        _refresh: bool,
+        _probe: &crate::agents::tools_report::ToolsProbe,
+    ) -> Result<Option<orbyn_contracts::EngineTools>> {
+        Ok(None)
+    }
+
     /// Subscription limits, when the engine reports them without Orbyn touching
     /// a credential. Reading them spends no model usage.
     async fn limits(&self) -> Result<Option<Value>> {

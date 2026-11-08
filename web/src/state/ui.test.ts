@@ -5,7 +5,7 @@ const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] });
+  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"] });
 });
 
 describe("thread layouts", () => {
@@ -103,17 +103,29 @@ describe("thread layouts", () => {
   });
 });
 
+describe("saved preferences", () => {
+  it("load with the removed modelFavorites field, ignore it and do not save it again", async () => {
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ modelFavorites: ["codex:x"], panelOpen: true }));
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi;
+    expect(fresh.getState().panelOpen).toBe(true);
+    expect("modelFavorites" in fresh.getState()).toBe(false);
+    fresh.getState().setPanelWidth(400);
+    expect(localStorage.getItem("orbyn.prefs.v1")).not.toContain("modelFavorites");
+  });
+});
+
 describe("panel tab row", () => {
   it("remembers each thread's order and closed set", () => {
     ui().setLayoutKey("a");
     ui().movePanelTab("side", 0);
     ui().closePanelTab("files");
     ui().setLayoutKey("b");
-    expect(ui().panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side"]);
-    expect(ui().panelTabsClosed).toEqual([]);
+    expect(ui().panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["tools"]);
     ui().setLayoutKey("a");
-    expect(ui().panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
-    expect(ui().panelTabsClosed).toEqual(["files"]);
+    expect(ui().panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["tools", "files"]);
   });
 
   it("drops stale ids from a saved row and never leaves it empty", async () => {
@@ -124,8 +136,23 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBeNull();
-    expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity"]);
+    expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity", "tools"]);
     expect(fresh.panelTabsClosed).toEqual([]);
+  });
+
+  it("gives a saved row from before the Tools tab existed that tab, closed, whatever its closed list was", async () => {
+    localStorage.setItem(
+      "orbyn.prefs.v1",
+      JSON.stringify({
+        panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [],
+        layouts: { a: { panelTab: "files", panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] } },
+      }),
+    );
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(fresh.panelTabsClosed).toEqual(["tools"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools"]);
   });
 
   it("skips a saved layout that is not an object instead of failing to load", async () => {

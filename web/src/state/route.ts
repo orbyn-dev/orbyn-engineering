@@ -8,6 +8,7 @@ export const SETTINGS_SECTIONS = [
   "diffs",
   "keybindings",
   "providers",
+  "tools",
   "threads",
   "tasks",
   "projects",
@@ -24,6 +25,8 @@ export type Route =
   | { name: "home" }
   | { name: "thread"; id: string }
   | { name: "new"; projectId: string | null }
+  /** A project with no threads: the empty screen, or the composer once it has some. */
+  | { name: "project"; projectId: string }
   | { name: "trust"; projectId: string; threadId: string | null }
   | {
       name: "settings";
@@ -50,6 +53,8 @@ export function routeHref(route: Route): string {
       return `#/threads/${enc(route.id)}`;
     case "new":
       return route.projectId ? `#/new/${enc(route.projectId)}` : "#/new";
+    case "project":
+      return `#/projects/${enc(route.projectId)}`;
     case "trust":
       return `#/trust/${enc(route.projectId)}${route.threadId ? `/${enc(route.threadId)}` : ""}`;
     case "usage":
@@ -95,6 +100,8 @@ export function parseRoute(hash: string): Route {
       return first ? { name: "thread", id: first } : { name: "home" };
     case "new":
       return { name: "new", projectId: first ?? null };
+    case "projects":
+      return first ? { name: "project", projectId: first } : { name: "home" };
     case "trust":
       return first ? { name: "trust", projectId: first, threadId: second ?? null } : { name: "home" };
     case "usage":
@@ -145,6 +152,12 @@ export function goToHash(hash: string): void {
     return;
   }
   window.location.hash = hash;
+}
+
+/** Swaps the current history entry for a route, so Back skips the screen that only passed the person on. */
+export function redirect(route: Route): void {
+  window.history.replaceState(null, "", routeHref(route));
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 const subscribe = (notify: () => void) => {

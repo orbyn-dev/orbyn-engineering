@@ -428,6 +428,8 @@ fn router(state: AppState) -> Router {
         .route("/api/usage", get(api::usage).post(api::usage))
         .route("/api/usage/refresh", post(api::refresh_usage))
         .route("/api/limits", get(api::limits_overview))
+        .route("/api/threads/{id}/tools", get(api::thread_tools))
+        .route("/api/engines/{id}/tools", get(api::engine_tools))
         .route("/api/threads/{id}/limits", get(api::thread_limits))
         .route("/api/engines/{id}/limits", get(api::engine_limits))
         .route("/api/engines/{id}/models", get(api::engine_models))

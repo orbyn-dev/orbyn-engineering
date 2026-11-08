@@ -41,11 +41,9 @@ const useThreadList = () => {
   return useMemo(() => Object.values(threads), [threads]);
 };
 
-const sameChoice = (a: ModelChoice, b: ModelChoice) => a.engine === b.engine && a.model === b.model;
 
 /** A worktree purpose nothing else has, so each background send gets its own checkout. */
-const uniquePurpose = (base: string, tag: string | null) =>
-  [slugify(base) || "thread", tag ? slugify(tag) : null, crypto.randomUUID().slice(0, 6)].filter(Boolean).join("-");
+const uniquePurpose = (base: string) => [slugify(base) || "thread", crypto.randomUUID().slice(0, 6)].join("-");
 
 function DraftModelControls({
   engines,
@@ -54,10 +52,8 @@ function DraftModelControls({
   effort,
   extras,
   access,
-  extraModels,
   register,
   onModel,
-  onToggleExtra,
   onEffort,
   onOption,
   onAccess,
@@ -68,10 +64,8 @@ function DraftModelControls({
   effort: string | null;
   extras: Record<string, string>;
   access: PermissionMode | null;
-  extraModels: ModelChoice[];
   register(open: () => (element: HTMLElement) => void): void;
   onModel(next: ModelChoice): void;
-  onToggleExtra(next: ModelChoice): void;
   onEffort(value: string): void;
   onOption(option: string, value: string): void;
   onAccess(mode: PermissionMode): void;
@@ -90,9 +84,7 @@ function DraftModelControls({
       <ModelPickerTrigger
         engines={engines}
         selected={{ engine, model }}
-        extra={extraModels}
         onPick={onModel}
-        onToggleExtra={onToggleExtra}
       />
       <EffortTrigger
         model={resolved}
@@ -147,7 +139,6 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const extras = optionDraft?.owner === optionOwner ? optionDraft.values : {};
   const setExtras = (values: Record<string, string>) => setOptionDraft({ owner: optionOwner, values });
   const { worktree, setWorktree, loading: checkoutLoading, error: checkoutError } = useDraftCheckout(project, reused);
-  const [extraModels, setExtraModels] = useState<ModelChoice[]>([]);
   const sendBackground = useRef<() => boolean>(() => false);
   useCommand("composer.sendBackground", () => sendBackground.current());
   const checkoutButton = useRef<HTMLButtonElement>(null);
@@ -207,7 +198,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   };
 
   /** Creates and starts one thread, leaving the draft and the route alone. */
-  const launch = async (choice: ModelChoice, purpose: string | null, text: string, picked: boolean) => {
+  const launch = async (choice: ModelChoice, purpose: string | null, text: string) => {
     const thread = await api.createThread({
       ...(project ? { project_id: project.id } : {}),
       engine: choice.engine,
@@ -224,12 +215,9 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       text,
       attached.map((file) => file.id),
       {
-        ...(picked && pickedEffort ? { effort: pickedEffort } : {}),
-        ...(picked && Object.keys(extras).length > 0 ? { options: extras } : {}),
-        // The draft's engine saves what it shows; another engine in a fan-out narrows the choice itself.
-        ...((choice.engine === engine?.id ? access : chosenAccess) === "supervised"
-          ? {}
-          : { permission_mode: choice.engine === engine?.id ? access : chosenAccess }),
+        ...(pickedEffort ? { effort: pickedEffort } : {}),
+        ...(Object.keys(extras).length > 0 ? { options: extras } : {}),
+        ...(access === "supervised" ? {} : { permission_mode: access }),
       },
     );
     addPrompt(thread.id, { runId: run.id, text });
@@ -239,15 +227,11 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const send = async () => {
     const text = prompt.trim();
     if (!text || busy || checkoutLoading || checkoutError || modelDefaults.loading || modelDefaults.error || !engine || untrusted()) return;
-    if (extraModels.length > 0) {
-      void sendEach(text);
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
-      const purpose = worktree === null ? null : worktree === reused ? worktree : slugify(worktree) || uniquePurpose(text, null);
-      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text, true);
+      const purpose = worktree === null ? null : worktree === reused ? worktree : slugify(worktree) || uniquePurpose(text);
+      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       recordUserPrompt();
       setPrefs({ lastModel: { engine: engine.id, model: pickedModel, effort: pickedEffort } });
       adoptLayout(thread.id);
@@ -269,8 +253,8 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     setError(null);
     try {
       const purpose =
-        worktree === null ? null : worktree === reused ? worktree : uniquePurpose(worktree, null);
-      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text, true);
+        worktree === null ? null : worktree === reused ? worktree : uniquePurpose(worktree);
+      const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       setPrompt("");
       setFiles([]);
       useUi.getState().pushToast(`Started ${thread.title}`);
@@ -283,38 +267,9 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     }
   };
 
-  /** One thread and one worktree for each model picked. */
-  const sendEach = async (text: string) => {
-    if (!engine) return;
-    if (!project?.is_git) {
-      setError("Sending to several models needs a Git project.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const choices = [{ engine: engine.id, model: pickedModel }, ...extraModels];
-    const results = await Promise.allSettled(
-      choices.map((choice, at) =>
-        launch(choice, uniquePurpose(worktree ?? "multi", choice.model ?? choice.engine), text, at === 0),
-      ),
-    );
-    setBusy(false);
-    const failed = results.find((result) => result.status === "rejected");
-    if (results.some((result) => result.status === "fulfilled")) recordUserPrompt();
-    if (failed) {
-      setError(toFailure(failed.reason).message);
-      return;
-    }
-    setPrompt("");
-    setFiles([]);
-    setExtraModels([]);
-    useUi.getState().pushToast(`Started ${choices.length} threads`);
-    field.current?.focus();
-  };
-
   sendBackground.current = () => {
     if (!prompt.trim() || busy || checkoutLoading || checkoutError || modelDefaults.loading || modelDefaults.error || !engine) return false;
-    void (extraModels.length > 0 ? send() : startInBackground());
+    void startInBackground();
     return true;
   };
 
@@ -472,18 +427,9 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                         effort={pickedEffort}
                         extras={extras}
                         access={unmanaged ? null : access}
-                        extraModels={extraModels}
                         register={setOpenTraits}
-                        onToggleExtra={(next) =>
-                          setExtraModels(
-                            extraModels.some((entry) => sameChoice(entry, next))
-                              ? extraModels.filter((entry) => !sameChoice(entry, next))
-                              : [...extraModels, next],
-                          )
-                        }
                         onModel={(next) => {
                           const picked = { ...next, effort: next.engine === engine.id && next.model === pickedModel ? pickedEffort : null };
-                          setExtraModels([]);
                           setExtras({});
                           setChoice(picked);
                           setPrefs({ lastModel: picked });
@@ -500,7 +446,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                       <ModelPickerTrigger engines={installed} selected={{ engine: installed[0]!.id, model: null }}
                         onPick={(next) => {
                           const picked = { ...next, effort: null };
-                          setChoice(picked); setPrefs({ lastModel: picked }); setExtraModels([]);
+                          setChoice(picked); setPrefs({ lastModel: picked });
                         }} />
                     ) : (
                       <span className="composer-control">

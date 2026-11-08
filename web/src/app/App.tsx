@@ -5,7 +5,7 @@ import { SignIn } from "../features/onboarding/SignIn";
 import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../state/ui";
-import { ErrorState, Loading } from "../ui/states";
+import { ErrorState, Splash } from "../ui/states";
 import { onShellEvent, Shell } from "./Shell";
 import { useConnection, watchConnection } from "../state/connection";
 import { upgradeToast } from "../state/healthToasts";
@@ -102,9 +102,7 @@ function BootedApp() {
   switch (boot.state) {
     case "loading":
       return (
-        <main className="boot">
-          <Loading label="Connecting to Orbyn" rows={3} />
-        </main>
+        <Splash label="Connecting to Orbyn" />
       );
     case "sign-in":
       return <SignIn onSignedIn={start} />;

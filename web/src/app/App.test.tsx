@@ -55,7 +55,7 @@ describe("App against the mock API", () => {
     await user.click(side);
     expect(useUi.getState().panelOpen).toBe(true);
     expect(side).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByRole("tablist", { name: "Context" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tablist", { name: "Panel tabs" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
   });
 
   it("creates the thread on first send from the draft", async () => {
@@ -73,7 +73,7 @@ describe("App against the mock API", () => {
     const picker = await screen.findByRole("dialog", { name: "Choose a model" });
     expect(within(picker).getByRole("button", { name: /Aider \(terminal\) \(Unmanaged\)/ })).toBeInTheDocument();
     expect(within(picker).queryByRole("button", { name: /Cursor Agent/ })).toBeNull();
-    await user.click(within(picker).getByRole("option", { name: /Claude Opus/ }));
+    await user.click(within(picker).getAllByRole("option", { name: /Claude Opus/ })[0]!);
     expect(await screen.findByRole("button", { name: "Claude Opus" })).toBeInTheDocument();
   });
 
@@ -201,6 +201,20 @@ describe("App against the mock API", () => {
       expect(within(dialog).getByText("Faster thread loading")).toBeInTheDocument();
       await user.click(within(dialog).getAllByRole("button", { name: "What’s new" })[1]!);
       expect(within(dialog).getByText(/\d+ new changes?/)).toBeInTheDocument();
+    });
+
+    it("marks the pill with the 16 px mark and gives only the app row a 28 px tile", async () => {
+      idle();
+      const user = userEvent.setup();
+      render(<App />);
+      const pill = await screen.findByRole("button", { name: "Updates available · 3" });
+      expect(pill.querySelector("svg.logo")).toHaveAttribute("data-logo", "16");
+      await user.click(pill);
+      const dialog = await screen.findByRole("dialog", { name: "Update everything" });
+      const rows = within(dialog).getAllByRole("listitem");
+      expect(rows[0]?.querySelector(".logo-tile")).toHaveAttribute("data-size", "28");
+      expect(rows[0]).toHaveTextContent("Orbyn Engineering");
+      expect(dialog.querySelectorAll(".logo-tile")).toHaveLength(1);
     });
 
     it("keeps the Skills library row, saying it is up to date, when nothing newer exists", async () => {
@@ -658,7 +672,7 @@ describe("App against the mock API", () => {
     go("#/threads/t-done");
     render(<App />);
     await screen.findByRole("button", { name: "Show side panel" });
-    expect(screen.queryByRole("tablist", { name: "Context" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Panel tabs" })).toBeNull();
     expect(useUi.getState().panelOpen).toBe(false);
   });
 
@@ -679,7 +693,7 @@ describe("App against the mock API", () => {
     useUi.setState({ panelOpen: true, panelTab: "diff" });
     go("#/threads/t-done");
     render(<App />);
-    const row = await screen.findByRole("tablist", { name: "Context" });
+    const row = await screen.findByRole("tablist", { name: "Panel tabs" });
     expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });

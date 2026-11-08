@@ -82,7 +82,7 @@ remaining behavior, native/manual qualification and refusal notes.
 - [x] A5 Turn into project: adopts the folder in place, with sibling threads | packages/contracts/src/orchestrationV2.ts | w d s | M | server done | web done
 - [x] A6 Start in background: sends and opens another draft, one worktree each | docs/user/thread-sidebar.md | w d | M | web done
 - [x] A7 Send and new thread: keyed send that leaves a fresh draft | packages/contracts/src/keybindings.ts | w d | S | web done
-- [x] A8 Multi-model fan-out: shift-click models, one thread and worktree each | apps/web/src/components/chat/useMultipleModelSend.ts | w d | M | web done
+- [ ] A8 Multi-model fan-out: shift-click models, one thread and worktree each | apps/web/src/components/chat/useMultipleModelSend.ts | w d | M | scope: excluded | reason: removed from the beta; the picker chooses one model (designer: Planned, not in the beta)
 - [x] A9 New thread in this worktree: reuses an existing worktree | docs/user/thread-sidebar.md | w d | S | web done
 - [ ] A10 Use last project: mobile default for new threads, toggleable | docs/user/thread-sidebar.md | m | S | scope: excluded | reason: mobile client only
 - [x] A11 Pin and unpin: keeps thread above active work, scroll stays put | apps/web/src/components/Sidebar.tsx | w d m s | S
@@ -174,8 +174,8 @@ remaining behavior, native/manual qualification and refusal notes.
 - [x] B19 Interrupt button: stops running turn when draft empty | apps/web/src/components/chat/ComposerPrimaryActions.tsx | w d m | S | web done
 - [x] B20 Custom models: add unlisted model, rename built-ins via settings.json | apps/web/src/components/settings/CustomModelEditor.tsx | w d s | M | server done | web done
 - [x] B21 Remembered model defaults: provider, model and options carry to new threads | docs/user/composer.md | w d m | S | web done
-- [x] B22 Model picker: providers rail, search, favorites, number jumps | apps/web/src/components/chat/ProviderModelPicker.tsx | w d m | L
-- [x] B23 Model visibility and order: hide, reorder, favorite per instance | packages/contracts/src/settings.ts | w d s | M
+- [x] B22 Model picker: search, provider chips, models under provider names (no favorites, no picker-only shortcuts) | apps/web/src/components/chat/ProviderModelPicker.tsx | w d m | L
+- [x] B23 Model visibility and order: hide, reorder, favorite per instance | packages/contracts/src/settings.ts | w d s | M | scope: mixed | local: hide and reorder | excludes: favorites, removed from the beta (designer: Planned, not in the beta)
 - [x] B24 Traits picker: effort, thinking, speed, context options per model | apps/web/src/components/chat/TraitsPicker.tsx | w d m | M: effort, Codex service tier and Claude fast mode per model; neither engine reports thinking or context choices
 - [x] B25 Effort display: label or bars, with shortcuts | apps/web/src/components/chat/EffortGlyph.tsx | w d | S | web done
 - [x] B26 Permission mode: Supervised, Auto-accept edits, Auto, Full access | docs/user/permission-modes.md | w d m s | L

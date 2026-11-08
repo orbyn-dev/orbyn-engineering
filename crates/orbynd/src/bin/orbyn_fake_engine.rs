@@ -34,6 +34,19 @@ fn main() {
             }
             std::process::exit(if state.trim() == "starred" { 0 } else { 1 });
         }
+        "mcp" if args.get(1).map(String::as_str) == Some("list") => {
+            record_launch("claude-mcp-list", &args);
+            // `claude mcp list` as 2.1.318 prints it.
+            let text = std::env::var("ORBYN_FAKE_MCP_LIST").unwrap_or_else(|_| {
+                "Checking MCP server health…\n\n\
+                 github: npx -y github-mcp - ✔ Connected\n\
+                 postgres-dev: pg-mcp - ✘ Failed to connect — Command not found: pg-mcp\n\
+                 claude.ai Vercel: https://mcp.vercel.com - ✔ Connected\n\
+                 claude.ai Google Drive: https://drive.example/mcp - ! Needs authentication\n"
+                    .into()
+            });
+            print!("{text}");
+        }
         "--version" => println!(
             "{}",
             std::env::var("FAKE_VERSION").unwrap_or("0.166.0".into())
@@ -391,6 +404,15 @@ fn claude(args: &[String]) {
     send(&json!({
         "type": "system", "subtype": "init", "session_id": session, "model": "fake",
         "slash_commands": ["compact", "review", "fake-command"],
+        // The frame a real run reports: servers (only the dynamic one when --mcp-config is
+        // passed), the person's plugins, and the tools by name.
+        "mcp_servers": [{ "name": "orbyn_engineering", "status": "connected", "source": "dynamic" }],
+        "plugins": [
+            { "name": "orbyn-skills", "path": "/home/me/.claude/plugins/orbyn-skills" },
+            { "name": "cc-plugin-telemetry", "path": "builtin" },
+        ],
+        "tools": ["Bash", "Read", "Edit", "mcp__orbyn_engineering__skill_search", "mcp__orbyn_engineering__skill_load"],
+        "skills": ["tdd", "architect", "how"],
     }));
     let block = |index: u64, block: Value| {
         send(&json!({
@@ -733,7 +755,12 @@ fn codex() {
                     std::thread::sleep(std::time::Duration::from_millis(300));
                     state.tools_ready = true;
                 }
-                send(&json!({ "id": id, "result": { "data": [], "nextCursor": null } }));
+                send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                    { "name": "orbyn_engineering", "tools": { "skill_search": {}, "skill_load": {} }, "authStatus": "unsupported" },
+                    { "name": "codex_apps", "tools": { "x": {} }, "authStatus": "bearerToken" },
+                    { "name": "filesystem", "tools": { "read": {}, "write": {} }, "authStatus": "unsupported" },
+                    { "name": "notion", "tools": {}, "toolsError": "needs login", "authStatus": "notLoggedIn" },
+                ] } }));
             }
             // As Codex 0.166.0 answered: a loaded thread is required, and the server's
             // own result comes back unchanged.
@@ -811,6 +838,20 @@ fn codex() {
                         "threadId": "fake-feedback-1", "promptHash": null,
                     }}));
                 }
+            }
+            "app/list" => {
+                send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                    { "id": "gh", "name": "GitHub", "description": "Repositories, issues and pull requests", "isAccessible": true, "isEnabled": true },
+                    { "id": "gm", "name": "Gmail", "description": "Search and read mail", "isAccessible": false, "isEnabled": true },
+                ] } }));
+            }
+            "plugin/list" => {
+                send(
+                    &json!({ "id": id, "result": { "marketplaces": [ { "name": "fake", "plugins": [
+                    { "name": "orbyn-skills", "installed": true, "enabled": true,
+                      "interface": { "displayName": "orbyn-skills", "shortDescription": "3 commands" } },
+                ] } ], "marketplaceLoadErrors": [], "featuredPluginIds": [] } }),
+                );
             }
             "model/list" if sibling_exists("lost-models") => {
                 send(&json!({ "id": id, "error": { "code": -32000, "message": "no list" } }));

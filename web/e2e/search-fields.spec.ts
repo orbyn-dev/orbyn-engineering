@@ -22,7 +22,7 @@ test("the Keybindings find field is one pill", async ({ page }) => {
 test("the model picker's search is one pill", async ({ page }) => {
   await page.goto("/#/new");
   await page.locator("[data-model-trigger]").first().click();
-  await bare(page.getByRole("dialog", { name: "Choose a model" }).getByRole("textbox").first());
+  await bare(page.getByRole("dialog", { name: "Choose a model" }).getByRole("combobox").first());
 });
 
 test("the thread search in the sidebar is one pill", async ({ page }) => {
