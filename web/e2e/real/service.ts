@@ -63,7 +63,7 @@ const pullRow = ({ number, ...rest }: PullFixture) => ({
 
 const STAND_IN_GH = resolve(WEB, "e2e/real/stand-in-gh.mjs");
 
-/** Puts the stand-in first on PATH as `gh`, with its pull requests in a file. */
+/** A GitHub-only fixture: `gh` keeps state, and discovery of other forges fails locally. */
 function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: string; state: string; log: string } {
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -76,6 +76,15 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
   } else {
     symlinkSync(STAND_IN_GH, join(bin, "gh"));
+  }
+  // /api/forges probes every forge. Never let this GitHub fixture reach an installed non-GitHub CLI.
+  for (const program of ["glab", "az", "tea"]) {
+    if (process.platform === "win32") {
+      writeFileSync(join(bin, `${program}.mjs`), "process.exit(1);\n");
+      writeFileSync(join(bin, `${program}.cmd`), `@echo off\r\nnode "%~dp0${program}.mjs" %*\r\n`);
+    } else {
+      writeFileSync(join(bin, program), "#!/usr/bin/env node\nprocess.exit(1);\n", { mode: 0o755 });
+    }
   }
   return { bin, state, log };
 }
@@ -138,12 +147,12 @@ export interface ServiceOptions {
   /** Fake engines, with this usage report added to each Claude turn's result. */
   claudeUsage?: Record<string, unknown>;
   scenes?: boolean;
-  /** Runs `gh` through the stand-in, with these pull requests on the forge. */
+  /** Selects the GitHub-only stand-in, with these pull requests on the forge. */
   forge?: boolean | PullFixture[];
   registry?: string;
   /** A folder holding the protocol double's saved ACP sessions (`sessions.json`). */
   nativeSessions?: string;
-  /** Folders put first on the service's PATH, for stand-in tools such as `jj`. */
+  /** Extra stand-in folders ahead of host PATH; the selected GitHub fixture takes precedence. */
   path?: string[];
 }
 
@@ -202,7 +211,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${forge ? `${forge.bin}${delimiter}` : ""}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const ready = await new Promise<{ url: string; token: string }>((done, fail) => {

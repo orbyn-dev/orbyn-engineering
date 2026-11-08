@@ -37,6 +37,7 @@ export interface PopoverOptions {
 export function usePopover({ kind, root, trigger, active = true, closing, panes, onClose }: PopoverOptions) {
   const state = useRef<{ focusReturn: FocusReturn | null; moved: boolean }>({ focusReturn: null, moved: false });
   const id = useId();
+  const markedRoot = useRef<HTMLElement | null>(null);
   // Taken as it opens, while rendering, before anything inside takes focus.
   if (!active) state.current = { focusReturn: null, moved: false };
   else if (!state.current.focusReturn) state.current.focusReturn = captureFocusReturn(trigger?.() ?? undefined);
@@ -51,19 +52,34 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
   const latest = useRef({ dismiss, panes, trigger, kind });
   latest.current = { dismiss, panes, trigger, kind };
 
-  // The element is marked so focus never returns into it while it leaves.
+  // Keep markers across ordinary renders: a nested portal reads its ancestor's marker during layout.
   useLayoutEffect(() => {
-    const element = root.current;
-    if (!active || !element) return;
+    const element = active ? root.current : null;
+    const previous = markedRoot.current;
+    if (previous !== element) {
+      if (previous?.getAttribute("data-popover-root") === id) {
+        previous.removeAttribute("data-popover-root");
+        previous.removeAttribute("data-popover-owner");
+      }
+      markedRoot.current = element;
+    }
+    if (!element) return;
     element.setAttribute("data-popover-root", id);
     // A popover opened from inside another names it, so only that one counts as inside it.
     const owner = latest.current.trigger?.()?.closest<HTMLElement>("[data-popover-root]")?.dataset.popoverRoot;
     if (owner) element.setAttribute("data-popover-owner", owner);
-    return () => {
+    else element.removeAttribute("data-popover-owner");
+  });
+
+  // Cleanup belongs to this hook's lifetime, not each render, and only releases markers it still owns.
+  useLayoutEffect(() => () => {
+    const element = markedRoot.current;
+    if (element?.getAttribute("data-popover-root") === id) {
       element.removeAttribute("data-popover-root");
       element.removeAttribute("data-popover-owner");
-    };
-  });
+    }
+    markedRoot.current = null;
+  }, [id]);
 
   useEffect(() => {
     if (!active || closing) return;
