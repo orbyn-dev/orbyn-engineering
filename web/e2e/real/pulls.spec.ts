@@ -378,6 +378,18 @@ test("a merge is refused when the branch moved after the page was read, and Relo
   await dialog.getByRole("button", { name: "Reload" }).click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length).toBeGreaterThan(reads);
+  // The reload's own reads finish before the next test starts, so they do not queue behind it at the forge.
+  // (The page keeps an event stream open, so "idle" is read from the forge calls going quiet.)
+  let seen = -1;
+  await expect
+    .poll(async () => {
+      const now = service.ghCalls().length;
+      const quiet = now === seen;
+      seen = now;
+      await page.waitForTimeout(600);
+      return quiet;
+    })
+    .toBe(true);
 });
 
 test("a merged pull request can be reverted", async ({ page }) => {
