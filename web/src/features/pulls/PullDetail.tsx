@@ -321,6 +321,7 @@ export function PullDetail({
   const refreshAll = useWorkspace((state) => state.refreshAll);
   const engines = useWorkspace((state) => state.engines.data);
   const tabsId = useId();
+  const activity = useTimelineEvents(projectId, number);
   const setPageLabel = usePageLabel((state) => state.set);
   const shownTitle = detail.status === "ready" ? detail.data.pull.title : null;
   useEffect(() => {
@@ -673,7 +674,6 @@ export function PullDetail({
   const offline = connection === "offline";
   const viewers = (forges.data ?? []).flatMap((one) => (one.signed_in && one.viewer ? [one.viewer] : []));
   const mine = extras.data?.details[0];
-  const activity = useTimelineEvents(projectId, number);
   const reviewAsked = reviewAskedOf(mine, viewers);
   const own = Boolean(pull.author && viewers.some((login) => login.toLowerCase() === (pull.author ?? "").toLowerCase()));
   const state = pageState(pull, mergeable, reviewAsked);
