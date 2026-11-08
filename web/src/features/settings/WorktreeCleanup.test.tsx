@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { request } from "../../api/client";
-import { WorktreeCleanup } from "./WorktreeCleanup";
+import { daysWhenTurnedOn, WorktreeCleanup } from "./WorktreeCleanup";
 import { scopedFixture } from "./scopedPreferenceFixture.test-support";
 
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
@@ -33,6 +33,16 @@ it("shows the saved days beside On, saves a new number on leaving it, and Off hi
   expect(days).toHaveValue(14);
   await user.clear(days); await user.type(days, "3"); await user.tab();
   await waitFor(() => sent({ mode: "custom", rules: { settled_after_days: 3 } }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Automatic worktree cleanup" }), "off");
+  // The controls rest while the save and the read after it are under way; a change made then is not taken.
+  const select = screen.getByRole("combobox", { name: "Automatic worktree cleanup" });
+  await waitFor(() => expect(select).toBeEnabled());
+  await user.selectOptions(select, "off");
   await waitFor(() => sent({ mode: "off" }));
+});
+
+it("turns on from Off at seven days whatever the field still says, and keeps a set number otherwise", () => {
+  expect(daysWhenTurnedOn(null, "12")).toBe(7);
+  expect(daysWhenTurnedOn(null, "")).toBe(7);
+  expect(daysWhenTurnedOn(14, "30")).toBe(30);
+  expect(daysWhenTurnedOn(14, "")).toBe(7);
 });
