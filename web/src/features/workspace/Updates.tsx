@@ -9,7 +9,7 @@ import {
   type UpdateRunStep,
 } from "../../state/workspace";
 import { Button } from "../../ui/controls";
-import { Markdown } from "../thread/Markdown";
+import { Markdown } from "../thread/public";
 import { Dialog } from "../../ui/Dialog";
 
 const short = (value: string | null) =>

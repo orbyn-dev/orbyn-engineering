@@ -18,7 +18,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { BaseDirectoryDialog } from "./BaseDirectoryDialog";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { DETAIL_ROWS, detailsMenuItems } from "../thread/DetailsCard";
+import { DETAIL_ROWS, detailsMenuItems } from "../thread/public";
 import { DesktopApp } from "./DesktopApp";
 import { PreferenceGroups } from "./PreferenceRows";
 import { WorktreeCleanup } from "./WorktreeCleanup";

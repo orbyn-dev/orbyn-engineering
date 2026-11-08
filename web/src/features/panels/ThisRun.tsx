@@ -3,8 +3,7 @@ import { elapsed } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { useWorkspace } from "../../state/workspace";
 import { EngineGlyph } from "../../ui/badges";
-import { useThreadLogs } from "../thread/threadLogs";
-import { runningTools } from "../thread/timeline";
+import { useThreadLogs, runningTools } from "../thread/public";
 
 /** The tool calls running now in this thread's run, newest first; nothing when none run. */
 export function ThisRun({ threadId }: { threadId: string }) {

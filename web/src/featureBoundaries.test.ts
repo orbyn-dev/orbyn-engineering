@@ -26,6 +26,10 @@ describe.each([
   ["src/app/probe.ts", "../features/panels", "panels"],
   ["src/features/thread/probe.ts", "../workspace", "workspace"],
   ["src/app/probe.ts", "../features/workspace", "workspace"],
+  ["src/features/usage/probe.ts", "../thread", "thread"],
+  ["src/app/probe.ts", "../features/thread", "thread"],
+  ["src/features/usage/probe.ts", "../future", "future"],
+  ["src/app/probe.ts", "../features/future", "future"],
 ])("boundary from %s via %s", (filePath, target, feature) => {
   it.each([
     `import { value } from "${target}/private";`,
@@ -70,7 +74,19 @@ describe.each([
   ["src/features/panels/SideChatPane.tsx", "../thread"],
   ["src/features/panels/terminalChip.ts", "../thread"],
   ["src/app/Shell.tsx", "../features/thread"],
-])("thread cohort from %s", (filePath, target) => {
+  ["src/features/panels/TerminalDrawerBody.tsx", "../thread"],
+  ["src/features/panels/TerminalPanel.tsx", "../thread"],
+  ["src/features/panels/ThisRun.tsx", "../thread"],
+  ["src/features/pulls/PullCells.tsx", "../thread"],
+  ["src/features/pulls/PullConversation.tsx", "../thread"],
+  ["src/features/pulls/PullDetail.tsx", "../thread"],
+  ["src/features/pulls/PullGuide.tsx", "../thread"],
+  ["src/features/pulls/PullsPage.tsx", "../thread"],
+  ["src/features/settings/PreferenceSections.tsx", "../thread"],
+  ["src/features/settings/ProjectModelDefaults.tsx", "../thread"],
+  ["src/features/workspace/Updates.tsx", "../thread"],
+
+])("thread consumer from %s", (filePath, target) => {
   it.each([
     `import { value } from "${target}/private";`,
     `export * from "${target}/private";`,
@@ -84,8 +100,8 @@ describe.each([
   });
 });
 
-it("retains thread access for remaining consumers, internals and tests", async () => {
-  expect(await lint("src/features/panels/TerminalDrawerBody.tsx", 'import { runProjectAction } from "../thread/runProjectAction";')).toHaveLength(0);
+it("enforces remaining thread consumers while preserving internals and tests", async () => {
+  expect(await lint("src/features/panels/TerminalDrawerBody.tsx", 'import { runProjectAction } from "../thread/runProjectAction";')).toMatchObject([{ messageId: "private" }]);
   expect(await lint("src/features/thread/Composer.tsx", 'import { useThreadLogs } from "./threadLogs";')).toHaveLength(0);
   expect(await lint("src/features/panels/DiffPanel.test.tsx", 'import { useThreadLogs } from "../thread/threadLogs";')).toHaveLength(0);
 });
@@ -145,13 +161,12 @@ it("enforces workspace boundaries on existing module paths", async () => {
   expect(await lint("src/features/workspace/groups.test.ts", 'import { arrangeThreads } from "./groups";')).toHaveLength(0);
 });
 
-it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels", "workspace"])("allows %s internals, inward imports and unfinished destinations", async (feature) => {
+it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels", "workspace", "thread", "future"])("allows %s internals and imports toward shared state", async (feature) => {
   expect(await lint(`src/features/${feature}/probe.ts`, 'import { value } from "./private";')).toHaveLength(0);
   expect(await lint("src/features/thread/probe.ts", 'import { value } from "../../state/ui";')).toHaveLength(0);
-  expect(await lint("src/features/usage/probe.ts", 'import { value } from "../thread/private";')).toHaveLength(0);
 });
 
-it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels", "workspace"])("keeps shared folders inward to %s, including public dynamic imports", async (feature) => {
+it.each(["usage", "platform", "settings", "skills", "pulls", "onboarding", "panels", "workspace", "thread", "future"])("keeps shared folders inward to %s, including public dynamic imports", async (feature) => {
   for (const folder of ["ui", "state", "lib", "api", "styles"]) {
     for (const code of [
       `import { value } from "../features/${feature}/public";`,
@@ -174,6 +189,10 @@ it.each([
   ["src/features/workspace/onboarding-probe.test.ts", "../onboarding/FolderBrowser"],
   ["src/features/thread/panels-probe.test.ts", "../panels/FileMedia"],
   ["src/features/thread/workspace-probe.test.ts", "../workspace/threadActions"],
+  ["src/features/panels/thread-probe.test.ts", "../thread/threadLogs"],
+  ["src/features/panels/future-probe.test.ts", "../future/private"],
+  ["src/test-setup.ts", "./features/thread/threadLogs"],
+  ["src/test-support.ts", "./features/thread/composerContext"],
   ["src/test-setup.ts", "./features/workspace/groups"],
   ["src/test-support.ts", "./features/workspace/Sidebar"],
   ["src/test-setup.ts", "./features/panels/SurfacePane"],
@@ -207,4 +226,23 @@ it.each([
   ["src/features/usage/probe.ts", 'import { value } from "../../../mock/api";'],
 ])("preserves existing restrictions in %s: %s", async (filePath, code) => {
   expect(await lint(filePath, code, "no-restricted-imports")).toHaveLength(1);
+});
+
+
+it("enforces boundaries for future feature directories by default", async () => {
+  expect(await lint("src/app/probe.ts", 'import { value } from "../features/future/private";')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/app/probe.ts", 'import { value } from "../features/future/public";')).toHaveLength(0);
+  expect(await lint("src/features/future/probe.ts", 'import { value } from "./private";')).toHaveLength(0);
+});
+
+
+it("checks fixed template dynamic imports", async () => {
+  expect(await lint("src/app/probe.ts", 'const value = import(`../features/usage/private`);')).toMatchObject([{ messageId: "private" }]);
+  expect(await lint("src/app/probe.ts", 'const value = import(`../features/usage/public`);')).toHaveLength(0);
+  expect(await lint("src/state/probe.ts", 'const value = import(`../features/usage/public`);')).toMatchObject([{ messageId: "inward" }]);
+});
+
+
+it("leaves computed dynamic import targets to source review", async () => {
+  expect(await lint("src/app/probe.ts", 'const value = import(`../features/${feature}/private`);')).toHaveLength(0);
 });
