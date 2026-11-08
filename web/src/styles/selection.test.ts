@@ -22,9 +22,20 @@ describe("what can be selected", () => {
     for (const selector of [
       ".msg-bubble", ".md", ".code-card", ".tool-output", ".tool-inspect", ".command", ".diff-view", ".diff-card",
       ".file-preview", ".pull-body", ".pull-comment", ".pull-review-note-text", ".pull-check-name", ".pull-patch",
-      ".error-text", ".error-state", ".set-path", ".terminal-host", "input", "textarea", "[contenteditable]",
+      ".error-text", ".set-path", ".terminal-host", "input", "textarea", ".approval-target", ".approval-kv",
+      ".ask-label", ".skills-description", ".skills-detail", '[contenteditable]:not([contenteditable="false"])',
     ]) expect(optedIn, selector).toContain(selector);
+    expect(optedIn).not.toContain(".error-state");
     expect(css).toMatch(/-webkit-user-select:\s*text/);
+  });
+
+  it("shows the text cursor over fields and the text blocks people copy, not the root's arrow", () => {
+    const texty = new Set(blocks.filter(({ body }) => /(^|\s)cursor:\s*text/.test(body)).flatMap(({ selectors }) => selectors));
+    for (const selector of ["textarea", ".command", ".diff-card", ".pull-patch", ".approval-target", ".set-path", ".msg-bubble"]) {
+      expect(texty, selector).toContain(selector);
+    }
+    expect([...texty].some((selector) => selector.startsWith("input:not("))).toBe(true);
+    expect(texty).toContain('[contenteditable]:not([contenteditable="false"])');
   });
 
   it("leaves link and button cursors alone", () => {

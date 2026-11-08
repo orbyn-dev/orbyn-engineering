@@ -33,9 +33,16 @@ body,
 .pull-check-name,
 .pull-patch,
 .pull-mono,
+/* Approval cards: what the command would run and where, and the question put to the person. */
+.approval-target,
+.approval-kv,
+.ask-label,
+.question legend,
+/* Skills: a skill's description and detail text. */
+.skills-description,
+.skills-detail,
 /* Errors and values meant to be copied. */
 .error-text,
-.error-state,
 .detail-automation-error,
 .pr-link-error,
 .set-path,
@@ -49,8 +56,8 @@ body,
 /* Fields. */
 input,
 textarea,
-[contenteditable],
-[contenteditable] * {
+[contenteditable]:not([contenteditable="false"]),
+[contenteditable]:not([contenteditable="false"]) * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -60,11 +67,27 @@ textarea,
 .code-card,
 .tool-output,
 .tool-inspect,
+.command,
 .diff-view,
+.diff-card,
 .file-preview,
 .pull-body,
 .pull-comment,
-.error-text {
+.pull-patch,
+.approval-target,
+.approval-kv,
+.error-text,
+.set-path,
+.diff-path,
+.browser-path,
+.trust-path,
+.workflow-path,
+.folder-path,
+.skills-description,
+.skills-detail,
+input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="range"], [type="color"]),
+textarea,
+[contenteditable]:not([contenteditable="false"]) {
   cursor: text;
 }
 
