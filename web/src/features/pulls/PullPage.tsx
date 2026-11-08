@@ -23,10 +23,30 @@ export function PullStateBanner({
   failed?: PullCheck;
   /** The person opened it: a forge does not let them review it. */
   own?: boolean;
-  /** The review card is open, so the banner leaves the one button to it. */
+  /** The review card is open: the Request changes button stays, pressed. */
   reviewing?: boolean;
   actions: { reopen(): void; ready(): void; approve(): void; requestChanges(): void; deleteBranch(): void };
 }) {
+  // The person's own pull request: nobody reviews their own, and Request changes is only pressed while its card is open.
+  if (own && ["open", "running", "review", "approved"].includes(state)) {
+    return (
+      <PullsBanner
+        icon={<GitPullRequest size={14} aria-hidden />}
+        actions={
+          <>
+            <Button small tone="quiet" disabled icon={<SquareCheck size={14} aria-hidden />}>
+              Approve
+            </Button>
+            <Button small tone="quiet" aria-pressed={reviewing} data-pressed={reviewing || undefined} onClick={actions.requestChanges}>
+              Request changes
+            </Button>
+          </>
+        }
+      >
+        You opened this pull request.
+      </PullsBanner>
+    );
+  }
   switch (state) {
     case "merged":
       return (
@@ -106,11 +126,9 @@ export function PullStateBanner({
               <Button small tone="primary" disabled={own} icon={<SquareCheck size={14} aria-hidden />} onClick={actions.approve}>
                 Approve
               </Button>
-              {reviewing ? null : (
-                <Button small onClick={actions.requestChanges}>
-                  Request changes
-                </Button>
-              )}
+              <Button small aria-pressed={reviewing} data-pressed={reviewing || undefined} onClick={actions.requestChanges}>
+                Request changes
+              </Button>
             </>
           }
         >
@@ -245,6 +263,7 @@ export function MergeRow({
   onMenu,
   onMerge,
   hidden,
+  dim,
 }: {
   method: string;
   onMethod(value: string): void;
@@ -258,6 +277,8 @@ export function MergeRow({
   onMerge(): void;
   /** A merged pull request has nothing to merge: only the line shows. */
   hidden: boolean;
+  /** The review card is open: the merge row waits, dimmed. */
+  dim?: boolean;
 }) {
   const items: MenuItem[] = [
     ...METHODS.map((entry) => ({ label: entry.label, selected: method === entry.value, onSelect: () => onMethod(entry.value) })),
@@ -268,7 +289,7 @@ export function MergeRow({
   return (
     <>
       {hidden ? null : (
-        <div className="pull-merge" data-off={!gate.enabled || undefined}>
+        <div className="pull-merge" data-off={!gate.enabled || undefined} data-dim={dim || undefined}>
           <button
             type="button"
             className="pull-method"

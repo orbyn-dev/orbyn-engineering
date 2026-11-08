@@ -191,7 +191,8 @@ describe("Request changes", () => {
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
   };
   const note = () => screen.getByRole("textbox", { name: "What needs to change?" });
-  const send = () => screen.getByRole("button", { name: /^(Request changes|Try again)$/ });
+  const card = () => within(screen.getByRole("region", { name: "Request changes" }));
+  const send = () => card().getByRole("button", { name: /^(Request changes|Try again)$/ });
   const flushAll = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
 
   it("opens a card under the merge row, and sends only once there is a note", async () => {
@@ -214,7 +215,7 @@ describe("Request changes", () => {
     await flushAll();
     expect(screen.getByRole("button", { name: "Requesting…" })).toBeDisabled();
     expect(note()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(card().getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 
   it("becomes a timeline entry, labels the title, and says so on the merge row", async () => {
@@ -223,7 +224,7 @@ describe("Request changes", () => {
     fireEvent.change(note(), { target: { value: "Fix this" } });
     fireEvent.click(send());
     await flushAll();
-    expect(screen.getByText("You requested changes", { selector: "b" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "You requested changes" })).toBeInTheDocument();
     expect(screen.getByText("Fix this")).toBeInTheDocument();
     expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
     expect(screen.getByText("You requested changes.")).toBeInTheDocument();
@@ -253,6 +254,7 @@ describe("Request changes", () => {
   it("will not request changes on your own pull request, and Approve is off too", async () => {
     asked();
     await show(detail({ review_state: "review_required", author: "me" }));
+    expect(screen.getByText("You opened this pull request.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
     expect(screen.getByText("You can’t request changes on your own pull request.")).toBeInTheDocument();
@@ -270,5 +272,62 @@ describe("Request changes", () => {
     fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Discard" }));
     await flushAll();
     expect(screen.queryByRole("textbox", { name: "What needs to change?" })).toBeNull();
+  });
+
+  it("keeps the Request changes button in the banner, pressed, while the card is open", async () => {
+    await open();
+    expect(screen.getAllByRole("button", { name: "Request changes" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Request changes" })[0]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("closes from any control of the card on Escape, and asks first when there is a note", async () => {
+    await open();
+    fireEvent.keyDown(card().getByRole("button", { name: "Cancel" }), { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Request changes" })).toBeNull();
+  });
+
+  it("keeps the note when the card is closed and opened again", async () => {
+    await open();
+    fireEvent.change(note(), { target: { value: "Remember me" } });
+    fireEvent.click(card().getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Discard" }));
+    await flushAll();
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(note()).toHaveValue("Remember me");
+  });
+
+  it("dims the merge row while the card is open, and expands the checks again once it is sent", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    await open();
+    expect(document.querySelector(".pull-merge")).toHaveAttribute("data-dim");
+    expect(screen.queryByText("lint")).toBeNull();
+    fireEvent.change(note(), { target: { value: "x" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(document.querySelector(".pull-merge")).not.toHaveAttribute("data-dim");
+    expect(screen.getByText("lint")).toBeInTheDocument();
+  });
+
+  it("puts the sent note in the left column as an entry, and the label as an amber pill", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    await open();
+    fireEvent.change(note(), { target: { value: "Fix this" } });
+    fireEvent.click(send());
+    await flushAll();
+    const entry = screen.getByRole("region", { name: "You requested changes" });
+    expect(entry.closest(".pull-main")).not.toBeNull();
+    expect(entry).toHaveTextContent("You requested changes · just now");
+    expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
+  });
+
+  it("says the review may have been sent when the forge did not answer, and reads the reviews again", async () => {
+    vi.spyOn(pullsApi, "review").mockRejectedValue(new ApiFailure("bad_gateway", "no", 504));
+    await open();
+    const reads = vi.mocked(pullsApi.detail).mock.calls.length;
+    fireEvent.change(note(), { target: { value: "x" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByText(/It may have been sent/)).toBeInTheDocument();
+    expect(vi.mocked(pullsApi.detail).mock.calls.length).toBeGreaterThan(reads);
   });
 });

@@ -54,8 +54,8 @@ const fixtures: PullFixture[] = [
     ],
   },
   { number: 2, title: "Second layer", headRefName: "feat-two", baseRefName: "feat-one", isDraft: true, author: { login: "grace" }, labels: [{ name: "docs" }] },
-  // Its branch gets a commit after the page is read: the merge must be refused.
-  { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" }, headNow: "ddddddd" },
+  // The viewer is asked to review it, so its page offers the review.
+  { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" }, reviewers: ["me"] },
   { number: 4, title: "Old idea", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
   { number: 5, title: "Shipped work", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
 ];
@@ -293,8 +293,8 @@ test("the code tab marks files viewed and submits line comments as one review", 
 
 test("Request changes opens a review card, sends the note as a review and becomes a timeline entry", async ({ page }) => {
   const article = await openPull(page, "Unrelated fix");
-  await moreAction(page, article, "Request changes");
-  const send = article.getByRole("button", { name: "Request changes" });
+  await article.getByRole("button", { name: "Request changes" }).click();
+  const send = article.getByRole("region", { name: "Request changes" }).getByRole("button", { name: "Request changes" });
   await expect(send).toBeDisabled();
   await article.getByRole("textbox", { name: "What needs to change?" }).fill("Please add a test.");
   await send.click();
@@ -368,15 +368,19 @@ test("merge takes a method from the menu, strips credits and can wait for checks
 
 test("a merge is refused when the branch moved after the page was read, and Reload reads it again", async ({ page }) => {
   const article = await openPull(page, "Unrelated fix");
+  // The branch gets a commit after the page was read, for this test only.
+  service.ghEdit(3, { headNow: "ddddddd" });
   await article.getByRole("button", { name: "Merge", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Merge pull request" });
   await dialog.getByRole("button", { name: "Merge", exact: true }).click();
   await expect(dialog.getByText("This pull request changed")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Reload" })).toBeFocused();
   await expect(dialog.getByRole("button", { name: "Merge", exact: true })).toHaveCount(0);
   expect(service.ghPull(3).state ?? "OPEN").toBe("OPEN");
   const reads = service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length;
   await dialog.getByRole("button", { name: "Reload" }).click();
   await expect(dialog).toBeHidden();
+  service.ghEdit(3, { headNow: undefined });
   await expect.poll(() => service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length).toBeGreaterThan(reads);
   // The reload's own reads finish before the next test starts, so they do not queue behind it at the forge.
   // (The page keeps an event stream open, so "idle" is read from the forge calls going quiet.)
@@ -471,4 +475,24 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   await link.getByRole("button", { name: "Link", exact: true }).click();
   await expect(page.locator(".pr-chip")).toHaveText("#1");
   expect(projectId).not.toBe("");
+});
+
+test("a spent rate limit pauses the details filters: every row, a neutral banner, a paused chip", async ({ page }) => {
+  await page.goto(`${service.page}#/pulls`);
+  await expect(page.locator(".pull-rows > li")).toHaveCount(3);
+  // The reviewer filter is offered once reviews are known.
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  await page.getByRole("dialog", { name: "Filters" }).getByRole("checkbox", { name: "Needs my review" }).click();
+  await page.keyboard.press("Escape");
+  // The forge's limit is spent before the next rows are asked about.
+  service.ghEdit(0, { rateLimited: true });
+  try {
+    await page.getByRole("button", { name: "Closed", exact: true }).click();
+    await expect(page.getByText(/GitHub is limiting requests, so the reviewer and check filters are paused\. They resume (at \d\d:\d\d|soon)\./)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+    await expect(page.locator(".pull-rows > li")).toHaveCount(1);
+    await expect(page.locator(".pulls-chipwrap-tip .pull-tip")).toHaveText("Paused");
+  } finally {
+    service.ghEdit(0, { rateLimited: false });
+  }
 });

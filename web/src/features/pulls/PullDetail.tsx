@@ -292,6 +292,8 @@ export function PullDetail({
   /** The review card is open, and what was sent once it was. */
   const [reviewing, setReviewing] = useState(false);
   const [requested, setRequested] = useState<string | null>(null);
+  /** What was typed in the review card, kept for the visit if the card is closed and opened again. */
+  const [reviewNote, setReviewNote] = useState("");
   const [confirm, setConfirm] = useState<"close" | "delete_branch" | null>(null);
   const [auto, setAuto] = useState(false);
   const [deleteAfter, setDeleteAfter] = useState(() => deleteBranchChoice(projectId));
@@ -413,7 +415,6 @@ export function PullDetail({
       ? [
           { label: "Edit title", onSelect: () => setEditing(pull.title) },
           { label: "Work on this", onSelect: () => void work() },
-          ...(pull.state === "open" ? [{ label: "Request changes", onSelect: () => setReviewing(true) }] : []),
           { label: `Open on ${forge === "The host" ? "the forge" : forge}`, disabled: connection === "offline", onSelect: () => void window.open(pull.url, "_blank", "noreferrer") },
           ...(open ? [{ label: "Close pull request", destructive: true, onSelect: () => setConfirm("close") }] : []),
         ]
@@ -776,6 +777,7 @@ export function PullDetail({
                 <b>Summary</b>
                 {description}
               </div>
+              {requested !== null ? <RequestedChangesEntry note={requested} /> : null}
               <FilesCard files={fileList.data ?? []} additions={additions === null ? null : Number(additions)} deletions={deletions === null ? null : Number(deletions)} />
             </div>
             <div className="pull-side">{sideColumn()}</div>
@@ -809,7 +811,7 @@ export function PullDetail({
             </Row>
           ) : null}
         </div>
-        <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing || requested !== null} />
+        <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing} />
         <MergeRow
           method={mergeMethod}
           onMethod={setMergeMethod}
@@ -825,23 +827,30 @@ export function PullDetail({
           onMenu={setMergeMenu}
           onMerge={() => setMerging(true)}
           hidden={pull.state === "merged"}
+          dim={reviewing}
         />
         {reviewing ? (
           <RequestChangesCard
             projectId={projectId}
             number={number}
             own={own}
+            ownKnown={forges.status === "ready"}
+            note={reviewNote}
+            onNote={setReviewNote}
             forge={forgeLabel}
             onCancel={() => setReviewing(false)}
             onDone={(note) => {
               setReviewing(false);
+              setReviewNote("");
               setRequested(note);
               void detail.reload();
               void extras.reload();
             }}
+            onUnknown={() => {
+              void detail.reload();
+              void extras.reload();
+            }}
           />
-        ) : requested !== null ? (
-          <RequestedChangesEntry note={requested} />
         ) : null}
         {reviewers}
         {labels}

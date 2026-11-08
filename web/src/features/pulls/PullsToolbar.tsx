@@ -542,8 +542,8 @@ export function PullsToolbar(props: ToolbarProps) {
           {chips.map((chip) => {
             const dependent = props.detailsWait !== undefined && (chip.id === "review:review_required" || chip.id.startsWith("requested:"));
             const waiting = dependent && props.detailsWait === "waiting";
-            return (
-              <span key={chip.id} className="pulls-fchip" data-wait={dependent ? props.detailsWait : undefined} title={dependent && props.detailsWait === "paused" ? "Paused" : undefined}>
+            const chipEl = (
+              <span key={chip.id} className="pulls-fchip" data-wait={dependent ? props.detailsWait : undefined}>
                 {dependent && props.detailsWait === "failed" ? <TriangleAlert size={14} className="pulls-chip-alert" aria-hidden /> : null}
                 {dependent && props.detailsWait === "paused" ? <Pause size={14} className="pulls-chip-alert" aria-hidden /> : null}
                 {chip.label}
@@ -551,6 +551,17 @@ export function PullsToolbar(props: ToolbarProps) {
                   {waiting ? <i className="pulls-wait spin" aria-hidden /> : <X size={10} aria-hidden />}
                 </button>
               </span>
+            );
+            // A paused chip says why in the tooltip the rows use, not the browser's.
+            return dependent && props.detailsWait === "paused" ? (
+              <span key={chip.id} className="pulls-chipwrap-tip">
+                {chipEl}
+                <span role="tooltip" className="pull-tip">
+                  Paused
+                </span>
+              </span>
+            ) : (
+              chipEl
             );
           })}
           <button type="button" className="pulls-ghost" onClick={() => onFilters(clearedFilters(filters))}>

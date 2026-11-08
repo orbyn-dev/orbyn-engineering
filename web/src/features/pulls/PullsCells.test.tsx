@@ -184,7 +184,7 @@ describe("a filter that needs details", () => {
     expect(screen.getByRole("button", { name: /PR 9/ })).toBeInTheDocument();
     expect(screen.getByText(/GitHub is limiting requests, so the reviewer and check filters are paused\. They resume at \d\d:\d\d\./)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(screen.getByText("Review: needs my review").closest(".pulls-fchip")).toHaveAttribute("title", "Paused");
+    expect(screen.getByRole("tooltip", { name: "Paused" })).toBeInTheDocument();
     const calls = vi.mocked(pullsApi.details).mock.calls.length;
     await act(async () => void (await vi.advanceTimersByTimeAsync(61_000)));
     expect(vi.mocked(pullsApi.details).mock.calls.length).toBe(calls + 1);
