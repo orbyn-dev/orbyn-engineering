@@ -27,7 +27,7 @@ test("composer keys open the model picker, effort and the branch switcher", asyn
   const picker = page.getByRole("dialog", { name: "Choose a model" });
   await expect(picker).toBeVisible();
   await picker.getByRole("combobox", { name: "Search models" }).press("ArrowLeft");
-  await expect(picker.getByRole("tab", { selected: true })).toBeFocused();
+  await expect(picker.getByRole("button", { pressed: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await box(page).press("ControlOrMeta+Shift+e");
   await expect(page.getByRole("menu", { name: "Composer options" })).toBeVisible();

@@ -71,8 +71,8 @@ describe("App against the mock API", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "Claude Sonnet" }));
     const picker = await screen.findByRole("dialog", { name: "Choose a model" });
-    expect(within(picker).getByRole("tab", { name: /Aider \(terminal\) \(Unmanaged\)/ })).toBeInTheDocument();
-    expect(within(picker).queryByRole("tab", { name: /Cursor Agent/ })).toBeNull();
+    expect(within(picker).getByRole("button", { name: /Aider \(terminal\) \(Unmanaged\)/ })).toBeInTheDocument();
+    expect(within(picker).queryByRole("button", { name: /Cursor Agent/ })).toBeNull();
     await user.click(within(picker).getAllByRole("option", { name: /Claude Opus/ })[0]!);
     expect(await screen.findByRole("button", { name: "Claude Opus" })).toBeInTheDocument();
   });

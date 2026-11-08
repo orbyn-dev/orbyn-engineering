@@ -16,7 +16,7 @@ const values = async (service: Service, project?: string) => Object.fromEntries(
 async function selectModel(page: Page, label: string) {
   await modelRow(page).locator("[data-model-trigger]").click();
   const picker = page.getByRole("dialog", { name: "Choose a model" });
-  await picker.getByRole("tab", { name: /^Codex$/ }).click();
+  await picker.getByRole("button", { name: /^Codex$/ }).click();
   await picker.getByRole("option").filter({ hasText: label }).click();
 }
 
@@ -139,7 +139,7 @@ test("Escape closes only the model picker inside the settings page, including fr
       await expect(search).toBeFocused();
       if (focus === "provider") {
         await search.press("Tab");
-        await expect(picker.getByRole("tab", { selected: true })).toBeFocused();
+        await expect(picker.getByRole("button", { pressed: true })).toBeFocused();
       }
       await page.keyboard.press("Escape");
       await expect(picker).toHaveCount(0);

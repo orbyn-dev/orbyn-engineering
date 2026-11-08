@@ -58,7 +58,7 @@ async function openWithNeighbours() {
   const trigger = screen.getByRole("button", { name: "Small model" });
   await user.click(trigger);
   const picker = await screen.findByRole("dialog", { name: "Choose a model" });
-  return { user, trigger, picker, search: within(picker).getByRole("combobox", { name: "Search models" }), chip: within(picker).getByRole("tab", { name: "All" }) };
+  return { user, trigger, picker, search: within(picker).getByRole("combobox", { name: "Search models" }), chip: within(picker).getByRole("button", { name: "All" }) };
 }
 
 it("Shift+Tab from the chips goes to the search field, and from the search field closes before the trigger", async () => {
@@ -112,8 +112,8 @@ async function openTwo() {
 
 it("builds its chips from the engines it is given: All, then each by its full name", async () => {
   const { picker } = await openTwo();
-  expect(within(picker).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["All", "Claude Code", "Codex"]);
-  expect(within(picker).getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+  expect(within(picker).getAllByRole("button").filter((button) => button.hasAttribute("aria-pressed")).map((tab) => tab.textContent)).toEqual(["All", "Claude Code", "Codex"]);
+  expect(within(picker).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
 });
 
 it("lists every provider under its full name, with the note only where the engine reported one", async () => {
@@ -128,24 +128,24 @@ it("lists every provider under its full name, with the note only where the engin
 
 it("a chip shows only that provider's models, and the arrow keys move between chips", async () => {
   const { user, picker } = await openTwo();
-  await user.click(within(picker).getByRole("tab", { name: "Codex" }));
+  await user.click(within(picker).getByRole("button", { name: "Codex" }));
   expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Small model", "Big model"]);
-  within(picker).getByRole("tab", { name: "Codex" }).focus();
+  within(picker).getByRole("button", { name: "Codex" }).focus();
   await user.keyboard("{ArrowLeft}");
-  expect(within(picker).getByRole("tab", { name: "Claude Code" })).toHaveFocus();
-  expect(within(picker).getByRole("tab", { name: "Claude Code" })).toHaveAttribute("aria-selected", "true");
+  expect(within(picker).getByRole("button", { name: "Claude Code" })).toHaveFocus();
+  expect(within(picker).getByRole("button", { name: "Claude Code" })).toHaveAttribute("aria-pressed", "true");
   await user.keyboard("{Home}");
-  expect(within(picker).getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+  expect(within(picker).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   expect(within(picker).getAllByRole("option")).toHaveLength(4);
 });
 
 it("typing filters across all providers and drops a heading that has no match", async () => {
   const { user, picker, search } = await openTwo();
-  await user.click(within(picker).getByRole("tab", { name: "Claude Code" }));
+  await user.click(within(picker).getByRole("button", { name: "Claude Code" }));
   await user.type(search, "big");
   expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Big model"]);
   expect(within(picker).getAllByRole("group")).toHaveLength(1);
-  expect(within(picker).getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+  expect(within(picker).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   await user.clear(search);
   await user.type(search, "zzz");
   expect(within(picker).getByRole("status")).toHaveTextContent("No models found");
@@ -171,7 +171,7 @@ it("moves through the rows with the arrow keys, announces the active one, and pi
 it("ArrowLeft in an empty search field moves to the chosen chip", async () => {
   const { user, picker } = await openTwo();
   await user.keyboard("{ArrowLeft}");
-  expect(within(picker).getByRole("tab", { name: "All" })).toHaveFocus();
+  expect(within(picker).getByRole("button", { name: "All" })).toHaveFocus();
 });
 
 it("keeps its list scrollable to the end: the rows scroll, with room under the last one", () => {
@@ -205,4 +205,20 @@ it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-cl
   expect(pick).toHaveBeenCalledTimes(1);
   expect(pick).toHaveBeenCalledWith({ engine: "claude", model: "opus" });
   expect(picker).toBeDefined();
+});
+
+it("keeps a row highlighted when the search clears, so Enter picks what is shown as active", async () => {
+  const pick = vi.fn();
+  useModelStore.setState({ byEngine: { claude, codex }, loading: {}, errors: {} });
+  const user = userEvent.setup();
+  render(<ModelPickerTrigger engines={two} selected={{ engine: "codex", model: "small" }} onPick={pick} />);
+  await user.click(screen.getByRole("button", { name: "Small model" }));
+  const search = await screen.findByRole("combobox", { name: "Search models" });
+  expect(search).toHaveAttribute("aria-autocomplete", "list");
+  await user.type(search, "big");
+  await user.clear(search);
+  const rows = screen.getAllByRole("option");
+  expect(search).toHaveAttribute("aria-activedescendant", rows[0]!.id);
+  await user.keyboard("{Enter}");
+  expect(pick).toHaveBeenCalledWith({ engine: "claude", model: "opus" });
 });

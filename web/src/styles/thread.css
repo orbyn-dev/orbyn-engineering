@@ -2276,7 +2276,7 @@ button.detail-row:hover {
   font-size: var(--text-meta);
   cursor: pointer;
 }
-.model-chip[aria-selected="true"] {
+.model-chip[aria-pressed="true"] {
   background: var(--color-selected);
   color: var(--color-text);
 }

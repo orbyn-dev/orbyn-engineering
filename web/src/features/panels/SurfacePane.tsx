@@ -231,9 +231,8 @@ export function SurfacePane({
     return () => observer?.disconnect();
   }, [refit]);
   useLayoutEffect(refit, [count, refit]);
-  const { shown, hidden } = visibleTabs(rowIds, tab, promoted, slots);
   // A hidden tab that became the open one by any route keeps the slot it took.
-  const holder = slots >= count ? null : rowIds.slice(0, Math.max(1, slots)).includes(tab) ? (promoted && rowIds.includes(promoted) ? promoted : null) : tab;
+  const { shown, hidden, holder } = visibleTabs(rowIds, tab, promoted, slots);
   useLayoutEffect(() => {
     if (holder !== promoted) setPromoted(holder);
   }, [holder, promoted]);
@@ -273,11 +272,14 @@ export function SurfacePane({
   const closeWithFocus = (id: RightTab) => {
     const at = rowIds.indexOf(id);
     const neighbour = rowIds[at + 1] ?? rowIds[at - 1];
+    // A neighbour folded into "..." has no slot to hold focus: the tab that opens takes the last slot.
+    const hiddenNext = neighbour !== undefined && !shown.includes(neighbour);
     const target =
       (neighbour ? list.current?.querySelector<HTMLElement>(`#${TAB_ID}${neighbour}`) : null) ?? plusButton.current ?? list.current;
     const back = captureFocusReturn(target);
     flushSync(() => closeTab(id));
     back.restore();
+    if (hiddenNext) requestAnimationFrame(() => list.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus());
     setSaid("Tab closed");
   };
   // One Tab stop: the chosen tab. Arrows move between tabs, Delete closes one, Alt+Shift+Arrow moves it.

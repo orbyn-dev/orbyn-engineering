@@ -175,9 +175,13 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   await expect(picker.getByRole("option").first()).toBeVisible({ timeout: 15_000 });
   const choice = picker.getByRole("option").nth(1);
   const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
-  await picker.getByRole("combobox", { name: "Search models" }).fill(label);
-  await expect(picker.getByRole("option").first()).toBeVisible();
-  await picker.getByRole("combobox", { name: "Search models" }).press("Enter");
+  // The thread.jump shortcuts are listed in Keybindings and belong to the page: the open picker keeps them off it.
+  await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+1");
+  await expect(picker).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`#/threads/${id}$`));
+  const exact = picker.getByRole("option").filter({ has: page.locator("b", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
+  await expect(exact).toHaveCount(1);
+  await exact.click();
   await expect.poll(async () => (await thread(id) as unknown as { model: string | null }).model).not.toBeNull();
   await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
 

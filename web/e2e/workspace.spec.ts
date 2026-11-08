@@ -429,9 +429,18 @@ async function openPanel(page: import("@playwright/test").Page) {
   await page.goto("/__mock/scenario/default?to=/%23/threads/t-done");
   await page.getByRole("button", { name: "Show side panel" }).click();
   await expect(page.getByRole("tablist", { name: "Panel tabs" })).toBeVisible();
-  // The panel slides in; wait for it to settle.
-  await expect(page.locator(".context")).not.toHaveAttribute("data-moves", { timeout: 5_000 }).catch(() => {});
-  await page.waitForTimeout(500);
+  // The panel slides in; wait until its left edge stops moving.
+  await expect
+    .poll(() =>
+      page.locator(".context").evaluate(
+        (pane) =>
+          new Promise<boolean>((resolve) => {
+            const x = pane.getBoundingClientRect().x;
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(pane.getBoundingClientRect().x === x)));
+          }),
+      ),
+    )
+    .toBe(true);
 }
 /** Sets the panel's width, past the 320px the resizer allows, to see the strip at the widths the designs draw. */
 const resize = async (page: import("@playwright/test").Page, width: number) => {

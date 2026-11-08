@@ -75,7 +75,6 @@ interface Prefs {
   threadSort: "updated_at" | "created_at";
   projectSort: "updated_at" | "created_at";
   /** `engine:model` keys. */
-  modelFavorites: string[];
   modelHidden: string[];
   modelOrder: string[];
   effortDisplay: "label" | "bars";
@@ -219,7 +218,6 @@ const defaults: Prefs = {
   multilineRows: false,
   threadSort: "updated_at",
   projectSort: "updated_at",
-  modelFavorites: [],
   modelHidden: [],
   modelOrder: [],
   effortDisplay: "label",
@@ -397,7 +395,6 @@ const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): Prefs =>
   multilineRows: state.multilineRows,
   threadSort: state.threadSort,
   projectSort: state.projectSort,
-  modelFavorites: state.modelFavorites,
   modelHidden: state.modelHidden,
   modelOrder: state.modelOrder,
   effortDisplay: state.effortDisplay,

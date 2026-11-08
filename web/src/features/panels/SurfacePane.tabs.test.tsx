@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
@@ -194,14 +194,18 @@ describe("surface tabs", () => {
 
   it("with one tab left, hides the Tab menu and so Close tab, and Delete keeps the tab too", async () => {
     const user = userEvent.setup();
+    const onReturn = vi.fn();
     useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side", "tools"] });
-    pane();
+    pane({ onReturn });
     expect(names()).toEqual(["Diff"]);
     expect(screen.queryByRole("button", { name: "Tab menu" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
     screen.getByRole("tab", { name: "Diff" }).focus();
     await user.keyboard("{Delete}");
     expect(names()).toEqual(["Diff"]);
+    // The side panel's × at the end of the strip is what closes the last tab.
+    await user.click(screen.getByRole("button", { name: "Close side panel" }));
+    expect(onReturn).toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Browser", "Activity", "Side chat", "Tools", "Reset tab order"]);
   });
@@ -348,6 +352,28 @@ describe("tabs that do not fit", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "More tabs" })).toHaveFocus();
+  });
+
+  it("keeps the open tab visible when it is the last slot and a tab was picked from the menu earlier", async () => {
+    const user = userEvent.setup();
+    restore = narrow(244);
+    pane();
+    await user.click(screen.getByRole("button", { name: "More tabs" }));
+    await user.click(screen.getByRole("menuitem", { name: "Side chat" }));
+    expect(ids()).toEqual(["diff", "files", "side"]);
+    act(() => useUi.getState().togglePanel("browser"));
+    expect(ids()).toEqual(["diff", "files", "browser"]);
+  });
+
+  it("focuses the tab that opens in the last slot when the next tab is folded away", async () => {
+    const user = userEvent.setup();
+    restore = narrow(244);
+    useUi.setState({ panelTab: "browser" });
+    pane();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close tab" }));
+    await waitFor(() => expect(screen.getByRole("tab", { selected: true })).toHaveFocus());
+    expect(screen.getByRole("tab", { selected: true })).toHaveAttribute("aria-label", "Activity");
   });
 
   it("walks the arrow keys over the visible tabs only", async () => {

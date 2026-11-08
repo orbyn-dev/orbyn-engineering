@@ -6,7 +6,6 @@ import { useCommand } from "../../app/shortcuts";
 import { useUi } from "../../state/ui";
 import { EngineGlyph } from "../../ui/badges";
 import { closingProps, Presence } from "../../ui/Presence";
-import { tabKeys } from "../../ui/tabKeys";
 import { usePopover } from "../../ui/usePopover";
 import {
   arrangeModels,
@@ -155,7 +154,7 @@ function ModelPopover({
   // them; Shift+Tab the reverse.
   const panes = [
     { root: search, focus: () => input.current?.focus() },
-    { root: chips, focus: () => chips.current?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]')?.focus() },
+    { root: chips, focus: () => chips.current?.querySelector<HTMLElement>('button[tabindex="0"]')?.focus() },
   ];
   const popover = usePopover({
     kind: "menu",
@@ -203,16 +202,19 @@ function ModelPopover({
   };
 
   const onKey = (event: React.KeyboardEvent) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+      // The listed thread.jump shortcuts, not this popover's: it does not let them act on the page behind it.
+      event.preventDefault();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActive((Math.max(active, step > 0 ? -1 : 0) + step + ordered.length) % Math.max(ordered.length, 1));
     } else if (event.key === "ArrowLeft" && !query) {
       event.preventDefault();
-      chips.current?.querySelector<HTMLButtonElement>('[role="tab"][tabindex="0"]')?.focus();
+      chips.current?.querySelector<HTMLButtonElement>('button[tabindex="0"]')?.focus();
     } else if (event.key === "Enter") {
       event.preventDefault();
-      const row = ordered[Math.max(active, searching ? 0 : -1)];
+      const row = ordered[active];
       if (row) pick(row);
     }
   };
@@ -262,6 +264,7 @@ function ModelPopover({
           role="combobox"
           aria-label="Search models"
           aria-expanded="true"
+          aria-autocomplete="list"
           aria-controls={listId}
           aria-activedescendant={active >= 0 && active < ordered.length ? `${listId}-${active}` : undefined}
           placeholder="Search models"
@@ -269,6 +272,7 @@ function ModelPopover({
           onKeyDown={onKey}
           onChange={(event) => {
             setQuery(event.target.value);
+            // A row stays highlighted, so Enter never picks one that is not.
             setActive(0);
           }}
         />
@@ -277,25 +281,33 @@ function ModelPopover({
         <div
           ref={chips}
           className="model-chips"
-          role="tablist"
+          role="toolbar"
           aria-label="Provider"
           onScroll={measure}
           onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") return;
-            tabKeys(event, (index) => {
-              const next = ids[index];
-              if (next) choose(next);
-            });
+            const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>("button")];
+            const at = buttons.indexOf(document.activeElement as HTMLElement);
+            if (at < 0) return;
+            const next =
+              event.key === "ArrowRight" ? (at + 1) % buttons.length
+              : event.key === "ArrowLeft" ? (at - 1 + buttons.length) % buttons.length
+              : event.key === "Home" ? 0
+              : event.key === "End" ? buttons.length - 1
+              : -1;
+            if (next < 0) return;
+            event.preventDefault();
+            buttons[next]?.focus();
+            const id = ids[next];
+            if (id) choose(id);
           }}
         >
           {ids.map((id) => (
             <button
               key={id}
               type="button"
-              role="tab"
               className="model-chip"
               aria-label={id !== ALL && engines.find((engine) => engine.id === id)?.capabilities.managed === false ? `${engineName(id)} (Unmanaged)` : undefined}
-              aria-selected={shownChip === id}
+              aria-pressed={shownChip === id}
               aria-controls={listId}
               tabIndex={shownChip === id ? 0 : -1}
               onClick={() => {
