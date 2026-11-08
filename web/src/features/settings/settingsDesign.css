@@ -228,9 +228,7 @@
   width: 40px;
   height: 40px;
   border-radius: var(--radius-11);
-  background: var(--color-primary);
-  color: var(--color-onAccent);
-  font-weight: 500;
+  object-fit: contain;
 }
 /* Layout reads as a block heading above its cards. */
 .settings-page .setting-line-stacked {

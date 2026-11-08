@@ -94,7 +94,7 @@ function ScopePicker({ axis, label, value, options, allLabel, disabled, onSelect
 
 /** This app has one device, so the select holds that one choice. */
 function LocalEnvironmentSelect() {
-  const info = useAsync("settings-environment-label", (signal) => api.info(signal));
+  const info = useAsync("settings-environment-label", (signal) => api.info(signal), { keep: true });
   if (info.error) return <span role="alert">{info.error.message} <Button small onClick={info.reload}>Retry</Button></span>;
   return <select aria-label="Device scope" value="this" onChange={() => undefined}><option value="this">{info.data?.environment_label ?? "Loading…"}</option></select>;
 }

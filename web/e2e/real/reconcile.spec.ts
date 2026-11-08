@@ -196,7 +196,7 @@ test("scheduled tasks: create, pause, run and delete through the form", async ({
 
 test("the keybindings page rebinds and the new key runs", async ({ page }) => {
   await page.goto(`${service.page}#/settings/keybindings`);
-  await expect(page.getByText("sidebar.toggle")).toBeVisible();
+  await expect(page.getByText("Toggle sidebar", { exact: true })).toBeVisible();
   await expect(page.getByText(/Couldn't/)).toHaveCount(0);
 });
 

@@ -92,9 +92,13 @@ export function elapsed(fromIso: string, toMs: number): string {
 export function clockTime(iso: string, format: "locale" | "12-hour" | "24-hour" = "locale"): string {
   const date = new Date(iso);
   const hour12 = format === "locale" ? undefined : format === "12-hour";
+  // No leading zero on a 12-hour clock (a 24-hour one keeps two digits), and AM or PM in capitals.
+  const twelve = format === "12-hour" || (format === "locale" && /^h1[12]$/.test(new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hourCycle ?? ""));
   return Number.isNaN(date.getTime())
     ? ""
-    : date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12 });
+    : date
+        .toLocaleTimeString(undefined, { hour: twelve ? "numeric" : "2-digit", minute: "2-digit", second: "2-digit", hour12 })
+        .replace(/\b(am|pm)\b/gi, (mark) => mark.toUpperCase());
 }
 
 export function fullTime(iso: string): string {

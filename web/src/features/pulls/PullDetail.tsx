@@ -28,7 +28,7 @@ import { PullsBanner } from "./PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
-import { mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
+import { bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
 
 type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
 
@@ -52,7 +52,7 @@ const waitingRun = (check: PullCheck): number | null => {
 };
 
 function Checks({ projectId, number }: { projectId: string; number: number }) {
-  const checks = useAsync(`pull-checks:${projectId}:${number}`, (signal) => pullsApi.checks(projectId, number, signal));
+  const checks = useAsync(`pull-checks:${projectId}:${number}`, (signal) => pullsApi.checks(projectId, number, signal), { keep: true });
   const pushToast = useUi((state) => state.pushToast);
   if (checks.status !== "ready" || checks.data.length === 0) return null;
   const approve = (run: number) => {
@@ -177,7 +177,8 @@ function Description({
 function Timeline({ projectId, number }: { projectId: string; number: number }) {
   const events = useAsync(`pull-timeline:${projectId}:${number}`, (signal) =>
     pullsApi.timeline(projectId, number, signal),
-  );
+  { keep: true },
+);
   const [kind, setKind] = useState("all");
   const kinds = useMemo(() => [...new Set((events.data ?? []).map((event) => event.kind))].sort(), [events.data]);
   if (events.status === "loading") return <Loading label="Loading timeline" rows={4} />;
@@ -274,12 +275,12 @@ export function PullDetail({
   /** Moves to another pull request in the same stack. */
   onOpen?(number: number): void;
 }) {
-  const detail = useAsync(`pull:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal));
+  const detail = useAsync(`pull:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal), { keep: true });
   const page = layout === "page";
   // What the page layout adds beside the detail: files, checks, the details the list also reads, and who is signed in.
-  const fileList = useAsync(`pull-files:${projectId}:${number}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])));
-  const checkList = useAsync(`pull-checklist:${projectId}:${number}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])));
-  const extras = useAsync(`pull-extras:${projectId}:${number}`, (signal) =>
+  const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])));
+  const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])));
+  const extras = useAsync(`pull-extras:${projectId}:${number}:${page}`, (signal) =>
     page ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: null }], fresh: false }, signal) : Promise.resolve({ details: [], paused: [] }),
   );
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal));
@@ -301,6 +302,12 @@ export function PullDetail({
   const loadedAt = useMemo(() => (detail.data ? Date.now() : null), [detail.data]);
   const [tab, setTab] = useState<Tab>("summary");
   const [merging, setMerging] = useState(false);
+  // The dialog is built from this detail, so it opens on a read that has finished: a kept
+  // copy drawn while the read runs could be of a pull request that has moved on.
+  const openMerge = () => {
+    if (!detail.refreshing) setMerging(true);
+    else void detail.reload().then(() => setMerging(true));
+  };
   const [mergeMethod, setMergeMethod] = useState("squash");
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -377,6 +384,8 @@ export function PullDetail({
       await work;
       pushToast(done);
       void detail.reload();
+      // A merge can delete the branch a checkout was on.
+      void useWorkspace.getState().refreshManaged();
       // What the banner and the tab counts read goes stale with the pull request.
       if (page) {
         void extras.reload();
@@ -639,7 +648,7 @@ export function PullDetail({
                 tone="primary"
                 icon={<GitMerge size={14} aria-hidden />}
                 disabled={mergeable === "conflicting"}
-                onClick={() => setMerging(true)}
+                onClick={openMerge}
               >
                 Merge
               </Button>
@@ -774,7 +783,7 @@ export function PullDetail({
           <div className="pull-cols">
             <div className="pull-main">
               <div className="pull-card pull-summary">
-                <b>Summary</b>
+                {bodyOpensWith(current.body, "Summary") ? null : <b>Summary</b>}
                 {description}
               </div>
               {requested !== null ? <RequestedChangesEntry note={requested} /> : null}
@@ -825,7 +834,7 @@ export function PullDetail({
           gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : requested !== null ? { ...gate, hint: "You requested changes." } : gate}
           menu={mergeMenu}
           onMenu={setMergeMenu}
-          onMerge={() => setMerging(true)}
+          onMerge={openMerge}
           hidden={pull.state === "merged"}
           dim={reviewing}
         />
