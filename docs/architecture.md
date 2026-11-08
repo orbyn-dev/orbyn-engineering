@@ -645,7 +645,7 @@ all. `?observe=true` attaches read-only: input and resizes are dropped. Fish sta
 with `no-query-term` so it does not wait on terminal replies.
 
 Tools and connectors are read-only. `GET /api/threads/:id/tools` and `GET /api/engines/:id/tools`
-(`?refresh=1` asks the engine again, `?project=` names a project's folder) return `EngineTools`: groups
+(`?refresh=1` asks the engine again) return `EngineTools`: groups
 `builtin`, `orbyn`, `mcp`, `connectors`, `plugins` and `skills`, each with entries whose state is
 `ready`, `starting`, `needs_sign_in` or `failed`, and `not_reported` naming the groups the engine
 cannot report. A group an engine does not report is left out, never shown empty. Claude Code is asked
@@ -656,8 +656,11 @@ because a run that passes `--mcp-config` lists only that server at init. Codex i
 app-server with `mcpServerStatus/list`, `app/list` and `plugin/list`; the app and plugin lists are very
 large, so they are reduced to names, states and short descriptions inside the driver, apps to those the
 person can reach and plugins to the installed and enabled. Only names, states and short reasons leave the
-engine's reply: no address, token or request body. Answers are kept for 30 seconds per engine and folder;
-an engine that does not answer returns the last list marked with an error. There is no per-tool switch:
+engine's reply: no address, token or request body. Both checks run in a neutral folder, never a project's, so no project config or server starts for a page view.
+Each driver keeps its engine-wide answer for 30 seconds and shares one read between callers, so opening
+threads does not start `claude mcp list` or a Codex app-server each time. A check that fails, or comes back
+with an error, returns the last good list marked with that error, and `error` is never set just because a
+group is absent. There is no per-tool switch:
 the engine decides what is enabled.
 
 The engine console (`POST /api/threads/:id/console`) opens the engine's own

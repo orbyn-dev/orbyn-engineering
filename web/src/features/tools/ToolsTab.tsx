@@ -1,4 +1,5 @@
 import { RefreshCw, Settings } from "lucide-react";
+import { useState } from "react";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited } from "../../lib/motion";
@@ -41,6 +42,18 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
   const engineName = engineById(engines, engine)?.name ?? engine;
   const tools = useAsync(`thread-tools:${threadId}`, (signal) => api.threadTools(threadId, false, signal));
   const waited = useWaited(tools.status === "loading");
+  const [checking, setChecking] = useState(false);
+  // Check again asks the engine itself; a plain reload could be answered from what is kept.
+  const checkAgain = async () => {
+    setChecking(true);
+    try {
+      tools.setData(await api.threadTools(threadId, true));
+    } catch {
+      await tools.reload();
+    } finally {
+      setChecking(false);
+    }
+  };
 
   if (tools.status === "loading") {
     return (
@@ -81,7 +94,7 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
   }
   return (
     <div className="tg-tools">
-      <Header engineName={engineName} source={data.source} checkedAt={data.checked_at} busy={tools.refreshing} onRefresh={data.source === "run" ? undefined : () => void tools.reload()} />
+      <Header engineName={engineName} source={data.source} checkedAt={data.checked_at} busy={checking || tools.refreshing} onRefresh={data.source === "run" ? undefined : () => void checkAgain()} />
       {data.error ? <p className="tg-note" role="status">{data.error} The list is from {clock(data.checked_at) ?? "earlier"}.</p> : null}
       <ToolsList tools={data} engineName={engineName} mode="thread" />
       <button type="button" className="tg-footlink" onClick={() => navigate({ name: "settings", section: "tools" })}>

@@ -110,9 +110,26 @@ async fn a_codex_thread_reports_only_what_codex_does_and_names_the_rest() {
 async fn an_engine_that_cannot_report_is_refused_plainly() {
     let dir = TempDir::new();
     let (service, _) = setup(&dir, Options::default(), "claude").await;
-    let (code, _) = service
-        .send("/api/engines/nonexistent/tools", Value::Null)
-        .await;
-    assert_ne!(code, 200);
+    let unknown = service
+        .get("/api/engines/nonexistent/tools")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status().as_u16(), 404);
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn asking_again_reads_the_engine_again_and_the_answer_stays_whole() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let path = format!("/api/threads/{thread}/tools");
+    let first = service.json(&path).await;
+    // A second ask inside the kept window and a forced one give the same list.
+    let again = service.json(&path).await;
+    let forced = service.json(&format!("{path}?refresh=1")).await;
+    assert_eq!(group(&first, "connectors"), group(&again, "connectors"));
+    assert_eq!(group(&first, "connectors"), group(&forced, "connectors"));
+    assert!(forced.get("error").is_none(), "{forced}");
     service.stop().await;
 }

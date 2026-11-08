@@ -128,6 +128,21 @@ describe("panel tab row", () => {
     expect(fresh.panelTabsClosed).toEqual([]);
   });
 
+  it("gives a saved row from before the Tools tab existed that tab, closed, whatever its closed list was", async () => {
+    localStorage.setItem(
+      "orbyn.prefs.v1",
+      JSON.stringify({
+        panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [],
+        layouts: { a: { panelTab: "files", panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] } },
+      }),
+    );
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(fresh.panelTabsClosed).toEqual(["tools"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools"]);
+  });
+
   it("skips a saved layout that is not an object instead of failing to load", async () => {
     localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ layouts: { a: null, b: 7, c: "x", d: { panelTab: "files" } } }));
     vi.resetModules();

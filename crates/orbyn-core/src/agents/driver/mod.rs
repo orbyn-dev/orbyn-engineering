@@ -412,6 +412,7 @@ pub trait EngineDriver: Send + Sync {
         &self,
         _cwd: &std::path::Path,
         _init: Option<&Value>,
+        _refresh: bool,
     ) -> Result<Option<orbyn_contracts::EngineTools>> {
         Ok(None)
     }

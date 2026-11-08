@@ -33,8 +33,11 @@ use crate::governance::approvals::Verdict;
 use crate::util::new_id;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
-/// The status lists can be large (thousands of apps), so they get longer than a plain call.
-const TOOLS_CALL_TIMEOUT: Duration = Duration::from_secs(45);
+/// The whole status check: starting an app-server and reading three lists, some with
+/// thousands of entries. One deadline for all of it, not one per call.
+const TOOLS_DEADLINE: Duration = Duration::from_secs(60);
+/// Pages followed for one list. A list longer than this is reported as possibly incomplete.
+const TOOLS_MAX_PAGES: usize = 20;
 /// An upload is slower than a read, so it does not share the read allowance.
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERRUPT_GRACE: Duration = Duration::from_secs(5);
@@ -56,6 +59,8 @@ pub struct CodexDriver {
     sandbox: String,
     /// The id and name of an instance, when this is one.
     named: Option<(String, String)>,
+    /// The tools Codex last reported, shared by every thread of this engine.
+    tools_list: Arc<crate::agents::tools_report::Probed<orbyn_contracts::EngineTools>>,
 }
 
 impl CodexDriver {
@@ -65,6 +70,7 @@ impl CodexDriver {
             program,
             sandbox,
             named: None,
+            tools_list: Arc::default(),
         }
     }
 }
@@ -109,6 +115,7 @@ impl EngineDriver for CodexDriver {
                 instance.id.clone(),
                 instance.name.clone().unwrap_or(instance.id.clone()),
             )),
+            tools_list: Arc::default(),
         }))
     }
 
@@ -297,43 +304,31 @@ impl EngineDriver for CodexDriver {
             .await
     }
 
-    /// Codex 0.166.0's `thread/revert` keeps the turns before `before_turn` as the
-    /// thread's durable history and leaves files alone. It answers only for a thread
-    /// it has loaded, so a short-lived app-server in the checkout resumes it first.
     async fn tools(
         &self,
         cwd: &std::path::Path,
         _init: Option<&Value>,
+        refresh: bool,
     ) -> Result<Option<orbyn_contracts::EngineTools>> {
-        let session = self.short_session_experimental(cwd).await?;
-        // Each list is read on its own: one that does not answer leaves its group out
-        // rather than hiding the rest. The app and plugin lists are very large, so they are
-        // reduced to names and states here and never leave this function whole.
-        let servers = session
-            .rpc
-            .call("mcpServerStatus/list", json!({}), TOOLS_CALL_TIMEOUT)
-            .await
-            .ok();
-        let apps = session
-            .rpc
-            .call("app/list", json!({}), TOOLS_CALL_TIMEOUT)
-            .await
-            .ok();
-        let plugins = session
-            .rpc
-            .call("plugin/list", json!({}), TOOLS_CALL_TIMEOUT)
-            .await
-            .ok();
-        if servers.is_none() && apps.is_none() && plugins.is_none() {
-            return Err(CoreError::Internal("Codex did not answer.".into()));
-        }
-        Ok(Some(codex_tools(
-            servers.as_ref(),
-            apps.as_ref(),
-            plugins.as_ref(),
-        )))
+        // Shared by every thread of this engine, and one overall deadline covers starting
+        // the app-server and all three lists.
+        let answer = self
+            .tools_list
+            .get(refresh, std::time::Duration::from_secs(30), || async {
+                tokio::time::timeout(TOOLS_DEADLINE, self.read_tools(cwd))
+                    .await
+                    .ok()
+                    .flatten()
+            })
+            .await;
+        answer
+            .map(Some)
+            .ok_or_else(|| CoreError::Internal("Codex did not answer.".into()))
     }
 
+    /// Codex 0.166.0's `thread/revert` keeps the turns before `before_turn` as the
+    /// thread's durable history and leaves files alone. It answers only for a thread
+    /// it has loaded, so a short-lived app-server in the checkout resumes it first.
     async fn revert_session(
         &self,
         cwd: &std::path::Path,
@@ -405,6 +400,35 @@ impl CodexDriver {
         self.short_session_in(&std::env::temp_dir()).await
     }
 
+    /// The three status lists of a short app-server, reduced to names and states. Each is
+    /// read on its own: one that does not answer leaves its group out rather than hiding
+    /// the rest. The app and plugin lists are very large, so they never leave this function whole.
+    async fn read_tools(&self, cwd: &std::path::Path) -> Option<orbyn_contracts::EngineTools> {
+        let deadline = std::time::Instant::now() + TOOLS_DEADLINE;
+        let left = || deadline.saturating_duration_since(std::time::Instant::now());
+        let session = self.short_session_experimental(cwd).await.ok()?;
+        let (servers, servers_cut) =
+            listed_pages(&session.rpc, "mcpServerStatus/list", deadline).await;
+        let (apps, apps_cut) = listed_pages(&session.rpc, "app/list", deadline).await;
+        let plugins = if left().is_zero() {
+            None
+        } else {
+            session
+                .rpc
+                .call("plugin/list", json!({}), left())
+                .await
+                .ok()
+        };
+        if servers.is_none() && apps.is_none() && plugins.is_none() {
+            return None;
+        }
+        let mut tools = codex_tools(servers.as_ref(), apps.as_ref(), plugins.as_ref());
+        if servers_cut || apps_cut {
+            tools.error = Some("Codex's list may be incomplete.".into());
+        }
+        Some(tools)
+    }
+
     /// A short app-server that takes the experimental calls the status lists need.
     async fn short_session_experimental(&self, cwd: &std::path::Path) -> Result<ShortSession> {
         let command = resolve_engine(&self.program)?;
@@ -444,6 +468,40 @@ impl CodexDriver {
             _process: process.child,
         })
     }
+}
+
+/// One status list, following `nextCursor` while the shared deadline allows. Returns the
+/// entries gathered as `{ "data": [...] }` (or `None` if the first page failed) and whether
+/// the list was cut short by the deadline or the page cap.
+async fn listed_pages(
+    rpc: &RpcClient,
+    method: &str,
+    deadline: std::time::Instant,
+) -> (Option<Value>, bool) {
+    let left = || deadline.saturating_duration_since(std::time::Instant::now());
+    let mut gathered: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut got_any = false;
+    for _ in 0..TOOLS_MAX_PAGES {
+        if left().is_zero() {
+            return (got_any.then(|| json!({ "data": gathered })), true);
+        }
+        let params = cursor
+            .as_ref()
+            .map_or(json!({}), |at| json!({ "cursor": at }));
+        let Ok(page) = rpc.call(method, params, left()).await else {
+            return (got_any.then(|| json!({ "data": gathered })), got_any);
+        };
+        got_any = true;
+        if let Some(items) = page.get("data").and_then(Value::as_array) {
+            gathered.extend(items.iter().cloned());
+        }
+        match page.get("nextCursor").and_then(Value::as_str) {
+            Some(next) if !next.is_empty() => cursor = Some(next.to_owned()),
+            _ => return (Some(json!({ "data": gathered })), false),
+        }
+    }
+    (Some(json!({ "data": gathered })), true)
 }
 
 /// The Tools list for Codex, from what `mcpServerStatus/list`, `app/list` and `plugin/list`

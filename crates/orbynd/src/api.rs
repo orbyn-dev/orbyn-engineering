@@ -864,7 +864,7 @@ pub async fn thread_tools(
     ))
 }
 
-/// The same for Settings: an engine, in a project's folder when one is named.
+/// The same for Settings: an engine, without a thread.
 pub async fn engine_tools(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -873,11 +873,7 @@ pub async fn engine_tools(
     Ok(Json(
         state
             .core
-            .engine_tools(
-                &id,
-                query.get("project").map(String::as_str),
-                query.contains_key("refresh"),
-            )
+            .engine_tools(&id, query.contains_key("refresh"))
             .await?,
     ))
 }

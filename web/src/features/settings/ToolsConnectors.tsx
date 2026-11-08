@@ -30,9 +30,11 @@ function EnginePanel({ engine, name }: { engine: string; name: string }) {
       setChecking(false);
     }
   };
+  const retry = () => void (tools.status === "error" ? tools.reload() : checkAgain());
   const data = tools.data;
   const at = clock(data?.checked_at);
-  const failed = tools.status === "error";
+  // A check can fail as a request, or come back 200 with an error beside the last good list.
+  const failed = tools.status === "error" || Boolean(data?.error);
   return (
     <div role="tabpanel" aria-label={name}>
       <div className="tg-set-head">
@@ -49,9 +51,9 @@ function EnginePanel({ engine, name }: { engine: string; name: string }) {
           <AlertTriangle size={14} aria-hidden className="tg-icon" />
           <span className="tg-name">
             <b>Couldn’t check {name} tools</b>
-            <small className="tg-why">{name} didn’t answer.{data ? ` The list below is from ${at ?? "earlier"}.` : ""}</small>
+            <small className="tg-why">{data?.error ?? `${name} didn’t answer.`}{data ? ` The list below is from ${at ?? "earlier"}.` : ""}</small>
           </span>
-          <Button small onClick={() => void tools.reload()}>Retry</Button>
+          <Button small onClick={retry}>Retry</Button>
         </div>
       ) : null}
       {data ? (
@@ -71,7 +73,9 @@ function EnginePanel({ engine, name }: { engine: string; name: string }) {
 /** Settings › Agents › Tools and connectors: what each engine has, read-only. */
 export function ToolsConnectorsSection() {
   // Only Claude Code and Codex can say what they have; the other engines have no such report.
-  const engines = (useWorkspace((state) => state.engines.data) ?? []).filter((one) => one.installed && /^(claude|codex)/.test(one.id));
+  const engines = (useWorkspace((state) => state.engines.data) ?? []).filter(
+    (one) => one.installed && ["claude", "codex"].includes(one.instance_of ?? one.id),
+  );
   const [picked, setPicked] = useState<string | null>(null);
   const current = engines.find((one) => one.id === picked) ?? engines[0];
   return (

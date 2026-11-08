@@ -62,6 +62,8 @@ pub struct ClaudeDriver {
     named: Option<(String, String)>,
     /// Tokens before Claude compacts, from the instance.
     auto_compact_window: Option<u32>,
+    /// What `claude mcp list` said, shared by every thread of this engine.
+    mcp_list: Arc<crate::agents::tools_report::Probed<Vec<McpListed>>>,
 }
 
 impl ClaudeDriver {
@@ -70,6 +72,7 @@ impl ClaudeDriver {
             program,
             named: None,
             auto_compact_window: None,
+            mcp_list: Arc::default(),
         }
     }
 }
@@ -499,7 +502,7 @@ fn launch_settings(spec: &RunSpec, window: Option<u32>) -> Option<Value> {
 }
 
 /// One line of `claude mcp list`: the server's name, and what the CLI says of it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct McpListed {
     pub name: String,
     pub state: String,
@@ -670,12 +673,20 @@ fn claude_tools(
     {
         groups.push(counted("skills", usize::try_from(count).unwrap_or(0)));
     }
-    assemble(
+    let mut tools = assemble(
         "claude",
         if init.is_some() { "run" } else { "check" },
         groups,
         init.is_some(),
-    )
+    );
+    if listed.is_none() {
+        // The CLI could not be asked, which says nothing about whether it has servers.
+        tools.error = Some("Claude Code did not list its servers.".into());
+        tools
+            .not_reported
+            .retain(|id| id != "mcp" && id != "connectors");
+    }
+    tools
 }
 
 static SERVERS_LEARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -874,6 +885,7 @@ impl EngineDriver for ClaudeDriver {
                 .auto_compact_window
                 .as_deref()
                 .and_then(|window| window.parse().ok()),
+            mcp_list: Arc::default(),
         }))
     }
 
@@ -898,11 +910,18 @@ impl EngineDriver for ClaudeDriver {
         &self,
         _cwd: &Path,
         init: Option<&Value>,
+        refresh: bool,
     ) -> Result<Option<orbyn_contracts::EngineTools>> {
         // Asked in a neutral folder on purpose: `claude mcp list` starts the servers it
         // checks, and a project's `.mcp.json` must not run just because a page was opened.
-        // A project's own servers show through the frame its runs report.
-        let listed = list_mcp(&self.program).await;
+        // A project's own servers show through the frame its runs report. The answer is
+        // shared by every thread of this engine for half a minute.
+        let listed = self
+            .mcp_list
+            .get(refresh, std::time::Duration::from_secs(30), || {
+                list_mcp(&self.program)
+            })
+            .await;
         Ok(Some(claude_tools(listed.as_deref(), init)))
     }
 

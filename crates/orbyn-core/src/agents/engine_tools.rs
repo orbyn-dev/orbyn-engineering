@@ -1,40 +1,44 @@
 //! What a thread's engine has available, for the Tools tab and Settings. The engine is
-//! asked (a CLI status command or a short app-server), what its last run reported is added,
-//! and the answer is kept for half a minute so a tab opened twice asks once.
+//! asked in a neutral folder (the drivers keep each engine-wide answer for half a minute and
+//! share one read between callers), what the thread's last run reported is added, and the
+//! last good list stays when a later check fails.
 
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
 
 use orbyn_contracts::{EngineTools, ToolGroup};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 
-const KEEP: Duration = Duration::from_secs(30);
-
-/// The last answer per engine and folder.
+/// The last good list per engine and thread, kept so a failed check can still show it.
 #[derive(Default)]
 pub(crate) struct ToolsCache {
-    entries: std::collections::HashMap<String, (Instant, EngineTools)>,
+    last: std::collections::HashMap<String, EngineTools>,
 }
 
 impl ToolsCache {
-    fn fresh(&self, key: &str) -> Option<EngineTools> {
-        self.entries
-            .get(key)
-            .filter(|(at, _)| at.elapsed() < KEEP)
-            .map(|(_, tools)| tools.clone())
-    }
-
     fn last(&self, key: &str) -> Option<EngineTools> {
-        self.entries.get(key).map(|(_, tools)| tools.clone())
+        self.last.get(key).cloned()
     }
 
     fn keep(&mut self, key: String, tools: EngineTools) {
-        if self.entries.len() > 64 {
-            self.entries.clear();
+        if self.last.len() > 64 {
+            self.last.clear();
         }
-        self.entries.insert(key, (Instant::now(), tools));
+        self.last.insert(key, tools);
+    }
+}
+
+/// The answer to show, given what the engine just said and the last good list: a check that
+/// came back with an error keeps the list the person already had, marked with that error.
+fn settle(answer: EngineTools, last: Option<EngineTools>) -> (EngineTools, bool) {
+    match (answer.error.clone(), last) {
+        (Some(error), Some(mut last)) => {
+            last.error = Some(error);
+            (last, false)
+        }
+        (Some(_), None) => (answer, false),
+        (None, _) => (answer, true),
     }
 }
 
@@ -46,45 +50,35 @@ impl Core {
         let init =
             self.store
                 .latest_custom_event(Some(thread_id), "engine.tools", Some(&family))?;
-        let cwd = Path::new(&thread.cwd).to_path_buf();
-        self.tools_for(&thread.engine, &cwd, init, refresh, Some(thread_id))
+        self.tools_for(&thread.engine, init, refresh, Some(thread_id))
             .await
     }
 
     /// The tools of an engine for Settings: the engine asked now, with the newest run's
-    /// report from any thread, in the project's folder when one is chosen.
-    pub async fn engine_tools(
-        &self,
-        engine: &str,
-        project: Option<&str>,
-        refresh: bool,
-    ) -> Result<EngineTools> {
-        let cwd = match project {
-            Some(id) => Path::new(&self.store.project(id)?.path).to_path_buf(),
-            None => std::env::temp_dir(),
-        };
+    /// report from any thread.
+    pub async fn engine_tools(&self, engine: &str, refresh: bool) -> Result<EngineTools> {
         let family = self.engines.driver(engine)?.family();
         let init = self
             .store
             .latest_custom_event(None, "engine.tools", Some(&family))?;
-        self.tools_for(engine, &cwd, init, refresh, None).await
+        self.tools_for(engine, init, refresh, None).await
     }
 
     async fn tools_for(
         &self,
         engine: &str,
-        cwd: &Path,
         init: Option<(String, serde_json::Value)>,
         refresh: bool,
         thread: Option<&str>,
     ) -> Result<EngineTools> {
         let driver = self.engines.driver(engine)?;
-        let key = format!("{engine}\n{}\n{}", cwd.display(), thread.unwrap_or(""));
-        if !refresh && let Some(fresh) = lock(&self.tool_lists).fresh(&key) {
-            return Ok(fresh);
-        }
+        let key = format!("{engine}\n{}", thread.unwrap_or(""));
+        // A neutral folder, never the thread's: asking Codex starts an app-server that
+        // loads its folder's `.codex` config and servers, and a project's must not run
+        // because a tab was opened. A project's own servers show through a run's frame.
+        let cwd: PathBuf = std::env::temp_dir();
         let answered = driver
-            .tools(cwd, init.as_ref().map(|(_, value)| value))
+            .tools(&cwd, init.as_ref().map(|(_, value)| value), refresh)
             .await;
         let mut tools = match answered {
             Ok(Some(tools)) => tools,
@@ -94,21 +88,19 @@ impl Core {
                 ));
             }
             Err(error) => {
-                // The last list stays, marked, so nothing the person knew disappears.
                 let mut last = lock(&self.tool_lists).last(&key).ok_or(error)?;
                 last.error = Some("The engine did not answer.".into());
                 return Ok(last);
             }
         };
         tools.engine = engine.to_owned();
-        if let Some((ts, _)) = &init
-            && tools.source == "run"
-        {
-            tools.checked_at = Some(ts.clone());
-        }
         self.add_skills(&mut tools);
-        lock(&self.tool_lists).keep(key, tools.clone());
-        Ok(tools)
+        let last = lock(&self.tool_lists).last(&key);
+        let (shown, good) = settle(tools, last);
+        if good {
+            lock(&self.tool_lists).keep(key, shown.clone());
+        }
+        Ok(shown)
     }
 
     /// Orbyn's own skills library is known without asking the engine, so it fills the
@@ -136,4 +128,50 @@ fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list(error: Option<&str>, names: &[&str]) -> EngineTools {
+        EngineTools {
+            engine: "claude".into(),
+            source: "check".into(),
+            checked_at: Some("2026-11-08T10:00:00Z".into()),
+            groups: vec![ToolGroup {
+                id: "mcp".into(),
+                count: names.len() as u32,
+                items: Vec::new(),
+            }],
+            not_reported: Vec::new(),
+            error: error.map(str::to_owned),
+            reported: true,
+        }
+    }
+
+    #[test]
+    fn a_good_answer_replaces_the_last_one_and_is_kept() {
+        let (shown, keep) = settle(list(None, &["a", "b"]), Some(list(None, &["a"])));
+        assert_eq!(shown.groups[0].count, 2);
+        assert!(keep);
+    }
+
+    #[test]
+    fn a_check_with_an_error_keeps_the_last_good_list_marked_with_that_error() {
+        let (shown, keep) = settle(
+            list(Some("did not list"), &[]),
+            Some(list(None, &["a", "b"])),
+        );
+        assert_eq!(shown.groups[0].count, 2, "the earlier list stays");
+        assert_eq!(shown.error.as_deref(), Some("did not list"));
+        assert!(!keep, "an errored answer never becomes the last good one");
+    }
+
+    #[test]
+    fn with_no_earlier_list_the_errored_answer_is_all_there_is() {
+        let (shown, keep) = settle(list(Some("did not list"), &[]), None);
+        assert_eq!(shown.error.as_deref(), Some("did not list"));
+        assert!(!keep);
+    }
 }

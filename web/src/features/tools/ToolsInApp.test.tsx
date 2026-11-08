@@ -67,3 +67,32 @@ it("keeps the last list, dimmed, when an engine does not answer the check", asyn
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument();
 });
+
+it("shows the alert and dims the kept list when a check comes back 200 with an error", async () => {
+  vi.spyOn(api, "engineTools").mockImplementation(async (engine) => ({
+    ...engineTools(engine), error: "Claude Code did not list its servers.",
+  }));
+  window.location.hash = "#/settings/tools";
+  const { container } = render(<App />);
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText(/Couldn’t check Claude Code tools/)).toBeInTheDocument();
+  expect(within(alert).getByText(/did not list its servers/)).toBeInTheDocument();
+  expect(container.querySelector(".tg-stale")).not.toBeNull();
+  expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument();
+});
+
+it("gives a tab to Claude Code and Codex and their instances, and to no other engine", async () => {
+  vi.spyOn(api, "engines").mockResolvedValue([
+      { id: "claude", name: "Claude Code", installed: true, capabilities: { managed: true } },
+      { id: "claude-wide", name: "Claude wide", installed: true, instance_of: "claude", capabilities: { managed: true } },
+      { id: "codex", name: "Codex", installed: true, capabilities: { managed: true } },
+      { id: "gemini", name: "Gemini CLI", installed: true, capabilities: { managed: true } },
+      { id: "custom", name: "Custom agent", installed: true, instance_of: "acp", capabilities: { managed: true } },
+    ] as never);
+  vi.spyOn(api, "engineTools").mockImplementation(async (engine) => engineTools(engine));
+  window.location.hash = "#/settings/tools";
+  render(<App />);
+  await screen.findByRole("tab", { name: "Claude Code" });
+  const tabs = within(screen.getByRole("tablist", { name: "Engine" })).getAllByRole("tab").map((tab) => tab.textContent);
+  expect(tabs).toEqual(["Claude Code", "Claude wide", "Codex"]);
+});

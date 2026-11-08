@@ -85,3 +85,20 @@ it("offers Try again when the engine does not answer", async () => {
   await user.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument());
 });
+
+it("Check again asks the engine itself, not a kept answer", async () => {
+  const user = userEvent.setup();
+  const read = vi.spyOn(api, "threadTools").mockResolvedValue(engineTools("codex"));
+  render(<ToolsTab threadId="t" engine="codex" />);
+  await screen.findByRole("region", { name: "Connectors" });
+  expect(read).toHaveBeenLastCalledWith("t", false, expect.anything());
+  await user.click(screen.getByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(read).toHaveBeenLastCalledWith("t", true));
+});
+
+it("keeps the list and says why when the engine's check came back with an error", async () => {
+  vi.spyOn(api, "threadTools").mockResolvedValue({ ...engineTools("codex"), error: "Codex's list may be incomplete." });
+  render(<ToolsTab threadId="t" engine="codex" />);
+  expect(await screen.findByText(/Codex's list may be incomplete/)).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument();
+});
