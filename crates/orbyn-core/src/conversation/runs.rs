@@ -67,6 +67,25 @@ fn write_scope(root: &Path, checkout: &Path, from_checkout: bool) -> WriteScope 
     }
 }
 
+/// Where a thread's engine process starts for a run, and whether its relative paths
+/// then mean the checkout. Claude starts in the checkout, or in the library for a
+/// session that began there; Codex's process starts at the root with its turns on the
+/// checkout; the rest start in the checkout.
+fn engine_start(
+    driver: &dyn EngineDriver,
+    native: bool,
+    root: &Path,
+    checkout: &Path,
+    session: Option<&str>,
+) -> (PathBuf, bool) {
+    if let Some(cwd) = driver.start_dir(root, checkout, session) {
+        let at_checkout = cwd == checkout;
+        return (cwd, at_checkout);
+    }
+    let cwd = if native { root } else { checkout };
+    (cwd.to_path_buf(), driver.resolves_from_checkout())
+}
+
 async fn branch_name(checkout: &Path) -> Option<String> {
     let name = git(checkout, &["symbolic-ref", "--short", "-q", "HEAD"])
         .await
@@ -102,7 +121,8 @@ struct RunContext<'a> {
     branch: Option<&'a str>,
     /// `None` outside Git.
     checkout_revision: Option<&'a str>,
-    /// The engine's working directory is the library, not the checkout.
+    /// The engine's working directory is the library, not the checkout: a session that
+    /// began there before runs started in the checkout.
     runs_at_library: bool,
     library_thread: bool,
     route: &'a SkillRoute,
@@ -162,16 +182,23 @@ fn run_context(context: &RunContext<'_>) -> String {
              CONTRIBUTING.md). They specialize shared methods.\n"
         ));
     }
-    if context.runs_at_library && !context.library_thread {
-        // The engine's own banner names the library its "primary working directory",
-        // and a small model took that as the task. Say outright which folder is the work.
-        text.push_str(&format!(
-            "The project you are working on is the checkout above, {}. Your shell starts in the \
-             shared library, which is not the project: do not cd into the library or read it \
-             to answer questions about the project; use absolute paths under the checkout and \
-             run commands from there.\n",
-            context.checkout.display()
-        ));
+    if !context.library_thread {
+        if context.runs_at_library {
+            // An older session keeps the folder it began in. Say outright which one is the work.
+            text.push_str(&format!(
+                "The project you are working on is the checkout above, {}. Your shell starts in the \
+                 shared library, which is not the project: do not cd into the library or read it \
+                 to answer questions about the project; use absolute paths under the checkout and \
+                 run commands from there.\n",
+                context.checkout.display()
+            ));
+        } else {
+            text.push_str(&format!(
+                "Your working directory is the checkout, {}: that is the project. The library is \
+                 for skills only, not the project.\n",
+                context.checkout.display()
+            ));
+        }
     }
     text.push_str(&skills_line(context));
     if context.plan {
@@ -492,10 +519,14 @@ impl RunManager {
                 },
             )?;
         }
-        let from_checkout = self
-            .engines
-            .driver(&thread.engine)?
-            .resolves_from_checkout();
+        let driver = self.engines.driver(&thread.engine)?;
+        let (_, from_checkout) = engine_start(
+            driver.as_ref(),
+            driver.descriptor().tier == EngineTier::Native,
+            root,
+            Path::new(&thread.cwd),
+            self.store.engine_session(&thread.id)?.as_deref(),
+        );
         let scope = write_scope(root, Path::new(&thread.cwd), from_checkout);
         let preparation_retry = self.store.is_preparation_retry(&run.id)?;
         let stops = Stops::default();
@@ -1216,6 +1247,13 @@ impl RunManager {
         } else {
             check_target(&root, Path::new(&thread.cwd)).await?
         };
+        let warm_start = engine_start(
+            driver.as_ref(),
+            descriptor.tier == EngineTier::Native,
+            &root,
+            &checkout,
+            self.store.engine_session(&thread.id)?.as_deref(),
+        );
         let route = self.skills.route(
             &descriptor.capabilities.skill_delivery,
             thread.skill_profile.as_deref(),
@@ -1232,11 +1270,7 @@ impl RunManager {
             engine: thread.engine.clone(),
             family: driver.family(),
             // The same limit the thread's runs get, while this token is live unadopted.
-            write_scope: Some(write_scope(
-                &root,
-                Path::new(&thread.cwd),
-                driver.resolves_from_checkout(),
-            )),
+            write_scope: Some(write_scope(&root, Path::new(&thread.cwd), warm_start.1)),
             mode,
             plan,
         };
@@ -1250,11 +1284,8 @@ impl RunManager {
         let spec = RunSpec {
             run_id: String::new(),
             thread_id: thread.id.clone(),
-            cwd: if descriptor.tier == EngineTier::Native {
-                root
-            } else {
-                checkout.clone()
-            },
+            cwd: warm_start.0,
+            library: root,
             checkout,
             prompt: String::new(),
             user_prompt: String::new(),
@@ -1524,6 +1555,10 @@ impl RunManager {
         }
         let (revision, dirty) = self.workspace.identity().await?;
         let handoff = self.store.run_handoff(&scope.run_id)?;
+        let resume = self.store.run_engine_session(&scope.run_id)?;
+        let native = descriptor.tier == EngineTier::Native;
+        let (start, at_checkout) =
+            engine_start(driver.as_ref(), native, &root, &checkout, resume.as_deref());
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -1532,7 +1567,7 @@ impl RunManager {
             checkout: &checkout,
             branch: branch_name(&checkout).await.as_deref(),
             checkout_revision: checkout_revision(&checkout).await.as_deref(),
-            runs_at_library: !driver.resolves_from_checkout(),
+            runs_at_library: !at_checkout,
             library_thread,
             route: &route,
             skill_tools: descriptor.capabilities.mcp,
@@ -1540,7 +1575,6 @@ impl RunManager {
             files: &files,
             handoff: handoff.as_deref(),
         });
-        let native = descriptor.tier == EngineTier::Native;
         let kind = RunKind::parse(&prompt);
         // An app's note rides with the next ordinary turn only, and the timeline
         // records exactly what was sent before the engine sees it.
@@ -1577,7 +1611,8 @@ impl RunManager {
         let spec = RunSpec {
             run_id: scope.run_id.clone(),
             thread_id: thread.id.clone(),
-            cwd: if native { root } else { checkout.clone() },
+            cwd: start,
+            library: root,
             checkout,
             prompt: format!("{context}\n\n{prompt}"),
             context,
@@ -1588,7 +1623,7 @@ impl RunManager {
             model: chosen.model.clone(),
             effort: chosen.effort.clone(),
             options: chosen.options.clone(),
-            resume: self.store.run_engine_session(&scope.run_id)?,
+            resume,
             mcp_url,
             run_dir: run_dir.to_path_buf(),
         };

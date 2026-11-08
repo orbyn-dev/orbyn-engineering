@@ -113,13 +113,15 @@ async fn claude_console_resumes_the_thread_session_and_holds_runs() {
             json!("--add-dir"),
         ]
     );
-    // Claude starts at the library, where its runs keep the session, and reaches
-    // the nested checkout with `--add-dir`.
-    let checkout = std::path::PathBuf::from(args[5].as_str().unwrap());
-    assert!(checkout.ends_with("repo/project"), "{checkout:?}");
+    // Claude starts in the checkout, where its runs now keep the session, and reaches
+    // the library with `--add-dir`.
+    let library = std::path::PathBuf::from(args[5].as_str().unwrap());
     let cwd = std::fs::canonicalize(launched[0]["cwd"].as_str().unwrap()).unwrap();
-    let library = checkout.parent().and_then(Path::parent).unwrap();
-    assert_eq!(cwd, std::fs::canonicalize(library).unwrap());
+    assert!(cwd.ends_with("repo/project"), "{cwd:?}");
+    assert_eq!(
+        std::fs::canonicalize(&library).unwrap(),
+        std::fs::canonicalize(cwd.parent().and_then(Path::parent).unwrap()).unwrap()
+    );
 
     // The console owns the session: no run, and a second open reuses it.
     let (code, body) = service

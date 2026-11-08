@@ -213,7 +213,7 @@ async fn an_added_folder_still_needs_trust_before_anything_runs() {
 }
 
 #[tokio::test]
-async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
+async fn claude_starts_in_the_checkout_and_reaches_the_library_by_path() {
     let dir = TempDir::new();
     let launch_file = dir.path().join("l");
     let service = start(&dir, options(&launch_file, None)).await;
@@ -226,7 +226,8 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
     service.admit(&thread, "hi").await;
     assert_eq!(service.finished(&thread).await, "completed");
     let launch = &launches(&launch_file, "claude")[0];
-    assert_eq!(launch["cwd"], library.to_str().unwrap());
+    // The project is the primary folder; the library comes in only as an added one.
+    assert_eq!(launch["cwd"], repo.to_str().unwrap());
     let args: Vec<&str> = launch["args"]
         .as_array()
         .unwrap()
@@ -234,7 +235,11 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
         .map(|arg| arg.as_str().unwrap())
         .collect();
     let at = args.iter().position(|arg| *arg == "--add-dir").unwrap();
-    assert_eq!(args[at + 1], repo.to_str().unwrap());
+    assert_eq!(args[at + 1], library.to_str().unwrap());
+    assert!(
+        !args.iter().any(|arg| *arg == repo.to_str().unwrap()),
+        "the checkout is the cwd, not an added folder: {args:?}"
+    );
     let prompt = launches(&launch_file, "claude-prompt");
     let prompt = prompt[0]["args"][0].as_str().unwrap();
     let head = std::process::Command::new("git")
@@ -244,17 +249,20 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
         .unwrap();
     let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
     assert!(prompt.contains(&format!("Checkout: {} on main at {head}", repo.display())));
-    assert!(prompt.contains("use absolute paths"), "{prompt}");
-    // The engine's banner calls the library its primary directory, so the prompt must
-    // name the project as the work and the library as not the project.
+    // The engine's banner would call its first folder the primary one, so the prompt
+    // says the checkout is the working directory and the library is not the project.
     assert!(
         prompt.contains(&format!(
-            "The project you are working on is the checkout above, {}",
+            "Your working directory is the checkout, {}: that is the project",
             repo.display()
         )),
         "{prompt}"
     );
-    assert!(prompt.contains("which is not the project"), "{prompt}");
+    assert!(prompt.contains("not the project"), "{prompt}");
+    assert!(
+        !prompt.contains("Your shell starts in the shared library"),
+        "{prompt}"
+    );
     service.stop().await;
 }
 
@@ -395,7 +403,6 @@ async fn a_thread_without_a_project_gets_a_dated_folder_that_outlives_it() {
     let dir = TempDir::new();
     let launch_file = dir.path().join("l");
     let service = start(&dir, options(&launch_file, None)).await;
-    let library = support::canonical(dir.path().join("library"));
     let body = scratch_thread(&service).await;
     assert_eq!(body["scratch"], true);
     let cwd = PathBuf::from(body["cwd"].as_str().unwrap());
@@ -417,7 +424,8 @@ async fn a_thread_without_a_project_gets_a_dated_folder_that_outlives_it() {
     service.admit(thread, "hi").await;
     assert_eq!(service.finished(thread).await, "completed");
     let launch = &launches(&launch_file, "claude")[0];
-    assert_eq!(launch["cwd"], library.to_str().unwrap());
+    // A scratch thread works in its own dated folder, with the library added.
+    assert_eq!(launch["cwd"], cwd.to_str().unwrap());
     let quoted = json!(cwd.to_str().unwrap()).to_string();
     assert!(launch.to_string().contains(quoted.trim_matches('"')));
     let gone = service

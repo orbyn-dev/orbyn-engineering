@@ -11,7 +11,7 @@ use workflows::Workflows;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -92,12 +92,15 @@ pub fn run_args(spec: &RunSpec, mcp_config: &Path, window: Option<u32>) -> Vec<O
     .map(OsString::from)
     .collect();
     args.push(mcp_config.into());
-    // Reach for the checkout without moving the session: skills and instructions
-    // still load from the library. On 2.1.150 this loads the checkout's skills, and
-    // not its hooks or `.mcp.json`, which ran only when placed in the cwd.
-    if spec.checkout != spec.cwd {
-        args.push("--add-dir".into());
-        args.push(spec.checkout.clone().into());
+    // The run starts in the checkout, so the project's own instructions, hooks and
+    // `.mcp.json` are the primary ones, and the library comes in with `--add-dir`:
+    // on 2.1.150 that loads its skills and nothing else. A session begun before this
+    // started in the library, and resumes there with the checkout added instead.
+    for extra in [&spec.checkout, &spec.library] {
+        if *extra != spec.cwd && (extra != &spec.library || spec.library != spec.checkout) {
+            args.push("--add-dir".into());
+            args.push(extra.clone().into());
+        }
     }
     args.push("--permission-prompt-tool".into());
     args.push(CLAUDE_APPROVE_TOOL.into());
@@ -120,9 +123,46 @@ pub fn run_args(spec: &RunSpec, mcp_config: &Path, window: Option<u32>) -> Vec<O
     args
 }
 
-/// Claude's interactive command line on a run's session. Runs start at the
-/// library, where Claude keeps the session, and reach the checkout with `--add-dir`.
+/// Claude keeps a session under the folder it started in. Sessions begun when runs
+/// started in the library are still there, so one found only under the library's
+/// folder resumes from the library; everything else starts in the checkout.
+pub fn session_cwd(root: &Path, checkout: &Path, session: Option<&str>) -> PathBuf {
+    session_cwd_in(
+        crate::agents::usage::history_root(crate::agents::usage::Engine::Claude).as_deref(),
+        root,
+        checkout,
+        session,
+    )
+}
+
+fn session_cwd_in(
+    history: Option<&Path>,
+    root: &Path,
+    checkout: &Path,
+    session: Option<&str>,
+) -> PathBuf {
+    let (Some(history), Some(session)) = (history, session) else {
+        return checkout.to_path_buf();
+    };
+    let has = |dir: &Path| {
+        history
+            .join(crate::agents::claude_history::project_folder_name(
+                &dir.to_string_lossy(),
+            ))
+            .join(format!("{session}.jsonl"))
+            .is_file()
+    };
+    if checkout != root && !has(checkout) && has(root) {
+        root.to_path_buf()
+    } else {
+        checkout.to_path_buf()
+    }
+}
+
+/// Claude's interactive command line on a run's session, started where the session
+/// lives and given the other folder with `--add-dir`.
 pub fn console_args(console: &ConsoleSpec<'_>) -> Vec<OsString> {
+    let cwd = session_cwd(console.root, console.checkout, Some(console.session));
     let mut args: Vec<OsString> = vec!["--resume".into(), console.session.into()];
     if let Some(model) = console.model {
         args.extend(["--model".into(), model.into()]);
@@ -131,8 +171,10 @@ pub fn console_args(console: &ConsoleSpec<'_>) -> Vec<OsString> {
         "--permission-mode".into(),
         if console.plan { "plan" } else { "default" }.into(),
     ]);
-    if console.checkout != console.root {
-        args.extend(["--add-dir".into(), console.checkout.into()]);
+    for extra in [console.checkout, console.root] {
+        if extra != cwd && (extra != console.root || console.root != console.checkout) {
+            args.extend(["--add-dir".into(), extra.into()]);
+        }
     }
     args
 }
@@ -234,15 +276,15 @@ impl EngineDriver for ClaudeDriver {
         }))
     }
 
-    fn resolves_from_checkout(&self) -> bool {
-        false
+    fn start_dir(&self, root: &Path, checkout: &Path, session: Option<&str>) -> Option<PathBuf> {
+        Some(session_cwd(root, checkout, session))
     }
 
     fn console(&self, console: &ConsoleSpec<'_>) -> Option<ConsoleCommand> {
         Some(ConsoleCommand {
             program: self.program.clone(),
             args: console_args(console),
-            cwd: console.root.to_path_buf(),
+            cwd: session_cwd(console.root, console.checkout, Some(console.session)),
             title: "Claude console".into(),
         })
     }
@@ -1729,8 +1771,9 @@ mod tests {
         RunSpec {
             run_id: "r".into(),
             thread_id: "t".into(),
-            cwd: PathBuf::from("/workspace"),
+            cwd: PathBuf::from("/workspace/repo/app"),
             checkout: PathBuf::from("/workspace/repo/app"),
+            library: PathBuf::from("/workspace"),
             prompt: "hello".into(),
             user_prompt: "hello".into(),
             context: String::new(),
@@ -2029,7 +2072,7 @@ mod tests {
                 "--mcp-config",
                 "/run/mcp.json",
                 "--add-dir",
-                "/workspace/repo/app",
+                "/workspace",
                 "--permission-prompt-tool",
                 "mcp__orbyn_engineering__approve",
                 "--model",
@@ -2213,17 +2256,68 @@ mod tests {
     }
 
     #[test]
-    fn the_checkout_is_added_by_path_and_only_when_it_is_elsewhere() {
-        let mut elsewhere = spec();
-        elsewhere.cwd = "/library".into();
-        elsewhere.checkout = "/work/app".into();
-        let args = run_args(&elsewhere, Path::new("/tmp/mcp.json"), None);
-        let at = args.iter().position(|arg| arg == "--add-dir").unwrap();
-        assert_eq!(args[at + 1], "/work/app");
-        let mut same = spec();
-        same.checkout = same.cwd.clone();
-        let args = run_args(&same, Path::new("/tmp/mcp.json"), None);
+    fn the_library_is_added_when_the_run_starts_in_the_checkout() {
+        let args = run_args(&spec(), Path::new("/tmp/mcp.json"), None);
+        let adds: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--add-dir")
+            .map(|pair| pair[1].to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(adds, ["/workspace"]);
+    }
+
+    #[test]
+    fn a_session_begun_in_the_library_adds_the_checkout_instead() {
+        let mut legacy = spec();
+        legacy.cwd = "/workspace".into();
+        let args = run_args(&legacy, Path::new("/tmp/mcp.json"), None);
+        let adds: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--add-dir")
+            .map(|pair| pair[1].to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(adds, ["/workspace/repo/app"]);
+    }
+
+    #[test]
+    fn a_library_thread_adds_nothing() {
+        let mut library = spec();
+        library.cwd = "/workspace".into();
+        library.checkout = "/workspace".into();
+        let args = run_args(&library, Path::new("/tmp/mcp.json"), None);
         assert!(!args.iter().any(|arg| arg == "--add-dir"));
+    }
+
+    #[test]
+    fn a_session_resumes_where_its_file_is() {
+        let dir = crate::testing::TempDir::new();
+        let history = dir.path().join("projects");
+        let (root, app) = (
+            Path::new("/lib/workspace"),
+            Path::new("/lib/workspace/repo/app"),
+        );
+        let name = |path: &Path| {
+            crate::agents::claude_history::project_folder_name(&path.to_string_lossy())
+        };
+        let place = |folder: &Path, session: &str| {
+            let at = history.join(name(folder));
+            std::fs::create_dir_all(&at).unwrap();
+            std::fs::write(at.join(format!("{session}.jsonl")), "").unwrap();
+        };
+        place(root, "old");
+        place(app, "new");
+        place(root, "both");
+        place(app, "both");
+        let pick = |session: Option<&str>| session_cwd_in(Some(&history), root, app, session);
+        // Begun in the library before runs started in the checkout: stays there.
+        assert_eq!(pick(Some("old")), root);
+        assert_eq!(pick(Some("new")), app);
+        // A session found in both lives where the checkout is.
+        assert_eq!(pick(Some("both")), app);
+        // No session, an unknown one, or no history folder start in the checkout.
+        assert_eq!(pick(None), app);
+        assert_eq!(pick(Some("missing")), app);
+        assert_eq!(session_cwd_in(None, root, app, Some("old")), app);
     }
 
     #[test]

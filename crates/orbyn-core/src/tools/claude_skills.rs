@@ -48,10 +48,9 @@ fn home() -> Option<PathBuf> {
 }
 
 /// Every user-invocable skill the CLI would load for a run that starts at
-/// `base` on `checkout`. A name found earlier wins: config, then the start
-/// folder, then the checkout, then plugins. `base` is where the engine starts
-/// (the workspace root for a native run) and `checkout` is the directory the
-/// run adds. `plugin_cache` is the CLI's `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
+/// `base` and adds `checkout`. A name found earlier wins: config, then the start
+/// folder, then the added one, then plugins. `base` is where the engine starts (the
+/// project checkout) and `checkout` is the directory the run adds (the library). `plugin_cache` is the CLI's `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
 pub fn discover(
     config: &Path,
     base: &Path,
