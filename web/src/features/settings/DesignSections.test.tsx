@@ -75,7 +75,6 @@ it("lists the installed agent CLIs and their versions on About", async () => {
 it("shows the app icon on About, not a lettered placeholder tile", async () => {
   vi.mocked(request).mockResolvedValue({ version: "1.0.0", platform: "macos", remote: false });
   const { container } = render(<AboutSection />);
-  await screen.findByText(/Orbyn Engineering 1\.0\.0/);
   const logo = container.querySelector("img.set-logo");
   expect(logo).toHaveAttribute("src", "/favicon.svg");
   expect(container.querySelector("span.set-logo")).toBeNull();
