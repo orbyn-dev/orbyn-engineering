@@ -119,26 +119,21 @@ function groupRows(rows: readonly PickerRow[], engines: readonly EngineStatus[])
 function ModelPopover({
   engines,
   selected,
-  extra,
   anchor,
   portalContainer,
   trigger,
   onPick,
-  onToggleExtra,
   closing,
   onClose,
 }: {
   engines: EngineStatus[];
   selected: Selection;
-  extra: readonly Selection[];
   anchor: DOMRect;
   closing?: boolean;
   portalContainer?: HTMLElement | null;
   /** The button that opened it, where focus returns. */
   trigger(): HTMLElement | null | undefined;
   onPick(selection: Selection): void;
-  /** Shift-click adds a model, for starting one thread on each. */
-  onToggleExtra?(selection: Selection): void;
   onClose(): void;
 }) {
   const hidden = useUi((state) => state.modelHidden);
@@ -197,14 +192,9 @@ function ModelPopover({
   const groups = groupRows(rows, engines);
   const ordered = groups.flatMap((group) => group.rows.map((entry) => entry.row));
   const ids = [ALL, ...engines.map((engine) => engine.id)];
-  const pick = (row: PickerRow, adding = false) => {
-    const choice = { engine: row.engine, model: row.model.id };
-    if (adding && onToggleExtra) {
-      if (choice.engine !== selected.engine || choice.model !== selected.model) onToggleExtra(choice);
-      return;
-    }
+  const pick = (row: PickerRow) => {
     popover.dismiss("select");
-    onPick(choice);
+    onPick({ engine: row.engine, model: row.model.id });
   };
   const choose = (id: string) => {
     setChip(id);
@@ -213,17 +203,7 @@ function ModelPopover({
   };
 
   const onKey = (event: React.KeyboardEvent) => {
-    const mod = event.metaKey || event.ctrlKey;
-    if (mod && event.shiftKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-      event.preventDefault();
-      const at = ids.indexOf(chip) + (event.key === "ArrowDown" ? 1 : -1);
-      const next = ids[(at + ids.length) % ids.length];
-      if (next) choose(next);
-    } else if (mod && /^[1-9]$/.test(event.key)) {
-      event.preventDefault();
-      const row = ordered[Number(event.key) - 1];
-      if (row) pick(row);
-    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActive((Math.max(active, step > 0 ? -1 : 0) + step + ordered.length) % Math.max(ordered.length, 1));
@@ -270,7 +250,7 @@ function ModelPopover({
 
   const failure = chip !== ALL && !searching ? byEngine[chip]?.error : null;
   const loading = engines.some((engine) => byEngine[engine.id] === undefined) && ordered.length === 0;
-  const isSelected = (row: PickerRow) => [selected, ...extra].some((entry) => row.engine === entry.engine && row.model.id === entry.model);
+  const isSelected = (row: PickerRow) => row.engine === selected.engine && row.model.id === selected.model;
   const engineName = (id: string) => engines.find((engine) => engine.id === id)?.name ?? id;
 
   return (
@@ -346,7 +326,7 @@ function ModelPopover({
                     className="model-row"
                     data-active={index === active || undefined}
                     onPointerMove={() => setActive(index)}
-                    onClick={(event) => pick(row, event.shiftKey)}
+                    onClick={() => pick(row)}
                   >
                     <span className="model-row-text">
                       <b>{row.model.label}</b>
@@ -373,20 +353,15 @@ function ModelPopover({
 export function ModelPickerTrigger({
   engines,
   selected,
-  extra = [],
   disabled,
   triggerLabel,
   onPick,
-  onToggleExtra,
 }: {
   engines: EngineStatus[];
   selected: Selection;
-  /** Models added beside the selected one. */
-  extra?: readonly Selection[];
   disabled?: boolean;
   triggerLabel?: string;
   onPick(selection: Selection): void;
-  onToggleExtra?(selection: Selection): void;
 }) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const models = useEngineModels(selected.engine);
@@ -416,7 +391,6 @@ export function ModelPickerTrigger({
       >
         {engine ? <EngineGlyph name={engine.name} /> : null}
         <span>{name}</span>
-        {extra.length > 0 ? <span className="model-extra">+{extra.length}</span> : null}
         {engines.length === 0 ? <ChevronDown size={12} aria-hidden /> : null}
       </button>
       <Presence>
@@ -424,12 +398,10 @@ export function ModelPickerTrigger({
         <ModelPopover
           engines={engines}
           selected={{ engine: selected.engine, model: model?.id ?? selected.model }}
-          extra={extra}
           anchor={anchor}
           portalContainer={button.current?.closest("dialog")}
           trigger={() => button.current}
           onPick={onPick}
-          onToggleExtra={onToggleExtra}
           onClose={close}
         />
       ) : null}

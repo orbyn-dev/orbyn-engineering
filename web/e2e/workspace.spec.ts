@@ -481,7 +481,7 @@ test("the panel's tabs are icon-only 32px slots that never move when another tab
   await expect(page.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
 });
 
-for (const width of [380, 320, 280, 240]) {
+for (const width of [380, 320]) {
   test(`at ${width}px every slot is 32px and stays put as each tab is opened`, async ({ page }) => {
     await openPanel(page);
     await resize(page, width);

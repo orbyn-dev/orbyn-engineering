@@ -354,7 +354,6 @@ export function SurfacePane({
         <div ref={list} className="ctx-tabs" role="tablist" aria-label="Panel tabs" onKeyDown={onTabKey}>
           {shown.map((id) => {
             const { label, icon: Icon } = tabOf(id);
-            const offline = kind === "offline" && NEEDS_NETWORK.includes(id);
             return (
               <button
                 key={id}
@@ -367,7 +366,6 @@ export function SurfacePane({
                 data-selected={tab === id || undefined}
                 data-dragging={dragging === id || undefined}
                 data-over={over === id && dragging !== id ? "" : undefined}
-                data-offline={offline ? "" : undefined}
                 aria-label={label}
                 aria-selected={tab === id}
                 aria-controls={tab === id ? `context-${id}` : undefined}
@@ -447,17 +445,19 @@ export function SurfacePane({
       </header>
       <div className="ctx-title">
         <b>{tabOf(tab).label}</b>
-        <IconButton
-          label="Tab menu"
-          pressed={tabMenu !== null}
-          aria-haspopup="menu"
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            setTabMenu(tabMenu ? null : { x: rect.right - 160, y: rect.bottom + 4 });
-          }}
-        >
-          <MoreHorizontal size={14} aria-hidden />
-        </IconButton>
+        {rowIds.length > 1 ? (
+          <IconButton
+            label="Tab menu"
+            pressed={tabMenu !== null}
+            aria-haspopup="menu"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setTabMenu(tabMenu ? null : { x: rect.right - 160, y: rect.bottom + 4 });
+            }}
+          >
+            <MoreHorizontal size={14} aria-hidden />
+          </IconButton>
+        ) : null}
       </div>
       <Presence>
         {plusMenu ? (
@@ -473,7 +473,7 @@ export function SurfacePane({
             x={tabMenu.x}
             y={tabMenu.y}
             label="Tab menu"
-            items={[{ label: "Close tab", icon: <X size={14} aria-hidden />, disabled: rowIds.length < 2, onSelect: () => closeWithFocus(tab) }]}
+            items={[{ label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) }]}
             onClose={() => setTabMenu(null)}
           />
         ) : null}

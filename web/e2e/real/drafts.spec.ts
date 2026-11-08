@@ -54,32 +54,6 @@ test("mod+enter starts in the background, and each send gets its own worktree", 
   for (const thread of made) await settled(service, thread.id);
 });
 
-test("shift-click adds models, and each one starts a thread and a worktree", async ({ page }) => {
-  await openDraft(page);
-  const before = (await threads()).length;
-  await page.locator("[data-model-trigger]").click();
-  const picker = page.getByRole("dialog", { name: "Choose a model" });
-  await picker.getByRole("tab", { name: /Codex/ }).click();
-  const options = picker.getByRole("option");
-  await expect(options.first()).toBeVisible();
-  await options.first().click();
-  await page.locator("[data-model-trigger]").click();
-  await picker.getByRole("option").nth(1).click({ modifiers: ["Shift"] });
-  await expect(picker).toBeVisible();
-  await expect(picker.getByRole("option", { selected: true })).toHaveCount(2);
-  await page.keyboard.press("Escape");
-  await expect(page.locator("[data-model-trigger]")).toContainText("+1");
-  await box(page).fill("compare models");
-  await box(page).press("Enter");
-  await expect(page.getByText("Started 2 threads")).toBeVisible();
-  await expect(page).toHaveURL(/#\/new\//);
-  const made = (await threads()).slice(0, (await threads()).length - before);
-  expect(made).toHaveLength(2);
-  expect(new Set(made.map((thread) => thread.cwd)).size).toBe(2);
-  expect(new Set(made.map((thread) => thread.model)).size).toBe(2);
-  for (const thread of made) await settled(service, thread.id);
-});
-
 test("mod+alt+enter sends and leaves a fresh draft", async ({ page }) => {
   await openDraft(page);
   await send(page, "[scene:usage] one");

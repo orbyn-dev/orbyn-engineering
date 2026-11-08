@@ -187,3 +187,22 @@ it("takes every colour from the theme tokens, so Light, Dark and Dim all follow"
   const block = css.slice(start, css.indexOf(".traits-menu {\n  width: 304px"));
   expect(block.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) ?? []).toEqual([]);
 });
+
+it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-click picks like a click", async () => {
+  const pick = vi.fn();
+  useModelStore.setState({ byEngine: { claude, codex }, loading: {}, errors: {} });
+  const user = userEvent.setup();
+  render(<ModelPickerTrigger engines={two} selected={{ engine: "codex", model: "small" }} onPick={pick} />);
+  await user.click(screen.getByRole("button", { name: "Small model" }));
+  const picker = await screen.findByRole("dialog", { name: "Choose a model" });
+  await user.keyboard("{Control>}1{/Control}");
+  expect(pick).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Small model" }));
+  await user.keyboard("{Shift>}");
+  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getByRole("option", { name: /Opus 5.5/ }));
+  await user.keyboard("{/Shift}");
+  expect(pick).toHaveBeenCalledTimes(1);
+  expect(pick).toHaveBeenCalledWith({ engine: "claude", model: "opus" });
+  expect(picker).toBeDefined();
+});

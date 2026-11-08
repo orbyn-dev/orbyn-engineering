@@ -4099,10 +4099,6 @@ button.context-meter:hover:not(:disabled) {
   margin: 0;
   font-size: 12.5px;
 }
-.model-extra {
-  color: var(--color-muted);
-  font-variant-numeric: tabular-nums;
-}
 .side-chat-pane {
   display: flex;
   flex-direction: column;

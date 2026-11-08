@@ -192,14 +192,16 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTabsClosed).toEqual(["tools"]);
   });
 
-  it("keeps the last tab: its menu cannot close it", async () => {
+  it("with one tab left, hides the Tab menu and so Close tab, and Delete keeps the tab too", async () => {
     const user = userEvent.setup();
     useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side", "tools"] });
     pane();
-    expect(screen.getAllByRole("tab")).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    expect(screen.getByRole("menuitem", { name: "Close tab" })).toBeDisabled();
-    await user.keyboard("{Escape}");
+    expect(names()).toEqual(["Diff"]);
+    expect(screen.queryByRole("button", { name: "Tab menu" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
+    screen.getByRole("tab", { name: "Diff" }).focus();
+    await user.keyboard("{Delete}");
+    expect(names()).toEqual(["Diff"]);
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Browser", "Activity", "Side chat", "Tools", "Reset tab order"]);
   });
@@ -241,12 +243,11 @@ describe("surface tabs", () => {
 describe("connection states in the panel", () => {
   afterEach(() => useConnection.setState({ offline: false, serviceDown: false }));
 
-  it("marks only the tabs that need the network when offline, and says so over their content", () => {
+  it("puts no mark on a slot when offline, and says so over the content of a tab that needs the network", () => {
     useConnection.setState({ offline: true });
     useUi.setState({ panelTab: "side" });
     pane();
-    const offline = screen.getAllByRole("tab").filter((tab) => tab.hasAttribute("data-offline"));
-    expect(offline.map((tab) => tab.id)).toEqual(["context-tab-browser", "context-tab-side"]);
+    expect(document.querySelector("[data-offline]")).toBeNull();
     expect(screen.getByText("You’re offline.")).toBeInTheDocument();
   });
 
@@ -285,12 +286,11 @@ describe("connection states in the panel", () => {
     expect(screen.queryByText("Waiting for the Orbyn service")).not.toBeInTheDocument();
   });
 
-  it("marks the Browser tab offline and leaves the note to the Browser, while Diff, Files and Activity carry no mark", () => {
+  it("leaves the offline note to the Browser, and no slot carries a mark", () => {
     useConnection.setState({ offline: true });
     useUi.setState({ panelTab: "browser" });
     pane();
-    expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("data-offline");
-    for (const name of ["Diff", "Files", "Activity"]) expect(screen.getByRole("tab", { name })).not.toHaveAttribute("data-offline");
+    expect(document.querySelector("[data-offline]")).toBeNull();
     expect(screen.getByText("Browser content")).toBeInTheDocument();
     expect(screen.queryByText("You’re offline.")).not.toBeInTheDocument();
   });

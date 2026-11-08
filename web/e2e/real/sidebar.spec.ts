@@ -177,7 +177,7 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
   await picker.getByRole("combobox", { name: "Search models" }).fill(label);
   await expect(picker.getByRole("option").first()).toBeVisible();
-  await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+1");
+  await picker.getByRole("combobox", { name: "Search models" }).press("Enter");
   await expect.poll(async () => (await thread(id) as unknown as { model: string | null }).model).not.toBeNull();
   await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
 
