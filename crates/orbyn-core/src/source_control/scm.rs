@@ -644,9 +644,19 @@ impl Core {
                         }
                     }
                     DetailsOutcome::RateLimited => {
+                        // GitHub's own reset time, when it will say; else the fixed pause.
+                        let reset = forge::github_graphql_reset(cwd).await.map(|at| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0, |since| since.as_secs());
+                            std::time::Duration::from_secs(at.saturating_sub(now))
+                        });
                         let left = {
                             let mut cache = self.pull_details.lock().unwrap();
-                            cache.pause(Instant::now());
+                            match reset {
+                                Some(span) => cache.pause_for(Instant::now(), span),
+                                None => cache.pause(Instant::now()),
+                            }
                             cache.resumes_in(Instant::now())
                         };
                         return Ok(paused(left));

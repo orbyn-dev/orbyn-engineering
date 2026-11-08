@@ -494,6 +494,18 @@ pub const DETAIL_FIELDS: [&str; 4] = [
     "comment_count",
 ];
 
+/// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
+pub async fn github_graphql_reset(cwd: &Path) -> Option<u64> {
+    let output = call(Forge::GitHub, cwd, &["api", "rate_limit"]).await.ok()?;
+    graphql_reset(&output)
+}
+
+/// The GraphQL reset time in a `rate_limit` answer.
+pub fn graphql_reset(answer: &str) -> Option<u64> {
+    let value: Value = serde_json::from_str(answer).ok()?;
+    value.pointer("/resources/graphql/reset")?.as_u64()
+}
+
 /// How the batched details request ended.
 #[derive(Debug, PartialEq)]
 pub enum DetailsOutcome {
@@ -1951,7 +1963,12 @@ fn merge_args(forge: Forge, id: &str, options: &MergePull, body: Option<&str>) -
         if let Some(body) = body {
             push(&["--message", body]);
         }
-        if let Some(head) = &options.expected_head {
+        // glab rebases before it merges, which moves the head the person saw: with --sha every rebase
+        // merge would be refused as "changed". Whether it checks first is not documented, so a rebase
+        // goes without the check.
+        if options.method != "rebase"
+            && let Some(head) = &options.expected_head
+        {
             push(&["--sha", head]);
         }
     }
@@ -1962,8 +1979,10 @@ fn merge_args(forge: Forge, id: &str, options: &MergePull, body: Option<&str>) -
 pub fn head_changed(forge: Forge, message: &str) -> bool {
     let message = message.to_lowercase();
     match forge {
-        Forge::GitHub => message.contains("head branch was modified") || message.contains("head commit"),
-        Forge::GitLab => message.contains("sha does not match") || message.contains("sha mismatch"),
+        // GitHub: "Head branch was modified. Review and try the merge again."
+        Forge::GitHub => message.contains("head branch was modified"),
+        // GitLab: "SHA does not match HEAD of source branch"
+        Forge::GitLab => message.contains("sha does not match head of source branch"),
         _ => false,
     }
 }
@@ -2246,6 +2265,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_graphql_reset_is_read_from_the_rate_limit_answer() {
+        assert_eq!(graphql_reset(r#"{"resources":{"core":{"reset":1},"graphql":{"reset":1762600000}}}"#), Some(1_762_600_000));
+        assert_eq!(graphql_reset("not json"), None);
+        assert_eq!(graphql_reset(r#"{"resources":{}}"#), None);
+    }
+
+    #[test]
     fn the_head_the_person_saw_goes_to_the_forge() {
         let options = MergePull {
             method: "squash".into(),
@@ -2260,6 +2286,9 @@ mod tests {
         assert_eq!(github, ["pr", "merge", "7", "--squash", "--match-head-commit", "abc123"]);
         let gitlab = merge_args(Forge::GitLab, "7", &options, None);
         assert_eq!(gitlab, ["mr", "merge", "7", "--yes", "--squash", "--sha", "abc123"]);
+        let rebase = MergePull { method: "rebase".into(), ..options.clone() };
+        assert!(!merge_args(Forge::GitLab, "7", &rebase, None).iter().any(|arg| arg == "--sha"));
+        assert!(merge_args(Forge::GitHub, "7", &rebase, None).iter().any(|arg| arg == "--match-head-commit"));
         let none = MergePull { expected_head: None, ..options };
         assert!(!merge_args(Forge::GitHub, "7", &none, None).iter().any(|arg| arg.contains("head")));
     }
@@ -2275,6 +2304,8 @@ mod tests {
         // Other failures keep their own words.
         assert!(matches!(head_moved(github, CoreError::Git("merge conflict".into())), CoreError::Git(_)));
         assert!(head_changed(Forge::GitLab, "405: SHA does not match HEAD of source branch"));
+        // A message that only mentions a head commit is not a moved head.
+        assert!(!head_changed(Forge::GitHub, "could not find the head commit"));
         assert!(!head_changed(Forge::Forgejo, "Head branch was modified"));
         assert_eq!(CoreError::PullHeadChanged.code(), "pull_head_changed");
         assert_eq!(CoreError::PullHeadChanged.status(), 409);
