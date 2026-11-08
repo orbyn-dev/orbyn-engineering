@@ -1364,9 +1364,8 @@ mod tests {
         assert!(core.known_forges().is_none());
         *core.forge_statuses.lock().unwrap() = Some((Instant::now(), vec![forge_stub("kept")]));
         assert_eq!(core.forges(false).await[0].id, "kept");
-        // A rescan asks every CLI again and replaces what was kept.
-        assert_eq!(core.forges(true).await.len(), ALL_FORGES.len());
-        assert_ne!(core.known_forges().unwrap()[0].id, "kept");
+        // Asking for a rescan runs the real CLIs, so it is left to the end-to-end tests;
+        // here only what is kept and when it expires.
         *core.forge_statuses.lock().unwrap() = Some((
             Instant::now() - FORGES_TTL - Duration::from_secs(1),
             vec![forge_stub("old")],
