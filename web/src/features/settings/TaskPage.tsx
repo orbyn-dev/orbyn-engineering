@@ -73,7 +73,7 @@ function RunRow({ run, now }: { run: TaskRun; now: number }) {
 }
 
 function Runs({ task }: { task: ScheduledTask }) {
-  const runs = useAsync(`task-runs:${task.id}`, (signal) => api.taskRuns(task.id, signal));
+  const runs = useAsync(`task-runs:${task.id}`, (signal) => api.taskRuns(task.id, signal), { keep: true });
   if (runs.status === "loading") return <Loading label="Loading runs" rows={3} />;
   if (runs.status === "error") {
     return (
@@ -117,8 +117,8 @@ function DeliveryRow({ delivery }: { delivery: WebhookDelivery }) {
 }
 
 function Deliveries({ task }: { task: ScheduledTask }) {
-  const address = useAsync(`webhook:${task.id}`, (signal) => api.taskWebhook(task.id, signal));
-  const deliveries = useAsync(`deliveries:${task.id}`, (signal) => api.taskDeliveries(task.id, signal));
+  const address = useAsync(`webhook:${task.id}`, (signal) => api.taskWebhook(task.id, signal), { keep: true });
+  const deliveries = useAsync(`deliveries:${task.id}`, (signal) => api.taskDeliveries(task.id, signal), { keep: true });
   if (deliveries.status === "loading") return <Loading label="Loading deliveries" rows={3} />;
   if (deliveries.status === "error") {
     return (
@@ -157,7 +157,7 @@ function CopyOnce({ text }: { text: string }) {
 
 /** Whether the address takes requests, and the one moment its full text is shown. */
 function WebhookAddressRow({ task, offline }: { task: ScheduledTask; offline: boolean }) {
-  const address = useAsync(`webhook:${task.id}`, (signal) => api.taskWebhook(task.id, signal));
+  const address = useAsync(`webhook:${task.id}`, (signal) => api.taskWebhook(task.id, signal), { keep: true });
   const [issued, setIssued] = useState<WebhookEndpoint | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

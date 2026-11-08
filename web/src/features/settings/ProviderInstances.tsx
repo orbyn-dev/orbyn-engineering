@@ -28,7 +28,7 @@ export interface InstanceStore {
 /** The saved provider instances, written with the environment's compare-and-set. */
 export function useProviderInstances(): InstanceStore {
   const scope = useSettingsScope();
-  const preferences = useAsync("provider-instances", (signal) => request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: {}, keys: ["provider_instances"] }, signal));
+  const preferences = useAsync("provider-instances", (signal) => request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: {}, keys: ["provider_instances"] }, signal), { keep: true });
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [conflict, setConflict] = useState(false);
   const pending = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
