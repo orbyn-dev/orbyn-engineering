@@ -35,7 +35,8 @@ it("says so, with a Retry, when the agent is still busy after the last try, and 
     await vi.advanceTimersByTimeAsync(60_000);
   });
   expect(vi.mocked(request)).toHaveBeenCalledTimes(7);
-  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't check saved sessions");
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t check saved sessions");
+  expect(screen.getByRole("alert")).toHaveTextContent("The agent is busy. Try again in a moment.");
   vi.mocked(request).mockResolvedValue(caps as never);
   await act(async () => {
     screen.getByRole("button", { name: "Retry" }).click();

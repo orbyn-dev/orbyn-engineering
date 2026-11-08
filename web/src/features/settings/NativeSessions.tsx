@@ -63,10 +63,16 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     };
   }, [engine.id, active, again]);
 
-  if (active && stuck && !caps) {
-    return <ErrorState compact title="Couldn't check saved sessions" failure={stuck} onRetry={() => setAgain((n) => n + 1)} />;
-  }
-  if (!active || !caps?.can_list) return null;
+  // One line for the person, whatever words the service used; the row sits with whatever else the section shows.
+  const stuckRow = active && stuck ? (
+    <ErrorState
+      compact
+      title="Couldn’t check saved sessions"
+      failure={new ApiFailure(stuck.code, "The agent is busy. Try again in a moment.", stuck.status)}
+      onRetry={() => setAgain((n) => n + 1)}
+    />
+  ) : null;
+  if (!active || !caps?.can_list) return stuckRow;
   const canImport = caps.can_load || caps.can_resume;
   const fail = (title: string, failure: unknown) => toast(`${title}: ${toFailure(failure).message}`);
 
@@ -120,6 +126,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
 
   return (
     <div className="native-sessions">
+      {stuckRow}
       <SettingRow title="Native sessions" description={projects.length === 0 ? "Add a project before importing sessions." : "Resume agent-owned conversations as threads."}>
         {projects.length > 0 ? (
           <>
