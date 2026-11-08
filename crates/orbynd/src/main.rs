@@ -966,6 +966,14 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         tokio::spawn(async move { activity.run_shell_activity(quit).await });
         let (links, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { links.run_web_links(quit).await });
+        // The first usage read would otherwise scan all history while a person waits.
+        let (usage, quit) = (core.clone(), stop.clone());
+        tokio::spawn(async move {
+            tokio::select! {
+                () = tokio::time::sleep(std::time::Duration::from_secs(5)) => usage.usage.warm().await,
+                () = quit.cancelled() => {}
+            }
+        });
     }
     let shutdown = stop.clone();
     let server = tokio::spawn(async move {

@@ -497,6 +497,21 @@ impl UsageCenter {
         })
     }
 
+    /// Reads history into memory ahead of the first request, which otherwise waits
+    /// for gigabytes of files. Runs on a blocking thread, and a failure only means the
+    /// first read scans.
+    pub async fn warm(&self) {
+        let cache = self.cache.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let mut cache = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            scan_engine(Engine::Claude, &mut cache);
+            scan_engine(Engine::Codex, &mut cache);
+        })
+        .await;
+    }
+
     /// Forgets every scan and limit, so the next read goes back to the sources.
     pub fn forget(&self) {
         *self
