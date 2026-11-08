@@ -415,8 +415,9 @@
 .md li.md-task > input[type="checkbox"] {
   position: absolute;
   top: 0.25em;
-  left: -1.25rem;
+  inset-inline-start: -1.25rem;
   margin: 0;
+  opacity: 0.85;
   pointer-events: none;
 }
 .md li::marker {

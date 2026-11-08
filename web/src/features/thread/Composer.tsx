@@ -712,7 +712,7 @@ export function Composer({
     traits.openAt(trigger, true);
   });
   const effortLevel = effortValue(model, thread.effort ?? null);
-  const effortShown = effortOption(model) !== null && effortLevel !== null;
+  const effortShown = effortOption(model) !== null;
   const stepEffort = (step: 1 | -1) => {
     const values = effortOption(model)?.values ?? [];
     if (values.length === 0 || busy) return false;
@@ -1071,7 +1071,7 @@ export function Composer({
           onClose={() => setOverflow(null)}
           items={[
             {
-              label: `${model?.label ?? thread.model ?? engineName}${effortLevel ? ` · ${effortLevel.label}` : ""}`,
+              label: `${model?.label ?? thread.model ?? engineName}${effortShown ? ` · ${effortLevel?.label ?? "Default"}` : ""}`,
               disabled: busy,
               onSelect: () => document.querySelector<HTMLElement>("form.composer [data-model-trigger]")?.click(),
             },

@@ -49,15 +49,15 @@ it("lists only the offered modes in the permissions menu", () => {
 const withEffort = (values: { id: string; label: string; default?: boolean }[]) =>
   ({ options: [{ id: "effort", label: "Effort", values }] }) as unknown as ModelInfo;
 
-it("names the effort level in its pill and never draws a bare Effort", () => {
+it("names the effort level in its pill, says Default when none is chosen, and draws nothing without an effort setting", () => {
   const levels = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium", default: true }];
   const shown = render(<EffortTrigger model={withEffort(levels)} effort={null} access={null} onOpen={() => {}} />);
   expect(screen.getByRole("button", { name: /Effort: Medium/ })).toHaveTextContent(/Medium|^$/);
   shown.unmount();
-  // A model with an effort option but no level chosen or defaulted, and a model with no effort setting at all.
-  const none = render(<EffortTrigger model={withEffort([{ id: "low", label: "Low" }])} effort={null} access={null} onOpen={() => {}} />);
-  expect(none.container).toBeEmptyDOMElement();
-  none.unmount();
+  // An effort option with no level chosen or defaulted still shows a pill, so a level can be picked.
+  const unset = render(<EffortTrigger model={withEffort([{ id: "low", label: "Low" }])} effort={null} access={null} onOpen={() => {}} />);
+  expect(screen.getByRole("button", { name: "Effort: Default" })).toHaveTextContent("Default");
+  unset.unmount();
   const absent = render(<EffortTrigger model={{ options: [] } as unknown as ModelInfo} effort={null} access={null} onOpen={() => {}} />);
   expect(absent.container).toBeEmptyDOMElement();
 });

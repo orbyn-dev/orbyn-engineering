@@ -158,7 +158,7 @@ function parseBlocks(lines: string[]): Block[] {
         const current = LIST_ITEM.exec(lines[at] ?? "");
         if (!current || (current[1] ?? "").length !== indent || /\d/.test(current[2] ?? "") !== ordered) break;
         const first = current[3] ?? "";
-        const box = ordered ? null : TASK_BOX.exec(first);
+        const box = TASK_BOX.exec(first);
         tasks.push(box ? box[1] !== " " : null);
         const body = [box ? first.slice(box[0].length) : first];
         at += 1;
@@ -382,8 +382,8 @@ function renderBlock(block: Block, key: number): ReactNode {
         return done === null || done === undefined ? (
           <li key={at} dir="auto">{item.map(renderBlock)}</li>
         ) : (
-          <li key={at} dir="auto" className="md-task">
-            <input type="checkbox" checked={done} readOnly tabIndex={-1} aria-label={done ? "Done" : "Not done"} onChange={() => undefined} />
+          <li key={at} dir="auto" className="md-task" id={`${key}-task-${at}`}>
+            <input type="checkbox" checked={done} disabled aria-labelledby={`${key}-task-${at}`} onChange={() => undefined} />
             {item.map(renderBlock)}
           </li>
         );

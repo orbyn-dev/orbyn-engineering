@@ -65,12 +65,13 @@ describe("pull request links", () => {
 });
 
 it("renders task list items as read-only checkboxes and not as literal brackets", () => {
-  const { container } = render(<Markdown text={"- [ ] write it\n- [x] test it\n- [X] ship it\n- plain\n1. [ ] numbered stays text"} />);
+  const { container } = render(<Markdown text={"- [ ] write it\n- [x] test it\n- [X] ship it\n- plain\n\n1. [ ] numbered"} />);
   const boxes = [...container.querySelectorAll<HTMLInputElement>("li.md-task > input[type=checkbox]")];
-  expect(boxes.map((box) => box.checked)).toEqual([false, true, true]);
-  expect(boxes.every((box) => box.readOnly)).toBe(true);
+  expect(boxes.map((box) => box.checked)).toEqual([false, true, true, false]);
+  expect(boxes.every((box) => box.disabled)).toBe(true);
+  expect(boxes[0]?.getAttribute("aria-labelledby")).toBe(boxes[0]?.closest("li")?.id);
   expect(container.textContent).not.toMatch(/\[[ xX]\] (write|test|ship)/);
   expect(container).toHaveTextContent("write it");
-  expect(container.querySelectorAll("li:not(.md-task)")).toHaveLength(2);
-  expect(container).toHaveTextContent("[ ] numbered stays text");
+  expect(container.querySelectorAll("li:not(.md-task)")).toHaveLength(1);
+  expect(container.querySelector("ol li.md-task")).toHaveTextContent("numbered");
 });
