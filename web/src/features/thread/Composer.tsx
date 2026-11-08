@@ -711,6 +711,8 @@ export function Composer({
     if (!trigger || unmanaged) return false;
     traits.openAt(trigger, true);
   });
+  const effortLevel = effortValue(model, thread.effort ?? null);
+  const effortShown = effortOption(model) !== null && effortLevel !== null;
   const stepEffort = (step: 1 | -1) => {
     const values = effortOption(model)?.values ?? [];
     if (values.length === 0 || busy) return false;
@@ -1069,18 +1071,20 @@ export function Composer({
           onClose={() => setOverflow(null)}
           items={[
             {
-              label: model?.label ?? thread.model ?? engineName,
+              label: `${model?.label ?? thread.model ?? engineName}${effortLevel ? ` · ${effortLevel.label}` : ""}`,
               disabled: busy,
               onSelect: () => document.querySelector<HTMLElement>("form.composer [data-model-trigger]")?.click(),
             },
-            {
-              label: "Effort",
-              disabled: busy,
-              onSelect: () => {
-                const trigger = effortButton();
-                if (trigger) traits.openAt(trigger, false);
-              },
-            },
+            ...(effortShown
+              ? [{
+                label: "Effort",
+                disabled: busy,
+                onSelect: () => {
+                  const trigger = effortButton();
+                  if (trigger) traits.openAt(trigger, false);
+                },
+              }]
+              : []),
             ...(unmanaged
               ? []
               : [

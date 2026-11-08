@@ -192,11 +192,12 @@ export function EffortTrigger({
   const display = useUi((state) => state.effortDisplay);
   const option = effortOption(model);
   const current = effortValue(model, effort);
-  if (!option) return null;
-  const parts = [`Effort: ${current?.label ?? "Default"}`, access ? `Permissions: ${ACCESS[access].label}` : null];
+  // No effort setting, or no level to name: nothing is drawn, never a bare "Effort".
+  if (!option || !current) return null;
+  const parts = [`Effort: ${current.label}`, access ? `Permissions: ${ACCESS[access].label}` : null];
   const levels = option.values;
-  const at = levels.findIndex((value) => value.id === current?.id);
-  const named = current === null || current.id === "max";
+  const at = levels.findIndex((value) => value.id === current.id);
+  const named = current.id === "max";
   return (
     <button
       data-effort-trigger
@@ -210,7 +211,7 @@ export function EffortTrigger({
       {display === "bars" && !named ? (
         <EffortGlyph count={levels.filter((value) => value.id !== "max").length} filled={at + 1} />
       ) : (
-        (current?.label ?? option.label)
+        current.label
       )}
     </button>
   );
