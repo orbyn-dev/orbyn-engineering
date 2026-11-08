@@ -245,6 +245,16 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
     let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
     assert!(prompt.contains(&format!("Checkout: {} on main at {head}", repo.display())));
     assert!(prompt.contains("use absolute paths"), "{prompt}");
+    // The engine's banner calls the library its primary directory, so the prompt must
+    // name the project as the work and the library as not the project.
+    assert!(
+        prompt.contains(&format!(
+            "The project you are working on is the checkout above, {}",
+            repo.display()
+        )),
+        "{prompt}"
+    );
+    assert!(prompt.contains("which is not the project"), "{prompt}");
     service.stop().await;
 }
 

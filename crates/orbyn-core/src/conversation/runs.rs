@@ -163,10 +163,15 @@ fn run_context(context: &RunContext<'_>) -> String {
         ));
     }
     if context.runs_at_library && !context.library_thread {
-        text.push_str(
-            "Your shell starts in the library, so use absolute paths under the checkout and run \
-             commands from there.\n",
-        );
+        // The engine's own banner names the library its "primary working directory",
+        // and a small model took that as the task. Say outright which folder is the work.
+        text.push_str(&format!(
+            "The project you are working on is the checkout above, {}. Your shell starts in the \
+             shared library, which is not the project: do not cd into the library or read it \
+             to answer questions about the project; use absolute paths under the checkout and \
+             run commands from there.\n",
+            context.checkout.display()
+        ));
     }
     text.push_str(&skills_line(context));
     if context.plan {
