@@ -218,6 +218,8 @@ test("summary edits the title, description, reviewers and labels", async ({ page
   await renamed.getByLabel("Title").fill("First layer");
   await renamed.getByRole("button", { name: "Save", exact: true }).click();
   await expect(detail(page, "First layer")).toBeVisible();
+  // The forge stand-in has taken the restored title before the next test reads it (the page shows it sooner).
+  await expect.poll(() => service.ghPull(1).title).toBe("First layer");
 });
 
 test("checks show state and a fork's workflow is approved from here", async ({ page }) => {
