@@ -14,3 +14,4 @@ e5278fd577dadd1cd11800f0ca2b7abd908343cc # refactor(core): move the codex driver
 7b0113845b30dd3645a43f5f2ccc25a2f625b237 # refactor(core): move the acp driver and its sessions into an acp folder
 cb0d36fa7a89a7087a51eba5774fcc923ae78933 # refactor(core): move the acp driver tests into their own file
 8678212e2ca296ee089964e96848e26372567217 # refactor(web): move workspace files into sidebar, palette and app-chrome folders
+6f4e756ad452cf8492291a11c36a93363261c5b2 # refactor(web): move panel files into strip, browser, diff, files, terminal, activity and preview folders

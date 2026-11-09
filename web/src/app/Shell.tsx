@@ -27,7 +27,7 @@ import { PullsPage } from "../features/pulls/PullsPage";
 import { ScheduledTasksPage } from "../features/settings/ScheduledTasks";
 import { UsagePage } from "../features/usage/UsagePage";
 import { SkillsPage } from "../features/skills/SkillsPage";
-import { PreviewFloat } from "../features/panels/PreviewFloat";
+import { PreviewFloat } from "../features/panels/preview/PreviewFloat";
 import { Toasts } from "../ui/Toasts";
 import { GitHubStarPrompt } from "../features/workspace/app-chrome/GitHubStarPrompt";
 import { FoldersNotice } from "../features/workspace/app-chrome/FoldersNotice";
