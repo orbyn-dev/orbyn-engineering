@@ -4,6 +4,8 @@
 //! watches or records. This is local: a client watches over the same access as the
 //! rest of the API, and nothing here reaches another machine.
 
+mod profiles;
+
 mod servers;
 
 mod crash;
@@ -23,8 +25,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
-    BrowserProfile, PickedElement, PreviewInput, PreviewPointer, PreviewRecording,
-    PreviewRecordingOptions, PreviewTab, PreviewView,
+    PickedElement, PreviewInput, PreviewPointer, PreviewRecording, PreviewRecordingOptions,
+    PreviewTab, PreviewView,
 };
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -64,7 +66,6 @@ const SIZES: std::ops::RangeInclusive<u32> = 100..=4096;
 /// clicked in the page changes it with nobody telling this side.
 const HISTORY_TICKS: u32 = 5;
 const ZOOMS: std::ops::RangeInclusive<f64> = 0.25..=3.0;
-const PROFILE_NAME_LIMIT: usize = 64;
 /// A snapshot's bounds: how many elements an agent may read, and how long one
 /// name, value, selector, address or text sample may be. They hold in the page and
 /// again here, so a page that answers more than asked still stays small.
@@ -1182,110 +1183,6 @@ impl Core {
         let view = tab.view();
         tokio::spawn(pump(tab));
         Ok(view)
-    }
-
-    fn profile_folder(&self, id: &str) -> PathBuf {
-        self.config.data_dir.join("browser-profiles").join(id)
-    }
-
-    fn stored_profiles(&self) -> Result<Vec<(String, String)>> {
-        let list = self.preference("preview_profiles", None)?;
-        Ok(list
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|entry| {
-                let text = |key: &str| entry.get(key)?.as_str().map(str::to_owned);
-                Some((text("id")?, text("name")?))
-            })
-            .collect())
-    }
-
-    fn profile_open(&self, id: &str) -> bool {
-        lock(&self.previews.tabs)
-            .values()
-            .any(|tab| lock(&tab.info).profile.as_deref() == Some(id))
-    }
-
-    /// A browser locks its profile, so a named one holds one tab at a time.
-    fn claim_profile(&self, id: &str) -> Result<PathBuf> {
-        if !self.stored_profiles()?.iter().any(|(known, _)| known == id) {
-            return Err(CoreError::NotFound("browser profile".into()));
-        }
-        if self.profile_open(id) {
-            return Err(CoreError::Invalid(
-                "That profile is open in another tab.".into(),
-            ));
-        }
-        Ok(self.profile_folder(id))
-    }
-
-    pub fn browser_profiles(&self) -> Result<Vec<BrowserProfile>> {
-        Ok(self
-            .stored_profiles()?
-            .into_iter()
-            .map(|(id, name)| BrowserProfile {
-                in_use: self.profile_open(&id),
-                id,
-                name,
-            })
-            .collect())
-    }
-
-    fn save_profiles(&self, profiles: &[(String, String)]) -> Result<()> {
-        let list: Vec<Value> = profiles
-            .iter()
-            .map(|(id, name)| json!({ "id": id, "name": name }))
-            .collect();
-        let values =
-            std::collections::BTreeMap::from([("preview_profiles".to_owned(), json!(list))]);
-        self.set_preferences(None, &values)
-    }
-
-    pub fn create_browser_profile(&self, name: &str) -> Result<BrowserProfile> {
-        let name = name.trim();
-        if name.is_empty() || name.chars().count() > PROFILE_NAME_LIMIT {
-            return Err(CoreError::Invalid(format!(
-                "A profile name is 1 to {PROFILE_NAME_LIMIT} characters."
-            )));
-        }
-        let mut profiles = self.stored_profiles()?;
-        let id = new_id();
-        profiles.push((id.clone(), name.to_owned()));
-        self.save_profiles(&profiles)?;
-        Ok(BrowserProfile {
-            id,
-            name: name.to_owned(),
-            in_use: false,
-        })
-    }
-
-    fn release_profile(&self, id: &str) -> Result<()> {
-        if !self.stored_profiles()?.iter().any(|(known, _)| known == id) {
-            return Err(CoreError::NotFound("browser profile".into()));
-        }
-        if self.profile_open(id) {
-            return Err(CoreError::Invalid(
-                "Close the tab using this profile first.".into(),
-            ));
-        }
-        match std::fs::remove_dir_all(self.profile_folder(id)) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
-            _ => Ok(()),
-        }
-    }
-
-    /// Empties a profile: cookies, storage and history go, and the name stays.
-    pub fn clear_browser_profile(&self, id: &str) -> Result<()> {
-        self.release_profile(id)
-    }
-
-    pub fn delete_browser_profile(&self, id: &str) -> Result<()> {
-        self.release_profile(id)?;
-        let mut profiles = self.stored_profiles()?;
-        profiles.retain(|(known, _)| known != id);
-        self.save_profiles(&profiles)
     }
 
     pub fn start_preview_recording(
