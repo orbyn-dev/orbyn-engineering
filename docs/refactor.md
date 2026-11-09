@@ -119,17 +119,24 @@ The backend (B) and web (W) tracks can run in parallel.
   hooks, search field and delete dialog in files of their own, plus thread rows, menu, actions, undo
   and grouping), `palette/` (command palette, add-project palette, project filter, path input) and
   `app-chrome/` (updates, quit confirmation, environment identity, notices, star prompt, clone jobs);
-  `Sidebar.tsx` left the baseline (11 to 10 long TypeScript files). `features/settings/` has
+  `Sidebar.tsx` left the baseline (11 to 10 long TypeScript files). `features/panels/` now has
+  `strip/` (tabs, width), `browser/` (`BrowserPanel.tsx` 954 to 440 lines, with the page view,
+  resize handles, start page and the address, zoom, device and recent-page rules in files of their
+  own), `diff/` (`DiffPanel.tsx` 665 to 377 lines, with the diff model and the patch view; the git
+  action and restore-files dialogs), `files/` (viewers, zip and Office readers; `office.ts` 720 to
+  457 lines), `terminal/`, `activity/` and `preview/`; `SurfacePane.tsx` keeps its name and sits at the
+  front door. The three long files left the baseline (10 to 7 long TypeScript files).
+  `features/settings/` has
   `rows/` (scoped preference rows, scope context and sentence, banner, dialog card), `sections/`
   (one file per settings section; `PreferenceSections.tsx` 796 lines is gone), `pages/`
   (Appearance, Keybindings, Threads), `providers/`, `projects/`, `maintenance/`, `tools-connectors/`
   and `scheduled-tasks/`; its CSS stays at the root until W2. `features/pulls/` has `list/`, `detail/`
   and `model/` (`PullDetail.tsx` 900 to 573 lines, `PullsToolbar.tsx` 676 to 289), and
   `features/usage/` keeps its files side by side (`UsagePage.tsx` 763 to 247, with the view, limits,
-  parts and price dialog in files of their own). All four left the baseline (10 to 6 long TypeScript
+  parts and price dialog in files of their own). All four left the baseline (7 to 3 long TypeScript
   files). `features/tools` stays its own feature: `thread` and `panels` import it, and `settings`
   sits above them, so folding it into `settings/tools-connectors/` would be a cycle. The rest of W5
-  (BrowserPanel, DiffPanel and others) is still open.
+  (the remaining long files) is still open.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,

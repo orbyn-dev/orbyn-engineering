@@ -6,10 +6,10 @@
   },
   "direction": [
     "features/onboarding/DraftView.tsx -> app/shortcuts.ts",
-    "features/panels/BrowserPanel.tsx -> app/shortcuts.ts",
-    "features/panels/PreviewWindow.tsx -> app/shortcuts.ts",
-    "features/panels/TerminalDrawerBody.tsx -> app/shortcuts.ts",
-    "features/panels/TerminalPanel.tsx -> app/shortcuts.ts",
+    "features/panels/browser/BrowserPanel.tsx -> app/shortcuts.ts",
+    "features/panels/preview/PreviewWindow.tsx -> app/shortcuts.ts",
+    "features/panels/terminal/TerminalDrawerBody.tsx -> app/shortcuts.ts",
+    "features/panels/terminal/TerminalPanel.tsx -> app/shortcuts.ts",
     "features/settings/pages/Keybindings.tsx -> app/commandLabels.ts",
     "features/settings/pages/Keybindings.tsx -> app/shortcuts.ts",
     "features/settings/projects/ProjectActions.tsx -> app/shortcuts.ts",
@@ -30,9 +30,6 @@
   "lines": {
     "app/Shell.tsx": 732,
     "features/onboarding/DraftView.tsx": 608,
-    "features/panels/BrowserPanel.tsx": 954,
-    "features/panels/DiffPanel.tsx": 665,
-    "features/panels/office.ts": 720,
     "state/ui.ts": 783
   },
   "css": {
