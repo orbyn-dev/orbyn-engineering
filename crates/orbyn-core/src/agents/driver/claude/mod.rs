@@ -6,6 +6,7 @@
 mod args;
 mod events;
 mod plan;
+mod protocol;
 mod usage;
 mod workflows;
 
@@ -27,14 +28,11 @@ use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::sync::CancellationToken;
 
-use super::pipes::{
-    EngineProcess, exit_message, lines, one_shot_at, resolve_engine, spawn_engine,
-    spawn_engine_with,
-};
+use super::pipes::{EngineProcess, one_shot_at, resolve_engine, spawn_engine, spawn_engine_with};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, MCP_SERVER_NAME,
-    ModelCatalog, ProbeDir, RunControl, RunHandle, RunKind, RunSpec, UpdatePlan, WarmProcess,
-    effort_option, proposed_plan_events,
+    ModelCatalog, ProbeDir, RunHandle, RunKind, RunSpec, UpdatePlan, WarmProcess, effort_option,
+    proposed_plan_events,
 };
 use crate::agents::console::{ConsoleCommand, ConsoleSpec};
 use crate::agents::engines::maintenance;
@@ -43,9 +41,9 @@ use crate::agents::selection::FAST_MODE;
 use crate::error::{CoreError, Result};
 use crate::util::write_private;
 use args::CAPABILITY_ENV;
-use events::{StreamMapper, text_of};
+use events::text_of;
+use protocol::{Inputs, run_protocol};
 use usage::parse_usage_report;
-use workflows::Workflows;
 
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 /// How long a run held open for a workflow waits, once the last one ends, for the
@@ -1246,146 +1244,6 @@ fn documented_catalog(reason: String) -> ModelCatalog {
         ],
         ..ModelCatalog::default()
     }
-}
-
-/// What a run takes while it works: steering text and controls.
-struct Inputs {
-    steering: mpsc::UnboundedReceiver<String>,
-    controls: mpsc::UnboundedReceiver<RunControl>,
-}
-
-async fn sleep_until(due: Option<tokio::time::Instant>) {
-    match due {
-        Some(due) => tokio::time::sleep_until(due).await,
-        None => std::future::pending().await,
-    }
-}
-
-async fn run_protocol(
-    mut process: EngineProcess,
-    spec: RunSpec,
-    events: mpsc::Sender<EngineEvent>,
-    inputs: Inputs,
-    cancel: CancellationToken,
-) {
-    let Inputs {
-        mut steering,
-        mut controls,
-    } = inputs;
-    // The prompt goes over stdin, never argv: it can exceed ARG_MAX and argv is
-    // visible to other processes.
-    let prompt = user_message(&spec);
-    let wrote = async {
-        process.stdin.write_all(prompt.as_bytes()).await?;
-        process.stdin.write_all(b"\n").await?;
-        process.stdin.flush().await
-    }
-    .await;
-    if let Err(error) = wrote {
-        tracing::debug!(%error, "could not write the prompt");
-    }
-    let mut stdin = process.stdin;
-    let mut mapper = StreamMapper::default();
-    let mut stream = lines(process.stdout);
-    let mut outcome = None;
-    let mut grace = None;
-    let stream_ended = loop {
-        tokio::select! {
-            biased;
-            () = cancel.cancelled() => break false,
-            () = sleep_until(grace) => {
-                outcome = mapper.held.take();
-                break false;
-            }
-            Some(control) = controls.recv() => {
-                let RunControl::StopWorkflow { tool_call_id } = control;
-                if let Some(frame) = mapper.workflows.stop_request(&tool_call_id) {
-                    if let Err(error) = stdin.write_all(format!("{frame}\n").as_bytes()).await {
-                        tracing::debug!(%error, "could not ask Claude to stop a workflow");
-                    }
-                    let _ = stdin.flush().await;
-                } else if events.send(Workflows::already_ended(&tool_call_id)).await.is_err() {
-                    return;
-                }
-            }
-            Some(text) = steering.recv() => {
-                // The CLI folds a message sent mid-turn into the running turn.
-                let frame = format!("{}\n", user_frame(&text));
-                if let Err(error) = stdin.write_all(frame.as_bytes()).await {
-                    tracing::debug!(%error, "could not steer the run");
-                }
-                let _ = stdin.flush().await;
-            }
-            line = stream.next() => {
-                let Some(line) = line else { break true };
-                let Ok(line) = line else { continue };
-                let Ok(frame) = serde_json::from_str::<Value>(&line) else {
-                    tracing::debug!("skipping a non-JSON Claude line");
-                    continue;
-                };
-                for event in mapper.on_frame(&frame) {
-                    if events.send(event).await.is_err() {
-                        return;
-                    }
-                }
-                if let Some(result) = mapper.outcome.take() {
-                    outcome = Some(result);
-                    break false;
-                }
-                if mapper.waiting_on_hold() {
-                    grace.get_or_insert_with(|| tokio::time::Instant::now() + HOLD_GRACE);
-                } else {
-                    grace = None;
-                }
-            }
-        }
-    };
-    // The turn finished before the CLI went away; a workflow it held for is gone.
-    let outcome = outcome.or_else(|| mapper.held.take());
-    // Closing stdin is the CLI's signal to exit.
-    drop(stdin);
-    for event in mapper.close_open_blocks() {
-        let _ = events.send(event).await;
-    }
-    for event in mapper.workflows.end_all() {
-        let _ = events.send(event).await;
-    }
-    let cancelled = cancel.is_cancelled();
-    let status = match tokio::time::timeout(EXIT_GRACE, process.child.wait()).await {
-        Ok(status) => status.ok(),
-        Err(_) => {
-            process.child.terminate();
-            None
-        }
-    };
-    let outcome = match (outcome, cancelled, stream_ended) {
-        (_, true, _) => EngineOutcome::Cancelled,
-        (Some(result), _, _) => result,
-        _ => {
-            let message = exit_message(status, &process.stderr).await;
-            if message.contains(NO_SESSION) {
-                EngineOutcome::SessionLost
-            } else {
-                EngineOutcome::Failed(message)
-            }
-        }
-    };
-    let _ = events.send(EngineEvent::Finished(outcome)).await;
-}
-
-/// How the CLI reports a `--resume` id it does not have.
-const NO_SESSION: &str = "No conversation found";
-
-/// Slash commands reach the CLI bare, or it would read them as ordinary text.
-fn user_message(spec: &RunSpec) -> String {
-    match spec.kind {
-        RunKind::Turn => user_frame(&spec.prompt),
-        _ => user_frame(&spec.user_prompt),
-    }
-}
-
-fn user_frame(text: &str) -> String {
-    json!({ "type": "user", "message": { "role": "user", "content": text } }).to_string()
 }
 
 fn parse_auth_status(status: i32, stdout: &str) -> orbyn_contracts::AuthState {

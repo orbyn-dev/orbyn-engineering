@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use orbyn_contracts::{AgUiEvent, ThreadUsage};
 use serde_json::{Value, json};
 
+use super::init_tools;
 use super::plan::{
     TaskStep, created_from_text, task_content, task_result, task_status, todo_content,
 };
+use super::protocol::NO_SESSION;
 use super::workflows::Workflows;
-use super::{NO_SESSION, init_tools};
 use crate::agents::driver::{EngineEvent, EngineOutcome, ItemRecord, proposed_plan_events};
 use crate::util::new_id;
 
