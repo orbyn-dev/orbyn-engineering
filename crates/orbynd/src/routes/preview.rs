@@ -250,7 +250,7 @@ pub async fn download(
         .map_err(|_| orbyn_core::CoreError::NotFound("download".into()))?;
     let disposition = format!(
         "attachment; filename*=UTF-8''{}",
-        crate::raw_files::encoded_name(&name)
+        crate::routes::raw_files::encoded_name(&name)
     );
     let mut response = Body::from_stream(ReaderStream::new(file)).into_response();
     let headers = response.headers_mut();
@@ -269,7 +269,7 @@ pub async fn download(
     );
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(crate::raw_files::SANDBOX),
+        HeaderValue::from_static(crate::routes::raw_files::SANDBOX),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(response)

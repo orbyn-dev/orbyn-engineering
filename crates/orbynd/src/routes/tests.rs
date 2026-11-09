@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::*;
+use crate::*;
 
 const TABLE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/routes.json");
 const PUBLIC_PREFIXES: [&str; 3] = ["/auth/", "/hooks/", "/mcp/"];

@@ -1,35 +1,29 @@
 //! `orbynd`: transport and CLI over `orbyn-core`.
 
-mod access;
 mod api;
-mod mcp_apps;
-mod preview_routes;
-mod pulls;
-mod raw_files;
+mod http;
 mod recent_events;
-mod remote_images;
-mod renders;
-#[cfg(test)]
-mod route_table;
-mod stream;
-mod terminal_ws;
-mod ui;
+mod routes;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use access::Access;
 use api::AppState;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
 use clap::{Args, Parser, Subcommand};
+use http::access::{self, Access};
 use orbyn_core::agents::engines::EngineConfig;
 use orbyn_core::util::{random_token, sha256_hex};
 use orbyn_core::{Core, CoreConfig, CoreError};
+use routes::{
+    mcp_apps, media as remote_images, preview as preview_routes, pulls, raw_files, renders, stream,
+    terminal as terminal_ws, ui,
+};
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;

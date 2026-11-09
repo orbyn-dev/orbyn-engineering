@@ -31,7 +31,7 @@ use orbyn_core::{Core, CoreError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::access::Access;
+use crate::http::access::Access;
 
 /// The actor recorded for anything arriving over the local API.
 pub const LOCAL_USER: &str = "user";
