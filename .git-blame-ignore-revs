@@ -1,3 +1,4 @@
 # Commits that only move or reformat files, so `git blame` skips them.
 # One full commit hash per line, with a comment saying what it did.
 # Each folder-architecture move commit (docs/refactor.md) is listed here.
+d381a2dcfa9c578fbcf432e3fc13d0df8a3b914c # refactor(contracts): move wire types into domain modules
