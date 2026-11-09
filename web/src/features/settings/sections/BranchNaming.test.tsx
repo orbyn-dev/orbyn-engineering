@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
-import { WorktreesSection } from "./PreferenceSections";
+import { WorktreesSection } from "./WorktreesSection";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));

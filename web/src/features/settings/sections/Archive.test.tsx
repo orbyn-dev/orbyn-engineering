@@ -4,7 +4,7 @@ import * as fixtures from "../../../../mock/fixtures";
 import { api } from "../../../api/client";
 import type { Thread } from "../../../api/types";
 import { useWorkspace } from "../../../state/workspace";
-import { ArchiveSection } from "./PreferenceSections";
+import { ArchiveSection } from "./ArchiveSection";
 
 afterEach(() => vi.restoreAllMocks());
 

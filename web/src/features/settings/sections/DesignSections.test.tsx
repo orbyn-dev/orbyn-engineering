@@ -5,7 +5,7 @@ import { request } from "../../../api/client";
 import type { EngineStatus } from "../../../api/types";
 import { useWorkspace } from "../../../state/workspace";
 import { KeybindingsSection } from "../pages/Keybindings";
-import { AboutSection } from "./PreferenceSections";
+import { AboutSection } from "./AboutSection";
 import { ProviderTable } from "../providers/ProviderTable";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));

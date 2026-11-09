@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
 import { useUi } from "../../../state/ui";
-import { ChatSection, GeneralSection } from "./PreferenceSections";
+import { ChatSection } from "./ChatSection";
+import { GeneralSection } from "./GeneralSection";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn(), api: { ...(await original<{ api: object }>()).api, browse: vi.fn().mockResolvedValue({ path: "/home", parent: null, entries: [{ name: "Code", path: "/home/Code", is_git: false }] }) } }));
 

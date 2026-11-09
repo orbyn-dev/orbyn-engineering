@@ -9,7 +9,7 @@ import { ErrorState, Loading } from "../../../ui/states";
 import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
 import { useUi } from "../../../state/ui";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { Toggle } from "../sections/PreferenceSections";
+import { Toggle } from "../sections/parts";
 import { HistoryImport } from "../maintenance/HistoryImport";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
 

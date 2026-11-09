@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, request } from "../../../api/client";
-import { GeneralSection } from "./PreferenceSections";
+import { GeneralSection } from "./GeneralSection";
 import { EnvironmentCleanup, MaintenanceSection } from "../maintenance/Maintenance";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));

@@ -15,16 +15,14 @@ import { KeybindingsSection } from "./pages/Keybindings";
 import { MaintenanceSection } from "./maintenance/Maintenance";
 import { ProjectsSection } from "./projects/Projects";
 import { ProvidersSection } from "./providers/Providers";
-import {
-  AboutSection,
-  ArchiveSection,
-  ChatSection,
-  DiffsSection,
-  GeneralSection,
-  LabsSection,
-  SourceControlSection,
-  WorktreesSection,
-} from "./sections/PreferenceSections";
+import { AboutSection } from "./sections/AboutSection";
+import { ArchiveSection } from "./sections/ArchiveSection";
+import { ChatSection } from "./sections/ChatSection";
+import { DiffsSection } from "./sections/DiffsSection";
+import { GeneralSection } from "./sections/GeneralSection";
+import { LabsSection } from "./sections/LabsSection";
+import { SourceControlSection } from "./sections/SourceControlSection";
+import { WorktreesSection } from "./sections/WorktreesSection";
 import { ScheduledTasksSection } from "./scheduled-tasks/ScheduledTasks";
 import { ThreadsSection } from "./pages/Threads";
 import { ToolsConnectorsSection } from "./tools-connectors/ToolsConnectors";
