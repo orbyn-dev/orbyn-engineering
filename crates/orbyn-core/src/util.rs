@@ -1,15 +1,19 @@
 //! Small shared primitives: ids, timestamps, random tokens, hex and owner-only files.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use sha2::{Digest, Sha256};
 
-/// The current user's home folder: `HOME`, else `USERPROFILE` on Windows.
+/// The current user's home folder: `HOME`, else `USERPROFILE` (checked on every OS).
+/// An empty `HOME` is still returned.
 pub fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    home_from(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+}
+
+fn home_from(home: Option<OsString>, profile: Option<OsString>) -> Option<PathBuf> {
+    home.or(profile).map(PathBuf::from)
 }
 
 pub fn new_id() -> String {
@@ -221,11 +225,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_home_folder_follows_the_environment() {
-        let expected = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from);
-        assert_eq!(home_dir(), expected);
+    fn home_comes_from_home_then_userprofile() {
+        let os = |text: &str| Some(OsString::from(text));
+        assert_eq!(home_from(os("/h"), os("/p")), Some(PathBuf::from("/h")));
+        assert_eq!(home_from(None, os("/p")), Some(PathBuf::from("/p")));
+        assert_eq!(home_from(None, None), None);
+        // An empty HOME is returned as it is, not skipped.
+        assert_eq!(home_from(os(""), os("/p")), Some(PathBuf::new()));
     }
 
     #[test]
