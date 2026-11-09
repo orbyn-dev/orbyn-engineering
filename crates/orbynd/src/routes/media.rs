@@ -5,7 +5,13 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::api::{ApiFailure, ApiResult, AppState};
+use crate::http::{ApiFailure, ApiResult, AppState};
+use axum::Router;
+use axum::routing::get;
+
+pub fn routes() -> Router<AppState> {
+    Router::new().route("/api/media/image", get(serve))
+}
 
 #[derive(Deserialize)]
 pub struct ImageQuery {

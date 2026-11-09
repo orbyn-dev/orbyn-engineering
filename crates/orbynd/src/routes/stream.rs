@@ -18,7 +18,18 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 
-use crate::api::{ApiJson, ApiResult, AppState, QueryMap};
+use crate::http::{ApiJson, ApiResult, AppState, QueryMap};
+use axum::Router;
+use axum::routing::{get, post};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/shell/events", get(shell_events))
+        .route("/api/updates/events", get(update_events))
+        .route("/api/threads/{id}/events", get(thread_events))
+        .route("/api/engines/update-events", get(engine_update_events))
+        .route("/agui/threads/{id}", post(agui_run))
+}
 
 const BATCH: u32 = 500;
 const KEEP_ALIVE: Duration = Duration::from_secs(15);

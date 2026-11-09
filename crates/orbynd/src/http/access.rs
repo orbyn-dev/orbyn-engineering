@@ -14,7 +14,7 @@ use axum::response::Response;
 use orbyn_core::conversation::renders::{is_image_name, is_render_id};
 use orbyn_core::util::{random_token, secrets_match, sha256_hex};
 
-use crate::api::ApiFailure;
+use crate::http::ApiFailure;
 
 const SESSION_COOKIE: &str = "orbyn_session";
 const SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);

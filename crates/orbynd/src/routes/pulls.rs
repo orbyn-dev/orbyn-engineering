@@ -13,7 +13,96 @@ use orbyn_contracts::{
 };
 use orbyn_core::source_control::forge::PullFilter;
 
-use crate::api::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use axum::Router;
+use axum::routing::{get, patch, post};
+use orbyn_contracts::LinkPull;
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/threads/{id}/pulls", get(linked_pulls).post(link_pull))
+        .route("/api/threads/{id}/pulls/refresh", post(refresh_pulls))
+        .route(
+            "/api/threads/{id}/pulls/{number}",
+            get(pull_detail).delete(unlink_pull),
+        )
+        .route("/api/threads/{id}/pulls/{number}/review", post(review_pull))
+        .route("/api/threads/{id}/pulls/{number}/merge", post(merge_pull))
+        .route("/api/forges", get(forges))
+        .route("/api/pulls", get(all))
+        .route("/api/pulls/details", post(details))
+        .route("/api/projects/{id}/pulls", get(list))
+        .route("/api/projects/{id}/pulls/close", post(close_many))
+        .route(
+            "/api/projects/{id}/pulls/reviewers",
+            get(reviewer_candidates),
+        )
+        .route("/api/projects/{id}/pulls/labels", get(label_candidates))
+        .route(
+            "/api/projects/{id}/workflows/{run}/approve",
+            post(approve_workflow),
+        )
+        .route(
+            "/api/projects/{id}/pulls/{number}",
+            get(detail).patch(update),
+        )
+        .route("/api/projects/{id}/pulls/{number}/checks", get(checks))
+        .route(
+            "/api/projects/{id}/pulls/{number}/comments",
+            get(conversation).post(comment),
+        )
+        .route(
+            "/api/projects/{id}/pulls/{number}/comments/{comment}",
+            patch(edit_comment),
+        )
+        .route(
+            "/api/projects/{id}/pulls/{number}/comments/{comment}/react",
+            post(react),
+        )
+        .route(
+            "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve",
+            post(resolve_thread),
+        )
+        .route("/api/projects/{id}/pulls/{number}/timeline", get(timeline))
+        .route("/api/projects/{id}/pulls/{number}/files", get(files))
+        .route(
+            "/api/projects/{id}/pulls/{number}/revisions",
+            get(revisions),
+        )
+        .route(
+            "/api/projects/{id}/commits/{sha}/files",
+            get(revision_files),
+        )
+        .route("/api/projects/{id}/pulls/{number}/viewed", post(set_viewed))
+        .route("/api/projects/{id}/pulls/{number}/review", post(review))
+        .route(
+            "/api/projects/{id}/pulls/{number}/reviewers",
+            post(set_reviewers),
+        )
+        .route("/api/projects/{id}/pulls/{number}/labels", post(set_labels))
+        .route("/api/projects/{id}/pulls/{number}/merge", post(merge))
+        .route("/api/projects/{id}/pulls/{number}/action", post(action))
+        .route(
+            "/api/projects/{id}/pulls/{number}/stack",
+            get(stack).post(stack_action),
+        )
+        .route("/api/projects/{id}/pulls/{number}/checkout", post(checkout))
+        .route("/api/projects/{id}/pulls/{number}/work", post(work_on))
+        .route(
+            "/api/projects/{id}/pulls/{number}/guide",
+            get(guide).post(generate_guide),
+        )
+        .route(
+            "/api/projects/{id}/pulls/{number}/guide/ask",
+            post(ask_about_stop),
+        )
+        .route("/api/threads/{id}/watches", get(watches))
+        .route("/api/watches/check", post(check_watches))
+        .route(
+            "/api/threads/{id}/pulls/{number}/watch",
+            post(watch).delete(unwatch),
+        )
+}
 
 fn filter_of(query: HashMap<String, String>) -> PullFilter {
     let mut query = query;
@@ -385,4 +474,69 @@ pub async fn forges(
 ) -> impl IntoResponse {
     let rescan = query.get("rescan").is_some_and(|value| value == "true");
     Json(state.core.forges(rescan).await)
+}
+
+async fn linked_pulls(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    state.core.store.thread(&id)?;
+    Ok(Json(state.core.store.linked_pulls(&id)?))
+}
+
+async fn link_pull(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<LinkPull>,
+) -> ApiResult<impl IntoResponse> {
+    Ok((
+        StatusCode::CREATED,
+        Json(state.core.link_pull(&id, body.number).await?),
+    ))
+}
+
+async fn unlink_pull(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, u64)>,
+) -> ApiResult<StatusCode> {
+    state.core.store.unlink_pull(&id, number)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn refresh_pulls(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.refresh_pulls(&id).await?))
+}
+
+async fn pull_detail(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, u64)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.pull_detail(&id, number).await?))
+}
+
+async fn review_pull(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, u64)>,
+    ApiJson(body): ApiJson<SubmitReview>,
+) -> ApiResult<StatusCode> {
+    state
+        .core
+        .review_pull(&id, number, &body, LOCAL_USER)
+        .await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn merge_pull(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, u64)>,
+    ApiJson(body): ApiJson<MergePull>,
+) -> ApiResult<StatusCode> {
+    state
+        .core
+        .merge_pull(&id, number, &body, LOCAL_USER)
+        .await?;
+    Ok(StatusCode::ACCEPTED)
 }

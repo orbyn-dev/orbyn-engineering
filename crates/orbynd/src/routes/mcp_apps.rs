@@ -8,7 +8,26 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::api::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use axum::Router;
+use axum::routing::{delete, post, put};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/threads/{id}/mcp-apps/{render_id}/tool-call",
+            post(tool_call),
+        )
+        .route(
+            "/api/threads/{id}/mcp-apps/{render_id}/message",
+            post(message),
+        )
+        .route(
+            "/api/threads/{id}/mcp-apps/{render_id}/context",
+            put(context),
+        )
+        .route("/api/threads/{id}/mcp-app-context", delete(clear_context))
+}
 
 #[derive(Deserialize)]
 pub struct ToolCall {

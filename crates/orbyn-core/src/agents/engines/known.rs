@@ -4,6 +4,9 @@
 
 use orbyn_contracts::{CustomEngine, EngineTier};
 
+use super::instances::LOCAL_ACP_DRIVER;
+use crate::error::{CoreError, Result};
+
 /// One CLI and how to reach its ACP mode.
 pub struct KnownEngine {
     pub id: &'static str,
@@ -211,6 +214,48 @@ pub fn known_engine(id: &str) -> Option<&'static KnownEngine> {
     KNOWN_ENGINES.iter().find(|engine| engine.id == id)
 }
 
+/// A lowercase id from a name: runs of anything but letters and digits become one `-`.
+pub fn slug(name: &str) -> String {
+    let text: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    text.split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Fills in a missing id from the name, then refuses an engine that is incomplete,
+/// uses a reserved id, claims a built-in tier or has an AG-UI target that is not a URL.
+pub fn prepare_custom_engine(engine: &mut CustomEngine) -> Result<()> {
+    if engine.id.is_empty() {
+        engine.id = slug(&engine.name);
+    }
+    if engine.id.is_empty() || engine.name.trim().is_empty() || engine.target.trim().is_empty() {
+        return Err(CoreError::Invalid(
+            "Name the engine and give its command or URL.".into(),
+        ));
+    }
+    if engine.id == LOCAL_ACP_DRIVER {
+        return Err(CoreError::Invalid(
+            "That engine id is reserved for local ACP instances.".into(),
+        ));
+    }
+    if matches!(engine.id.as_str(), "claude" | "codex") || engine.tier == EngineTier::Native {
+        return Err(CoreError::Invalid("That engine is built in.".into()));
+    }
+    if engine.tier == EngineTier::Agui
+        && !(engine.target.starts_with("http://") || engine.target.starts_with("https://"))
+    {
+        return Err(CoreError::Invalid(
+            "An AG-UI engine needs an http or https URL.".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +315,89 @@ mod tests {
             .map(|e| e.id)
             .collect();
         assert_eq!(silent, ["deepseek", "fx"]);
+    }
+}
+
+#[cfg(test)]
+mod custom_engine_tests {
+    use super::*;
+
+    fn engine(id: &str, name: &str, tier: EngineTier, target: &str) -> CustomEngine {
+        CustomEngine {
+            id: id.into(),
+            name: name.into(),
+            tier,
+            target: target.into(),
+            args: Vec::new(),
+        }
+    }
+
+    fn message(result: Result<()>) -> String {
+        match result {
+            Err(CoreError::Invalid(message)) => message,
+            other => panic!("expected an invalid-input error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slug_joins_words_and_drops_edges() {
+        assert_eq!(slug("My  Agent_2!"), "my-agent-2");
+        assert_eq!(slug("--Already-slugged--"), "already-slugged");
+        assert_eq!(slug("!!!"), "");
+    }
+
+    #[test]
+    fn a_missing_id_comes_from_the_name() {
+        let mut named = engine("", "Open Code", EngineTier::Acp, "opencode acp");
+        prepare_custom_engine(&mut named).unwrap();
+        assert_eq!(named.id, "open-code");
+        let mut kept = engine("mine", "Open Code", EngineTier::Acp, "opencode acp");
+        prepare_custom_engine(&mut kept).unwrap();
+        assert_eq!(kept.id, "mine");
+    }
+
+    #[test]
+    fn an_incomplete_engine_is_refused() {
+        for (id, name, target) in [("", "!!!", "x"), ("a", "  ", "x"), ("a", "A", " ")] {
+            let mut incomplete = engine(id, name, EngineTier::Acp, target);
+            assert_eq!(
+                message(prepare_custom_engine(&mut incomplete)),
+                "Name the engine and give its command or URL."
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_and_built_in_ids_are_refused() {
+        let mut reserved = engine(LOCAL_ACP_DRIVER, "A", EngineTier::Acp, "x");
+        assert_eq!(
+            message(prepare_custom_engine(&mut reserved)),
+            "That engine id is reserved for local ACP instances."
+        );
+        for id in ["claude", "codex"] {
+            let mut built_in = engine(id, "A", EngineTier::Acp, "x");
+            assert_eq!(
+                message(prepare_custom_engine(&mut built_in)),
+                "That engine is built in."
+            );
+        }
+        let mut native = engine("mine", "A", EngineTier::Native, "x");
+        assert_eq!(
+            message(prepare_custom_engine(&mut native)),
+            "That engine is built in."
+        );
+    }
+
+    #[test]
+    fn an_agui_engine_needs_a_url() {
+        let mut bad = engine("a", "A", EngineTier::Agui, "agent --serve");
+        assert_eq!(
+            message(prepare_custom_engine(&mut bad)),
+            "An AG-UI engine needs an http or https URL."
+        );
+        for target in ["http://localhost:1", "https://example.test/agent"] {
+            let mut good = engine("a", "A", EngineTier::Agui, target);
+            prepare_custom_engine(&mut good).unwrap();
+        }
     }
 }

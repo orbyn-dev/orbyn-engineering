@@ -11,7 +11,16 @@ use orbyn_core::conversation::renders::RenderFile;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::api::{ApiJson, ApiResult, AppState};
+use crate::http::{ApiJson, ApiResult, AppState};
+use axum::Router;
+use axum::routing::{get, post};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/threads/{id}/renders", post(publish))
+        .route("/api/threads/{id}/renders/{render_id}", get(page))
+        .route("/api/threads/{id}/renders/{render_id}/{file}", get(image))
+}
 
 /// Stops a published page from reading the API, the network, this origin's storage
 /// or a form. `img-src 'self'` is what lets the page show the images the publish

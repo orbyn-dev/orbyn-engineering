@@ -10,12 +10,11 @@
     "crates/orbyn-core/src/conversation/runs.rs": 1996,
     "crates/orbyn-core/src/source_control/forge.rs": 2987,
     "crates/orbyn-core/src/tools/mcp_tools.rs": 1920,
-    "crates/orbynd/src/api.rs": 2075,
     "crates/orbynd/src/bin/orbyn_fake_engine.rs": 1715
   },
   "orbynd_git_spawns": {},
   "orbynd_store_refs": {
-    "crates/orbynd/src/stream.rs": 1,
-    "crates/orbynd/src/terminal_ws.rs": 1
+    "crates/orbynd/src/routes/stream.rs": 1,
+    "crates/orbynd/src/routes/terminal.rs": 1
   }
 }
