@@ -1,4 +1,6 @@
+use super::events::UpdateMapper;
 use super::*;
+use orbyn_contracts::AgUiEvent;
 
 #[test]
 fn agents_without_http_mcp_get_the_stdio_bridge() {
