@@ -9,6 +9,8 @@ mod raw_files;
 mod recent_events;
 mod remote_images;
 mod renders;
+#[cfg(test)]
+mod route_table;
 mod stream;
 mod terminal_ws;
 mod ui;
