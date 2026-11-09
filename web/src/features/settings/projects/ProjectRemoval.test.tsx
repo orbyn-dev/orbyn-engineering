@@ -1,12 +1,12 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { api, request } from "../../api/client";
-import type { ProjectScopeCheckout } from "../../generated/ProjectScopeCheckout";
-import type { ProjectScopeGroup } from "../../generated/ProjectScopeGroup";
+import { api, request } from "../../../api/client";
+import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
+import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";
 import { ProjectRemoval } from "./Projects";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
 const member: ProjectScopeCheckout = {
   project_id: "p1", physical_key: "k1", name: "orbyn-engineering", path: "/code/orbyn-engineering",

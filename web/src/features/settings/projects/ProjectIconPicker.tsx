@@ -1,12 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import type { ProjectIconOverride } from "../../generated/ProjectIconOverride";
-import { deriveProjectIdentity, PROJECT_ICON_COLORS, type ProjectIconColor } from "../../lib/projectIdentity";
-import { toFailure } from "../../lib/useAsync";
-import { Dialog } from "../../ui/Dialog";
-import { Button } from "../../ui/controls";
-import { ProjectIconVisual } from "../../ui/ProjectIconVisual";
+import type { ProjectIconOverride } from "../../../generated/ProjectIconOverride";
+import { deriveProjectIdentity, PROJECT_ICON_COLORS, type ProjectIconColor } from "../../../lib/projectIdentity";
+import { toFailure } from "../../../lib/useAsync";
+import { Dialog } from "../../../ui/Dialog";
+import { Button } from "../../../ui/controls";
+import { ProjectIconVisual } from "../../../ui/ProjectIconVisual";
 import { emojiChoices, iconChoiceLabel, pastedProjectEmoji, pickerMonogram, searchProjectIcons } from "./projectIconChoices";
-import "./ProjectIconPicker.css";
+import "../ProjectIconPicker.css";
 
 /** Mounted once per open: read revisions may rebase while the user's draft stays local. */
 export function ProjectIconPicker({ current, projectName, disabled, onClose, onSave, onReload, reloadPending }: {

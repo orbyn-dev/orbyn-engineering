@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { api, request } from "../../api/client";
+import { api, request } from "../../../api/client";
 import { HistoryImport } from "./HistoryImport";
 
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
+vi.mock("../../../api/client", async (original) => {
+  const actual = await original<typeof import("../../../api/client")>();
   return { ...actual, request: vi.fn(), api: { ...actual.api, addProject: vi.fn() } };
 });
 

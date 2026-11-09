@@ -1,10 +1,10 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../api/client";
-import type { EngineStatus } from "../../api/types";
+import { ApiFailure, request } from "../../../api/client";
+import type { EngineStatus } from "../../../api/types";
 import { NativeSessions } from "./NativeSessions";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
 const engine = { id: "agent", tier: "acp", installed: true } as unknown as EngineStatus;
 const caps = { can_list: true, can_load: true, can_resume: false, can_delete: true };

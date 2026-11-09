@@ -1,7 +1,7 @@
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import type { ScopedPreferencesChange } from "../../generated/ScopedPreferencesChange";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
-import type { PreferenceEdit } from "../../generated/PreferenceEdit";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 
 /** One tuple: effort and options belong to the default model, so all four move together. */
 export const MODEL_DEFAULT_KEYS = ["default_engine", "default_model", "default_effort", "default_model_options"] as const;

@@ -1,9 +1,9 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import * as fixtures from "../../../mock/fixtures";
-import { api } from "../../api/client";
-import type { Thread } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
+import * as fixtures from "../../../../mock/fixtures";
+import { api } from "../../../api/client";
+import type { Thread } from "../../../api/types";
+import { useWorkspace } from "../../../state/workspace";
 import { ArchiveSection } from "./PreferenceSections";
 
 afterEach(() => vi.restoreAllMocks());

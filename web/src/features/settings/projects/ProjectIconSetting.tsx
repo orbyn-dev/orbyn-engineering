@@ -1,20 +1,20 @@
 import { RotateCcw } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
-import type { Project } from "../../api/types";
-import type { ProjectIconOverride } from "../../generated/ProjectIconOverride";
-import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
-import type { ProjectScopeCheckout } from "../../generated/ProjectScopeCheckout";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
-import { invalidateProjectImages } from "../../lib/projectImages";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { ProjectBadge } from "../../ui/badges";
-import { SettingRow } from "../../ui/SettingRow";
-import { Button, IconButton } from "../../ui/controls";
+import { api } from "../../../api/client";
+import type { Project } from "../../../api/types";
+import type { ProjectIconOverride } from "../../../generated/ProjectIconOverride";
+import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import { invalidateProjectImages } from "../../../lib/projectImages";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { ProjectBadge } from "../../../ui/badges";
+import { SettingRow } from "../../../ui/SettingRow";
+import { Button, IconButton } from "../../../ui/controls";
 import { ProjectIconPicker } from "./ProjectIconPicker";
-import { Presence } from "../../ui/Presence";
+import { Presence } from "../../../ui/Presence";
 import { ProjectImagePicker, type ProjectImagePickerScope } from "./ProjectImagePicker";
 
 /** How the service names a copy of an image chosen outside the project. */

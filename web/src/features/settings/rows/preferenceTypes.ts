@@ -1,5 +1,5 @@
-import type { PreferenceEdit } from "../../generated/PreferenceEdit";
-import type { ScopedPreferenceRow } from "../../generated/ScopedPreferenceRow";
+import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
+import type { ScopedPreferenceRow } from "../../../generated/ScopedPreferenceRow";
 
 export type PreferenceSaveResult = { saved: true; row: ScopedPreferenceRow | undefined } | { saved: false; error: string | null };
 export interface PreferenceControl {

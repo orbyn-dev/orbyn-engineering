@@ -1,13 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../api/client";
-import type { Project } from "../../api/types";
-import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
-import type { ProjectScopeCheckout } from "../../generated/ProjectScopeCheckout";
+import { api } from "../../../api/client";
+import type { Project } from "../../../api/types";
+import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
 import { ProjectIconSetting } from "./ProjectIconSetting";
 
-vi.mock("../../ui/badges", () => ({ ProjectBadge: () => <span>badge</span> }));
+vi.mock("../../../ui/badges", () => ({ ProjectBadge: () => <span>badge</span> }));
 
 const member: ProjectScopeCheckout = {
   project_id: "p1", physical_key: "k1", name: "One", metadata_revision: "4", path: "/one",

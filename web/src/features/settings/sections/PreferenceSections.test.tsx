@@ -1,11 +1,11 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { request } from "../../api/client";
-import { useUi } from "../../state/ui";
+import { request } from "../../../api/client";
+import { useUi } from "../../../state/ui";
 import { ChatSection, DiffsSection } from "./PreferenceSections";
-import { scopedFixture } from "./scopedPreferenceFixture.test-support";
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 it("offers the reference usage-limit defaults with their existing preference keys", async () => {
   const user = userEvent.setup();
   vi.mocked(request).mockResolvedValue(scopedFixture([

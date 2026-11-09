@@ -1,19 +1,19 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../api/client";
-import type { EngineModels, PreferenceView } from "../../api/types";
-import type { ScopedPreferencesChange } from "../../generated/ScopedPreferencesChange";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
+import { ApiFailure, request } from "../../../api/client";
+import type { EngineModels, PreferenceView } from "../../../api/types";
+import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import { ProjectModelDefaults } from "./ProjectModelDefaults";
-import { scopedFixture } from "./scopedPreferenceFixture.test-support";
-import { useModelStore } from "../../state/modelStore";
+import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+import { useModelStore } from "../../../state/modelStore";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-vi.mock("../../state/workspace", () => ({ useWorkspace: (select: (state: unknown) => unknown) =>
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../state/workspace", () => ({ useWorkspace: (select: (state: unknown) => unknown) =>
   select({ engines: { data: [{ id: "codex", name: "Codex", installed: true }] } }) }));
-vi.mock("../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick, disabled, triggerLabel }: {
+vi.mock("../../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick, disabled, triggerLabel }: {
   selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void; disabled: boolean; triggerLabel?: string;
 }) => <button disabled={disabled} onClick={() => onPick({ engine: "codex", model: "chosen" })}>
   {triggerLabel ?? `Choose model (${selected.engine}/${selected.model ?? "automatic"})`}</button> }));

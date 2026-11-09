@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { api, ApiFailure } from "../../api/client";
-import type { FsListing } from "../../api/types";
+import { api, ApiFailure } from "../../../api/client";
+import type { FsListing } from "../../../api/types";
 import { BaseDirectoryDialog } from "./BaseDirectoryDialog";
 
 const home: FsListing = { path: "/home", parent: null, entries: [{ name: "Code", path: "/home/Code", is_git: false }] };

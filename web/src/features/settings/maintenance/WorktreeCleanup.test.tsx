@@ -1,11 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { request } from "../../api/client";
+import { request } from "../../../api/client";
 import { daysWhenTurnedOn, WorktreeCleanup } from "./WorktreeCleanup";
-import { scopedFixture } from "./scopedPreferenceFixture.test-support";
+import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
 const view = (value: unknown, source = "default") => ({ key: "worktree_cleanup", value, default: {}, source, project_scoped: true }) as never;
 const serve = (value: unknown, source?: string) => vi.mocked(request).mockImplementation(async () =>

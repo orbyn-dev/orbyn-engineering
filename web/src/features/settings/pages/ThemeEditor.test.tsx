@@ -1,12 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { request } from "../../api/client";
-import { useUi } from "../../state/ui";
-import { readThemeFile } from "../../styles/themes";
+import { request } from "../../../api/client";
+import { useUi } from "../../../state/ui";
+import { readThemeFile } from "../../../styles/themes";
 import { AppearanceSection } from "./Appearance";
-import { scopedFixture } from "./scopedPreferenceFixture.test-support";
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
 async function openEditor() {
   vi.mocked(request).mockResolvedValue(scopedFixture([]));

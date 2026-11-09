@@ -1,19 +1,19 @@
 import { Plus } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import type { ProjectScript } from "../../generated/ProjectScript";
-import type { PreferenceEdit } from "../../generated/PreferenceEdit";
-import { ACTION_ICONS, ProjectActionIcon } from "../../ui/ProjectActionIcon";
-import { Button } from "../../ui/controls";
-import { formatShortcut } from "../../app/shortcuts";
-import { actionCommand } from "../../lib/actionCommand";
-import { request } from "../../api/client";
-import type { KeybindingsView } from "../../api/types";
-import { useAsync } from "../../lib/useAsync";
-import { ConfirmDialog, Dialog } from "../../ui/Dialog";
-import type { PreferenceControl, PreferenceSaveResult } from "./preferenceTypes";
+import type { ProjectScript } from "../../../generated/ProjectScript";
+import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
+import { ACTION_ICONS, ProjectActionIcon } from "../../../ui/ProjectActionIcon";
+import { Button } from "../../../ui/controls";
+import { formatShortcut } from "../../../app/shortcuts";
+import { actionCommand } from "../../../lib/actionCommand";
+import { request } from "../../../api/client";
+import type { KeybindingsView } from "../../../api/types";
+import { useAsync } from "../../../lib/useAsync";
+import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
+import type { PreferenceControl, PreferenceSaveResult } from "../rows/preferenceTypes";
 import { useActionKeybinding } from "./actionKeybinding";
-import { toFailure } from "../../lib/useAsync";
-import { ApiFailure } from "../../api/client";
+import { toFailure } from "../../../lib/useAsync";
+import { ApiFailure } from "../../../api/client";
 
 function actionsFrom(value: unknown): ProjectScript[] {
   if (!Array.isArray(value)) return [];

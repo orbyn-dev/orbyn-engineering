@@ -24,7 +24,7 @@ import { CloneJobs } from "../features/workspace/app-chrome/CloneJobs";
 import { Sidebar } from "../features/workspace/sidebar/Sidebar";
 import { useDrawnOrder } from "../features/workspace/sidebar/drawnOrder";
 import { PullsPage } from "../features/pulls/PullsPage";
-import { ScheduledTasksPage } from "../features/settings/ScheduledTasks";
+import { ScheduledTasksPage } from "../features/settings/scheduled-tasks/ScheduledTasks";
 import { UsagePage } from "../features/usage/UsagePage";
 import { SkillsPage } from "../features/skills/SkillsPage";
 import { PreviewFloat } from "../features/panels/PreviewFloat";

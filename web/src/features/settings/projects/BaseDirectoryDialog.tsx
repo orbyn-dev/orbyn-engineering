@@ -1,10 +1,10 @@
 import { AlertTriangle, ArrowUp, ChevronRight, Folder } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
-import { useAsync } from "../../lib/useAsync";
-import { Button, IconButton } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
-import { Loading } from "../../ui/states";
+import { api } from "../../../api/client";
+import { useAsync } from "../../../lib/useAsync";
+import { Button, IconButton } from "../../../ui/controls";
+import { Dialog } from "../../../ui/Dialog";
+import { Loading } from "../../../ui/states";
 
 /**
  * The base-directory picker (dialog-base-directory, -empty, -error). It has actions, so it has a

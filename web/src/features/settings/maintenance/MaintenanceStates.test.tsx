@@ -1,13 +1,13 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, ApiFailure, request } from "../../api/client";
-import { useConnection } from "../../state/connection";
-import { useWorkspace } from "../../state/workspace";
+import { api, ApiFailure, request } from "../../../api/client";
+import { useConnection } from "../../../state/connection";
+import { useWorkspace } from "../../../state/workspace";
 import { MaintenanceSection } from "./Maintenance";
-import { scopedFixture } from "./scopedPreferenceFixture.test-support";
+import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
 const hour = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 const diagnostics = (events: unknown[]) => ({ version: "0.42.1", pid: 1, active_runs: 2, terminals: 0,

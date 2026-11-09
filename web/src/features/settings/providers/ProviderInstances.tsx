@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../../api/client";
-import type { EngineStatus, JsonValue } from "../../api/types";
-import type { ProviderInstance } from "../../generated/ProviderInstance";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { Button } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
-import { useSettingsScope } from "./SettingsScopeContext";
+import { api, request } from "../../../api/client";
+import type { EngineStatus, JsonValue } from "../../../api/types";
+import type { ProviderInstance } from "../../../generated/ProviderInstance";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { Button } from "../../../ui/controls";
+import { Dialog } from "../../../ui/Dialog";
+import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { formatArgs, INSTANCE_COLORS, newInstanceId, parseArgs, patchInstance, readInstance, validCompactWindow, validInstanceId, accentColor } from "./providerInstanceData";
-import "./ProviderInstances.css";
+import "../ProviderInstances.css";
 
 export interface InstanceStore {
   raw: JsonValue[];

@@ -1,11 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { request } from "../../api/client";
-import { useUi } from "../../state/ui";
+import { request } from "../../../api/client";
+import { useUi } from "../../../state/ui";
 import { ChatSection, GeneralSection } from "./PreferenceSections";
-import { scopedFixture } from "./scopedPreferenceFixture.test-support";
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn(), api: { ...(await original<{ api: object }>()).api, browse: vi.fn().mockResolvedValue({ path: "/home", parent: null, entries: [{ name: "Code", path: "/home/Code", is_git: false }] }) } }));
+import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn(), api: { ...(await original<{ api: object }>()).api, browse: vi.fn().mockResolvedValue({ path: "/home", parent: null, entries: [{ name: "Code", path: "/home/Code", is_git: false }] }) } }));
 
 it("sets what Enter does while a turn runs from a select", async () => {
   const user = userEvent.setup();

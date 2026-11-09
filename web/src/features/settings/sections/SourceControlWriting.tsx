@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { PreferenceGroups } from "./PreferenceRows";
-import { settingsLabel } from "./settingsSearch";
+import { PreferenceGroups } from "../rows/PreferenceRows";
+import { settingsLabel } from "../settingsSearch";
 
 interface WritingStyle {
   mode: "repo_conventions" | "conventional_commits" | "custom";

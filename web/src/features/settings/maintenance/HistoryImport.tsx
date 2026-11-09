@@ -1,16 +1,16 @@
 import { useState } from "react";
-import { api, request } from "../../api/client";
-import type { HistoryScan } from "../../generated/HistoryScan";
-import type { HistorySession } from "../../generated/HistorySession";
-import type { HistorySessionImported } from "../../generated/HistorySessionImported";
-import { fullTime } from "../../lib/format";
-import { toFailure } from "../../lib/useAsync";
-import { navigate } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { Button } from "../../ui/controls";
-import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-import { settingsLabel } from "./settingsSearch";
+import { api, request } from "../../../api/client";
+import type { HistoryScan } from "../../../generated/HistoryScan";
+import type { HistorySession } from "../../../generated/HistorySession";
+import type { HistorySessionImported } from "../../../generated/HistorySessionImported";
+import { fullTime } from "../../../lib/format";
+import { toFailure } from "../../../lib/useAsync";
+import { navigate } from "../../../state/route";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { Button } from "../../../ui/controls";
+import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { settingsLabel } from "../settingsSearch";
 
 const ENGINE_NAMES: Record<string, string> = { claude: "Claude", codex: "Codex" };
 

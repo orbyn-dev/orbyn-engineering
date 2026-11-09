@@ -1,15 +1,15 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../api/client";
-import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
-import { navigate, useRoute } from "../../state/route";
+import { ApiFailure, request } from "../../../api/client";
+import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import { navigate, useRoute } from "../../../state/route";
 import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { ScopeSentence } from "./ScopeSentence";
 
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
+vi.mock("../../../api/client", async (original) => {
+  const actual = await original<typeof import("../../../api/client")>();
   return { ...actual, request: vi.fn(), api: { ...actual.api,
     info: vi.fn(async () => ({ version: "1", remote: false, platform: "test", environment_label: "Test computer" })),
   } };

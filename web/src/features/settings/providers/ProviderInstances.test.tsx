@@ -1,16 +1,16 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, ApiFailure, request } from "../../api/client";
-import type { EngineStatus, JsonValue } from "../../api/types";
+import { api, ApiFailure, request } from "../../../api/client";
+import type { EngineStatus, JsonValue } from "../../../api/types";
 import { ProvidersSection } from "./Providers";
 
 const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
-vi.mock("../../api/client", async (original) => ({ ...await original<typeof import("../../api/client")>(), request: vi.fn() }));
-vi.mock("../../state/workspace", () => ({
+vi.mock("../../../api/client", async (original) => ({ ...await original<typeof import("../../../api/client")>(), request: vi.fn() }));
+vi.mock("../../../state/workspace", () => ({
   useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null } }),
 }));
-vi.mock("./SettingsScopeContext", () => ({ useSettingsScope: () => null }));
+vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
 const base = { capabilities: {}, installed: true, version: "2.1.318", auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as const;
 const engine = (patch: Partial<EngineStatus>) => ({ ...base, ...patch }) as EngineStatus;
 let entries: JsonValue[], revision: string, conflict: string | null;

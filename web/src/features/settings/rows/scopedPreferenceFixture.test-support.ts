@@ -1,6 +1,6 @@
-import type { PreferenceView } from "../../api/types";
-import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
+import type { PreferenceView } from "../../../api/types";
+import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 
 export function preferenceCatalog(ids: string[] = [], project?: string): ProjectScopeCatalog {
   return { version: "catalog", metadata_complete: true,

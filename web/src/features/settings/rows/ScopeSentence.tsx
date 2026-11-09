@@ -1,9 +1,9 @@
-import { api } from "../../api/client";
-import { useAsync } from "../../lib/useAsync";
+import { api } from "../../../api/client";
+import { useAsync } from "../../../lib/useAsync";
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { Button } from "../../ui/controls";
-import { usePopover } from "../../ui/usePopover";
+import { Button } from "../../../ui/controls";
+import { usePopover } from "../../../ui/usePopover";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 interface Choice { key: string; label: string; path?: string; }

@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../../api/client";
-import type { JsonValue } from "../../api/types";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import type { ScopedPreferenceRow } from "../../generated/ScopedPreferenceRow";
-import type { PreferenceEdit } from "../../generated/PreferenceEdit";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { ErrorState, Loading } from "../../ui/states";
-import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-import { Button } from "../../ui/controls";
+import { request } from "../../../api/client";
+import type { JsonValue } from "../../../api/types";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import type { ScopedPreferenceRow } from "../../../generated/ScopedPreferenceRow";
+import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { ErrorState, Loading } from "../../../ui/states";
+import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { Button } from "../../../ui/controls";
 import { PreferenceInheritance } from "./PreferenceInheritance";
 import type { PreferenceRow, PreferenceControl, PreferenceSaveResult } from "./preferenceTypes";
-import { Segmented } from "../../ui/Segmented";
+import { Segmented } from "../../../ui/Segmented";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { runHandlers } from "../../app/shortcuts";
-import { useUi } from "../../state/ui";
+import { runHandlers } from "../../../app/shortcuts";
+import { useUi } from "../../../state/ui";
 
 /** Read and mutation identities stay attached to the scope that produced them. */
 export function ScopedRows({ groups, query, inheritance }: {

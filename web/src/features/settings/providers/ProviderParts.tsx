@@ -1,16 +1,16 @@
 import { RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
-import { api, request } from "../../api/client";
-import type { EngineStatus, JsonValue } from "../../api/types";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { useModelStore } from "../../state/modelStore";
-import { Button, CopyCommand } from "../../ui/controls";
-import { ConfirmDialog } from "../../ui/Dialog";
-import { SettingRow } from "../../ui/SettingRow";
-import { useSettingsScope } from "./SettingsScopeContext";
+import { api, request } from "../../../api/client";
+import type { EngineStatus, JsonValue } from "../../../api/types";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { useModelStore } from "../../../state/modelStore";
+import { Button, CopyCommand } from "../../../ui/controls";
+import { ConfirmDialog } from "../../../ui/Dialog";
+import { SettingRow } from "../../../ui/SettingRow";
+import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { useEngineUpdates, UpdateProgressLine } from "./engineUpdates";
 
 export function UpdateAction({ engine }: { engine: EngineStatus }) {

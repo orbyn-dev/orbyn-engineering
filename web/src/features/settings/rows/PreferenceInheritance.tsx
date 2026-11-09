@@ -1,10 +1,10 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import type { PreferenceView } from "../../api/types";
-import type { ScopedPreferenceMember } from "../../generated/ScopedPreferenceMember";
-import type { ScopedPreferenceOverride } from "../../generated/ScopedPreferenceOverride";
+import type { PreferenceView } from "../../../api/types";
+import type { ScopedPreferenceMember } from "../../../generated/ScopedPreferenceMember";
+import type { ScopedPreferenceOverride } from "../../../generated/ScopedPreferenceOverride";
 import { Check, Layers } from "lucide-react";
-import { Button, IconButton } from "../../ui/controls";
-import { usePopover } from "../../ui/usePopover";
+import { Button, IconButton } from "../../../ui/controls";
+import { usePopover } from "../../../ui/usePopover";
 import type { PreferenceRow } from "./preferenceTypes";
 
 function displayValue(row: PreferenceRow, value: unknown): string {

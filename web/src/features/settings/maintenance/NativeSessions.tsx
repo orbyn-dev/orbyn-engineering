@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiFailure, request } from "../../api/client";
-import type { EngineStatus } from "../../api/types";
-import type { AcpNativeSession } from "../../generated/AcpNativeSession";
-import type { AcpNativeSessionImported } from "../../generated/AcpNativeSessionImported";
-import type { AcpNativeSessionPage } from "../../generated/AcpNativeSessionPage";
-import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilities";
-import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { Button } from "../../ui/controls";
-import { ConfirmDialog } from "../../ui/Dialog";
-import { ErrorState } from "../../ui/states";
-import { SettingRow } from "../../ui/SettingRow";
+import { ApiFailure, request } from "../../../api/client";
+import type { EngineStatus } from "../../../api/types";
+import type { AcpNativeSession } from "../../../generated/AcpNativeSession";
+import type { AcpNativeSessionImported } from "../../../generated/AcpNativeSessionImported";
+import type { AcpNativeSessionPage } from "../../../generated/AcpNativeSessionPage";
+import type { AcpSessionCapabilities } from "../../../generated/AcpSessionCapabilities";
+import { toFailure } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { Button } from "../../../ui/controls";
+import { ConfirmDialog } from "../../../ui/Dialog";
+import { ErrorState } from "../../../ui/states";
+import { SettingRow } from "../../../ui/SettingRow";
 
 /** A capability read turned away as busy is asked again up to this many times, a little later each time. */
 const CAPABILITY_RETRIES = 6;

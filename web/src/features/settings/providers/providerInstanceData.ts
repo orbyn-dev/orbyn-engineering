@@ -1,5 +1,5 @@
-import type { JsonValue } from "../../api/types";
-import type { ProviderInstance } from "../../generated/ProviderInstance";
+import type { JsonValue } from "../../../api/types";
+import type { ProviderInstance } from "../../../generated/ProviderInstance";
 export function readInstance(value: JsonValue): ProviderInstance | null {
   if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.id !== "string" || typeof value.driver !== "string") return null;
   return { id: value.id, driver: value.driver, enabled: value.enabled !== false,

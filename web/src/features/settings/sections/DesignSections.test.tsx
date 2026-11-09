@@ -1,14 +1,14 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { request } from "../../api/client";
-import type { EngineStatus } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
-import { KeybindingsSection } from "./Keybindings";
+import { request } from "../../../api/client";
+import type { EngineStatus } from "../../../api/types";
+import { useWorkspace } from "../../../state/workspace";
+import { KeybindingsSection } from "../pages/Keybindings";
 import { AboutSection } from "./PreferenceSections";
-import { ProviderTable } from "./ProviderTable";
+import { ProviderTable } from "../providers/ProviderTable";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
 const store = { raw: [], instances: [{ id: "codex", driver: "codex", enabled: true }], disabled: false, error: null, conflict: false,
   save: vi.fn(), reload: vi.fn() };

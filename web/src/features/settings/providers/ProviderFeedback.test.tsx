@@ -1,17 +1,17 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure } from "../../api/client";
-import type { EngineModels, EngineStatus } from "../../api/types";
+import { ApiFailure } from "../../../api/client";
+import type { EngineModels, EngineStatus } from "../../../api/types";
 import { ProvidersSection } from "./Providers";
 
 const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
 const actions = vi.hoisted(() => ({ sendFeedback: vi.fn(), models: vi.fn(), updateAllEngines: vi.fn() }));
-vi.mock("../../api/client", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../api/client")>();
+vi.mock("../../../api/client", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../../api/client")>();
   return { ...original, api: { ...original.api, ...actions } };
 });
-vi.mock("../../state/workspace", () => ({
+vi.mock("../../../state/workspace", () => ({
   useWorkspace: (select: (state: {
     refreshEngines: typeof mock.refresh;
     engines: { data: EngineStatus[]; error: null };
@@ -23,7 +23,7 @@ vi.mock("../../state/workspace", () => ({
       projects: { data: [], error: null },
     }),
 }));
-vi.mock("./SettingsScopeContext", () => ({ useSettingsScope: () => null }));
+vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
 
 const catalog: EngineModels = {
   engine: "codex", source: "engine", models: [], error: null,

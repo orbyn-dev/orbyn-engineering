@@ -1,14 +1,14 @@
-import { settingsLabel } from "./settingsSearch";
+import { settingsLabel } from "../settingsSearch";
 import { AlertTriangle, ChevronLeft, Info } from "lucide-react";
 import { useRef, useState } from "react";
-import { MAX_PANEL_ANIMATION_MS } from "../../lib/panelAnimations";
-import { applyTheme, useUi, type LayoutChoice, type ThemeChoice, type Typography } from "../../state/ui";
-import { Button } from "../../ui/controls";
-import { Segmented } from "../../ui/Segmented";
-import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-import { isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../styles/themes";
-import { ENVIRONMENT_ICON_CHOICES } from "./EnvironmentIcon";
-import { PreferenceGroups } from "./PreferenceRows";
+import { MAX_PANEL_ANIMATION_MS } from "../../../lib/panelAnimations";
+import { applyTheme, useUi, type LayoutChoice, type ThemeChoice, type Typography } from "../../../state/ui";
+import { Button } from "../../../ui/controls";
+import { Segmented } from "../../../ui/Segmented";
+import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
+import { ENVIRONMENT_ICON_CHOICES } from "../EnvironmentIcon";
+import { PreferenceGroups } from "../rows/PreferenceRows";
 
 /** What this environment publishes to every viewer, and when its theme was set. */
 function EnvironmentGroup() {

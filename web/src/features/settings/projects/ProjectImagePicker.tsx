@@ -1,12 +1,12 @@
 import { File } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
-import type { ProjectImageSearchResult } from "../../generated/ProjectImageSearchResult";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
-import { projectImageCandidateUrl } from "../../lib/projectImages";
-import { toFailure } from "../../lib/useAsync";
-import { closingProps } from "../../ui/Presence";
-import "./ProjectImagePicker.css";
+import { api } from "../../../api/client";
+import type { ProjectImageSearchResult } from "../../../generated/ProjectImageSearchResult";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import { projectImageCandidateUrl } from "../../../lib/projectImages";
+import { toFailure } from "../../../lib/useAsync";
+import { closingProps } from "../../../ui/Presence";
+import "../ProjectImagePicker.css";
 
 export interface ProjectImagePickerScope {
   scope: ProjectScopesQuery;

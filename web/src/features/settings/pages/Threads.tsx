@@ -1,17 +1,17 @@
-import { settingsLabel } from "./settingsSearch";
+import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
-import { api } from "../../api/client";
-import type { ServerSettings } from "../../api/types";
-import type { SnoozePreset } from "../../generated/SnoozePreset";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { Button } from "../../ui/controls";
-import { ErrorState, Loading } from "../../ui/states";
-import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-import { useUi } from "../../state/ui";
-import { PreferenceGroups } from "./PreferenceRows";
-import { Toggle } from "./PreferenceSections";
-import { HistoryImport } from "./HistoryImport";
-import { useSettingsScope } from "./SettingsScopeContext";
+import { api } from "../../../api/client";
+import type { ServerSettings } from "../../../api/types";
+import type { SnoozePreset } from "../../../generated/SnoozePreset";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { Button } from "../../../ui/controls";
+import { ErrorState, Loading } from "../../../ui/states";
+import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { useUi } from "../../../state/ui";
+import { PreferenceGroups } from "../rows/PreferenceRows";
+import { Toggle } from "../sections/PreferenceSections";
+import { HistoryImport } from "../maintenance/HistoryImport";
+import { useSettingsScope } from "../rows/SettingsScopeContext";
 
 const AFTER_DAYS: { value: number | null; label: string }[] = [
   { value: null, label: "Never" },

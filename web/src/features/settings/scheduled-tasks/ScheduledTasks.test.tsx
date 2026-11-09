@@ -1,10 +1,10 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import * as fixtures from "../../../mock/fixtures";
-import { api } from "../../api/client";
-import { useWorkspace } from "../../state/workspace";
-import { installMockFetch } from "../../test-support";
+import * as fixtures from "../../../../mock/fixtures";
+import { api } from "../../../api/client";
+import { useWorkspace } from "../../../state/workspace";
+import { installMockFetch } from "../../../test-support";
 import { ScheduledTasksSection } from "./ScheduledTasks";
 
 afterEach(() => { vi.restoreAllMocks(); });

@@ -1,15 +1,15 @@
 import { useState } from "react";
-import { request } from "../../api/client";
-import { inDesktopApp } from "../../api/shell";
-import { commandLabel, whenPhrase } from "../../app/commandLabels";
-import { formatShortcut, runHandlers } from "../../app/shortcuts";
-import type { KeybindingsView } from "../../api/types";
-import { toFailure, useAsync } from "../../lib/useAsync";
+import { request } from "../../../api/client";
+import { inDesktopApp } from "../../../api/shell";
+import { commandLabel, whenPhrase } from "../../../app/commandLabels";
+import { formatShortcut, runHandlers } from "../../../app/shortcuts";
+import type { KeybindingsView } from "../../../api/types";
+import { toFailure, useAsync } from "../../../lib/useAsync";
 import { AlertCircle, MoreHorizontal, Pencil, Search } from "lucide-react";
-import { IconButton } from "../../ui/controls";
-import { Menu } from "../../ui/Menu";
-import { useUi } from "../../state/ui";
-import { ErrorState, Loading } from "../../ui/states";
+import { IconButton } from "../../../ui/controls";
+import { Menu } from "../../../ui/Menu";
+import { useUi } from "../../../state/ui";
+import { ErrorState, Loading } from "../../../ui/states";
 
 const CAP_GLYPHS: Record<string, string> = { Enter: "↵", Backspace: "⌫" };
 

@@ -1,5 +1,5 @@
-import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./SettingsScopeContext";
-import { ScopeSentence } from "./ScopeSentence";
+import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./rows/SettingsScopeContext";
+import { ScopeSentence } from "./rows/ScopeSentence";
 import { SettingRowIds } from "../../ui/SettingRow";
 import { searchSettings, settingSearchId } from "./settingsSearch";
 import { api } from "../../api/client";
@@ -10,11 +10,11 @@ import { Info, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { routeHref, type SettingsSection } from "../../state/route";
 import { IconButton } from "../../ui/controls";
-import { AppearanceSection } from "./Appearance";
-import { KeybindingsSection } from "./Keybindings";
-import { MaintenanceSection } from "./Maintenance";
-import { ProjectsSection } from "./Projects";
-import { ProvidersSection } from "./Providers";
+import { AppearanceSection } from "./pages/Appearance";
+import { KeybindingsSection } from "./pages/Keybindings";
+import { MaintenanceSection } from "./maintenance/Maintenance";
+import { ProjectsSection } from "./projects/Projects";
+import { ProvidersSection } from "./providers/Providers";
 import {
   AboutSection,
   ArchiveSection,
@@ -24,10 +24,10 @@ import {
   LabsSection,
   SourceControlSection,
   WorktreesSection,
-} from "./PreferenceSections";
-import { ScheduledTasksSection } from "./ScheduledTasks";
-import { ThreadsSection } from "./Threads";
-import { ToolsConnectorsSection } from "./ToolsConnectors";
+} from "./sections/PreferenceSections";
+import { ScheduledTasksSection } from "./scheduled-tasks/ScheduledTasks";
+import { ThreadsSection } from "./pages/Threads";
+import { ToolsConnectorsSection } from "./tools-connectors/ToolsConnectors";
 import "./settingsDesign.css";
 
 export const labels: Record<SettingsSection, string> = {

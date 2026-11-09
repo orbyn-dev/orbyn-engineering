@@ -1,8 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
-import type { EngineStatus } from "../../api/types";
-import { installMockFetch } from "../../test-support";
+import type { EngineStatus } from "../../../api/types";
+import { installMockFetch } from "../../../test-support";
 import { ProviderDetail } from "./ProviderDetail";
 
 const engine = { id: "claude", name: "Claude Code", tier: "native", installed: true, version: "2.1.318", latest: null, auth: "logged_in", path: "/opt/claude",

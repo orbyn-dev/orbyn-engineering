@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../../api/client";
-import type { JsonValue } from "../../api/types";
-import type { PreferenceEdit } from "../../generated/PreferenceEdit";
-import type { ProjectScopeGroup } from "../../generated/ProjectScopeGroup";
-import type { ProjectScopesQuery } from "../../generated/ProjectScopesQuery";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import type { ScopedPreferenceRow } from "../../generated/ScopedPreferenceRow";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { Button } from "../../ui/controls";
-import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-import { ErrorState, Loading } from "../../ui/states";
-import { PreferenceInheritance } from "./PreferenceInheritance";
-import { useSettingsScope } from "./SettingsScopeContext";
-import { useUi } from "../../state/ui";
+import { request } from "../../../api/client";
+import type { JsonValue } from "../../../api/types";
+import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
+import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import type { ScopedPreferenceRow } from "../../../generated/ScopedPreferenceRow";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { Button } from "../../../ui/controls";
+import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { ErrorState, Loading } from "../../../ui/states";
+import { PreferenceInheritance } from "../rows/PreferenceInheritance";
+import { useSettingsScope } from "../rows/SettingsScopeContext";
+import { useUi } from "../../../state/ui";
 
 /** Turning cleanup on without a number of days uses this one. */
 const DEFAULT_DAYS = 7;

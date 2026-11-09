@@ -1,13 +1,13 @@
-import { settingsLabel } from "./settingsSearch";
+import { settingsLabel } from "../settingsSearch";
 import { useEffect } from "react";
-import { api } from "../../api/client";
-import { onShellChange } from "../../api/shell";
-import type { ShellAction } from "../../api/types";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
+import { api } from "../../../api/client";
+import { onShellChange } from "../../../api/shell";
+import type { ShellAction } from "../../../api/types";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
 import { Check, Info } from "lucide-react";
-import { Button } from "../../ui/controls";
-import { SettingGroup, SettingRow } from "../../ui/SettingRow";
+import { Button } from "../../../ui/controls";
+import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
 
 const PERMISSIONS: Record<string, { title: string; missing: string; open: ShellAction }> = {
   accessibility: {

@@ -1,15 +1,15 @@
 import { Check, Plus, RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
-import { request } from "../../api/client";
-import type { EngineStatus } from "../../api/types";
-import type { PreferenceEdit } from "../../generated/PreferenceEdit";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { Button } from "../../ui/controls";
+import { request } from "../../../api/client";
+import type { EngineStatus } from "../../../api/types";
+import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { Button } from "../../../ui/controls";
 import type { InstanceStore } from "./ProviderInstances";
-import { PreferenceInheritance } from "./PreferenceInheritance";
-import { useSettingsScope } from "./SettingsScopeContext";
+import { PreferenceInheritance } from "../rows/PreferenceInheritance";
+import { useSettingsScope } from "../rows/SettingsScopeContext";
 
 const KEY = "disabled_engines";
 

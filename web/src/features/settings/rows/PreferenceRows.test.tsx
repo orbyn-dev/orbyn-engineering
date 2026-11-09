@@ -1,14 +1,14 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../api/client";
-import type { PreferenceView } from "../../api/types";
+import { ApiFailure, request } from "../../../api/client";
+import type { PreferenceView } from "../../../api/types";
 import { PreferenceGroups } from "./PreferenceRows";
-import type { ScopedPreferencesChange } from "../../generated/ScopedPreferencesChange";
-import type { ScopedPreferencesQuery } from "../../generated/ScopedPreferencesQuery";
+import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
+import type { ScopedPreferencesQuery } from "../../../generated/ScopedPreferencesQuery";
 import { preferenceCatalog, scopedFixture } from "./scopedPreferenceFixture.test-support";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 const groups = [{ title: "Source control", rows: [{ key: "auto_pull", title: "Auto pull", inheritance: true }] }];
 const requestMock = vi.mocked(request);
 let globalValue: boolean | undefined;
