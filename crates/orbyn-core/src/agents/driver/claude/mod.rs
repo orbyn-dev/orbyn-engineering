@@ -2808,7 +2808,7 @@ mod tests {
 
     /// A real 2.1.150 reply to `initialize`, read logged out from an empty config
     /// folder, with its account block and pid removed.
-    const RECORDED: &str = include_str!("fixtures/claude-2.1.150-initialize.json");
+    const RECORDED: &str = include_str!("../fixtures/claude-2.1.150-initialize.json");
 
     #[test]
     fn a_recorded_reply_parses_as_the_live_one_will() {
