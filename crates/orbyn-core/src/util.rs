@@ -35,7 +35,7 @@ pub(crate) fn parse_time(text: &str) -> Option<i64> {
         .map(time::OffsetDateTime::unix_timestamp)
 }
 
-pub(crate) fn unix_now() -> i64 {
+pub fn unix_now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
@@ -57,7 +57,7 @@ pub fn random_token() -> Result<String> {
     Ok(hex(&random_bytes::<32>()?))
 }
 
-pub(crate) fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

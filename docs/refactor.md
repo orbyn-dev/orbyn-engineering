@@ -216,9 +216,9 @@ The backend (B) and web (W) tracks can run in parallel.
   `util::json` (`field`, `optional`, `text`), replaces the three copies in forge parsing,
   preview snapshots and the ACP events. `util::home_dir` is the only home lookup; the two
   modules that had their own now delegate to it, and `claude_skills` keeps its empty-`HOME`
-  filter. Visibility is compiler-checked: `util` exposes only the seven functions the
-  transport uses and `source_control::git` only `is_git_repo`; the rest is `pub(crate)`,
-  with no call site changed.
+  filter. Visibility is compiler-checked with `--all-targets`: `util` exposes only what the
+  transport and its tests use and `source_control::git` only `is_git_repo`; the rest is
+  `pub(crate)`, with no call site changed.
 
 - W7a (product and generic tiers): done for the shared folders; front-door helpers are open (see
   the audit below). `state/` became `product/state/`, and `lib/timeline` became `product/timeline`.
