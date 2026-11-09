@@ -1,9 +1,9 @@
 import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink, Link2, Maximize2, Minus, Plus, X } from "lucide-react";
 import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { IconButton, LinkButton } from "../../ui/controls";
+import { toFailure } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { IconButton, LinkButton } from "../../../ui/controls";
 import {
   mediaAttribute,
   mediaCopyTarget,

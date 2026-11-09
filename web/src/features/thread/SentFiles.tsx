@@ -6,8 +6,8 @@ import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Dialog } from "../../ui/Dialog";
 import { TimelineThread } from "./items";
-import { Lightbox } from "./MarkdownMedia";
-import { fileLinkTarget } from "./MarkdownLink";
+import { Lightbox } from "../content/markdown/MarkdownMedia";
+import { fileLinkTarget } from "../content/markdown/MarkdownLink";
 import type { SentAttachment } from "./projection";
 
 /** A typed `@path` the message referred to. */

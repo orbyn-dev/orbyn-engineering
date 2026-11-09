@@ -9,7 +9,7 @@ import { Button, IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { TimelineThread } from "./items";
-import { Markdown } from "./Markdown";
+import { Markdown } from "../content/markdown/Markdown";
 import { planFilename, planTitle, stripPlanTitle } from "./proposedPlan";
 
 const COLLAPSE_CHARS = 900;

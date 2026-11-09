@@ -13,10 +13,10 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { PullRequest } from "../../api/types";
-import { compactAge } from "../../lib/format";
+import type { PullRequest } from "../../../api/types";
+import { compactAge } from "../../../lib/format";
 import { pullRepositoryLabel, samePullRequest } from "./pullLink";
-import { pullsApi } from "../../api/pulls";
+import { pullsApi } from "../../../api/pulls";
 
 const CARD_WIDTH = 320;
 const CARD_HEIGHT = 150;

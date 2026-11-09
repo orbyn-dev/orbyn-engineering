@@ -35,7 +35,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Collapsible } from "../../ui/Collapsible";
 import { Dialog } from "../../ui/Dialog";
 import { useOpenControl, useOpenState } from "../../ui/openState";
-import { outputSpans } from "./ansi";
+import { outputSpans } from "../content/code/ansi";
 import { HtmlRender } from "./HtmlRender";
 import { McpApp } from "./McpApp";
 import type { PlanItem, ToolItem } from "./projection";

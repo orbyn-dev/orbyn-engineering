@@ -1,7 +1,7 @@
 import { Check, Copy, WrapText } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useUi } from "../../state/ui";
-import { IconButton } from "../../ui/controls";
+import { useUi } from "../../../state/ui";
+import { IconButton } from "../../../ui/controls";
 import { highlight, type Token } from "./codeHighlight";
 
 /** `bare` drops the header, for a command shown above its output. */

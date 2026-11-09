@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
-import { useUi } from "../../state/ui";
-import { CodeBlock } from "./CodeBlock";
+import { useUi } from "../../../state/ui";
+import { CodeBlock } from "../code/CodeBlock";
 
 const dark = (theme: string) =>
   theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);

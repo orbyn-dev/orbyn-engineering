@@ -1,15 +1,15 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../api/client";
-import type { PullRequest } from "../../api/types";
-import { threads } from "../../../mock/fixtures";
-import { useWorkspace } from "../../state/workspace";
-import { pullChecks, pullPreviewPlacement, pullReview, pullState } from "../pulls/PullLinkPreview";
-import { pullNumberOf, pullRepositoryLabel, samePullRequest } from "../pulls/pullLink";
+import { ApiFailure, request } from "../../../api/client";
+import type { PullRequest } from "../../../api/types";
+import { threads } from "../../../../mock/fixtures";
+import { useWorkspace } from "../../../state/workspace";
+import { pullChecks, pullPreviewPlacement, pullReview, pullState } from "./PullLinkPreview";
+import { pullNumberOf, pullRepositoryLabel, samePullRequest } from "./pullLink";
 import { Markdown } from "./Markdown";
 import { previewProjectId } from "./MarkdownLink";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 const mock = vi.mocked(request);
 const href = "https://github.com/acme/orbyn/pull/42";
 
