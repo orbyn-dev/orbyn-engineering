@@ -40,7 +40,6 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 export const presetById = (id: string | null) => THEME_PRESETS.find((preset) => preset.id === id) ?? null;
 
-const HEX = /^#[0-9a-f]{6}$/i;
 const COLOUR = /^(#([0-9a-f]{3}|[0-9a-f]{6})|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+|1\.0+)\s*)?\))$/i;
 /** A colour a token may hold: #rgb, #rrggbb or rgb()/rgba(). */
 export const isColour = (value: string) => COLOUR.test(value.trim());
@@ -82,31 +81,3 @@ const VSCODE_TOKENS: Record<string, ThemeToken> = {
   descriptionForeground: "--color-muted",
   focusBorder: "--color-primary",
 };
-
-/** Reads a theme file: our shape, or a VS Code theme's `colors` map. */
-export function parseThemeFile(text: string): ThemeColors | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== "object") return null;
-  const body = value as { colors?: Record<string, unknown> } & Record<string, unknown>;
-  const colors = body.colors ?? body;
-  const vscode: Record<string, ThemeToken> = {
-    "editor.background": "--color-background",
-    "sideBar.background": "--color-sidebar",
-    "editorWidget.background": "--color-raised",
-    "panel.border": "--color-border",
-    "editor.foreground": "--color-text",
-    descriptionForeground: "--color-muted",
-    focusBorder: "--color-primary",
-  };
-  const out: ThemeColors = {};
-  for (const [key, raw] of Object.entries(colors)) {
-    const token = vscode[key] ?? (THEME_TOKENS.some(([name]) => name === key) ? (key as ThemeToken) : null);
-    if (token && typeof raw === "string" && HEX.test(raw)) out[token] = raw;
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}

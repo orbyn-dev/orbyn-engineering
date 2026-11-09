@@ -384,9 +384,6 @@ export const lineCount = (value: string): number => linesOf(value).length;
 export const LINES_SHOWN = 12;
 export const ROWS_SHOWN = 7;
 export const ENTRIES_SHOWN = 6;
-export const WIDE_LINE = 100;
-
-export const hasWideLine = (value: string): boolean => linesOf(value).some((line) => line.length > WIDE_LINE);
 
 /** Consecutive same-kind calls; reasoning and rows that never group stand alone. */
 export interface CallRun {
