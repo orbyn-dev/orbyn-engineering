@@ -3,23 +3,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
-
-wire! {
-/// US dollars per million tokens.
-pub struct ModelPrice {
-    pub model: String,
-    pub input: f64,
-    pub output: f64,
-    pub cache_read: f64,
-    pub cache_write: f64,
-    /// The service tier these rates apply to, as the engine names it: `fast`,
-    /// `priority`, `batch`, `flex` or `other`. Absent means the standard tier.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub tier: Option<String>,
-}
-}
-
 wire! {
 /// Estimated dollars by token type.
 pub struct TokenCosts {
@@ -40,14 +23,6 @@ pub struct TierUsage {
     pub estimated_cost: Option<f64>,
 }
 }
-
-wire! {
-pub struct ModelAlias {
-    pub model: String,
-    pub counts_as: String,
-}
-}
-
 wire! {
 pub struct ModelUsage {
     pub model: String,

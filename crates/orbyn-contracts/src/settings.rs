@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::{ModelAlias, ModelPrice, ProjectScopeCatalog, ProjectScopesQuery, ProjectScript};
+use crate::{ProjectScopeCatalog, ProjectScopesQuery, ProjectScript};
 
 wire_enum! {
 pub enum AutoSettleChoice {
@@ -189,5 +189,28 @@ wire! {
 pub struct ScopedPreferencesResult {
     pub catalog: ProjectScopeCatalog,
     pub rows: Vec<ScopedPreferenceRow>,
+}
+}
+
+wire! {
+/// US dollars per million tokens.
+pub struct ModelPrice {
+    pub model: String,
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
+    /// The service tier these rates apply to, as the engine names it: `fast`,
+    /// `priority`, `batch`, `flex` or `other`. Absent means the standard tier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tier: Option<String>,
+}
+}
+
+wire! {
+pub struct ModelAlias {
+    pub model: String,
+    pub counts_as: String,
 }
 }
