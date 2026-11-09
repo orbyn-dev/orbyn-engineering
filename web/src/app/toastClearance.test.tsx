@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { useToastClearance } from "./Shell";
+import { useToastClearance } from "./shell";
 
 let fixture: HTMLElement | undefined;
 afterEach(() => {

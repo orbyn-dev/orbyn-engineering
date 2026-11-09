@@ -26,3 +26,4 @@ d6cb0514c515aa58c86a86a2b2c79dbf32f47325 # refactor(core): move scm_writing and 
 47a39b9191aacf686268efd117ed8a0b8e452258 # refactor(core): move preview into its own folder
 c199f6f33aff8b98747ce337f8afc70ebeed3232 # refactor(core): move the MCP server into its own folder
 3a3c6354870bdb5df43cf610a625ab56ba2531c7 # refactor(web): move product-vocabulary shared files into product/
+68045665928a08c5c6addb0933ce97616fd303e7 # refactor(web): move the ui store, the shell and the draft view into folders

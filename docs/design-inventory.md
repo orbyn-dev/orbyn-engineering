@@ -17,15 +17,15 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 
 | n | id | group | title | component | status | phase | Proof |
 |---|---|---|---|---|---|---|---|
-| 1 | `shell-console` | Shell and layouts | Console layout | `app/Shell.tsx:559; product/state/ui.ts:9` | exists | P1 | |
-| 2 | `shell-ledger` | Shell and layouts | Ledger layout | `product/state/ui.ts:9; app/TitleBar.tsx:84; features/thread/LedgerPin.tsx` | exists | P1 | |
-| 3 | `shell-reading` | Shell and layouts | Reading layout | `app/readingNav.ts; app/Shell.tsx:137` | exists | P1 | |
+| 1 | `shell-console` | Shell and layouts | Console layout | `app/shell/Shell.tsx; product/state/ui/types.ts` | exists | P1 | |
+| 2 | `shell-ledger` | Shell and layouts | Ledger layout | `product/state/ui/types.ts; app/TitleBar.tsx:84; features/thread/LedgerPin.tsx` | exists | P1 | |
+| 3 | `shell-reading` | Shell and layouts | Reading layout | `app/readingNav.ts; app/shell/commands.ts` | exists | P1 | |
 | 4 | `welcome` | Getting started | Welcome | `features/onboarding/WelcomeWizard.tsx:152` | exists | P1 | |
 | 5 | `connect-agent` | Getting started | Connect an agent | `features/onboarding/WelcomeWizard.tsx:52` | exists | P1 | |
 | 6 | `add-project` | Getting started | Add a project | `features/workspace/palette/AddProjectPalette.tsx:392; product/ui/FolderBrowser.tsx` | exists | P1 | |
 | 7 | `trust` | Getting started | Trust this folder | `features/onboarding/TrustFolder.tsx:12` | exists | P1 | |
 | 8 | `no-projects` | Getting started | No projects yet | `features/onboarding/NoProjects.tsx:10` | exists | P1 | |
-| 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView.tsx:118` | exists | P2 | |
+| 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView/index.tsx` | exists | P2 | |
 | 10 | `approval` | Threads | Approve a command | `features/thread/ApprovalCard.tsx:24` | exists | P2 | |
 | 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionPanel.tsx:79` | exists | P2 | |
 | 12 | `plan` | Threads | Proposed plan | `features/thread/PlanCard.tsx:76` | exists | P2 | |
@@ -217,7 +217,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 198 | `x-chat-slash-none` | Threads, every state | Slash command with no match | `features/thread/composer/Composer.tsx:243` | partial | P2 | |
 | 199 | `x-chat-mention` | Threads, every state | @-mention file picker | `features/thread/composer/Composer.tsx:232` | exists | P2 | |
 | 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/composer/Composer.tsx` | missing | P2 | |
-| 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView.tsx:347` | exists | P2 | |
+| 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView/index.tsx` | exists | P2 | |
 | 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/settings/sections/ArchiveSection.tsx:17` | partial | P2 | |
 | 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/terminal/TerminalDrawerBody.tsx:101` | exists | P2 | |
 | 204 | `x-term-running` | Terminal, every state | Terminal: a running process | `features/panels/terminal/TerminalPanel.tsx:207` | partial | P2 | |
@@ -318,11 +318,11 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 64 | `consent` | Consent allow | toggle knob translateX; button spinner after 400ms; card content cross-fade | fast 150ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade, static ring | `n/a (Account only)` | n/a | Not this app | |
 | 65 | `update` | Launcher update progress | progress transform scaleX; button, bar and caption opacity cross-fade; blue while downloading | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | fill jumps; labels cross-fade | `web/src/features/workspace/app-chrome/Updates.tsx:95,296; web/src/features/settings/providers/engineUpdates.tsx:80` | missing | P1 | |
 | 66 | `sidenav` | Sidebar select | highlight transform translateY; label color; title opacity | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | highlight jumps; colour and title fade | `web/src/features/workspace/sidebar/Sidebar.tsx; web/src/styles/shell.css:309 .thread-row` | differs | P1 | |
-| 67 | `pagechange` | Page change | outgoing opacity; incoming opacity and translateY 6px to 0 | exit 170ms, page 240ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | plain cross-fade | `web/src/app/Shell.tsx; product/panels/panelAnimations.ts:19-31` | missing | P1 | |
+| 67 | `pagechange` | Page change | outgoing opacity; incoming opacity and translateY 6px to 0 | exit 170ms, page 240ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | plain cross-fade | `web/src/app/shell/Shell.tsx; product/panels/panelAnimations.ts:19-31` | missing | P1 | |
 | 68 | `pushpop` | Phone push and pop | pushed screen transform translateX 100% to 0; the screen below stays still | page 240ms, exit 170ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | screen fades in place | `missing (no push/pop; narrow layout swaps views, thread.css:1722-1733)` | missing | P1 | |
 | 69 | `tabbar` | Tab bar switch | indicator transform translateX; label colour; screen opacity (frequent, no travel) | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | indicator jumps; colour and screen fade | `n/a (no phone tab bar in the web app; only PreviewScreens.tsx mock)` | n/a | Not this app | |
 | 70 | `collapse` | Sidebar to drawer | drawer transform translateX -100% to 0; scrim opacity | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | drawer and scrim fade in place | `web/src/styles/shell.css:651-657 [data-panel-motion=on] .sidebar; web/src/product/panels/panelAnimations.ts` | differs | P1 | |
-| 71 | `themes` | Theme switch | background-color, color, border-color, box-shadow on every surface | fast 150ms | cubic-bezier(.4,0,.2,1) | same colour change (it is not movement) | `web/src/styles/themes.ts; product/state/ui.ts:677; app/App.tsx:48` | missing | P1 | |
+| 71 | `themes` | Theme switch | background-color, color, border-color, box-shadow on every surface | fast 150ms | cubic-bezier(.4,0,.2,1) | same colour change (it is not movement) | `web/src/styles/themes.ts; product/state/ui/store.ts; app/App.tsx:48` | missing | P1 | |
 | 72 | `reduced` | Reduced motion | opacity, transform translateY -4px and scale .98 from the trigger corner | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, 150ms | `web/src/ui/Menu.tsx; web/src/styles/base.css:772 .popup-menu` | differs | P1 | |
 | 73 | `reduced` | Reduced motion | opacity, transform translateY -4px and scale .98 from the trigger corner | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, 150ms | `web/src/ui/Menu.tsx; web/src/styles/base.css:772 .popup-menu` | differs | P1 | |
 | 74 | `reduced` | Reduced motion | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |

@@ -1,109 +1,33 @@
-import { recordUserPrompt } from "../workspace";
-import { useDraftModelDefaults } from "./useDraftModelDefaults";
-import { useDraftCheckout } from "./useDraftCheckout";
-import { ArrowUp, Bot, Eye, Folder, GitBranch, GitPullRequest, Paperclip, Sparkles, X, XCircle } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../api/client";
-import { useCommand } from "../../product/shell/shortcuts";
-import type { EngineStatus, PermissionMode, Project } from "../../api/types";
-import { slugify } from "../../lib/format";
-import { toFailure } from "../../lib/useAsync";
-import { navigate } from "../../product/state/route";
-import { useThreadLogs } from "../../product/state/threadLogs";
-import { useUi } from "../../product/state/ui";
-import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
-import { SkillsNotice } from "./SkillsNotice";
-import "./onboarding.css";
-import { NoProjects } from "./NoProjects";
-import { IconButton } from "../../ui/controls";
-import { Menu } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { Loading, NarrowBack } from "../../product/ui/states";
-import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "../thread";
-import { ModelPickerTrigger } from "../thread";
-import { resolveModel, useEngineModels } from "../../product/state/modelStore";
-import { DraftProjectPicker } from "./DraftProjectPicker";
-import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../product/state/draftStore";
+import { recordUserPrompt } from "../../workspace";
+import { useDraftModelDefaults } from "../useDraftModelDefaults";
+import { useDraftCheckout } from "../useDraftCheckout";
+import { ArrowUp, Bot, Folder, GitBranch, Paperclip, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { api } from "../../../api/client";
+import { useCommand } from "../../../product/shell/shortcuts";
+import type { PermissionMode, Project } from "../../../api/types";
+import { slugify } from "../../../lib/format";
+import { toFailure } from "../../../lib/useAsync";
+import { navigate } from "../../../product/state/route";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useUi } from "../../../product/state/ui";
+import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
+import { SkillsNotice } from "../SkillsNotice";
+import "../onboarding.css";
+import { NoProjects } from "../NoProjects";
+import { IconButton } from "../../../ui/controls";
+import { Menu } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
+import { Loading, NarrowBack } from "../../../product/ui/states";
+import { ACCESS, shownAccess } from "../../thread";
+import { ModelPickerTrigger } from "../../thread";
+import { DraftProjectPicker } from "../DraftProjectPicker";
+import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";
+import { DraftModelControls } from "./DraftModelControls";
+import { MAX_PREVIOUS_WORKTREES, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
+import { SUGGESTIONS } from "./suggestions";
 
-type OpenMenu = { kind: "checkout"; x: number; y: number };
-
-export { SCRATCH } from "../../product/state/draftStore";
-
-interface ModelChoice {
-  engine: string;
-  model: string | null;
-}
-
-const MAX_PREVIOUS_WORKTREES = 5;
-
-const useThreadList = () => {
-  const threads = useWorkspace((state) => state.threads);
-  return useMemo(() => Object.values(threads), [threads]);
-};
-
-
-/** A worktree purpose nothing else has, so each background send gets its own checkout. */
-const uniquePurpose = (base: string) => [slugify(base) || "thread", crypto.randomUUID().slice(0, 6)].join("-");
-
-function DraftModelControls({
-  engines,
-  engine,
-  model,
-  effort,
-  extras,
-  access,
-  register,
-  onModel,
-  onEffort,
-  onOption,
-  onAccess,
-}: {
-  engines: EngineStatus[];
-  engine: string;
-  model: string | null;
-  effort: string | null;
-  extras: Record<string, string>;
-  access: PermissionMode | null;
-  register(open: () => (element: HTMLElement) => void): void;
-  onModel(next: ModelChoice): void;
-  onEffort(value: string): void;
-  onOption(option: string, value: string): void;
-  onAccess(mode: PermissionMode): void;
-}) {
-  const models = useEngineModels(engine);
-  const resolved = resolveModel(models, model);
-  const modes = offeredModes(engines.find((entry) => entry.id === engine) ?? null);
-  const traits = useTraitsMenu({ model: resolved, effort, extras, access, modes, onEffort, onOption, onAccess });
-  const openAt = useRef(traits.openAt);
-  openAt.current = traits.openAt;
-  useEffect(() => {
-    register(() => (element: HTMLElement) => openAt.current(element, true));
-  }, [register]);
-  return (
-    <>
-      <ModelPickerTrigger
-        engines={engines}
-        selected={{ engine, model }}
-        onPick={onModel}
-      />
-      <EffortTrigger
-        model={resolved}
-        effort={effort}
-        access={access}
-        onOpen={(element) => traits.openAt(element, false)}
-      />
-      {traits.menu}
-    </>
-  );
-}
-
-/** Starting points that only fill the message; sending is still the person's call. */
-const SUGGESTIONS = [
-  { icon: XCircle, label: "Fix a failing test", text: "Find and fix a failing test." },
-  { icon: GitPullRequest, label: "Review an open pull request", text: "Review the open pull request." },
-  { icon: Eye, label: "Explain this codebase", text: "Explain how this codebase is organised." },
-  { icon: Sparkles, label: "Use a skill", text: "$" },
-] as const;
+export { SCRATCH } from "../../../product/state/draftStore";
 
 /** The default screen: a composer for a thread that doesn't exist until you send. */
 export function DraftView({ projectId }: { projectId: string | null }) {
