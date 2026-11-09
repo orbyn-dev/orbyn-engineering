@@ -1,11 +1,4 @@
-import type {
-  ActionKind,
-  AuthState,
-  EngineStatus,
-  EngineTier,
-  RunState,
-  VersionSupport,
-} from "../api/types";
+import type { AuthState, RunState } from "../api/types";
 
 export const runStateLabels: Record<RunState, string> = {
   admitted: "Queued",
@@ -24,32 +17,6 @@ export const authLabels: Record<AuthState, string> = {
   unknown: "Login unknown",
   not_applicable: "No login needed",
 };
-
-export const supportLabels: Record<VersionSupport, string> = {
-  tested: "Tested",
-  untested: "Untested",
-  below_minimum: "Below minimum",
-  unknown: "Not checked",
-};
-
-export const tierLabels: Record<EngineTier, string> = {
-  native: "Native",
-  acp: "ACP",
-  agui: "AG-UI",
-  terminal: "Terminal",
-};
-
-export const actionLabels: Record<ActionKind, string> = {
-  command: "Command",
-  file_change: "File change",
-  tool: "Tool",
-  computer: "Computer",
-  browser: "Browser",
-  network: "Network",
-};
-
-export const signInLabel = (engine: Pick<EngineStatus, "name">) =>
-  `Sign in through the ${engine.name} CLI`;
 
 const units: [Intl.RelativeTimeFormatUnit, number][] = [
   ["day", 86_400],
