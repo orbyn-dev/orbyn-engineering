@@ -1,0 +1,84 @@
+import { describe, expect, it } from "vitest";
+import { compactAge, elapsed, relativeTime } from "./format";
+import { callDuration } from "../features/thread/toolCalls";
+import { formatWait } from "../features/thread/ThreadBanners";
+import { agoWords } from "../features/thread/pullStore";
+import { formatTokens } from "../features/usage/usageModel";
+import { formatBytes } from "../features/panels/zipArchive";
+import { workDuration } from "../features/thread/toolTrace";
+
+// These tables pin what every duration, age and size formatter writes today. The
+// formatters differ on purpose (rounding, padding, units), so each keeps its own table.
+
+const MS = [0, 400, 999, 1000, 4200, 9_950, 10_000, 41_000, 59_400, 59_600, 60_000, 62_000, 3_599_000, 3_600_000, 3_660_000, 3_723_400, 7_200_000, 90_061_000];
+const START = new Date("2026-11-08T10:00:00.000Z");
+
+const table = (format: (ms: number) => string, expected: string[]) => {
+  expect(MS.map(format)).toEqual(expected);
+};
+
+describe("duration formatters", () => {
+  it("elapsed: whole seconds, then m ss, then h mm", () => {
+    table(
+      (ms) => elapsed(START.toISOString(), START.getTime() + ms),
+      ["0s", "0s", "1s", "1s", "4s", "10s", "10s", "41s", "59s", "1m 00s", "1m 00s", "1m 02s", "59m 59s", "1h 00m", "1h 01m", "1h 02m", "2h 00m", "25h 01m"],
+    );
+    expect(elapsed("not a date", 5)).toBe("");
+  });
+
+  it("callDuration: tenths under ten seconds, never hours", () => {
+    table(callDuration, ["0.0s", "0.4s", "1.0s", "1.0s", "4.2s", "10s", "10s", "41s", "59s", "1m 00s", "1m 00s", "1m 02s", "59m 59s", "60m 00s", "61m 00s", "62m 03s", "120m 00s", "1501m 01s"]);
+  });
+
+  it("workDuration: drops zero seconds and zero minutes", () => {
+    table(workDuration, ["0s", "0s", "1s", "1s", "4s", "10s", "10s", "41s", "59s", "1m", "1m", "1m 2s", "59m 59s", "1h", "1h 1m", "1h 2m", "2h", "25h 1m"]);
+  });
+
+  it("formatWait: rounds up, and the minutes after an hour are not padded", () => {
+    table(formatWait, ["0s", "1s", "1s", "1s", "5s", "10s", "10s", "41s", "1m 00s", "1m 00s", "1m 00s", "1m 02s", "59m 59s", "1h 0m", "1h 1m", "1h 2m", "2h 0m", "25h 1m"]);
+    expect(formatWait(-5000)).toBe("0s");
+  });
+});
+
+describe("age formatters", () => {
+  const AGES = [...MS, 86_400_000, 172_800_000];
+
+  it("agoWords: a sentence ending in ago, from epoch milliseconds", () => {
+    expect(AGES.map((ms) => agoWords(0, ms))).toEqual([
+      "just now", "just now", "just now", "just now", "just now", "just now", "just now", "just now", "just now", "just now",
+      "1 min ago", "1 min ago", "59 min ago", "1 hr ago", "1 hr ago", "1 hr ago", "2 hr ago", "1 d ago", "1 d ago", "2 d ago",
+    ]);
+  });
+
+  it("compactAge: the sidebar column, never in the future", () => {
+    expect(AGES.map((ms) => compactAge(START.toISOString(), START.getTime() + ms))).toEqual([
+      "now", "now", "now", "now", "now", "now", "now", "now", "now", "now",
+      "1m", "1m", "59m", "1h", "1h", "1h", "2h", "1d", "1d", "2d",
+    ]);
+    expect(compactAge(START.toISOString(), START.getTime() - 5000)).toBe("now");
+    expect(compactAge("not a date")).toBe("");
+  });
+
+  it("relativeTime: locale short style, past and future", () => {
+    expect(AGES.map((ms) => relativeTime(START.toISOString(), START.getTime() + ms))).toEqual([
+      "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now",
+      "1 min. ago", "1 min. ago", "60 min. ago", "1 hr. ago", "1 hr. ago", "1 hr. ago", "2 hr. ago", "yesterday", "yesterday", "2 days ago",
+    ]);
+    expect(relativeTime(START.toISOString(), START.getTime() - 3_600_000)).toBe("in 1 hr.");
+    expect(relativeTime("not a date")).toBe("");
+  });
+});
+
+describe("size and count formatters", () => {
+  it("formatBytes: binary units, one decimal only when needed", () => {
+    expect([0, 1, 1023, 1024, 1536, 1048576, 12582912, 2000000, 1e9, 1e12, 1e15, -1, Number.NaN].map(formatBytes)).toEqual([
+      "0 B", "1 B", "1023 B", "1 KB", "1.5 KB", "1 MB", "12 MB", "1.9 MB", "953.7 MB", "931.3 GB", "909.5 TB", "0 B", "0 B",
+    ]);
+  });
+
+  it("formatTokens: three significant figures with a K, M, B or T suffix", () => {
+    expect([0, 950, 999, 1000, 1234, 79_200_000, 99_999, 100_000, 474_000_000, 5_790_000_000, 2e12].map(formatTokens)).toEqual([
+      "0", "950", "999", "1K", "1.23K", "79.2M", "100K", "100K", "474M", "5.79B", "2T",
+    ]);
+  });
+});
