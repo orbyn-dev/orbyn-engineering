@@ -22,7 +22,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 3 | `shell-reading` | Shell and layouts | Reading layout | `app/readingNav.ts; app/Shell.tsx:137` | exists | P1 | |
 | 4 | `welcome` | Getting started | Welcome | `features/onboarding/WelcomeWizard.tsx:152` | exists | P1 | |
 | 5 | `connect-agent` | Getting started | Connect an agent | `features/onboarding/WelcomeWizard.tsx:52` | exists | P1 | |
-| 6 | `add-project` | Getting started | Add a project | `features/workspace/AddProjectPalette.tsx:392; features/onboarding/FolderBrowser.tsx` | exists | P1 | |
+| 6 | `add-project` | Getting started | Add a project | `features/workspace/AddProjectPalette.tsx:392; ui/FolderBrowser.tsx` | exists | P1 | |
 | 7 | `trust` | Getting started | Trust this folder | `features/onboarding/TrustFolder.tsx:12` | exists | P1 | |
 | 8 | `no-projects` | Getting started | No projects yet | `features/onboarding/NoProjects.tsx:10` | exists | P1 | |
 | 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView.tsx:118` | exists | P2 | |
@@ -33,46 +33,46 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 14 | `composer` | Threads | Composer | `features/thread/Composer.tsx:105` | exists | P2 | |
 | 15 | `composer-menus` | Threads | Access mode and slash commands | `features/thread/Composer.tsx:243; features/thread/ComposerTraits.tsx` | exists | P2 | |
 | 16 | `banners` | Threads | Thread states | `features/thread/ThreadBanners.tsx:19` | exists | P2 | |
-| 17 | `git` | Threads | Commit, push and worktrees | `features/thread/GitControl.tsx:213` | exists | P2 | |
+| 17 | `git` | Threads | Commit, push and worktrees | `features/thread/GitControl.tsx:16` | exists | P2 | |
 | 18 | `find` | Threads | Find, minimap and related threads | `features/thread/ThreadFind.tsx:34; features/thread/Minimap.tsx:14; features/thread/RelatedThreads.tsx:25` | exists | P2 | |
 | 19 | `thread-menu` | Threads | Thread menu and undo | `features/workspace/threadMenu.tsx; features/workspace/threadUndo.ts` | exists | P2 | |
 | 20 | `palette` | Threads | Command palette | `features/workspace/CommandPalette.tsx:67` | exists | P2 | |
 | 21 | `thread-empty` | Threads | Loading, empty and error | `ui/states.tsx:9; features/thread/Transcript.tsx` | exists | P2 | |
 | 22 | `tc-collapsed` | Tool calls, every state | Collapsed groups | `features/thread/items.tsx:396` | partial | P2 | |
-| 23 | `tc-rows` | Tool calls, every state | Every kind of row, collapsed | `features/thread/toolTrace.ts:49; features/thread/items.tsx:116` | partial | P2 | |
+| 23 | `tc-rows` | Tool calls, every state | Every kind of row, collapsed | `lib/timeline/toolTrace.ts:49; features/thread/items.tsx:116` | partial | P2 | |
 | 24 | `tc-group-open` | Tool calls, every state | Group expanded | `features/thread/items.tsx:420` | exists | P2 | |
-| 25 | `tc-command-open` | Tool calls, every state | Command expanded | `features/thread/items.tsx:190; features/thread/CodeBlock.tsx` | partial | P2 | |
+| 25 | `tc-command-open` | Tool calls, every state | Command expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx` | partial | P2 | |
 | 26 | `tc-output-capped` | Tool calls, every state | Output capped at 12 lines | `features/thread/items.tsx:128` | missing | P2 | |
 | 27 | `tc-output-all` | Tool calls, every state | All output, scrolling inside the block | `features/thread/items.tsx:128; styles/thread.css:596` | partial | P2 | |
 | 28 | `tc-running` | Tool calls, every state | Running, output streaming | `features/thread/items.tsx:190` | partial | P2 | |
 | 29 | `tc-running-group` | Tool calls, every state | Running group, collapsed and open | `features/thread/items.tsx:374,445` | partial | P2 | |
 | 30 | `tc-failed` | Tool calls, every state | Failed, with stderr in red | `features/thread/items.tsx:190` | partial | P2 | |
-| 31 | `tc-failed-collapsed` | Tool calls, every state | Failed, collapsed | `features/thread/toolTrace.ts:116` | partial | P2 | |
+| 31 | `tc-failed-collapsed` | Tool calls, every state | Failed, collapsed | `lib/timeline/toolTrace.ts:116` | partial | P2 | |
 | 32 | `tc-timeout` | Tool calls, every state | Timed out | `features/thread/items.tsx:190` | missing | P2 | |
 | 33 | `tc-denied` | Tool calls, every state | Blocked by the access mode, needs you | `features/thread/ApprovalCard.tsx:24` | partial | P2 | |
 | 34 | `tc-denied-resolved` | Tool calls, every state | After the choice | `features/thread/ApprovalCard.tsx:13` | partial | P2 | |
-| 35 | `tc-cancelled` | Tool calls, every state | Cancelled | `features/thread/projection.ts:39` | missing | P2 | |
-| 36 | `tc-output-file` | Tool calls, every state | Output too large, saved to a file | `features/thread/projection.ts:39` | missing | P2 | |
+| 35 | `tc-cancelled` | Tool calls, every state | Cancelled | `lib/timeline/types.ts:32` | missing | P2 | |
+| 36 | `tc-output-file` | Tool calls, every state | Output too large, saved to a file | `lib/timeline/types.ts:32` | missing | P2 | |
 | 37 | `tc-binary` | Tool calls, every state | Binary output | `features/thread/items.tsx:128` | missing | P2 | |
 | 38 | `tc-empty` | Tool calls, every state | Empty output | `features/thread/items.tsx:137` | exists | P2 | |
 | 39 | `tc-long-hover` | Tool calls, every state | Very long command, collapsed | `features/thread/items.tsx:208` | partial | P2 | |
-| 40 | `tc-long-open` | Tool calls, every state | Very long command, expanded | `features/thread/items.tsx:190; features/thread/CodeBlock.tsx:44` | partial | P2 | |
-| 41 | `tc-long-lines` | Tool calls, every state | Very long lines in output | `styles/thread.css:596; features/thread/CodeBlock.tsx:11` | partial | P2 | |
+| 40 | `tc-long-open` | Tool calls, every state | Very long command, expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx:44` | partial | P2 | |
+| 41 | `tc-long-lines` | Tool calls, every state | Very long lines in output | `styles/thread.css:596; features/content/code/CodeBlock.tsx:11` | partial | P2 | |
 | 42 | `tc-many` | Tool calls, every state | Many groups, Expand all and Collapse all | `features/thread/items.tsx:396` | missing | P2 | |
 | 43 | `tc-focus` | Tool calls, every state | Keyboard focus on a row | `ui/Collapsible.tsx` | partial | P2 | |
 | 44 | `tc-terminal` | Tool calls, every state | Open in terminal | `generated/OpenTerminal.ts` | missing | P2 | |
-| 45 | `tc-read` | Tool calls, every state | Read file, with a line range | `features/thread/toolTrace.ts:14,49` | partial | P2 | |
+| 45 | `tc-read` | Tool calls, every state | Read file, with a line range | `lib/timeline/toolTrace.ts:14,49` | partial | P2 | |
 | 46 | `tc-edit` | Tool calls, every state | Edit file, with a mini diff | `features/thread/items.tsx:295` | partial | P2 | |
-| 47 | `tc-create` | Tool calls, every state | Create file | `features/thread/toolTrace.ts:15` | missing | P2 | |
-| 48 | `tc-search` | Tool calls, every state | Search, with a result list | `features/thread/toolTrace.ts:16` | partial | P2 | |
-| 49 | `tc-list` | Tool calls, every state | List files | `features/thread/toolTrace.ts:16` | missing | P2 | |
-| 50 | `tc-fetch` | Tool calls, every state | Web fetch, with the page title | `features/thread/toolTrace.ts:17` | partial | P2 | |
-| 51 | `tc-mcp` | Tool calls, every state | MCP tool, with server and arguments | `features/thread/McpApp.tsx; features/thread/toolTrace.ts:49` | partial | P2 | |
+| 47 | `tc-create` | Tool calls, every state | Create file | `lib/timeline/toolTrace.ts:15` | missing | P2 | |
+| 48 | `tc-search` | Tool calls, every state | Search, with a result list | `lib/timeline/toolTrace.ts:16` | partial | P2 | |
+| 49 | `tc-list` | Tool calls, every state | List files | `lib/timeline/toolTrace.ts:16` | missing | P2 | |
+| 50 | `tc-fetch` | Tool calls, every state | Web fetch, with the page title | `lib/timeline/toolTrace.ts:17` | partial | P2 | |
+| 51 | `tc-mcp` | Tool calls, every state | MCP tool, with server and arguments | `features/thread/McpApp.tsx; lib/timeline/toolTrace.ts:49` | partial | P2 | |
 | 52 | `tc-subagent` | Tool calls, every state | Subagent, with a link to its thread | `features/thread/SubagentBar.tsx:40; features/thread/RelatedThreads.tsx:25` | partial | P2 | |
 | 53 | `tc-plan` | Tool calls, every state | Plan or to-do update | `features/thread/items.tsx:254` | exists | P2 | |
-| 54 | `tc-image` | Tool calls, every state | Image viewed | `features/thread/toolTrace.ts:14` | partial | P2 | |
-| 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/panels/SideChatPane.tsx:16` | partial | P2 | |
-| 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/panels/SideChatPane.tsx:16; features/thread/ApprovalCard.tsx:24` | partial | P2 | |
+| 54 | `tc-image` | Tool calls, every state | Image viewed | `lib/timeline/toolTrace.ts:14` | partial | P2 | |
+| 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/thread/SideChatPane.tsx:16` | partial | P2 | |
+| 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/thread/SideChatPane.tsx:16; features/thread/ApprovalCard.tsx:24` | partial | P2 | |
 | 57 | `tc-phone-list` | Tool calls, every state | Phone: groups and rows | `missing` | missing | P2 | |
 | 58 | `tc-phone-sheet` | Tool calls, every state | Phone: output in a sheet | `missing` | missing | P2 | |
 | 59 | `tc-phone-needs-you` | Tool calls, every state | Phone: needs you | `missing` | missing | P2 | |
@@ -80,7 +80,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 61 | `panel-files` | Side panel and terminal | Files | `features/panels/FilesPanel.tsx` | exists | P2 | |
 | 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/BrowserPanel.tsx` | exists | P2 | |
 | 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/ActivityPanel.tsx:13` | exists | P2 | |
-| 64 | `panel-side` | Side panel and terminal | Side chat | `features/panels/SideChatPane.tsx` | exists | P2 | |
+| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPane.tsx` | exists | P2 | |
 | 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/TerminalDrawerBody.tsx:25` | exists | P2 | |
 | 66 | `pulls` | Pages | Pull requests | `features/pulls/PullsPage.tsx:42` | exists | P2 | |
 | 67 | `pull-detail` | Pages | Pull request | `features/pulls/PullDetail.tsx:343` | exists | P2 | |
@@ -102,7 +102,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 83 | `pr-list-merged` | Pull requests, every state | List: merged | `features/pulls/PullsPage.tsx:28` | exists | P2 | |
 | 84 | `pr-list-closed` | Pull requests, every state | List: closed | `features/pulls/PullsPage.tsx:27` | exists | P2 | |
 | 85 | `pr-list-draft` | Pull requests, every state | List: draft | `features/pulls/PullsPage.tsx:155,302` | exists | P2 | |
-| 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `features/thread/GitControl.tsx:31` | partial | P2 | |
+| 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `features/panels/GitActionDialog.tsx:36` | partial | P2 | |
 | 87 | `pr-detail-loading` | Pull requests, every state | Detail: loading | `features/pulls/PullDetail.tsx:391` | exists | P2 | |
 | 88 | `pr-detail-error` | Pull requests, every state | Detail: GitHub unreachable | `features/pulls/PullDetail.tsx:403` | exists | P2 | |
 | 89 | `pr-detail-offline` | Pull requests, every state | Detail: offline | `missing` | missing | P2 | |
@@ -187,9 +187,9 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 168 | `x-activity-running` | Side panel, every state | Activity: running | `features/panels/ActivityPanel.tsx:31` | partial | P2 | |
 | 169 | `x-activity-failed` | Side panel, every state | Activity: failed step with log | `features/panels/ActivityPanel.tsx:35` | partial | P2 | |
 | 170 | `x-activity-filtered` | Side panel, every state | Activity: filtered | `features/panels/ActivityPanel.tsx:7` | partial | P2 | |
-| 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/panels/SideChatPane.tsx` | exists | P2 | |
-| 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/panels/SideChatPane.tsx:16` | exists | P2 | |
-| 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/panels/SideChatPane.tsx:16` | partial | P2 | |
+| 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/thread/SideChatPane.tsx` | exists | P2 | |
+| 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/thread/SideChatPane.tsx:16` | exists | P2 | |
+| 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/thread/SideChatPane.tsx:16` | partial | P2 | |
 | 174 | `x-gate-running` | Side panel, every state | Review gate: reviewing | `missing` | missing | P3 | |
 | 175 | `x-gate-passed` | Side panel, every state | Review gate: passed | `missing` | missing | P3 | |
 | 176 | `x-gate-selected` | Side panel, every state | Review gate: finding opened | `missing` | missing | P3 | |
@@ -201,14 +201,14 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 182 | `x-panel-offline` | Side panel, every state | Panel: offline | `features/panels/SurfacePane.tsx` | missing | P1 | |
 | 183 | `x-chat-streaming` | Threads, every state | Reply streaming, with stop | `features/thread/ComposerExtras.tsx:129; features/thread/items.tsx:208` | exists | P2 | |
 | 184 | `x-chat-interrupted` | Threads, every state | Interrupted, then resumed | `features/thread/ThreadView.tsx:167` | partial | P2 | |
-| 185 | `x-chat-code` | Threads, every state | Long code block with copy | `features/thread/CodeBlock.tsx:44` | partial | P2 | |
+| 185 | `x-chat-code` | Threads, every state | Long code block with copy | `features/content/code/CodeBlock.tsx:44` | partial | P2 | |
 | 186 | `x-chat-attach` | Threads, every state | Attached files and images | `features/thread/Composer.tsx:70; features/thread/SentFiles.tsx` | exists | P2 | |
 | 187 | `x-chat-tool` | Threads, every state | Tool call expanded | `features/thread/items.tsx:190` | exists | P2 | |
 | 188 | `x-chat-error` | Threads, every state | Error with retry | `features/thread/ThreadBanners.tsx:70` | exists | P2 | |
 | 189 | `x-chat-ratelimit` | Threads, every state | Rate limited, with time to wait | `features/thread/ThreadBanners.tsx:19` | partial | P2 | |
 | 190 | `x-chat-context` | Threads, every state | Context nearly full | `features/thread/ComposerExtras.tsx:30` | partial | P2 | |
 | 191 | `x-chat-compacting` | Threads, every state | Compacting the thread | `features/thread/ComposerExtras.tsx:53` | partial | P2 | |
-| 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `features/thread/projection.ts:265` | partial | P2 | |
+| 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `lib/timeline/projection.ts:133` | partial | P2 | |
 | 193 | `x-chat-edit` | Threads, every state | Edit a message and branch | `features/thread/MessageActions.tsx:81,94` | partial | P2 | |
 | 194 | `x-chat-message-menu` | Threads, every state | Message actions | `features/thread/MessageActions.tsx:41` | exists | P2 | |
 | 195 | `x-chat-long` | Threads, every state | Very long thread, jump to latest | `features/thread/Transcript.tsx:218` | partial | P2 | |
@@ -264,7 +264,7 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 10 | `select` | Select open | menu opacity, translateY -4px, scale .98 from the trigger; chevron rotate 180deg | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | menu fades; chevron flips without turning | `native <select> (base.css:123 focus style); custom menu is ui/Menu.tsx` | missing | P1 | |
 | 11 | `menu` | Menu open and close | opacity, transform translateY -4px and scale .98 from the trigger corner | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, 150ms | `web/src/ui/Menu.tsx; web/src/styles/base.css:772 .popup-menu` | differs | P1 | |
 | 12 | `palette` | Launcher search | scrim opacity; panel opacity and translateY -8px; results opacity, translateY to the next slot | base 200ms, exit 140ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel and scrim fade; rows fade out and close up | `web/src/features/workspace/CommandPalette.tsx:222 (bare <dialog class=palette>); web/src/styles/base.css:988 .palette` | missing | P1 | |
-| 13 | `tooltip` | Tooltip delay | opacity, translateY -2px to 0 | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, same delay | `web/src/styles/base.css:845 .hover-card (ThreadRow.tsx:116, PullLinkPreview.tsx:112); native title= elsewhere (ui/controls.tsx:74)` | differs | P1 | |
+| 13 | `tooltip` | Tooltip delay | opacity, translateY -2px to 0 | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, same delay | `web/src/styles/base.css:845 .hover-card (ThreadRow.tsx:116, features/content/markdown/PullLinkPreview.tsx:112); native title= elsewhere (ui/controls.tsx:74)` | differs | P1 | |
 | 14 | `context` | Context menu | opacity, translateY -4px and scale .98 from the pointer position | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only | `web/src/features/panels/FilesPanel.tsx:260; features/workspace/ProjectFilter.tsx:126 (via ui/Menu.tsx)` | differs | P1 | |
 | 15 | `modal` | Modal and scrim | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
 | 16 | `confirm` | Confirm a destructive action | dialog and scrim as the modal; row opacity, siblings translateY one slot; toast translateY 12px | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | dialog fades; row fades out and the list closes up at once | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog; web/src/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |

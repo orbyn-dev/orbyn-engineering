@@ -1,3 +1,7 @@
 # Commits that only move or reformat files, so `git blame` skips them.
 # One full commit hash per line, with a comment saying what it did.
 # Each folder-architecture move commit (docs/refactor.md) is listed here.
+# W3: markdown and code rendering moved from features/thread into features/content
+ded9bd5371558390f5a2ce07c0b0249df843f7ab
+# W3: shared thread logic moved down to state, lib and ui; side chat into thread, pull store into pulls
+5f0449347773efab37c4acdd7e19ba70a85853be
