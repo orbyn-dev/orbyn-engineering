@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addRecent, pickedText, stepZoom, pageSize } from "./BrowserPanel";
+import { addRecent, stepZoom, pageSize } from "./BrowserPanel";
 
 describe("pageSize", () => {
   it("keeps a page within what the service takes", () => {
@@ -20,12 +20,5 @@ describe("browser helpers", () => {
   it("keeps recent pages newest first and each once", () => {
     expect(addRecent(["a", "b"], "b")).toEqual(["b", "a"]);
     expect(addRecent(Array.from({ length: 60 }, (_, at) => `u${at}`), "new")).toHaveLength(50);
-  });
-
-  it("quotes a picked element and can't be closed from inside the page", () => {
-    const text = pickedText({ tag: "b", selector: "#x", text: "a\n\nb", html: "<b>```</b>" });
-    expect(text).toContain("Element `#x`");
-    expect(text).toContain("> a b");
-    expect(text.match(/```/g)).toHaveLength(2);
   });
 });

@@ -118,14 +118,6 @@ export function addRecent(recent: string[], url: string): string[] {
   return [url, ...recent.filter((entry) => entry !== url)].slice(0, RECENT_LIMIT);
 }
 
-/** What a picked element adds to the message. It came from the page, so it is quoted. */
-export function pickedText(picked: PickedElement): string {
-  const lines = [`Element \`${picked.selector}\``];
-  if (picked.text) lines.push(`> ${picked.text.replace(/\n+/g, " ")}`);
-  lines.push("```html", picked.html.replaceAll("```", "` ` `"), "```");
-  return lines.join("\n");
-}
-
 function frameSocket(threadId: string, tabId: string) {
   const token = readToken();
   const query = token ? `?token=${q(token)}` : "";

@@ -76,13 +76,6 @@ export const noFilters: PullFilters = {
   requestedFrom: [],
 };
 
-/** Splits `label:x` out of the search, which the list filters on itself. */
-export function parseSearch(text: string): { query: string; labels: string[] } {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  const labels = words.filter((word) => word.length > 6 && word.startsWith("label:")).map((word) => word.slice(6).toLowerCase());
-  return { query: words.filter((word) => !(word.length > 6 && word.startsWith("label:"))).join(" "), labels };
-}
-
 /**
  * Pulls finished `label:x` words out of what is being typed. A word is finished once a space
  * follows it, or when `final` says the text is being submitted or left.
