@@ -168,6 +168,16 @@ The backend (B) and web (W) tracks can run in parallel.
   non-test file is now 472 lines (`scm/writing/mod.rs`). `git.rs` stays whole (609 lines
   without tests). Public paths such as `source_control::forge::list_pulls` are unchanged.
 
+- B3c (preview and MCP tools): done. `browser/preview/` holds the manager in `mod.rs` (207 lines)
+  with `open`, `tabs`, `pump`, `crash`, `snapshots`, `expressions`, `profiles`, `servers` (local
+  server discovery), `favicon` and tests in `tests.rs`; the former `preview_bridge`, `preview_recording`
+  and `preview_trace` are `preview::{bridge, recording, trace}`. `tools/mcp/` holds the server in `mod.rs`
+  with `apps` (was `mcp_apps`) and `tools/` (was `mcp_tools`: `definitions`, `dispatch`, `guide`,
+  `project`, `preview`, `render`, tests in `tests.rs`). `preview.rs` (2,507 lines) and `mcp_tools.rs`
+  (1,920) left the Rust size baseline (5 to 3 long files); the largest non-test file is now
+  `preview/recording.rs` (934, moved whole) and the largest cut file `tools/dispatch.rs` (682, one
+  match). The old paths `browser::preview_bridge` and `tools::mcp_tools` still resolve.
+
 ## Done when
 
 - No hand-written source file over about 800 lines.
