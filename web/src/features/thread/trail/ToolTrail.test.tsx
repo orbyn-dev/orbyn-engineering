@@ -1,15 +1,15 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TimelineRow } from "./items";
-import { TimelineThread } from "./timelineThread";
-import { rangesIn } from "./ThreadFind";
-import type { ToolItem } from "../../lib/timeline/types";
-import { entryText } from "./threadSearch";
-import { callFindText } from "./toolCalls";
-import { forgetOpenState, OpenStateScope } from "../../ui/openState";
-import { arrangeTimeline, groupWork } from "../../lib/timeline/timeline";
-import { useUi } from "../../state/ui";
+import { TimelineRow } from "../items";
+import { TimelineThread } from "../timelineThread";
+import { rangesIn } from "../ThreadFind";
+import type { ToolItem } from "../../../lib/timeline/types";
+import { entryText } from "../threadSearch";
+import { callFindText } from "../toolCalls";
+import { forgetOpenState, OpenStateScope } from "../../../ui/openState";
+import { arrangeTimeline, groupWork } from "../../../lib/timeline/timeline";
+import { useUi } from "../../../state/ui";
 
 const make = (name: string, args: unknown, extra: Partial<ToolItem> = {}): ToolItem => ({
   kind: "tool",

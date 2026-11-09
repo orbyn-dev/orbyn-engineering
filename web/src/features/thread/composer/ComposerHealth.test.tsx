@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import type { EngineStatus } from "../../api/types";
+import type { EngineStatus } from "../../../api/types";
 import { ComposerBanners } from "./ComposerExtras";
 
 const healthy: EngineStatus = {

@@ -10,7 +10,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { IconButton } from "../../ui/controls";
-import { usageShare } from "./ComposerExtras";
+import { usageShare } from "./composer/ComposerExtras";
 import { DRow } from "../../ui/DetailRows";
 import { BranchRow } from "./GitControl";
 import { OpenInEditor } from "./OpenInEditor";

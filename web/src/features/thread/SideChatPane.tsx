@@ -9,7 +9,7 @@ import { engineById, useWorkspace } from "../../state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { Empty } from "../../ui/states";
-import { Composer } from "./Composer";
+import { Composer } from "./composer/Composer";
 import { ThreadScope } from "./MessageActions";
 import { Transcript } from "./Transcript";
 import { closeSideChat, openSideChat, showSideChat, sideChatsOf } from "./sideChat";

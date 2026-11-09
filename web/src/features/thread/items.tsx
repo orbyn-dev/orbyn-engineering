@@ -30,7 +30,7 @@ import {
   type WorkItem,
 } from "../../lib/timeline/timeline";
 import { workSegments } from "./toolCalls";
-import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
+import { PlanRow, TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
 import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../lib/timeline/types";
 

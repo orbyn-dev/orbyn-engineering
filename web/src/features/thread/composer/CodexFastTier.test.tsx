@@ -2,16 +2,16 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
-import { api } from "../../api/client";
-import type { EngineModels, EngineStatus } from "../../api/types";
-import type { ModelInfo } from "../../generated/ModelInfo";
-import type { ModelOption } from "../../generated/ModelOption";
-import { resolveModel, useEngineModels, useModelStore } from "../../state/modelStore";
+import { api } from "../../../api/client";
+import type { EngineModels, EngineStatus } from "../../../api/types";
+import type { ModelInfo } from "../../../generated/ModelInfo";
+import type { ModelOption } from "../../../generated/ModelOption";
+import { resolveModel, useEngineModels, useModelStore } from "../../../state/modelStore";
 import { EffortTrigger, useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
 
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
+vi.mock("../../../api/client", async (original) => {
+  const actual = await original<typeof import("../../../api/client")>();
   return { ...actual, api: { ...actual.api, models: vi.fn() } };
 });
 

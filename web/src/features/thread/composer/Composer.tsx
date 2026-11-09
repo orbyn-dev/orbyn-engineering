@@ -1,6 +1,6 @@
-import { useCompacting } from "./ThreadStates";
+import { useCompacting } from "../ThreadStates";
 import { composerMarkup } from "./composerMarkup";
-import { recordUserPrompt } from "../workspace";
+import { recordUserPrompt } from "../../workspace";
 import { ArrowUp, Archive, Folder, GitBranch, ListChecks, Paperclip, ShieldOff, SlidersHorizontal, Square, X,
   RotateCcw,
 } from "lucide-react";
@@ -14,20 +14,20 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from "react";
-import { api, request } from "../../api/client";
-import { useCommand as useSharedCommand } from "../../app/shortcuts";
-import type { EngineStatus, PermissionMode, Thread } from "../../api/types";
-import { useLayoutWidth } from "../../lib/useLayout";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useConnectionKind } from "../../state/connection";
-import { useDraftStore } from "../../state/draftStore";
-import { navigate } from "../../state/route";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useUi, type StashedPrompt } from "../../state/ui";
-import { IconButton } from "../../ui/controls";
-import { Menu } from "../../ui/Menu";
-import { closingProps, Presence } from "../../ui/Presence";
-import { useWorkspace } from "../../state/workspace";
+import { api, request } from "../../../api/client";
+import { useCommand as useSharedCommand } from "../../../app/shortcuts";
+import type { EngineStatus, PermissionMode, Thread } from "../../../api/types";
+import { useLayoutWidth } from "../../../lib/useLayout";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useConnectionKind } from "../../../state/connection";
+import { useDraftStore } from "../../../state/draftStore";
+import { navigate } from "../../../state/route";
+import { useThreadLogs } from "../../../state/threadLogs";
+import { useUi, type StashedPrompt } from "../../../state/ui";
+import { IconButton } from "../../../ui/controls";
+import { Menu } from "../../../ui/Menu";
+import { closingProps, Presence } from "../../../ui/Presence";
+import { useWorkspace } from "../../../state/workspace";
 import { CompactOffer, ComposerBanners, ContextMeter, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import {
   continueListLine,
@@ -40,14 +40,14 @@ import {
 } from "./composerInput";
 import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
-import { QuestionPanel } from "./QuestionPanel";
-import { SubagentChips } from "./SubagentBar";
-import { effortOption, effortValue, resolveModel, useEngineModels } from "../../state/modelStore";
-import { QueuedMessages } from "./QueuedMessages";
-import { openSideChat } from "./sideChat";
-import { pullsApi } from "../../api/pulls";
-import { FILE_MENTION_TYPE, insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
-import { useComposerChips } from "../../state/composerChipStore";
+import { QuestionPanel } from "../QuestionPanel";
+import { SubagentChips } from "../SubagentBar";
+import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../state/modelStore";
+import { QueuedMessages } from "../QueuedMessages";
+import { openSideChat } from "../sideChat";
+import { pullsApi } from "../../../api/pulls";
+import { FILE_MENTION_TYPE, insertToken, pullToken, threadToken, triggerAt } from "../../../lib/skillMention";
+import { useComposerChips } from "../../../state/composerChipStore";
 import { CODE_LANGUAGES, exitCodeBlock, indentCodeLines, openFenceAt, setFenceLanguage } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
 import {
@@ -60,7 +60,7 @@ import {
   promptWithChips,
   refillExcerpts,
   type ComposerChip,
-} from "../../lib/composerContext";
+} from "../../../lib/composerContext";
 
 interface Suggestion {
   value: string;

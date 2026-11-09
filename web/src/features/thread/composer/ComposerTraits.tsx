@@ -1,12 +1,12 @@
 import { Lock, PenLine, ShieldOff, Sparkles, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EngineStatus, ModelInfo, ModelOption, PermissionMode } from "../../api/types";
+import type { EngineStatus, ModelInfo, ModelOption, PermissionMode } from "../../../api/types";
 import { FloatingPanel } from "./ModelPicker";
-import { effortOption, effortValue } from "../../state/modelStore";
+import { effortOption, effortValue } from "../../../state/modelStore";
 import { EffortGlyph } from "./EffortGlyph";
-import { useUi } from "../../state/ui";
-import { Presence } from "../../ui/Presence";
-import { usePopover } from "../../ui/usePopover";
+import { useUi } from "../../../state/ui";
+import { Presence } from "../../../ui/Presence";
+import { usePopover } from "../../../ui/usePopover";
 
 export const ACCESS: Record<PermissionMode, { label: string; description: string; icon: LucideIcon }> = {
   supervised: { label: "Supervised", description: "Ask before commands and file changes.", icon: Lock },

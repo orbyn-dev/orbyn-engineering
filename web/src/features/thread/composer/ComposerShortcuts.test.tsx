@@ -1,11 +1,11 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MockApi } from "../../../mock/api";
-import { App } from "../../app/App";
-import { runHandlers } from "../../app/shortcuts";
-import { installMockFetch } from "../../test-support";
-import { useUi } from "../../state/ui";
+import type { MockApi } from "../../../../mock/api";
+import { App } from "../../../app/App";
+import { runHandlers } from "../../../app/shortcuts";
+import { installMockFetch } from "../../../test-support";
+import { useUi } from "../../../state/ui";
 
 /**
  * Parity row K41. Each test presses the real chord at the document and lets the shell's
