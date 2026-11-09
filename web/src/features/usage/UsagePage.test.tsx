@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure } from "../../api/client";
 import type { UsageReport } from "../../api/types";
-import { LIMITS_WAIT_MS, UsagePage } from "./UsagePage";
+import { LIMITS_WAIT_MS } from "./UsageLimits";
+import { UsagePage } from "./UsagePage";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
