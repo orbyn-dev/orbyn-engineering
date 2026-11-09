@@ -1,9 +1,9 @@
 import { Lock, RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
-import { pullsApi } from "../../api/pulls";
-import { toFailure } from "../../lib/useAsync";
-import { Button } from "../../ui/controls";
-import { ConfirmDialog } from "../../ui/Dialog";
+import { pullsApi } from "../../../api/pulls";
+import { toFailure } from "../../../lib/useAsync";
+import { Button } from "../../../ui/controls";
+import { ConfirmDialog } from "../../../ui/Dialog";
 
 /**
  * The review card under the merge row. The note is required, and Escape asks before throwing one away.

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { PullsToolbar } from "./PullsToolbar";
-import { defaultSort, noFilters, pullData, type PullData, type PullFilters } from "./pullModel";
+import { defaultSort, noFilters, pullData, type PullData, type PullFilters } from "../model/pullModel";
 
 function Harness({
   initial = noFilters,

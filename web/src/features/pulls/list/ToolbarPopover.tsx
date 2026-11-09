@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { captureFocusReturn, moveFocus, type CloseCause } from "../../ui/focusReturn";
-import { closingProps } from "../../ui/Presence";
-import { usePopover } from "../../ui/usePopover";
-import { MOTION } from "../../lib/motion";
-import { usePrefersReducedMotion } from "../../lib/useLayout";
+import { captureFocusReturn, moveFocus, type CloseCause } from "../../../ui/focusReturn";
+import { closingProps } from "../../../ui/Presence";
+import { usePopover } from "../../../ui/usePopover";
+import { MOTION } from "../../../lib/motion";
+import { usePrefersReducedMotion } from "../../../lib/useLayout";
 
 /** The longest the exit may take: --m-base-out is 140ms, so the fallback never cuts it short. */
 const EXIT_FALLBACK_MS = 220;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { pullsApi } from "../../api/pulls";
-import type { PullListEntry } from "../../api/types";
-import { useWaited } from "../../lib/motion";
+import { pullsApi } from "../../../api/pulls";
+import type { PullListEntry } from "../../../api/types";
+import { useWaited } from "../../../lib/motion";
 import { detailsKey, type DetailsByKey, type PullDetails } from "./pullModel";
 
 /** The service answers at most this many rows in one details request. */

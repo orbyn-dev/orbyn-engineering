@@ -1,27 +1,27 @@
 import { RefreshCw, Search, X } from "lucide-react";
-import "./pulls.css";
+import "../pulls.css";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PullList, PullListEntry } from "../../api/types";
-import { agoWords, relativeTime } from "../../lib/format";
-import { useWaited } from "../../lib/motion";
-import { deriveProjectIdentity } from "../../lib/projectIdentity";
-import { ApiFailure } from "../../api/client";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useLayoutWidth } from "../../lib/useLayout";
-import { navigate, useRoute } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { useVisibleProjects } from "../../state/workspace";
-import { Button, IconButton } from "../../ui/controls";
-import { checkConnectionNow, useConnectionKind } from "../../state/connection";
-import { ConfirmDialog } from "../../ui/Dialog";
-import { PageBar } from "../../ui/PageBar";
-import { ErrorState } from "../../ui/states";
-import { PullDetail } from "./PullDetail";
-import { RowMergeDialog } from "./MergeDialog";
+import type { PullList, PullListEntry } from "../../../api/types";
+import { agoWords, relativeTime } from "../../../lib/format";
+import { useWaited } from "../../../lib/motion";
+import { deriveProjectIdentity } from "../../../lib/projectIdentity";
+import { ApiFailure } from "../../../api/client";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useLayoutWidth } from "../../../lib/useLayout";
+import { navigate, useRoute } from "../../../state/route";
+import { useUi } from "../../../state/ui";
+import { useVisibleProjects } from "../../../state/workspace";
+import { Button, IconButton } from "../../../ui/controls";
+import { checkConnectionNow, useConnectionKind } from "../../../state/connection";
+import { ConfirmDialog } from "../../../ui/Dialog";
+import { PageBar } from "../../../ui/PageBar";
+import { ErrorState } from "../../../ui/states";
+import { PullDetail } from "../detail/PullDetail";
+import { RowMergeDialog } from "../detail/MergeDialog";
 import { PullsToolbar } from "./PullsToolbar";
 import { PullRows, PullsHead, PullsSkeleton } from "./PullRows";
 import { DetailsBanner, NoPulls, OfflineBanner, RateLimitBanner, SignedOut, Unreachable } from "./PullStates";
-import { usePullDetails } from "./usePullDetails";
+import { usePullDetails } from "../model/usePullDetails";
 import {
   activeChips,
   clearedFilters,
@@ -38,8 +38,8 @@ import {
   type PullFilters,
   type PullSort,
   emptyColumns,
-} from "./pullModel";
-import { pullsApi } from "../../api/pulls";
+} from "../model/pullModel";
+import { pullsApi } from "../../../api/pulls";
 /** One request per state the service is asked for, merged into one list. */
 async function loadPulls(states: readonly string[], query: string, signal: AbortSignal): Promise<PullList> {
   const lists = await Promise.all(states.map((state) => pullsApi.list(state, query, signal)));

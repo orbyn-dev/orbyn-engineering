@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { pullsApi } from "../../api/pulls";
-import type { PullDetailsResponse, PullListEntry } from "../../api/types";
-import { MOTION } from "../../lib/motion";
+import { pullsApi } from "../../../api/pulls";
+import type { PullDetailsResponse, PullListEntry } from "../../../api/types";
+import { MOTION } from "../../../lib/motion";
 import { PullsPage } from "./PullsPage";
 
 const entry = (number: number, over: Partial<PullListEntry["pull"]> = {}, state = "open"): PullListEntry => ({

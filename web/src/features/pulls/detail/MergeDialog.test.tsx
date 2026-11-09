@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure } from "../../api/client";
-import { pullsApi } from "../../api/pulls";
-import type { PullRequestDetail } from "../../api/types";
+import { ApiFailure } from "../../../api/client";
+import { pullsApi } from "../../../api/pulls";
+import type { PullRequestDetail } from "../../../api/types";
 import { MergeDialog, RowMergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 
 const detail = { pull: { number: 7, base: "main", title: "T" }, body: "Message", head_sha: "abc" } as unknown as PullRequestDetail;

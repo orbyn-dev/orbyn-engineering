@@ -1,4 +1,4 @@
-import type { PullDetailsResponse, PullListEntry, PullRequest } from "../../api/types";
+import type { PullDetailsResponse, PullListEntry, PullRequest } from "../../../api/types";
 
 /** What the details request returns for one pull request. */
 export type PullDetails = PullDetailsResponse["details"][number];

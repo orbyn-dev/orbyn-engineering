@@ -1,10 +1,10 @@
 import { Check, ChevronDown, Pause, Search, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { deriveProjectIdentity } from "../../lib/projectIdentity";
-import { Segmented } from "../../ui/Segmented";
-import { Button, IconButton } from "../../ui/controls";
+import { deriveProjectIdentity } from "../../../lib/projectIdentity";
+import { Segmented } from "../../../ui/Segmented";
+import { Button, IconButton } from "../../../ui/controls";
 import { ToolbarPopover } from "./ToolbarPopover";
-import "./pullsToolbar.css";
+import "../pullsToolbar.css";
 import {
   activeChips,
   clearedFilters,
@@ -17,7 +17,7 @@ import {
   type PullSort,
   type PullState,
   type ReviewKey,
-} from "./pullModel";
+} from "../model/pullModel";
 
 export interface ToolbarProject {
   id: string;

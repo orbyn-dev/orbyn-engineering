@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PullListEntry } from "../../api/types";
+import type { PullListEntry } from "../../../api/types";
 import { activeChips, bodyOpensWith, detailsKey, emptyColumns, checksOf, checksView, mergeGate, noFilters, pageState, takeLabels, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
 
 const newest: PullSort = { by: "created", dir: "newest" };

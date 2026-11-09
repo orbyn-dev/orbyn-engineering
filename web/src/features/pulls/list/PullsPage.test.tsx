@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { pullsApi } from "../../api/pulls";
-import type { PullList } from "../../api/types";
-import { MOTION } from "../../lib/motion";
-import { setViewportWidth } from "../../test-support";
+import { pullsApi } from "../../../api/pulls";
+import type { PullList } from "../../../api/types";
+import { MOTION } from "../../../lib/motion";
+import { setViewportWidth } from "../../../test-support";
 import { PullsPage } from "./PullsPage";
 
 let finish!: (list: PullList) => void;

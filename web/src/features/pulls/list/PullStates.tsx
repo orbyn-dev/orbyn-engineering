@@ -1,6 +1,6 @@
 import { Clock, CloudOff, Copy, GitPullRequest, Lock, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { Button } from "../../ui/controls";
+import { Button } from "../../../ui/controls";
 
 /** A quiet bar above the list: what is wrong, and the step that helps. */
 export function PullsBanner({ icon, children, actions, tone, live }: { icon: ReactNode; children: ReactNode; actions: ReactNode; tone?: "warn" | "err"; live?: boolean }) {

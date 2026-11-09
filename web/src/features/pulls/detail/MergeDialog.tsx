@@ -1,10 +1,10 @@
 import { RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
-import { pullsApi } from "../../api/pulls";
-import type { PullRequestDetail } from "../../api/types";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { Button, Field } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
+import { pullsApi } from "../../../api/pulls";
+import type { PullRequestDetail } from "../../../api/types";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { Button, Field } from "../../../ui/controls";
+import { Dialog } from "../../../ui/Dialog";
 
 const METHOD_WORDS: Record<string, string> = { squash: "Squash and merge", merge: "Create a merge commit", rebase: "Rebase and merge" };
 

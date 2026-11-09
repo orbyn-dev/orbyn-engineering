@@ -1,11 +1,11 @@
 import { FileDiff, MessageSquarePlus, Search, X } from "lucide-react";
 import { useState } from "react";
-import type { PullFile, ReviewLineComment } from "../../api/types";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { Button, IconButton } from "../../ui/controls";
-import { ErrorState, Loading } from "../../ui/states";
-import { pullsApi } from "../../api/pulls";
+import type { PullFile, ReviewLineComment } from "../../../api/types";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { Button, IconButton } from "../../../ui/controls";
+import { ErrorState, Loading } from "../../../ui/states";
+import { pullsApi } from "../../../api/pulls";
 
 interface PatchLine {
   text: string;

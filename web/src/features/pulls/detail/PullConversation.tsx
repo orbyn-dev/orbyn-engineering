@@ -1,14 +1,14 @@
 import { Check, CornerDownRight, Pencil, SmilePlus } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { PullComment, PullThread } from "../../api/types";
-import { relativeTime } from "../../lib/format";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { Button, IconButton } from "../../ui/controls";
-import { Menu } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { Markdown } from "../content";
-import { pullsApi } from "../../api/pulls";
+import type { PullComment, PullThread } from "../../../api/types";
+import { relativeTime } from "../../../lib/format";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { Button, IconButton } from "../../../ui/controls";
+import { Menu } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
+import { Markdown } from "../../content";
+import { pullsApi } from "../../../api/pulls";
 
 const REACTIONS: [string, string][] = [
   ["+1", "👍"],

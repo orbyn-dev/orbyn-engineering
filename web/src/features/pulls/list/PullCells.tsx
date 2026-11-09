@@ -1,10 +1,10 @@
 import { MessageSquare, SquareCheck, Users, X } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
-import type { PullListEntry } from "../../api/types";
-import { deriveProjectIdentity } from "../../lib/projectIdentity";
-import { forgeName } from "./pullStore";
-import { checksView, requestedName, yourReview, type PullDetails } from "./pullModel";
-import type { DetailsStatus } from "./usePullDetails";
+import type { PullListEntry } from "../../../api/types";
+import { deriveProjectIdentity } from "../../../lib/projectIdentity";
+import { forgeName } from "../model/pullStore";
+import { checksView, requestedName, yourReview, type PullDetails } from "../model/pullModel";
+import type { DetailsStatus } from "../model/usePullDetails";
 
 /** What the cells need to know about the details request, and who is signed in. */
 export interface CellEnv {

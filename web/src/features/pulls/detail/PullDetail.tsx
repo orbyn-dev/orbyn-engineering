@@ -1,34 +1,34 @@
 import { Check, CircleDashed, Ellipsis, EllipsisVertical, ExternalLink, GitMerge, Layers, MessageSquare, Pencil, Plus, X } from "lucide-react";
-import "./pulls.css";
+import "../pulls.css";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { tabKeys } from "../../ui/tabKeys";
-import { usePageLabel } from "../../state/pageLabel";
-import type { PullCheck, PullRequestDetail } from "../../api/types";
-import { agoWords, relativeTime } from "../../lib/format";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { navigate } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { Button, IconButton, Pill } from "../../ui/controls";
-import { ConfirmDialog } from "../../ui/Dialog";
-import { Menu, type MenuItem } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { PageBar } from "../../ui/PageBar";
-import { ErrorState, Loading } from "../../ui/states";
-import { Markdown } from "../content";
+import { tabKeys } from "../../../ui/tabKeys";
+import { usePageLabel } from "../../../state/pageLabel";
+import type { PullCheck, PullRequestDetail } from "../../../api/types";
+import { agoWords, relativeTime } from "../../../lib/format";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { navigate } from "../../../state/route";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { Button, IconButton, Pill } from "../../../ui/controls";
+import { ConfirmDialog } from "../../../ui/Dialog";
+import { Menu, type MenuItem } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
+import { PageBar } from "../../../ui/PageBar";
+import { ErrorState, Loading } from "../../../ui/states";
+import { Markdown } from "../../content";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
-import { pullsApi } from "../../api/pulls";
-import { checkConnectionNow, useConnectionKind } from "../../state/connection";
-import { useThreadPulls } from "./pullStore";
-import { forgeName, numberLabel } from "./pullStore";
-import { useVisibleProjects } from "../../state/workspace";
-import { PullsBanner } from "./PullStates";
+import { pullsApi } from "../../../api/pulls";
+import { checkConnectionNow, useConnectionKind } from "../../../state/connection";
+import { useThreadPulls } from "../model/pullStore";
+import { forgeName, numberLabel } from "../model/pullStore";
+import { useVisibleProjects } from "../../../state/workspace";
+import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
-import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "./pullModel";
+import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
 
 type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
 
@@ -185,7 +185,7 @@ function useTimelineEvents(projectId: string, number: number, enabled: boolean) 
     { keep: true },
   );
 }
-type TimelineRead = ReturnType<typeof useAsync<import("../../api/types").PullTimelineEvent[]>>;
+type TimelineRead = ReturnType<typeof useAsync<import("../../../api/types").PullTimelineEvent[]>>;
 
 function Timeline({ projectId, number }: { projectId: string; number: number }) {
   return <TimelineList events={useTimelineEvents(projectId, number, true) as TimelineRead} />;

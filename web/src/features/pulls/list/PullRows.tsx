@@ -1,9 +1,9 @@
 import { CircleCheck, CircleDot, CircleX, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, MessageSquare } from "lucide-react";
-import type { PullListEntry } from "../../api/types";
-import { compactAge } from "../../lib/format";
-import { IconButton } from "../../ui/controls";
+import type { PullListEntry } from "../../../api/types";
+import { compactAge } from "../../../lib/format";
+import { IconButton } from "../../../ui/controls";
 import { ChecksCell, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
-import { detailsKey, type DetailsByKey } from "./pullModel";
+import { detailsKey, type DetailsByKey } from "../model/pullModel";
 
 /** The one word after the title. Conflicts and Ready to merge wait for the list to carry whether it merges cleanly. */
 export const stateWord = (pull: PullListEntry["pull"]) =>

@@ -1,12 +1,12 @@
 import { ChevronDown, CircleCheck, Clock, CloudOff, FileDiff, GitPullRequest, Lock, RefreshCw, SquareCheck, Trash2, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
-import type { PullCheck, PullFile, PullRequest } from "../../api/types";
-import { Button } from "../../ui/controls";
-import { Menu, type MenuItem } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { useWaited } from "../../lib/motion";
-import { PullsBanner } from "./PullStates";
-import type { PageState } from "./pullModel";
+import type { PullCheck, PullFile, PullRequest } from "../../../api/types";
+import { Button } from "../../../ui/controls";
+import { Menu, type MenuItem } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
+import { useWaited } from "../../../lib/motion";
+import { PullsBanner } from "../list/PullStates";
+import type { PageState } from "../model/pullModel";
 
 /** The line above the tabs that says what state the pull request is in, with the step that fits it. */
 export function PullStateBanner({

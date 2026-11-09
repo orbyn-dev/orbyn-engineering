@@ -2,9 +2,9 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { navigate } from "../../state/route";
+import { navigate } from "../../../state/route";
 import { PullsToolbar } from "./PullsToolbar";
-import { defaultSort, noFilters } from "./pullModel";
+import { defaultSort, noFilters } from "../model/pullModel";
 
 function Harness({ phone = true }: { phone?: boolean }) {
   const [filters, setFilters] = useState(noFilters);
