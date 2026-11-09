@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../api";
+import { queryPreferences, updatePreferences } from "../api";
 import type { JsonValue } from "../../../api/types";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import type { ScopedPreferenceRow } from "../../../generated/ScopedPreferenceRow";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -27,7 +26,7 @@ export function ScopedRows({ groups, query, inheritance }: {
   const showInheritance = inheritance ?? scope?.inheritance ?? false;
   const keys = groups.flatMap((group) => group.rows.map((row) => row.key));
   const list = useAsync(JSON.stringify([query, keys]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys }, signal), { keep: true });
+    queryPreferences({ scope: query, keys }, signal), { keep: true });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -44,7 +43,7 @@ export function ScopedRows({ groups, query, inheritance }: {
     setBusy(true);
     setError(null);
     try {
-      const changed = await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", {
+      const changed = await updatePreferences({
         scope: query, membership_version: result.catalog.version,
         if_match: { [row.key]: row.revision }, edits: { [row.key]: edit },
       });

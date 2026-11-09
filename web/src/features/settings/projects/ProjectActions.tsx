@@ -6,8 +6,7 @@ import { ACTION_ICONS, ProjectActionIcon } from "../../../product/ui/ProjectActi
 import { Button } from "../../../ui/controls";
 import { formatShortcut } from "../../../product/shell/shortcuts";
 import { actionCommand } from "../../../product/composer/actionCommand";
-import { request } from "../api";
-import type { KeybindingsView } from "../../../api/types";
+import { readKeybindings } from "../api";
 import { useAsync } from "../../../lib/useAsync";
 import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
 import type { PreferenceControl, PreferenceSaveResult } from "../rows/preferenceTypes";
@@ -48,7 +47,7 @@ export function ProjectActions({ value, control }: { value: unknown; control: Pr
     target?.focus();
   }, [editing, control.disabled]);
   const actions = actionsFrom(value);
-  const keys = useAsync("action-keybindings", (signal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal), { keep: true });
+  const keys = useAsync("action-keybindings", (signal) => readKeybindings(signal), { keep: true });
   const shortcut = (id: string | null) => id === null ? undefined
     : [...(keys.data?.rules ?? [])].reverse().find((rule) => !rule.remove && rule.command === actionCommand(id))?.key;
   return <div ref={root} className="project-actions">

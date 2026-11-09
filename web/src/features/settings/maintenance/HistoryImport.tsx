@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { api, request } from "../api";
+import { api, importHistorySession, scanHistory } from "../api";
 import type { HistoryScan } from "../../../generated/HistoryScan";
 import type { HistorySession } from "../../../generated/HistorySession";
-import type { HistorySessionImported } from "../../../generated/HistorySessionImported";
 import { fullTime } from "../../../lib/format";
 import { toFailure } from "../../../lib/useAsync";
 import { navigate } from "../../../product/state/route";
@@ -26,7 +25,7 @@ export function HistoryImport({ inSettings = false }: { inSettings?: boolean } =
   const find = async () => {
     setBusy("scan");
     try {
-      setScan(await request<HistoryScan>("GET", "/api/history/sessions"));
+      setScan(await scanHistory());
     } catch (failure) {
       pushToast(`Couldn't read agent history: ${toFailure(failure).message}`);
     } finally {
@@ -36,7 +35,7 @@ export function HistoryImport({ inSettings = false }: { inSettings?: boolean } =
   const importSession = async (session: HistorySession) => {
     setBusy(`${session.engine}:${session.session_id}`);
     try {
-      const done = await request<HistorySessionImported>("POST", "/api/history/import", { engine: session.engine, session_id: session.session_id });
+      const done = await importHistorySession(session.engine, session.session_id);
       await useWorkspace.getState().refreshAll();
       navigate({ name: "thread", id: done.thread_id });
     } catch (failure) {
@@ -52,7 +51,7 @@ export function HistoryImport({ inSettings = false }: { inSettings?: boolean } =
     try {
       await api.addProject(session.cwd);
       await useWorkspace.getState().refreshAll();
-      setScan(await request<HistoryScan>("GET", "/api/history/sessions"));
+      setScan(await scanHistory());
     } catch (failure) {
       pushToast(`Couldn't add the folder: ${toFailure(failure).message}`);
     } finally {

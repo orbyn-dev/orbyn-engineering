@@ -1,5 +1,5 @@
 import type { ClipboardEvent, MutableRefObject } from "react";
-import { request } from "../api";
+import { readThreadFile } from "../api";
 import {
   CHIP_MIME,
   chipsFromClipboard,
@@ -32,10 +32,7 @@ export function handleComposerPaste(
   if (carried) {
     event.preventDefault();
     void refillExcerpts(carried, async (path) => {
-      const found = await request<{ content: string }>(
-        "GET",
-        `/api/threads/${encodeURIComponent(thread.id)}/files/content?path=${encodeURIComponent(path)}`,
-      );
+      const found = await readThreadFile(thread.id, path);
       return { text: fileExcerpt(found.content, null), language: languageForPath(path) };
     }).then((filled) => addChips(thread.id, filled));
     return;

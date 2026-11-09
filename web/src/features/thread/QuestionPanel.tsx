@@ -1,20 +1,14 @@
 import { Paperclip, X } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
-import { api, request } from "./api";
-import type { Question, QuestionRequest } from "../../api/types";
+import { answerQuestion, api, pendingQuestions } from "./api";
+import type { Question } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { Button } from "../../ui/controls";
 import { Markdown } from "../content";
 
 const POLL_MS = 1500;
 
-const pending = (threadId: string, signal?: AbortSignal) =>
-  request<QuestionRequest[]>(
-    "GET",
-    `/api/questions?thread_id=${encodeURIComponent(threadId)}&state=pending`,
-    undefined,
-    signal,
-  );
+const pending = (threadId: string, signal?: AbortSignal) => pendingQuestions(threadId, signal);
 
 function QuestionRow({
   question,
@@ -109,7 +103,7 @@ export function QuestionPanel({ threadId, waiting }: { threadId: string; waiting
     setBusy(true);
     setError(null);
     try {
-      await request("POST", `/api/questions/${encodeURIComponent(open.id)}/${path}`, body);
+      await answerQuestion(open.id, path, body);
       setPicked({});
       setOthers({});
       setFiles({});

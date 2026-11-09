@@ -1,7 +1,7 @@
 import { Activity, ChevronDown, ChevronRight, FileDiff, Gauge, Globe, Play, SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "./api";
-import type { EngineLimits, LocalServer, ProjectFileView, Thread } from "../../api/types";
+import { api, listThreadScripts, listThreadServers } from "./api";
+import type { EngineLimits, LocalServer, Thread } from "../../api/types";
 import type { ProjectScript } from "../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../lib/motion";
 import { toFailure, useAsync } from "../../lib/useAsync";
@@ -55,7 +55,7 @@ export function detailsMenuItems(): MenuItem[] {
 
 function ServersRow({ threadId }: { threadId: string }) {
   const servers = useAsync(`details-servers:${threadId}`, (signal) =>
-    request<LocalServer[]>("GET", `/api/threads/${encodeURIComponent(threadId)}/servers`, undefined, signal),
+    listThreadServers(threadId, signal),
   );
   const showInBrowser = useUi((state) => state.showInBrowser);
   const waited = useWaitedFor(servers.status === "loading");
@@ -111,10 +111,7 @@ function UsageRow({ threadId }: { threadId: string }) {
 }
 
 function ScriptsRow({ threadId }: { threadId: string }) {
-  const base = `/api/threads/${encodeURIComponent(threadId)}`;
-  const scripts = useAsync(`details-scripts:${threadId}`, (signal) =>
-    request<ProjectFileView>("GET", `${base}/scripts`, undefined, signal),
-  );
+  const scripts = useAsync(`details-scripts:${threadId}`, (signal) => listThreadScripts(threadId, signal));
   const pushToast = useUi((state) => state.pushToast);
   const [expanded, setExpanded] = useState(false);
   const waited = useWaitedFor(scripts.status === "loading");

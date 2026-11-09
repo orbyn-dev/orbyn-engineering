@@ -1,8 +1,8 @@
 import { useCommand } from "../../../product/shell/shortcuts";
 import { Check, ChevronDown, ChevronUp, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { request } from "../api";
-import type { ProjectFileView, TerminalInfo } from "../../../api/types";
+import { closeTerminal, listTerminals, listThreadScripts, startConsole, startTerminal } from "../api";
+import type { TerminalInfo } from "../../../api/types";
 import { elapsed } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useNow } from "../../../lib/useNow";
@@ -21,7 +21,6 @@ import { runProjectAction } from "../../../product/composer/runProjectAction";
 import { ProjectActionIcon } from "../../../product/ui/ProjectActionIcon";
 
 const MAIN = "main";
-const q = encodeURIComponent;
 
 export function groupTerminals(terminals: readonly TerminalInfo[]): TerminalInfo[][] {
   const groups = new Map<string, TerminalInfo[]>();
@@ -60,7 +59,7 @@ export function TerminalBar({ threadId, onOpen }: { threadId: string; onOpen(): 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
       try {
-        const terminals = await request<TerminalInfo[]>("GET", `/api/threads/${q(threadId)}/terminals`);
+        const terminals = await listTerminals(threadId);
         if (!live) return;
         const running = runningCount(terminals);
         setCount(running);
@@ -168,12 +167,11 @@ export function TerminalDrawerBody({
   /** Hides the drawer; what runs keeps running. */
   onClose(): void;
 }) {
-  const base = `/api/threads/${q(threadId)}`;
   const terminals = useAsync(`terminals:${threadId}`, (signal) =>
-    request<TerminalInfo[]>("GET", `${base}/terminals`, undefined, signal),
+    listTerminals(threadId, signal),
   );
   const scripts = useAsync(`scripts:${threadId}`, (signal) =>
-    request<ProjectFileView>("GET", `${base}/scripts`, undefined, signal),
+    listThreadScripts(threadId, signal),
   );
   const [active, setActive] = useState(MAIN);
   // A terminal opened here takes focus when it loads; one that was already there does not.
@@ -209,7 +207,7 @@ export function TerminalDrawerBody({
 
   const open = async (body: Record<string, string>) => {
     try {
-      const made = await request<TerminalInfo>("POST", `${base}/terminals`, body);
+      const made = await startTerminal(threadId, body);
       setActive(made.group);
       setFocusGroup(made.group);
       reload();
@@ -220,7 +218,7 @@ export function TerminalDrawerBody({
   /** The engine's own CLI resumed on this thread's session; the service says when it can't. */
   const openConsole = async () => {
     try {
-      const made = await request<TerminalInfo>("POST", `${base}/console`, {});
+      const made = await startConsole(threadId);
       setActive(made.group);
       setFocusGroup(made.group);
       reload();
@@ -230,7 +228,7 @@ export function TerminalDrawerBody({
   };
   const close = async (terminal: TerminalInfo) => {
     try {
-      await request("DELETE", `${base}/terminals/${q(terminal.id)}`);
+      await closeTerminal(threadId, terminal.id);
       reload();
     } catch (failure) {
       fail(failure);

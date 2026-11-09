@@ -1,10 +1,9 @@
 import { AlertTriangle, ChevronLeft, CloudOff, RefreshCw, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../api";
+import { addRegistryEntry, api, importHistorySession, listRegistry, removeRegistryEntry, scanHistory } from "../api";
 import type { AcpRegistryEntry } from "../../../api/types";
 import type { HistoryScan } from "../../../generated/HistoryScan";
 import type { HistorySession } from "../../../generated/HistorySession";
-import type { HistorySessionImported } from "../../../generated/HistorySessionImported";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useConnection } from "../../../product/state/connection";
 import { navigate } from "../../../product/state/route";
@@ -13,7 +12,6 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Empty, Loading } from "../../../product/ui/states";
 
-const q = encodeURIComponent;
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 const day = (iso: string) => new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
 const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -37,7 +35,7 @@ export function AcpRegistryPage({ onBack }: { onBack(): void }) {
   const pushToast = useUi((state) => state.pushToast);
   const loadedAt = useRef<number | null>(null);
   const found = useAsync("acp-registry", async (signal) => {
-    const entries = await request<AcpRegistryEntry[]>("GET", "/api/acp/registry?q=", undefined, signal);
+    const entries = await listRegistry("", signal);
     loadedAt.current = Date.now();
     return entries;
   }, { keep: true });
@@ -79,11 +77,11 @@ export function AcpRegistryPage({ onBack }: { onBack(): void }) {
                   <>
                     <span className="set-pill">Installed</span>
                     <Button small tone="quiet" aria-label={`Remove ${entry.name}`} disabled={working === entry.id}
-                      onClick={() => void act(entry, request("DELETE", `/api/acp/registry/${q(entry.id)}`), `${entry.name} removed`)}>Remove</Button>
+                      onClick={() => void act(entry, removeRegistryEntry(entry.id), `${entry.name} removed`)}>Remove</Button>
                   </>
                 ) : entry.installable.length > 0 ? (
                   <Button small aria-label={`Add ${entry.name}`} disabled={working === entry.id}
-                    onClick={() => void act(entry, request("POST", `/api/acp/registry/${q(entry.id)}`, { distribution: entry.installable[0] }), `${entry.name} added`)}>Add</Button>
+                    onClick={() => void act(entry, addRegistryEntry(entry.id, entry.installable[0]), `${entry.name} added`)}>Add</Button>
                 ) : <span className="t3">Can't be installed here</span>}
               </span>
             </div>
@@ -104,7 +102,7 @@ export function HistoryImportPage({ onBack }: { onBack(): void }) {
   const find = async () => {
     setBusy("scan");
     try {
-      const next = await request<HistoryScan>("GET", "/api/history/sessions");
+      const next = await scanHistory();
       setScan(next);
       setPicked(new Set(next.sessions.filter((session) => session.importable && !session.thread_id).map(keyOf)));
     } catch (failure) {
@@ -123,7 +121,7 @@ export function HistoryImportPage({ onBack }: { onBack(): void }) {
     let last: string | null = null, done = 0;
     for (const session of available.filter((entry) => picked.has(keyOf(entry)))) {
       try {
-        const result = await request<HistorySessionImported>("POST", "/api/history/import", { engine: session.engine, session_id: session.session_id });
+        const result = await importHistorySession(session.engine, session.session_id);
         last = result.thread_id; done += 1;
       } catch (failure) { pushToast(`Couldn't import ${session.title}: ${toFailure(failure).message}`); }
     }

@@ -1,6 +1,6 @@
 import { CalendarClock, CirclePlay, Pause, Pencil, Play } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { request } from "./api";
+import { listScheduledTasks, runScheduledTask, setScheduledTaskEnabled } from "./api";
 import type { ScheduledTask } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
@@ -11,13 +11,10 @@ import { navigate, useRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { Button, IconButton } from "../../ui/controls";
 
-const q = encodeURIComponent;
 
 /** Tasks bound to this thread, with the same run, pause and edit controls as Settings. */
 export function ThreadAutomations({ threadId }: { threadId: string }) {
-  const tasks = useAsync(`details-tasks:${threadId}`, (signal) =>
-    request<ScheduledTask[]>("GET", "/api/tasks", undefined, signal),
-  );
+  const tasks = useAsync(`details-tasks:${threadId}`, (signal) => listScheduledTasks(signal));
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState<{
@@ -102,7 +99,7 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
     setSaved(null);
     let row: ScheduledTask;
     try {
-      row = await request<ScheduledTask>("POST", `/api/tasks/${q(task.id)}/enabled`, { enabled });
+      row = await setScheduledTaskEnabled(task.id, enabled);
     } catch (failure) {
       if (shownThread.current === threadId) {
         pushToast(`Couldn't ${enabled ? "resume" : "pause"} ${task.name}. ${toFailure(failure).message}`);
@@ -139,7 +136,7 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
   const run = async (task: ScheduledTask) => {
     setBusy(task.id);
     try {
-      await request("POST", `/api/tasks/${q(task.id)}/run`);
+      await runScheduledTask(task.id);
     } catch (failure) {
       pushToast(`Couldn't run ${task.name}. ${toFailure(failure).message}`);
     } finally {

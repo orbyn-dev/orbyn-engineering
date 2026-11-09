@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { request } from "../api";
+import { readKeybindings, saveKeybinding } from "../api";
 import { inDesktopApp } from "../api";
 import { commandLabel, whenPhrase } from "./commandLabels";
 import { formatShortcut, runHandlers } from "../../../product/shell/shortcuts";
-import type { KeybindingsView } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { AlertCircle, MoreHorizontal, Pencil, Search } from "lucide-react";
 import { IconButton } from "../../../ui/controls";
@@ -21,7 +20,7 @@ function keyCaps(rule: string): string[] {
   return parts.map((part) => CAP_GLYPHS[part] ?? part);
 }
 
-const load = (signal?: AbortSignal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal);
+const load = (signal?: AbortSignal) => readKeybindings(signal);
 
 export function KeybindingsSection() {
   const view = useAsync("keybindings", load, { keep: true });
@@ -47,7 +46,7 @@ export function KeybindingsSection() {
       .filter(Boolean)
       .join("+");
     setEditing(null);
-    request<KeybindingsView>("POST", "/api/keybindings", { key, command, when, remove: false }).then(
+    saveKeybinding({ key, command, when, remove: false }).then(
       (next) => {
         view.setData(next);
         runHandlers("keybindings.reload");

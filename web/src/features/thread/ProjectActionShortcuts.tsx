@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { request } from "./api";
-import type { ProjectFileView } from "../../api/types";
+import { listThreadScripts } from "./api";
 import { useCommand } from "../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { parseRoute } from "../../product/state/route";
@@ -29,7 +28,7 @@ function useActionRunner(threadId: string) {
     if (!active()) return false;
     if (pending.current.has(requestKey)) return true;
     pending.current.add(requestKey);
-    void request<ProjectFileView>("GET", `/api/threads/${encodeURIComponent(threadId)}/scripts`).then(async (view) => {
+    void listThreadScripts(threadId).then(async (view) => {
       const script = view.scripts.find((entry) => entry.id === id);
       if (script && active()) await runProjectAction(threadId, script);
     }).catch((failure: unknown) => useUi.getState().pushToast(`Couldn't run that action. ${toFailure(failure).message}`))
@@ -47,7 +46,7 @@ function ActionShortcut({ id, run, activeThread }: { id: string; run(id: string)
 /** Register only actions available in this thread; unrelated project bindings stay inactive. */
 export function ProjectActionShortcuts({ threadId }: { threadId: string }) {
   const scripts = useAsync(`action-shortcuts:${threadId}`, (signal) =>
-    request<ProjectFileView>("GET", `/api/threads/${encodeURIComponent(threadId)}/scripts`, undefined, signal));
+    listThreadScripts(threadId, signal));
   const reload = scripts.reload;
   const { run, activeThread } = useActionRunner(threadId);
   useCommand("projectActions.pending", (command) => {

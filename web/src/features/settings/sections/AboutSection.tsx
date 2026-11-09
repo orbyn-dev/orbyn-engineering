@@ -1,7 +1,7 @@
 import { ChevronLeft, Search } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
-import { api, request } from "../api";
+import { api, readTriagePlaybook } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -9,7 +9,6 @@ import { Button } from "../../../ui/controls";
 import licenses from "../licenses.json";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
-import type { TriagePlaybook } from "../../../generated/TriagePlaybook";
 import { navigate } from "../../../product/state/route";
 import { LogoTile } from "../../../product/ui/Logo";
 import { DRAFT_KEY, SCRATCH } from "../../../product/state/draftStore";
@@ -73,7 +72,7 @@ function TriageRow() {
   const pushToast = useUi((state) => state.pushToast);
   const start = async () => {
     try {
-      const playbook = await request<TriagePlaybook>("GET", "/api/triage/playbook");
+      const playbook = await readTriagePlaybook();
       useUi.getState().setDraft(DRAFT_KEY, playbook.prompt);
       navigate({ name: "new", projectId: SCRATCH });
     } catch (failure) {

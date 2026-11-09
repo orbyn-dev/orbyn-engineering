@@ -1,8 +1,7 @@
 import { Check, Copy, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "./api";
+import { api, queryPreferences, updatePreferences } from "./api";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { EngineStatus, PermissionMode, Project } from "../../api/types";
 import { AddProjectPalette } from "../workspace";
 import { ACCESS, offeredModes, shownAccess } from "../thread";
@@ -145,7 +144,7 @@ function useDefaultAccess() {
   const [revision, setRevision] = useState<{ version: string; row: string } | null>(null);
   useEffect(() => {
     const abort = new AbortController();
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: {}, keys: ["default_permission_mode"] }, abort.signal).then(
+    queryPreferences({ scope: {}, keys: ["default_permission_mode"] }, abort.signal).then(
       (result) => {
         const row = result.rows?.find((entry) => entry.key === "default_permission_mode");
         if (!row || abort.signal.aborted) return;
@@ -158,7 +157,7 @@ function useDefaultAccess() {
   }, []);
   const save = async (mode: PermissionMode) => {
     if (!revision) return;
-    await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", {
+    await updatePreferences({
       scope: {},
       membership_version: revision.version,
       if_match: { default_permission_mode: revision.row },

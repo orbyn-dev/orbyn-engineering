@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../api";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import { queryPreferences, updatePreferences } from "../api";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
@@ -25,8 +24,7 @@ function ModelDefaults({ query, disabled }: { query: ProjectScopesQuery; disable
   const scope = useSettingsScope();
   const engines = useWorkspace((state) => state.engines.data) ?? [];
   const modelsByEngine = useModelStore((state) => state.byEngine);
-  const result = useAsync("project-model-defaults", (signal) => request<ScopedPreferencesResult>("POST",
-    "/api/settings/preferences/query", { scope: query, keys: MODEL_DEFAULT_KEYS }, signal), { keep: true });
+  const result = useAsync("project-model-defaults", (signal) => queryPreferences({ scope: query, keys: MODEL_DEFAULT_KEYS }, signal), { keep: true });
   const [draft, setDraft] = useState<Edit | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
@@ -44,8 +42,7 @@ function ModelDefaults({ query, disabled }: { query: ProjectScopesQuery; disable
     pending.current = true;
     setSaving(true); setDraft(edit); setError(null);
     try {
-      const changed = await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences",
-        modelDefaultChange(data, query, edit));
+      const changed = await updatePreferences(modelDefaultChange(data, query, edit));
       useUi.getState().bumpPreferencesRevision();
       if (mounted.current) { result.setData(changed); setDraft(null); }
     } catch (failure) {

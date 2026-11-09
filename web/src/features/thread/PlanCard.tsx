@@ -1,7 +1,7 @@
 import { Ellipsis } from "lucide-react";
 import { use, useState } from "react";
 import { useOpenState } from "../../ui/openState";
-import { request } from "./api";
+import { saveThreadFile } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { Dialog } from "../../ui/Dialog";
@@ -33,11 +33,7 @@ function SaveDialog({ threadId, text, name, onClose }: { threadId: string; text:
     setSaving(true);
     setError(null);
     try {
-      await request("PUT", `/api/threads/${encodeURIComponent(threadId)}/files/content`, {
-        path: path.trim(),
-        content: text,
-        base_revision: null,
-      });
+      await saveThreadFile(threadId, { path: path.trim(), content: text, base_revision: null });
       pushToast(`Saved ${path.trim()}`);
       onClose();
     } catch (failure) {

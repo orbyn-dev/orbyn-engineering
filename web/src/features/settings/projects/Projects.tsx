@@ -1,7 +1,7 @@
 import { TriangleAlert } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ApiFailure, api, request } from "../api";
-import type { LibraryStatus, Thread } from "../../../api/types";
+import { ApiFailure, api, listProjectThreads, queryProjectScopes } from "../api";
+import type { LibraryStatus } from "../../../api/types";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";
 import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
@@ -275,9 +275,8 @@ export function ProjectRemoval({ query, group, members, disabled, reload, clearS
     countRequest.current = abort;
     try {
       const counts = await Promise.all(targets.map(async (member) => {
-        const path = `/api/threads?project_id=${encodeURIComponent(member.project_id)}`;
-        const lists = await Promise.all([request<Thread[]>("GET", path, undefined, abort.signal),
-          request<Thread[]>("GET", `${path}&archived=true`, undefined, abort.signal)]);
+        const lists = await Promise.all([listProjectThreads(member.project_id, false, abort.signal),
+          listProjectThreads(member.project_id, true, abort.signal)]);
         return [member.project_id, new Set(lists.flat().map((thread) => thread.id)).size] as const;
       }));
       if (mounted.current) setPlan({ id: ++sequence.current, members: targets, counts: Object.fromEntries(counts), removed: [],
@@ -308,7 +307,7 @@ export function ProjectRemoval({ query, group, members, disabled, reload, clearS
       let clear = false;
       if (plan.wholeGroup && mounted.current) {
         try {
-          const catalog = await request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", { recipe: query.recipe });
+          const catalog = await queryProjectScopes({ recipe: query.recipe });
           clear = !catalog.groups.some((entry) => entry.key === plan.groupKey);
         } catch {
           // Entries are already removed. The independently owned scope read reports

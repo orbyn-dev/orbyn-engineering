@@ -3,8 +3,8 @@ import { ChevronRight, Copy, RefreshCw } from "lucide-react";
 import { EnvironmentIcon } from "../EnvironmentIcon";
 import { useLayoutEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "../../../ui/Dialog";
-import { api, request } from "../api";
-import type { CleanupReport, Diagnostics, JsonValue, OtlpResult } from "../../../api/types";
+import { api, queryPreferences, readCleanupReport, readDiagnostics, repairDatabase, runCleanup, sendOtlp, stopServiceProcess, updatePreferences } from "../api";
+import type { CleanupReport, JsonValue } from "../../../api/types";
 import type { ServiceProcess } from "../../../generated/ServiceProcess";
 import { fullTime, mebibytes, sizeWords, uptime } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -12,7 +12,6 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { useUi } from "../../../product/state/ui";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { Button } from "../../../ui/controls";
@@ -69,7 +68,7 @@ function endpointValue(value: JsonValue | undefined, key: SignalKey): string {
 /** One local environment snapshot owns these drafts and every later response. */
 function TelemetryForm({ query, disabled }: { query: ProjectScopesQuery; disabled: boolean }) {
   const preferences = useAsync(JSON.stringify(["observability", query]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: ["observability"] }, signal), { keep: true });
+    queryPreferences({ scope: query, keys: ["observability"] }, signal), { keep: true });
   const pushToast = useUi((state) => state.pushToast);
   const [draft, setDraft] = useState<Partial<Record<SignalKey, string>>>({});
   const [checks, setChecks] = useState<Partial<Record<SignalKey, EndpointCheck>>>({});
@@ -101,7 +100,7 @@ function TelemetryForm({ query, disabled }: { query: ProjectScopesQuery; disable
       if_match: { observability: row.revision }, edits: { observability: { op: "set", value: patch } },
     } satisfies ScopedPreferencesChange;
     try {
-      const next = await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", mutation);
+      const next = await updatePreferences(mutation);
       useUi.getState().bumpPreferencesRevision();
       if (mounted.current) {
         preferences.setData(next);
@@ -131,7 +130,7 @@ function TelemetryForm({ query, disabled }: { query: ProjectScopesQuery; disable
         setChecks((previous) => ({ ...previous, [key]: { url, message: text, pending: false, failed } }));
       }
     };
-    request<OtlpResult>("POST", "/api/diagnostics/otlp", { url }).then(
+    sendOtlp(url).then(
       (result) => result.ok ? finish(`Reached, ${result.status}`, false) : finish("Couldn’t reach this address.", true),
       () => finish("Couldn’t reach this address.", true),
     );
@@ -184,9 +183,9 @@ function CleanupGroup() {
 
 export function EnvironmentCleanup({ query, disabled }: { query: ProjectScopesQuery; disabled: boolean }) {
   const preferences = useAsync(JSON.stringify(["storage-cleanup", query]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: ["storage_cleanup", "worktree_cleanup"] }, signal), { keep: true });
+    queryPreferences({ scope: query, keys: ["storage_cleanup", "worktree_cleanup"] }, signal), { keep: true });
   const last = useAsync("cleanup-report", (signal) =>
-    request<CleanupReport | null>("GET", "/api/storage/cleanup", undefined, signal), { keep: true });
+    readCleanupReport(signal), { keep: true });
   const preview = useAsync(JSON.stringify(["cleanup-preview", query]), (signal) => api.storageCleanupPreview(signal), { keep: true });
   const [draft, setDraft] = useState<Partial<Record<RetentionKey, string>>>({});
   const [report, setReport] = useState<CleanupReport | null>(null);
@@ -215,7 +214,7 @@ export function EnvironmentCleanup({ query, disabled }: { query: ProjectScopesQu
       if_match: { storage_cleanup: row.revision }, edits: { storage_cleanup: { op: "set", value: { [key]: value } } },
     } satisfies ScopedPreferencesChange;
     try {
-      const next = await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", mutation);
+      const next = await updatePreferences(mutation);
       useUi.getState().bumpPreferencesRevision();
       if (mounted.current) {
         preferences.setData({ ...snapshot, catalog: next.catalog,
@@ -260,7 +259,7 @@ export function EnvironmentCleanup({ query, disabled }: { query: ProjectScopesQu
     setDeleting(true);
     setError(null);
     try {
-      const result = await request<CleanupReport>("POST", "/api/storage/cleanup");
+      const result = await runCleanup();
       if (mounted.current) setReport(result);
     } catch (failure) {
       if (mounted.current) setError(toFailure(failure).message);
@@ -378,17 +377,17 @@ function problemTime(iso: string, now = new Date()): string {
 }
 
 function DiagnosticsGroup() {
-  const info = useAsync("diagnostics", (signal) => request<Diagnostics>("GET", "/api/diagnostics", undefined, signal), { keep: true });
+  const info = useAsync("diagnostics", (signal) => readDiagnostics(signal), { keep: true });
   const offline = useConnection((state) => state.offline);
   const pushToast = useUi((state) => state.pushToast);
   const [note, setNote] = useState<string | null>(null);
   const [showProblems, setShowProblems] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [stopping, setStopping] = useState<ServiceProcess | null>(null);
-  const run = async (path: string, done: string) => {
+  const run = async (action: () => Promise<unknown>, done: string) => {
     setNote(null);
     try {
-      await request("POST", path);
+      await action();
       setNote(done);
       info.reload();
     } catch (failure) {
@@ -425,7 +424,7 @@ function DiagnosticsGroup() {
         <div className="set-facts-foot"><Button small onClick={() => setRepairing(true)}>Repair database</Button></div>
       </div>
       {repairing ? <ConfirmDialog title="Repair the database?" confirmLabel="Repair database" cancelFocus onClose={() => setRepairing(false)}
-        onConfirm={async () => { await run("/api/diagnostics/repair", "Database repaired"); }}>
+        onConfirm={async () => { await run(repairDatabase, "Database repaired"); }}>
         <p>Orbyn will check and repair its local database. Threads aren’t deleted.</p>
       </ConfirmDialog> : null}
       {recent.length === 0 ? <SettingsEmpty title="No problems">Nothing went wrong in the last 24 hours.</SettingsEmpty> : <>
@@ -449,7 +448,7 @@ function DiagnosticsGroup() {
         ))}
       </ul>}
       {stopping ? <ConfirmDialog title={`Stop ${stopping.name}?`} confirmLabel="Stop" tone="danger" cancelFocus onClose={() => setStopping(null)}
-        onConfirm={async () => { await run(`/api/diagnostics/processes/${stopping.pid}/stop`, `Stopped ${stopping.name}`); }}>
+        onConfirm={async () => { await run(() => stopServiceProcess(stopping.pid), `Stopped ${stopping.name}`); }}>
         <p>It stops now. Threads that use it end their current turn.</p>
       </ConfirmDialog> : null}
       {note ? <SettingRow title="Last action" description={note} /> : null}

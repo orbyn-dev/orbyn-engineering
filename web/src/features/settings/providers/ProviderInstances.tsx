@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../api";
+import { api, queryPreferences, updatePreferences } from "../api";
 import type { EngineStatus, JsonValue } from "../../../api/types";
 import type { ProviderInstance } from "../../../generated/ProviderInstance";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -28,7 +27,7 @@ export interface InstanceStore {
 /** The saved provider instances, written with the environment's compare-and-set. */
 export function useProviderInstances(): InstanceStore {
   const scope = useSettingsScope();
-  const preferences = useAsync("provider-instances", (signal) => request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: {}, keys: ["provider_instances"] }, signal), { keep: true });
+  const preferences = useAsync("provider-instances", (signal) => queryPreferences({ scope: {}, keys: ["provider_instances"] }, signal), { keep: true });
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [conflict, setConflict] = useState(false);
   const pending = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -43,7 +42,7 @@ export function useProviderInstances(): InstanceStore {
     if (pending.current || disabled || !row || !preferences.data) return "Provider settings aren't ready yet.";
     pending.current = true; setBusy(true); setError(null);
     try {
-      const changed = await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", { scope: {}, membership_version: preferences.data.catalog.version,
+      const changed = await updatePreferences({ scope: {}, membership_version: preferences.data.catalog.version,
         if_match: { provider_instances: row.revision }, edits: { provider_instances: { op: "set", value: next } } });
       useUi.getState().bumpPreferencesRevision();
       if (mounted.current) preferences.setData(changed);

@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiFailure, request } from "../api";
+import { ApiFailure, deleteNativeSession, importNativeSession, listNativeSessions, nativeSessionCapabilities } from "../api";
 import type { EngineStatus } from "../../../api/types";
 import type { AcpNativeSession } from "../../../generated/AcpNativeSession";
-import type { AcpNativeSessionImported } from "../../../generated/AcpNativeSessionImported";
-import type { AcpNativeSessionPage } from "../../../generated/AcpNativeSessionPage";
 import type { AcpSessionCapabilities } from "../../../generated/AcpSessionCapabilities";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
@@ -16,8 +14,6 @@ import { SettingRow } from "../rows/SettingRow";
 /** A capability read turned away as busy is asked again up to this many times, a little later each time. */
 const CAPABILITY_RETRIES = 6;
 const CAPABILITY_RETRY_MS = 400;
-
-const base = (engine: string) => `/api/engines/${encodeURIComponent(engine)}/native-sessions`;
 
 /** An ACP agent's own saved conversations, offered only when it says it can list them. */
 export function NativeSessions({ engine }: { engine: EngineStatus }) {
@@ -46,7 +42,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     // again, an update running) is turned away as busy. That is not "cannot list sessions": ask again shortly. Any
     // other answer (disabled, unsupported, not signed in, a start-up error) is final, and asking again would not change it.
     const ask = () =>
-      request<AcpSessionCapabilities>("GET", `${base(engine.id)}/capabilities`, undefined, abort.signal).then(setCaps, (failure: unknown) => {
+      nativeSessionCapabilities(engine.id, abort.signal).then(setCaps, (failure: unknown) => {
         if (abort.signal.aborted || !(failure instanceof ApiFailure) || failure.code !== "engine_busy") return;
         if (retries >= CAPABILITY_RETRIES) {
           // Still busy after the last try: say so, rather than look like an agent that cannot list sessions.
@@ -82,7 +78,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     setBusy("list");
     try {
       const query = `?project_id=${encodeURIComponent(project)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-      const page = await request<AcpNativeSessionPage>("GET", `${base(engine.id)}${query}`);
+      const page = await listNativeSessions(engine.id, query);
       if (mine !== epoch.current) return;
       setSessions((current) => (cursor ? [...current, ...page.sessions] : page.sessions));
       setNext(page.next_cursor);
@@ -97,7 +93,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     const mine = epoch.current;
     setBusy(session.session_id);
     try {
-      const done = await request<AcpNativeSessionImported>("POST", `${base(engine.id)}/import`, {
+      const done = await importNativeSession(engine.id, {
         project_id: project, session_id: session.session_id,
         ...(session.title ? { title: session.title } : {}), ...(session.updated_at ? { updated_at: session.updated_at } : {}),
       });
@@ -115,7 +111,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     const mine = epoch.current;
     setBusy(session.session_id);
     try {
-      await request("POST", `${base(engine.id)}/delete`, { project_id: project, session_id: session.session_id });
+      await deleteNativeSession(engine.id, { project_id: project, session_id: session.session_id });
       if (mine !== epoch.current) return;
       setSessions((current) => current.filter((row) => row.session_id !== session.session_id));
       toast("ACP session deleted");

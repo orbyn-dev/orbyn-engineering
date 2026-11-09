@@ -1,6 +1,6 @@
 import { AppWindow, ArrowLeft, ArrowRight, Clock, CloudOff, Crosshair, EyeOff, Hand, MoreHorizontal, Plus, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { request } from "../api";
+import { changePreviewView, clearPreview, closePreview, listPreviewTabs, navigatePreview, openPreview, popOutPreview, previewRecordingEndpoint, reloadPreview, resizePreview, setPreviewControl, stepPreviewHistory } from "../api";
 import type { PickedElement, PreviewTab } from "../../../api/types";
 import { useCommand } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -17,7 +17,7 @@ import { PreviewRecordings } from "./previewRecording";
 import { PageBridge } from "./PageBridge";
 import { useBrowserPanels } from "./browserPanels";
 import { inDesktopApp } from "../api";
-import { DEVICES, TAB_POLL_MS, VIEWPORT, addRecent, isLocalUrl, q, resolveAddress, stepZoom } from "./browserModel";
+import { DEVICES, TAB_POLL_MS, VIEWPORT, addRecent, isLocalUrl, resolveAddress, stepZoom } from "./browserModel";
 import { PageView } from "./PageView";
 import { StartPage } from "./StartPage";
 import { deviceChoice, pageSize, type PageSize } from "./viewportResize";
@@ -58,11 +58,10 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
   onMove?(tabId: string): void;
   detached?: boolean;
 }) {
-  const base = `/api/threads/${q(threadId)}/previews`;
   const pane = useRef<HTMLDivElement>(null);
   const ownsFocus = () => Boolean(pane.current?.contains(document.activeElement)) ||
     (document.activeElement === document.body && (!onlyTabId || detached));
-  const tabs = useAsync(`previews:${threadId}`, (signal) => request<PreviewTab[]>("GET", base, undefined, signal));
+  const tabs = useAsync(`previews:${threadId}`, (signal) => listPreviewTabs(threadId, signal));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draftTab, setDraftTab] = useState(false);
   const [address, setAddress] = useState("");
@@ -112,10 +111,10 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
     if (!(active?.private ?? isPrivate)) remember(url);
     void act(async () => {
       if (active) {
-        await request("POST", `${base}/${q(active.id)}/navigate`, { url });
+        await navigatePreview(threadId, active.id, url);
       } else {
         const how = { private: isPrivate, ...(profile ? { profile } : {}) };
-        const made = await request<PreviewTab>("POST", base, { url, ...VIEWPORT, ...how });
+        const made = await openPreview(threadId, { url, ...VIEWPORT, ...how });
         setDraftTab(false);
         setActiveId(made.id);
         setPrivate(false);
@@ -123,13 +122,13 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
     });
   };
   const view = (change: { zoom?: number; appearance?: string; mobile?: boolean }) => {
-    if (active) void act(() => request("POST", `${base}/${q(active.id)}/view`, change));
+    if (active) void act(() => changePreviewView(threadId, active.id, change));
   };
   const reloadPage = (hard: boolean) => {
-    if (active) void act(() => request("POST", `${base}/${q(active.id)}/reload`, { hard }));
+    if (active) void act(() => reloadPreview(threadId, active.id, hard));
   };
   const clear = (what: { cookies?: boolean; cache?: boolean }) => {
-    if (active) void act(() => request("POST", `${base}/${q(active.id)}/clear`, what));
+    if (active) void act(() => clearPreview(threadId, active.id, what));
   };
   const chosen = active ? (devices[active.id] ?? "fit") : "fit";
   const size = { width: active?.width ?? 0, height: active?.height ?? 0 };
@@ -143,7 +142,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
   /** One resize for a whole drag or run of key presses, then the tab list catches up. */
   const commitResize = (next: PageSize) => {
     if (!active) return;
-    request("POST", `${base}/${q(active.id)}/resize`, next).then(
+    resizePreview(threadId, active.id, next).then(
       () => void reload().then(() => setLive(null)),
       (failure: unknown) => {
         // The page keeps the size it had.
@@ -160,7 +159,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
       return;
     }
     setLive(null);
-    void act(() => request("POST", `${base}/${q(active.id)}/resize`, pageSize(active.height, active.width)));
+    void act(() => resizePreview(threadId, active.id, pageSize(active.height, active.width)));
   };
   const setDevice = (id: string, rotate = false) => {
     // Custom is what the select says about a size a handle already set.
@@ -173,8 +172,8 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
     }
     const next = rotate ? { width: active.height, height: active.width } : preset.size;
     void act(async () => {
-      await request("POST", `${base}/${q(active.id)}/resize`, next);
-      await request("POST", `${base}/${q(active.id)}/view`, { mobile: preset.phone });
+      await resizePreview(threadId, active.id, next);
+      await changePreviewView(threadId, active.id, { mobile: preset.phone });
     });
   };
   const openWaiting = useRef(go);
@@ -221,13 +220,13 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
     { label: toolbar ? "Hide device toolbar" : "Show device toolbar", separatorBefore: true, onSelect: () => setToolbar(!toolbar) },
     ...(!detached ? [{ label: "Float over chat", onSelect: () => useUi.getState().setPreviewFloat({ threadId, tabId: tab.id }) }] : []),
     ...(onMove ? [{ label: onlyTabId ? "Move to Browser panel" : "Move to another panel", onSelect: () => onMove(tab.id) }] : []),
-    { label: "Open in separate window", disabled: !inDesktopApp(), onSelect: () => void act(() => request("POST", `${base}/${q(tab.id)}/window`)) },
+    { label: "Open in separate window", disabled: !inDesktopApp(), onSelect: () => void act(() => popOutPreview(threadId, tab.id)) },
     { label: "Clear cookies", separatorBefore: true, destructive: true, onSelect: () => clear({ cookies: true }) },
     { label: "Clear cache", destructive: true, onSelect: () => clear({ cache: true }) },
   ];
   const step = (back: boolean) => {
     if (!active) return;
-    void act(() => request("POST", `${base}/${q(active.id)}/history`, { back }));
+    void act(() => stepPreviewHistory(threadId, active.id, back));
   };
   // A link clicked in the page moves the tab with nobody telling this side.
   const watching = active !== null || Boolean(onlyTabId);
@@ -285,7 +284,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
             </button>
             <IconButton
               label="Close tab"
-              onClick={() => void act(() => request("DELETE", `${base}/${q(tab.id)}`))}
+              onClick={() => void act(() => closePreview(threadId, tab.id))}
             >
               <X size={12} aria-hidden />
             </IconButton>
@@ -313,7 +312,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
           <span className="browser-popout">
             <IconButton
               label="Open in separate window"
-              onClick={() => void act(() => request("POST", `${base}/${q(active.id)}/window`))}
+              onClick={() => void act(() => popOutPreview(threadId, active.id))}
             >
               <AppWindow size={14} aria-hidden />
             </IconButton>
@@ -357,7 +356,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
             <IconButton
               label={human ? "Give control back" : "Take control"}
               pressed={human}
-              onClick={() => void act(() => request("POST", `${base}/${q(active.id)}/control`, { human: !human }))}
+              onClick={() => void act(() => setPreviewControl(threadId, active.id, !human))}
             >
               <Hand size={14} aria-hidden />
             </IconButton>
@@ -374,13 +373,13 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
         ) : null}
       </div>
       {active ? <BrowserRecording key={`${threadId}:${active.id}`} tab={active}
-        endpoint={`${base}/${q(active.id)}/recording`} actions={recordings} refresh={async () => {
+        endpoint={previewRecordingEndpoint(threadId, active.id)} actions={recordings} refresh={async () => {
           // Recording writes need a rejecting read; useAsync.reload intentionally
           // consumes read errors for the general panel polling flow.
-          const fresh = await request<PreviewTab[]>("GET", base);
+          const fresh = await listPreviewTabs(threadId);
           const target = fresh.find((tab) => tab.id === active.id);
           if (!target) throw new Error("The recorded tab closed before its status could be read.");
-          if (recordings.owns(`${base}/${q(active.id)}/recording`)) tabs.setData(fresh);
+          if (recordings.owns(previewRecordingEndpoint(threadId, active.id))) tabs.setData(fresh);
           return target;
         }} /> : null}
       <Presence>{menu && active ? <Menu x={menu.x} y={menu.y} label="Page actions" items={moreItems(active)} onClose={() => setMenu(null)} /> : null}</Presence>

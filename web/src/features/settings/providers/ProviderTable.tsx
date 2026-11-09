@@ -1,9 +1,8 @@
 import { Check, Plus, RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
-import { request } from "../api";
+import { queryPreferences, updatePreferences } from "../api";
 import type { EngineStatus } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
@@ -18,7 +17,7 @@ function useProvidersInUse() {
   const scope = useSettingsScope();
   const query = scope?.active ? scope.query : {};
   const list = useAsync(JSON.stringify(["in-use", query]), (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: query, keys: [KEY] }, signal), { keep: true });
+    queryPreferences({ scope: query, keys: [KEY] }, signal), { keep: true });
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
   const row = list.data?.rows.find((entry) => entry.key === KEY);
@@ -29,7 +28,7 @@ function useProvidersInUse() {
     pending.current = true;
     setError(null);
     try {
-      await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", { scope: query, membership_version: list.data.catalog.version,
+      await updatePreferences({ scope: query, membership_version: list.data.catalog.version,
         if_match: { [KEY]: row.revision }, edits: { [KEY]: edit } });
       useUi.getState().bumpPreferencesRevision();
       list.reload();
