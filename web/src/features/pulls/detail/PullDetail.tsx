@@ -1,21 +1,19 @@
-import { Check, CircleDashed, Ellipsis, EllipsisVertical, ExternalLink, GitMerge, Layers, MessageSquare, Pencil, Plus, X } from "lucide-react";
+import { Ellipsis, EllipsisVertical, ExternalLink, GitMerge, MessageSquare, Pencil, X } from "lucide-react";
 import "../pulls.css";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { tabKeys } from "../../../ui/tabKeys";
 import { usePageLabel } from "../../../state/pageLabel";
-import type { PullCheck, PullRequestDetail } from "../../../api/types";
-import { agoWords, relativeTime } from "../../../lib/format";
+import type { PullRequestDetail } from "../../../api/types";
+import { agoWords } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate } from "../../../state/route";
 import { useUi } from "../../../state/ui";
 import { useWorkspace } from "../../../state/workspace";
 import { Button, IconButton, Pill } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
-import { Menu, type MenuItem } from "../../../ui/Menu";
+import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { PageBar } from "../../../ui/PageBar";
-import { ErrorState, Loading } from "../../../ui/states";
-import { Markdown } from "../../content";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
@@ -27,249 +25,13 @@ import { useVisibleProjects } from "../../../state/workspace";
 import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
-import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullPageSkeleton, PullStateBanner, Row, SignedOutBlock, UnreachableBlock } from "./PullPage";
+import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullPage";
 import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
+import { Checks, Description, People } from "./PullSummaryCards";
+import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
+import { Stack } from "./PullStack";
+import { PAGE_LABELS, PullDetailError, PullDetailLoading, TAB_LABELS, TitleForm, pullMenuItems, type Tab } from "./PullDetailParts";
 
-type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
-
-const TAB_LABELS: Record<Tab, string> = { summary: "Summary", guide: "Guide", timeline: "Timeline", code: "Code", checks: "Checks" };
-const PAGE_LABELS: Record<Tab, string> = { summary: "Summary", guide: "Guide", timeline: "Conversation", code: "Files changed", checks: "Checks" };
-
-const checkIcon = (check: PullCheck) =>
-  check.state === "pass" ? (
-    <Check size={14} className="tone-success" role="img" aria-label="Passing" />
-  ) : check.state === "fail" ? (
-    <X size={14} className="tone-danger" role="img" aria-label="Failing" />
-  ) : (
-    <CircleDashed size={14} className="tone-warn" role="img" aria-label="Pending" />
-  );
-
-/** A fork's workflow waits for approval on a run named only by its link. */
-const waitingRun = (check: PullCheck): number | null => {
-  if (check.state !== "pending" || !/approv/i.test(check.description ?? "")) return null;
-  const run = /\/actions\/runs\/(\d+)/.exec(check.url ?? "");
-  return run ? Number(run[1]) : null;
-};
-
-function Checks({ projectId, number }: { projectId: string; number: number }) {
-  const checks = useAsync(`pull-checks:${projectId}:${number}`, (signal) => pullsApi.checks(projectId, number, signal), { keep: true });
-  const pushToast = useUi((state) => state.pushToast);
-  if (checks.status !== "ready" || checks.data.length === 0) return null;
-  const approve = (run: number) => {
-    pullsApi.approveWorkflow(projectId, run).then(
-      () => {
-        pushToast("Workflow approved");
-        checks.reload();
-      },
-      (failure: unknown) => pushToast(`Couldn't approve it. ${toFailure(failure).message}`),
-    );
-  };
-  return (
-    <section className="pull-section pull-card">
-      <h3>Checks</h3>
-      <ul className="pull-checks">
-        {checks.data.map((check) => {
-          const run = waitingRun(check);
-          return (
-            <li key={`${check.workflow ?? ""}:${check.name}`}>
-              {checkIcon(check)}
-              <span>{check.name}</span>
-              {check.description ? <small className="muted">{check.description}</small> : null}
-              {check.url ? (
-                <a href={check.url} target="_blank" rel="noreferrer" aria-label={`Open ${check.name}`}>
-                  <ExternalLink size={12} aria-hidden />
-                </a>
-              ) : null}
-              {run !== null ? (
-                <Button small onClick={() => approve(run)}>
-                  Approve workflow
-                </Button>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-/** Reviewers or labels: what's set, and a search over what the forge offers. */
-function People({
-  title,
-  chosen,
-  load,
-  save,
-}: {
-  title: string;
-  chosen: string[];
-  load(signal: AbortSignal): Promise<{ name: string }[]>;
-  save(add: string[], remove: string[]): Promise<void>;
-}) {
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const candidates = useAsync(`pull-${title}`, load);
-  const pushToast = useUi((state) => state.pushToast);
-  const change = (add: string[], remove: string[]) => {
-    save(add, remove).catch((failure: unknown) => pushToast(`Couldn't change that. ${toFailure(failure).message}`));
-  };
-  const items: MenuItem[] = (candidates.data ?? []).map((candidate) => {
-    const on = chosen.includes(candidate.name);
-    return {
-      label: candidate.name,
-      selected: on,
-      onSelect: () => (on ? change([], [candidate.name]) : change([candidate.name], [])),
-    };
-  });
-  return (
-    <div className="pull-people pull-card">
-      <span className="pull-card-title">{title}</span>
-      {chosen.map((name) => (
-        <Pill key={name}>{name}</Pill>
-      ))}
-      <IconButton
-        label={`Change ${title.toLowerCase()}`}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setMenu({ x: rect.left, y: rect.bottom + 4 });
-        }}
-      >
-        <Plus size={14} aria-hidden />
-      </IconButton>
-      <Presence>{menu ? <Menu x={menu.x} y={menu.y} label={title} items={items} onClose={() => setMenu(null)} /> : null}</Presence>
-    </div>
-  );
-}
-
-function Description({
-  detail,
-  projectId,
-  onSave,
-}: {
-  detail: PullRequestDetail;
-  projectId: string;
-  onSave(body: string): Promise<void>;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  if (draft !== null) {
-    return (
-      <div className="pull-section">
-        <textarea aria-label="Description" rows={6} value={draft} onChange={(event) => setDraft(event.target.value)} />
-        <div className="pull-form-actions">
-          <Button small onClick={() => setDraft(null)}>
-            Cancel
-          </Button>
-          <Button small tone="primary" onClick={() => void onSave(draft).then(() => setDraft(null))}>
-            Save description
-          </Button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <>
-      {detail.body ? <Markdown text={detail.body} projectId={projectId} /> : <p className="muted">No description provided.</p>}
-      <IconButton label="Edit description" onClick={() => setDraft(detail.body)}>
-        <Pencil size={14} aria-hidden />
-      </IconButton>
-    </>
-  );
-}
-
-/**
- * The pull request's activity: comments, reviews, commits and the rest. It is paginated on the forge, so it is read
- * only when something shows it (the Conversation tab); until then the tab's count is the comments' count.
- */
-function useTimelineEvents(projectId: string, number: number, enabled: boolean) {
-  return useAsync(
-    `pull-timeline:${projectId}:${number}:${enabled}`,
-    (signal) => (enabled ? pullsApi.timeline(projectId, number, signal) : Promise.resolve(null)),
-    { keep: true },
-  );
-}
-type TimelineRead = ReturnType<typeof useAsync<import("../../../api/types").PullTimelineEvent[]>>;
-
-function Timeline({ projectId, number }: { projectId: string; number: number }) {
-  return <TimelineList events={useTimelineEvents(projectId, number, true) as TimelineRead} />;
-}
-
-function TimelineList({ events }: { events: TimelineRead }) {
-  const [kind, setKind] = useState("all");
-  const kinds = useMemo(() => [...new Set((events.data ?? []).map((event) => event.kind))].sort(), [events.data]);
-  if (events.status === "loading" || (events.status === "ready" && !events.data)) return <Loading label="Loading timeline" rows={4} />;
-  if (events.status === "error") {
-    return <ErrorState compact title="Couldn't load the timeline" failure={events.error} onRetry={events.reload} />;
-  }
-  if (!events.data || events.data.length === 0) return <p className="muted">No activity yet.</p>;
-  return (
-    <>
-      <select aria-label="Filter activity" value={kind} onChange={(event) => setKind(event.target.value)}>
-        <option value="all">All activity</option>
-        {kinds.map((entry) => (
-          <option key={entry} value={entry}>
-            {entry}
-          </option>
-        ))}
-      </select>
-      <ol className="pull-timeline">
-        {events.data
-          .filter((event) => kind === "all" || event.kind === kind)
-          .map((event, at) => (
-            <li key={event.id || `${event.kind}:${at}`}>
-              <span className="pull-actor">{event.actor ?? "Someone"}</span> {event.text ?? event.kind}
-              {event.created_at ? <time>{relativeTime(event.created_at)}</time> : null}
-            </li>
-          ))}
-      </ol>
-    </>
-  );
-}
-
-/** Where this pull request sits among the ones stacked on each other. */
-function Stack({ projectId, number, onOpen }: { projectId: string; number: number; onOpen?(number: number): void }) {
-  const stack = useAsync(`pull-stack:${projectId}:${number}`, (signal) => pullsApi.stack(projectId, number, signal));
-  const [method, setMethod] = useState("squash");
-  const pushToast = useUi((state) => state.pushToast);
-  if (!stack.data || stack.data.layers.length < 2) return null;
-  const { layers, position } = stack.data;
-  const act = (action: string) => {
-    pullsApi.stackAction(projectId, number, action, action === "merge" ? method : undefined).then(
-      (results) => {
-        const failed = results.find((result) => !result.ok);
-        pushToast(failed ? `Stopped at #${failed.number}. ${failed.message ?? ""}` : "Stack updated");
-        stack.reload();
-      },
-      (failure: unknown) => pushToast(`Couldn't do that. ${toFailure(failure).message}`),
-    );
-  };
-  return (
-    <nav className="pull-stack" aria-label="Stack">
-      <Layers size={14} aria-hidden />
-      <span>
-        {position + 1} of {layers.length}
-      </span>
-      {layers.map((layer) => (
-        <button
-          type="button"
-          key={layer.number}
-          aria-current={layer.number === number ? "true" : undefined}
-          onClick={() => onOpen?.(layer.number)}
-        >
-          #{layer.number}
-        </button>
-      ))}
-      <select aria-label="Stack merge method" value={method} onChange={(event) => setMethod(event.target.value)}>
-        <option value="squash">Squash</option>
-        <option value="merge">Merge</option>
-        <option value="rebase">Rebase</option>
-      </select>
-      <Button small onClick={() => act("merge")}>
-        Merge stack
-      </Button>
-      <Button small onClick={() => act("rebase")}>
-        Rebase stack
-      </Button>
-    </nav>
-  );
-}
 
 /** One pull request: Summary, Guide, Timeline and Code, with merge and review. */
 export function PullDetail({
@@ -356,46 +118,8 @@ export function PullDetail({
       </span>
     </PageBar>
   );
-  if (detail.status === "loading") {
-    if (page)
-      return (
-        <article className="pull-page" aria-label={`Pull request #${number}`}>
-          {pageHead(<i className="pull-title-skel" aria-hidden />)}
-          <div className="pull-page-tabs" aria-hidden>
-            {(["summary", "guide", "timeline", "code", "checks"] as const).map((entry) => (
-              <button key={entry} type="button" tabIndex={-1} disabled>
-                {PAGE_LABELS[entry]}
-              </button>
-            ))}
-          </div>
-          <PullPageSkeleton />
-        </article>
-      );
-    return (
-      <Loading label="Loading pull request" rows={5} />
-    );
-  }
-  if (detail.status === "error" && !detail.data) {
-    if (page) {
-      return (
-        <article className="pull-page" aria-label={`Pull request #${number}`}>
-          {pageHead(
-            <h1 tabIndex={-1} data-page-title>
-              Pull request #{number}
-            </h1>,
-          )}
-          {signedOut ? (
-            <SignedOutBlock forge={forgeLabel} number={number} onSignIn={() => navigate({ name: "settings", section: "source-control" })} onLater={() => (window.history.length > 1 ? window.history.back() : navigate({ name: "pulls" }))} />
-          ) : (
-            <UnreachableBlock onRetry={detail.reload} />
-          )}
-        </article>
-      );
-    }
-    return (
-      <ErrorState title="Couldn't load this pull request" failure={detail.error} onRetry={detail.reload} />
-    );
-  }
+  if (detail.status === "loading") return <PullDetailLoading page={page} number={number} pageHead={pageHead} />;
+  if (detail.status === "error" && !detail.data) return <PullDetailError page={page} number={number} pageHead={pageHead} signedOut={signedOut} forgeLabel={forgeLabel} failure={detail.error} onRetry={detail.reload} />;
   const current = detail.data as PullRequestDetail;
   const { pull, mergeable, additions, deletions, changed_files: files } = current;
   const open = pull.state === "open";
@@ -439,60 +163,9 @@ export function PullDetail({
       pushToast(`Couldn't check it out. ${toFailure(failure).message}`);
     }
   };
-  const items: MenuItem[] = [
-    ...(page
-      ? [
-          { label: "Edit title", onSelect: () => setEditing(pull.title) },
-          { label: "Work on this", onSelect: () => void work() },
-          { label: `Open on ${forge === "The host" ? "the forge" : forge}`, disabled: connection === "offline", onSelect: () => void window.open(pull.url, "_blank", "noreferrer") },
-          ...(open ? [{ label: "Close pull request", destructive: true, onSelect: () => setConfirm("close") }] : []),
-        ]
-      : []),
-    ...(open
-      ? [
-          pull.draft
-            ? { label: "Ready for review", onSelect: () => void update({ draft: false }, "Ready for review") }
-            : { label: "Convert to draft", onSelect: () => void update({ draft: true }, "Converted to draft") },
-          ...(baseChangeAllowed(current) ? [{ label: "Change base branch", onSelect: () => setChangingBase(true) }] : []),
-          { label: "Update branch", onSelect: () => void act("update_branch", "Branch updated") },
-          { label: "Update with rebase", onSelect: () => void act("rebase", "Branch rebased") },
-          {
-            label: current.maintainer_can_modify ? "Stop maintainer edits" : "Allow maintainer edits",
-            onSelect: () =>
-              void update({ maintainer_can_modify: !current.maintainer_can_modify }, "Maintainer edits changed"),
-          },
-        ]
-      : []),
-    { label: "Check out here", separatorBefore: true, onSelect: () => void checkout(false) },
-    { label: "Check out in a worktree", onSelect: () => void checkout(true) },
-    ...(pull.state === "merged"
-      ? [{ label: "Revert changes", onSelect: () => void act("revert", "Revert opened") }]
-      : []),
-    {
-      label: "Delete branch",
-      destructive: true,
-      separatorBefore: true,
-      onSelect: () => setConfirm("delete_branch"),
-    },
-  ];
+  const items = pullMenuItems({ page, pull, current, open, forge, connection, setEditing, setConfirm, setChangingBase, work, update, act, checkout });
 
-  const titleForm = (
-    <form
-      className="pull-title-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void update({ title: editing ?? "" }, "Title saved").then(() => setEditing(null));
-      }}
-    >
-      <input aria-label="Title" value={editing ?? ""} autoFocus onChange={(event) => setEditing(event.target.value)} />
-      <Button small tone="primary" type="submit" disabled={!(editing ?? "").trim()}>
-        Save
-      </Button>
-      <Button small onClick={() => setEditing(null)}>
-        Cancel
-      </Button>
-    </form>
-  );
+  const titleForm = <TitleForm editing={editing} setEditing={setEditing} update={update} />;
   // Plain text, as the frames draw it (pull-detail, pr-detail-cards). The field appears only after Change base branch,
   // which is offered only when the service says the base can be changed; it reports no such permission yet.
   const baseBranch =
