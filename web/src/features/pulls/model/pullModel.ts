@@ -1,4 +1,7 @@
 import type { PullDetailsResponse, PullListEntry, PullRequest } from "../../../api/types";
+import { checksOf } from "../../../product/pulls/labels";
+
+export { checksOf };
 
 /** What the details request returns for one pull request. */
 export type PullDetails = PullDetailsResponse["details"][number];
@@ -59,10 +62,6 @@ export const withoutDetailFilters = (filters: PullFilters): PullFilters => ({
 });
 
 export const defaultSort: PullSort = { by: "updated", dir: "newest" };
-
-/** The service says `pass` and `fail`; older stand-ins say `passing` and `failing`. */
-export const checksOf = (state: string | null): "pass" | "fail" | "pending" | "none" =>
-  state === "pass" || state === "passing" ? "pass" : state === "fail" || state === "failing" ? "fail" : state === "pending" ? "pending" : "none";
 
 export const noFilters: PullFilters = {
   states: ["open"],

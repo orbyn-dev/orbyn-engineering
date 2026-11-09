@@ -15,9 +15,10 @@ import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { DRow } from "../../product/ui/DetailRows";
 import { captureFocusReturn } from "../../ui/focusReturn";
-import { ToolbarPopover } from "../pulls";
-import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "../panels";
-import { checksSummary, chipDot, chipLabel, entryOf, forgeName, numberLabel, readyToMerge, stateWord, useThreadPulls, WATCH_TIP } from "../pulls";
+import { ToolbarPopover, useThreadPullEntry, useThreadPulls } from "../pulls";
+import { GitActionDialog, useGitAvailable } from "../panels";
+import { createPullRequestPlan } from "../../product/git/plans";
+import { checksSummary, chipDot, chipLabel, forgeName, numberLabel, readyToMerge, stateWord, WATCH_TIP } from "../../product/pulls/labels";
 import "../pulls/pullsToolbar.css";
 import "./pullChip.css";
 import { agoWords } from "../../lib/format";
@@ -32,7 +33,7 @@ function useLinked(thread: Thread) {
   useEffect(() => {
     void load({ id, project_id: projectId });
   }, [load, id, projectId]);
-  return useThreadPulls((state) => entryOf(state, thread.id));
+  return useThreadPullEntry(thread.id);
 }
 
 function Skeleton() {
@@ -111,7 +112,7 @@ export function LinkForm({ thread, host = "The host", onDone, onCancel }: { thre
 }
 
 function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOpen(): void }) {
-  const entry = useThreadPulls((state) => entryOf(state, thread.id));
+  const entry = useThreadPullEntry(thread.id);
   const setWatch = useThreadPulls((state) => state.setWatch);
   const pushToast = useUi((state) => state.pushToast);
   const offline = useConnectionKind() === "offline";
@@ -200,7 +201,7 @@ function Row({ thread, pull, onOpen }: { thread: Thread; pull: PullRequest; onOp
  * show this, so a change in one is a change in the other.
  */
 export function PullList({ thread, onOpen, focusFirst, sheet = false }: { thread: Thread; onOpen(): void; focusFirst?: boolean; sheet?: boolean }) {
-  const entry = useThreadPulls((state) => entryOf(state, thread.id));
+  const entry = useThreadPullEntry(thread.id);
   const refresh = useThreadPulls((state) => state.refresh);
   const load = useThreadPulls((state) => state.load);
   const offline = useConnectionKind() === "offline";

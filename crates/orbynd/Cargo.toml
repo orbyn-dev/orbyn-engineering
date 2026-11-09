@@ -19,7 +19,7 @@ path = "src/bin/orbyn.rs"
 # engine's wire format over real pipes and is never selected by default.
 [[bin]]
 name = "orbyn-fake-engine"
-path = "src/bin/orbyn_fake_engine.rs"
+path = "src/bin/orbyn_fake_engine/main.rs"
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }

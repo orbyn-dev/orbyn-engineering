@@ -4,7 +4,7 @@ import { api, queryPreferences, updatePreferences } from "./api";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import type { EngineStatus, PermissionMode, Project } from "../../api/types";
 import { AddProjectPalette } from "../workspace";
-import { ACCESS, offeredModes, shownAccess } from "../thread";
+import { ACCESS, offeredModes, shownAccess } from "../../product/composer/access";
 import { navigate, routeHref } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";

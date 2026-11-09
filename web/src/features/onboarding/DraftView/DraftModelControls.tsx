@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { EngineStatus, PermissionMode } from "../../../api/types";
 import { resolveModel, useEngineModels } from "../../../product/state/modelStore";
-import { EffortTrigger, offeredModes, useTraitsMenu } from "../../thread";
+import { EffortTrigger, useTraitsMenu } from "../../thread";
+import { offeredModes } from "../../../product/composer/access";
 import { ModelPickerTrigger } from "../../thread";
 import type { ModelChoice } from "./draftHelpers";
 

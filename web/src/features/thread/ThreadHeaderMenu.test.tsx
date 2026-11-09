@@ -5,6 +5,7 @@ import { ApiFailure, api } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
 import * as actions from "../workspace/sidebar/threadActions";
+import * as clipboard from "../../product/ui/copyText";
 import { ArchivedBanner } from "./ThreadStates";
 import { emptyLog } from "../../product/timeline/projection";
 import { familyOf, ThreadHeaderMenu } from "./ThreadHeaderMenu";
@@ -14,13 +15,14 @@ vi.mock("../workspace/sidebar/threadActions", async (original) => ({
   ...(await original<typeof import("../workspace/sidebar/threadActions")>()),
   archiveThreads: vi.fn(),
   unarchiveThread: vi.fn(),
-  copyText: vi.fn(),
   deleteThreadNow: vi.fn(),
   settleThreads: vi.fn(),
   unsettleThreads: vi.fn(),
   snoozeThreads: vi.fn(),
   wakeThreads: vi.fn(),
 }));
+
+vi.mock("../../product/ui/copyText", () => ({ copyText: vi.fn() }));
 
 const base: Thread = { id: "t", project_id: "p", title: "Fix login", engine: "codex", model: null,
   cwd: "/work/app", worktree: null, skill_profile: null, scratch: false, active_run: null, last_run_state: "completed", created_at: "", updated_at: "",
@@ -41,7 +43,7 @@ const open = async (thread: Thread) => {
 beforeEach(() => {
   vi.mocked(actions.archiveThreads).mockClear();
   vi.mocked(actions.unarchiveThread).mockClear();
-  vi.mocked(actions.copyText).mockClear();
+  vi.mocked(clipboard.copyText).mockClear();
   vi.mocked(actions.deleteThreadNow).mockReset();
   useWorkspace.setState({ threads: { t: base } });
 });
@@ -106,7 +108,7 @@ describe("the thread header menu", () => {
   it("copies the folder path", async () => {
     const { user, menu } = await open(base);
     await user.click(within(menu).getByRole("menuitem", { name: "Copy folder path" }));
-    expect(actions.copyText).toHaveBeenCalledWith("/work/app", "Folder path copied");
+    expect(clipboard.copyText).toHaveBeenCalledWith("/work/app", "Folder path copied");
   });
 
   it("archives a live thread", async () => {

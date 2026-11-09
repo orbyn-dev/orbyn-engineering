@@ -1,2 +1,1 @@
-// Front door: the only module other features import from onboarding.
-export { chooseDraftEngine } from "./draftEngine";
+// Front door: onboarding has no cross-feature API yet.

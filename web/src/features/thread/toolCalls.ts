@@ -1,5 +1,5 @@
 import { prettyJson } from "../../lib/format";
-import { outputSpans } from "../content";
+import { outputSpans } from "../../lib/ansi";
 import type { ReasoningItem, ToolItem } from "../../product/timeline/types";
 import { baseName, parsed, paths, toolFailed, traceTool } from "../../product/timeline/toolTrace";
 

@@ -2,7 +2,7 @@ import { WrapText, ChevronDown } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ToolItem } from "../../../../product/timeline/types";
 import { useOpenState } from "../../../../ui/openState";
-import { outputSpans } from "../../../content";
+import { outputSpans } from "../../../../lib/ansi";
 import { LINES_SHOWN, lineCount } from "../../toolCalls";
 import { MoreBar } from "./BlockParts";
 

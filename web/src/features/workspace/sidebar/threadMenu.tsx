@@ -29,10 +29,10 @@ import { useDraftStore, worktreePurpose } from "../../../product/state/draftStor
 import { Button, Field } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 import type { MenuItem } from "../../../ui/Menu";
+import { copyText } from "../../../product/ui/copyText";
 import {
   archiveThreads,
   copyReference,
-  copyText,
   pinThreads,
   regenerateTitles,
   setAutoSettle,

@@ -1,4 +1,4 @@
-import { markdownText } from "../content";
+import { markdownText } from "../../lib/markdown";
 import type { ThreadItem } from "../../product/timeline/types";
 import { callFindText } from "./toolCalls";
 import type { TimelineEntry } from "../../product/timeline/timeline";
