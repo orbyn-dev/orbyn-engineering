@@ -2,6 +2,7 @@ use crate::app::Core;
 use orbyn_contracts::{ForgeStatus, PullRequest};
 use std::time::{Duration, Instant};
 
+use super::watch::{WatchState, watch_news};
 use super::*;
 
 fn pull(number: u64, head: &str, base: &str) -> PullRequest {
