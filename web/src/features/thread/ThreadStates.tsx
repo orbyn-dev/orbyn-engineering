@@ -10,8 +10,8 @@ import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { unarchiveThread } from "../workspace/threadActions";
 import { usageShare } from "./ComposerExtras";
-import { formatWait } from "./ThreadBanners";
 import { useThreadLogs } from "./threadLogs";
+import { waitLeft } from "../../lib/format";
 
 /** A run whose prompt is the compact command, while it runs: the thread is being compacted. */
 export function useCompacting(thread: Thread): boolean {
@@ -103,7 +103,7 @@ export function useThreadChip(thread: Thread): ReactNode {
     );
   }
   if (limit && !thread.active_run && resetsAt > now) {
-    return <span className="page-sub-item limit-label">Waiting · {formatWait(resetsAt - now)}</span>;
+    return <span className="page-sub-item limit-label">Waiting · {waitLeft(resetsAt - now)}</span>;
   }
   return null;
 }

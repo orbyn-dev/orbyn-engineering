@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compactAge, elapsed, relativeTime } from "./format";
-import { callDuration } from "../features/thread/toolCalls";
-import { formatWait } from "../features/thread/ThreadBanners";
-import { agoWords } from "../features/thread/pullStore";
-import { formatTokens } from "../features/usage/usageModel";
-import { formatBytes } from "../features/panels/zipArchive";
-import { workDuration } from "../features/thread/toolTrace";
+import { agoWords, callDuration, compactAge, elapsed, formatBytes, formatTokens, mebibytes, relativeTime, uptime, waitLeft, workDuration } from "./format";
 
 // These tables pin what every duration, age and size formatter writes today. The
 // formatters differ on purpose (rounding, padding, units), so each keeps its own table.
@@ -34,9 +28,9 @@ describe("duration formatters", () => {
     table(workDuration, ["0s", "0s", "1s", "1s", "4s", "10s", "10s", "41s", "59s", "1m", "1m", "1m 2s", "59m 59s", "1h", "1h 1m", "1h 2m", "2h", "25h 1m"]);
   });
 
-  it("formatWait: rounds up, and the minutes after an hour are not padded", () => {
-    table(formatWait, ["0s", "1s", "1s", "1s", "5s", "10s", "10s", "41s", "1m 00s", "1m 00s", "1m 00s", "1m 02s", "59m 59s", "1h 0m", "1h 1m", "1h 2m", "2h 0m", "25h 1m"]);
-    expect(formatWait(-5000)).toBe("0s");
+  it("waitLeft: rounds up, and the minutes after an hour are not padded", () => {
+    table(waitLeft, ["0s", "1s", "1s", "1s", "5s", "10s", "10s", "41s", "1m 00s", "1m 00s", "1m 00s", "1m 02s", "59m 59s", "1h 0m", "1h 1m", "1h 2m", "2h 0m", "25h 1m"]);
+    expect(waitLeft(-5000)).toBe("0s");
   });
 });
 
@@ -73,6 +67,11 @@ describe("size and count formatters", () => {
     expect([0, 1, 1023, 1024, 1536, 1048576, 12582912, 2000000, 1e9, 1e12, 1e15, -1, Number.NaN].map(formatBytes)).toEqual([
       "0 B", "1 B", "1023 B", "1 KB", "1.5 KB", "1 MB", "12 MB", "1.9 MB", "953.7 MB", "931.3 GB", "909.5 TB", "0 B", "0 B",
     ]);
+  });
+
+  it("uptime and mebibytes: whole units, and one decimal of MiB", () => {
+    expect([0, 59, 60, 3599, 3600, 7300].map(uptime)).toEqual(["0s", "59s", "1m", "59m", "1h", "2h"]);
+    expect([0, 1_048_576, 1_572_864, 1_073_741_824].map(mebibytes)).toEqual(["0.0 MiB", "1.0 MiB", "1.5 MiB", "1024.0 MiB"]);
   });
 
   it("formatTokens: three significant figures with a K, M, B or T suffix", () => {

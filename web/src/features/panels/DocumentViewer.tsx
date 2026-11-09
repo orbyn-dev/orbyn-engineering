@@ -3,7 +3,7 @@ import { ApiFailure } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { ErrorState, Loading } from "../../ui/states";
 import { BytesFallback, rawUrl } from "./FileMedia";
-import { MAX_ARCHIVE_BYTES, formatBytes } from "./zipArchive";
+import { MAX_ARCHIVE_BYTES } from "./zipArchive";
 import {
   MAX_COLUMNS_PER_SHEET,
   MAX_ROWS_PER_SHEET,
@@ -15,6 +15,7 @@ import {
   type OfficeSheet,
   type XlsxDocument,
 } from "./office";
+import { formatBytes } from "../../lib/format";
 
 /**
  * The Word and spreadsheet formats this viewer opens, by name. `.docm` and

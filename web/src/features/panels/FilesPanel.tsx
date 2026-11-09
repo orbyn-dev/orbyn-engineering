@@ -15,12 +15,12 @@ import { DocumentViewer, officeKind } from "./DocumentViewer";
 import { FileBytes, FileMedia, mediaKind, rawUrl } from "./FileMedia";
 import { FilePreview, previewKind } from "./FilePreview";
 import { ZipViewer, isZipPath } from "./ZipViewer";
-import { formatBytes } from "./zipArchive";
 import { useResolvedThreadPath } from "../thread/useResolvedThreadPath";
 import { primaryEditor } from "../thread/editorPreferences";
 import { useWorkspace } from "../../state/workspace";
 import { FileComments } from "./FileComments";
 import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
+import { formatBytes } from "../../lib/format";
 
 const q = encodeURIComponent;
 

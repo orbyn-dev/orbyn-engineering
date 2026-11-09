@@ -57,16 +57,6 @@ export function callKind(item: Pick<ToolItem, "name" | "args">): CallKind {
 const GROUPED: readonly CallKind[] = ["command", "read", "edit", "search", "mcp", "fetch"];
 export const groupsKind = (kind: CallKind) => GROUPED.includes(kind);
 
-/** Seconds as the rows show them: 0.1s, 4.2s, 41s, 1m 02s. */
-export function callDuration(ms: number): string {
-  const tenths = Math.max(0, Math.round(ms / 100));
-  if (tenths < 100) return `${Math.floor(tenths / 10)}.${tenths % 10}s`;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-}
-
 const stamp = (iso: string) => new Date(iso).getTime();
 
 /** How long a call took, or how long it has run so far; null when no time is known. */

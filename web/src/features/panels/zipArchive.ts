@@ -9,6 +9,8 @@
  * display and then only used as text.
  */
 
+import { formatBytes } from "../../lib/format";
+
 /** The largest archive the viewer opens. */
 export const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 /** The most entries the viewer lists. */
@@ -67,21 +69,6 @@ export class ZipError extends Error {
     this.name = "ZipError";
     this.code = code;
   }
-}
-
-/** Byte sizes a person reads: 512 B, 1.5 KB, 12 MB. */
-export function formatBytes(size: number): string {
-  if (!Number.isFinite(size) || size < 0) return "0 B";
-  if (size < 1024) return `${size} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = size / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  // One decimal only when the size has one: "12 MB", not "12.0 MB".
-  return `${Number.isInteger(value) ? String(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
 const viewOf = (bytes: Uint8Array<ArrayBuffer>) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

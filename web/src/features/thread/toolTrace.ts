@@ -158,12 +158,3 @@ export function summarizeWork(items: readonly (ToolItem | ReasoningItem)[]): Wor
     failed: failed > 0,
   };
 }
-
-/** Whole minutes and seconds, the way a finished turn reports its time. */
-export function workDuration(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
-  return minutes % 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 60)}h`;
-}
