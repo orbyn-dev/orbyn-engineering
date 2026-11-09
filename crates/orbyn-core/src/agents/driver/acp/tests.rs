@@ -1,4 +1,5 @@
 use super::events::UpdateMapper;
+use super::models::{parse_models, parse_session_options, require_offered};
 use super::permissions::{classify, permission_outcome};
 use super::*;
 use crate::governance::approvals::Verdict;
