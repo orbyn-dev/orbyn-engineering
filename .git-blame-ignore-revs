@@ -8,3 +8,4 @@ ded9bd5371558390f5a2ce07c0b0249df843f7ab # refactor(web): move markdown and code
 5f0449347773efab37c4acdd7e19ba70a85853be # refactor(web): move shared thread logic down to state, lib and ui
 1d1268bfd3b27736c39806303b417ceefe61d335 # refactor(web): move composer and tool trail files into folders
 8678212e2ca296ee089964e96848e26372567217 # refactor(web): move workspace files into sidebar, palette and app-chrome folders
+6f4e756ad452cf8492291a11c36a93363261c5b2 # refactor(web): move panel files into strip, browser, diff, files, terminal, activity and preview folders
