@@ -1,9 +1,25 @@
 import { useCompacting } from "../ThreadStates";
 import { composerMarkup } from "./composerMarkup";
+import { MentionMenu, type Suggestion } from "./MentionMenu";
+import { AttachmentStrip, type ShownAttachment } from "./AttachmentStrip";
+import { CodeBar } from "./CodeBar";
+import { ComposerContext } from "./ComposerContext";
+import { controlsMenuItems } from "./controlsMenu";
+import {
+  effortButton,
+  MAX_HEIGHT_RATIO,
+  MENU_LIFT,
+  MENU_ROWS,
+  NARROW_BAR,
+  NO_CHIPS,
+  NO_STASHES,
+  STYLED_CHARS,
+  WIDE,
+} from "./composerConstants";
+import { loadSuggestions } from "./suggestions";
+import { useOwnCommand } from "./useOwnCommand";
 import { recordUserPrompt } from "../../workspace";
-import { ArrowUp, Archive, Folder, GitBranch, ListChecks, Paperclip, ShieldOff, SlidersHorizontal, Square, X,
-  RotateCcw,
-} from "lucide-react";
+import { ArrowUp, Archive, ListChecks, Paperclip, SlidersHorizontal, Square } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -15,7 +31,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { api, request } from "../../../api/client";
-import { useCommand as useSharedCommand } from "../../../app/shortcuts";
 import type { EngineStatus, PermissionMode, Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -23,10 +38,10 @@ import { useConnectionKind } from "../../../state/connection";
 import { useDraftStore } from "../../../state/draftStore";
 import { navigate } from "../../../state/route";
 import { useThreadLogs } from "../../../state/threadLogs";
-import { useUi, type StashedPrompt } from "../../../state/ui";
+import { useUi } from "../../../state/ui";
 import { IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
-import { closingProps, Presence } from "../../../ui/Presence";
+import { Presence } from "../../../ui/Presence";
 import { useWorkspace } from "../../../state/workspace";
 import { CompactOffer, ComposerBanners, ContextMeter, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import {
@@ -45,10 +60,9 @@ import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../state/modelStore";
 import { QueuedMessages } from "../QueuedMessages";
 import { openSideChat } from "../sideChat";
-import { pullsApi } from "../../../api/pulls";
-import { FILE_MENTION_TYPE, insertToken, pullToken, threadToken, triggerAt } from "../../../lib/skillMention";
+import { FILE_MENTION_TYPE, insertToken, triggerAt } from "../../../lib/skillMention";
 import { useComposerChips } from "../../../state/composerChipStore";
-import { CODE_LANGUAGES, exitCodeBlock, indentCodeLines, openFenceAt, setFenceLanguage } from "./composerCodeBlock";
+import { exitCodeBlock, indentCodeLines, openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
 import {
   CHIP_MIME,
@@ -59,82 +73,7 @@ import {
   languageForPath,
   promptWithChips,
   refillExcerpts,
-  type ComposerChip,
 } from "../../../lib/composerContext";
-
-interface Suggestion {
-  value: string;
-  detail: string | null;
-  /** What goes in the prompt, when it isn't the trigger and the value. */
-  insert?: string;
-}
-
-/** A file on its way to the service: `id` once kept, `failure` if it was refused. */
-interface ShownAttachment {
-  key: string;
-  file: File;
-  name: string;
-  /** An object URL for images added here, so the shelf can show them. */
-  preview: string | null;
-  id: string | null;
-  failure: string | null;
-}
-
-/** Past this a keystroke would lag behind the styling, so the text stays plain. */
-const STYLED_CHARS = 20_000;
-
-/** Commands go to the thread's own composer; a side chat's stays out of their way. */
-const useOwnCommand = (side: boolean, command: string, handler: () => boolean | void) =>
-  useSharedCommand(command, () => (side ? false : handler()));
-
-const NO_STASHES: StashedPrompt[] = [];
-const NO_CHIPS: ComposerChip[] = [];
-const effortButton = () => document.querySelector<HTMLElement>("[data-effort-trigger]");
-const LOCAL_COMMANDS: Suggestion[] = [
-  { value: "plan", detail: "Switch to Plan" },
-  { value: "default", detail: "Switch back to Build" },
-  { value: "usage-limits", detail: "Show usage limits" },
-  { value: "side", detail: "Ask in a side chat" },
-  { value: "btw", detail: "Ask in a side chat" },
-];
-const PLAN_COMMANDS = new Set(["plan", "default"]);
-/** Below this the footer's controls fold into one menu. */
-const NARROW_BAR = 440;
-const WIDE = 1000;
-const MENU_LIFT = 150;
-const MAX_HEIGHT_RATIO = 0.4;
-const MENU_ROWS = 6;
-
-/** The @ and # suggestions above the composer. Leaves by fading, so it takes its rows as a snapshot. */
-function MentionMenu({
-  matches,
-  active,
-  marker,
-  closing,
-  onPick,
-}: {
-  matches: Suggestion[];
-  active: number;
-  marker: string;
-  closing?: boolean;
-  onPick(suggestion: Suggestion): void;
-}) {
-  return (
-    <ul className="mention-menu" role="listbox" aria-label="Suggestions" {...closingProps(closing)}>
-      {matches.map((suggestion, at) => (
-        <li key={suggestion.value} role="option" aria-selected={at === active}>
-          <button type="button" tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={() => onPick(suggestion)}>
-            <span className="mention-name">
-              {marker}
-              {suggestion.value}
-            </span>
-            {suggestion.detail ? <span className="mention-detail">{suggestion.detail}</span> : null}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 export function Composer({
   thread,
@@ -238,44 +177,9 @@ export function Composer({
 
   const trigger = menuDismissed ? null : triggerAt(draft, caret);
   const lookupKey = trigger ? `${thread.id}:${trigger.char}:${trigger.query}` : `${thread.id}:idle`;
-  const lookup = useAsync<Suggestion[]>(lookupKey, async (signal) => {
-    if (!trigger) return [];
-    if (trigger.char === "/") {
-      const commands = await api.commands(thread.id, signal);
-      const needle = trigger.query.toLowerCase();
-      const local = LOCAL_COMMANDS.filter(
-        (command) => command.value.includes(needle) && (planControls || !PLAN_COMMANDS.has(command.value)),
-      );
-      const skills = skillsInSlash ? (await api.mentions(thread.id, trigger.query, signal)).skills : [];
-      return [
-        ...local,
-        ...commands
-          .filter((command) => command.name.toLowerCase().includes(needle))
-          .map((command) => ({ value: command.name, detail: command.description })),
-        ...skills.map((value) => ({ value, detail: "Skill" })),
-      ];
-    }
-    if (trigger.char === "#") {
-      const digits = /^\d+$/.test(trigger.query);
-      const pulls = await pullsApi.projectPulls(thread.project_id, digits ? "" : trigger.query, signal);
-      return pulls
-        .filter((pull) => !digits || String(pull.number).includes(trigger.query))
-        .map((pull) => ({
-          value: String(pull.number),
-          detail: pull.title,
-          insert: pullToken(pull.number, pull.title, pull.url),
-        }));
-    }
-    const found = await api.mentions(thread.id, trigger.query, signal);
-    if (trigger.char === "$") return found.skills.map((value) => ({ value, detail: null }));
-    const threads = found.threads.map((other) => ({
-      value: other.title,
-      detail: "Thread",
-      insert: threadToken(other.id, other.title),
-    }));
-    const files = found.files.slice(0, Math.max(MENU_ROWS - threads.length, 2));
-    return [...files.map((value) => ({ value, detail: null })), ...threads];
-  });
+  const lookup = useAsync<Suggestion[]>(lookupKey, (signal) =>
+    loadSuggestions(trigger, thread, planControls, skillsInSlash, signal),
+  );
   const matches = useMemo(() => (trigger ? (lookup.data ?? []).slice(0, MENU_ROWS) : []), [trigger, lookup.data]);
   const menuOpen = matches.length > 0;
   const active = Math.min(highlight, Math.max(matches.length - 1, 0));
@@ -806,55 +710,9 @@ export function Composer({
             )
           }
         />
-        {fence ? (
-          <div className="composer-codebar">
-            <span>Code block</span>
-            <select
-              aria-label="Code block language"
-              value={fence.language}
-              onChange={(event) => setDraft(thread.id, setFenceLanguage(draft, fence, event.target.value))}
-            >
-              {CODE_LANGUAGES.map((language) => (
-                <option key={language || "plain"} value={language}>
-                  {language || "Plain text"}
-                </option>
-              ))}
-              {(CODE_LANGUAGES as readonly string[]).includes(fence.language) ? null : (
-                <option value={fence.language}>{fence.language}</option>
-              )}
-            </select>
-          </div>
-        ) : null}
+        {fence ? <CodeBar thread={thread} draft={draft} fence={fence} setDraft={setDraft} /> : null}
         {attachments.length > 0 ? (
-          <ul className="attachment-strip" aria-label="Attachments">
-            {attachments.map((file) => (
-              <li key={file.key} data-failed={file.failure !== null || undefined}>
-                {file.preview ? <img src={file.preview} alt="" className="attachment-thumb" /> : null}
-                <span title={file.failure ?? undefined}>{file.name}</span>
-                {file.failure ? (
-                  <>
-                    <span className="attachment-failure" role="alert">
-                      {file.failure}
-                    </span>
-                    <button type="button" aria-label={`Retry ${file.name}`} onClick={() => startUpload(file)}>
-                      <RotateCcw size={12} aria-hidden />
-                    </button>
-                  </>
-                ) : file.id === null ? (
-                  <span className="sr-only" role="status">
-                    Uploading
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  aria-label={`Remove ${file.name}`}
-                  onClick={() => setAttachments(attachments.filter((entry) => entry.key !== file.key))}
-                >
-                  <X size={12} aria-hidden />
-                </button>
-              </li>
-            ))}
-          </ul>
+          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} />
         ) : null}
         {overBy > 0 ? (
           <p className="composer-over" role="alert">
@@ -1010,58 +868,16 @@ export function Composer({
           )}
         </div>
       </div>
-      <div className="composer-context" hidden={!showContext && !persistentContext}>
-        <dl>
-          <div title={thread.cwd}>
-            <dt className="sr-only">Checkout</dt>
-            <dd>
-              <Folder size={12} aria-hidden />
-              {thread.worktree ? "Worktree" : "Current checkout"}
-            </dd>
-          </div>
-          {branch ? (
-            <div>
-              <dt className="sr-only">Branch</dt>
-              <dd>
-                <GitBranch size={12} aria-hidden />
-                {branch}
-              </dd>
-            </div>
-          ) : branchPending ? (
-            <div className="composer-branch-pending" aria-hidden>
-              <dd>
-                <GitBranch size={12} aria-hidden />
-                main
-              </dd>
-            </div>
-          ) : null}
-        </dl>
-        <dl>
-          <div>
-            <dt className="sr-only">Access</dt>
-            <dd className={unmanaged ? "tone-warn" : undefined}>
-              {unmanaged ? (
-                <>
-                  <ShieldOff size={12} aria-hidden />
-                  Unmanaged
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="context-action"
-                  aria-haspopup="menu"
-                  aria-label={`Permissions: ${ACCESS[access].label}`}
-                  disabled={busy || !thread.lifecycle}
-                  onClick={(event) => traits.openAt(event.currentTarget, true)}
-                >
-                  <AccessIcon size={12} aria-hidden />
-                  {ACCESS[access].label}
-                </button>
-              )}
-            </dd>
-          </div>
-        </dl>
-      </div>
+      <ComposerContext
+        thread={thread}
+        hidden={!showContext && !persistentContext}
+        branch={branch}
+        branchPending={branchPending}
+        unmanaged={unmanaged}
+        access={access}
+        busy={busy}
+        traits={traits}
+      />
       {traits.menu}
       <Presence>{overflow ? (
         <Menu
@@ -1069,38 +885,20 @@ export function Composer({
           y={overflow.y}
           label="Composer controls"
           onClose={() => setOverflow(null)}
-          items={[
-            {
-              label: `${model?.label ?? thread.model ?? engineName}${effortShown ? ` · ${effortLevel?.label ?? "Default"}` : ""}`,
-              disabled: busy,
-              onSelect: () => document.querySelector<HTMLElement>("form.composer [data-model-trigger]")?.click(),
-            },
-            ...(effortShown
-              ? [{
-                label: "Effort",
-                disabled: busy,
-                onSelect: () => {
-                  const trigger = effortButton();
-                  if (trigger) traits.openAt(trigger, false);
-                },
-              }]
-              : []),
-            ...(unmanaged
-              ? []
-              : [
-                  {
-                    label: `Permissions: ${ACCESS[access].label}`,
-                    disabled: busy,
-                    onSelect: () => {
-                      const trigger = effortButton();
-                      if (trigger) traits.openAt(trigger, true);
-                    },
-                  },
-                ]),
-            ...(planControls
-              ? [{ label: "Plan", selected: planMode, disabled: busy, onSelect: () => void setPlanMode(!planMode) }]
-              : []),
-          ]}
+          items={controlsMenuItems({
+            thread,
+            model,
+            engineName,
+            effortShown,
+            effortLevel,
+            busy,
+            unmanaged,
+            access,
+            planControls,
+            planMode,
+            traits,
+            setPlanMode,
+          })}
         />
       ) : null}</Presence>
       </div>
