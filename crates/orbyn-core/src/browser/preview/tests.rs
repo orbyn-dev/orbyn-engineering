@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
+use super::crash::{CRASH_WINDOW, Crashes};
 use super::favicon::favicon_url;
 use super::pump::{decode_base64, pump};
 use super::*;

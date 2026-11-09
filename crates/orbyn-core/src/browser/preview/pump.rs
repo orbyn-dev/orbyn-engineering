@@ -1,11 +1,9 @@
 //! The frame loop: polls a tab while anyone watches or records.
 
+use super::crash::{Crashes, bring_back};
 use super::favicon::{FAVICON, favicon_url};
 use super::lock;
-use super::{
-    Crashes, FRAME_EVERY, FRAME_QUALITY, HISTORY_TICKS, PROFILE_GRACE, RECORDING_SAFE_FOCUS, Tab,
-    bring_back,
-};
+use super::{FRAME_EVERY, FRAME_QUALITY, HISTORY_TICKS, PROFILE_GRACE, RECORDING_SAFE_FOCUS, Tab};
 use crate::browser::preview_bridge;
 use crate::browser::preview_recording::MAX_JPEG;
 use serde_json::json;
