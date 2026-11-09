@@ -1,6 +1,5 @@
+use super::events::text_of;
 use serde_json::{Value, json};
-
-use super::text_of;
 
 /// One row of the plan activity fed by Claude's TaskCreate/TaskUpdate/TaskList.
 pub(super) struct TaskStep {
