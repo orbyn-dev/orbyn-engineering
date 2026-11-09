@@ -11,7 +11,19 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
-use crate::api::{ApiResult, AppState};
+use crate::http::{ApiResult, AppState};
+use axum::Router;
+use axum::routing::get;
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/threads/{id}/files/raw", get(serve))
+        .route("/api/projects/{id}/icon/raw", get(serve_project_icon))
+        .route(
+            "/api/projects/{id}/images/raw",
+            get(serve_project_candidate),
+        )
+}
 
 /// Stops anything a file holds from running, even opened directly in a tab.
 pub(crate) const SANDBOX: &str =

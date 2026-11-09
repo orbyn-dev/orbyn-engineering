@@ -19,7 +19,53 @@ use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::io::ReaderStream;
 
-use crate::api::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use axum::Router;
+use axum::extract::DefaultBodyLimit;
+use axum::routing::{delete, get, post};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/threads/{id}/previews", get(list).post(open))
+        .route("/api/threads/{id}/previews/{tab}", delete(close))
+        .route("/api/threads/{id}/previews/file", post(open_file))
+        .route("/api/threads/{id}/previews/{tab}/view", post(view))
+        .route("/api/threads/{id}/previews/{tab}/window", post(window))
+        .route("/api/threads/{id}/previews/{tab}/reload", post(reload))
+        .route("/api/threads/{id}/previews/{tab}/clear", post(clear))
+        .route("/api/threads/{id}/previews/{tab}/pick", post(pick))
+        .route("/api/browser-profiles", get(profiles).post(create_profile))
+        .route("/api/browser-profiles/{id}", delete(delete_profile))
+        .route("/api/browser-profiles/{id}/clear", post(clear_profile))
+        .route("/api/threads/{id}/previews/{tab}/navigate", post(navigate))
+        .route("/api/threads/{id}/previews/{tab}/history", post(history))
+        .route("/api/threads/{id}/previews/{tab}/resize", post(resize))
+        .route("/api/threads/{id}/previews/{tab}/control", post(control))
+        .route("/api/threads/{id}/previews/{tab}/input", post(input))
+        .route("/api/threads/{id}/previews/{tab}/copy", post(copy))
+        .route(
+            "/api/threads/{id}/previews/{tab}/uploads",
+            post(upload).layer(DefaultBodyLimit::max(
+                orbyn_core::browser::preview_bridge::MAX_UPLOAD_BYTES + 1024,
+            )),
+        )
+        .route(
+            "/api/threads/{id}/previews/{tab}/chooser",
+            post(answer_chooser),
+        )
+        .route(
+            "/api/threads/{id}/previews/{tab}/downloads/{download}",
+            get(download),
+        )
+        .route(
+            "/api/threads/{id}/previews/{tab}/recording",
+            post(start_recording).delete(stop_recording),
+        )
+        .route("/ws/preview/{id}/{tab}", get(stream))
+        .route("/ws/preview/{id}/{tab}/pointer", get(pointers))
+        .route("/api/threads/{id}/servers", get(servers))
+        .route("/api/threads/{id}/servers/{pid}/stop", post(stop_server))
+}
 
 pub async fn list(
     State(state): State<AppState>,

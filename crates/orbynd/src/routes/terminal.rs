@@ -25,7 +25,26 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-use crate::api::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
+use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
+use axum::Router;
+use axum::routing::{get, patch, post};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/ws/terminal/{thread_id}", get(terminal))
+        .route("/ws/terminal/{thread_id}/{terminal}", get(attach))
+        .route("/api/threads/{id}/terminals", get(list).post(open))
+        .route("/api/threads/{id}/console", post(console))
+        .route(
+            "/api/threads/{id}/terminals/{terminal}",
+            patch(rename).delete(close),
+        )
+        .route(
+            "/api/threads/{id}/terminals/{terminal}/scrollback",
+            get(scrollback).delete(clear),
+        )
+        .route("/api/threads/{id}/scripts", get(scripts).post(run_script))
+}
 
 /// A shell with no client attached survives this long, for reconnects.
 const IDLE_SHELL: Duration = Duration::from_secs(60);

@@ -20,7 +20,13 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use crate::*;
+use axum::Router;
+use orbyn_core::{Core, CoreConfig};
+use tokio::net::TcpListener;
+
+use super::router;
+use crate::http::AppState;
+use crate::http::access::Access;
 
 const TABLE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/routes.json");
 const PUBLIC_PREFIXES: [&str; 3] = ["/auth/", "/hooks/", "/mcp/"];
