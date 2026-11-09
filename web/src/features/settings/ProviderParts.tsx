@@ -7,18 +7,11 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { useModelStore } from "../../state/modelStore";
-import { Button, CopyCommand, type PillTone } from "../../ui/controls";
+import { Button, CopyCommand } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { SettingRow } from "../../ui/SettingRow";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useEngineUpdates, UpdateProgressLine } from "./engineUpdates";
-
-export const supportTone: Record<EngineStatus["support"], PillTone> = {
-  tested: "neutral",
-  untested: "info",
-  below_minimum: "danger",
-  unknown: "neutral",
-};
 
 export function UpdateAction({ engine }: { engine: EngineStatus }) {
   const [confirming, setConfirming] = useState(false);

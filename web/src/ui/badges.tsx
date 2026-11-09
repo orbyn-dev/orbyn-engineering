@@ -56,7 +56,3 @@ export function EngineGlyph({ name, letters = 1 }: { name: string; letters?: num
     </span>
   );
 }
-
-export function OrbynMark() {
-  return <span className="brand-mark" aria-hidden />;
-}

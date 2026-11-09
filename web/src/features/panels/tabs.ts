@@ -19,8 +19,6 @@ export const tabsChanged = (order: readonly RightTab[], closed: readonly RightTa
   closed.some((id) => !CLOSED_AT_FIRST.includes(id)) ||
   order.some((id, at) => id !== RIGHT_TAB_IDS[at]);
 
-/** One tab slot: 32 px wide, at every panel width, so an icon never moves when another tab opens. */
-export const SLOT = 32;
 /** A slot and the gap after it. */
 export const SLOT_PITCH = 34;
 

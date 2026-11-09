@@ -89,37 +89,3 @@ export function NarrowBack({ to }: { to?: Route }) {
     </a>
   );
 }
-
-export function PageHeader({
-  title,
-  back,
-  backLabel,
-  actions,
-  children,
-}: {
-  title: string;
-  back?: Route;
-  backLabel?: string;
-  actions?: ReactNode;
-  children?: ReactNode;
-}) {
-  const layout = useLayoutWidth();
-  const showBack = back && (layout === "phone" || back.name !== "home");
-  return (
-    <header className="page-head">
-      {showBack ? (
-        <a className="back-link" href={routeHref(back)}>
-          <ArrowLeft size={16} aria-hidden />
-          {backLabel ?? "Back"}
-        </a>
-      ) : null}
-      <div className="page-head-row">
-        <h1 tabIndex={-1} data-page-title>
-          {title}
-        </h1>
-        {actions ? <div className="page-actions">{actions}</div> : null}
-      </div>
-      {children}
-    </header>
-  );
-}
