@@ -6,6 +6,9 @@ use orbyn_contracts::{MergePull, PullChecks, ReviewLineComment};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
+use super::details::{
+    DetailsOutcome, classify_details, details_query, graphql_reset, parse_details,
+};
 use super::github::{github_threads, parse_github_event};
 use super::gitlab::gitlab_conversation;
 use super::*;
