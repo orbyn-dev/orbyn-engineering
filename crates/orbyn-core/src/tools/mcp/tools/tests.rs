@@ -11,6 +11,9 @@ use super::guide::{
     MAX_STOP_SUMMARY_CHARS, MAX_STOP_TITLE_CHARS, guide_head, guide_stops,
 };
 use super::project::{MAX_PROJECT_ID_BYTES, MAX_PROJECT_PATH_BYTES, bounded_project_text};
+use super::render::{
+    DEFAULT_RENDER_HEIGHT, MAX_RENDER_HEIGHT, MIN_RENDER_HEIGHT, render_height, render_title,
+};
 use super::*;
 
 #[test]

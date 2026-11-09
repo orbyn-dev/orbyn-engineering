@@ -4,6 +4,8 @@
 //! asking, so each one with an effect goes through the gate here, as a `tool` action:
 //! it needs a person unless the thread is in full access or a rule allows it.
 
+mod render;
+
 mod project;
 
 mod guide;
@@ -28,18 +30,13 @@ use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use definitions::TOOLS;
 use guide::{guide_head, guide_stops};
+use render::{render_height, render_title};
 
 /// Under the 45 seconds a tool has to answer, so the caller hears `ended: false`.
 const MAX_WAIT_SECONDS: u64 = 40;
 const MAX_SEARCH_CHARS: usize = 200_000;
 const MAX_HITS: usize = 50;
 const MAX_BATCH: usize = 16;
-/// A published page's frame height. Nothing measures the page yet (C23), so a call
-/// picks the height and these are the bounds it is held to.
-const DEFAULT_RENDER_HEIGHT: u64 = 480;
-const MIN_RENDER_HEIGHT: u64 = 120;
-const MAX_RENDER_HEIGHT: u64 = 2000;
-const MAX_RENDER_TITLE_CHARS: usize = 200;
 /// The tool list for `tools/list`.
 pub(crate) fn tool_specs() -> impl Iterator<Item = Value> {
     TOOLS.iter().map(|tool| {
@@ -195,30 +192,6 @@ pub(crate) fn matches_words(haystack: &str, query: &str) -> bool {
     let haystack = haystack.to_lowercase();
     let mut words = query.split_whitespace().peekable();
     words.peek().is_some() && words.all(|word| haystack.contains(&word.to_lowercase()))
-}
-
-/// The frame height a published page is shown at. A caller's number stands, held to a
-/// size a card can show; without one the page gets the default. Nothing measures the
-/// page yet (C23), so this is the whole of what decides it.
-fn render_height(args: &Value) -> u64 {
-    args.get("height")
-        .and_then(Value::as_f64)
-        .map_or(DEFAULT_RENDER_HEIGHT, |height| {
-            let bounded = height.clamp(MIN_RENDER_HEIGHT as f64, MAX_RENDER_HEIGHT as f64);
-            // The bound is not negative, so the cast is exact after rounding.
-            bounded.round() as u64
-        })
-}
-
-/// The card's title: trimmed, cut to a length a row can show, and `HTML` when the
-/// call named none.
-fn render_title(args: &Value) -> String {
-    args.get("title")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .map(|title| title.chars().take(MAX_RENDER_TITLE_CHARS).collect())
-        .unwrap_or_else(|| "HTML".to_owned())
 }
 
 impl Core {
