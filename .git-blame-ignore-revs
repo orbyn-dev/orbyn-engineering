@@ -7,3 +7,4 @@ d381a2dcfa9c578fbcf432e3fc13d0df8a3b914c # refactor(contracts): move wire types 
 ded9bd5371558390f5a2ce07c0b0249df843f7ab # refactor(web): move markdown and code rendering into features/content
 5f0449347773efab37c4acdd7e19ba70a85853be # refactor(web): move shared thread logic down to state, lib and ui
 1d1268bfd3b27736c39806303b417ceefe61d335 # refactor(web): move composer and tool trail files into folders
+8678212e2ca296ee089964e96848e26372567217 # refactor(web): move workspace files into sidebar, palette and app-chrome folders
