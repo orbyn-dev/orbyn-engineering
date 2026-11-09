@@ -76,12 +76,12 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 57 | `tc-phone-list` | Tool calls, every state | Phone: groups and rows | `missing` | missing | P2 | |
 | 58 | `tc-phone-sheet` | Tool calls, every state | Phone: output in a sheet | `missing` | missing | P2 | |
 | 59 | `tc-phone-needs-you` | Tool calls, every state | Phone: needs you | `missing` | missing | P2 | |
-| 60 | `panel-diff` | Side panel and terminal | Diff | `features/panels/DiffPanel.tsx` | exists | P2 | |
-| 61 | `panel-files` | Side panel and terminal | Files | `features/panels/FilesPanel.tsx` | exists | P2 | |
-| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/BrowserPanel.tsx` | exists | P2 | |
-| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/ActivityPanel.tsx:13` | exists | P2 | |
+| 60 | `panel-diff` | Side panel and terminal | Diff | `features/panels/diff/DiffPanel.tsx` | exists | P2 | |
+| 61 | `panel-files` | Side panel and terminal | Files | `features/panels/files/FilesPanel.tsx` | exists | P2 | |
+| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2 | |
+| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | |
 | 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPane.tsx` | exists | P2 | |
-| 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/TerminalDrawerBody.tsx:25` | exists | P2 | |
+| 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | exists | P2 | |
 | 66 | `pulls` | Pages | Pull requests | `features/pulls/PullsPage.tsx:42` | exists | P2 | |
 | 67 | `pull-detail` | Pages | Pull request | `features/pulls/PullDetail.tsx:343` | exists | P2 | |
 | 68 | `usage` | Pages | Usage | `features/usage/UsagePage.tsx:554` | exists | P2 | |
@@ -102,7 +102,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 83 | `pr-list-merged` | Pull requests, every state | List: merged | `features/pulls/PullsPage.tsx:28` | exists | P2 | |
 | 84 | `pr-list-closed` | Pull requests, every state | List: closed | `features/pulls/PullsPage.tsx:27` | exists | P2 | |
 | 85 | `pr-list-draft` | Pull requests, every state | List: draft | `features/pulls/PullsPage.tsx:155,302` | exists | P2 | |
-| 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `features/panels/GitActionDialog.tsx:36` | partial | P2 | |
+| 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `features/panels/diff/GitActionDialog.tsx:36` | partial | P2 | |
 | 87 | `pr-detail-loading` | Pull requests, every state | Detail: loading | `features/pulls/PullDetail.tsx:391` | exists | P2 | |
 | 88 | `pr-detail-error` | Pull requests, every state | Detail: GitHub unreachable | `features/pulls/PullDetail.tsx:403` | exists | P2 | |
 | 89 | `pr-detail-offline` | Pull requests, every state | Detail: offline | `missing` | missing | P2 | |
@@ -121,7 +121,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/PullCode.tsx` | partial | P2 | |
 | 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/PullDetail.tsx:47` | partial | P2 | |
 | 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/PullDetail.tsx:205` | partial | P2 | |
-| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/panels/LinkedPulls.tsx; features/panels/tabs.ts:10` | partial | P2 | |
+| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/panels/LinkedPulls.tsx; features/panels/strip/tabs.ts:10` | partial | P2 | |
 | 106 | `pr-phone-list` | Pull requests, every state | Phone: Pull requests list | `missing` | missing | P2 | |
 | 107 | `pr-phone-detail` | Pull requests, every state | Phone: pull request detail | `missing` | missing | P2 | |
 | 108 | `s-general` | Settings | Settings · General | `features/settings/PreferenceSections.tsx:59` | exists | P1 | |
@@ -157,36 +157,36 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 138 | `t-inspect` | Tools | Inspect | `missing` | missing | P5 | |
 | 139 | `t-inspect-empty` | Tools | Inspect: empty and error | `missing` | missing | P5 | |
 | 140 | `t-phone` | Tools | Memory and review on a phone | `missing` | missing | P3 | |
-| 141 | `x-diff-empty` | Side panel, every state | Diff: no changes | `features/panels/DiffPanel.tsx:620` | exists | P2 | |
-| 142 | `x-diff-loading` | Side panel, every state | Diff: loading | `features/panels/DiffPanel.tsx:529` | exists | P2 | |
-| 143 | `x-diff-error` | Side panel, every state | Diff: couldn't read changes | `features/panels/DiffPanel.tsx:531` | exists | P2 | |
-| 144 | `x-diff-binary` | Side panel, every state | Diff: binary file | `features/panels/DiffPanel.tsx:204` | partial | P2 | |
-| 145 | `x-diff-huge` | Side panel, every state | Diff: huge file collapsed | `features/panels/DiffPanel.tsx:19,482` | partial | P2 | |
-| 146 | `x-diff-conflict` | Side panel, every state | Diff: conflict markers | `features/panels/DiffPanel.tsx:426` | partial | P2 | |
-| 147 | `x-diff-staged` | Side panel, every state | Diff: staged and unstaged | `features/panels/DiffPanel.tsx:67` | missing | P2 | |
-| 148 | `x-diff-comment` | Side panel, every state | Diff: comment on a line | `features/panels/DiffPanel.tsx:154,253` | exists | P2 | |
-| 149 | `x-diff-search` | Side panel, every state | Diff: filter files | `features/panels/DiffPanel.tsx:110` | partial | P2 | |
-| 150 | `x-diff-menu` | Side panel, every state | Diff: panel menu open | `features/panels/DiffPanel.tsx` | missing | P2 | |
-| 151 | `x-diff-split` | Side panel, every state | Diff: split view, maximised | `features/panels/DiffPanel.tsx:374; features/panels/SurfacePane.tsx:245` | exists | P2 | |
-| 152 | `x-files-empty` | Side panel, every state | Files: nothing selected | `features/panels/FilesPanel.tsx:236` | partial | P2 | |
-| 153 | `x-files-loading` | Side panel, every state | Files: loading | `features/panels/FilesPanel.tsx:201,245` | exists | P2 | |
-| 154 | `x-files-error` | Side panel, every state | Files: folder can't be read | `features/panels/FilesPanel.tsx:247` | exists | P2 | |
-| 155 | `x-files-search` | Side panel, every state | Files: search in the tree | `features/panels/FilesPanel.tsx:353` | exists | P2 | |
-| 156 | `x-files-edit` | Side panel, every state | Files: unsaved edit | `features/panels/FilesPanel.tsx:43,76` | exists | P2 | |
-| 157 | `x-files-readonly` | Side panel, every state | Files: read-only file | `features/panels/FilesPanel.tsx:43` | missing | P2 | |
-| 158 | `x-files-large` | Side panel, every state | Files: large tree | `features/panels/FilesPanel.tsx:236` | missing | P2 | |
-| 159 | `x-files-menu` | Side panel, every state | Files: file menu open | `features/panels/FilesPanel.tsx:283` | partial | P2 | |
-| 160 | `x-browser-empty` | Side panel, every state | Browser: no page open | `features/panels/BrowserPanel.tsx:480` | exists | P2 | |
-| 161 | `x-browser-loading` | Side panel, every state | Browser: loading a page | `features/panels/BrowserPanel.tsx` | missing | P2 | |
-| 162 | `x-browser-error` | Side panel, every state | Browser: page error | `features/panels/BrowserPanel.tsx:893` | partial | P2 | |
-| 163 | `x-browser-offline` | Side panel, every state | Browser: offline | `features/panels/BrowserPanel.tsx` | missing | P2 | |
-| 164 | `x-browser-console` | Side panel, every state | Browser: console open | `features/panels/BrowserPanel.tsx` | missing | P2 | |
-| 165 | `x-browser-device` | Side panel, every state | Browser: device size picker | `features/panels/BrowserPanel.tsx:185` | exists | P2 | |
-| 166 | `x-browser-pick` | Side panel, every state | Browser: element picked | `features/panels/BrowserPanel.tsx:151` | exists | P2 | |
-| 167 | `x-activity-empty` | Side panel, every state | Activity: nothing yet | `features/panels/ActivityPanel.tsx:17` | exists | P2 | |
-| 168 | `x-activity-running` | Side panel, every state | Activity: running | `features/panels/ActivityPanel.tsx:31` | partial | P2 | |
-| 169 | `x-activity-failed` | Side panel, every state | Activity: failed step with log | `features/panels/ActivityPanel.tsx:35` | partial | P2 | |
-| 170 | `x-activity-filtered` | Side panel, every state | Activity: filtered | `features/panels/ActivityPanel.tsx:7` | partial | P2 | |
+| 141 | `x-diff-empty` | Side panel, every state | Diff: no changes | `features/panels/diff/DiffPanel.tsx:620` | exists | P2 | |
+| 142 | `x-diff-loading` | Side panel, every state | Diff: loading | `features/panels/diff/DiffPanel.tsx:529` | exists | P2 | |
+| 143 | `x-diff-error` | Side panel, every state | Diff: couldn't read changes | `features/panels/diff/DiffPanel.tsx:531` | exists | P2 | |
+| 144 | `x-diff-binary` | Side panel, every state | Diff: binary file | `features/panels/diff/DiffPanel.tsx:204` | partial | P2 | |
+| 145 | `x-diff-huge` | Side panel, every state | Diff: huge file collapsed | `features/panels/diff/DiffPanel.tsx:19,482` | partial | P2 | |
+| 146 | `x-diff-conflict` | Side panel, every state | Diff: conflict markers | `features/panels/diff/DiffPanel.tsx:426` | partial | P2 | |
+| 147 | `x-diff-staged` | Side panel, every state | Diff: staged and unstaged | `features/panels/diff/DiffPanel.tsx:67` | missing | P2 | |
+| 148 | `x-diff-comment` | Side panel, every state | Diff: comment on a line | `features/panels/diff/DiffPanel.tsx:154,253` | exists | P2 | |
+| 149 | `x-diff-search` | Side panel, every state | Diff: filter files | `features/panels/diff/DiffPanel.tsx:110` | partial | P2 | |
+| 150 | `x-diff-menu` | Side panel, every state | Diff: panel menu open | `features/panels/diff/DiffPanel.tsx` | missing | P2 | |
+| 151 | `x-diff-split` | Side panel, every state | Diff: split view, maximised | `features/panels/diff/DiffPanel.tsx:374; features/panels/SurfacePane.tsx:245` | exists | P2 | |
+| 152 | `x-files-empty` | Side panel, every state | Files: nothing selected | `features/panels/files/FilesPanel.tsx:236` | partial | P2 | |
+| 153 | `x-files-loading` | Side panel, every state | Files: loading | `features/panels/files/FilesPanel.tsx:201,245` | exists | P2 | |
+| 154 | `x-files-error` | Side panel, every state | Files: folder can't be read | `features/panels/files/FilesPanel.tsx:247` | exists | P2 | |
+| 155 | `x-files-search` | Side panel, every state | Files: search in the tree | `features/panels/files/FilesPanel.tsx:353` | exists | P2 | |
+| 156 | `x-files-edit` | Side panel, every state | Files: unsaved edit | `features/panels/files/FilesPanel.tsx:43,76` | exists | P2 | |
+| 157 | `x-files-readonly` | Side panel, every state | Files: read-only file | `features/panels/files/FilesPanel.tsx:43` | missing | P2 | |
+| 158 | `x-files-large` | Side panel, every state | Files: large tree | `features/panels/files/FilesPanel.tsx:236` | missing | P2 | |
+| 159 | `x-files-menu` | Side panel, every state | Files: file menu open | `features/panels/files/FilesPanel.tsx:283` | partial | P2 | |
+| 160 | `x-browser-empty` | Side panel, every state | Browser: no page open | `features/panels/browser/BrowserPanel.tsx:480` | exists | P2 | |
+| 161 | `x-browser-loading` | Side panel, every state | Browser: loading a page | `features/panels/browser/BrowserPanel.tsx` | missing | P2 | |
+| 162 | `x-browser-error` | Side panel, every state | Browser: page error | `features/panels/browser/BrowserPanel.tsx:893` | partial | P2 | |
+| 163 | `x-browser-offline` | Side panel, every state | Browser: offline | `features/panels/browser/BrowserPanel.tsx` | missing | P2 | |
+| 164 | `x-browser-console` | Side panel, every state | Browser: console open | `features/panels/browser/BrowserPanel.tsx` | missing | P2 | |
+| 165 | `x-browser-device` | Side panel, every state | Browser: device size picker | `features/panels/browser/BrowserPanel.tsx:185` | exists | P2 | |
+| 166 | `x-browser-pick` | Side panel, every state | Browser: element picked | `features/panels/browser/BrowserPanel.tsx:151` | exists | P2 | |
+| 167 | `x-activity-empty` | Side panel, every state | Activity: nothing yet | `features/panels/activity/ActivityPanel.tsx:17` | exists | P2 | |
+| 168 | `x-activity-running` | Side panel, every state | Activity: running | `features/panels/activity/ActivityPanel.tsx:31` | partial | P2 | |
+| 169 | `x-activity-failed` | Side panel, every state | Activity: failed step with log | `features/panels/activity/ActivityPanel.tsx:35` | partial | P2 | |
+| 170 | `x-activity-filtered` | Side panel, every state | Activity: filtered | `features/panels/activity/ActivityPanel.tsx:7` | partial | P2 | |
 | 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/thread/SideChatPane.tsx` | exists | P2 | |
 | 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/thread/SideChatPane.tsx:16` | exists | P2 | |
 | 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/thread/SideChatPane.tsx:16` | partial | P2 | |
@@ -219,14 +219,14 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/composer/Composer.tsx` | missing | P2 | |
 | 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView.tsx:347` | exists | P2 | |
 | 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/settings/PreferenceSections.tsx:602` | partial | P2 | |
-| 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/TerminalDrawerBody.tsx:101` | exists | P2 | |
-| 204 | `x-term-running` | Terminal, every state | Terminal: a running process | `features/panels/TerminalPanel.tsx:207` | partial | P2 | |
-| 205 | `x-term-failed` | Terminal, every state | Terminal: a failed command | `features/panels/TerminalPanel.tsx:42` | partial | P2 | |
+| 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/terminal/TerminalDrawerBody.tsx:101` | exists | P2 | |
+| 204 | `x-term-running` | Terminal, every state | Terminal: a running process | `features/panels/terminal/TerminalPanel.tsx:207` | partial | P2 | |
+| 205 | `x-term-failed` | Terminal, every state | Terminal: a failed command | `features/panels/terminal/TerminalPanel.tsx:42` | partial | P2 | |
 | 206 | `x-term-search` | Terminal, every state | Terminal: search in output | `package.json xterm deps` | missing | P2 | |
-| 207 | `x-term-split` | Terminal, every state | Terminal: split panes | `features/panels/TerminalDrawerBody.tsx:125` | exists | P2 | |
-| 208 | `x-term-menu` | Terminal, every state | Terminal: tab menu | `features/panels/TerminalDrawerBody.tsx:179` | missing | P2 | |
-| 209 | `x-term-agent` | Terminal, every state | Terminal: started by the agent | `features/panels/TerminalDrawerBody.tsx:138; features/panels/TerminalPanel.tsx:76` | partial | P2 | |
-| 210 | `x-term-ended` | Terminal, every state | Terminal: process ended | `features/panels/TerminalPanel.tsx:207` | partial | P2 | |
+| 207 | `x-term-split` | Terminal, every state | Terminal: split panes | `features/panels/terminal/TerminalDrawerBody.tsx:125` | exists | P2 | |
+| 208 | `x-term-menu` | Terminal, every state | Terminal: tab menu | `features/panels/terminal/TerminalDrawerBody.tsx:179` | missing | P2 | |
+| 209 | `x-term-agent` | Terminal, every state | Terminal: started by the agent | `features/panels/terminal/TerminalDrawerBody.tsx:138; features/panels/terminal/TerminalPanel.tsx:76` | partial | P2 | |
+| 210 | `x-term-ended` | Terminal, every state | Terminal: process ended | `features/panels/terminal/TerminalPanel.tsx:207` | partial | P2 | |
 | 211 | `x-term-maximised` | Terminal, every state | Terminal: maximised | `features/thread/ThreadView.tsx:402` | partial | P2 | |
 | 212 | `x-term-closed` | Terminal, every state | Terminal: closed | `features/thread/ThreadView.tsx:282` | missing | P2 | |
 | 213 | `x-phone-stream` | Phone, more | Phone: streaming and offline | `missing` | missing | P2 | |
