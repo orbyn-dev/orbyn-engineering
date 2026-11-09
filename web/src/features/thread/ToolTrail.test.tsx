@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TimelineRow } from "./items";
 import { TimelineThread } from "./timelineThread";
 import { rangesIn } from "./ThreadFind";
-import type { ToolItem } from "./projection";
+import type { ToolItem } from "../../lib/timeline/projection";
 import { entryText } from "./threadSearch";
 import { callFindText } from "./toolCalls";
 import { forgetOpenState, OpenStateScope } from "../../ui/openState";
-import { arrangeTimeline, groupWork } from "./timeline";
+import { arrangeTimeline, groupWork } from "../../lib/timeline/timeline";
 import { useUi } from "../../state/ui";
 
 const make = (name: string, args: unknown, extra: Partial<ToolItem> = {}): ToolItem => ({

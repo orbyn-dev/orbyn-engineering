@@ -10,7 +10,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { unarchiveThread } from "../workspace/threadActions";
 import { usageShare } from "./ComposerExtras";
-import { useThreadLogs } from "./threadLogs";
+import { useThreadLogs } from "../../state/threadLogs";
 import { waitLeft } from "../../lib/format";
 
 /** A run whose prompt is the compact command, while it runs: the thread is being compacted. */

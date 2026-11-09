@@ -1,9 +1,9 @@
-import { request } from "../../api/client";
-import type { PreviewTab } from "../../api/types";
-import type { ProjectScript } from "../../generated/ProjectScript";
-import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { parseRoute } from "../../state/route";
+import { request } from "../api/client";
+import type { PreviewTab } from "../api/types";
+import type { ProjectScript } from "../generated/ProjectScript";
+import { toFailure } from "./useAsync";
+import { useUi } from "../state/ui";
+import { parseRoute } from "../state/route";
 
 /** A successfully launched action may bring its saved URL into the Browser. */
 export async function openActionPreview(threadId: string, script: ProjectScript): Promise<void> {

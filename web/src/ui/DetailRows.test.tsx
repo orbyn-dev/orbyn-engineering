@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { LimitValue, tokensShort } from "./DetailsCard";
+import { LimitValue, tokensShort } from "../features/thread/DetailsCard";
 import { DRow } from "./DetailRows";
 
 it("shows each limit window as it is, amber at 20% left or less and still amber at 0%", () => {

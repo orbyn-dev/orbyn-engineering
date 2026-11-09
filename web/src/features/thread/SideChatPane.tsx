@@ -3,15 +3,15 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
-import { useThreadStream } from "../thread/threadLogs";
+import { useThreadStream } from "../../state/threadLogs";
 import { useUi } from "../../state/ui";
 import { engineById, useWorkspace } from "../../state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { Empty } from "../../ui/states";
-import { Composer } from "../thread/Composer";
-import { ThreadScope } from "../thread/MessageActions";
-import { Transcript } from "../thread/Transcript";
+import { Composer } from "./Composer";
+import { ThreadScope } from "./MessageActions";
+import { Transcript } from "./Transcript";
 import { closeSideChat, openSideChat, showSideChat, sideChatsOf } from "./sideChat";
 
 function SideChat({ side, parent }: { side: Thread; parent: Thread }) {

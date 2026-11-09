@@ -3,13 +3,13 @@ import { createContext, useContext, useState } from "react";
 import { api } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
 import { navigate, parseRoute } from "../../state/route";
-import { useThreadLogs } from "./threadLogs";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
-import { useComposerChips } from "./composerChipStore";
+import { useComposerChips } from "../../state/composerChipStore";
 import { IconButton } from "../../ui/controls";
-import { chipId } from "./composerContext";
+import { chipId } from "../../lib/composerContext";
 import { ConfirmDialog } from "../../ui/Dialog";
+import { RestoreFilesDialog } from "../panels/RestoreFilesDialog";
 
 /** The thread these messages belong to, when it isn't the one the page is on. */
 export const ThreadScope = createContext<string | null>(null);
@@ -18,25 +18,6 @@ const openThread = () => {
   const route = parseRoute(window.location.hash);
   return route.name === "thread" ? route.id : null;
 };
-
-/** Confirms, then puts the folder back to how it was before a turn. */
-export function RestoreFilesDialog({ threadId, runId, onClose }: { threadId: string; runId: string; onClose(): void }) {
-  const pushToast = useUi((state) => state.pushToast);
-  return (
-    <ConfirmDialog
-      title="Restore files?"
-      confirmLabel="Restore files"
-      onClose={onClose}
-      onConfirm={async () => {
-        await api.restoreWorkspace(threadId, runId, "start");
-        useThreadLogs.getState().touchDiff(threadId);
-        pushToast("Files restored");
-      }}
-    >
-      <p>The folder goes back to how it was before this turn. What it holds now is saved first, so this can be undone from Git.</p>
-    </ConfirmDialog>
-  );
-}
 
 /** Hover actions on a message: copy, and rewind or fork at its run. */
 export function MessageActions({ text, runId, role }: { text: string; runId: string | null; role: "user" | "assistant" }) {

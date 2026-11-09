@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequest } from "../../api/types";
-import { checksOf } from "../pulls/pullModel";
+import { checksOf } from "./pullModel";
 
 /** What the chip and every list of a thread's pull requests share, so a change in one shows in both. */
 export interface ThreadPullsEntry {

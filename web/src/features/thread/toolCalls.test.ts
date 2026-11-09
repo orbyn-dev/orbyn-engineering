@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ToolItem } from "./projection";
+import type { ToolItem } from "../../lib/timeline/projection";
 import { callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, sourceLines } from "./toolCalls";
 import { callDuration } from "../../lib/format";
 

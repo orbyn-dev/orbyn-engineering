@@ -22,7 +22,7 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import { useConnectionKind } from "../../state/connection";
 import { useDraftStore } from "../../state/draftStore";
 import { navigate } from "../../state/route";
-import { useThreadLogs } from "./threadLogs";
+import { useThreadLogs } from "../../state/threadLogs";
 import { useUi, type StashedPrompt } from "../../state/ui";
 import { IconButton } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
@@ -44,10 +44,10 @@ import { QuestionPanel } from "./QuestionPanel";
 import { SubagentChips } from "./SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../state/modelStore";
 import { QueuedMessages } from "./QueuedMessages";
-import { openSideChat } from "../panels/sideChat";
+import { openSideChat } from "./sideChat";
 import { pullsApi } from "../../api/pulls";
 import { FILE_MENTION_TYPE, insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
-import { useComposerChips } from "./composerChipStore";
+import { useComposerChips } from "../../state/composerChipStore";
 import { CODE_LANGUAGES, exitCodeBlock, indentCodeLines, openFenceAt, setFenceLanguage } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
 import {
@@ -60,7 +60,7 @@ import {
   promptWithChips,
   refillExcerpts,
   type ComposerChip,
-} from "./composerContext";
+} from "../../lib/composerContext";
 
 interface Suggestion {
   value: string;

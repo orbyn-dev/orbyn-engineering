@@ -38,11 +38,11 @@ import { useOpenControl, useOpenState } from "../../ui/openState";
 import { outputSpans } from "../content/code/ansi";
 import { HtmlRender } from "./HtmlRender";
 import { McpApp } from "./McpApp";
-import type { PlanItem, ToolItem } from "./projection";
-import { useThreadLogs } from "./threadLogs";
+import type { PlanItem, ToolItem } from "../../lib/timeline/projection";
+import { useThreadLogs } from "../../state/threadLogs";
 import { useThreadOfTimeline } from "./timelineThread";
 import { argEntries, callKind, callLabel, callMs, callPath, callState, editDiff, LINES_SHOWN, ENTRIES_SHOWN, lineCount, listEntries, readRange, resultRows, ROWS_SHOWN, runLabel, plain, subagentTask, commandText, isWebAddress, scalar, shownPath, sourceLines, type CallKind, type CallRun, type CallState, pluralize, editStat, hostOf } from "./toolCalls";
-import { parsed, toolFailed, traceTool } from "./toolTrace";
+import { parsed, toolFailed, traceTool } from "../../lib/timeline/toolTrace";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
 
 const KIND_ICONS: Record<CallKind, LucideIcon> = {

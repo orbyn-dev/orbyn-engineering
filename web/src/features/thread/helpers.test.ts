@@ -4,12 +4,12 @@ import { parsePatch } from "../panels/DiffPanel";
 import { arrangeThreads } from "../workspace/groups";
 import { touchesOf } from "./approvalDetail";
 import { percentLabel } from "./ComposerExtras";
-import type { ThreadItem } from "./projection";
+import type { ThreadItem } from "../../lib/timeline/projection";
 import { insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
 import { outputSpans } from "../content/code/ansi";
-import type { ToolItem } from "./projection";
-import { arrangeTimeline, groupWork } from "./timeline";
-import { summarizeWork } from "./toolTrace";
+import type { ToolItem } from "../../lib/timeline/projection";
+import { arrangeTimeline, groupWork } from "../../lib/timeline/timeline";
+import { summarizeWork } from "../../lib/timeline/toolTrace";
 import { withLocalPrompts } from "./Transcript";
 
 describe("triggers", () => {

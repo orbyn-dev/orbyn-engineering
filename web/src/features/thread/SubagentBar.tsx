@@ -4,7 +4,7 @@ import { runStateLabels } from "../../lib/format";
 import { navigate } from "../../state/route";
 import { Button } from "../../ui/controls";
 import { threadRunState } from "../workspace/RunState";
-import type { SubagentActivity } from "./projection";
+import type { SubagentActivity } from "../../lib/timeline/projection";
 
 const DONE = /^(completed|done|finished|success)/i;
 const FAILED = /^(failed|errored|error|cancel)/i;

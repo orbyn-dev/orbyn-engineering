@@ -1,4 +1,4 @@
-import type { ThreadItem } from "./projection";
+import type { ThreadItem } from "../../lib/timeline/projection";
 
 export const LARGE_PASTE_BYTES = 32 * 1024;
 

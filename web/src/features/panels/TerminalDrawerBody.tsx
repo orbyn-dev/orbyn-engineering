@@ -17,7 +17,7 @@ import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
 import { captureFocusReturn } from "../../ui/focusReturn";
 import { addTerminalChip } from "./terminalChip";
 import type { ProjectScript } from "../../generated/ProjectScript";
-import { runProjectAction } from "../thread/runProjectAction";
+import { runProjectAction } from "../../lib/runProjectAction";
 import { ProjectActionIcon } from "../../ui/ProjectActionIcon";
 
 const MAIN = "main";

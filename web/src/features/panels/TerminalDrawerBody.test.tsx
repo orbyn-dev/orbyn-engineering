@@ -5,13 +5,13 @@ import { request } from "../../api/client";
 import type { TerminalInfo } from "../../api/types";
 import { useConnection } from "../../state/connection";
 import { useUi } from "../../state/ui";
-import { useComposerChips } from "../thread/composerChipStore";
+import { useComposerChips } from "../../state/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
 import { registerTerminal, terminalKey } from "./terminalControls";
 
 vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId, autoFocus }: { terminalId?: string; autoFocus?: boolean }) => <div data-autofocus={autoFocus ? "yes" : "no"}>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-vi.mock("../thread/runProjectAction", () => ({ runProjectAction: vi.fn(() => Promise.resolve()) }));
+vi.mock("../../lib/runProjectAction", () => ({ runProjectAction: vi.fn(() => Promise.resolve()) }));
 
 const mock = vi.mocked(request);
 
@@ -83,7 +83,7 @@ describe("terminal drawer", () => {
     await user.click(screen.getByRole("button", { name: "Send to the agent" }));
     expect(useComposerChips.getState().chips["th"]).toEqual([expect.objectContaining({ kind: "terminal", output: "1 failed | 47 passed", exitCode: 1 })]);
     await user.click(screen.getByRole("button", { name: "Run again" }));
-    const { runProjectAction } = await import("../thread/runProjectAction");
+    const { runProjectAction } = await import("../../lib/runProjectAction");
     expect(runProjectAction).toHaveBeenCalledWith("th", expect.objectContaining({ name: "test" }));
     stop();
   });

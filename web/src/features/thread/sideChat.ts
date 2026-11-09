@@ -1,7 +1,7 @@
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
-import { useThreadLogs } from "../thread/threadLogs";
+import { useThreadLogs } from "../../state/threadLogs";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 

@@ -8,7 +8,7 @@ import { Dialog } from "../../ui/Dialog";
 import { Button, IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { TimelineThread } from "./items";
+import { TimelineThread } from "./timelineThread";
 import { Markdown } from "../content/markdown/Markdown";
 import { planFilename, planTitle, stripPlanTitle } from "./proposedPlan";
 

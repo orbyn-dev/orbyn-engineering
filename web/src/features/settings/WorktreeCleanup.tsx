@@ -10,7 +10,7 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import { Button } from "../../ui/controls";
 import { SettingGroup, SettingRow } from "../../ui/SettingRow";
 import { ErrorState, Loading } from "../../ui/states";
-import { PreferenceInheritance } from "./PreferenceRows";
+import { PreferenceInheritance } from "./PreferenceInheritance";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useUi } from "../../state/ui";
 

@@ -28,10 +28,10 @@ import {
   type WorkGroup,
   type WorkingRow,
   type WorkItem,
-} from "./timeline";
+} from "../../lib/timeline/timeline";
 import { workSegments } from "./toolCalls";
 import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
-import { TimelineThread, useThreadOfTimeline } from "./timelineThread";
+import { useThreadOfTimeline } from "./timelineThread";
 import type {
   ActivityItem,
   ApprovalItem,
@@ -40,9 +40,8 @@ import type {
   NoticeItem,
   ReasoningItem,
   ToolItem,
-} from "./projection";
+} from "../../lib/timeline/projection";
 
-export { TimelineThread };
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {

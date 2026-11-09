@@ -10,7 +10,8 @@ import { Button } from "../../ui/controls";
 import { ErrorState, Loading } from "../../ui/states";
 import { ModelPickerTrigger } from "../thread/ModelPicker";
 import { useEngineModels, useModelStore } from "../../state/modelStore";
-import { PreferenceGroups, PreferenceInheritance } from "./PreferenceRows";
+import { PreferenceGroups } from "./PreferenceRows";
+import { PreferenceInheritance } from "./PreferenceInheritance";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { MODEL_DEFAULT_KEYS, modelDefaultChange, type DefaultModelChoice } from "./modelDefaultChange";
 

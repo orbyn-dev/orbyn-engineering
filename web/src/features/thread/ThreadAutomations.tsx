@@ -6,7 +6,7 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
 import { scheduleLabel, taskTone } from "../../lib/taskSchedule";
 import { useWaited } from "../../lib/motion";
-import { DRow } from "./DetailRows";
+import { DRow } from "../../ui/DetailRows";
 import { navigate, useRoute } from "../../state/route";
 import { useUi } from "../../state/ui";
 import { Button, IconButton } from "../../ui/controls";
