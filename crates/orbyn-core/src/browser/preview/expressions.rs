@@ -1,4 +1,4 @@
-//! What an agent asks a page to run or wait for: the limits on one request, the page expressions, and the three ways to drive a page.
+//! What an agent asks a page to do: click, type, scroll, run an expression or wait, each within bounds.
 
 use super::{PreviewAct, PreviewAction, PreviewManager, lock};
 use crate::error::{CoreError, Result};

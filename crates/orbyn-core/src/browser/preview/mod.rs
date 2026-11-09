@@ -4,26 +4,17 @@
 //! watches or records. This is local: a client watches over the same access as the
 //! rest of the API, and nothing here reaches another machine.
 
-mod tabs;
-
-mod expressions;
-
-mod snapshots;
-
-mod open;
-
-mod profiles;
-
-mod servers;
-
-mod crash;
-
-mod pump;
-
-mod favicon;
-
 pub mod bridge;
+mod crash;
+mod expressions;
+mod favicon;
+mod open;
+mod profiles;
+mod pump;
 pub(crate) mod recording;
+mod servers;
+mod snapshots;
+mod tabs;
 pub(crate) mod trace;
 
 use std::collections::HashMap;
@@ -40,6 +31,7 @@ use crate::browser::preview_bridge::Bridge;
 use crate::browser::preview_recording::Recording;
 use crate::error::{CoreError, Result};
 use crate::governance::computer::cdp::{BrowserSession, HistoryState, LaunchOptions};
+
 pub(crate) use expressions::{DEFAULT_SCROLL, MAX_SCROLL, MAX_TYPE_CHARS, MAX_WAIT_TEXT_CHARS};
 pub(crate) use snapshots::MAX_SELECTOR_CHARS;
 
@@ -64,6 +56,7 @@ const SIZES: std::ops::RangeInclusive<u32> = 100..=4096;
 /// clicked in the page changes it with nobody telling this side.
 const HISTORY_TICKS: u32 = 5;
 const ZOOMS: std::ops::RangeInclusive<f64> = 0.25..=3.0;
+
 pub(crate) struct Tab {
     pub(crate) info: Mutex<PreviewTab>,
     pub(crate) session: tokio::sync::Mutex<BrowserSession>,

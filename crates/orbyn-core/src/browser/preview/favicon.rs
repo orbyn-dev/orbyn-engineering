@@ -1,4 +1,4 @@
-//! Finding the address of a page's icon. The viewer fetches the bytes itself, through the restricted image proxy.
+//! Finding the address of a page's icon; the viewer fetches the bytes through the image proxy.
 
 use serde_json::Value;
 
