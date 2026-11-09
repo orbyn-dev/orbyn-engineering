@@ -4,6 +4,8 @@
 //! watches or records. This is local: a client watches over the same access as the
 //! rest of the API, and nothing here reaches another machine.
 
+mod favicon;
+
 pub mod bridge;
 pub(crate) mod recording;
 pub(crate) mod trace;
@@ -35,6 +37,7 @@ use crate::governance::computer::cdp::{
 };
 use crate::store::AuditRecord;
 use crate::util::new_id;
+use favicon::{FAVICON, favicon_url};
 
 const MAX_TABS: usize = 4;
 const FRAME_EVERY: Duration = Duration::from_millis(200);
@@ -57,31 +60,6 @@ const SIZES: std::ops::RangeInclusive<u32> = 100..=4096;
 /// How many frame ticks pass between looks at history, about one a second. A link
 /// clicked in the page changes it with nobody telling this side.
 const HISTORY_TICKS: u32 = 5;
-/// Discover only; the viewer fetches bytes through the restricted image proxy.
-const FAVICON: &str = r#"(() => {
-    const icon = document.querySelector('link[rel~="icon"]');
-    return { page_url: location.href, icon_url: icon ? icon.href : new URL('/favicon.ico', location.href).href };
-})()"#;
-
-fn favicon_url(value: &Value, page_url: &str) -> Option<String> {
-    if value.get("page_url")?.as_str()? != page_url {
-        return None;
-    }
-    let raw = value.get("icon_url")?.as_str()?;
-    if raw.len() > 4096 {
-        return None;
-    }
-    let mut url = reqwest::Url::parse(raw).ok()?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port_or_known_default() != Some(443)
-    {
-        return None;
-    }
-    url.set_fragment(None);
-    Some(url.to_string())
-}
 const ZOOMS: std::ops::RangeInclusive<f64> = 0.25..=3.0;
 const PROFILE_NAME_LIMIT: usize = 64;
 /// How many crashes are put right, and over what time.
