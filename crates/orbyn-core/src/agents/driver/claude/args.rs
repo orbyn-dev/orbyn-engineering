@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{base_settings, library_agents, run_settings_path};
+use super::settings::{base_settings, library_agents, run_settings_path};
 use crate::agents::console::ConsoleSpec;
 use crate::agents::driver::{CLAUDE_APPROVE_TOOL, RunSpec};
 

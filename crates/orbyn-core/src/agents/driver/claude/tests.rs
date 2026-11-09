@@ -3,6 +3,9 @@ use super::catalog::{documented_catalog, parse_capabilities, read_control};
 use super::events::{StreamMapper, on_user, rejected_limit};
 use super::mcp::{claude_tools, init_tools, parse_mcp_list};
 use super::plan::task_content;
+use super::settings::{
+    GUARDED_TOOLS, MAX_AGENTS, launch_settings, library_agents, rule_name, run_settings,
+};
 use super::*;
 use crate::agents::driver::CLAUDE_APPROVE_TOOL;
 

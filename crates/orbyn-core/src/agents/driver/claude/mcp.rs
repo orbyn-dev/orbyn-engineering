@@ -1,7 +1,7 @@
 use orbyn_contracts::AgUiEvent;
 use serde_json::{Value, json};
 
-use super::{MAX_SEEN_SERVERS, rule_name, seen_servers};
+use super::settings::{MAX_SEEN_SERVERS, rule_name, seen_servers};
 use crate::agents::driver::{EngineEvent, MCP_SERVER_NAME};
 
 /// One line of `claude mcp list`: the server's name, and what the CLI says of it.
