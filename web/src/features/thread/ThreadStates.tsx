@@ -9,7 +9,7 @@ import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { unarchiveThread } from "../workspace";
-import { usageShare } from "./ComposerExtras";
+import { usageShare } from "./composer/ComposerExtras";
 import { useThreadLogs } from "../../state/threadLogs";
 import { waitLeft } from "../../lib/format";
 

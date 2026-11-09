@@ -30,8 +30,8 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionPanel.tsx:79` | exists | P2 | |
 | 12 | `plan` | Threads | Proposed plan | `features/thread/PlanCard.tsx:76` | exists | P2 | |
 | 13 | `subagents` | Threads | Subagents and queued messages | `features/thread/SubagentBar.tsx:40; features/thread/QueuedMessages.tsx:9` | exists | P2 | |
-| 14 | `composer` | Threads | Composer | `features/thread/Composer.tsx:105` | exists | P2 | |
-| 15 | `composer-menus` | Threads | Access mode and slash commands | `features/thread/Composer.tsx:243; features/thread/ComposerTraits.tsx` | exists | P2 | |
+| 14 | `composer` | Threads | Composer | `features/thread/composer/Composer.tsx:105` | exists | P2 | |
+| 15 | `composer-menus` | Threads | Access mode and slash commands | `features/thread/composer/Composer.tsx:243; features/thread/composer/ComposerTraits.tsx` | exists | P2 | |
 | 16 | `banners` | Threads | Thread states | `features/thread/ThreadBanners.tsx:19` | exists | P2 | |
 | 17 | `git` | Threads | Commit, push and worktrees | `features/thread/GitControl.tsx:16` | exists | P2 | |
 | 18 | `find` | Threads | Find, minimap and related threads | `features/thread/ThreadFind.tsx:34; features/thread/Minimap.tsx:14; features/thread/RelatedThreads.tsx:25` | exists | P2 | |
@@ -199,24 +199,24 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 180 | `x-panel-maximised` | Side panel, every state | Panel: maximised | `features/panels/SurfacePane.tsx:245` | exists | P1 | |
 | 181 | `x-panel-tabs-more` | Side panel, every state | Panel: tabs overflow | `features/panels/SurfacePane.tsx:220` | partial | P1 | |
 | 182 | `x-panel-offline` | Side panel, every state | Panel: offline | `features/panels/SurfacePane.tsx` | missing | P1 | |
-| 183 | `x-chat-streaming` | Threads, every state | Reply streaming, with stop | `features/thread/ComposerExtras.tsx:129; features/thread/items.tsx:208` | exists | P2 | |
+| 183 | `x-chat-streaming` | Threads, every state | Reply streaming, with stop | `features/thread/composer/ComposerExtras.tsx:129; features/thread/items.tsx:208` | exists | P2 | |
 | 184 | `x-chat-interrupted` | Threads, every state | Interrupted, then resumed | `features/thread/ThreadView.tsx:167` | partial | P2 | |
 | 185 | `x-chat-code` | Threads, every state | Long code block with copy | `features/content/code/CodeBlock.tsx:44` | partial | P2 | |
-| 186 | `x-chat-attach` | Threads, every state | Attached files and images | `features/thread/Composer.tsx:70; features/thread/SentFiles.tsx` | exists | P2 | |
+| 186 | `x-chat-attach` | Threads, every state | Attached files and images | `features/thread/composer/Composer.tsx:70; features/thread/SentFiles.tsx` | exists | P2 | |
 | 187 | `x-chat-tool` | Threads, every state | Tool call expanded | `features/thread/items.tsx:190` | exists | P2 | |
 | 188 | `x-chat-error` | Threads, every state | Error with retry | `features/thread/ThreadBanners.tsx:70` | exists | P2 | |
 | 189 | `x-chat-ratelimit` | Threads, every state | Rate limited, with time to wait | `features/thread/ThreadBanners.tsx:19` | partial | P2 | |
-| 190 | `x-chat-context` | Threads, every state | Context nearly full | `features/thread/ComposerExtras.tsx:30` | partial | P2 | |
-| 191 | `x-chat-compacting` | Threads, every state | Compacting the thread | `features/thread/ComposerExtras.tsx:53` | partial | P2 | |
+| 190 | `x-chat-context` | Threads, every state | Context nearly full | `features/thread/composer/ComposerExtras.tsx:30` | partial | P2 | |
+| 191 | `x-chat-compacting` | Threads, every state | Compacting the thread | `features/thread/composer/ComposerExtras.tsx:53` | partial | P2 | |
 | 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `lib/timeline/projection.ts:133` | partial | P2 | |
 | 193 | `x-chat-edit` | Threads, every state | Edit a message and branch | `features/thread/MessageActions.tsx:81,94` | partial | P2 | |
 | 194 | `x-chat-message-menu` | Threads, every state | Message actions | `features/thread/MessageActions.tsx:41` | exists | P2 | |
 | 195 | `x-chat-long` | Threads, every state | Very long thread, jump to latest | `features/thread/Transcript.tsx:218` | partial | P2 | |
-| 196 | `x-chat-offline` | Threads, every state | Offline composer, queued message | `features/thread/Composer.tsx` | missing | P2 | |
-| 197 | `x-chat-slash` | Threads, every state | Slash command results | `features/thread/Composer.tsx:243` | exists | P2 | |
-| 198 | `x-chat-slash-none` | Threads, every state | Slash command with no match | `features/thread/Composer.tsx:243` | partial | P2 | |
-| 199 | `x-chat-mention` | Threads, every state | @-mention file picker | `features/thread/Composer.tsx:232` | exists | P2 | |
-| 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/Composer.tsx` | missing | P2 | |
+| 196 | `x-chat-offline` | Threads, every state | Offline composer, queued message | `features/thread/composer/Composer.tsx` | missing | P2 | |
+| 197 | `x-chat-slash` | Threads, every state | Slash command results | `features/thread/composer/Composer.tsx:243` | exists | P2 | |
+| 198 | `x-chat-slash-none` | Threads, every state | Slash command with no match | `features/thread/composer/Composer.tsx:243` | partial | P2 | |
+| 199 | `x-chat-mention` | Threads, every state | @-mention file picker | `features/thread/composer/Composer.tsx:232` | exists | P2 | |
+| 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/composer/Composer.tsx` | missing | P2 | |
 | 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView.tsx:347` | exists | P2 | |
 | 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/settings/PreferenceSections.tsx:602` | partial | P2 | |
 | 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/TerminalDrawerBody.tsx:101` | exists | P2 | |
@@ -292,19 +292,19 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 38 | `calview` | Month and week views | thumb transform translateX; view opacity and translateY 6px to 0 | base 200ms, page 240ms, exit 170ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | views cross-fade only | `n/a (Planner only)` | n/a | Not this app | |
 | 39 | `notelist` | Note list to editor | selection background-color; editor opacity | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same fades | `n/a (Notes only)` | n/a | Not this app | |
 | 40 | `search` | Search filtering | non-matching rows opacity; matching rows translateY into the freed slots | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | rows fade; matches jump up | `n/a (Notes only)` | n/a | Not this app | |
-| 41 | `send` | Send a message | message opacity and translateY 8px to 0 from the composer; composer text cleared | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1) | message fades in; no travel | `web/src/features/thread/Composer.tsx:960-975 .send-btn; web/src/styles/thread.css:1263` | missing | P2 | |
-| 42 | `stream` | Streaming text | each word opacity 0 to 1; send and stop icons cross-fade | fast 150ms | cubic-bezier(.2,.8,.2,1) | text appears whole in one fade | `web/src/styles/thread.css:360-366 .caret; features/thread/Composer.tsx:960-975` | missing | P2 | |
+| 41 | `send` | Send a message | message opacity and translateY 8px to 0 from the composer; composer text cleared | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1) | message fades in; no travel | `web/src/features/thread/composer/Composer.tsx:960-975 .send-btn; web/src/styles/thread.css:1263` | missing | P2 | |
+| 42 | `stream` | Streaming text | each word opacity 0 to 1; send and stop icons cross-fade | fast 150ms | cubic-bezier(.2,.8,.2,1) | text appears whole in one fade | `web/src/styles/thread.css:360-366 .caret; features/thread/composer/Composer.tsx:960-975` | missing | P2 | |
 | 43 | `steps` | Agent step trail | step opacity and translateY 8px to 0; spinner to tick cross-fade | fast 150ms, base 200ms | cubic-bezier(.2,.8,.2,1) | steps fade in; icons cross-fade | `web/src/features/thread/items.tsx:265; web/src/styles/thread.css:517 .trace[data-live]::after` | missing | P2 | |
 | 44 | `approval` | Approval card | card opacity and translateY 8px to 0; amber to neutral background and border; content cross-fade | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | card and content fade only | `web/src/features/thread/items.tsx; web/src/styles/thread.css:691 .approval` | missing | P2 | |
 | 45 | `question` | Question card | card as an approval; option background-color; question to answer cross-fade | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | fades only | `web/src/features/thread/items.tsx (question card)` | missing | P2 | |
 | 46 | `plan` | Plan proposed | card opacity and translateY 8px to 0; status and button cross-fade; step tick | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | fades only | `web/src/features/thread/items.tsx (plan card)` | missing | P2 | |
 | 47 | `subagents` | Subagent chips | chip opacity and translateY 8px to 0; spinner to tick cross-fade | fast 150ms | cubic-bezier(.2,.8,.2,1) | chips fade in together | `web/src/features/thread/SubagentBar.tsx:24` | missing | P2 | |
-| 48 | `composer` | Composer grow | one-line and three-line shells cross-fade; the thread translateY by the extra height; no height animation | fast 150ms, base 200ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | shells cross-fade; thread jumps | `web/src/features/thread/Composer.tsx; web/src/styles/thread.css:1128 .composer-box` | missing | P2 | |
+| 48 | `composer` | Composer grow | one-line and three-line shells cross-fade; the thread translateY by the extra height; no height animation | fast 150ms, base 200ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | shells cross-fade; thread jumps | `web/src/features/thread/composer/Composer.tsx; web/src/styles/thread.css:1128 .composer-box` | missing | P2 | |
 | 49 | `threadswitch` | Thread switch | thread background-color; conversation opacity (frequent action, no travel) | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same fades | `web/src/features/workspace/ThreadRow.tsx; web/src/styles/shell.css:309 .thread-row` | differs | P2 | |
 | 50 | `toolcalls` | Tool calls in a thread | group, command and extra-output rows height (grid 0fr to 1fr) and opacity; rows below are pushed, never overlapped; streamed lines opacity | base 200ms, exit 140ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | rows open and close at once, lines and content fade | `web/src/ui/Collapsible.tsx; web/src/styles/base.css:752 .collapsible-panel (used by items.tsx:98,201,333)` | differs | P2 | |
 | 51 | `hunk` | Diff hunk expand | revealed lines opacity; the lines below translateY by the revealed height | base 200ms, slow 300ms | cubic-bezier(.2,.8,.2,1) | lines fade in; the block below jumps | `web/src/features/panels/DiffPanel.tsx` | missing | P2 | |
 | 52 | `review` | Review-gate findings | finding opacity and translateY 8px to 0 as each check reports; gate label cross-fade | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1) | rows fade in as they arrive | `missing (no review-gate UI found in styles/*.css or components by grep)` | missing | P3 | |
-| 53 | `slash` | Notes slash menu | menu opacity, translateY -4px and scale .98 from the caret; items fade as the query narrows; inserted block opacity | base 200ms, exit 140ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | menu and block fade only | `web/src/features/thread/Composer.tsx (mention menu); web/src/styles/base.css:1138 .mention-menu` | differs | P1 | |
+| 53 | `slash` | Notes slash menu | menu opacity, translateY -4px and scale .98 from the caret; items fade as the query narrows; inserted block opacity | base 200ms, exit 140ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | menu and block fade only | `web/src/features/thread/composer/Composer.tsx (mention menu); web/src/styles/base.css:1138 .mention-menu` | differs | P1 | |
 | 54 | `linkchip` | Link chip insert | pasted text opacity out; chip opacity and scale .96 to 1 in the same spot | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | cross-fade without scale | `n/a (Notes only)` | n/a | Not this app | |
 | 55 | `saveind` | Save indicator | label opacity cross-fade; spinner rotates while saving | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade, static ring | `n/a (Notes only)` | n/a | Not this app | |
 | 56 | `flip` | Study card flip | card face opacity and scale .98 to 1 (2D swap, no rotation) | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | plain cross-fade, no scale | `n/a (Notes only)` | n/a | Not this app | |

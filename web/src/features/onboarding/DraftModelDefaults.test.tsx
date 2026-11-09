@@ -16,14 +16,14 @@ vi.mock("../../app/shortcuts", () => ({ useCommand: () => undefined }));
 vi.mock("../workspace/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
 vi.mock("./useDraftCheckout", () => ({ useDraftCheckout: () => ({ worktree: null, setWorktree: () => undefined, loading: false, error: null }) }));
 vi.mock("../../state/modelStore", () => ({ useEngineModels: () => null, resolveModel: () => null }));
-vi.mock("../thread/ComposerTraits", () => ({
+vi.mock("../thread/composer/ComposerTraits", () => ({
   ACCESS: { supervised: { label: "Supervised", icon: () => null } },
   EffortTrigger: () => null,
   offeredModes: () => ["supervised"],
   shownAccess: (_engine: unknown, saved: string) => saved,
   useTraitsMenu: () => ({ menu: null, openAt: () => undefined }),
 }));
-vi.mock("../thread/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick }: {
+vi.mock("../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick }: {
   selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void;
 }) => <button type="button" onClick={() => onPick({ engine: "codex", model: "explicit" })}>
   Model {selected.engine}/{selected.model ?? "automatic"}</button> }));

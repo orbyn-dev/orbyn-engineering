@@ -3,13 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../api/client";
-import type { EngineModels, EngineStatus } from "../../api/types";
+import { api } from "../../../api/client";
+import type { EngineModels, EngineStatus } from "../../../api/types";
 import { ModelPickerTrigger } from "./ModelPicker";
-import { useModelStore } from "../../state/modelStore";
+import { useModelStore } from "../../../state/modelStore";
 
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
+vi.mock("../../../api/client", async (original) => {
+  const actual = await original<typeof import("../../../api/client")>();
   return { ...actual, api: { ...actual.api, models: vi.fn() } };
 });
 const engines = [{ id: "codex", name: "Codex", installed: true, capabilities: { managed: true } }] as EngineStatus[];

@@ -1,12 +1,12 @@
 import { Check, ChevronDown, Search } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { EngineStatus } from "../../api/types";
-import { useCommand } from "../../app/shortcuts";
-import { useUi } from "../../state/ui";
-import { EngineGlyph } from "../../ui/badges";
-import { closingProps, Presence } from "../../ui/Presence";
-import { usePopover } from "../../ui/usePopover";
+import type { EngineStatus } from "../../../api/types";
+import { useCommand } from "../../../app/shortcuts";
+import { useUi } from "../../../state/ui";
+import { EngineGlyph } from "../../../ui/badges";
+import { closingProps, Presence } from "../../../ui/Presence";
+import { usePopover } from "../../../ui/usePopover";
 import {
   arrangeModels,
   modelKey,
@@ -16,7 +16,7 @@ import {
   useEngineModels,
   useModelStore,
   type PickerRow,
-} from "../../state/modelStore";
+} from "../../../state/modelStore";
 
 const MARGIN = 6;
 const GAP = 4;
