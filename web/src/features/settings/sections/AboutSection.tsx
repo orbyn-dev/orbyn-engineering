@@ -15,6 +15,7 @@ import { LogoTile } from "../../../ui/Logo";
 import { DRAFT_KEY, SCRATCH } from "../../../state/draftStore";
 import { heading, Toggle } from "./parts";
 
+/** The two lists of open-source packages, one for the interface and one for the service. */
 function LicenceLists({ onBack }: { onBack(): void }) {
   const [list, setList] = useState<"scripts" | "crates">("scripts");
   const [filter, setFilter] = useState("");

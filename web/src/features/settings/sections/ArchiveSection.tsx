@@ -9,6 +9,7 @@ import { unarchiveThread } from "../../workspace";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { heading } from "./parts";
 
+/** The project's name over its archived threads. A project that was removed keeps its group, with a neutral Removed tag. */
 export function ArchiveGroupHead({ name, removed }: { name: string; removed: boolean }) {
   return <p className="set-grp set-grp-tight">{name}{removed ? <span className="set-pill">Removed</span> : null}</p>;
 }

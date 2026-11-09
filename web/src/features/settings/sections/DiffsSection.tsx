@@ -5,6 +5,7 @@ import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { heading } from "./parts";
 
+/** The same stored layout the diff panel's own switch uses. */
 function DiffViewRow() {
   const layout = useUi((state) => state.diffLayout);
   const setPrefs = useUi((state) => state.setPrefs);
