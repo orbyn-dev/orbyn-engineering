@@ -1,6 +1,7 @@
 use super::args::{CAPABILITY_ENV, capability_args, console_args, run_args, session_cwd_in};
 use super::catalog::{documented_catalog, parse_capabilities, read_control};
 use super::events::{StreamMapper, on_user, rejected_limit};
+use super::mcp::{claude_tools, init_tools, parse_mcp_list};
 use super::plan::task_content;
 use super::*;
 use crate::agents::driver::CLAUDE_APPROVE_TOOL;

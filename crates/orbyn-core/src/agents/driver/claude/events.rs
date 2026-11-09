@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use orbyn_contracts::{AgUiEvent, ThreadUsage};
 use serde_json::{Value, json};
 
-use super::init_tools;
+use super::mcp::init_tools;
 use super::plan::{
     TaskStep, created_from_text, task_content, task_result, task_status, todo_content,
 };
