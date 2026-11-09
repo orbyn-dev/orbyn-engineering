@@ -12,293 +12,29 @@
  */
 
 import { ZipError, readEntryBytes, readZipArchive, type ZipEntry } from "./zipArchive";
+import {
+  MAX_BLOCKS,
+  MAX_CELLS,
+  MAX_COLUMNS_PER_SHEET,
+  MAX_NESTING,
+  MAX_ROWS_PER_SHEET,
+  MAX_SHEETS,
+  OfficeError,
+  type DocxBlock,
+  type DocxDocument,
+  type DocxTable,
+  type OfficeParts,
+  type OfficeRequest,
+  type OfficeResponse,
+  type OfficeSheet,
+  type XlsxDocument,
+} from "./officeModel";
+import { attr, child, children, localName, parseXml, stripControlChars, stripNoise, type XmlElement } from "./officeXml";
 
-/** How deep a part may nest before the reader refuses it: every descent below
- * this is a recursive call, and a stack overflow is not a message to show. */
-export const MAX_NESTING = 100;
-/** The most paragraphs and tables one Word document may hold. */
-export const MAX_BLOCKS = 5000;
-/** The most worksheets one workbook may name. */
-export const MAX_SHEETS = 200;
-/** The most rows and the most columns one sheet's grid shows. */
-export const MAX_ROWS_PER_SHEET = 5000;
-export const MAX_COLUMNS_PER_SHEET = 64;
-/**
- * The most cells every grid of one workbook may show together: each sheet's
- * rows by its widest column, added up, with a sheet that holds no value still
- * counting one column for its rows. One sheet at its own caps shows 320,000,
- * so this is about three such sheets. Bounding each sheet alone was not
- * enough: two hundred sheets of one cell at row 5000 column BL each show
- * 320,000 cells, which is 64,000,000 together, off a 61 KB file.
- */
-export const MAX_CELLS = 1000 * 1000;
-
-/** The formats this reader opens. `.docm` and `.xlsm` carry the same parts. */
-export type OfficeKind = "docx" | "xlsx";
-
-/** Why a document was refused. Every one of these is shown to the person. */
-export type OfficeRefusal =
-  | "office_unreadable"
-  | "office_too_deep"
-  | "office_too_many_blocks"
-  | "office_too_many_sheets"
-  | "office_too_many_cells";
-
-/** A refusal to read a document, with a message ready to show. */
-export class OfficeError extends Error {
-  readonly code: OfficeRefusal | string;
-
-  constructor(code: OfficeRefusal | string, message: string) {
-    super(message);
-    this.name = "OfficeError";
-    this.code = code;
-  }
-}
-
-/** One block of a Word body, with the plain text the reader can show as source. */
-export interface DocxHeading {
-  kind: "heading";
-  /** 1 to 4; a deeper heading style is shown at the deepest level here. */
-  level: 1 | 2 | 3 | 4;
-  text: string;
-}
-
-export interface DocxParagraph {
-  kind: "paragraph";
-  text: string;
-}
-
-export interface DocxTable {
-  kind: "table";
-  /** One entry per row; a cell's paragraphs are joined with a newline. */
-  rows: string[][];
-  /** The rows flattened: cells by tab, rows by newline. */
-  text: string;
-}
-
-export type DocxBlock = DocxHeading | DocxParagraph | DocxTable;
-
-export interface DocxDocument {
-  format: "docx";
-  blocks: DocxBlock[];
-  /** The source view's text: each block's own text on its own line. */
-  text: string;
-}
-
-/** One worksheet: its tab's label and the used range as display text. */
-export interface OfficeSheet {
-  name: string;
-  /** Rows from row 1, each holding the cells up to its own last value. */
-  rows: string[][];
-  /** Set when the sheet holds a value past the row cap, which is not shown. */
-  rowsCut?: boolean;
-  /** Set when the sheet holds a value past the column cap, which is not shown. */
-  columnsCut?: boolean;
-}
-
-export interface XlsxDocument {
-  format: "xlsx";
-  sheets: OfficeSheet[];
-}
-
-export type OfficeModel = DocxDocument | XlsxDocument;
-
-/** What the viewer hands the worker: the file's bytes and what it should be. */
-export interface OfficeRequest {
-  kind: OfficeKind;
-  bytes: Uint8Array<ArrayBuffer>;
-}
-
-/** What the worker hands back: a model, or a refusal with its own code. */
-export type OfficeResponse = { ok: true; model: OfficeModel } | { ok: false; code: string; message: string };
-
-/** The XML parts of one archive, read on demand. */
-export interface OfficeParts {
-  /** Every file entry, as the archive names it with `/` separators. */
-  readonly names: readonly string[];
-  /** One part's decompressed bytes, with the archive reader's caps and checks. */
-  read(name: string): Promise<Uint8Array<ArrayBuffer>>;
-}
+export * from "./officeModel";
 
 /** The part a Word document keeps its body in. */
 const DOCX_DOCUMENT_PART = "word/document.xml";
-
-/** The controls that are genuinely noise, in one test: below a tab, between a
- * newline and a space, and the two control blocks. A tab and a newline are not
- * among them, because a cell's own text can hold either. */
-function isNoise(code: number): boolean {
-  return (code < 0x20 && code !== 0x09 && code !== 0x0a) || (code >= 0x7f && code <= 0x9f);
-}
-
-/** Every control character and line break: a name, an attribute, or a run of
- * text, where a break can only have come from markup this reader already
- * turns into one (`w:tab`, `w:br`). */
-export function stripControlChars(text: string): string {
-  let clean = "";
-  for (const character of text) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
-    clean += character;
-  }
-  return clean;
-}
-
-/**
- * The noise taken out of a string whose own tabs and line breaks are content:
- * a workbook cell, where Alt+Enter is a real `&#10;` in the file. The grid
- * shows one so the reader can see it, and the markup the scanner drops is
- * never a line break, so nothing here invents one.
- */
-export function stripNoise(text: string): string {
-  let clean = "";
-  for (const character of text) {
-    if (!isNoise(character.codePointAt(0) ?? 0)) clean += character;
-  }
-  return clean;
-}
-
-/** One element of a scanned part. Only what the two formats need is kept. */
-interface XmlElement {
-  name: string;
-  attrs: Map<string, string>;
-  children: XmlElement[];
-  /** The character data directly inside this element, entities decoded. */
-  text: string;
-}
-
-const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-const TAG_NAME = /^[^\s/>]+/;
-const ATTRIBUTES = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-
-function decodeEntities(text: string): string {
-  if (!text.includes("&")) return text;
-  return text.replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, body: string) => {
-    if (!body.startsWith("#")) return NAMED_ENTITIES[body] ?? whole;
-    const hex = body[1] === "x" || body[1] === "X";
-    const code = Number.parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
-    // A lone surrogate cannot be built and has no meaning here.
-    if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return whole;
-    return String.fromCodePoint(code);
-  });
-}
-
-/** The end of a tag: a `>` inside a quoted value does not end it. */
-function findTagEnd(source: string, from: number): number {
-  let quote = "";
-  for (let at = from; at < source.length; at += 1) {
-    const character = source[at] ?? "";
-    if (quote) {
-      if (character === quote) quote = "";
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      continue;
-    }
-    if (character === ">") return at;
-  }
-  return -1;
-}
-
-function readAttributes(text: string): Map<string, string> {
-  const attrs = new Map<string, string>();
-  for (const match of text.matchAll(ATTRIBUTES)) {
-    const name = match[1];
-    if (!name) continue;
-    const value = match[2] ?? match[3] ?? "";
-    attrs.set(name, stripControlChars(decodeEntities(value)));
-  }
-  return attrs;
-}
-
-/**
- * A part as a tree. The scanner is deliberately forgiving: a stray close tag
- * and a tag cut short by the end of the bytes are ignored, because a document
- * that is damaged in one place should still show what it does hold. Comments,
- * the declaration and a doctype are skipped, and CDATA is taken as text.
- */
-function parseXml(source: string): XmlElement {
-  const root: XmlElement = { name: "#root", attrs: new Map(), children: [], text: "" };
-  const open: XmlElement[] = [root];
-  let at = 0;
-  while (at < source.length) {
-    const start = source.indexOf("<", at);
-    const top = open[open.length - 1];
-    if (!top) break;
-    if (start < 0) {
-      top.text += stripNoise(decodeEntities(source.slice(at)));
-      break;
-    }
-    top.text += stripNoise(decodeEntities(source.slice(at, start)));
-    if (source.startsWith("<!--", start)) {
-      const end = source.indexOf("-->", start + 4);
-      at = end < 0 ? source.length : end + 3;
-      continue;
-    }
-    if (source.startsWith("<![CDATA[", start)) {
-      const end = source.indexOf("]]>", start + 9);
-      const stop = end < 0 ? source.length : end;
-      top.text += stripNoise(source.slice(start + 9, stop));
-      at = end < 0 ? source.length : end + 3;
-      continue;
-    }
-    if (source.startsWith("<?", start)) {
-      const end = source.indexOf("?>", start + 2);
-      at = end < 0 ? source.length : end + 2;
-      continue;
-    }
-    if (source.startsWith("<!", start)) {
-      // A doctype; this reader never needs its declarations.
-      const end = findTagEnd(source, start + 2);
-      at = end < 0 ? source.length : end + 1;
-      continue;
-    }
-    const end = findTagEnd(source, start + 1);
-    if (end < 0) break;
-    const body = source.slice(start + 1, end);
-    at = end + 1;
-    if (body.startsWith("/")) {
-      const name = body.slice(1).trim();
-      while (open.length > 1 && open[open.length - 1]?.name !== name) open.pop();
-      if (open.length > 1) open.pop();
-      continue;
-    }
-    const selfClosing = body.endsWith("/");
-    const tag = selfClosing ? body.slice(0, -1) : body;
-    const name = TAG_NAME.exec(tag)?.[0] ?? "";
-    if (name === "") continue;
-    const element: XmlElement = { name, attrs: readAttributes(tag.slice(name.length)), children: [], text: "" };
-    top.children.push(element);
-    if (!selfClosing) open.push(element);
-  }
-  return root;
-}
-
-/** The part after a namespace prefix: `w:p` is `p`, and `r:id` is `id`. */
-function localName(name: string): string {
-  const at = name.indexOf(":");
-  return at < 0 ? name : name.slice(at + 1);
-}
-
-/**
- * A match by local name, so a prefixed `w:p` and an unprefixed `p` both count:
- * a Word body prefixes its elements and a sheet's XML usually does not.
- */
-function child(element: XmlElement, name: string): XmlElement | null {
-  return element.children.find((node) => localName(node.name) === name) ?? null;
-}
-
-function children(element: XmlElement, name: string): XmlElement[] {
-  return element.children.filter((node) => localName(node.name) === name);
-}
-
-/** An attribute by local name, so `w:val` and `val` both answer. */
-function attr(element: XmlElement, name: string): string | null {
-  const exact = element.attrs.get(name);
-  if (exact !== undefined) return exact;
-  for (const [key, value] of element.attrs) if (localName(key) === name) return value;
-  return null;
-}
 
 /** OPC part names compare without case, and a package may name one either way. */
 function findPart(names: readonly string[], name: string): string | null {
@@ -718,3 +454,4 @@ export async function respondToOfficeRequest(request: OfficeRequest): Promise<Of
     return { ok: false, code: "office_unreadable", message: "This document can't be read." };
   }
 }
+
