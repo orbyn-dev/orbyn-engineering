@@ -110,6 +110,28 @@ describe("one pull request as a page", () => {
     finish(detail());
   });
 
+  it("keeps the page bar mounted from loading through an error and a retry to the loaded page", async () => {
+    let finish: (value: PullRequestDetail) => void = () => {};
+    vi.mocked(pullsApi.detail)
+      .mockRejectedValueOnce(new ApiFailure("unreachable", "bad gateway", 502))
+      .mockImplementationOnce(() => new Promise<PullRequestDetail>((resolve) => { finish = resolve; }));
+    render(<PullDetail layout="page" projectId="p" number={142} />);
+    const bar = document.querySelector(".page-bar") as HTMLElement;
+    expect([...document.querySelectorAll(".pull-page-tabs button")].map((tab) => tab.textContent)).toEqual(["Summary", "Guide", "Conversation", "Files changed", "Checks"]);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(document.querySelector(".page-bar")).toBe(bar);
+    bar.tabIndex = -1;
+    bar.focus();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(document.querySelector(".page-bar")).toBe(bar);
+    finish(detail());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByRole("button", { name: /^Merge$/ })).toBeInTheDocument();
+    expect(document.querySelector(".page-bar")).toBe(bar);
+    expect(document.activeElement).toBe(bar);
+  });
+
   it("shows the base branch as plain text in the Status card, with no input inside it", async () => {
     await show(detail());
     const card = document.querySelector(".pull-status") as HTMLElement;

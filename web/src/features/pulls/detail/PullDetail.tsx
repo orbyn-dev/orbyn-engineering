@@ -30,7 +30,7 @@ import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, 
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
 import { Stack } from "./PullStack";
-import { PAGE_LABELS, PullDetailError, PullDetailLoading, TAB_LABELS, TitleForm, pullMenuItems, type Tab } from "./PullDetailParts";
+import { PAGE_LABELS, pullDetailError, pullDetailLoading, TAB_LABELS, TitleForm, pullMenuItems, type Tab } from "./PullDetailParts";
 
 
 /** One pull request: Summary, Guide, Timeline and Code, with merge and review. */
@@ -118,8 +118,8 @@ export function PullDetail({
       </span>
     </PageBar>
   );
-  if (detail.status === "loading") return <PullDetailLoading page={page} number={number} pageHead={pageHead} />;
-  if (detail.status === "error" && !detail.data) return <PullDetailError page={page} number={number} pageHead={pageHead} signedOut={signedOut} forgeLabel={forgeLabel} failure={detail.error} onRetry={detail.reload} />;
+  if (detail.status === "loading") return pullDetailLoading({ page, number, pageHead });
+  if (detail.status === "error" && !detail.data) return pullDetailError({ page, number, pageHead, signedOut, forgeLabel, failure: detail.error, onRetry: detail.reload });
   const current = detail.data as PullRequestDetail;
   const { pull, mergeable, additions, deletions, changed_files: files } = current;
   const open = pull.state === "open";

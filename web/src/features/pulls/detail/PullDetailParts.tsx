@@ -116,7 +116,7 @@ export function TitleForm({
 type PageHead = (title: ReactNode, pill?: ReactNode) => ReactNode;
 
 /** The pull request while its first read runs: the page's skeleton, or a plain loading row in the panel. */
-export function PullDetailLoading({ page, number, pageHead }: { page: boolean; number: number; pageHead: PageHead }) {
+export function pullDetailLoading({ page, number, pageHead }: { page: boolean; number: number; pageHead: PageHead }) {
   if (page)
     return (
       <article className="pull-page" aria-label={`Pull request #${number}`}>
@@ -137,7 +137,7 @@ export function PullDetailLoading({ page, number, pageHead }: { page: boolean; n
 }
 
 /** The pull request when its first read failed: sign-in or retry on the page, an error row in the panel. */
-export function PullDetailError({
+export function pullDetailError({
   page,
   number,
   pageHead,
