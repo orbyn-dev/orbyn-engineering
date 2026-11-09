@@ -1,4 +1,9 @@
+use std::path::Path;
+
+use serde_json::json;
+
 use super::*;
+use crate::error::CoreError;
 
 #[test]
 fn a_github_commit_reads_its_first_line_and_login() {
