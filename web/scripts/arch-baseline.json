@@ -6,11 +6,7 @@
   },
   "direction": [],
   "tier": [],
-  "lines": {
-    "app/Shell.tsx": 732,
-    "features/onboarding/DraftView.tsx": 608,
-    "product/state/ui.ts": 783
-  },
+  "lines": {},
   "css": {
     "styles/thread.css": 4497
   }

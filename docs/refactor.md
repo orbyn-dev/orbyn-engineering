@@ -107,17 +107,17 @@ Notes:
 | W2 | CSS ownership: no class defined twice | open, needs the owner's go-ahead |
 | W3 | Break feature cycles; `features/content` and `index.ts` front doors | done |
 | W4 | Per-feature `api.ts` and hooks | open (not started) |
-| W5 | Giant components into sub-folders (composer, trail, sidebar, panels, settings, pulls, usage) | done except the three files in W7b |
+| W5 | Giant components into sub-folders (composer, trail, sidebar, panels, settings, pulls, usage) | done |
 | W6 | Naming pass and `web/README.md` | `web/README.md` exists (W7a); the naming pass is open |
 | W7a | Product and generic tiers for shared web code (`product/`) | done |
-| W7b | Split `app/Shell.tsx` (732 lines), `product/state/ui.ts` (783) and `onboarding/DraftView.tsx` (608) | open |
+| W7b | Split `app/Shell.tsx` (732 lines), `product/state/ui.ts` (783) and `onboarding/DraftView.tsx` (608) | done |
 
 The backend (B) and web (W) tracks can run in parallel.
 
 ### Status
 
 - R0, W1: done.
-- W5 (in progress): `features/thread/composer/` holds the composer (`Composer.tsx` 1,109 to 597
+- W5: `features/thread/composer/` holds the composer (`Composer.tsx` 1,109 to 597
   lines, with the mention menu, constants, key and paste handling, attachment, stash, stop
   and thread-setting hooks, field, bar, context row and suggestion loading each in a file
   of their own) and `features/thread/trail/` holds the tool trail (`ToolTrail.tsx` 876 to
@@ -143,8 +143,20 @@ The backend (B) and web (W) tracks can run in parallel.
   `features/usage/` keeps its files side by side (`UsagePage.tsx` 763 to 247, with the view, limits,
   parts and price dialog in files of their own). All four left the baseline (7 to 3 long TypeScript
   files). `features/tools` stays its own feature: `thread` and `panels` import it, and `settings`
-  sits above them, so folding it into `settings/tools-connectors/` would be a cycle. The three
-  remaining long web files (`Shell.tsx`, `product/state/ui.ts`, `DraftView.tsx`) are W7b.
+  sits above them, so folding it into `settings/tools-connectors/` would be a cycle.
+- W7b: done. `app/Shell.tsx` (732 to 150 lines) is `app/shell/`: `Shell.tsx` (the component),
+  `routes.tsx` (home and the route switch), `commands.ts` (the commands the shell owns, focus
+  cycling, jump rows), `keys.ts` (the global key listener, its context, the undo shortcut and the
+  slow-request toast), `loading.ts` (the one-at-a-time workspace and engine loads), `notifications.ts`
+  (the announcer, the chime and thread notices), `focus.ts` (route focus and toast clearance),
+  `events.ts` (desktop shell events) and `index.ts` as the front door. `product/state/ui.ts` (783)
+  is `product/state/ui/`: `types.ts` (the vocabulary and shapes, `Prefs` included), `defaults.ts`
+  (first-run values and the layout helpers), `savedPrefs.ts` (reading, migrating and cleaning what
+  was saved), `store.ts` (the store and its actions), `theme.ts` (`resolveTheme`, `applyTheme`) and
+  `index.ts`, which exports exactly what the single file did, so about 60 importers are untouched.
+  `features/onboarding/DraftView.tsx` (608 to 532) is `DraftView/`: `index.tsx` (the component),
+  `DraftModelControls.tsx`, `suggestions.ts` and `draftHelpers.ts`. The web long-file baseline is
+  empty of TypeScript (3 to 0); only `styles/thread.css` stays, for W2.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
@@ -255,8 +267,8 @@ curated list of API names; the table is the record).
 ## Handoff
 
 The refactor stops here for now. Whoever continues starts from this section. Current numbers:
-the web architecture baseline has 3 long TypeScript files (`app/Shell.tsx`, `product/state/ui.ts`,
-`features/onboarding/DraftView.tsx`) and 1 long CSS file (`styles/thread.css`); the Rust baseline
+the web architecture baseline has no long TypeScript files and 1 long CSS file (`styles/thread.css`,
+which is W2); the Rust baseline
 has 3 long files (`conversation/runs.rs`, `agents/engines/mod.rs`, `bin/orbyn_fake_engine.rs`). The
 `direction` and `tier` web baselines are empty, and deep imports, file cycles and feature cycles
 have no baseline.
@@ -265,7 +277,6 @@ have no baseline.
 
 | Unit | Work | Size and notes |
 | --- | --- | --- |
-| W7b | Split `app/Shell.tsx`, `product/state/ui.ts` (stores, persistence and migration are separate concerns) and `features/onboarding/DraftView.tsx` | Web only. Keep hook order and effects; `state/ui.ts` holds the persisted prefs (`prefsMigration` tests exist). Finishes the web long-file baseline. |
 | B3c2 | `conversation/runs.rs` (1,996 lines: admission, queue, warm next turn, limits, checkpoints, rewind hold) and `agents/engines/mod.rs` (1,659) into folders, same method as B3a to B3c1 | Rust. Needs a warm `target/` (a clean build takes several GB). `bin/orbyn_fake_engine.rs` (1,715) is a test double: split it only if a cut is clean, otherwise keep it baselined. |
 | B4 | One process-spawn path (git always through the wrapper; today about 8 direct `Command::new("git")` sites in core), one JSON helper (three different `field()` helpers), one home-directory lookup (about five private copies), and visibility narrowing checked with the compiler (the scout's name-matching list is not enough) | Rust. Changes behaviour paths, so each change needs its own test. |
 | W2 | CSS ownership: `styles/thread.css` (about 4,500 lines, mostly panels and onboarding rules), `pages.css`, `shell.css`, `base.css` move next to the components they style; shared pieces (`btn`, `dialog`, `pill`, `empty` and the like, defined in up to 10 files) are defined once in `ui/` | **Needs the owner's go-ahead.** The tests cannot see a changed cascade. Compare screenshots before and after in Light, Dark and Dim for every moved rule, and keep the CSS load order identical (compare the first-import order from `main.tsx`, as the W7a review did). |
