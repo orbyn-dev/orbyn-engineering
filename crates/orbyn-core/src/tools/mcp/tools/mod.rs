@@ -4,6 +4,8 @@
 //! asking, so each one with an effect goes through the gate here, as a `tool` action:
 //! it needs a person unless the thread is in full access or a rule allows it.
 
+mod project;
+
 mod guide;
 
 mod definitions;
@@ -32,8 +34,6 @@ const MAX_WAIT_SECONDS: u64 = 40;
 const MAX_SEARCH_CHARS: usize = 200_000;
 const MAX_HITS: usize = 50;
 const MAX_BATCH: usize = 16;
-const MAX_PROJECT_PATH_BYTES: usize = 4096;
-const MAX_PROJECT_ID_BYTES: usize = 128;
 /// A published page's frame height. Nothing measures the page yet (C23), so a call
 /// picks the height and these are the bounds it is held to.
 const DEFAULT_RENDER_HEIGHT: u64 = 480;
@@ -89,16 +89,6 @@ fn wait_seconds(args: &Value) -> Result<u64> {
             .map(|seconds| seconds.min(MAX_WAIT_SECONDS))
             .ok_or_else(|| CoreError::Invalid("seconds must be a non-negative integer.".into())),
     }
-}
-
-fn bounded_project_text<'a>(args: &'a Value, key: &str, max_bytes: usize) -> Result<&'a str> {
-    let value = text(args, key)?;
-    if value.len() > max_bytes || value.contains('\0') {
-        return Err(CoreError::Invalid(format!(
-            "{key} is at most {max_bytes} bytes and cannot contain NUL."
-        )));
-    }
-    Ok(value)
 }
 
 /// A pull request number as stored: positive and small enough for SQLite.
@@ -232,64 +222,6 @@ fn render_title(args: &Value) -> String {
 }
 
 impl Core {
-    /// Only project add/remove may reach another project. Resolve exactly what
-    /// the approval describes; callers cannot supply the internal preview fields.
-    async fn project_tool_preview(
-        &self,
-        binding: &McpBinding,
-        name: &str,
-        args: &Value,
-    ) -> Result<Option<Value>> {
-        if binding.scope.plan && matches!(name, "orbyn_project_create" | "orbyn_project_delete") {
-            return Err(CoreError::Invalid(
-                "Plan mode does not add or remove projects.".into(),
-            ));
-        }
-        match name {
-            "orbyn_project_create" => {
-                let path = bounded_project_text(args, "path", MAX_PROJECT_PATH_BYTES)?;
-                if !Path::new(path).is_absolute() {
-                    return Err(CoreError::Invalid(
-                        "path must be an absolute existing folder.".into(),
-                    ));
-                }
-                let root = crate::project::workspace::resolve_project(
-                    &self.workspace.root()?,
-                    Path::new(path),
-                )
-                .await?;
-                let path = root.path.to_string_lossy().into_owned();
-                bounded_project_text(&json!({ "path": path }), "path", MAX_PROJECT_PATH_BYTES)?;
-                Ok(Some(
-                    json!({ "path": path, "trusted": false, "files_created": false }),
-                ))
-            }
-            "orbyn_project_delete" => {
-                let id = bounded_project_text(args, "project_id", MAX_PROJECT_ID_BYTES)?;
-                let project = self.store.project(id)?;
-                bounded_project_text(
-                    &json!({ "path": project.path }),
-                    "path",
-                    MAX_PROJECT_PATH_BYTES,
-                )?;
-                bounded_project_text(&json!({ "name": project.name }), "name", 4096)?;
-                let own = self.store.thread(&binding.scope.thread_id)?;
-                if project.id == own.project_id
-                    || project.scratch
-                    || Path::new(&project.path) == self.workspace.root()?
-                {
-                    return Err(CoreError::Invalid("The caller's own, library and scratch projects cannot be removed by a tool.".into()));
-                }
-                let threads = self.store.agent_project_threads(id)?;
-                Ok(Some(json!({
-                    "project_id": id, "path": project.path, "name": project.name,
-                    "thread_ids": threads, "files_removed": false,
-                })))
-            }
-            _ => Ok(None),
-        }
-    }
-
     /// Runs one of Orbyn's tools for `binding`'s run. A tool with an effect is
     /// refused unless the gate allows it, and the gate's reason comes back.
     pub async fn call_orbyn_tool(
@@ -329,25 +261,6 @@ impl Core {
             }
         }
         self.run_orbyn_tool(binding, name, args).await
-    }
-
-    /// A thread in the caller's project. Anything else reads as not found, so a
-    /// tool cannot be used to learn what other projects hold.
-    fn project_thread(&self, binding: &McpBinding, id: &str) -> Result<Thread> {
-        let own = self.store.thread(&binding.scope.thread_id)?;
-        let thread = self.store.thread(id)?;
-        if thread.project_id != own.project_id {
-            return Err(CoreError::NotFound("thread".into()));
-        }
-        Ok(thread)
-    }
-
-    fn project_task(&self, binding: &McpBinding, id: &str) -> Result<()> {
-        let own = self.store.thread(&binding.scope.thread_id)?;
-        if self.store.task(id)?.project_id != own.project_id {
-            return Err(CoreError::NotFound("scheduled task".into()));
-        }
-        Ok(())
     }
 
     /// A new thread in the caller's project with a first message.

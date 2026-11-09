@@ -10,6 +10,7 @@ use super::guide::{
     MAX_FILE_NOTE_CHARS, MAX_GUIDE_PATH_BYTES, MAX_GUIDE_STOPS, MAX_STOP_FILES, MAX_STOP_QUESTIONS,
     MAX_STOP_SUMMARY_CHARS, MAX_STOP_TITLE_CHARS, guide_head, guide_stops,
 };
+use super::project::{MAX_PROJECT_ID_BYTES, MAX_PROJECT_PATH_BYTES, bounded_project_text};
 use super::*;
 
 #[test]
