@@ -1,6 +1,9 @@
 //! The per-run MCP server: hand-written JSON-RPC behind `POST /mcp/:thread_token`.
 //! A token is random per run, reaches only that run's engine and dies with the run.
 
+pub mod apps;
+pub mod tools;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
