@@ -2,8 +2,7 @@ import { Check, CloudOff, RefreshCw } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useRef } from "react";
 import { useConnection } from "../../../product/state/connection";
-import { request } from "../api";
-import type { ForgeStatus } from "../../../api/types";
+import { listForges } from "../api";
 import { useAsync } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
@@ -12,7 +11,7 @@ import { SourceControlWriting } from "./SourceControlWriting";
 import { heading } from "./parts";
 
 export function SourceControlSection() {
-  const forges = useAsync("forges", (signal) => request<ForgeStatus[]>("GET", "/api/forges?rescan=true", undefined, signal));
+  const forges = useAsync("forges", (signal) => listForges(signal));
   const offline = useConnection((state) => state.offline);
   const scannedAt = useRef<number | null>(null);
   if (forges.status === "ready" && !offline) scannedAt.current = Date.now();

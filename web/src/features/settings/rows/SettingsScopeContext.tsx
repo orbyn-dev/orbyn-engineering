@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, type ReactNode } from "react";
-import { request, type ApiFailure } from "../api";
+import { queryProjectScopes, type ApiFailure } from "../api";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectSettingsSelection } from "../../../generated/ProjectSettingsSelection";
@@ -39,7 +39,7 @@ export function SettingsScopeProvider({ section, children }: { section: Settings
   const key = JSON.stringify(query);
   const result = useAsync(`settings-scope:${key}`, async (signal) => {
     try {
-      return { key, catalog: await request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", query, signal), error: null };
+      return { key, catalog: await queryProjectScopes(query, signal), error: null };
     } catch (error) {
       return { key, catalog: null, error: toFailure(error) };
     }

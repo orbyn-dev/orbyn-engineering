@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "../../../product/shell/shortcuts";
-import { api, request } from "../api";
+import { api, readPreferences } from "../api";
 import { inDesktopApp, readShellStatus } from "../api";
-import type { PreferenceView } from "../../../api/types";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { HOLD_MS, isQuitKey, quitTracker, type QuitMode, type QuitState } from "./quitTracker";
@@ -31,7 +30,7 @@ export function QuitConfirmation() {
     const read = async () => {
       const [info, preferences] = await Promise.all([
         api.info(),
-        request<PreferenceView[]>("GET", "/api/preferences"),
+        readPreferences(),
         inDesktopApp() ? Promise.resolve() : readShellStatus().then(() => undefined),
       ]);
       const value = preferences.find((view) => view.key === "quit_confirmation")?.value;

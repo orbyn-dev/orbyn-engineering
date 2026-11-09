@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, request } from "../api";
+import { api, queryProjectScopes } from "../api";
 import type { Project, ServerSettings, Thread } from "../../../api/types";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
@@ -61,9 +61,7 @@ export function useSidebarCatalog(
       return;
     }
     const abort = new AbortController();
-    request<ProjectScopeCatalog>(
-      "POST",
-      "/api/settings/project-scopes",
+    queryProjectScopes(
       { recipe: { mode: projectGrouping, overrides: JSON.parse(overridesKey) as typeof groupingOverrides } },
       abort.signal,
     ).then(setGroupingCatalog, () => {

@@ -1,7 +1,6 @@
 import { useRef } from "react";
-import { authHeaders, request } from "../api";
+import { authHeaders, choosePreviewFiles, copyPreview } from "../api";
 import { serviceUrl } from "../api";
-import type { PreviewCopy } from "../../../generated/PreviewCopy";
 import type { PreviewDownload } from "../../../generated/PreviewDownload";
 import type { PreviewTab } from "../../../generated/PreviewTab";
 import type { PreviewUpload } from "../../../generated/PreviewUpload";
@@ -40,7 +39,7 @@ async function bytesRequest(method: string, path: string, body?: Blob): Promise<
  * needs, and plain text goes to browsers without clipboard items.
  */
 export function copyFromPage(threadId: string, tabId: string): Promise<void> {
-  const text = request<PreviewCopy>("POST", `${tabBase(threadId, tabId)}/copy`).then((copied) => copied.text);
+  const text = copyPreview(threadId, tabId).then((copied) => copied.text);
   const clipboard = navigator.clipboard as Clipboard | undefined;
   if (!clipboard) return Promise.reject(new Error("This window has no clipboard."));
   if (typeof ClipboardItem === "function" && typeof clipboard.write === "function") {
@@ -58,7 +57,7 @@ export async function answerChooser(threadId: string, tabId: string, files: File
     const response = await bytesRequest("POST", `${base}/uploads?name=${q(file.name)}`, file);
     ids.push(((await response.json()) as PreviewUpload).id);
   }
-  await request("POST", `${base}/chooser`, { files: ids });
+  await choosePreviewFiles(threadId, tabId, ids);
 }
 
 /** Saves a finished download where the person's browser saves files. */

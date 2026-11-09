@@ -1,7 +1,7 @@
 import { ArrowUp, Download, Folder, GitBranch, Plus, Search, SquareCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api, request } from "../api";
-import type { PreferenceView, Project } from "../../../api/types";
+import { api, readPreferences } from "../api";
+import type { Project } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate, routeHref } from "../../../product/state/route";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -22,7 +22,7 @@ export function cloneAddress(text: string): string {
 
 /** The base directory setting, when the person has chosen one. */
 function useBaseDirectory(): string | null {
-  const preferences = useAsync("add-project-base-directory", (signal) => request<PreferenceView[]>("GET", "/api/preferences", undefined, signal));
+  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(signal));
   const value = (Array.isArray(preferences.data) ? preferences.data : []).find((view) => view.key === "add_project_base_directory")?.value;
   return typeof value === "string" && value.trim() ? value : null;
 }

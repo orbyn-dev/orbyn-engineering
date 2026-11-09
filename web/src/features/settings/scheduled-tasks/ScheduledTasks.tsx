@@ -2,7 +2,7 @@ import { chooseDraftEngine } from "../../onboarding";
 import { AlertTriangle, Check, CloudOff, Plus, RefreshCw, X } from "lucide-react";
 import "../ScheduledTasks.css";
 import { useEffect, useState } from "react";
-import { NETWORK_ERROR, request } from "../api";
+import { NETWORK_ERROR, deleteScheduledTask, listScheduledTasks, saveScheduledTask, setScheduledTaskEnabled } from "../api";
 import type { ScheduledTask, WebhookFilter } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { relativeTime } from "../../../lib/format";
@@ -20,11 +20,10 @@ import { PageBar } from "../../../product/ui/PageBar";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { Empty, Loading } from "../../../product/ui/states";
 
-const listTasks = (signal?: AbortSignal) => request<ScheduledTask[]>("GET", "/api/tasks", undefined, signal);
+const listTasks = (signal?: AbortSignal) => listScheduledTasks(signal);
 
 type TaskKind = "interval" | "fixed_time" | "webhook" | "after_thread";
 
-const q = encodeURIComponent;
 const MAX_FILTERS = 16;
 const FILTER_OPS = [
   { value: "equals", label: "equals" },
@@ -193,7 +192,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
               timestamp_path: hook.timestamp.trim() || undefined,
             }
           : {};
-      await request(task ? "PUT" : "POST", task ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
+      await saveScheduledTask(task ? task.id : null, {
         ...kept,
         ...webhook,
         project_id: project,
@@ -319,7 +318,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
       ) : null}
       {deleting && task ? (
         <ConfirmDialog title={`Delete ${task.name}?`} confirmLabel="Delete task" tone="danger" onClose={() => setDeleting(false)}
-          onConfirm={async () => { await request("DELETE", `/api/tasks/${q(task.id)}`); onSaved(); onClose(); }}>
+          onConfirm={async () => { await deleteScheduledTask(task.id); onSaved(); onClose(); }}>
           <p>The task stops running. Threads it already started stay.</p>
         </ConfirmDialog>
       ) : null}
@@ -484,7 +483,7 @@ function TasksView({ page }: { page: boolean }) {
                       aria-label={`Enable ${task.name}`}
                       checked={task.enabled}
                       onChange={(event) =>
-                        void act(request("POST", `/api/tasks/${encodeURIComponent(task.id)}/enabled`, { enabled: event.target.checked }))
+                        void act(setScheduledTaskEnabled(task.id, event.target.checked))
                       }
                     />
                   </span>

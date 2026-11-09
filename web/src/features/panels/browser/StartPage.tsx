@@ -1,10 +1,8 @@
 import { Square } from "lucide-react";
-import { request } from "../api";
-import type { BrowserProfile, LocalServer } from "../../../api/types";
+import { listBrowserProfiles, listThreadServers, stopThreadServer } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
-import { q } from "./browserModel";
 
 /** Reachable servers from this thread's processes, and pages opened before. */
 export function StartPage({
@@ -21,10 +19,10 @@ export function StartPage({
   isPrivate: boolean;
 }) {
   const profiles = useAsync("browser-profiles", (signal) =>
-    request<BrowserProfile[]>("GET", "/api/browser-profiles", undefined, signal),
+    listBrowserProfiles(signal),
   );
   const servers = useAsync(`servers:${threadId}`, (signal) =>
-    request<LocalServer[]>("GET", `/api/threads/${q(threadId)}/servers`, undefined, signal),
+    listThreadServers(threadId, signal),
   );
   const recent = useUi((state) => state.recentUrls);
   const pushToast = useUi((state) => state.pushToast);
@@ -58,7 +56,7 @@ export function StartPage({
                 <IconButton
                   label={`Stop localhost:${server.port}`}
                   onClick={() => {
-                    request<void>("POST", `/api/threads/${q(threadId)}/servers/${server.pid}/stop`).then(servers.reload, (failure: unknown) =>
+                    stopThreadServer(threadId, server.pid).then(servers.reload, (failure: unknown) =>
                       pushToast(`Couldn't stop it. ${toFailure(failure).message}`),
                     );
                   }}

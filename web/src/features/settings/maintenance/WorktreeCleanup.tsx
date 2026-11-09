@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../api";
+import { queryPreferences, updatePreferences } from "../api";
 import type { JsonValue } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import type { ScopedPreferenceRow } from "../../../generated/ScopedPreferenceRow";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
@@ -61,8 +60,8 @@ export function WorktreeCleanup() {
 
 function CleanupRules({ query }: { query: ProjectScopesQuery }) {
   const scope = useSettingsScope();
-  const read = useAsync("worktree-cleanup", (signal) => request<ScopedPreferencesResult>(
-    "POST", "/api/settings/preferences/query", { scope: query, keys: ["worktree_cleanup", "storage_cleanup"] }, signal), { keep: true });
+  const read = useAsync("worktree-cleanup", (signal) => queryPreferences(
+    { scope: query, keys: ["worktree_cleanup", "storage_cleanup"] }, signal), { keep: true });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
@@ -102,13 +101,13 @@ function CleanupRules({ query }: { query: ProjectScopesQuery }) {
     } finally { pending.current = false; if (mounted.current) setBusy(false); }
   };
   const put = (target: ProjectScopesQuery, version: string, current: ScopedPreferenceRow, edit: PreferenceEdit) =>
-    request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", {
+    updatePreferences({
       scope: target, membership_version: version, if_match: { [current.key]: current.revision }, edits: { [current.key]: edit } });
   const retry = error ? <p role="alert" className="field-error">{error} <Button small disabled={disabled} onClick={read.reload}>Retry</Button></p> : null;
   if (all) return <ProjectsTable row={row} groups={snapshot.catalog.groups} age={age} turn={turn} disabled={disabled} retry={retry}
     write={(group, edit) => guard(async () => {
       const target: ProjectScopesQuery = { selection: { kind: "project_group", group_key: group.key } };
-      const fresh = await request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: target, keys: [row.key] });
+      const fresh = await queryPreferences({ scope: target, keys: [row.key] });
       const current = fresh.rows.find((entry) => entry.key === row.key);
       if (current) await put(target, fresh.catalog.version, current, edit(current));
     })} />;

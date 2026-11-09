@@ -1,13 +1,12 @@
 import { useState, type KeyboardEvent } from "react";
-import { request } from "../api";
-import type { KeybindingsView } from "../../../api/types";
+import { readKeybindings, saveKeybinding } from "../api";
 import { runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { actionCommand } from "../../../product/composer/actionCommand";
 
 /** The environment owns shortcuts; an action save and a shortcut save are separate effects. */
 export function useActionKeybinding(initialId: string | null) {
-  const view = useAsync("action-keybindings", (signal) => request<KeybindingsView>("GET", "/api/keybindings", undefined, signal), { keep: true });
+  const view = useAsync("action-keybindings", (signal) => readKeybindings(signal), { keep: true });
   const [id, setId] = useState(initialId);
   const [draft, setDraft] = useState<string | null>(null);
   const ruleFor = (actionId: string | null) => actionId === null ? undefined
@@ -25,7 +24,7 @@ export function useActionKeybinding(initialId: string | null) {
     if (draft === null) return;
     const previous = ruleFor(actionId);
     if (draft === (previous?.key ?? "")) { setDraft(null); return; }
-    const next = await request<KeybindingsView>("POST", "/api/keybindings", {
+    const next = await saveKeybinding({
       command: actionCommand(actionId), key: draft || previous?.key,
       when: previous?.when ?? null, remove: draft === "",
     });

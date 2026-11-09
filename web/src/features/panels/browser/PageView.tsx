@@ -8,7 +8,7 @@ import {
   type WheelEvent,
 } from "react";
 import { serviceSocketUrl } from "../api";
-import { request } from "../api";
+import { pickPreviewElement, resizePreview, sendPreviewInput } from "../api";
 import { readToken } from "../api";
 import type { PickedElement, PreviewTab } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
@@ -67,7 +67,7 @@ export function PageView({
   }, [threadId, tab.id]);
   const send = (body: { kind: string; x?: number; y?: number; delta_y?: number; text?: string }) => {
     if (!human) return;
-    request("POST", `/api/threads/${q(threadId)}/previews/${q(tab.id)}/input`, body).catch((failure: unknown) =>
+    sendPreviewInput(threadId, tab.id, body).catch((failure: unknown) =>
       pushToast(`Couldn't reach the page. ${toFailure(failure).message}`),
     );
   };
@@ -123,7 +123,7 @@ export function PageView({
         fitted.current = size;
         // Input sent from now on reaches the page after this resize, so it maps to the new size.
         sized.current = size;
-        request("POST", `/api/threads/${q(threadId)}/previews/${q(tab.id)}/resize`, size).catch((failure: unknown) => {
+        resizePreview(threadId, tab.id, size).catch((failure: unknown) => {
           if (sized.current === size) sized.current = before;
           pushToast(`Couldn't resize the page. ${toFailure(failure).message}`);
         });
@@ -157,7 +157,7 @@ export function PageView({
       send({ kind: "click", ...point(event) });
       return;
     }
-    request<PickedElement>("POST", `/api/threads/${q(threadId)}/previews/${q(tab.id)}/pick`, point(event)).then(
+    pickPreviewElement(threadId, tab.id, point(event)).then(
       (picked) => onPicked?.(picked),
       (failure: unknown) => pushToast(`Couldn't read that element. ${toFailure(failure).message}`),
     );

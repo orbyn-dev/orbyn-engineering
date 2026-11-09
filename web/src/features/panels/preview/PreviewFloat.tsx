@@ -1,6 +1,6 @@
 import { Maximize2, X } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { request } from "../api";
+import { listPreviewTabs } from "../api";
 import type { PreviewTab } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
@@ -8,7 +8,6 @@ import { IconButton } from "../../../ui/controls";
 import { PageView } from "../browser/PageView";
 
 const POLL_MS = 3000;
-const q = encodeURIComponent;
 
 /** A tab an agent opened since the last look, if the Browser panel isn't showing. */
 export function newAgentTab(tabs: PreviewTab[], seen: Set<string>): PreviewTab | null {
@@ -31,7 +30,7 @@ function FloatHost({ threadId }: { threadId: string }) {
   const setFloat = useUi((state) => state.setPreviewFloat);
   const shown = float?.threadId === threadId ? float : null;
   const tabs = useAsync(`preview-float:${threadId}`, (signal) =>
-    request<PreviewTab[]>("GET", `/api/threads/${q(threadId)}/previews`, undefined, signal),
+    listPreviewTabs(threadId, signal),
   );
   const reload = tabs.reload;
   useEffect(() => {

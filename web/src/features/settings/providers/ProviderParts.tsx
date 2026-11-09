@@ -1,8 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
-import { api, request } from "../api";
+import { api, queryPreferences, updatePreferences } from "../api";
 import type { EngineStatus, JsonValue } from "../../../api/types";
-import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -94,7 +93,7 @@ function readCustomModel(value: JsonValue): CustomModel | null {
 export function useCustomModels(engine: EngineStatus) {
   const scope = useSettingsScope();
   const preferences = useAsync("custom-models", (signal) =>
-    request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", { scope: {}, keys: ["custom_models"] }, signal),
+    queryPreferences({ scope: {}, keys: ["custom_models"] }, signal),
   { keep: true },
 );
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +113,7 @@ export function useCustomModels(engine: EngineStatus) {
     setBusy(true);
     setError(null);
     try {
-      const changed = await request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", {
+      const changed = await updatePreferences({
         scope: {}, membership_version: preferences.data.catalog.version,
         if_match: { [row.key]: row.revision }, edits: { [row.key]: { op: "set", value: next } },
       });

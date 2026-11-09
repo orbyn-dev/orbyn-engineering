@@ -1,4 +1,4 @@
-import { request } from "../api";
+import { previewTransport } from "../api";
 import type { Wired } from "../../../api/types";
 import type { PreviewRecording as RecordingWire } from "../../../generated/PreviewRecording";
 import { toFailure } from "../../../lib/useAsync";
@@ -27,7 +27,7 @@ export class PreviewRecordings {
   private listeners = new Set<() => void>();
   private focused: { endpoint: string; token: symbol } | null = null;
 
-  constructor(private readonly transport: Transport = request) {}
+  constructor(private readonly transport: Transport = previewTransport) {}
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);

@@ -1,7 +1,7 @@
 import { AppWindow, ChevronRight, Copy, Download, ExternalLink, File, Folder, Paperclip, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "../api";
-import type { FileContent, FileEntry, SearchHit } from "../../../api/types";
+import { api, listThreadFiles, openThreadFileInBrowser, readThreadFile, saveThreadFile, searchThreadFiles } from "../api";
+import type { FileContent, FileEntry } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
@@ -23,7 +23,6 @@ import { FileComments } from "./FileComments";
 import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
 import { formatBytes } from "../../../lib/format";
 
-const q = encodeURIComponent;
 
 /** Reads a file by what it holds, with the source a click away and edits saved safely. */
 function FileBody({
@@ -50,11 +49,7 @@ function FileBody({
     setSaving(true);
     setError(null);
     try {
-      await request("PUT", `/api/threads/${q(threadId)}/files/content`, {
-        path,
-        content: text,
-        base_revision: file.revision,
-      });
+      await saveThreadFile(threadId, { path, content: text, base_revision: file.revision });
       setMode(kind ? "preview" : "source");
       onSaved();
     } catch (failure) {
@@ -109,7 +104,7 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
   // A Word document is read the same way: its own bytes, through the worker.
   const office = officeKind(path);
   const read = useAsync(`file:${JSON.stringify([threadId, cwd, media ? "" : path])}`, async (signal) => {
-    const content = media ? null : await request<FileContent>("GET", `/api/threads/${q(threadId)}/files/content?path=${q(path)}`, undefined, signal);
+    const content = media ? null : await readThreadFile(threadId, path, signal);
     if ((useWorkspace.getState().threads[threadId]?.cwd ?? "") !== cwd) throw new DOMException("Checkout changed", "AbortError");
     return { cwd, path, content };
   });
@@ -151,7 +146,7 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
   };
   const openInBrowser = async () => {
     try {
-      await request("POST", `/api/threads/${encodeURIComponent(threadId)}/previews/file`, { path });
+      await openThreadFileInBrowser(threadId, path);
       useUi.getState().showInBrowser("");
     } catch (failure) {
       pushToast(`Couldn't open it. ${toFailure(failure).message}`);
@@ -233,7 +228,7 @@ function FolderList({
   onFile(path: string): void;
 }) {
   const list = useAsync(`files:${threadId}:${path}`, (signal) =>
-    request<FileEntry[]>("GET", `/api/threads/${q(threadId)}/files?path=${q(path)}`, undefined, signal),
+    listThreadFiles(threadId, path, signal),
   );
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
@@ -345,7 +340,7 @@ export function FilesPanel({ threadId }: { threadId: string }) {
   const [query, setQuery] = useState("");
   const hits = useAsync(`file-search:${threadId}:${query}`, (signal) =>
     query
-      ? request<SearchHit[]>("GET", `/api/threads/${q(threadId)}/files/search?q=${q(query)}&content=true`, undefined, signal)
+      ? searchThreadFiles(threadId, query, signal)
       : Promise.resolve([]),
   );
   if (outside) return <OutsideFileViewer key={outside} threadId={threadId} path={outside} onBack={() => chooseFile(null)} />;
