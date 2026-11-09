@@ -10,7 +10,7 @@ const base = () =>
     ["ui/Button.tsx", `export const Button = 1;\n`],
     ["lib/util.ts", `import { Button } from "../ui/Button";\nexport const u = Button;\n`],
   ]);
-const empty = { direction: [], deep: [], cycle: [], lines: {}, css: {} };
+const empty = { direction: [], deep: [], cycle: [], featureCycle: [], lines: {}, css: {} };
 const bare = (r) => ({ ...r, unresolved: undefined });
 
 describe("arch-check", () => {
@@ -43,9 +43,9 @@ describe("arch-check", () => {
   });
 
   it("fails a baselined item that no longer exists, and only notes a shrink", () => {
-    const old = { ...empty, deep: ["x -> y"], lines: { "lib/long.ts": 700 } };
+    const old = { ...empty, direction: ["x -> y"], lines: { "lib/long.ts": 700 } };
     const r = compare(analyze(base().set("lib/long.ts", lines(650))), old);
-    expect(r.stale).toEqual(["deep: x -> y"]);
+    expect(r.stale).toEqual(["direction: x -> y"]);
     expect(r.shrunk).toHaveLength(1);
     expect(r.fresh).toEqual([]);
     expect(compare(analyze(base()), old).stale).toHaveLength(2);
@@ -54,6 +54,36 @@ describe("arch-check", () => {
   it("flags a deep import into another feature but not its index", () => {
     const s = base().set("features/a/C.tsx", `import { x } from "../b/Inner";\n`).set("features/b/Inner.ts", "export const x = 1;\n");
     expect(analyze(s).deep).toEqual(["features/a/C.tsx -> features/b/Inner.ts"]);
+  });
+
+  it("always fails a deep import or a cycle, with no baseline to hide it", () => {
+    const s = base()
+      .set("features/a/C.tsx", `import { x } from "../b/Inner";\n`)
+      .set("features/b/Inner.ts", "export const x = 1;\n")
+      .set("lib/p.ts", `import "./q";\n`)
+      .set("lib/q.ts", `import "./p";\n`);
+    const found = analyze(s);
+    expect(compare(found, found).fresh).toEqual([
+      "deep: features/a/C.tsx -> features/b/Inner.ts",
+      "cycle: lib/p.ts -> lib/q.ts",
+      "cycle: lib/q.ts -> lib/p.ts",
+    ]);
+    expect(compare(found, found).stale).toEqual([]);
+  });
+
+  it("flags a cycle between features even when each goes through a front door", () => {
+    const s = base()
+      .set("features/a/index.ts", `export { A } from "./A";\n`)
+      .set("features/a/A.tsx", `import { B } from "../b";\nexport const A = B;\n`)
+      .set("features/b/index.ts", `export { B } from "./B";\n`)
+      .set("features/b/B.tsx", `import { C } from "../c";\nexport const B = C;\n`)
+      .set("features/c/index.ts", `export { C } from "./C";\n`)
+      .set("features/c/C.tsx", `import { A } from "../a";\nexport const C = A;\n`);
+    expect(analyze(s).featureCycle).toEqual(["a -> b", "b -> c", "c -> a"]);
+    const ordered = base()
+      .set("features/a/A.tsx", `import { B } from "../b";\nexport const A = B;\n`)
+      .set("features/b/index.ts", `export const B = 1;\n`);
+    expect(analyze(ordered).featureCycle).toEqual([]);
   });
 
   it("flags edges inside a new import cycle", () => {

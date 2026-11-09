@@ -6,9 +6,9 @@ import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../state/workspace";
 import * as actions from "../workspace/threadActions";
 import { ArchivedBanner } from "./ThreadStates";
-import { emptyLog } from "./projection";
+import { emptyLog } from "../../lib/timeline/projection";
 import { familyOf, ThreadHeaderMenu } from "./ThreadHeaderMenu";
-import { useThreadLogs } from "./threadLogs";
+import { useThreadLogs } from "../../state/threadLogs";
 
 vi.mock("../workspace/threadActions", async (original) => ({
   ...(await original<typeof import("../workspace/threadActions")>()),

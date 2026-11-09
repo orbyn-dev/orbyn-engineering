@@ -7,11 +7,13 @@
 // Rules, over hand-written files (tests, generated code and test helpers excluded):
 //   direction  app -> features -> ui, lib, state -> api, one way: features never import app;
 //              ui, lib, state and api never import app or a feature; api never imports ui, lib or state
-//   deep       a feature imports another feature only through its index.ts
-//   cycle      no import cycle between files; an edge inside a cycle is a violation
+//   deep       a feature imports another feature only through its index.ts (always an error)
+//   cycle      no import cycle between files; an edge inside a cycle is a violation (always an error)
+//   feature    no import cycle between features (the one-way order in docs/refactor.md); always an error
 //   lines      TypeScript over 600 lines, CSS over 1500 lines; may not grow past baseline
-// Existing violations live in the baseline, which may only shrink: a new violation or growth fails,
-// and so does a baselined item that no longer exists (re-run --update so it cannot quietly return).
+// direction and lines keep their existing violations in the baseline, which may only shrink: a new
+// violation or growth fails, and so does a baselined item that no longer exists (re-run --update so it
+// cannot quietly return). deep and cycle have no baseline: any violation fails.
 // A long file that shrinks but stays long only prints a notice; --update lowers its recorded size.
 // Type-only imports count as edges. Imports inside comments are ignored. CI runs this on Ubuntu only.
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -115,6 +117,25 @@ export function analyze(sources) {
     const inside = new Set(group);
     for (const from of group) for (const to of graph.get(from)) if (inside.has(to)) cycle.push(`${from} -> ${to}`);
   }
+  const featureGraph = new Map();
+  for (const [from, tos] of graph) {
+    const a = layerOf(from);
+    if (a.layer !== "features") continue;
+    if (!featureGraph.has(a.feature)) featureGraph.set(a.feature, new Set());
+    for (const to of tos) {
+      const b = layerOf(to);
+      if (b.layer === "features" && b.feature !== a.feature) {
+        featureGraph.get(a.feature).add(b.feature);
+        if (!featureGraph.has(b.feature)) featureGraph.set(b.feature, new Set());
+      }
+    }
+  }
+  const featureCycle = [];
+  for (const group of stronglyConnected(featureGraph)) {
+    if (group.length < 2) continue;
+    const inside = new Set(group);
+    for (const from of group) for (const to of featureGraph.get(from)) if (inside.has(to)) featureCycle.push(`${from} -> ${to}`);
+  }
   const lines = {};
   const css = {};
   for (const [rel, text] of sources) {
@@ -125,7 +146,7 @@ export function analyze(sources) {
   }
   const sort = (xs) => [...new Set(xs)].sort();
   const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
-  return { direction: sort(direction), deep: sort(deep), cycle: sort(cycle), lines: sortObj(lines), css: sortObj(css), unresolved: sort(unresolved) };
+  return { direction: sort(direction), deep: sort(deep), cycle: sort(cycle), featureCycle: sort(featureCycle), lines: sortObj(lines), css: sortObj(css), unresolved: sort(unresolved) };
 }
 
 /** fresh: fails. stale: baselined items that are gone (fails). shrunk: still long but smaller (notice). */
@@ -133,7 +154,8 @@ export function compare(current, baseline) {
   const fresh = [];
   const stale = [];
   const shrunk = [];
-  for (const rule of ["direction", "deep", "cycle"]) {
+  for (const rule of ["deep", "cycle", "featureCycle"]) for (const v of current[rule] ?? []) fresh.push(`${rule}: ${v}`);
+  for (const rule of ["direction"]) {
     const known = new Set(baseline[rule] ?? []);
     const now = new Set(current[rule]);
     for (const v of now) if (!known.has(v)) fresh.push(`${rule}: ${v}`);
@@ -174,9 +196,12 @@ function main() {
   if (process.argv.includes("--update")) {
     const recorded = { ...current };
     delete recorded.unresolved;
+    delete recorded.deep;
+    delete recorded.cycle;
+    delete recorded.featureCycle;
     const body = { _note: "Recorded architecture debt (docs/refactor.md). Only shrink it; npm run arch:update rewrites it.", limits: LIMITS, ...recorded };
     writeFileSync(baselinePath, `${JSON.stringify(body, null, 2)}\n`);
-    console.log(`arch baseline written: ${current.direction.length} direction, ${current.deep.length} deep, ${current.cycle.length} cycle, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
+    console.log(`arch baseline written: ${current.direction.length} direction, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
     return;
   }
   const { fresh, stale, shrunk } = compare(current, JSON.parse(readFileSync(baselinePath, "utf8")));

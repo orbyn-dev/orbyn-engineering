@@ -77,7 +77,7 @@ import { ThreadRow, type RowActions } from "./ThreadRow";
 import { useDrawnOrder } from "./drawnOrder";
 import { pushUndo, undoLabel, undoLatest, useUndoNotice } from "./threadUndo";
 import { UpdatePill } from "./Updates";
-import { SkillsNav } from "../skills/SkillsNav";
+import { SkillsNav } from "../skills";
 
 const SETTLED_PAGE = 10;
 

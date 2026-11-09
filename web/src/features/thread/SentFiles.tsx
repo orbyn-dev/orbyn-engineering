@@ -5,10 +5,10 @@ import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
 import { Dialog } from "../../ui/Dialog";
-import { TimelineThread } from "./items";
-import { Lightbox } from "./MarkdownMedia";
-import { fileLinkTarget } from "./MarkdownLink";
-import type { SentAttachment } from "./projection";
+import { TimelineThread } from "./timelineThread";
+import { Lightbox } from "../content";
+import { fileLinkTarget } from "../content";
+import type { SentAttachment } from "../../lib/timeline/types";
 
 /** A typed `@path` the message referred to. */
 const PATH_TOKEN = /(^|\s)@([^\s@]+)/g;

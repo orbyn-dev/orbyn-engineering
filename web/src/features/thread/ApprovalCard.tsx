@@ -8,7 +8,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { touchesOf } from "./approvalDetail";
-import { approvalFromContent } from "./projection";
+import { approvalFromContent } from "../../lib/timeline/projection";
 
 const outcome = {
   allowed: { icon: CircleCheck, label: "Approved" },

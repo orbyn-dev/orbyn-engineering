@@ -3,8 +3,8 @@ import type { Thread } from "../../api/types";
 import { runStateLabels } from "../../lib/format";
 import { navigate } from "../../state/route";
 import { Button } from "../../ui/controls";
-import { threadRunState } from "../workspace/RunState";
-import type { SubagentActivity } from "./projection";
+import { threadRunState } from "../workspace";
+import type { SubagentActivity } from "../../lib/timeline/types";
 
 const DONE = /^(completed|done|finished|success)/i;
 const FAILED = /^(failed|errored|error|cancel)/i;

@@ -7,7 +7,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Button } from "../../ui/controls";
 import { Loading } from "../../ui/states";
 import { tabKeys } from "../../ui/tabKeys";
-import { ToolsList } from "../tools/ToolsList";
+import { ToolsList } from "../tools";
 
 const clock = (iso: string | null | undefined) => {
   const date = iso ? new Date(iso) : null;

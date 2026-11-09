@@ -3,10 +3,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/types";
 import { LimitBanner } from "./ThreadBanners";
 import { TimelineRow } from "./items";
-import type { ThreadItem } from "./projection";
-import { emptyLog } from "./projection";
+import type { ThreadItem } from "../../lib/timeline/types";
+import { emptyLog } from "../../lib/timeline/projection";
 import { ArchivedBanner, CompactingStep, useCompacting, useThreadChip } from "./ThreadStates";
-import { useThreadLogs } from "./threadLogs";
+import { useThreadLogs } from "../../state/threadLogs";
 
 const thread: Thread = { id: "t", project_id: "p", title: "T", engine: "codex", model: null,
   cwd: "/fixture", worktree: null, skill_profile: null, scratch: false, active_run: null, last_run_state: "completed", created_at: "", updated_at: "",

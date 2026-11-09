@@ -7,8 +7,8 @@ import { useUi } from "../../state/ui";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { DRow } from "./DetailRows";
-import { launchableEditors, primaryEditor } from "./editorPreferences";
+import { DRow } from "../../ui/DetailRows";
+import { launchableEditors, primaryEditor } from "../../lib/editorPreferences";
 
 /** Opens the thread's checkout in an editor; a revealed path is not a choice of editor, so it does not become the favorite. */
 function useEditorLauncher(threadId: string, fileManagerId: string | undefined) {

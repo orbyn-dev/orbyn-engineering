@@ -10,9 +10,10 @@ import { useWorkspace } from "../../state/workspace";
 import { LedgerPin } from "./LedgerPin";
 import { findMatches } from "./threadSearch";
 import { rangesIn } from "./ThreadFind";
-import { emptyLog, type ApprovalItem, type MessageItem, type ThreadItem, type ToolItem } from "./projection";
-import { useThreadLogs } from "./threadLogs";
-import { arrangeTimeline } from "./timeline";
+import { emptyLog } from "../../lib/timeline/projection";
+import type { ApprovalItem, MessageItem, ThreadItem, ToolItem } from "../../lib/timeline/types";
+import { useThreadLogs } from "../../state/threadLogs";
+import { arrangeTimeline } from "../../lib/timeline/timeline";
 import { transcriptFor } from "./transcriptRegistry";
 import { estimateRow, sizesFor } from "./windowing";
 

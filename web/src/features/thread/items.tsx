@@ -18,7 +18,7 @@ import { useUi } from "../../state/ui";
 import { Button, Pill } from "../../ui/controls";
 import { ApprovalCard, useResolvedApproval } from "./ApprovalCard";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
-import { Markdown } from "./Markdown";
+import { Markdown } from "../content";
 import { PlanCard } from "./PlanCard";
 import { proposedPlanIn, textAroundPlan } from "./proposedPlan";
 import { SentFiles } from "./SentFiles";
@@ -28,21 +28,11 @@ import {
   type WorkGroup,
   type WorkingRow,
   type WorkItem,
-} from "./timeline";
+} from "../../lib/timeline/timeline";
 import { workSegments } from "./toolCalls";
 import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
-import { TimelineThread, useThreadOfTimeline } from "./timelineThread";
-import type {
-  ActivityItem,
-  ApprovalItem,
-  DiffSummaryItem,
-  MessageItem,
-  NoticeItem,
-  ReasoningItem,
-  ToolItem,
-} from "./projection";
-
-export { TimelineThread };
+import { useThreadOfTimeline } from "./timelineThread";
+import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../lib/timeline/types";
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {

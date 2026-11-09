@@ -10,7 +10,7 @@ import { request } from "../../api/client";
 import type { KeybindingsView } from "../../api/types";
 import { useAsync } from "../../lib/useAsync";
 import { ConfirmDialog, Dialog } from "../../ui/Dialog";
-import type { PreferenceControl, PreferenceSaveResult } from "./PreferenceRows";
+import type { PreferenceControl, PreferenceSaveResult } from "./preferenceTypes";
 import { useActionKeybinding } from "./actionKeybinding";
 import { toFailure } from "../../lib/useAsync";
 import { ApiFailure } from "../../api/client";

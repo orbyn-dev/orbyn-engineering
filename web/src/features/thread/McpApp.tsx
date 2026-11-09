@@ -12,8 +12,8 @@ import {
   toolNotifications,
   type AppHost,
   type McpAppDisplayMode,
-} from "./mcpAppBridge";
-import type { ToolItem } from "./projection";
+} from "../../lib/timeline/mcpAppBridge";
+import type { ToolItem } from "../../lib/timeline/types";
 
 const parseArgs = (args: string): unknown => {
   try {

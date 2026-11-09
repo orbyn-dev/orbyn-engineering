@@ -8,8 +8,8 @@ import { Dialog } from "../../ui/Dialog";
 import { Button, IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { TimelineThread } from "./items";
-import { Markdown } from "./Markdown";
+import { TimelineThread } from "./timelineThread";
+import { Markdown } from "../content";
 import { planFilename, planTitle, stripPlanTitle } from "./proposedPlan";
 
 const COLLAPSE_CHARS = 900;

@@ -10,8 +10,7 @@ import { ActivityPanel } from "./ActivityPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { DiffPanel } from "./DiffPanel";
 import { FilesPanel } from "./FilesPanel";
-import { SideChatPane } from "./SideChatPane";
-import { ToolsTab } from "../tools/ToolsTab";
+import { ToolsTab } from "../tools";
 import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./panelWidth";
 import { useConnectionKind } from "../../state/connection";
@@ -169,6 +168,7 @@ export function SurfacePane({
   moves,
   maximized,
   details = null,
+  sideChat = null,
   onToggleMaximize,
   onReturn,
 }: {
@@ -180,6 +180,8 @@ export function SurfacePane({
   maximized: boolean;
   /** The thread's details card, which sits at the top of the panel above its tabs. */
   details?: ReactNode;
+  /** The Side chat tab's content; the thread owns it, so it is handed in. */
+  sideChat?: ReactNode;
   onToggleMaximize(): void;
   onReturn(): void;
 }) {
@@ -507,7 +509,7 @@ export function SurfacePane({
             ) : tab === "tools" ? (
               <ToolsTab key={thread.id} threadId={thread.id} engine={thread.engine} />
             ) : (
-              <SideChatPane parent={thread} />
+              sideChat
             )}
           </div>
         )}

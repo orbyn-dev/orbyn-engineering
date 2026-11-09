@@ -11,14 +11,14 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { IconButton } from "../../ui/controls";
 import { usageShare } from "./ComposerExtras";
-import { DRow } from "./DetailRows";
+import { DRow } from "../../ui/DetailRows";
 import { BranchRow } from "./GitControl";
 import { OpenInEditor } from "./OpenInEditor";
 import { PullsRow } from "./PullChip";
-import { runProjectAction } from "./runProjectAction";
+import { runProjectAction } from "../../lib/runProjectAction";
 import { ThreadAutomations } from "./ThreadAutomations";
-import { ToolsRow } from "../tools/ToolsRow";
-import { useThreadLogs } from "./threadLogs";
+import { ToolsRow } from "../tools";
+import { useThreadLogs } from "../../state/threadLogs";
 import { pluralize } from "./toolCalls";
 
 export const DETAIL_ROWS: { id: string; label: string }[] = [

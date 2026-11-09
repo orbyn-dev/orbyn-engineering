@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/types";
 import { useUi } from "../../state/ui";
 import { useWorkspace } from "../../state/workspace";
-import { TimelineThread } from "./items";
+import { TimelineThread } from "./timelineThread";
 import { SentFiles, sentPaths } from "./SentFiles";
 
 const thread: Thread = { id: "t", project_id: "p", title: "Thread", engine: "codex", model: null,

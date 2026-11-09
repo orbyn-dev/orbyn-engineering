@@ -8,7 +8,7 @@ import { toFailure, useAsync } from "../../lib/useAsync";
 import { useUi } from "../../state/ui";
 import { Button } from "../../ui/controls";
 import type { InstanceStore } from "./ProviderInstances";
-import { PreferenceInheritance } from "./PreferenceRows";
+import { PreferenceInheritance } from "./PreferenceInheritance";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 const KEY = "disabled_engines";

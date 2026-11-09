@@ -31,13 +31,15 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 ## Checks
 
-Existing violations are recorded in a baseline that may only shrink. A new
-violation fails, and so does a baselined item that no longer exists, so a fixed
-violation cannot quietly return: re-record the baseline in the same PR.
+Existing violations of some rules are recorded in a baseline that may only shrink.
+A new violation fails, and so does a baselined item that no longer exists, so a
+fixed violation cannot quietly return: re-record the baseline in the same PR.
+Deep cross-feature imports, import cycles and cycles between features have no baseline: one fails
+at once.
 
 | Check | Run | Baseline |
 | --- | --- | --- |
-| Web import direction, feature front doors, import cycles, file size (600 lines TypeScript, 1500 CSS) | `npm run check` in `web` (`scripts/arch-check.mjs`) | `web/scripts/arch-baseline.json` |
+| Web import direction, feature front doors, import cycles, file size (600 lines TypeScript, 1500 CSS) | `npm run check` in `web` (`scripts/arch-check.mjs`) | `web/scripts/arch-baseline.json` (direction and file size only; front doors, file cycles and feature cycles are always errors) |
 | Rust: no new `.rs` file over 1500 lines; `orbynd` gains no `Command::new("git")` and no new core `store` references | `python3 scripts/check_rust_arch.py` (CI "Cheap checks") | `scripts/rust-arch-baseline.json` |
 | Unused exports (report only, not in `check`) | `npm run arch:report` in `web` (knip) | none |
 
@@ -52,6 +54,13 @@ Notes:
   So features never import `app`, shared folders never import `app` or a feature,
   and `api` never imports `ui`, `lib` or `state`. These rules live here;
   [architecture.md](architecture.md) has no layering section.
+- Features form one acyclic order. A feature imports only the `index.ts` of one lower
+  down: `settings` > `onboarding` > `thread` > `panels` > `workspace` > `skills`, with
+  `pulls` and `tools` below `thread` and `panels`, and `content` at the bottom.
+  `usage` and `platform` import no feature. A piece two
+  features need moves to the lowest layer that fits: `features/content` (markdown and
+  code rendering), `ui`, `lib` (for example `lib/timeline`, the thread projection) or
+  `state` (for example `composerChipStore`, `threadLogs`), not a re-export from the old place.
 - Type-only imports count as edges, like any import. Imports inside comments are
   ignored, and an unresolved relative import prints a warning.
 - Both checks are text matching, not parsers; the Rust one lists its known gaps
@@ -96,6 +105,23 @@ Notes:
 | W6 | Naming pass and `web/README.md` |
 
 The backend (B) and web (W) tracks can run in parallel.
+
+### Status
+
+- R0, W1: done.
+- W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
+  Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
+  shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
+  useResolvedThreadPath,editorPreferences,runProjectAction,actionPreview,media}`,
+  `lib/timeline/{projection,types,timeline,toolTrace,mcpAppBridge}`,
+  `ui/{DetailRows,FolderBrowser}`. `pullStore` moved to `pulls`; `SideChatPane` and
+  `sideChat` moved to `thread`, which hands the tab's content to `SurfacePane`; the git
+  dialog and the restore-files dialog moved to `panels`. Front doors exist for
+  `content`, `onboarding`, `panels`, `pulls`, `skills`, `thread`, `tools` and `workspace`.
+  Deep imports 69 to 0 and cycle edges 8 to 0; both rules are now hard errors. Still
+  baselined: 21 `direction` entries (features importing `app/shortcuts`,
+  `app/commandLabels`, `app/sidebarDrawer`), the long files and `styles/thread.css`.
+  Left for later units: CSS stays where it was (W2), giant components stay whole (W5).
 
 ## Done when
 

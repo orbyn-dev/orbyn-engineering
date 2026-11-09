@@ -11,8 +11,6 @@ vi.mock("./BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div
 vi.mock("./DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div>Files content</div> }));
 vi.mock("./ActivityPanel", () => ({ ActivityPanel: () => null }));
-vi.mock("./SideChatPane", () => ({ SideChatPane: () => <div>Side chat content</div> }));
-vi.mock("./sideChat", () => ({ openSideChat: vi.fn(), closeSideChat: vi.fn() }));
 
 const thread = { id: "thread-1" } as Thread;
 const names = () => screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));
@@ -32,6 +30,7 @@ function pane(props: { mode?: PaneMode; onReturn?: () => void; onToggleMaximize?
   return render(
     <SurfacePane
       thread={thread}
+      sideChat={<div>Side chat content</div>}
       mode={props.mode ?? "docked"}
       closing={false}
       moves={false}

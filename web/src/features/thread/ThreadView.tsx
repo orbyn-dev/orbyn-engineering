@@ -23,16 +23,15 @@ import { usePopover } from "../../ui/usePopover";
 import { useSidebarDrawer } from "../../app/sidebarDrawer";
 import { markReachable, markUnreachable, useConnectionKind } from "../../state/connection";
 import { routeHref } from "../../state/route";
-import { useThreadLogs, useThreadStream } from "./threadLogs";
+import { useThreadLogs, useThreadStream } from "../../state/threadLogs";
 import { BranchShortcut, GitActions } from "./GitControl";
 import { LedgerPin } from "./LedgerPin";
 import { useUi } from "../../state/ui";
 import { engineById, useWorkspace } from "../../state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../ui/states";
-import { SurfacePane } from "../panels/SurfacePane";
-import { TerminalBar, TerminalDrawerBody } from "../panels/TerminalDrawerBody";
-import { threadRunState } from "../workspace/RunState";
+import { SurfacePane, TerminalBar, TerminalDrawerBody } from "../panels";
+import { threadRunState } from "../workspace";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./Composer";
 import { DetailsCard } from "./DetailsCard";
@@ -40,8 +39,9 @@ import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
-import { runningTools } from "./timeline";
+import { runningTools } from "../../lib/timeline/timeline";
 import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
+import { SideChatPane } from "./SideChatPane";
 import { SubagentBar } from "./SubagentBar";
 import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
@@ -564,6 +564,7 @@ export function ThreadView({ id }: { id: string }) {
           moves={paneMoves}
           maximized={maximized}
           details={inPanel && detailsPref ? <DetailsCard thread={thread} /> : null}
+          sideChat={<SideChatPane parent={thread} />}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {
             setMaximized(false);
