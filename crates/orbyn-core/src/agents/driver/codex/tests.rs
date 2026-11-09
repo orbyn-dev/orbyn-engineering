@@ -3,6 +3,9 @@ use super::protocol::{
     approval_content, approval_response, classify_request, feedback_params, feedback_receipt,
     is_tool_approval,
 };
+use super::sandbox::{
+    approval_policy, collaboration_mode, sandbox_policy, thread_config, tier_param,
+};
 #[test]
 fn limits_keep_only_windows_and_the_plan() {
     let kept = super::limit_fields(serde_json::json!({
