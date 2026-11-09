@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PreviewTab } from "../../../api/types";
-import { PageView } from "./BrowserPanel";
+import { PageView } from "./PageView";
 
 class FakeSocket {
   static last: FakeSocket | null = null;

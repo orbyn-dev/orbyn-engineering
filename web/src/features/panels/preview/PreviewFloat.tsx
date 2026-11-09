@@ -5,7 +5,7 @@ import type { PreviewTab } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../state/ui";
 import { IconButton } from "../../../ui/controls";
-import { PageView } from "../browser/BrowserPanel";
+import { PageView } from "../browser/PageView";
 
 const POLL_MS = 3000;
 const q = encodeURIComponent;

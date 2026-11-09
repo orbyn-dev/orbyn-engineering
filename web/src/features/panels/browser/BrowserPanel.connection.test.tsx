@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreviewTab } from "../../../api/types";
 import { useConnection } from "../../../state/connection";
-import { BrowserPanel, isLocalUrl } from "./BrowserPanel";
+import { BrowserPanel } from "./BrowserPanel";
+import { isLocalUrl } from "./browserModel";
 import { useBrowserPanels } from "./browserPanels";
 
 class FakeSocket {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addRecent, stepZoom, pageSize } from "./BrowserPanel";
+import { addRecent, stepZoom } from "./browserModel";
+import { pageSize } from "./viewportResize";
 
 describe("pageSize", () => {
   it("keeps a page within what the service takes", () => {
