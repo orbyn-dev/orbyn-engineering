@@ -6,38 +6,36 @@ mod events;
 mod limits;
 mod protocol;
 mod sandbox;
+mod short_sessions;
 mod tools;
 mod turn;
+
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use orbyn_contracts::{
-    AgUiEvent, AuthState, EngineCapabilities, EngineFeedbackReceipt, EngineFeedbackRequest,
-    EngineTier, ModelInfo, PermissionMode, ProviderInstance, SkillDelivery,
+    AuthState, EngineCapabilities, EngineFeedbackReceipt, EngineFeedbackRequest, EngineTier,
+    ProviderInstance, SkillDelivery,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::pipes::{one_shot_cli, resolve_engine, spawn_engine};
-use super::rpc::RpcClient;
 use super::{
-    EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, ModelCatalog,
-    RunHandle, RunKind, RunSpec, UpdatePlan,
+    EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, ModelCatalog, RunHandle, RunSpec,
+    UpdatePlan,
 };
 use crate::agents::console::{ConsoleCommand, ConsoleSpec};
 use crate::agents::engines::maintenance;
 use crate::agents::engines::probe::{probe_cli, read_login};
-use crate::agents::selection::SERVICE_TIER;
 use crate::error::{CoreError, Result};
-use crate::governance::approvals::Verdict;
 use catalog::{apply_configured_tier, parse_model};
 use limits::limit_fields;
 use protocol::{feedback_params, feedback_receipt, is_missing_thread};
 pub use sandbox::console_args;
-use tools::{codex_tools, listed_pages};
 use turn::run_protocol;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -390,85 +388,6 @@ impl EngineDriver for CodexDriver {
             task,
             input: Some(input),
             control: None,
-        })
-    }
-}
-
-/// An app-server kept alive only for a read. Dropping it ends the process.
-struct ShortSession {
-    rpc: RpcClient,
-    _process: crate::host::process::ManagedChild,
-}
-
-impl CodexDriver {
-    async fn short_session(&self) -> Result<ShortSession> {
-        self.short_session_in(&std::env::temp_dir()).await
-    }
-
-    /// The three status lists of a short app-server, reduced to names and states. Each is
-    /// read on its own: one that does not answer leaves its group out rather than hiding
-    /// the rest. The app and plugin lists are very large, so they never leave this function whole.
-    async fn read_tools(&self, cwd: &std::path::Path) -> Option<orbyn_contracts::EngineTools> {
-        let deadline = std::time::Instant::now() + TOOLS_DEADLINE;
-        let left = || deadline.saturating_duration_since(std::time::Instant::now());
-        let session = self.short_session_experimental(cwd).await.ok()?;
-        let (servers, servers_cut) =
-            listed_pages(&session.rpc, "mcpServerStatus/list", deadline).await;
-        let (apps, apps_cut) = listed_pages(&session.rpc, "app/list", deadline).await;
-        let plugins = if left().is_zero() {
-            None
-        } else {
-            session
-                .rpc
-                .call("plugin/list", json!({}), left())
-                .await
-                .ok()
-        };
-        if servers.is_none() && apps.is_none() && plugins.is_none() {
-            return None;
-        }
-        let mut tools = codex_tools(servers.as_ref(), apps.as_ref(), plugins.as_ref());
-        tools.incomplete = servers_cut || apps_cut;
-        Some(tools)
-    }
-
-    /// A short app-server that takes the experimental calls the status lists need.
-    async fn short_session_experimental(&self, cwd: &std::path::Path) -> Result<ShortSession> {
-        let command = resolve_engine(&self.program)?;
-        let args = [OsString::from("app-server")];
-        let process = spawn_engine(&command, &args, cwd)?;
-        let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, false);
-        rpc.call(
-            "initialize",
-            json!({
-                "clientInfo": { "name": "orbyn", "version": env!("CARGO_PKG_VERSION") },
-                "capabilities": { "experimentalApi": true },
-            }),
-            CALL_TIMEOUT,
-        )
-        .await?;
-        rpc.notify("initialized", None).await?;
-        Ok(ShortSession {
-            rpc,
-            _process: process.child,
-        })
-    }
-
-    async fn short_session_in(&self, cwd: &std::path::Path) -> Result<ShortSession> {
-        let command = resolve_engine(&self.program)?;
-        let args = [OsString::from("app-server")];
-        let process = spawn_engine(&command, &args, cwd)?;
-        let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, false);
-        rpc.call(
-            "initialize",
-            json!({ "clientInfo": { "name": "orbyn", "version": env!("CARGO_PKG_VERSION") } }),
-            CALL_TIMEOUT,
-        )
-        .await?;
-        rpc.notify("initialized", None).await?;
-        Ok(ShortSession {
-            rpc,
-            _process: process.child,
         })
     }
 }
