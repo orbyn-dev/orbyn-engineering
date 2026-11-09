@@ -433,10 +433,10 @@ async function openPanel(page: import("@playwright/test").Page) {
   await expect
     .poll(() =>
       page.locator(".context").evaluate(
-        (pane) =>
+        (panel) =>
           new Promise<boolean>((resolve) => {
-            const x = pane.getBoundingClientRect().x;
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve(pane.getBoundingClientRect().x === x)));
+            const x = panel.getBoundingClientRect().x;
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(panel.getBoundingClientRect().x === x)));
           }),
       ),
     )
@@ -444,9 +444,9 @@ async function openPanel(page: import("@playwright/test").Page) {
 }
 /** Sets the panel's width, past the 320px the resizer allows, to see the strip at the widths the designs draw. */
 const resize = async (page: import("@playwright/test").Page, width: number) => {
-  await page.locator(".context").evaluate((pane, w) => {
-    (pane as HTMLElement).style.minWidth = "0";
-    (pane as HTMLElement).style.width = `${w}px`;
+  await page.locator(".context").evaluate((panel, w) => {
+    (panel as HTMLElement).style.minWidth = "0";
+    (panel as HTMLElement).style.width = `${w}px`;
   }, width);
   // The strip refits on the next resize observation; wait for the layout to stop changing.
   await expect.poll(async () => {

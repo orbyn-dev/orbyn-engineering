@@ -31,14 +31,14 @@ const WAITING_LINE: Partial<Record<RightTab, string>> = {
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
 const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
 
-interface PaneDrag {
-  pane: HTMLElement;
+interface PanelDrag {
+  panel: HTMLElement;
   handle: HTMLElement;
   pointerId: number;
   right: number;
   layoutKey: string;
   startWidth: string;
-  /** The width this drag last wrote to the pane, or null before the first move. */
+  /** The width this drag last wrote to the panel, or null before the first move. */
   writtenWidth: string | null;
   current: number;
 }
@@ -48,12 +48,12 @@ interface PaneDrag {
  * and staying between 320 px and 60% of the window; a pill shows the width and faint ticks mark the
  * snap points while it moves. Double click returns to 380 px. The width is saved when the drag ends.
  */
-export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
+export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
   const setWidth = useUi((state) => state.setPanelWidth);
   const layoutKey = useUi((state) => state.layoutKey);
   const [dragging, setDragging] = useState<number | null>(null);
-  const drag = useRef<PaneDrag | null>(null);
-  // What the pane renders for a thread's width: the same rule as its style, so a restore never differs from a render.
+  const drag = useRef<PanelDrag | null>(null);
+  // What the panel renders for a thread's width: the same rule as its style, so a restore never differs from a render.
   const widthOf = (panelWidth: number | null) => {
     const width = panelWidth ?? (drawer ? undefined : PANEL_DEFAULT);
     return width === undefined ? "" : `${width}px`;
@@ -61,10 +61,10 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
   const widthOfRef = useRef(widthOf);
   widthOfRef.current = widthOf;
 
-  /** Lets go of the pointer and clears the drag's marks on the pane. */
-  const release = (active: PaneDrag) => {
+  /** Lets go of the pointer and clears the drag's marks on the panel. */
+  const release = (active: PanelDrag) => {
     drag.current = null;
-    delete active.pane.dataset.resizing;
+    delete active.panel.dataset.resizing;
     if (active.handle.hasPointerCapture?.(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
   };
 
@@ -77,9 +77,9 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
     setDragging(null);
     const current = useUi.getState();
     if (current.layoutKey !== active.layoutKey) {
-      active.pane.style.width = widthOfRef.current(current.panelWidth);
-    } else if (active.writtenWidth !== null && active.pane.style.width === active.writtenWidth) {
-      active.pane.style.width = active.startWidth;
+      active.panel.style.width = widthOfRef.current(current.panelWidth);
+    } else if (active.writtenWidth !== null && active.panel.style.width === active.writtenWidth) {
+      active.panel.style.width = active.startWidth;
     }
   }, [layoutKey]);
 
@@ -90,13 +90,13 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
     setDragging(null);
     const current = useUi.getState();
     if (current.layoutKey === active.layoutKey) setWidth(active.current);
-    else active.pane.style.width = widthOfRef.current(current.panelWidth);
+    else active.panel.style.width = widthOfRef.current(current.panelWidth);
   };
 
   return (
     <>
       <div
-        className="pane-resizer"
+        className="panel-resizer"
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize panel"
@@ -104,20 +104,20 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
         onDoubleClick={() => setWidth(PANEL_DEFAULT)}
         onPointerDown={(event) => {
           if (event.button !== 0 || drag.current) return;
-          const pane = event.currentTarget.parentElement;
-          if (!pane) return;
+          const panel = event.currentTarget.parentElement;
+          if (!panel) return;
           // Without this the drag selects the text it passes over.
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
-          const current = clampPanelWidth(pane.getBoundingClientRect().width, window.innerWidth);
-          pane.dataset.resizing = "";
+          const current = clampPanelWidth(panel.getBoundingClientRect().width, window.innerWidth);
+          panel.dataset.resizing = "";
           drag.current = {
-            pane,
+            panel,
             handle: event.currentTarget,
             pointerId: event.pointerId,
-            right: pane.getBoundingClientRect().right,
+            right: panel.getBoundingClientRect().right,
             layoutKey,
-            startWidth: pane.style.width,
+            startWidth: panel.style.width,
             writtenWidth: null,
             current,
           };
@@ -128,7 +128,7 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
           if (!active || active.pointerId !== event.pointerId || useUi.getState().layoutKey !== active.layoutKey) return;
           active.current = dragPanelWidth(active.right - event.clientX, window.innerWidth);
           active.writtenWidth = `${active.current}px`;
-          active.pane.style.width = active.writtenWidth;
+          active.panel.style.width = active.writtenWidth;
           setDragging(active.current);
         }}
         onPointerUp={(event) => stop(event.pointerId)}
@@ -140,11 +140,11 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
           {snapPoints(window.innerWidth)
             .filter((point) => point !== dragging)
             .map((point) => (
-              <span key={point} className="pane-tick" style={{ right: point }} aria-hidden>
+              <span key={point} className="panel-tick" style={{ right: point }} aria-hidden>
                 <i>{point}</i>
               </span>
             ))}
-          <span className="pane-width" role="status">
+          <span className="panel-width" role="status">
             {dragging} px
           </span>
         </>
@@ -154,14 +154,14 @@ export function PaneResizer({ drawer = false }: { drawer?: boolean }) {
 }
 
 /**
- * How the pane sits in the window: "docked" beside the thread, "overlay" over its right side under
+ * How the panel sits in the window: "docked" beside the thread, "overlay" over its right side under
  * the header (medium and small windows), or "sheet" in place of the thread (phone).
  */
-export type PaneMode = "docked" | "overlay" | "sheet";
+export type PanelMode = "docked" | "overlay" | "sheet";
 
 const TAB_ID = "context-tab-";
 
-export function SurfacePane({
+export function PanelHost({
   thread,
   mode,
   closing,
@@ -173,9 +173,9 @@ export function SurfacePane({
   onReturn,
 }: {
   thread: Thread;
-  mode: PaneMode;
+  mode: PanelMode;
   closing: boolean;
-  /** False while the pane is part of the page as it first appeared. */
+  /** False while the panel is part of the page as it first appeared. */
   moves: boolean;
   maximized: boolean;
   /** The thread's details card, which sits at the top of the panel above its tabs. */
@@ -337,7 +337,7 @@ export function SurfacePane({
       data-mode={mode}
       style={mode !== "sheet" && !maximized ? { width: width ?? (drawer ? undefined : PANEL_DEFAULT) } : undefined}
     >
-      {mode === "sheet" || maximized ? null : <PaneResizer drawer={drawer} />}
+      {mode === "sheet" || maximized ? null : <PanelResizer drawer={drawer} />}
       {drawer ? (
         <header className="drawer-head">
           <Button small onClick={onReturn}>

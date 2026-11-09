@@ -165,21 +165,21 @@
   gap: 5px;
   color: var(--color-danger);
 }
-.terminal-splits .term-pane {
+.terminal-splits .term-view {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
-.terminal-splits .term-pane + .term-pane {
+.terminal-splits .term-view + .term-view {
   border-left: 1px solid var(--color-border);
 }
-.terminal-splits[data-direction="vertical"] .term-pane + .term-pane {
+.terminal-splits[data-direction="vertical"] .term-view + .term-view {
   border-top: 1px solid var(--color-border);
   border-left: 0;
 }
-.term-pane-title {
+.term-view-title {
   display: flex;
   flex: none;
   align-items: center;

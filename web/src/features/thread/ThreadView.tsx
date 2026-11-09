@@ -32,7 +32,7 @@ import { useUi } from "../../product/state/ui";
 import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../product/ui/states";
-import { SurfacePane, TerminalBar, TerminalDrawerBody } from "../panels";
+import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./composer/Composer";
@@ -43,7 +43,7 @@ import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "../../product/timeline/timeline";
 import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
-import { SideChatPane } from "./SideChatPane";
+import { SideChatPanel } from "./SideChatPanel";
 import { SubagentBar } from "./SubagentBar";
 import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
@@ -69,18 +69,18 @@ function TopBar({
   project,
   detailsShown,
   detailsPopup,
-  paneShown,
+  panelShown,
   onToggleDetails,
-  onTogglePane,
+  onTogglePanel,
 }: {
   thread: Thread;
   project: Project | null;
   detailsShown: boolean;
   /** The card opens as a popover under the button. */
   detailsPopup: boolean;
-  paneShown: boolean;
+  panelShown: boolean;
   onToggleDetails(): void;
-  onTogglePane(): void;
+  onTogglePanel(): void;
 }) {
   const layout = useLayoutWidth();
   const terminalOpen = useUi((state) => state.terminalOpen);
@@ -129,7 +129,7 @@ function TopBar({
           <SquareTerminal size={16} aria-hidden />
         </IconButton>
         {narrow ? null : (
-          <IconButton label="Show side panel" data-panel-toggle pressed={paneShown} onClick={onTogglePane}>
+          <IconButton label="Show side panel" data-panel-toggle pressed={panelShown} onClick={onTogglePanel}>
             <PanelRight size={16} aria-hidden />
           </IconButton>
         )}
@@ -434,8 +434,8 @@ export function ThreadView({ id }: { id: string }) {
     if (panelOpen && layout === "small") useSidebarDrawer.getState().close();
   }, [panelOpen, layout]);
   const panelPresent = useLingering(panelOpen, motion.exitMs);
-  // A pane that is already open when the thread appears stays still; later opens and closes slide.
-  const paneMoves = useSettledAfter(thread ? id : null);
+  // A panel that is already open when the thread appears stays still; later opens and closes slide.
+  const panelMoves = useSettledAfter(thread ? id : null);
 
   if (!thread) {
     if (missing) {
@@ -494,9 +494,9 @@ export function ThreadView({ id }: { id: string }) {
           project={project}
           detailsShown={detailsShown}
           detailsPopup={!rail && !inPanel}
-          paneShown={panelOpen && !phone}
+          panelShown={panelOpen && !phone}
           onToggleDetails={toggleDetails}
-          onTogglePane={() => setPanelOpen(!panelOpen)}
+          onTogglePanel={() => setPanelOpen(!panelOpen)}
         />
         {finding ? <ThreadFind threadId={id} onClose={() => setFinding(false)} /> : null}
         <div className="thread-stage" hidden={terminalTakesOver} data-hero={hero || undefined} data-connection={connection ?? undefined}>
@@ -551,7 +551,7 @@ export function ThreadView({ id }: { id: string }) {
             </div>
           </div>
         </div>
-        <TerminalDrawer threadId={id} open={terminalOpen} moves={paneMoves} onClose={() => togglePanel("terminal")} />
+        <TerminalDrawer threadId={id} open={terminalOpen} moves={panelMoves} onClose={() => togglePanel("terminal")} />
         {terminalOpen ? null : <TerminalBar threadId={id} onOpen={() => togglePanel("terminal")} />}
         {rail && detailsShown ? <DetailsCard thread={thread} /> : null}
         {!rail && !inPanel && detailsPopover ? (
@@ -559,14 +559,14 @@ export function ThreadView({ id }: { id: string }) {
         ) : null}
       </section>
       {panelPresent ? (
-        <SurfacePane
+        <PanelHost
           thread={thread}
           mode={phone ? "sheet" : overlays ? "overlay" : "docked"}
           closing={!panelOpen}
-          moves={paneMoves}
+          moves={panelMoves}
           maximized={maximized}
           details={inPanel && detailsPref ? <DetailsCard thread={thread} /> : null}
-          sideChat={<SideChatPane parent={thread} />}
+          sideChat={<SideChatPanel parent={thread} />}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {
             setMaximized(false);

@@ -1,7 +1,7 @@
 /* Browser surface */
 .browser-panels { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.browser-pane { flex: 1; min-height: 0; overflow: hidden; }
-.browser-pane + .browser-pane { border-top: 1px solid var(--color-divider); }
+.browser-view { flex: 1; min-height: 0; overflow: hidden; }
+.browser-view + .browser-view { border-top: 1px solid var(--color-divider); }
 .browser-tab-icon { object-fit: contain; flex-shrink: 0; }
 .browser-tabs button[role="tab"] { display: inline-flex; align-items: center; gap: 6px; }
 .preview-window { height: 100dvh; min-height: 0; }
@@ -331,14 +331,14 @@ button.context-meter:hover:not(:disabled) {
   margin: 0;
   font-size: 12.5px;
 }
-.side-chat-pane {
+.side-chat-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
 }
 /* The other tabs inset their empty states 16px from the panel edge; Empty itself has no side padding. */
-.side-chat-pane > .empty {
+.side-chat-panel > .empty {
   padding: 12px 16px;
 }
 .side-chat {
@@ -862,7 +862,7 @@ div.browser-bridge-row {
   box-shadow: inset 2px 0 0 var(--color-muted);
 }
 /* A faint dashed line at each snap point while the edge is dragged, labelled at the foot. */
-.pane-tick {
+.panel-tick {
   position: absolute;
   z-index: 5;
   top: var(--titlebar-h);
@@ -871,7 +871,7 @@ div.browser-bridge-row {
   border-left: 1px dashed var(--color-muted);
   pointer-events: none;
 }
-.pane-tick > i {
+.panel-tick > i {
   position: absolute;
   bottom: 92px;
   left: 0;
@@ -887,7 +887,7 @@ div.browser-bridge-row {
   line-height: normal;
   transform: translateX(-50%);
 }
-.pane-width {
+.panel-width {
   position: absolute;
   z-index: 3;
   top: 50%;

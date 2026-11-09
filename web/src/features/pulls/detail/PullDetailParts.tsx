@@ -7,7 +7,7 @@ import { Button } from "../../../ui/controls";
 import type { MenuItem } from "../../../ui/Menu";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { baseChangeAllowed } from "../model/pullModel";
-import { PullPageSkeleton, SignedOutBlock, UnreachableBlock } from "./PullPage";
+import { PullDetailBlocksSkeleton, SignedOutBlock, UnreachableBlock } from "./PullDetailBlocks";
 import { navigate } from "../../../product/state/route";
 
 export type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
@@ -128,7 +128,7 @@ export function pullDetailLoading({ page, number, pageHead }: { page: boolean; n
             </button>
           ))}
         </div>
-        <PullPageSkeleton />
+        <PullDetailBlocksSkeleton />
       </article>
     );
   return (

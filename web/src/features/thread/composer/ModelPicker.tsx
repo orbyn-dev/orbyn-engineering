@@ -46,7 +46,7 @@ export function placeFloating(
   return { left: clampLeft(anchor.left - GAP - size.width), top: clampTop(anchor.top), origin: "right center" };
 }
 
-export function FloatingPanel({
+export function FloatingPicker({
   anchor,
   label,
   className,
@@ -154,7 +154,7 @@ function ModelPopover({
   const panel = useRef<HTMLDivElement>(null);
   // Two stops in visual order, search then the provider chips: Tab goes search -> chips and closes after
   // them; Shift+Tab the reverse.
-  const panes = [
+  const stops = [
     { root: search, focus: () => input.current?.focus() },
     { root: chips, focus: () => chips.current?.querySelector<HTMLElement>('button[tabindex="0"]')?.focus() },
   ];
@@ -163,7 +163,7 @@ function ModelPopover({
     root: panel,
     trigger,
     closing,
-    panes,
+    stops,
     onClose,
   });
 
@@ -262,7 +262,7 @@ function ModelPopover({
   const engineName = (id: string) => engines.find((engine) => engine.id === id)?.name ?? id;
 
   return (
-    <FloatingPanel anchor={anchor} label="Choose a model" className="model-picker" container={portalContainer} closing={closing} panelRef={panel} onKeyDown={keepJumps}>
+    <FloatingPicker anchor={anchor} label="Choose a model" className="model-picker" container={portalContainer} closing={closing} panelRef={panel} onKeyDown={keepJumps}>
       <div ref={search} className="model-search">
         <Search size={14} aria-hidden />
         <input
@@ -363,7 +363,7 @@ function ModelPopover({
           ) : null}
         </div>
       </div>
-    </FloatingPanel>
+    </FloatingPicker>
   );
 }
 

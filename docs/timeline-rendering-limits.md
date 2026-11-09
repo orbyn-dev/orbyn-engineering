@@ -53,7 +53,7 @@ The same spec re-ran on macOS on 5 November 2026 against the already-built
 images, the 404, the 400 and no remote media request.
 
 The pre-existing arbitrary HTML/SVG refusal is covered by
-`QuestionPanel.test.tsx`: a question containing `<script>` or `<svg onload>` keeps
+`QuestionCard.test.tsx`: a question containing `<script>` or `<svg onload>` keeps
 that text and mounts no script, SVG, image, video or iframe element. The
 live-provider question was attempted once and refused, recorded below, and was
 not retried. The native desktop shell was not run because no local desktop build
@@ -80,9 +80,10 @@ evidence and stays partial.
 The add-tab menu's Device entry is disabled, and no Device surface exists: the
 only other Device control is the browser's viewport toolbar, and H20 (the device
 panel) is still open. The disabled entry is therefore correct and was not built
-here. The pre-existing `SurfacePane.menu.test.tsx` regression asserts it stays
-disabled. Browser mute stays refused: the preview is a stream of JPEG frames with
-no audio track, so there is nothing to mute. Native qualification was not run
+here. The pre-existing tab-strip regression covers the add-tab menu
+(`PanelHost.tabs.test.tsx`). Browser mute stays refused: the preview is a stream
+of JPEG frames with no audio track, so there is nothing to mute. Native
+qualification was not run
 because no local desktop build exists.
 
 ## C4 real Codex outcome observation

@@ -35,6 +35,13 @@ folders never import a feature or `app`, generic code never imports `product`, a
 ESLint and `npm run check` fail the change that tries. A file used by one feature
 lives in that feature; shared code appears only by hoisting (docs/refactor.md).
 
+## Names
+
+Page is a route, Panel is a side-panel tab, Dialog is a modal. Non-route
+components are `...View` (`TaskView`, `StartView`); only side-panel tabs are
+`...Panel` (`PanelHost`, `SideChatPanel`, `BrowserPanel`); non-modal content is
+not a `...Dialog` (`QuestionCard`, `ConfirmFacts`). There is no "Pane".
+
 ## Tests
 
 Unit tests sit beside their file as `*.test.ts(x)` and run with `npm test`.

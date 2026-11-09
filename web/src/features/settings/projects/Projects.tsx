@@ -10,7 +10,7 @@ import { toFailure } from "../../../lib/useAsync";
 import { useWorkspace } from "../../../product/state/workspace";
 import { useUi } from "../../../product/state/ui";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { DialogCard } from "../rows/DialogCard";
+import { ConfirmFacts } from "../rows/ConfirmFacts";
 import { ProjectActions } from "./ProjectActions";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
@@ -348,7 +348,7 @@ export function ProjectRemoval({ query, group, members, disabled, reload, clearS
       confirmDisabled={disabled || remaining.length === 0} onClose={() => setPlan(null)} onConfirm={remove}>
       <p>{plan.wholeGroup ? "Orbyn stops tracking this project. Files on disk are not touched."
         : "Orbyn stops tracking this checkout. Files on disk are not touched. Other checkouts of this project are unaffected."}</p>
-      <DialogCard facts={[
+      <ConfirmFacts facts={[
         { label: folders.length === 1 ? "Folder" : "Folders", value: folders.length === 0 ? "Unknown" : <>{folders.map((folder) => <span key={folder} style={{ display: "block" }}>{folder}</span>)}</>, mono: true },
         ...(threadCount > 0 ? [{ label: "Threads", value: `${threadCount} · stay in Archive` }] : []),
       ]} />

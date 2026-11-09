@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useUi } from "../../product/state/ui";
-import { PaneResizer } from "./SurfacePane";
+import { PanelResizer } from "./PanelHost";
 
 beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1400 });
@@ -18,47 +18,47 @@ afterEach(() => {
 });
 
 function setup(drawer = false) {
-  const view = render(<div data-testid="pane"><PaneResizer drawer={drawer} /></div>);
-  const pane = screen.getByTestId("pane");
-  vi.spyOn(pane, "getBoundingClientRect").mockImplementation(() => ({ right: 1200, width: Number.parseFloat(pane.style.width) || 500 }) as DOMRect);
-  return { ...view, pane, handle: screen.getByRole("separator", { name: "Resize panel" }) };
+  const view = render(<div data-testid="panel"><PanelResizer drawer={drawer} /></div>);
+  const panel = screen.getByTestId("panel");
+  vi.spyOn(panel, "getBoundingClientRect").mockImplementation(() => ({ right: 1200, width: Number.parseFloat(panel.style.width) || 500 }) as DOMRect);
+  return { ...view, panel, handle: screen.getByRole("separator", { name: "Resize panel" }) };
 }
 
 it("prevents selection and saves the bounded width on pointer up", () => {
-  const { pane, handle } = setup();
+  const { panel, handle } = setup();
   const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, button: 0 });
   fireEvent(handle, down);
   expect(down.defaultPrevented).toBe(true);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 0 });
-  expect(pane.style.width).toBe("840px");
+  expect(panel.style.width).toBe("840px");
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(useUi.getState().panelWidth).toBe(840);
   expect(handle.releasePointerCapture).toHaveBeenCalledWith(1);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 1000 });
-  expect(pane.style.width).toBe("840px");
+  expect(panel.style.width).toBe("840px");
 });
 
 it("ignores non-primary buttons and other pointers", () => {
-  const { pane, handle } = setup();
+  const { panel, handle } = setup();
   fireEvent.pointerDown(handle, { pointerId: 1, button: 2 });
   expect(handle.setPointerCapture).not.toHaveBeenCalled();
   fireEvent.pointerDown(handle, { pointerId: 2, button: 0 });
   fireEvent.pointerDown(handle, { pointerId: 3, button: 0 });
   expect(handle.setPointerCapture).toHaveBeenCalledTimes(1);
   fireEvent.pointerMove(handle, { pointerId: 3, clientX: 1000 });
-  expect(pane.style.width).toBe("");
+  expect(panel.style.width).toBe("");
   fireEvent.pointerMove(handle, { pointerId: 2, clientX: 1000 });
-  expect(pane.style.width).toBe("320px");
+  expect(panel.style.width).toBe("320px");
 });
 
 it.each(["pointerCancel", "lostPointerCapture"] as const)("ends a drag on %s", (eventName) => {
-  const { pane, handle } = setup();
+  const { panel, handle } = setup();
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
   fireEvent[eventName](handle, { pointerId: 1 });
   expect(useUi.getState().panelWidth).toBe(600);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 1000 });
-  expect(pane.style.width).toBe("600px");
+  expect(panel.style.width).toBe("600px");
 });
 
 it("releases capture when unmounted and keeps the double-click reset to 380 px", () => {
@@ -72,37 +72,37 @@ it("releases capture when unmounted and keeps the double-click reset to 380 px",
 });
 
 it.each([false, true])("restores only a drag-owned width when the divider unmounts (parent changed: %s)", (parentChanged) => {
-  const { rerender, pane, handle } = setup();
-  pane.style.width = "450px";
+  const { rerender, panel, handle } = setup();
+  panel.style.width = "450px";
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
-  if (parentChanged) pane.style.width = "";
-  rerender(<div data-testid="pane" />);
-  expect(pane.style.width).toBe(parentChanged ? "" : "450px");
+  if (parentChanged) panel.style.width = "";
+  rerender(<div data-testid="panel" />);
+  expect(panel.style.width).toBe(parentChanged ? "" : "450px");
 });
 
 it("does not save a drag into a different thread layout", () => {
-  const { pane, handle } = setup();
+  const { panel, handle } = setup();
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
   act(() => useUi.setState({ layoutKey: "another-thread" }));
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(useUi.getState().panelWidth).toBeNull();
-  // The destination has no saved width, so the pane shows the default it renders with.
-  expect(pane.style.width).toBe("380px");
+  // The destination has no saved width, so the panel shows the default it renders with.
+  expect(panel.style.width).toBe("380px");
 });
 
 it("leaves a drawer's width to its stylesheet when the destination has no saved width", () => {
-  const { pane, handle } = setup(true);
+  const { panel, handle } = setup(true);
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
   act(() => useUi.setState({ layoutKey: "another-thread" }));
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(pane.style.width).toBe("");
+  expect(panel.style.width).toBe("");
 });
 
 it("restores the destination width if the pointer ends before layout cleanup", () => {
-  const { pane, handle } = setup();
+  const { panel, handle } = setup();
   fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
   act(() => {
@@ -110,5 +110,5 @@ it("restores the destination width if the pointer ends before layout cleanup", (
     fireEvent.pointerUp(handle, { pointerId: 1 });
   });
   expect(useUi.getState().panelWidth).toBe(640);
-  expect(pane.style.width).toBe("640px");
+  expect(panel.style.width).toBe("640px");
 });

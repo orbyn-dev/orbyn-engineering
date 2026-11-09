@@ -315,7 +315,7 @@ export function MergeRow({
 }
 
 /** What stands in for the page while it loads, drawn only once the wait passes 400 ms. */
-export function PullPageSkeleton() {
+export function PullDetailBlocksSkeleton() {
   const shown = useWaited(true);
   // Line widths as the pr-detail-loading frame draws them.
   const card = (widths: number[]) => (

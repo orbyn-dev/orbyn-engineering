@@ -6,7 +6,7 @@ import { clearedFilters, pullData, type PullFilters } from "../model/pullModel";
 import type { ToolbarProps } from "./toolbarTypes";
 import { Avatar, CHECK_OPTIONS, Matched, REVIEW_OPTIONS, STATE_OPTIONS, SearchBox, Tick, toggle } from "./toolbarParts";
 
-export function FilterPanel({ props, count, sheet, dismiss }: { props: ToolbarProps; count: number; sheet: boolean; dismiss(): void }) {
+export function FilterFields({ props, count, sheet, dismiss }: { props: ToolbarProps; count: number; sheet: boolean; dismiss(): void }) {
   const { filters, onFilters } = props;
   const has = props.has ?? pullData;
   const [authorFind, setAuthorFind] = useState("");

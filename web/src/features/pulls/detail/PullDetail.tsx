@@ -25,7 +25,7 @@ import { useVisibleProjects } from "../../../product/state/workspace";
 import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
-import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullPage";
+import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
 import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";

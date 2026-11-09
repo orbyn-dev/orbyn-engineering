@@ -5,7 +5,7 @@ import { useUi } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
 
 /** Reachable servers from this thread's processes, and pages opened before. */
-export function StartPage({
+export function StartView({
   threadId,
   onOpen,
   profile,

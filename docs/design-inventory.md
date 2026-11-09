@@ -27,7 +27,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 8 | `no-projects` | Getting started | No projects yet | `features/onboarding/NoProjects.tsx:10` | exists | P1 | |
 | 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView/index.tsx` | exists | P2 | |
 | 10 | `approval` | Threads | Approve a command | `features/thread/ApprovalCard.tsx:24` | exists | P2 | |
-| 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionPanel.tsx:79` | exists | P2 | |
+| 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionCard.tsx:79` | exists | P2 | |
 | 12 | `plan` | Threads | Proposed plan | `features/thread/PlanCard.tsx:76` | exists | P2 | |
 | 13 | `subagents` | Threads | Subagents and queued messages | `features/thread/SubagentBar.tsx:40; features/thread/QueuedMessages.tsx:9` | exists | P2 | |
 | 14 | `composer` | Threads | Composer | `features/thread/composer/Composer.tsx:105` | exists | P2 | |
@@ -71,8 +71,8 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 52 | `tc-subagent` | Tool calls, every state | Subagent, with a link to its thread | `features/thread/SubagentBar.tsx:40; features/thread/RelatedThreads.tsx:25` | partial | P2 | |
 | 53 | `tc-plan` | Tool calls, every state | Plan or to-do update | `features/thread/items.tsx:254` | exists | P2 | |
 | 54 | `tc-image` | Tool calls, every state | Image viewed | `product/timeline/toolTrace.ts:14` | partial | P2 | |
-| 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/thread/SideChatPane.tsx:16` | partial | P2 | |
-| 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/thread/SideChatPane.tsx:16; features/thread/ApprovalCard.tsx:24` | partial | P2 | |
+| 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/thread/SideChatPanel.tsx:16` | partial | P2 | |
+| 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/thread/SideChatPanel.tsx:16; features/thread/ApprovalCard.tsx:24` | partial | P2 | |
 | 57 | `tc-phone-list` | Tool calls, every state | Phone: groups and rows | `missing` | missing | P2 | |
 | 58 | `tc-phone-sheet` | Tool calls, every state | Phone: output in a sheet | `missing` | missing | P2 | |
 | 59 | `tc-phone-needs-you` | Tool calls, every state | Phone: needs you | `missing` | missing | P2 | |
@@ -80,7 +80,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 61 | `panel-files` | Side panel and terminal | Files | `features/panels/files/FilesPanel.tsx` | exists | P2 | |
 | 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2 | |
 | 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | |
-| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPane.tsx` | exists | P2 | |
+| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | exists | P2 | |
 | 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | exists | P2 | |
 | 66 | `pulls` | Pages | Pull requests | `features/pulls/list/PullsPage.tsx:42` | exists | P2 | |
 | 67 | `pull-detail` | Pages | Pull request | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
@@ -167,7 +167,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 148 | `x-diff-comment` | Side panel, every state | Diff: comment on a line | `features/panels/diff/DiffPanel.tsx:154,253` | exists | P2 | |
 | 149 | `x-diff-search` | Side panel, every state | Diff: filter files | `features/panels/diff/DiffPanel.tsx:110` | partial | P2 | |
 | 150 | `x-diff-menu` | Side panel, every state | Diff: panel menu open | `features/panels/diff/DiffPanel.tsx` | missing | P2 | |
-| 151 | `x-diff-split` | Side panel, every state | Diff: split view, maximised | `features/panels/diff/DiffPanel.tsx:374; features/panels/SurfacePane.tsx:245` | exists | P2 | |
+| 151 | `x-diff-split` | Side panel, every state | Diff: split view, maximised | `features/panels/diff/DiffPanel.tsx:374; features/panels/PanelHost.tsx:245` | exists | P2 | |
 | 152 | `x-files-empty` | Side panel, every state | Files: nothing selected | `features/panels/files/FilesPanel.tsx:236` | partial | P2 | |
 | 153 | `x-files-loading` | Side panel, every state | Files: loading | `features/panels/files/FilesPanel.tsx:201,245` | exists | P2 | |
 | 154 | `x-files-error` | Side panel, every state | Files: folder can't be read | `features/panels/files/FilesPanel.tsx:247` | exists | P2 | |
@@ -187,18 +187,18 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 168 | `x-activity-running` | Side panel, every state | Activity: running | `features/panels/activity/ActivityPanel.tsx:31` | partial | P2 | |
 | 169 | `x-activity-failed` | Side panel, every state | Activity: failed step with log | `features/panels/activity/ActivityPanel.tsx:35` | partial | P2 | |
 | 170 | `x-activity-filtered` | Side panel, every state | Activity: filtered | `features/panels/activity/ActivityPanel.tsx:7` | partial | P2 | |
-| 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/thread/SideChatPane.tsx` | exists | P2 | |
-| 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/thread/SideChatPane.tsx:16` | exists | P2 | |
-| 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/thread/SideChatPane.tsx:16` | partial | P2 | |
+| 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/thread/SideChatPanel.tsx` | exists | P2 | |
+| 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/thread/SideChatPanel.tsx:16` | exists | P2 | |
+| 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/thread/SideChatPanel.tsx:16` | partial | P2 | |
 | 174 | `x-gate-running` | Side panel, every state | Review gate: reviewing | `missing` | missing | P3 | |
 | 175 | `x-gate-passed` | Side panel, every state | Review gate: passed | `missing` | missing | P3 | |
 | 176 | `x-gate-selected` | Side panel, every state | Review gate: finding opened | `missing` | missing | P3 | |
 | 177 | `x-gate-error` | Side panel, every state | Review gate: couldn't run | `missing` | missing | P3 | |
 | 178 | `x-panel-collapsed` | Side panel, every state | Panel: collapsed | `features/thread/ThreadView.tsx:345` | exists | P1 | |
-| 179 | `x-panel-resized` | Side panel, every state | Panel: resized | `features/panels/SurfacePane.tsx:112` | exists | P1 | |
-| 180 | `x-panel-maximised` | Side panel, every state | Panel: maximised | `features/panels/SurfacePane.tsx:245` | exists | P1 | |
-| 181 | `x-panel-tabs-more` | Side panel, every state | Panel: tabs overflow | `features/panels/SurfacePane.tsx:220` | partial | P1 | |
-| 182 | `x-panel-offline` | Side panel, every state | Panel: offline | `features/panels/SurfacePane.tsx` | missing | P1 | |
+| 179 | `x-panel-resized` | Side panel, every state | Panel: resized | `features/panels/PanelHost.tsx:112` | exists | P1 | |
+| 180 | `x-panel-maximised` | Side panel, every state | Panel: maximised | `features/panels/PanelHost.tsx:245` | exists | P1 | |
+| 181 | `x-panel-tabs-more` | Side panel, every state | Panel: tabs overflow | `features/panels/PanelHost.tsx:220` | partial | P1 | |
+| 182 | `x-panel-offline` | Side panel, every state | Panel: offline | `features/panels/PanelHost.tsx` | missing | P1 | |
 | 183 | `x-chat-streaming` | Threads, every state | Reply streaming, with stop | `features/thread/composer/ComposerExtras.tsx:129; features/thread/items.tsx:208` | exists | P2 | |
 | 184 | `x-chat-interrupted` | Threads, every state | Interrupted, then resumed | `features/thread/ThreadView.tsx:167` | partial | P2 | |
 | 185 | `x-chat-code` | Threads, every state | Long code block with copy | `features/content/code/CodeBlock.tsx:44` | partial | P2 | |
@@ -269,11 +269,11 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 15 | `modal` | Modal and scrim | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
 | 16 | `confirm` | Confirm a destructive action | dialog and scrim as the modal; row opacity, siblings translateY one slot; toast translateY 12px | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | dialog fades; row fades out and the list closes up at once | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog; web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
 | 17 | `sheet` | Phone bottom sheet | sheet translateY 100% to 0; scrim opacity; drag follows the pointer 1:1 | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | sheet and scrim fade; drag still works | `missing (no bottom sheet; dialogs are centred)` | missing | P1 | |
-| 18 | `sidepanel` | Side panel slide | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread-panels.css:239-251 .context; web/src/product/panels/panelAnimations.ts` | differs | P1 | |
-| 19 | `sidetabs` | Side panel tabs | tab background-color and color; content opacity cross-fade | fast 150ms, exit 105ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | colour and fade only, same as full motion | `web/src/styles/thread-panels.css:289-379 .ptab/.surface-tab; features/panels/SurfacePane.tsx` | missing | P1 | |
-| 20 | `sidetabs` | Side panel tabs | tab flex-basis, max-width and padding to 0, opacity out; neighbours slide in as it collapses (one small strip, layout) | base 200ms | cubic-bezier(.4,0,.2,1) | tab disappears at once, content fades | `web/src/features/panels/SurfacePane.tsx; web/src/styles/thread-panels.css:330 .surface-tab` | missing | P1 | |
-| 21 | `sidetabs` | Side panel tabs | tab flex-basis, max-width and padding from 0 to full, opacity in | base 200ms | cubic-bezier(.2,.8,.2,1) | tab appears at once, content fades | `web/src/features/panels/SurfacePane.tsx; web/src/styles/thread-panels.css:330 .surface-tab` | missing | P1 | |
-| 22 | `sidetabs` | Side panel tabs | dragged tab lifts (translateY -2px, shadow) and follows the pointer; the others transform translateX one tab width | fast 150ms | cubic-bezier(.2,.8,.2,1) | tab order changes at once; no lift or slide | `n/a (Engineering has no tab drag-reorder; SurfacePane has no drag handlers)` | n/a | Not this app | |
+| 18 | `sidepanel` | Side panel slide | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/PanelHost.tsx:209; web/src/styles/thread-panels.css:239-251 .context; web/src/product/panels/panelAnimations.ts` | differs | P1 | |
+| 19 | `sidetabs` | Side panel tabs | tab background-color and color; content opacity cross-fade | fast 150ms, exit 105ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | colour and fade only, same as full motion | `web/src/styles/thread-panels.css:289-379 .ptab/.surface-tab; features/panels/PanelHost.tsx` | missing | P1 | |
+| 20 | `sidetabs` | Side panel tabs | tab flex-basis, max-width and padding to 0, opacity out; neighbours slide in as it collapses (one small strip, layout) | base 200ms | cubic-bezier(.4,0,.2,1) | tab disappears at once, content fades | `web/src/features/panels/PanelHost.tsx; web/src/styles/thread-panels.css:330 .surface-tab` | missing | P1 | |
+| 21 | `sidetabs` | Side panel tabs | tab flex-basis, max-width and padding from 0 to full, opacity in | base 200ms | cubic-bezier(.2,.8,.2,1) | tab appears at once, content fades | `web/src/features/panels/PanelHost.tsx; web/src/styles/thread-panels.css:330 .surface-tab` | missing | P1 | |
+| 22 | `sidetabs` | Side panel tabs | dragged tab lifts (translateY -2px, shadow) and follows the pointer; the others transform translateX one tab width | fast 150ms | cubic-bezier(.2,.8,.2,1) | tab order changes at once; no lift or slide | `n/a (Engineering has no tab drag-reorder; PanelHost has no drag handlers)` | n/a | Not this app | |
 | 23 | `termdrawer` | Terminal drawer | drawer transform translateY 100% to 0 over the thread | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | drawer fades in place | `web/src/features/thread/ThreadView.tsx:277-286 TerminalDrawer; web/src/styles/thread-panels.css:214 .drawer` | missing | P2 | |
 | 24 | `settings` | Settings navigation | highlight transform translateY; pane opacity and translateY 6px to 0 | base 200ms, page 240ms, exit 170ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | highlight jumps; pane cross-fades | `web/src/features/settings/SettingsPage.tsx` | missing | P1 | |
 | 25 | `toast` | Toasts | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
@@ -327,8 +327,8 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 73 | `reduced` | Reduced motion | opacity, transform translateY -4px and scale .98 from the trigger corner | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, 150ms | `web/src/ui/Menu.tsx; web/src/styles/base.css:772 .popup-menu` | differs | P1 | |
 | 74 | `reduced` | Reduced motion | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
 | 75 | `reduced` | Reduced motion | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
-| 76 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread-panels.css:239-251 .context; web/src/product/panels/panelAnimations.ts` | differs | P2 | |
-| 77 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread-panels.css:239-251 .context; web/src/product/panels/panelAnimations.ts` | differs | P2 | |
+| 76 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/PanelHost.tsx:209; web/src/styles/thread-panels.css:239-251 .context; web/src/product/panels/panelAnimations.ts` | differs | P2 | |
+| 77 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/PanelHost.tsx:209; web/src/styles/thread-panels.css:239-251 .context; web/src/product/panels/panelAnimations.ts` | differs | P2 | |
 | 78 | `reduced` | Reduced motion | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
 | 79 | `reduced` | Reduced motion | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
 | 80 | `reduced` | Reduced motion | tick opacity and scale; strike transform scaleX; row opacity; row translateY to Done after a 1.5s pause with Undo | fast 150ms, base 200ms, slow 300ms | cubic-bezier(.2,.8,.2,1) | tick and strike appear; row fades and reappears in Done | `n/a (Planner only)` | n/a | Not this app | |

@@ -52,7 +52,7 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { CompactOffer, ComposerBanners, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import { localCommand, promptHistory, type RecallPosition } from "./composerInput";
 import { offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
-import { QuestionPanel } from "../QuestionPanel";
+import { QuestionCard } from "../QuestionCard";
 import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../product/state/modelStore";
 import { QueuedMessages } from "../QueuedMessages";
@@ -451,7 +451,7 @@ export function Composer({
         onChange={reloadQueue}
         onEdit={(prompt) => setDraft(thread.id, draft.trim() ? `${draft}\n\n${prompt}` : prompt)}
       />
-      <QuestionPanel threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
+      <QuestionCard threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
       <ComposerBanners engine={engine} />
       <CompactOffer threadId={thread.id} engine={thread.engine} active={busy} items={log?.items ?? []} />
       {runId !== null && runId === stoppedRun ? <StopNotice threadId={thread.id} runId={runId} /> : null}

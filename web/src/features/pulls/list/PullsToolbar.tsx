@@ -6,7 +6,7 @@ import "../pullsToolbar.css";
 import { activeChips, clearedFilters, pullData, takeLabels, sortName, type PullSort } from "../model/pullModel";
 import type { ToolbarProps } from "./toolbarTypes";
 import type { Kind } from "./toolbarParts";
-import { FilterPanel } from "./FilterPanel";
+import { FilterFields } from "./FilterFields";
 
 export function PullsToolbar(props: ToolbarProps) {
   const has = props.has ?? pullData;
@@ -280,7 +280,7 @@ export function PullsToolbar(props: ToolbarProps) {
           closeNow={menu.sheet && !sheet}
           onClose={() => setMenu(null)}
         >
-          {(dismiss) => <FilterPanel props={props} count={count} sheet={menu.sheet} dismiss={dismiss} />}
+          {(dismiss) => <FilterFields props={props} count={count} sheet={menu.sheet} dismiss={dismiss} />}
         </ToolbarPopover>
       ) : null}
     </>

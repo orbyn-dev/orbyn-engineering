@@ -201,7 +201,7 @@ function WebhookAddressRow({ task, offline }: { task: ScheduledTask; offline: bo
 type Tab = "runs" | "deliveries";
 
 /** One task: its header, schedule, webhook address, and what ran and what arrived. */
-export function TaskPage({ task, onBack, onChanged, onEdit }: { task: ScheduledTask; onBack(): void; onChanged(): void; onEdit(): void }) {
+export function TaskView({ task, onBack, onChanged, onEdit }: { task: ScheduledTask; onBack(): void; onChanged(): void; onEdit(): void }) {
   const offline = useConnection((state) => state.offline);
   const pushToast = useUi((state) => state.pushToast);
   const projects = useVisibleProjects();

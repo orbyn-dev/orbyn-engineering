@@ -9,7 +9,7 @@ import { relativeTime } from "../../../lib/format";
 import { scheduleLabel, taskTone, WEEKDAYS } from "../../../product/tasks/taskSchedule";
 import { useConnection } from "../../../product/state/connection";
 import { navigate, useRoute } from "../../../product/state/route";
-import { TaskPage } from "./TaskPage";
+import { TaskView } from "./TaskView";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { settingsLabel } from "../settingsSearch";
 import { useUi } from "../../../product/state/ui";
@@ -413,7 +413,7 @@ function TasksView({ page }: { page: boolean }) {
   const empty = tasks.status === "ready" && tasks.data.length === 0;
   const openTask = opened === null ? undefined : tasks.data?.find((entry) => entry.id === opened);
   const content = openTask ? (
-    <TaskPage task={openTask} onBack={() => setOpened(null)} onChanged={tasks.reload} onEdit={() => setEditing(openTask)} />
+    <TaskView task={openTask} onBack={() => setOpened(null)} onChanged={tasks.reload} onEdit={() => setEditing(openTask)} />
   ) : (
     <>
       {page ? (

@@ -12,7 +12,7 @@ import { SettingRow } from "../rows/SettingRow";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { AddProviderDialog, InstanceEditor, useProviderInstances } from "./ProviderInstances";
 import { ProviderDetail } from "./ProviderDetail";
-import { AcpRegistryPage, HistoryImportPage } from "./ProviderPages";
+import { AcpRegistryView, HistoryImportView } from "./ProviderViews";
 import { ProviderListActions, ProviderTable } from "./ProviderTable";
 import { SettingsBanner } from "../rows/SettingsBanner";
 import { followEngineUpdates, UpdateProgressLine } from "./engineUpdates";
@@ -87,8 +87,8 @@ export function ProvidersSection() {
   const base = (engines.data ?? []).filter((engine) => !engine.instance_of);
   const editInstance = store.instances.find((entry) => entry.id === editing);
 
-  if (view.page === "history") return <HistoryImportPage onBack={list} />;
-  if (view.page === "registry") return <AcpRegistryPage onBack={list} />;
+  if (view.page === "history") return <HistoryImportView onBack={list} />;
+  if (view.page === "registry") return <AcpRegistryView onBack={list} />;
   const detail = view.page === "detail" ? engines.data?.find((engine) => engine.id === view.id) : undefined;
   if (detail) {
     return (

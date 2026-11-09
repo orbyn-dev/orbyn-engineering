@@ -5,7 +5,7 @@ import { useAsync } from "../../../lib/useAsync";
 import { ErrorState } from "../../../product/ui/states";
 import { Toasts } from "../../../product/ui/Toasts";
 import { GitHubStarPrompt } from "../../workspace";
-import { BrowserPane } from "../browser/BrowserPanel";
+import { BrowserView } from "../browser/BrowserPanel";
 
 /** A native viewer has preview shortcuts, without the main chat's navigation/actions. */
 export function PreviewWindow({ threadId, tabId }: { threadId: string; tabId: string }) {
@@ -31,7 +31,7 @@ export function PreviewWindow({ threadId, tabId }: { threadId: string; tabId: st
   }, [rules]);
   return <main className="preview-window">
     {keymap.error ? <ErrorState title="Can't load preview shortcuts" failure={keymap.error} onRetry={keymap.reload} /> : null}
-    <BrowserPane threadId={threadId} onlyTabId={tabId} detached />
+    <BrowserView threadId={threadId} onlyTabId={tabId} detached />
     <Toasts lead={<GitHubStarPrompt />} />
   </main>;
 }

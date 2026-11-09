@@ -40,7 +40,7 @@ async function expectAligned(page: Page) {
 }
 
 for (const layout of ["console", "ledger", "reading"]) {
-  test(`${layout} aligns the composer with the transcript through window and pane resizing`, async ({ page }) => {
+  test(`${layout} aligns the composer with the transcript through window and panel resizing`, async ({ page }) => {
     await page.evaluate((value) => { document.documentElement.dataset.workspace = value; }, layout);
     for (const width of [1600, 1200]) {
       await page.setViewportSize({ width, height: 900 });
