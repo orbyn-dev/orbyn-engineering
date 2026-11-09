@@ -6,6 +6,7 @@ use orbyn_contracts::{MergePull, PullChecks, ReviewLineComment};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
+use super::github::{github_threads, parse_github_event};
 use super::*;
 use crate::error::CoreError;
 

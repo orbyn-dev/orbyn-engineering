@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde_json::json;
 
+use super::github::parse_github_revision;
 use super::*;
 use crate::error::CoreError;
 
