@@ -3,6 +3,8 @@
 //! of it needs a trusted folder, and commit hooks do run here, as they would for
 //! the user. Writes wait for the thread's run to finish.
 
+pub(crate) mod writing;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
