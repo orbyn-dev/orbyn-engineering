@@ -2,12 +2,6 @@
 .details {
   background: transparent;
 }
-.details > .details-section {
-  margin-top: 8px;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: var(--color-sunken);
-}
 .dcard {
   display: flex;
   flex-direction: column;
@@ -205,24 +199,6 @@
 }
 .popup-menu .menu-check {
   margin-left: auto;
-}
-.dauto .dscript {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.dauto .dscript:focus-visible {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
 }
 .drow .dv small .dlink,
 .drow .dv small.mono {

@@ -337,9 +337,3 @@
   overflow: visible;
   white-space: normal;
 }
-.detail-chevron {
-  transition: rotate var(--m-fast) var(--m-io);
-}
-.detail-chevron[data-open] {
-  rotate: 180deg;
-}
