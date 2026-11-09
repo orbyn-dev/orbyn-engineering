@@ -30,9 +30,6 @@
   "lines": {
     "app/Shell.tsx": 732,
     "features/onboarding/DraftView.tsx": 608,
-    "features/panels/browser/BrowserPanel.tsx": 954,
-    "features/panels/diff/DiffPanel.tsx": 665,
-    "features/panels/files/office.ts": 720,
     "features/pulls/PullDetail.tsx": 900,
     "features/pulls/PullsToolbar.tsx": 676,
     "features/settings/PreferenceSections.tsx": 796,
