@@ -82,63 +82,63 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | |
 | 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPane.tsx` | exists | P2 | |
 | 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | exists | P2 | |
-| 66 | `pulls` | Pages | Pull requests | `features/pulls/PullsPage.tsx:42` | exists | P2 | |
-| 67 | `pull-detail` | Pages | Pull request | `features/pulls/PullDetail.tsx:343` | exists | P2 | |
+| 66 | `pulls` | Pages | Pull requests | `features/pulls/list/PullsPage.tsx:42` | exists | P2 | |
+| 67 | `pull-detail` | Pages | Pull request | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
 | 68 | `usage` | Pages | Usage | `features/usage/UsagePage.tsx:554` | exists | P2 | |
-| 69 | `tasks` | Pages | Scheduled tasks | `features/settings/ScheduledTasks.tsx:597` | exists | P2 | |
-| 70 | `task-new` | Pages | New scheduled task | `features/settings/ScheduledTasks.tsx:149` | exists | P2 | |
-| 71 | `pr-list-none` | Pull requests, every state | List: no pull requests | `features/pulls/PullsPage.tsx:258` | partial | P2 | |
-| 72 | `pr-list-loading` | Pull requests, every state | List: loading | `features/pulls/PullsPage.tsx:253` | exists | P2 | |
-| 73 | `pr-list-error` | Pull requests, every state | List: GitHub unreachable | `features/pulls/PullsPage.tsx:256` | exists | P2 | |
+| 69 | `tasks` | Pages | Scheduled tasks | `features/settings/scheduled-tasks/ScheduledTasks.tsx:597` | exists | P2 | |
+| 70 | `task-new` | Pages | New scheduled task | `features/settings/scheduled-tasks/ScheduledTasks.tsx:149` | exists | P2 | |
+| 71 | `pr-list-none` | Pull requests, every state | List: no pull requests | `features/pulls/list/PullsPage.tsx:258` | partial | P2 | |
+| 72 | `pr-list-loading` | Pull requests, every state | List: loading | `features/pulls/list/PullsPage.tsx:253` | exists | P2 | |
+| 73 | `pr-list-error` | Pull requests, every state | List: GitHub unreachable | `features/pulls/list/PullsPage.tsx:256` | exists | P2 | |
 | 74 | `pr-list-offline` | Pull requests, every state | List: offline | `missing` | missing | P2 | |
-| 75 | `pr-list-signedout` | Pull requests, every state | List: signed out of GitHub | `features/pulls/PullsPage.tsx:262; api/pulls.ts:28` | missing | P2 | |
-| 76 | `pr-list-filtered` | Pull requests, every state | List: filtered with no results | `features/pulls/PullsPage.tsx:258` | partial | P2 | |
-| 77 | `pr-list-running` | Pull requests, every state | List: checks running | `features/pulls/PullsPage.tsx:32,307` | exists | P2 | |
-| 78 | `pr-list-failed` | Pull requests, every state | List: checks failed | `features/pulls/PullsPage.tsx:32,307` | partial | P2 | |
-| 79 | `pr-list-review` | Pull requests, every state | List: review requested | `features/pulls/PullsPage.tsx:34` | partial | P2 | |
-| 80 | `pr-list-changes` | Pull requests, every state | List: changes requested | `features/pulls/PullsPage.tsx:316` | exists | P2 | |
-| 81 | `pr-list-approved` | Pull requests, every state | List: approved and ready to merge | `features/pulls/PullsPage.tsx:34` | exists | P2 | |
-| 82 | `pr-list-conflict` | Pull requests, every state | List: merge conflict | `features/pulls/PullsPage.tsx:283` | missing | P2 | |
-| 83 | `pr-list-merged` | Pull requests, every state | List: merged | `features/pulls/PullsPage.tsx:28` | exists | P2 | |
-| 84 | `pr-list-closed` | Pull requests, every state | List: closed | `features/pulls/PullsPage.tsx:27` | exists | P2 | |
-| 85 | `pr-list-draft` | Pull requests, every state | List: draft | `features/pulls/PullsPage.tsx:155,302` | exists | P2 | |
+| 75 | `pr-list-signedout` | Pull requests, every state | List: signed out of GitHub | `features/pulls/list/PullsPage.tsx:262; api/pulls.ts:28` | missing | P2 | |
+| 76 | `pr-list-filtered` | Pull requests, every state | List: filtered with no results | `features/pulls/list/PullsPage.tsx:258` | partial | P2 | |
+| 77 | `pr-list-running` | Pull requests, every state | List: checks running | `features/pulls/list/PullsPage.tsx:32,307` | exists | P2 | |
+| 78 | `pr-list-failed` | Pull requests, every state | List: checks failed | `features/pulls/list/PullsPage.tsx:32,307` | partial | P2 | |
+| 79 | `pr-list-review` | Pull requests, every state | List: review requested | `features/pulls/list/PullsPage.tsx:34` | partial | P2 | |
+| 80 | `pr-list-changes` | Pull requests, every state | List: changes requested | `features/pulls/list/PullsPage.tsx:316` | exists | P2 | |
+| 81 | `pr-list-approved` | Pull requests, every state | List: approved and ready to merge | `features/pulls/list/PullsPage.tsx:34` | exists | P2 | |
+| 82 | `pr-list-conflict` | Pull requests, every state | List: merge conflict | `features/pulls/list/PullsPage.tsx:283` | missing | P2 | |
+| 83 | `pr-list-merged` | Pull requests, every state | List: merged | `features/pulls/list/PullsPage.tsx:28` | exists | P2 | |
+| 84 | `pr-list-closed` | Pull requests, every state | List: closed | `features/pulls/list/PullsPage.tsx:27` | exists | P2 | |
+| 85 | `pr-list-draft` | Pull requests, every state | List: draft | `features/pulls/list/PullsPage.tsx:155,302` | exists | P2 | |
 | 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `features/panels/diff/GitActionDialog.tsx:36` | partial | P2 | |
-| 87 | `pr-detail-loading` | Pull requests, every state | Detail: loading | `features/pulls/PullDetail.tsx:391` | exists | P2 | |
-| 88 | `pr-detail-error` | Pull requests, every state | Detail: GitHub unreachable | `features/pulls/PullDetail.tsx:403` | exists | P2 | |
+| 87 | `pr-detail-loading` | Pull requests, every state | Detail: loading | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
+| 88 | `pr-detail-error` | Pull requests, every state | Detail: GitHub unreachable | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
 | 89 | `pr-detail-offline` | Pull requests, every state | Detail: offline | `missing` | missing | P2 | |
 | 90 | `pr-detail-signedout` | Pull requests, every state | Detail: signed out of GitHub | `missing` | missing | P2 | |
-| 91 | `pr-detail-filtered` | Pull requests, every state | Detail: files filter with no results | `features/pulls/PullCode.tsx` | missing | P2 | |
-| 92 | `pr-detail-running` | Pull requests, every state | Detail: checks running | `features/pulls/PullDetail.tsx:47,25` | partial | P2 | |
-| 93 | `pr-detail-failed` | Pull requests, every state | Detail: checks failed | `features/pulls/PullDetail.tsx:47` | partial | P2 | |
-| 94 | `pr-detail-review` | Pull requests, every state | Detail: review requested | `features/pulls/PullDetail.tsx:528` | partial | P2 | |
-| 95 | `pr-detail-changes` | Pull requests, every state | Detail: changes requested | `features/pulls/PullDetail.tsx:528` | partial | P2 | |
-| 96 | `pr-detail-approved` | Pull requests, every state | Detail: approved and ready to merge | `features/pulls/PullDetail.tsx:205,625` | partial | P2 | |
-| 97 | `pr-detail-conflict` | Pull requests, every state | Detail: merge conflict | `features/pulls/PullDetail.tsx:626` | partial | P2 | |
-| 98 | `pr-detail-merged` | Pull requests, every state | Detail: merged | `features/pulls/PullDetail.tsx:576,460` | partial | P2 | |
-| 99 | `pr-detail-closed` | Pull requests, every state | Detail: closed | `features/pulls/PullDetail.tsx:632` | exists | P2 | |
-| 100 | `pr-detail-draft` | Pull requests, every state | Detail: draft | `features/pulls/PullDetail.tsx:445` | exists | P2 | |
-| 101 | `pr-detail-conversation` | Pull requests, every state | Detail: conversation with comments | `features/pulls/PullConversation.tsx` | partial | P2 | |
-| 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/PullCode.tsx` | partial | P2 | |
-| 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/PullDetail.tsx:47` | partial | P2 | |
-| 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/PullDetail.tsx:205` | partial | P2 | |
+| 91 | `pr-detail-filtered` | Pull requests, every state | Detail: files filter with no results | `features/pulls/detail/PullCode.tsx` | missing | P2 | |
+| 92 | `pr-detail-running` | Pull requests, every state | Detail: checks running | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 93 | `pr-detail-failed` | Pull requests, every state | Detail: checks failed | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 94 | `pr-detail-review` | Pull requests, every state | Detail: review requested | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 95 | `pr-detail-changes` | Pull requests, every state | Detail: changes requested | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 96 | `pr-detail-approved` | Pull requests, every state | Detail: approved and ready to merge | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 97 | `pr-detail-conflict` | Pull requests, every state | Detail: merge conflict | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 98 | `pr-detail-merged` | Pull requests, every state | Detail: merged | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 99 | `pr-detail-closed` | Pull requests, every state | Detail: closed | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
+| 100 | `pr-detail-draft` | Pull requests, every state | Detail: draft | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
+| 101 | `pr-detail-conversation` | Pull requests, every state | Detail: conversation with comments | `features/pulls/detail/PullConversation.tsx` | partial | P2 | |
+| 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/detail/PullCode.tsx` | partial | P2 | |
+| 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
+| 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
 | 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/panels/LinkedPulls.tsx; features/panels/strip/tabs.ts:10` | partial | P2 | |
 | 106 | `pr-phone-list` | Pull requests, every state | Phone: Pull requests list | `missing` | missing | P2 | |
 | 107 | `pr-phone-detail` | Pull requests, every state | Phone: pull request detail | `missing` | missing | P2 | |
-| 108 | `s-general` | Settings | Settings · General | `features/settings/PreferenceSections.tsx:59` | exists | P1 | |
-| 109 | `s-appearance` | Settings | Settings · Appearance | `features/settings/Appearance.tsx:281` | exists | P1 | |
-| 110 | `s-chat` | Settings | Settings · Chat | `features/settings/PreferenceSections.tsx:210` | exists | P1 | |
-| 111 | `s-diffs` | Settings | Settings · Diffs & pull requests | `features/settings/PreferenceSections.tsx:353` | exists | P1 | |
-| 112 | `s-keys` | Settings | Settings · Keybindings | `features/settings/Keybindings.tsx:12` | exists | P1 | |
-| 113 | `s-providers` | Settings | Settings · Providers | `features/settings/Providers.tsx:412` | exists | P1 | |
-| 114 | `s-threads` | Settings | Settings · Threads | `features/settings/Threads.tsx:60` | exists | P1 | |
-| 115 | `s-tasks` | Settings | Settings · Scheduled tasks | `features/settings/ScheduledTasks.tsx:592` | exists | P1 | |
-| 116 | `s-projects` | Settings | Settings · Projects | `features/settings/Projects.tsx:418` | exists | P1 | |
-| 117 | `s-source` | Settings | Settings · Source control | `features/settings/PreferenceSections.tsx:472` | exists | P1 | |
-| 118 | `s-worktrees` | Settings | Settings · Worktrees | `features/settings/PreferenceSections.tsx:415` | exists | P1 | |
-| 119 | `s-maintenance` | Settings | Settings · Maintenance | `features/settings/Maintenance.tsx:405` | exists | P1 | |
-| 120 | `s-labs` | Settings | Settings · Labs | `features/settings/PreferenceSections.tsx:510` | exists | P1 | |
-| 121 | `s-about` | Settings | Settings · About and updates | `features/settings/PreferenceSections.tsx:587` | exists | P1 | |
-| 122 | `s-archive` | Settings | Settings · Archive | `features/settings/PreferenceSections.tsx:602` | exists | P1 | |
+| 108 | `s-general` | Settings | Settings · General | `features/settings/sections/GeneralSection.tsx:72` | exists | P1 | |
+| 109 | `s-appearance` | Settings | Settings · Appearance | `features/settings/pages/Appearance.tsx:281` | exists | P1 | |
+| 110 | `s-chat` | Settings | Settings · Chat | `features/settings/sections/ChatSection.tsx:10` | exists | P1 | |
+| 111 | `s-diffs` | Settings | Settings · Diffs & pull requests | `features/settings/sections/DiffsSection.tsx:27` | exists | P1 | |
+| 112 | `s-keys` | Settings | Settings · Keybindings | `features/settings/pages/Keybindings.tsx:12` | exists | P1 | |
+| 113 | `s-providers` | Settings | Settings · Providers | `features/settings/providers/Providers.tsx:412` | exists | P1 | |
+| 114 | `s-threads` | Settings | Settings · Threads | `features/settings/pages/Threads.tsx:60` | exists | P1 | |
+| 115 | `s-tasks` | Settings | Settings · Scheduled tasks | `features/settings/scheduled-tasks/ScheduledTasks.tsx:592` | exists | P1 | |
+| 116 | `s-projects` | Settings | Settings · Projects | `features/settings/projects/Projects.tsx:418` | exists | P1 | |
+| 117 | `s-source` | Settings | Settings · Source control | `features/settings/sections/SourceControlSection.tsx:14` | exists | P1 | |
+| 118 | `s-worktrees` | Settings | Settings · Worktrees | `features/settings/sections/WorktreesSection.tsx:38` | exists | P1 | |
+| 119 | `s-maintenance` | Settings | Settings · Maintenance | `features/settings/maintenance/Maintenance.tsx:405` | exists | P1 | |
+| 120 | `s-labs` | Settings | Settings · Labs | `features/settings/sections/LabsSection.tsx:6` | exists | P1 | |
+| 121 | `s-about` | Settings | Settings · About and updates | `features/settings/sections/AboutSection.tsx:110` | exists | P1 | |
+| 122 | `s-archive` | Settings | Settings · Archive | `features/settings/sections/ArchiveSection.tsx:17` | exists | P1 | |
 | 123 | `s-search` | Settings | Find a setting | `features/settings/SettingsPage.tsx:160; features/settings/settingsSearch.ts` | exists | P1 | |
 | 124 | `t-memory` | Tools | Memory | `missing` | missing | P3 | |
 | 125 | `t-memory-detail` | Tools | A memory in detail | `missing` | missing | P3 | |
@@ -218,7 +218,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 199 | `x-chat-mention` | Threads, every state | @-mention file picker | `features/thread/composer/Composer.tsx:232` | exists | P2 | |
 | 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/composer/Composer.tsx` | missing | P2 | |
 | 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView.tsx:347` | exists | P2 | |
-| 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/settings/PreferenceSections.tsx:602` | partial | P2 | |
+| 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/settings/sections/ArchiveSection.tsx:17` | partial | P2 | |
 | 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/terminal/TerminalDrawerBody.tsx:101` | exists | P2 | |
 | 204 | `x-term-running` | Terminal, every state | Terminal: a running process | `features/panels/terminal/TerminalPanel.tsx:207` | partial | P2 | |
 | 205 | `x-term-failed` | Terminal, every state | Terminal: a failed command | `features/panels/terminal/TerminalPanel.tsx:42` | partial | P2 | |
@@ -280,7 +280,7 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 26 | `banner` | Banner | opacity, translateY -8px to 0 in a reserved slot, nothing below shifts | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | banner fades in place | `web/src/styles/base.css:506 .banner` | missing | P1 | |
 | 27 | `spinner` | Spinner | spinner opacity; rotate 360deg loop, linear 900ms | fast 150ms, wait 400ms | cubic-bezier(.4,0,.2,1) | static ring, no rotation | `web/src/styles/base.css:647 .spin (Loader2 in items.tsx:265, SubagentBar.tsx:24, Updates.tsx:95)` | differs | P1 | |
 | 28 | `skeleton` | Skeleton to content | skeleton opacity; content opacity | fast 150ms, base 200ms, exit 105ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same fades | `web/src/ui/states.tsx; web/src/styles/base.css:447-453 .skeleton` | differs | P1 | |
-| 29 | `progress` | Progress bar | fill transform scaleX from the left; colour blue while running, green when done | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1) | fill jumps to each value | `web/src/styles/shell.css:1250-1265 .quit-progress (hold-to-quit bar only); update install progress is a text line (features/settings/engineUpdates.tsx:80)` | differs | P1 | |
+| 29 | `progress` | Progress bar | fill transform scaleX from the left; colour blue while running, green when done | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1) | fill jumps to each value | `web/src/styles/shell.css:1250-1265 .quit-progress (hold-to-quit bar only); update install progress is a text line (features/settings/providers/engineUpdates.tsx:80)` | differs | P1 | |
 | 30 | `syncline` | Sync line | label opacity cross-fade; colour from the label's own state | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade | `n/a (Planner only)` | n/a | Not this app | |
 | 31 | `status` | Status labels | label opacity cross-fade; background and text colour per state | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade | `web/src/ui/controls.tsx:116 .pill; web/src/styles/base.css:721 .status-dot` | missing | P1 | |
 | 32 | `checkoff` | Task check-off | tick opacity and scale; strike transform scaleX; row opacity; row translateY to Done after a 1.5s pause with Undo | fast 150ms, base 200ms, slow 300ms | cubic-bezier(.2,.8,.2,1) | tick and strike appear; row fades and reappears in Done | `n/a (Planner only)` | n/a | Not this app | |
@@ -316,7 +316,7 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 62 | `booking` | Booking slot pick | slot background-color, press scale .97; summary opacity and translateY 8px to 0; button spinner after 400ms | fast 150ms, base 200ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | colour and fades only | `n/a (Planner only)` | n/a | Not this app | |
 | 63 | `signin` | Approve a sign-in | button spinner opacity after 400ms; card content cross-fade | fast 150ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade, static ring | `n/a (Account only)` | n/a | Not this app | |
 | 64 | `consent` | Consent allow | toggle knob translateX; button spinner after 400ms; card content cross-fade | fast 150ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade, static ring | `n/a (Account only)` | n/a | Not this app | |
-| 65 | `update` | Launcher update progress | progress transform scaleX; button, bar and caption opacity cross-fade; blue while downloading | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | fill jumps; labels cross-fade | `web/src/features/workspace/app-chrome/Updates.tsx:95,296; web/src/features/settings/engineUpdates.tsx:80` | missing | P1 | |
+| 65 | `update` | Launcher update progress | progress transform scaleX; button, bar and caption opacity cross-fade; blue while downloading | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | fill jumps; labels cross-fade | `web/src/features/workspace/app-chrome/Updates.tsx:95,296; web/src/features/settings/providers/engineUpdates.tsx:80` | missing | P1 | |
 | 66 | `sidenav` | Sidebar select | highlight transform translateY; label color; title opacity | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | highlight jumps; colour and title fade | `web/src/features/workspace/sidebar/Sidebar.tsx; web/src/styles/shell.css:309 .thread-row` | differs | P1 | |
 | 67 | `pagechange` | Page change | outgoing opacity; incoming opacity and translateY 6px to 0 | exit 170ms, page 240ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | plain cross-fade | `web/src/app/Shell.tsx; lib/panelAnimations.ts:19-31` | missing | P1 | |
 | 68 | `pushpop` | Phone push and pop | pushed screen transform translateX 100% to 0; the screen below stays still | page 240ms, exit 170ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | screen fades in place | `missing (no push/pop; narrow layout swaps views, thread.css:1722-1733)` | missing | P1 | |

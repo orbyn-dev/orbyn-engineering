@@ -10,11 +10,11 @@
     "features/panels/preview/PreviewWindow.tsx -> app/shortcuts.ts",
     "features/panels/terminal/TerminalDrawerBody.tsx -> app/shortcuts.ts",
     "features/panels/terminal/TerminalPanel.tsx -> app/shortcuts.ts",
-    "features/settings/Keybindings.tsx -> app/commandLabels.ts",
-    "features/settings/Keybindings.tsx -> app/shortcuts.ts",
-    "features/settings/ProjectActions.tsx -> app/shortcuts.ts",
-    "features/settings/ScopedPreferenceRows.tsx -> app/shortcuts.ts",
-    "features/settings/actionKeybinding.ts -> app/shortcuts.ts",
+    "features/settings/pages/Keybindings.tsx -> app/commandLabels.ts",
+    "features/settings/pages/Keybindings.tsx -> app/shortcuts.ts",
+    "features/settings/projects/ProjectActions.tsx -> app/shortcuts.ts",
+    "features/settings/projects/actionKeybinding.ts -> app/shortcuts.ts",
+    "features/settings/rows/ScopedPreferenceRows.tsx -> app/shortcuts.ts",
     "features/thread/GitControl.tsx -> app/shortcuts.ts",
     "features/thread/OpenInEditor.tsx -> app/shortcuts.ts",
     "features/thread/ProjectActionShortcuts.tsx -> app/shortcuts.ts",
@@ -30,10 +30,6 @@
   "lines": {
     "app/Shell.tsx": 732,
     "features/onboarding/DraftView.tsx": 608,
-    "features/pulls/PullDetail.tsx": 900,
-    "features/pulls/PullsToolbar.tsx": 676,
-    "features/settings/PreferenceSections.tsx": 796,
-    "features/usage/UsagePage.tsx": 763,
     "state/ui.ts": 783
   },
   "css": {
