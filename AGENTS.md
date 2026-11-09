@@ -15,6 +15,7 @@ same commit as any change to them.
 - `crates/orbynd`: transport and CLI only.
 - `web`: React UI. No Tauri imports, no lifecycle rules.
 - `desktop/src-tauri`: thin shell.
+- Folder-architecture refactor: rules, target tree and units in [docs/refactor.md](docs/refactor.md).
 
 ## Designs
 
