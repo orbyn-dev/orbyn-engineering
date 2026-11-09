@@ -4,6 +4,8 @@
 //! DevOps and Forgejo cover the basics their CLIs have, and Bitbucket has no CLI to
 //! go through, so it reports that instead of asking for a token.
 
+pub(crate) mod cache;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;

@@ -122,7 +122,7 @@ pub struct Core {
     pub recovery: Recovery,
     pub(crate) keybinding_writer: Mutex<()>,
     /// Pull request details asked of GitHub, reused while a pull request is unchanged.
-    pub(crate) pull_details: Mutex<crate::source_control::forge_cache::DetailCache>,
+    pub(crate) pull_details: Mutex<crate::source_control::forge::cache::DetailCache>,
     /// What each forge's CLI said, reused briefly: asking costs a process per forge.
     pub(crate) forge_statuses:
         Mutex<Option<(std::time::Instant, Vec<orbyn_contracts::ForgeStatus>)>>,
