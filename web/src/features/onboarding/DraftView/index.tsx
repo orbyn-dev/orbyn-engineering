@@ -1,33 +1,33 @@
-import { recordUserPrompt } from "../workspace";
-import { useDraftModelDefaults } from "./useDraftModelDefaults";
-import { useDraftCheckout } from "./useDraftCheckout";
+import { recordUserPrompt } from "../../workspace";
+import { useDraftModelDefaults } from "../useDraftModelDefaults";
+import { useDraftCheckout } from "../useDraftCheckout";
 import { ArrowUp, Bot, Eye, Folder, GitBranch, GitPullRequest, Paperclip, Sparkles, X, XCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../api/client";
-import { useCommand } from "../../product/shell/shortcuts";
-import type { EngineStatus, PermissionMode, Project } from "../../api/types";
-import { slugify } from "../../lib/format";
-import { toFailure } from "../../lib/useAsync";
-import { navigate } from "../../product/state/route";
-import { useThreadLogs } from "../../product/state/threadLogs";
-import { useUi } from "../../product/state/ui";
-import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
-import { SkillsNotice } from "./SkillsNotice";
+import { api } from "../../../api/client";
+import { useCommand } from "../../../product/shell/shortcuts";
+import type { EngineStatus, PermissionMode, Project } from "../../../api/types";
+import { slugify } from "../../../lib/format";
+import { toFailure } from "../../../lib/useAsync";
+import { navigate } from "../../../product/state/route";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useUi } from "../../../product/state/ui";
+import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
+import { SkillsNotice } from "../SkillsNotice";
 import "./onboarding.css";
-import { NoProjects } from "./NoProjects";
-import { IconButton } from "../../ui/controls";
-import { Menu } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { Loading, NarrowBack } from "../../product/ui/states";
-import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "../thread";
-import { ModelPickerTrigger } from "../thread";
-import { resolveModel, useEngineModels } from "../../product/state/modelStore";
-import { DraftProjectPicker } from "./DraftProjectPicker";
-import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../product/state/draftStore";
+import { NoProjects } from "../NoProjects";
+import { IconButton } from "../../../ui/controls";
+import { Menu } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
+import { Loading, NarrowBack } from "../../../product/ui/states";
+import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "../../thread";
+import { ModelPickerTrigger } from "../../thread";
+import { resolveModel, useEngineModels } from "../../../product/state/modelStore";
+import { DraftProjectPicker } from "../DraftProjectPicker";
+import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";
 
 type OpenMenu = { kind: "checkout"; x: number; y: number };
 
-export { SCRATCH } from "../../product/state/draftStore";
+export { SCRATCH } from "../../../product/state/draftStore";
 
 interface ModelChoice {
   engine: string;

@@ -6,7 +6,7 @@ import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../product/state/ui";
 import { ErrorState, Splash } from "../product/ui/states";
-import { onShellEvent, Shell } from "./Shell";
+import { onShellEvent, Shell } from "./shell";
 import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
 import { PreviewWindow } from "../features/panels/preview/PreviewWindow";

@@ -1,9 +1,9 @@
 import { create } from "zustand";
-import { presetById, THEME_TOKENS, type ThemeColors } from "../../styles/themes";
-import type { ProjectGroupingMode } from "../../generated/ProjectGroupingMode";
-import { MOTION } from "../../lib/motion";
-import { readJson, writeJson } from "../../lib/storage";
-import { useWorkspace } from "./workspace";
+import { presetById, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
+import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
+import { MOTION } from "../../../lib/motion";
+import { readJson, writeJson } from "../../../lib/storage";
+import { useWorkspace } from "../workspace";
 
 export type ThemeChoice = "system" | "light" | "dark";
 /** How the workspace is arranged: by project, by what needs you, or as one reading column. */
