@@ -40,11 +40,9 @@ fn resolve_config_dir(value: Option<&OsStr>, base: &Path) -> Option<PathBuf> {
     home().map(|home| home.join(".claude"))
 }
 
+/// The shared lookup, minus an empty `HOME`, which this module reads as unset.
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    crate::util::home_dir().filter(|home| !home.as_os_str().is_empty())
 }
 
 /// Every user-invocable skill the CLI would load for a run that starts at

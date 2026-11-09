@@ -1,8 +1,9 @@
 //! GitHub specific: its field lists, GraphQL review thread queries and answer parsing.
 
 use super::Forge;
-use super::parse::{field, first_line, id_of, optional, person};
+use super::parse::{first_line, id_of, person};
 use super::process::spawn;
+use crate::util::json::{field, optional};
 use orbyn_contracts::{PullComment, PullFile, PullRevision, PullThread, PullTimelineEvent};
 use serde_json::{Value, json};
 use std::path::Path;

@@ -1,8 +1,8 @@
 //! Review state and check counts for a whole list of pull requests in one GraphQL request per batch.
 
 use super::Forge;
-use super::parse::{field, optional};
 use super::process::{call, spawn};
+use crate::util::json::{field, optional};
 use orbyn_contracts::{PullDetails, RequestedReviewer};
 use serde_json::Value;
 use std::collections::HashMap;

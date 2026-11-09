@@ -5,6 +5,8 @@ use crate::error::{CoreError, Result};
 use orbyn_contracts::PickedElement;
 use serde_json::{Value, json};
 
+use crate::util::json::field;
+
 /// A snapshot's bounds: how many elements an agent may read, and how long one
 /// name, value, selector, address or text sample may be. They hold in the page and
 /// again here, so a page that answers more than asked still stays small.
@@ -158,11 +160,6 @@ pub(super) fn snapshot_limit(asked: Option<u64>) -> usize {
 /// At most `limit` characters, counted whole so no cut splits a character.
 pub(super) fn capped(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
-}
-
-/// One string field of a page's answer, or nothing.
-pub(super) fn field<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
 /// Bounds the page's answer again. An oversized selector is omitted, since

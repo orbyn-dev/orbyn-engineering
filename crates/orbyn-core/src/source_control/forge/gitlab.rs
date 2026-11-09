@@ -1,6 +1,7 @@
 //! GitLab specific: its discussion, file and revision parsing and emoji names.
 
-use super::parse::{field, first_line, id_of, optional, person};
+use super::parse::{first_line, id_of, person};
+use crate::util::json::{field, optional};
 use orbyn_contracts::{PullComment, PullConversation, PullFile, PullRevision, PullThread};
 use serde_json::Value;
 

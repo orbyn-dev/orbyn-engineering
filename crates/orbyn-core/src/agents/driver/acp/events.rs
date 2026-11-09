@@ -230,13 +230,7 @@ fn chunk_text(update: &Value) -> String {
         .to_owned()
 }
 
-pub(super) fn field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
+pub(super) use crate::util::json::text as field;
 
 fn tool_output(update: &Value) -> String {
     if let Some(output) = update.get("rawOutput") {

@@ -7,10 +7,8 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 pub(super) const CONTEXT_BYTES: usize = 96 * 1024;
 
@@ -52,7 +50,7 @@ pub(super) async fn read_git_bounded(
     args: &[&str],
     attributes: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let mut command = Command::new("git");
+    let mut command = crate::source_control::git::command(cwd);
     command
         .args([
             "-c",
@@ -67,18 +65,11 @@ pub(super) async fn read_git_bounded(
             "core.attributesFile=",
         ])
         .args(args)
-        .current_dir(cwd)
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ATTR_NOSYSTEM", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .env("GIT_ATTR_NOSYSTEM", "1");
     if let Some(attributes) = attributes {
         command.env("GIT_ATTR_SOURCE", attributes);
     }
-    crate::host::child_env::for_tool(command.as_std_mut());
     let mut child = ManagedChild::spawn(command)?;
     let stdout = child
         .child_mut()

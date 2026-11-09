@@ -102,7 +102,7 @@ Notes:
 | B3b | Source control into folders (`forge/`, `scm/`) | done |
 | B3c1 | Preview and MCP tools into folders | done |
 | B3c2 | `conversation/runs.rs` (1,996 lines) and `agents/engines/mod.rs` (1,659) into folders | done |
-| B4 | One process-spawn path; narrower visibility | open |
+| B4 | One process-spawn path; narrower visibility | done |
 | W1 | Dead code and shared helpers | done |
 | W2 | CSS ownership: no class defined twice | open, needs the owner's go-ahead |
 | W3 | Break feature cycles; `features/content` and `index.ts` front doors | done |
@@ -208,6 +208,18 @@ The backend (B) and web (W) tracks can run in parallel.
   baseline (3 to 1 long files). Methods a sibling module calls are `pub(super)`; no public path
   changed, and a model pool's item list and the 839-test list are identical before and after.
 
+- B4 (one path per repeated thing): done. Every Git process starts in
+  `source_control::git::command(cwd)`, which sets the environment, streams and drop
+  behaviour once; the read wrapper, `git_user`, the bounded reads in `scm/writing`, the
+  project-scope metadata reads, snapshots and restores all build from it, so the only
+  direct `Command::new("git")` left in core logic is that builder. One JSON helper,
+  `util::json` (`field`, `optional`, `text`), replaces the three copies in forge parsing,
+  preview snapshots and the ACP events. `util::home_dir` is the only home lookup; the two
+  modules that had their own now delegate to it, and `claude_skills` keeps its empty-`HOME`
+  filter. Visibility is compiler-checked with `--all-targets`: `util` exposes only what the
+  transport and its tests use and `source_control::git` only `is_git_repo`; the rest is
+  `pub(crate)`, with no call site changed.
+
 - W7a (product and generic tiers): done for the shared folders; front-door helpers are open (see
   the audit below). `state/` became `product/state/`, and `lib/timeline` became `product/timeline`.
   The shared files that carry product vocabulary and have two or more feature users moved to
@@ -288,7 +300,6 @@ have no baseline.
 
 | Unit | Work | Size and notes |
 | --- | --- | --- |
-| B4 | One process-spawn path (git always through the wrapper; today about 8 direct `Command::new("git")` sites in core), one JSON helper (three different `field()` helpers), one home-directory lookup (about five private copies), and visibility narrowing checked with the compiler (the scout's name-matching list is not enough) | Rust. Changes behaviour paths, so each change needs its own test. |
 | W2 | CSS ownership: `styles/thread.css` (about 4,500 lines, mostly panels and onboarding rules), `pages.css`, `shell.css`, `base.css` move next to the components they style; shared pieces (`btn`, `dialog`, `pill`, `empty` and the like, defined in up to 10 files) are defined once in `ui/` | **Needs the owner's go-ahead.** The tests cannot see a changed cascade. Compare screenshots before and after in Light, Dark and Dim for every moved rule, and keep the CSS load order identical (compare the first-import order from `main.tsx`, as the W7a review did). |
 | W4 | Per-feature `api.ts` and hooks: components stop calling the API client directly (about 150 direct imports, for example Maintenance, BrowserPanel, the terminal drawer, the settings pages) | Web. Not started. |
 | W6 | Naming pass: Page is a route, Panel is a side-panel tab, Dialog is a modal, no "Pane" (`SurfacePane`, `SideChatPane`, `PullsPage` against `PullPage`); keep `web/README.md` in step | Do after W2 so files are renamed once. |

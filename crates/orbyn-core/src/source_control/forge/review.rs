@@ -3,10 +3,10 @@
 use super::Forge;
 use super::github::{RESOLVE_MUTATION, UNRESOLVE_MUTATION};
 use super::gitlab::gitlab_emoji;
-use super::parse::{field, optional};
 use super::process::{call, call_input, call_json, call_pages};
 use super::pulls::pull_detail;
 use crate::error::{CoreError, Result};
+use crate::util::json::{field, optional};
 use orbyn_contracts::{
     AddPullComment, PullCandidate, ReviewLineComment, SetPullPeople, SubmitReview,
 };

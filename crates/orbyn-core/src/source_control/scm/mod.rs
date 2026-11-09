@@ -11,7 +11,6 @@ mod watch;
 pub(crate) mod writing;
 
 use std::path::Path;
-use std::process::Stdio;
 use std::time::Duration;
 
 use orbyn_contracts::{
@@ -19,7 +18,6 @@ use orbyn_contracts::{
     Thread,
 };
 use serde_json::{Value, json};
-use tokio::process::Command;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -33,16 +31,8 @@ const PUSH_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Runs git for a real user action: hooks stay on, and nothing may prompt.
 pub(crate) async fn git_user(cwd: &Path, args: &[&str], timeout: Duration) -> Result<String> {
-    let mut command = Command::new("git");
-    command
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    crate::host::child_env::for_tool(command.as_std_mut());
+    let mut command = crate::source_control::git::command(cwd);
+    command.args(args).env("GIT_TERMINAL_PROMPT", "0");
     let output = tokio::time::timeout(timeout, command.output())
         .await
         .map_err(|_| CoreError::Git("Git did not finish in time.".into()))?

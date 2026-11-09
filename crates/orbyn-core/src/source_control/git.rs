@@ -52,17 +52,8 @@ pub(crate) async fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
 }
 
 pub(crate) async fn git_raw(cwd: &Path, args: &[&str]) -> Result<std::process::Output> {
-    let mut command = Command::new("git");
-    command
-        .args(SAFE_CONFIG)
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    crate::host::child_env::for_tool(command.as_std_mut());
+    let mut command = command(cwd);
+    command.args(SAFE_CONFIG).args(args);
     let output = async {
         crate::host::process::ManagedChild::spawn(command)?
             .output()
@@ -76,6 +67,21 @@ pub(crate) fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_owned()
 }
 
+/// Builds a Git process for `cwd`. Every Git Orbyn runs starts here, so its
+/// environment, streams and drop behaviour are set once.
+pub(crate) fn command(cwd: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    crate::host::child_env::for_tool(command.as_std_mut());
+    command
+}
+
 /// Filesystem-only check, so adding an untrusted folder runs nothing in it.
 pub fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
@@ -83,7 +89,7 @@ pub fn is_git_repo(path: &Path) -> bool {
 
 /// Git coordinates belong to this checkout, independently of a selected project
 /// subfolder. Strip only Git's line terminator; spaces can belong to the path.
-pub async fn checkout_root(cwd: &Path) -> Result<PathBuf> {
+pub(crate) async fn checkout_root(cwd: &Path) -> Result<PathBuf> {
     let output = git(cwd, &["rev-parse", "--show-toplevel"]).await?;
     let path = String::from_utf8_lossy(&output);
     let path = path.strip_suffix('\n').unwrap_or(&path);
@@ -92,7 +98,7 @@ pub async fn checkout_root(cwd: &Path) -> Result<PathBuf> {
 
 /// Git lists the primary checkout first, including when invoked from a linked
 /// worktree's subfolder or a repository with a separate Git directory.
-pub async fn primary_checkout(cwd: &Path) -> Result<PathBuf> {
+pub(crate) async fn primary_checkout(cwd: &Path) -> Result<PathBuf> {
     let output = git(cwd, &["worktree", "list", "--porcelain", "-z"]).await?;
     let first = output.split(|byte| *byte == 0).next().unwrap_or_default();
     let first = String::from_utf8_lossy(first);
@@ -102,7 +108,7 @@ pub async fn primary_checkout(cwd: &Path) -> Result<PathBuf> {
     crate::util::canonicalize(Path::new(path)).map_err(Into::into)
 }
 
-pub fn valid_purpose(purpose: &str) -> bool {
+pub(crate) fn valid_purpose(purpose: &str) -> bool {
     !purpose.is_empty()
         && purpose.len() <= 64
         && purpose
@@ -112,7 +118,7 @@ pub fn valid_purpose(purpose: &str) -> bool {
 }
 
 /// `<repo>-wt/<purpose>` beside the primary clone.
-pub fn worktree_path(repo: &Path, purpose: &str) -> Result<PathBuf> {
+pub(crate) fn worktree_path(repo: &Path, purpose: &str) -> Result<PathBuf> {
     let name = repo
         .file_name()
         .ok_or_else(|| CoreError::Git("This repository has no folder name.".into()))?;
@@ -130,7 +136,7 @@ pub struct RegisteredWorktree {
 }
 
 /// Linked worktrees, without the primary checkout.
-pub async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktree>> {
+pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktree>> {
     let listing = git(repo, &["worktree", "list", "--porcelain", "-z"]).await?;
     let mut worktrees = Vec::new();
     let mut current: Option<RegisteredWorktree> = None;
@@ -182,7 +188,7 @@ impl Default for WorktreeOptions {
 /// Finds or creates the purpose's worktree at `<repo>-wt/<purpose>`. A registered
 /// worktree already at that path is reused; its base is where it left the
 /// primary clone's HEAD.
-pub async fn create_worktree(
+pub(crate) async fn create_worktree(
     repo: &Path,
     purpose: &str,
     options: &WorktreeOptions,
@@ -287,7 +293,7 @@ async fn worktree_start(repo: &Path, options: &WorktreeOptions) -> Option<String
 
 /// Refs and index entries only: a snapshot leaves the real index and every working
 /// file alone. Ignored files are not captured.
-pub async fn snapshot(cwd: &Path, reference: Option<&str>, index: &Path) -> Result<String> {
+pub(crate) async fn snapshot(cwd: &Path, reference: Option<&str>, index: &Path) -> Result<String> {
     let index_text = index.to_string_lossy().into_owned();
     let attributes = no_attributes(cwd).await?;
     let with_index = |args: Vec<String>| {
@@ -295,20 +301,14 @@ pub async fn snapshot(cwd: &Path, reference: Option<&str>, index: &Path) -> Resu
         let attributes = attributes.clone();
         let cwd = cwd.to_path_buf();
         async move {
-            let mut command = Command::new("git");
+            let mut command = command(&cwd);
             command
                 .args(SAFE_CONFIG)
                 .args(BYTE_EXACT)
                 .args(["-c", "user.name=Orbyn", "-c", "user.email=orbyn@localhost"])
                 .args(&args)
-                .current_dir(&cwd)
                 .env("GIT_INDEX_FILE", &index_text)
-                .env("GIT_ATTR_SOURCE", &attributes)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-            crate::host::child_env::for_tool(command.as_std_mut());
+                .env("GIT_ATTR_SOURCE", &attributes);
             let output = command
                 .output()
                 .await
@@ -354,12 +354,12 @@ pub async fn snapshot(cwd: &Path, reference: Option<&str>, index: &Path) -> Resu
 }
 
 /// What changed between two commits.
-pub async fn diff_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<FileDiff>> {
+pub(crate) async fn diff_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<FileDiff>> {
     tracked_diff(cwd, &[from, to]).await
 }
 
 /// The changes one commit made.
-pub async fn commit_diff(cwd: &Path, sha: &str) -> Result<Vec<FileDiff>> {
+pub(crate) async fn commit_diff(cwd: &Path, sha: &str) -> Result<Vec<FileDiff>> {
     if !is_revision(sha) {
         return Err(CoreError::Invalid("That is not a commit.".into()));
     }
@@ -372,7 +372,7 @@ pub async fn commit_diff(cwd: &Path, sha: &str) -> Result<Vec<FileDiff>> {
 }
 
 /// Everything since this branch left `base`, untracked work included.
-pub async fn branch_diff(cwd: &Path, base: &str) -> Result<Vec<FileDiff>> {
+pub(crate) async fn branch_diff(cwd: &Path, base: &str) -> Result<Vec<FileDiff>> {
     if base.starts_with('-') || base.is_empty() {
         return Err(CoreError::Invalid("That is not a branch.".into()));
     }
@@ -380,11 +380,11 @@ pub async fn branch_diff(cwd: &Path, base: &str) -> Result<Vec<FileDiff>> {
     diff(cwd, Some(&shared)).await
 }
 
-pub fn is_revision(text: &str) -> bool {
+pub(crate) fn is_revision(text: &str) -> bool {
     (7..=64).contains(&text.len()) && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-pub async fn recent_commits(cwd: &Path, limit: u32) -> Result<Vec<CommitInfo>> {
+pub(crate) async fn recent_commits(cwd: &Path, limit: u32) -> Result<Vec<CommitInfo>> {
     let limit = format!("-{}", limit.min(100));
     let Ok(log) = git(cwd, &["log", &limit, "--format=%H%x09%an%x09%aI%x09%s"]).await else {
         // A repository with no commits has no history to show.
@@ -406,7 +406,7 @@ pub async fn recent_commits(cwd: &Path, limit: u32) -> Result<Vec<CommitInfo>> {
 
 /// Makes the working files match `target`, leaving HEAD, the index and ignored
 /// files alone. `current` is a snapshot of the files as they are now.
-pub async fn restore_worktree(cwd: &Path, current: &str, target: &str) -> Result<()> {
+pub(crate) async fn restore_worktree(cwd: &Path, current: &str, target: &str) -> Result<()> {
     let root = checkout_root(cwd).await?;
     let added = git(
         cwd,
@@ -441,7 +441,7 @@ pub async fn restore_worktree(cwd: &Path, current: &str, target: &str) -> Result
     {
         return Ok(());
     }
-    let mut command = Command::new("git");
+    let mut command = command(cwd);
     command
         .args(SAFE_CONFIG)
         .args(BYTE_EXACT)
@@ -452,14 +452,7 @@ pub async fn restore_worktree(cwd: &Path, current: &str, target: &str) -> Result
             "--",
             ".",
         ])
-        .current_dir(cwd)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_ATTR_SOURCE", no_attributes(cwd).await?)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    crate::host::child_env::for_tool(command.as_std_mut());
+        .env("GIT_ATTR_SOURCE", no_attributes(cwd).await?);
     let output = command
         .output()
         .await
@@ -471,7 +464,7 @@ pub async fn restore_worktree(cwd: &Path, current: &str, target: &str) -> Result
 }
 
 /// Changes against `base` (or HEAD), including untracked files.
-pub async fn diff(cwd: &Path, base: Option<&str>) -> Result<Vec<FileDiff>> {
+pub(crate) async fn diff(cwd: &Path, base: Option<&str>) -> Result<Vec<FileDiff>> {
     let root = checkout_root(cwd).await?;
     let cwd = root.as_path();
     let base = base.unwrap_or("HEAD");
