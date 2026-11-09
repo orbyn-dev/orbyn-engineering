@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 const read = (file: string) => readFileSync(join(process.cwd(), file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-const thread = read("src/styles/thread.css");
+const thread = [read("src/styles/composer.css"), read("src/styles/thread-panels.css")].join("\n");
 const pages = read("src/styles/pages.css");
 const rule = (css: string, selector: string) => css.split("}").find((block) => block.trim().startsWith(`${selector} {`)) ?? "";
 

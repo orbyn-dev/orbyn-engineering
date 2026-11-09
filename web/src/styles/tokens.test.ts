@@ -150,8 +150,8 @@ describe("control radii (Orbyn Components)", () => {
     expect(block(css["pages.css"]!, ".segmented button")).toContain("border-radius: var(--radius-7)");
     expect(block(css["pages.css"]!, ".segment")).toContain("border-radius: var(--radius-10)");
     expect(block(css["pages.css"]!, ".segment button")).toContain("border-radius: var(--radius-7)");
-    expect(block(css["thread.css"]!, ".access-segment")).toContain("border-radius: var(--radius-10)");
-    expect(block(css["thread.css"]!, ".access-segment button")).toContain("border-radius: var(--radius-7)");
+    expect(block(css["model-picker.css"]!, ".access-segment")).toContain("border-radius: var(--radius-10)");
+    expect(block(css["model-picker.css"]!, ".access-segment button")).toContain("border-radius: var(--radius-7)");
     expect(block(css["shell.css"]!, ".route-tabs button")).toContain("border-radius: var(--radius-md)");
     expect(block(css["base.css"]!, ".menu")).toContain("border-radius: var(--radius-lg)");
   });

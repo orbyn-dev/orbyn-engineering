@@ -1,0 +1,316 @@
+/* Rich Markdown */
+.md-table-wrap {
+  position: relative;
+}
+.md-table-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.md-details {
+  margin-block: 8px;
+}
+.md-math {
+  margin-block: 10px;
+  overflow-x: auto;
+}
+.md-diagram {
+  margin-block: 10px;
+  overflow-x: auto;
+}
+.md-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.md-file-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.md-file-link:hover {
+  text-decoration: underline;
+}
+.md-image {
+  display: block;
+  max-width: min(100%, 30rem);
+  margin-block: 8px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.md-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 30rem;
+  object-fit: contain;
+}
+.md-video {
+  position: relative;
+  display: inline-block;
+  max-width: min(100%, 30rem);
+  margin-block: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  vertical-align: top;
+}
+.md-video video {
+  display: block;
+  width: 100%;
+  max-height: 30rem;
+  background: var(--color-backdrop);
+}
+.md-media-expand {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: color-mix(in srgb, var(--color-backdrop) 72%, transparent);
+}
+.md-media-failed {
+  color: var(--color-muted);
+}
+.lightbox {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  border: 0;
+  background: var(--color-backdrop);
+  backdrop-filter: blur(16px);
+  color: var(--color-text);
+}
+.lightbox-bar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: calc(100vw - 24px);
+}
+.lightbox-readout {
+  padding-inline: 4px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lightbox-stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+.lightbox-stage img {
+  max-width: 90%;
+  max-height: 90%;
+  transition: transform var(--m-fast) ease;
+}
+.lightbox-stage video {
+  max-width: 90%;
+  max-height: 90%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* A published agent page: the timeline card, and the dialog that shows it larger. */
+.render-card {
+  margin: 4px 0 6px 22px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+}
+.render-card figcaption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-small);
+}
+.render-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-textSoft);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.render-body,
+.render-stage {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-background);
+}
+.render-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+.dialog-wide {
+  width: min(1120px, calc(100vw - 48px));
+}
+.render-zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.render-zoom input {
+  flex: 1;
+  accent-color: var(--color-primary);
+}
+.render-zoom output {
+  min-width: 5ch;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.md-thread-link {
+  color: var(--color-primary);
+}
+/* An MCP App page. Full screen keeps the same frame, so the page keeps its state. */
+.mcp-app[data-display="fullscreen"] {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  border-radius: 0;
+}
+.mcp-app[data-display="fullscreen"] .render-body {
+  flex: 1;
+  height: auto !important;
+}
+.mcp-app[data-display="fullscreen"] .render-frame {
+  height: 100% !important;
+}
+.mcp-app-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 6px 4px 10px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.mcp-app-note span {
+  flex: 1;
+}
+.mcp-app-ask pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Composer additions */
+.context-meter {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+}
+.context-meter svg {
+  flex: none;
+  rotate: -90deg;
+}
+.context-meter circle {
+  fill: none;
+  stroke: color-mix(in srgb, var(--color-muted) 24%, transparent);
+  stroke-width: 3;
+}
+.context-meter circle + circle {
+  stroke: color-mix(in srgb, var(--color-muted) 72%, transparent);
+  stroke-linecap: round;
+}
+.composer-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  color: var(--color-warnText);
+  font-size: var(--text-small);
+}
+.composer-banner span {
+  flex: 1;
+  min-width: 0;
+}
+.composer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-raised);
+  font-size: var(--text-small);
+}
+.composer-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.composer-panel ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.composer-panel li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stash-restore {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.stash-restore:hover {
+  background: var(--color-hover);
+}
+.attachment-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}
+.composer-box[data-dragging] {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: -2px;
+}
+.composer-control[data-on] {
+  color: var(--color-primary);
+}

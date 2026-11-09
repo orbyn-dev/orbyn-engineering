@@ -1,0 +1,525 @@
+/* The Details button: icon and label, pressed while the card shows. */
+.layout-toggles .topbar-details {
+  gap: 6px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--color-textSoft);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.layout-toggles .topbar-details[aria-pressed="true"] {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+/* At the top of the side panel, above its tabs. */
+.context > .details {
+  position: static;
+  flex: none;
+  width: auto;
+  max-height: 45%;
+  margin: 8px 10px 0;
+}
+/* While the panel is closed: a popover under the Details button. */
+.details-popover {
+  position: absolute;
+  z-index: 12;
+  top: calc(var(--topbar-h) + 4px);
+  /* Under the Details button: its right edge, left of the Terminal and panel buttons. */
+  right: 88px;
+  width: min(392px, calc(100% - 32px));
+  border-radius: var(--radius-lg);
+  background: var(--color-background);
+  box-shadow:
+    0 10px 30px var(--color-shadow),
+    0 0 0 1px var(--color-borderStrong);
+}
+.details-popover > .details {
+  position: static;
+  width: auto;
+  max-height: min(70vh, 560px);
+}
+
+/* Details card */
+.details {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--topbar-h) + 12px);
+  right: var(--details-gap);
+  display: flex;
+  flex-direction: column;
+  width: var(--details-w);
+  max-height: calc(100% - var(--topbar-h) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-lg);
+  background: var(--color-sunken);
+}
+.details-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 0 6px 0 10px;
+  color: var(--color-muted);
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+.detail-automation-error {
+  margin: 0;
+  padding: 2px 10px 4px;
+  color: var(--color-danger);
+  font-size: var(--text-meta);
+}
+.detail-running li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--color-textSoft);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.detail-running li > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-age {
+  flex: none;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  font-weight: 400;
+}
+
+/* Terminal drawer */
+.drawer {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  height: 300px;
+  overflow: clip;
+  overscroll-behavior: contain;
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--color-border);
+}
+/* The terminal drawer rises from the bottom edge and drops back the same way. */
+[data-panel-motion="on"] .drawer[data-moves] {
+  transition: translate var(--panel-duration) var(--ease-drawer);
+}
+[data-panel-motion="on"] .drawer[data-moves][data-closing] {
+  translate: 0 100%;
+  transition: translate var(--m-slow-out) var(--m-io);
+}
+@starting-style {
+  [data-panel-motion="on"] .drawer[data-moves] {
+    translate: 0 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-panel-motion="on"] .drawer[data-moves][data-closing] {
+    translate: none;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  @starting-style {
+    [data-panel-motion="on"] .drawer[data-moves] {
+      translate: none;
+      opacity: 0;
+    }
+  }
+}
+
+/* Context panel */
+.context {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--context-w);
+  min-height: 0;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-background);
+  box-shadow: none;
+}
+/* Slide in from the right over --panel-duration (--m-slow, ease-out) and out over
+   --m-slow-out. Only a pane that opens or closes moves: data-moves is set once the thread
+   has settled, so a pane already open at page load never animates. */
+[data-panel-motion="on"] .context[data-moves] {
+  transition: translate var(--panel-duration) var(--ease-drawer);
+}
+[data-panel-motion="on"] .context[data-moves][data-closing] {
+  translate: 100% 0;
+  transition: translate var(--m-slow-out) var(--m-io);
+}
+@starting-style {
+  [data-panel-motion="on"] .context[data-moves] {
+    translate: 100% 0;
+  }
+}
+/* Reduced motion: no slide, a fade over --m-fast instead (the global block sets the timing). */
+@media (prefers-reduced-motion: reduce) {
+  [data-panel-motion="on"] .context[data-moves][data-closing] {
+    translate: none;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  @starting-style {
+    [data-panel-motion="on"] .context[data-moves] {
+      translate: none;
+      opacity: 0;
+    }
+  }
+}
+/* Maximised, or a sheet on the phone: the panel takes the thread's place. */
+.context[data-maximized],
+.context[data-mode="sheet"] {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  border-left: 0;
+}
+/* Beside the thread or over it, the panel is 320px at the narrowest and 60% of the window at the widest. */
+.context[data-mode="docked"]:not([data-maximized]),
+.context[data-mode="overlay"]:not([data-maximized]) {
+  min-width: var(--panel-min-w);
+  max-width: 60vw;
+}
+/* Medium and small windows: it floats over the right of the thread, under the header so the header
+   buttons stay in reach. Nothing behind it moves, and nothing behind it is blocked. */
+.context[data-mode="overlay"]:not([data-maximized]) {
+  position: absolute;
+  z-index: 10;
+  top: var(--panel-overlay-top);
+  right: 0;
+  bottom: 0;
+  border-top: 1px solid var(--color-border);
+  border-left: 0;
+  border-top-left-radius: var(--radius-lg);
+  box-shadow:
+    -14px 0 32px var(--color-panelShadow),
+    -1px 0 0 var(--color-borderStrong);
+}
+.context[data-mode="overlay"][data-maximized] {
+  border-left: 0;
+}
+/* The drawer's own row above the tabs: Back to thread at the left, Maximise and Close at the right. */
+.drawer-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-divider);
+}
+.drawer-head .btn {
+  min-height: 26px;
+  padding: 0 10px;
+  border-color: transparent;
+  border-radius: var(--radius-9);
+  background: var(--color-chip);
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
+}
+.drawer-head .end {
+  display: flex;
+  gap: 2px;
+}
+.drawer-head .end .icon-btn {
+  width: 24px;
+  height: 24px;
+  color: var(--color-muted);
+}
+/* Small pills: the pages of the Browser, and the side chats. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 4px;
+}
+.chip,
+.surface-tab {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  height: 24px;
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
+}
+.chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 9px;
+  border: 0;
+  cursor: pointer;
+}
+.chip[aria-pressed="true"],
+.surface-tab[data-selected] {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.surface-tab button {
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.surface-tab button[role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 0 8px;
+}
+.surface-tab .icon-btn {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.surface-tab:not([data-selected]):hover,
+.chip:not([aria-pressed="true"]):hover {
+  background: var(--color-hover);
+}
+.context-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tabpanel {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px 16px;
+}
+.jj-change {
+  margin: 0 0 8px;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+.panel-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: var(--hit);
+  font-size: var(--text-small);
+  color: var(--color-textSoft);
+}
+/* A file's path takes the room, so its actions stay together at the end instead of spreading out. */
+.panel-bar > code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.diff-file {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  min-width: 0;
+}
+.diff-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: var(--hit);
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--color-textSoft);
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+}
+.diff-file-row:hover {
+  background: var(--color-hover);
+}
+.diff-file-row[aria-expanded="true"] {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.diff-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
+}
+.diff-binary {
+  padding: 8px;
+}
+.patch {
+  position: relative;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+.patch-inner {
+  min-width: max-content;
+}
+.patch-line {
+  display: flex;
+  align-items: baseline;
+  padding: 0 10px;
+  white-space: pre;
+}
+.patch-add {
+  background: var(--color-diffAdd);
+  color: var(--color-diffAddText);
+}
+.patch-del {
+  background: var(--color-diffDel);
+  color: var(--color-diffDelText);
+}
+.patch-hunk {
+  background: var(--color-selected);
+  color: var(--color-muted);
+}
+.patch-meta {
+  color: var(--color-muted);
+}
+.timeline {
+  display: flex;
+  flex-direction: column;
+}
+.timeline li {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-divider);
+  font-size: var(--text-small);
+}
+.timeline time {
+  flex: none;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.timeline li > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.timeline-label {
+  font-weight: 500;
+}
+.timeline-detail {
+  color: var(--color-muted);
+}
+.timeline li[data-tone="error"] .timeline-label {
+  color: var(--color-danger);
+}
+.timeline li[data-tone="attention"] .timeline-label {
+  color: var(--color-warnText);
+}
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 4px;
+}
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-raised);
+  overflow: hidden;
+}
+
+@media (max-width: 599px) {
+  .topbar {
+    padding: 0 8px;
+  }
+  .transcript-inner {
+    padding: 12px 16px;
+  }
+  .composer {
+    padding: 0 8px 4px;
+  }
+  .hero {
+    padding: 0 16px 16px;
+  }
+  .hero-title {
+    font-size: var(--text-heading);
+  }
+  .text-action {
+    min-height: var(--hit);
+    padding: 0 8px 0 2px;
+  }
+  .details {
+    left: 12px;
+    width: auto;
+  }
+  .drawer {
+    flex: 1;
+    height: auto;
+  }
+  .msg-bubble {
+    max-width: 90%;
+  }
+  .sent-files {
+    max-width: 90%;
+  }
+}
+.code-lang {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+/* The welcome steps sit above home, which fills only the height left under them. */
+.home-stack {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.home-stack > * {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.home-stack > .welcome-wizard {
+  flex: 1 0 auto;
+}
+.home-stack > .welcome-wizard:not([data-step="0"]) {
+  flex: none;
+  width: 100%;
+}
+/* Centred content never shrinks, so none of it ends up above the scroll start. */
+.home-stack > .no-projects {
+  flex: 1 0 auto;
+  height: auto;
+}

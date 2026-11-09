@@ -175,14 +175,14 @@ it("ArrowLeft in an empty search field moves to the chosen chip", async () => {
 });
 
 it("keeps its list scrollable to the end: the rows scroll, with room under the last one", () => {
-  const css = readFileSync(join(process.cwd(), "src/styles/thread.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const css = readFileSync(join(process.cwd(), "src/styles/model-picker.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const rows = /\.model-rows \{([^}]*)\}/.exec(css)![1]!;
   expect(rows).toMatch(/overflow-y:\s*auto/);
   expect(rows).toMatch(/padding:\s*0 5px 8px/);
 });
 
 it("takes every colour from the theme tokens, so Light, Dark and Dim all follow", () => {
-  const css = readFileSync(join(process.cwd(), "src/styles/thread.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const css = readFileSync(join(process.cwd(), "src/styles/model-picker.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const start = css.indexOf(".model-picker {");
   const block = css.slice(start, css.indexOf(".traits-menu {\n  width: 304px"));
   expect(block.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) ?? []).toEqual([]);
