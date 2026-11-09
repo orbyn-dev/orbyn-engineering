@@ -1,4 +1,6 @@
+use super::args::{CAPABILITY_ENV, session_cwd_in};
 use super::*;
+use crate::agents::driver::CLAUDE_APPROVE_TOOL;
 
 fn launch_frame() -> Value {
     json!({
