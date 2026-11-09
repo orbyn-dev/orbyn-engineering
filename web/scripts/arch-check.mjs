@@ -5,13 +5,15 @@
 //   node scripts/arch-check.mjs --update   rewrite scripts/arch-baseline.json
 //
 // Rules, over hand-written files (tests, generated code and test helpers excluded):
-//   direction  app -> features -> ui, lib, state -> api, one way: features never import app;
-//              ui, lib, state and api never import app or a feature; api never imports ui, lib or state
+//   direction  app -> features -> product -> generic (ui, lib, api), one way: features never import app;
+//              product, ui, lib and api never import app or a feature; api never imports ui or lib
+//   tier       generic code (ui, lib, api) never imports product/ (the product tier holds this product's
+//              vocabulary: docs/refactor.md, "Three tiers for shared code")
 //   deep       a feature imports another feature only through its index.ts (always an error)
 //   cycle      no import cycle between files; an edge inside a cycle is a violation (always an error)
 //   feature    no import cycle between features (the one-way order in docs/refactor.md); always an error
 //   lines      TypeScript over 600 lines, CSS over 1500 lines; may not grow past baseline
-// direction and lines keep their existing violations in the baseline, which may only shrink: a new
+// direction, tier and lines keep their existing violations in the baseline, which may only shrink: a new
 // violation or growth fails, and so does a baselined item that no longer exists (re-run --update so it
 // cannot quietly return). deep and cycle have no baseline: any violation fails.
 // A long file that shrinks but stays long only prints a notice; --update lowers its recorded size.
@@ -21,7 +23,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const LIMITS = { ts: 600, css: 1500 };
-const SHARED = new Set(["ui", "lib", "state", "api"]);
+const SHARED = new Set(["ui", "lib", "product", "api"]);
+const GENERIC = new Set(["ui", "lib", "api"]);
 const ASSET = /\.(css|json|svg|png|jpe?g|gif|webp|woff2?|ttf|txt|md)$/;
 const SKIP_DIRS = new Set(["generated", "node_modules"]);
 const TEST_FILE = /\.test\.(ts|tsx)$|(^|\/)test-(setup|support)\.ts$/;
@@ -87,6 +90,7 @@ function stronglyConnected(graph) {
 export function analyze(sources) {
   const files = new Set([...sources.keys()].filter((f) => SOURCE.test(f) && isHandWritten(f)));
   const direction = [];
+  const tier = [];
   const deep = [];
   const unresolved = [];
   const graph = new Map([...files].map((f) => [f, new Set()]));
@@ -103,7 +107,8 @@ export function analyze(sources) {
       const a = layerOf(from);
       const b = layerOf(to);
       const up = b.layer === "app" || b.layer === "features";
-      const apiUp = a.layer === "api" && (b.layer === "ui" || b.layer === "lib" || b.layer === "state");
+      const apiUp = a.layer === "api" && (b.layer === "ui" || b.layer === "lib");
+      if (GENERIC.has(a.layer) && b.layer === "product") tier.push(`${from} -> ${to}`);
       if ((SHARED.has(a.layer) && up) || (a.layer === "features" && b.layer === "app") || apiUp) direction.push(`${from} -> ${to}`);
       if (a.layer === "features" && b.layer === "features" && a.feature !== b.feature) {
         const front = /^features\/[^/]+\/index\.tsx?$/.test(to);
@@ -146,7 +151,7 @@ export function analyze(sources) {
   }
   const sort = (xs) => [...new Set(xs)].sort();
   const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
-  return { direction: sort(direction), deep: sort(deep), cycle: sort(cycle), featureCycle: sort(featureCycle), lines: sortObj(lines), css: sortObj(css), unresolved: sort(unresolved) };
+  return { direction: sort(direction), tier: sort(tier), deep: sort(deep), cycle: sort(cycle), featureCycle: sort(featureCycle), lines: sortObj(lines), css: sortObj(css), unresolved: sort(unresolved) };
 }
 
 /** fresh: fails. stale: baselined items that are gone (fails). shrunk: still long but smaller (notice). */
@@ -155,7 +160,7 @@ export function compare(current, baseline) {
   const stale = [];
   const shrunk = [];
   for (const rule of ["deep", "cycle", "featureCycle"]) for (const v of current[rule] ?? []) fresh.push(`${rule}: ${v}`);
-  for (const rule of ["direction"]) {
+  for (const rule of ["direction", "tier"]) {
     const known = new Set(baseline[rule] ?? []);
     const now = new Set(current[rule]);
     for (const v of now) if (!known.has(v)) fresh.push(`${rule}: ${v}`);
@@ -201,7 +206,7 @@ function main() {
     delete recorded.featureCycle;
     const body = { _note: "Recorded architecture debt (docs/refactor.md). Only shrink it; npm run arch:update rewrites it.", limits: LIMITS, ...recorded };
     writeFileSync(baselinePath, `${JSON.stringify(body, null, 2)}\n`);
-    console.log(`arch baseline written: ${current.direction.length} direction, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
+    console.log(`arch baseline written: ${current.direction.length} direction, ${current.tier.length} tier, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
     return;
   }
   const { fresh, stale, shrunk } = compare(current, JSON.parse(readFileSync(baselinePath, "utf8")));

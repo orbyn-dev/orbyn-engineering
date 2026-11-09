@@ -10,7 +10,7 @@ const base = () =>
     ["ui/Button.tsx", `export const Button = 1;\n`],
     ["lib/util.ts", `import { Button } from "../ui/Button";\nexport const u = Button;\n`],
   ]);
-const empty = { direction: [], deep: [], cycle: [], featureCycle: [], lines: {}, css: {} };
+const empty = { direction: [], tier: [], deep: [], cycle: [], featureCycle: [], lines: {}, css: {} };
 const bare = (r) => ({ ...r, unresolved: undefined });
 
 describe("arch-check", () => {
@@ -25,13 +25,40 @@ describe("arch-check", () => {
     expect(analyze(s).direction).toEqual(["ui/Bad.tsx -> features/a/A.tsx"]);
   });
 
-  it("flags a feature importing app, and api importing ui, lib or state", () => {
+  it("flags a feature importing app, and api importing ui or lib", () => {
     const s = base()
       .set("app/shortcuts.ts", "export const k = 1;\n")
       .set("features/a/K.tsx", `import { k } from "../../app/shortcuts";\n`)
       .set("api/client.ts", `import { u } from "../lib/util";\n`);
     const r = analyze(s);
     expect(r.direction).toEqual(["api/client.ts -> lib/util.ts", "features/a/K.tsx -> app/shortcuts.ts"]);
+  });
+
+  it("flags generic code importing product, but lets product and features import generic code", () => {
+    const s = base()
+      .set("product/state/route.ts", "export const route = 1;\n")
+      .set("lib/Bad.ts", `import { route } from "../product/state/route";\n`)
+      .set("ui/Bad.tsx", `import { route } from "../product/state/route";\n`)
+      .set("api/Bad.ts", `import { route } from "../product/state/route";\n`)
+      .set("product/Ok.ts", `import { Button } from "../ui/Button";\nimport { u } from "../lib/util";\nimport { route } from "./state/route";\nexport const ok = [Button, u, route];\n`)
+      .set("features/a/P.tsx", `import { route } from "../../product/state/route";\nimport { u } from "../../lib/util";\nexport const p = [route, u];\n`);
+    const r = analyze(s);
+    expect(r.tier).toEqual(["api/Bad.ts -> product/state/route.ts", "lib/Bad.ts -> product/state/route.ts", "ui/Bad.tsx -> product/state/route.ts"]);
+    expect(r.direction).toEqual([]);
+    expect(compare(r, empty).fresh).toHaveLength(3);
+    expect(compare(r, r).fresh).toEqual([]);
+    expect(compare(empty, r).stale).toHaveLength(3);
+  });
+
+  it("flags product importing a feature or app", () => {
+    const s = base()
+      .set("app/shortcuts.ts", "export const k = 1;\n")
+      .set("product/A.ts", `import { a } from "../features/a";\nimport { k } from "../app/shortcuts";\nexport const x = [a, k];\n`)
+      .set("features/a/index.ts", "export const a = 1;\n");
+    const r = analyze(s);
+    expect(r.direction).toEqual(["product/A.ts -> app/shortcuts.ts", "product/A.ts -> features/a/index.ts"]);
+    expect(compare(r, empty).fresh).toHaveLength(2);
+    expect(compare(r, r).fresh).toEqual([]);
   });
 
   it("ignores paths in comments and warns on unresolved specifiers", () => {

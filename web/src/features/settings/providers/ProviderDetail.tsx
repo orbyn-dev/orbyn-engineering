@@ -2,7 +2,7 @@ import { ArrowDown, ArrowUp, ChevronLeft, Plus } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../../api/client";
 import type { EngineStatus } from "../../../api/types";
-import { authLabels } from "../../../lib/format";
+import { authLabels } from "../../../product/runs/stateLabels";
 import { toFailure } from "../../../lib/useAsync";
 import { arrangeModels, modelKey, useEngineModels, useModelStore } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";

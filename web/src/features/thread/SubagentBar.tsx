@@ -1,6 +1,6 @@
 import { ArrowUpLeft, Check, Loader2, X } from "lucide-react";
 import type { Thread } from "../../api/types";
-import { runStateLabels } from "../../lib/format";
+import { runStateLabels } from "../../product/runs/stateLabels";
 import { navigate } from "../../product/state/route";
 import { Button } from "../../ui/controls";
 import { threadRunState } from "../workspace";

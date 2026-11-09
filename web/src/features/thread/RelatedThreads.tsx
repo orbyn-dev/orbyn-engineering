@@ -1,7 +1,7 @@
 import { Network } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Thread } from "../../api/types";
-import { runStateLabels } from "../../lib/format";
+import { runStateLabels } from "../../product/runs/stateLabels";
 import { navigate } from "../../product/state/route";
 import { useWorkspace } from "../../product/state/workspace";
 import { IconButton } from "../../ui/controls";

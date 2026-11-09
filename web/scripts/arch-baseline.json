@@ -4,33 +4,12 @@
     "ts": 600,
     "css": 1500
   },
-  "direction": [
-    "features/onboarding/DraftView.tsx -> app/shortcuts.ts",
-    "features/panels/browser/BrowserPanel.tsx -> app/shortcuts.ts",
-    "features/panels/preview/PreviewWindow.tsx -> app/shortcuts.ts",
-    "features/panels/terminal/TerminalDrawerBody.tsx -> app/shortcuts.ts",
-    "features/panels/terminal/TerminalPanel.tsx -> app/shortcuts.ts",
-    "features/settings/pages/Keybindings.tsx -> app/commandLabels.ts",
-    "features/settings/pages/Keybindings.tsx -> app/shortcuts.ts",
-    "features/settings/projects/ProjectActions.tsx -> app/shortcuts.ts",
-    "features/settings/projects/actionKeybinding.ts -> app/shortcuts.ts",
-    "features/settings/rows/ScopedPreferenceRows.tsx -> app/shortcuts.ts",
-    "features/thread/GitControl.tsx -> app/shortcuts.ts",
-    "features/thread/OpenInEditor.tsx -> app/shortcuts.ts",
-    "features/thread/ProjectActionShortcuts.tsx -> app/shortcuts.ts",
-    "features/thread/PullChip.tsx -> app/shortcuts.ts",
-    "features/thread/ThreadView.tsx -> app/shortcuts.ts",
-    "features/thread/ThreadView.tsx -> app/sidebarDrawer.ts",
-    "features/thread/composer/Composer.tsx -> app/shortcuts.ts",
-    "features/thread/composer/ModelPicker.tsx -> app/shortcuts.ts",
-    "features/usage/UsagePage.tsx -> app/shortcuts.ts",
-    "features/workspace/app-chrome/QuitConfirmation.tsx -> app/shortcuts.ts",
-    "features/workspace/sidebar/threadMenu.tsx -> app/shortcuts.ts"
-  ],
+  "direction": [],
+  "tier": [],
   "lines": {
     "app/Shell.tsx": 732,
     "features/onboarding/DraftView.tsx": 608,
-    "state/ui.ts": 783
+    "product/state/ui.ts": 783
   },
   "css": {
     "styles/thread.css": 4497
