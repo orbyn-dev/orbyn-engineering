@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use super::crash::{CRASH_WINDOW, Crashes};
 use super::favicon::favicon_url;
 use super::pump::{decode_base64, pump};
+use super::servers::{in_folder, parse_lsof, parse_netstat, parse_windows_listeners};
 use super::*;
 
 fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
