@@ -22,7 +22,9 @@ import { handleComposerPaste } from "./composerPaste";
 import { useAttachments } from "./useAttachments";
 import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
-import { useOwnCommand } from "./useOwnCommand";
+import { useCommand as useSharedCommand } from "../../../app/shortcuts";
+import { useStopRun } from "./useStopRun";
+import { useThreadSettings } from "./useThreadSettings";
 import { useStash } from "./useStash";
 import { recordUserPrompt } from "../../workspace";
 import {
@@ -36,7 +38,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { api } from "../../../api/client";
-import type { EngineStatus, PermissionMode, Thread } from "../../../api/types";
+import type { EngineStatus, Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useConnectionKind } from "../../../state/connection";
@@ -48,11 +50,7 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { useWorkspace } from "../../../state/workspace";
 import { CompactOffer, ComposerBanners, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
-import {
-  localCommand,
-  promptHistory,
-  type RecallPosition,
-} from "./composerInput";
+import { localCommand, promptHistory, type RecallPosition } from "./composerInput";
 import { offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 import { QuestionPanel } from "../QuestionPanel";
 import { SubagentChips } from "../SubagentBar";
@@ -63,11 +61,11 @@ import { FILE_MENTION_TYPE, insertToken, triggerAt } from "../../../lib/skillMen
 import { useComposerChips } from "../../../state/composerChipStore";
 import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
-import {
-  MAX_PROMPT_CHARS,
-  charactersOver,
-  promptWithChips,
-} from "../../../lib/composerContext";
+import { MAX_PROMPT_CHARS, charactersOver, promptWithChips } from "../../../lib/composerContext";
+
+/** Commands go to the thread's own composer; a side chat's stays out of their way. */
+const useOwnCommand = (side: boolean, command: string, handler: () => boolean | void) =>
+  useSharedCommand(command, () => (side ? false : handler()));
 
 export function Composer({
   thread,
@@ -134,10 +132,7 @@ export function Composer({
   const consumeChips = useComposerChips((state) => state.consume);
   const log = useThreadLogs((state) => state.logs[thread.id]);
   const history = useMemo(() => promptHistory(log?.items ?? []), [log]);
-  const [stopping, setStopping] = useState(false);
-  const [stoppedRun, setStoppedRun] = useState<string | null>(null);
-  const refreshAll = useWorkspace((state) => state.refreshAll);
-  const putThread = useWorkspace((state) => state.putThread);
+  const { stopping, stoppedRun, stop } = useStopRun(thread, setError);
   const projectBranch = useWorkspace(
     (state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null,
   );
@@ -199,14 +194,7 @@ export function Composer({
     caretAfterEdit.current = next.caret;
   };
 
-  const setPlanMode = async (on: boolean) => {
-    setError(null);
-    try {
-      putThread(await api.patchThread(thread.id, { plan_mode: on }));
-    } catch (failure) {
-      setError(`Couldn't change the mode. ${toFailure(failure).message}`);
-    }
-  };
+  const { putThread, setPlanMode, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
 
   /** A terminal selection is evidence, not a command; it is never consumed by one. */
   const hasTerminalContext = chips.some((chip) => chip.kind === "terminal");
@@ -378,35 +366,11 @@ export function Composer({
       .then(reloadQueue, (failure: unknown) => setError(`Couldn't steer. ${toFailure(failure).message}`));
   });
 
-  const setAccess = async (mode: PermissionMode) => {
-    setError(null);
-    try {
-      putThread(await api.patchThread(thread.id, { permission_mode: mode }));
-    } catch (failure) {
-      setError(`Couldn't change access. ${toFailure(failure).message}`);
-    }
-  };
-
   const approvals = useWorkspace((state) => state.approvals.data);
   const pendingHere = useMemo(
     () => (approvals ?? []).filter((approval) => approval.thread_id === thread.id),
     [approvals, thread.id],
   );
-
-  const stop = async () => {
-    if (!thread.active_run) return;
-    setStopping(true);
-    setError(null);
-    try {
-      await api.cancelRun(thread.active_run.id);
-      setStoppedRun(thread.active_run.id);
-      void refreshAll();
-    } catch (failure) {
-      setError(`Couldn't stop the run. ${toFailure(failure).message}`);
-    } finally {
-      setStopping(false);
-    }
-  };
 
   const unmanaged = engine !== null && !engine.capabilities.managed;
   const planMode = thread.lifecycle?.plan_mode ?? false;
@@ -417,29 +381,6 @@ export function Composer({
   const installed = useMemo(() => (allEngines ?? []).filter((entry) => entry.installed), [allEngines]);
   const models = useEngineModels(thread.engine);
   const model = resolveModel(models, thread.model);
-  const setPrefs = useUi((state) => state.setPrefs);
-  const setEffort = async (effort: string) => {
-    setError(null);
-    try {
-      putThread(await api.patchThread(thread.id, { effort }));
-      setPrefs({ lastModel: { engine: thread.engine, model: thread.model, effort } });
-    } catch (failure) {
-      setError(`Couldn't change the effort. ${toFailure(failure).message}`);
-    }
-  };
-  const pickModel = async (next: { engine: string; model: string | null }) => {
-    setError(null);
-    try {
-      const updated =
-        next.engine === thread.engine
-          ? await api.patchThread(thread.id, next.model ? { model: next.model } : {})
-          : await api.switchEngine(thread.id, next.engine, next.model);
-      putThread(updated);
-      setPrefs({ lastModel: { ...next, effort: updated.effort ?? null } });
-    } catch (failure) {
-      setError(`Couldn't change the model. ${toFailure(failure).message}`);
-    }
-  };
   useOwnCommand(side, "thread.editQueuedMessage", () => {
     const last = queue.data?.at(-1);
     if (!last) return false;
