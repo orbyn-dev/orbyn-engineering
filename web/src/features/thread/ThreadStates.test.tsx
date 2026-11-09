@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/types";
 import { LimitBanner } from "./ThreadBanners";
 import { TimelineRow } from "./items";
-import type { ThreadItem } from "../../lib/timeline/projection";
+import type { ThreadItem } from "../../lib/timeline/types";
 import { emptyLog } from "../../lib/timeline/projection";
 import { ArchivedBanner, CompactingStep, useCompacting, useThreadChip } from "./ThreadStates";
 import { useThreadLogs } from "../../state/threadLogs";

@@ -6,7 +6,7 @@ import { pullsApi } from "../../api/pulls";
 import type { PullRequest, Thread } from "../../api/types";
 import { useConnection } from "../../state/connection";
 import { PullChip, PullsRow } from "./PullChip";
-import { useThreadPulls, WATCH_TIP } from "../pulls/pullStore";
+import { useThreadPulls, WATCH_TIP } from "../pulls";
 
 const thread = { id: "t1", project_id: "p1" } as Thread;
 

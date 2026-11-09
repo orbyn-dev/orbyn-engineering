@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MessageItem } from "../../lib/timeline/projection";
+import type { MessageItem } from "../../lib/timeline/types";
 import type { TimelineEntry } from "../../lib/timeline/timeline";
 import { buildOffsets, estimateRow, indexAt, planRows, RowSizes, ROW_GAP, sizesFor, totalHeight, visibleRange } from "./windowing";
 

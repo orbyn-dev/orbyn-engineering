@@ -17,7 +17,7 @@ import { OpenInEditor } from "./OpenInEditor";
 import { PullsRow } from "./PullChip";
 import { runProjectAction } from "../../lib/runProjectAction";
 import { ThreadAutomations } from "./ThreadAutomations";
-import { ToolsRow } from "../tools/ToolsRow";
+import { ToolsRow } from "../tools";
 import { useThreadLogs } from "../../state/threadLogs";
 import { pluralize } from "./toolCalls";
 

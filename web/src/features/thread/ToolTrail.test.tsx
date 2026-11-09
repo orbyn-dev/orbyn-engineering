@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TimelineRow } from "./items";
 import { TimelineThread } from "./timelineThread";
 import { rangesIn } from "./ThreadFind";
-import type { ToolItem } from "../../lib/timeline/projection";
+import type { ToolItem } from "../../lib/timeline/types";
 import { entryText } from "./threadSearch";
 import { callFindText } from "./toolCalls";
 import { forgetOpenState, OpenStateScope } from "../../ui/openState";

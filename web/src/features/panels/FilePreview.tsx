@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { Markdown } from "../content/markdown/Markdown";
-import { Mermaid } from "../content/markdown/Mermaid";
+import { Markdown } from "../content";
+import { Mermaid } from "../content";
 
 export type PreviewKind = "markdown" | "delimited" | "mermaid" | "html" | "notebook";
 

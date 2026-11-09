@@ -1,6 +1,6 @@
 import { prettyJson } from "../../lib/format";
-import { outputSpans } from "../content/code/ansi";
-import type { ReasoningItem, ToolItem } from "../../lib/timeline/projection";
+import { outputSpans } from "../content";
+import type { ReasoningItem, ToolItem } from "../../lib/timeline/types";
 import { baseName, parsed, paths, toolFailed, traceTool } from "../../lib/timeline/toolTrace";
 
 /** The kind of row a tool call is drawn as; each has its own icon, words and block. */

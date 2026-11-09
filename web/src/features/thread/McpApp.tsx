@@ -13,7 +13,7 @@ import {
   type AppHost,
   type McpAppDisplayMode,
 } from "../../lib/timeline/mcpAppBridge";
-import type { ToolItem } from "../../lib/timeline/projection";
+import type { ToolItem } from "../../lib/timeline/types";
 
 const parseArgs = (args: string): unknown => {
   try {

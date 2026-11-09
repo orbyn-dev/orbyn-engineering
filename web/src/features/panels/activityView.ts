@@ -1,4 +1,4 @@
-import type { TimelineEntry } from "../../lib/timeline/projection";
+import type { TimelineEntry } from "../../lib/timeline/types";
 import { traceTool } from "../../lib/timeline/toolTrace";
 import { workDuration } from "../../lib/format";
 

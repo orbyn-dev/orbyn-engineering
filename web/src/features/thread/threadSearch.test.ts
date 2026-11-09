@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MessageItem, ToolItem } from "../../lib/timeline/projection";
+import type { MessageItem, ToolItem } from "../../lib/timeline/types";
 import { findMatches, rowOfItems, rowWhere } from "./threadSearch";
 import type { TimelineEntry } from "../../lib/timeline/timeline";
 

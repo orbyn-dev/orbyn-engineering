@@ -10,7 +10,7 @@ import { useWorkspace } from "../../state/workspace";
 import { Dialog } from "../../ui/Dialog";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { GitActionDialog, PLANS, PublishDialog, type Plan } from "../panels/GitActionDialog";
+import { GitActionDialog, PLANS, PublishDialog, type Plan } from "../panels";
 
 /** Commit, push and pull request for the open thread, in one menu in its header. */
 export function GitActions({ thread }: { thread: Thread }) {

@@ -4,7 +4,7 @@ import { api, request } from "../../api/client";
 import type { Question, QuestionRequest } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { Button } from "../../ui/controls";
-import { Markdown } from "../content/markdown/Markdown";
+import { Markdown } from "../content";
 
 const POLL_MS = 1500;
 

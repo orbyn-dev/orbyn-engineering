@@ -9,7 +9,7 @@ import { useComposerChips } from "../../state/composerChipStore";
 import { IconButton } from "../../ui/controls";
 import { chipId } from "../../lib/composerContext";
 import { ConfirmDialog } from "../../ui/Dialog";
-import { RestoreFilesDialog } from "../panels/RestoreFilesDialog";
+import { RestoreFilesDialog } from "../panels";
 
 /** The thread these messages belong to, when it isn't the one the page is on. */
 export const ThreadScope = createContext<string | null>(null);

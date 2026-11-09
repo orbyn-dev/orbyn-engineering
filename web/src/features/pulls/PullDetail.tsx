@@ -15,7 +15,7 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { PageBar } from "../../ui/PageBar";
 import { ErrorState, Loading } from "../../ui/states";
-import { Markdown } from "../content/markdown/Markdown";
+import { Markdown } from "../content";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";

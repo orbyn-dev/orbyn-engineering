@@ -10,7 +10,7 @@ import { ActivityPanel } from "./ActivityPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { DiffPanel } from "./DiffPanel";
 import { FilesPanel } from "./FilesPanel";
-import { ToolsTab } from "../tools/ToolsTab";
+import { ToolsTab } from "../tools";
 import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./panelWidth";
 import { useConnectionKind } from "../../state/connection";

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useUi } from "../../state/ui";
 import { HtmlRender } from "./HtmlRender";
 import { isHtmlRenderTool, renderFrameFrom } from "./renderFrame";
-import type { ToolItem } from "../../lib/timeline/projection";
+import type { ToolItem } from "../../lib/timeline/types";
 
 const THREAD = "01jc8xw9kq00000000000000aa";
 const RENDER = "01jc8xw9kq00000000000000bb";

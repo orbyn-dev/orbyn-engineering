@@ -1,4 +1,4 @@
-import type { ReasoningItem, RunSpan, ThreadItem, ToolItem } from "./projection";
+import type { ReasoningItem, RunSpan, ThreadItem, ToolItem } from "./types";
 import { summarizeWork } from "./toolTrace";
 import { workDuration } from "../format";
 

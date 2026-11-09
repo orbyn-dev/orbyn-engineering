@@ -1,4 +1,4 @@
-import { recordUserPrompt } from "../workspace/GitHubStarPrompt";
+import { recordUserPrompt } from "../workspace";
 import { useDraftModelDefaults } from "./useDraftModelDefaults";
 import { useDraftCheckout } from "./useDraftCheckout";
 import { ArrowUp, Bot, Eye, Folder, GitBranch, GitPullRequest, Paperclip, Sparkles, X, XCircle } from "lucide-react";
@@ -19,8 +19,8 @@ import { IconButton } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { Loading, NarrowBack } from "../../ui/states";
-import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "../thread/ComposerTraits";
-import { ModelPickerTrigger } from "../thread/ModelPicker";
+import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "../thread";
+import { ModelPickerTrigger } from "../thread";
 import { resolveModel, useEngineModels } from "../../state/modelStore";
 import { DraftProjectPicker } from "./DraftProjectPicker";
 import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../state/draftStore";

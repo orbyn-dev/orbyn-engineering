@@ -18,7 +18,7 @@ import { useUi } from "../../state/ui";
 import { Button, Pill } from "../../ui/controls";
 import { ApprovalCard, useResolvedApproval } from "./ApprovalCard";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
-import { Markdown } from "../content/markdown/Markdown";
+import { Markdown } from "../content";
 import { PlanCard } from "./PlanCard";
 import { proposedPlanIn, textAroundPlan } from "./proposedPlan";
 import { SentFiles } from "./SentFiles";
@@ -32,15 +32,7 @@ import {
 import { workSegments } from "./toolCalls";
 import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
-import type {
-  ActivityItem,
-  ApprovalItem,
-  DiffSummaryItem,
-  MessageItem,
-  NoticeItem,
-  ReasoningItem,
-  ToolItem,
-} from "../../lib/timeline/projection";
+import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../lib/timeline/types";
 
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {

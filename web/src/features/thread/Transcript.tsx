@@ -8,7 +8,7 @@ import { Empty, ErrorState, Loading } from "../../ui/states";
 import { TimelineRow } from "./items";
 import { TimelineThread } from "./timelineThread";
 import { Minimap, type MinimapItem } from "./Minimap";
-import type { MessageItem, ThreadItem } from "../../lib/timeline/projection";
+import type { MessageItem, ThreadItem } from "../../lib/timeline/types";
 import { rowOfItems } from "./threadSearch";
 import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "../../lib/timeline/timeline";
 import { registerTranscript } from "./transcriptRegistry";

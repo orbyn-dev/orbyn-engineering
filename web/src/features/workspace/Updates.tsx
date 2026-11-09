@@ -9,7 +9,7 @@ import {
   type UpdateRunStep,
 } from "../../state/workspace";
 import { Button } from "../../ui/controls";
-import { Markdown } from "../content/markdown/Markdown";
+import { Markdown } from "../content";
 import { Dialog } from "../../ui/Dialog";
 import { Logo, LogoTile } from "../../ui/Logo";
 

@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, it } from "vitest";
 import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../state/workspace";
-import { emptyLog, type ThreadItem } from "../../lib/timeline/projection";
+import { emptyLog } from "../../lib/timeline/projection";
+import type { ThreadItem } from "../../lib/timeline/types";
 import { useThreadLogs } from "../../state/threadLogs";
 import { ActivityPanel } from "./ActivityPanel";
 
