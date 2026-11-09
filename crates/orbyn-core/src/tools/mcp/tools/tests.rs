@@ -5,6 +5,7 @@ use crate::browser::preview::{
 use crate::error::CoreError;
 use serde_json::{Value, json};
 
+use super::definitions::TOOLS;
 use super::*;
 
 #[test]
