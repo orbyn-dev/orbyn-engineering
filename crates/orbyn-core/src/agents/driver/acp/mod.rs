@@ -2,6 +2,8 @@
 //! protocol version 1. The client advertises no file or terminal methods, so an
 //! agent cannot act through Orbyn without asking.
 
+mod sessions;
+
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::time::Duration;
@@ -185,14 +187,8 @@ impl EngineDriver for AcpDriver {
     async fn native_session_capabilities(
         &self,
     ) -> Result<Option<orbyn_contracts::AcpSessionCapabilities>> {
-        match super::acp_sessions::perform(
-            &self.engine,
-            self.env,
-            super::acp_sessions::Operation::Capabilities,
-        )
-        .await?
-        {
-            super::acp_sessions::Output::Capabilities(caps) => Ok(Some(caps)),
+        match sessions::perform(&self.engine, self.env, sessions::Operation::Capabilities).await? {
+            sessions::Output::Capabilities(caps) => Ok(Some(caps)),
             _ => unreachable!("capability operation returns capabilities"),
         }
     }
@@ -202,14 +198,14 @@ impl EngineDriver for AcpDriver {
         cwd: &std::path::Path,
         cursor: Option<&str>,
     ) -> Result<orbyn_contracts::AcpNativeSessionPage> {
-        match super::acp_sessions::perform(
+        match sessions::perform(
             &self.engine,
             self.env,
-            super::acp_sessions::Operation::List { cwd, cursor },
+            sessions::Operation::List { cwd, cursor },
         )
         .await?
         {
-            super::acp_sessions::Output::Page(page) => Ok(page),
+            sessions::Output::Page(page) => Ok(page),
             _ => unreachable!("list operation returns a page"),
         }
     }
@@ -219,30 +215,30 @@ impl EngineDriver for AcpDriver {
         cwd: &std::path::Path,
         session_id: &str,
     ) -> Result<super::NativeSessionReplay> {
-        match super::acp_sessions::perform(
+        match sessions::perform(
             &self.engine,
             self.env,
-            super::acp_sessions::Operation::Load {
+            sessions::Operation::Load {
                 cwd,
                 id: session_id,
             },
         )
         .await?
         {
-            super::acp_sessions::Output::Replay(replay) => Ok(replay),
+            sessions::Output::Replay(replay) => Ok(replay),
             _ => unreachable!("load operation returns replay"),
         }
     }
 
     async fn delete_native_session(&self, _cwd: &std::path::Path, session_id: &str) -> Result<()> {
-        match super::acp_sessions::perform(
+        match sessions::perform(
             &self.engine,
             self.env,
-            super::acp_sessions::Operation::Delete { id: session_id },
+            sessions::Operation::Delete { id: session_id },
         )
         .await?
         {
-            super::acp_sessions::Output::Deleted => Ok(()),
+            sessions::Output::Deleted => Ok(()),
             _ => unreachable!("delete operation returns acknowledgement"),
         }
     }
@@ -427,7 +423,7 @@ async fn open_session(
     }
     let init = initialize(rpc).await?;
     slot.record(&init);
-    let caps = super::acp_sessions::capabilities(&init);
+    let caps = sessions::capabilities(&init);
     let persistent = caps.can_load || caps.can_resume;
     let (id, mut session) = if let Some(id) = &spec.resume {
         let method = if caps.can_resume {
@@ -657,13 +653,9 @@ async fn open_raw(
 
 async fn initialize(rpc: &RpcClient) -> Result<Value> {
     let init = rpc
-        .call(
-            "initialize",
-            super::acp_sessions::initialize_params(),
-            CALL_TIMEOUT,
-        )
+        .call("initialize", sessions::initialize_params(), CALL_TIMEOUT)
         .await?;
-    super::acp_sessions::check_version(&init)?;
+    sessions::check_version(&init)?;
     Ok(init)
 }
 
@@ -718,7 +710,7 @@ async fn resume_without_replay(
                     };
                     count += 1;
                     bytes = bytes.checked_add(replay_message_size(&message)?).ok_or_else(replay_limit)?;
-                    if count > super::acp_sessions::MAX_MESSAGES || bytes > super::acp_sessions::MAX_BYTES {
+                    if count > sessions::MAX_MESSAGES || bytes > sessions::MAX_BYTES {
                         return Err(replay_limit());
                     }
                     discard_replay_message(rpc, message, session, resuming).await?;
@@ -764,10 +756,10 @@ fn replay_message_size(message: &Inbound) -> Result<usize> {
 }
 
 fn finish_restore(value: Value, bytes: usize, count: usize) -> Result<Value> {
-    if count >= super::acp_sessions::MAX_MESSAGES
+    if count >= sessions::MAX_MESSAGES
         || bytes
             .checked_add(bounded_json_size(&value)?)
-            .is_none_or(|size| size > super::acp_sessions::MAX_BYTES)
+            .is_none_or(|size| size > sessions::MAX_BYTES)
     {
         return Err(replay_limit());
     }
@@ -781,7 +773,7 @@ fn bounded_json_size(value: &impl serde::Serialize) -> Result<usize> {
             self.0 = self
                 .0
                 .checked_add(bytes.len())
-                .filter(|size| *size <= super::acp_sessions::MAX_BYTES)
+                .filter(|size| *size <= sessions::MAX_BYTES)
                 .ok_or_else(|| std::io::Error::other("ACP replay limit"))?;
             Ok(bytes.len())
         }

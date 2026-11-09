@@ -3,7 +3,6 @@
 //! logic: the run manager owns all of that.
 
 pub mod acp;
-mod acp_sessions;
 pub mod agui;
 pub mod claude;
 pub mod codex;
