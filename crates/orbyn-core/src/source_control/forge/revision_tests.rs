@@ -3,6 +3,7 @@ use std::path::Path;
 use serde_json::json;
 
 use super::github::parse_github_revision;
+use super::pulls::revision_files;
 use super::*;
 use crate::error::CoreError;
 
