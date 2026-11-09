@@ -16,6 +16,11 @@ use super::lock;
 use super::open::file_url;
 use super::pump::{decode_base64, pump};
 use super::servers::{in_folder, parse_lsof, parse_netstat, parse_windows_listeners};
+use super::snapshots::{
+    DEFAULT_SNAPSHOT_ELEMENTS, MAX_ADDRESS_CHARS, MAX_NAME_CHARS, MAX_SELECTOR_CHARS,
+    MAX_SNAPSHOT_ELEMENTS, MAX_SNAPSHOT_TEXT, MAX_VALUE_CHARS, capped_snapshot,
+    snapshot_expression, snapshot_limit,
+};
 use super::*;
 
 fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
