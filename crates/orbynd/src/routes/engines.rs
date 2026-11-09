@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use orbyn_contracts::{AcpNativeSessionsQuery, DeleteAcpNativeSession, ImportAcpNativeSession};
-use orbyn_contracts::{CustomEngine, EngineFeedbackRequest, EngineTier, InstallAcpAgent};
+use orbyn_contracts::{CustomEngine, EngineFeedbackRequest, InstallAcpAgent};
 use orbyn_core::CoreError;
 use serde::Deserialize;
 
@@ -232,46 +232,11 @@ async fn install_recommended_engine(
     ))
 }
 
-fn slug(name: &str) -> String {
-    let text: String = name
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    text.split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 async fn add_custom_engine(
     State(state): State<AppState>,
     ApiJson(mut engine): ApiJson<CustomEngine>,
 ) -> ApiResult<impl IntoResponse> {
-    if engine.id.is_empty() {
-        engine.id = slug(&engine.name);
-    }
-    if engine.id.is_empty() || engine.name.trim().is_empty() || engine.target.trim().is_empty() {
-        return Err(
-            CoreError::Invalid("Name the engine and give its command or URL.".into()).into(),
-        );
-    }
-    if engine.id == orbyn_core::agents::engines::instances::LOCAL_ACP_DRIVER {
-        return Err(CoreError::Invalid(
-            "That engine id is reserved for local ACP instances.".into(),
-        )
-        .into());
-    }
-    if matches!(engine.id.as_str(), "claude" | "codex") || engine.tier == EngineTier::Native {
-        return Err(CoreError::Invalid("That engine is built in.".into()).into());
-    }
-    if engine.tier == EngineTier::Agui
-        && !(engine.target.starts_with("http://") || engine.target.starts_with("https://"))
-    {
-        return Err(
-            CoreError::Invalid("An AG-UI engine needs an http or https URL.".into()).into(),
-        );
-    }
+    orbyn_core::agents::engines::known::prepare_custom_engine(&mut engine)?;
     state.core.store.save_custom_engine(&engine, LOCAL_USER)?;
     state.core.engines.invalidate().await;
     Ok((

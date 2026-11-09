@@ -1,9 +1,16 @@
 //! Small shared primitives: ids, timestamps, random tokens, hex and owner-only files.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use sha2::{Digest, Sha256};
+
+/// The current user's home folder: `HOME`, else `USERPROFILE` on Windows.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
 
 pub fn new_id() -> String {
     ulid::Ulid::generate().to_string().to_lowercase()
@@ -212,6 +219,14 @@ pub fn tail(text: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_home_folder_follows_the_environment() {
+        let expected = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from);
+        assert_eq!(home_dir(), expected);
+    }
 
     #[test]
     fn published_private_files_are_never_partial() {

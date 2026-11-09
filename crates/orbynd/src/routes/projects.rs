@@ -226,18 +226,12 @@ struct BrowseQuery {
     path: Option<String>,
 }
 
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
 async fn browse(Query(query): Query<BrowseQuery>) -> ApiResult<Json<FsListing>> {
     let requested = query
         .path
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .or_else(home)
+        .or_else(orbyn_core::util::home_dir)
         .ok_or_else(|| CoreError::Invalid("Choose a folder.".into()))?;
     if !requested.is_absolute() {
         return Err(CoreError::Invalid("Choose an absolute folder path.".into()).into());

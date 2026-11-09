@@ -962,10 +962,7 @@ async fn open_app(cli: &Cli, path: Option<&Path>) -> Outcome<()> {
 }
 
 fn home_dir() -> Outcome<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .ok_or_else(|| Failure::new("No home folder was found."))
+    orbyn_core::util::home_dir().ok_or_else(|| Failure::new("No home folder was found."))
 }
 
 #[cfg(unix)]
