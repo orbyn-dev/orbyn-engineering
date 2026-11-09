@@ -24,8 +24,8 @@
     "features/thread/composer/Composer.tsx -> app/shortcuts.ts",
     "features/thread/composer/ModelPicker.tsx -> app/shortcuts.ts",
     "features/usage/UsagePage.tsx -> app/shortcuts.ts",
-    "features/workspace/QuitConfirmation.tsx -> app/shortcuts.ts",
-    "features/workspace/threadMenu.tsx -> app/shortcuts.ts"
+    "features/workspace/app-chrome/QuitConfirmation.tsx -> app/shortcuts.ts",
+    "features/workspace/sidebar/threadMenu.tsx -> app/shortcuts.ts"
   ],
   "lines": {
     "app/Shell.tsx": 732,
@@ -37,7 +37,7 @@
     "features/pulls/PullsToolbar.tsx": 676,
     "features/settings/PreferenceSections.tsx": 796,
     "features/usage/UsagePage.tsx": 763,
-    "features/workspace/Sidebar.tsx": 1199,
+    "features/workspace/sidebar/Sidebar.tsx": 1199,
     "state/ui.ts": 783
   },
   "css": {

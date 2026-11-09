@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../../api/types";
 import { parsePatch } from "../panels/DiffPanel";
-import { arrangeThreads } from "../workspace/groups";
+import { arrangeThreads } from "../workspace/sidebar/groups";
 import { touchesOf } from "./approvalDetail";
 import { percentLabel } from "./composer/ComposerExtras";
 import type { ThreadItem } from "../../lib/timeline/types";

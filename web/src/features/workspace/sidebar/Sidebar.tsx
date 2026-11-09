@@ -23,24 +23,24 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, request } from "../../api/client";
-import type { Project, ServerSettings, Thread } from "../../api/types";
-import type { ProjectGroupingMode } from "../../generated/ProjectGroupingMode";
-import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
-import { toFailure } from "../../lib/useAsync";
-import { DRAFT_KEY, useDraftStore } from "../../state/draftStore";
-import { threadToken } from "../../lib/skillMention";
-import { navigate, routeHref, type Route } from "../../state/route";
-import { DEFAULT_SIDEBAR_WIDTH, useUi } from "../../state/ui";
-import { useVisibleProjects, useWorkspace } from "../../state/workspace";
-import { ProjectBadge } from "../../ui/badges";
-import { deriveProjectIdentity } from "../../lib/projectIdentity";
-import { Collapsible } from "../../ui/Collapsible";
-import { IconButton } from "../../ui/controls";
-import { ConfirmDialog } from "../../ui/Dialog";
-import { Menu, type MenuItem } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { ErrorState, Loading } from "../../ui/states";
+import { api, request } from "../../../api/client";
+import type { Project, ServerSettings, Thread } from "../../../api/types";
+import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
+import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import { toFailure } from "../../../lib/useAsync";
+import { DRAFT_KEY, useDraftStore } from "../../../state/draftStore";
+import { threadToken } from "../../../lib/skillMention";
+import { navigate, routeHref, type Route } from "../../../state/route";
+import { DEFAULT_SIDEBAR_WIDTH, useUi } from "../../../state/ui";
+import { useVisibleProjects, useWorkspace } from "../../../state/workspace";
+import { ProjectBadge } from "../../../ui/badges";
+import { deriveProjectIdentity } from "../../../lib/projectIdentity";
+import { Collapsible } from "../../../ui/Collapsible";
+import { IconButton } from "../../../ui/controls";
+import { ConfirmDialog } from "../../../ui/Dialog";
+import { Menu, type MenuItem } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
+import { ErrorState, Loading } from "../../../ui/states";
 import {
   arrangeThreads,
   attentionRank,
@@ -61,7 +61,7 @@ import {
   type ThreadSections,
 } from "./groups";
 import { trackPress } from "./pressGesture";
-import { ProjectFilter } from "./ProjectFilter";
+import { ProjectFilter } from "../palette/ProjectFilter";
 import {
   copyText,
   deleteThreads,
@@ -76,8 +76,8 @@ import { bulkMenuItems, CustomSnoozeDialog, RenameThreadDialog, snoozeChildren, 
 import { ThreadRow, type RowActions } from "./ThreadRow";
 import { useDrawnOrder } from "./drawnOrder";
 import { pushUndo, undoLabel, undoLatest, useUndoNotice } from "./threadUndo";
-import { UpdatePill } from "./Updates";
-import { SkillsNav } from "../skills";
+import { UpdatePill } from "../app-chrome/Updates";
+import { SkillsNav } from "../../skills";
 
 const SETTLED_PAGE = 10;
 

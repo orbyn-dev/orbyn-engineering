@@ -1,6 +1,6 @@
 import { useClearSelectionOnLeave } from "../lib/clearSelection";
 import { WelcomeHost } from "../features/onboarding/WelcomeWizard";
-import { QuitConfirmation } from "../features/workspace/QuitConfirmation";
+import { QuitConfirmation } from "../features/workspace/app-chrome/QuitConfirmation";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { create } from "zustand";
 import { NoProjects } from "../features/onboarding/NoProjects";
@@ -9,28 +9,28 @@ import { EmptyProject } from "../features/onboarding/EmptyProject";
 import { TrustFolder } from "../features/onboarding/TrustFolder";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { ThreadView } from "../features/thread/ThreadView";
-import { CommandPalette } from "../features/workspace/CommandPalette";
+import { CommandPalette } from "../features/workspace/palette/CommandPalette";
 import type { ShellEvent, Thread } from "../api/types";
-import { arrangeThreads, threadsFlat } from "../features/workspace/groups";
+import { arrangeThreads, threadsFlat } from "../features/workspace/sidebar/groups";
 import {
   copyReference,
   pinThreads,
   settleThreads,
   unpinThreads,
   unsettleThreads,
-} from "../features/workspace/threadActions";
-import { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from "../features/workspace/threadUndo";
-import { CloneJobs } from "../features/workspace/CloneJobs";
-import { Sidebar } from "../features/workspace/Sidebar";
-import { useDrawnOrder } from "../features/workspace/drawnOrder";
+} from "../features/workspace/sidebar/threadActions";
+import { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from "../features/workspace/sidebar/threadUndo";
+import { CloneJobs } from "../features/workspace/app-chrome/CloneJobs";
+import { Sidebar } from "../features/workspace/sidebar/Sidebar";
+import { useDrawnOrder } from "../features/workspace/sidebar/drawnOrder";
 import { PullsPage } from "../features/pulls/PullsPage";
 import { ScheduledTasksPage } from "../features/settings/ScheduledTasks";
 import { UsagePage } from "../features/usage/UsagePage";
 import { SkillsPage } from "../features/skills/SkillsPage";
 import { PreviewFloat } from "../features/panels/PreviewFloat";
 import { Toasts } from "../ui/Toasts";
-import { GitHubStarPrompt } from "../features/workspace/GitHubStarPrompt";
-import { FoldersNotice } from "../features/workspace/FoldersNotice";
+import { GitHubStarPrompt } from "../features/workspace/app-chrome/GitHubStarPrompt";
+import { FoldersNotice } from "../features/workspace/app-chrome/FoldersNotice";
 import { api, setSlowRequestHandler } from "../api/client";
 import { usePanelMotionRoot } from "../lib/panelAnimations";
 import { inDesktopApp, shellChanged, zoomKeyAction } from "../api/shell";

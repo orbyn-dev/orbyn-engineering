@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../state/workspace";
-import * as actions from "../workspace/threadActions";
+import * as actions from "../workspace/sidebar/threadActions";
 import { ArchivedBanner } from "./ThreadStates";
 import { emptyLog } from "../../lib/timeline/projection";
 import { familyOf, ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { useThreadLogs } from "../../state/threadLogs";
 
-vi.mock("../workspace/threadActions", async (original) => ({
-  ...(await original<typeof import("../workspace/threadActions")>()),
+vi.mock("../workspace/sidebar/threadActions", async (original) => ({
+  ...(await original<typeof import("../workspace/sidebar/threadActions")>()),
   archiveThreads: vi.fn(),
   unarchiveThread: vi.fn(),
   copyText: vi.fn(),

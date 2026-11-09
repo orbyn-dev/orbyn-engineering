@@ -1,11 +1,11 @@
 import { Check, Folder, Settings } from "lucide-react";
-import { SlidersIcon } from "../../ui/SlidersIcon";
+import { SlidersIcon } from "../../../ui/SlidersIcon";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Project } from "../../api/types";
-import { navigate } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { ProjectBadge } from "../../ui/badges";
-import { usePopover } from "../../ui/usePopover";
+import type { Project } from "../../../api/types";
+import { navigate } from "../../../state/route";
+import { useUi } from "../../../state/ui";
+import { ProjectBadge } from "../../../ui/badges";
+import { usePopover } from "../../../ui/usePopover";
 
 export const POPUP_WIDTH = 288;
 /** The popup's tallest size (max-height in shell.css), which the vertical clamp keeps inside the window. */

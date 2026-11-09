@@ -1,17 +1,17 @@
 import { AlertCircle, Check, ChevronDown, ChevronRight, CircleDashed, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
-import type { UpdateStatus } from "../../api/types";
+import type { UpdateStatus } from "../../../api/types";
 import {
   appHasUpdate,
   engineHasUpdate,
   useWorkspace,
   type UpdateRun,
   type UpdateRunStep,
-} from "../../state/workspace";
-import { Button } from "../../ui/controls";
-import { Markdown } from "../content";
-import { Dialog } from "../../ui/Dialog";
-import { Logo, LogoTile } from "../../ui/Logo";
+} from "../../../state/workspace";
+import { Button } from "../../../ui/controls";
+import { Markdown } from "../../content";
+import { Dialog } from "../../../ui/Dialog";
+import { Logo, LogoTile } from "../../../ui/Logo";
 
 const short = (value: string | null) =>
   value && /^[0-9a-f]{12,}$/.test(value) ? value.slice(0, 8) : (value ?? "Unknown");
