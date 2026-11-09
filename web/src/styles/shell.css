@@ -992,24 +992,6 @@ details[open] > summary > .chev {
 .page-narrow {
   max-width: 640px;
 }
-.page-head h1 {
-  font-size: var(--text-page);
-  font-weight: 500;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-}
-.page-head {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.page-head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 .page-actions {
   display: flex;
   gap: 8px;
@@ -1048,8 +1030,7 @@ details[open] > summary > .chev {
 .rows > li {
   border-bottom: 1px solid var(--color-divider);
 }
-.row,
-.row-link {
+.row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1059,15 +1040,6 @@ details[open] > summary > .chev {
   text-decoration: none;
   min-width: 0;
 }
-.row-link:hover {
-  background: var(--color-hover);
-  border-radius: var(--radius-md);
-}
-.row-stack {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
-}
 .row-title {
   display: inline-flex;
   align-items: center;
@@ -1076,12 +1048,6 @@ details[open] > summary > .chev {
   min-width: 0;
   font-size: var(--text-body);
   overflow-wrap: anywhere;
-}
-.row-grow {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
 }
 .row-meta {
   color: var(--color-muted);
@@ -1150,15 +1116,6 @@ details[open] > summary > .chev {
 .route-tabs button[aria-selected="true"] {
   background: var(--color-raised);
   color: var(--color-text);
-}
-.plain-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 200px;
-  margin-top: 4px;
-  overflow-y: auto;
-  font-size: var(--text-meta);
 }
 .update-reason {
   color: var(--color-muted);

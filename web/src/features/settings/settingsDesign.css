@@ -189,11 +189,6 @@
   display: inline-flex;
   gap: 4px;
 }
-.set-clash {
-  color: var(--color-warnText);
-  font-size: var(--text-meta);
-  white-space: nowrap;
-}
 .set-tr .icon-btn {
   color: var(--color-faint);
 }
@@ -608,9 +603,6 @@
 }
 .set-time {
   color: var(--color-muted);
-}
-.set-facts > .set-facts-end {
-  justify-content: flex-end;
 }
 .set-checking {
   display: inline-flex;

@@ -6,7 +6,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { api, request } from "../../api/client";
 import type { CleanupReport, Diagnostics, JsonValue, OtlpResult } from "../../api/types";
 import type { ServiceProcess } from "../../generated/ServiceProcess";
-import { fullTime, sizeWords } from "../../lib/format";
+import { fullTime, mebibytes, sizeWords, uptime } from "../../lib/format";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useWorkspace } from "../../state/workspace";
 import { useUi } from "../../state/ui";
@@ -23,11 +23,6 @@ import { SettingsBanner, SettingsEmpty } from "./SettingsBanner";
 import { useConnection } from "../../state/connection";
 import { FallbackNotice, Library } from "./Projects";
 import { SettingGroup, SettingRow } from "../../ui/SettingRow";
-
-const mib = (bytes: number) => `${(bytes / 1_048_576).toFixed(1)} MiB`;
-
-const duration = (seconds: number) =>
-  seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`;
 
 /** Past this, the space a repair gets back is worth a mention. */
 const REPAIR_NOTICE_BYTES = 1024 ** 3;
@@ -447,7 +442,7 @@ function DiagnosticsGroup() {
       {stoppable.length === 0 ? <p className="setting-line-desc">Nothing is running long.</p> : <ul className="setting-list" aria-label="Processes">
         {stoppable.map((process) => (
           <li key={process.pid}>
-            <SettingRow title={process.name} description={`Running ${duration(process.running_seconds)}`}>
+            <SettingRow title={process.name} description={`Running ${uptime(process.running_seconds)}`}>
               <button type="button" className="set-red-link" aria-label={`Stop ${process.name}`} onClick={() => setStopping(process)}>Stop</button>
             </SettingRow>
           </li>
@@ -460,7 +455,7 @@ function DiagnosticsGroup() {
       {note ? <SettingRow title="Last action" description={note} /> : null}
       {data.database.reclaimable_bytes >= REPAIR_NOTICE_BYTES ? (
         <p className="banner banner-warn" role="status">
-          The database can give back {mib(data.database.reclaimable_bytes)}. Repair it when no run is active.
+          The database can give back {mebibytes(data.database.reclaimable_bytes)}. Repair it when no run is active.
         </p>
       ) : null}
     </SettingGroup>

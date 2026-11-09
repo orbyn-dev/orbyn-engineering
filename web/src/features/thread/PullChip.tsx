@@ -17,21 +17,10 @@ import { DRow } from "./DetailRows";
 import { captureFocusReturn } from "../../ui/focusReturn";
 import { ToolbarPopover } from "../pulls/ToolbarPopover";
 import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "./GitControl";
-import {
-  agoWords,
-  checksSummary,
-  chipDot,
-  chipLabel,
-  entryOf,
-  forgeName,
-  numberLabel,
-  readyToMerge,
-  stateWord,
-  useThreadPulls,
-  WATCH_TIP,
-} from "./pullStore";
+import { checksSummary, chipDot, chipLabel, entryOf, forgeName, numberLabel, readyToMerge, stateWord, useThreadPulls, WATCH_TIP } from "./pullStore";
 import "../pulls/pullsToolbar.css";
 import "./pullChip.css";
+import { agoWords } from "../../lib/format";
 
 /** Reads the thread's linked pull requests once it shows, and again whenever it changes. */
 function useLinked(thread: Thread) {

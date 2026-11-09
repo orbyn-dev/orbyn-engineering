@@ -2,9 +2,10 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { DocumentViewer, OFFICE_READ_TIMEOUT_MS, officeKind, runInWorker, type OfficeRun } from "./DocumentViewer";
-import { MAX_ARCHIVE_BYTES, formatBytes } from "./zipArchive";
+import { MAX_ARCHIVE_BYTES } from "./zipArchive";
 import { buildDocx, buildXlsx, docxParagraph, stubWorker, worksheet } from "./office.test-support";
 import { MAX_CELLS, type DocxDocument, type OfficeModel, type OfficeRequest, type OfficeResponse, type XlsxDocument } from "./office";
+import { formatBytes } from "../../lib/format";
 
 afterEach(() => {
   vi.useRealTimers();

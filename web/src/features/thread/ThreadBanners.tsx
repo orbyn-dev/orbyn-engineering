@@ -3,6 +3,7 @@ import { CircleAlert, Clock, Gauge, RotateCcw, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { Thread, UpdateThread } from "../../api/types";
+import { waitLeft } from "../../lib/format";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useThreadLogs } from "./threadLogs";
 import { useUi } from "../../state/ui";
@@ -140,14 +141,6 @@ export function PreparationRetryButton({ threadId, runId }: { threadId: string; 
   return <Button small tone="quiet" disabled={retrying} icon={<RotateCcw size={12} aria-hidden />} onClick={retry}>Retry</Button>;
 }
 
-/** The time left on a wait: 2m 14s, or 1h 5m. */
-export function formatWait(ms: number): string {
-  const seconds = Math.max(Math.ceil(ms / 1000), 0);
-  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-  if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
-  return `${seconds}s`;
-}
-
 /** "Try again in 2m 14s", counting down, with a bar for how much of the wait has passed. Not a live region. */
 function LimitCountdown({ limit, now }: { limit: { stopped_at: string; resets_at: string | null }; now: number }) {
   const end = limit.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
@@ -155,7 +148,7 @@ function LimitCountdown({ limit, now }: { limit: { stopped_at: string; resets_at
   const share = Number.isNaN(start) || end <= start ? 0 : Math.min(Math.max((now - start) / (end - start), 0), 1);
   return (
     <span className="limit-wait" aria-hidden>
-      Try again in <b className="limit-left">{formatWait(end - now)}</b>.
+      Try again in <b className="limit-left">{waitLeft(end - now)}</b>.
       <span className="xbar" role="presentation">
         <i style={{ width: `${Math.round(share * 100)}%` }} />
       </span>

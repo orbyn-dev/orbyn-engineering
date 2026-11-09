@@ -1,28 +1,8 @@
 import { crc32 as checksum } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { buildZipArchive as buildZip } from "./zipArchive.test-support";
-import {
-  MAX_ARCHIVE_BYTES,
-  MAX_ENTRY_BYTES,
-  METHOD_DEFLATED,
-  METHOD_STORED,
-  ZipError,
-  buildZipTree,
-  crc32,
-  decodeCp437,
-  decodeEntryName,
-  decodeEntryText,
-  entryDataRange,
-  findEndOfCentralDirectory,
-  formatBytes,
-  looksBinary,
-  readEntryBytes,
-  readZipArchive,
-  sanitizeEntryName,
-  storedEntryBytes,
-  type ZipEntry,
-  type ZipReadResult,
-} from "./zipArchive";
+import { MAX_ARCHIVE_BYTES, MAX_ENTRY_BYTES, METHOD_DEFLATED, METHOD_STORED, ZipError, buildZipTree, crc32, decodeCp437, decodeEntryName, decodeEntryText, entryDataRange, findEndOfCentralDirectory, looksBinary, readEntryBytes, readZipArchive, sanitizeEntryName, storedEntryBytes, type ZipEntry, type ZipReadResult } from "./zipArchive";
+import { formatBytes } from "../../lib/format";
 
 /** The entries of an archive the reader accepted. */
 function read(bytes: Uint8Array<ArrayBuffer>): ZipEntry[] {

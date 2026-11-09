@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PullListEntry } from "../../api/types";
-import { activeChips, bodyOpensWith, detailsKey, emptyColumns, checksOf, checksView, mergeGate, noFilters, pageState, parseSearch, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
+import { activeChips, bodyOpensWith, detailsKey, emptyColumns, checksOf, checksView, mergeGate, noFilters, pageState, takeLabels, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
 
 const newest: PullSort = { by: "created", dir: "newest" };
 const oldest: PullSort = { by: "created", dir: "oldest" };
@@ -25,8 +25,10 @@ const entry = (number: number, over: Partial<PullListEntry["pull"]> = {}, projec
 });
 
 describe("pull list", () => {
-  it("takes label: words out of the search", () => {
-    expect(parseSearch("fix label:Bug login")).toEqual({ query: "fix login", labels: ["bug"] });
+  it("takes finished label: words out of the search", () => {
+    expect(takeLabels("fix label:Bug login", true)).toEqual({ labels: ["bug"], rest: "fix login" });
+    expect(takeLabels("fix label:Bug", false)).toEqual({ labels: [], rest: "fix label:Bug" });
+    expect(takeLabels("label:Bug ", false)).toEqual({ labels: ["bug"], rest: "" });
   });
 
   it("filters and sorts on what the forge reports", () => {

@@ -95,11 +95,6 @@ export function withoutWhitespaceChanges(lines: DiffLine[]): DiffLine[] {
   return out;
 }
 
-interface SplitRow {
-  left: DiffLine | null;
-  right: DiffLine | null;
-}
-
 type Numbered = { line: DiffLine; number: number | null };
 
 /** Pairs each run of removals with the additions after it, keeping new-side numbers. */
@@ -127,14 +122,6 @@ export function splitNumbered(entries: readonly Numbered[]): { left: Numbered | 
   }
   flush();
   return rows;
-}
-
-/** Pairs each run of removals with the additions after it. */
-export function splitRows(lines: DiffLine[]): SplitRow[] {
-  return splitNumbered(lines.map((line) => ({ line, number: null }))).map((row) => ({
-    left: row.left?.line ?? null,
-    right: row.right?.line ?? null,
-  }));
 }
 
 /**

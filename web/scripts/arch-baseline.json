@@ -72,7 +72,6 @@
     "features/pulls/PullDetail.tsx -> features/thread/Markdown.tsx",
     "features/pulls/PullDetail.tsx -> features/thread/pullStore.ts",
     "features/pulls/PullGuide.tsx -> features/thread/Markdown.tsx",
-    "features/pulls/PullsPage.tsx -> features/thread/pullStore.ts",
     "features/settings/LibraryChoice.tsx -> features/onboarding/FolderBrowser.tsx",
     "features/settings/PreferenceSections.tsx -> features/thread/DetailsCard.tsx",
     "features/settings/PreferenceSections.tsx -> features/workspace/threadActions.ts",
@@ -112,21 +111,20 @@
   "lines": {
     "app/Shell.tsx": 732,
     "features/onboarding/DraftView.tsx": 608,
-    "features/panels/BrowserPanel.tsx": 962,
-    "features/panels/DiffPanel.tsx": 678,
+    "features/panels/BrowserPanel.tsx": 954,
+    "features/panels/DiffPanel.tsx": 665,
     "features/panels/office.ts": 720,
     "features/pulls/PullDetail.tsx": 900,
     "features/pulls/PullsToolbar.tsx": 676,
     "features/settings/PreferenceSections.tsx": 796,
     "features/thread/Composer.tsx": 1109,
-    "features/thread/ToolTrail.tsx": 906,
+    "features/thread/ToolTrail.tsx": 876,
     "features/thread/projection.ts": 631,
-    "features/usage/UsagePage.tsx": 775,
+    "features/usage/UsagePage.tsx": 763,
     "features/workspace/Sidebar.tsx": 1199,
     "state/ui.ts": 783
   },
   "css": {
-    "styles/pages.css": 1540,
-    "styles/thread.css": 4707
+    "styles/thread.css": 4497
   }
 }

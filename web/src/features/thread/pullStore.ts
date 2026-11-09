@@ -179,15 +179,6 @@ export const numberLabel = (pull: Pick<PullRequest, "number" | "url">) => `${for
 
 export const chipLabel = (pulls: readonly PullRequest[]) => (pulls.length === 1 ? numberLabel(pulls[0]!) : `PRs ${pulls.length}`);
 
-/** "2 min ago", from the time the list was read. */
-export function agoWords(at: number, now: number): string {
-  const minutes = Math.max(0, Math.floor((now - at) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours} hr ago` : `${Math.floor(hours / 24)} d ago`;
-}
-
 /** The forge's name from a pull request's address, for the line that says it did not answer. */
 export function forgeName(url: string | undefined): string {
   const host = (() => {

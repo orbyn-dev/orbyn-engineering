@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { use, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../api/client";
-import { prettyJson } from "../../lib/format";
+import { callDuration, prettyJson } from "../../lib/format";
 import { useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
 import { useUi } from "../../state/ui";
@@ -41,37 +41,7 @@ import { McpApp } from "./McpApp";
 import type { PlanItem, ToolItem } from "./projection";
 import { useThreadLogs } from "./threadLogs";
 import { useThreadOfTimeline } from "./timelineThread";
-import {
-  argEntries,
-  callDuration,
-  callKind,
-  callLabel,
-  callMs,
-  callPath,
-  callState,
-  editDiff,
-  LINES_SHOWN,
-  ENTRIES_SHOWN,
-  lineCount,
-  listEntries,
-  readRange,
-  resultRows,
-  ROWS_SHOWN,
-  runLabel,
-  plain,
-  subagentTask,
-  commandText,
-  isWebAddress,
-  scalar,
-  shownPath,
-  sourceLines,
-  type CallKind,
-  type CallRun,
-  type CallState,
-  pluralize,
-  editStat,
-  hostOf,
-} from "./toolCalls";
+import { argEntries, callKind, callLabel, callMs, callPath, callState, editDiff, LINES_SHOWN, ENTRIES_SHOWN, lineCount, listEntries, readRange, resultRows, ROWS_SHOWN, runLabel, plain, subagentTask, commandText, isWebAddress, scalar, shownPath, sourceLines, type CallKind, type CallRun, type CallState, pluralize, editStat, hostOf } from "./toolCalls";
 import { parsed, toolFailed, traceTool } from "./toolTrace";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
 

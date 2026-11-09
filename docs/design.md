@@ -89,8 +89,7 @@ details), `--drawer-w` 360px (Reading panel), `--lights-w` 78px. The sizes 12.5p
   left and top. It has no border or radius when the sidebar is hidden.
 - Page heading (`.topbar`, the shared `.ph`): 22px/28px padding, a 22px medium title with
   -0.015em tracking, a muted sub line (branch, run status) and actions at the right. The
-  thread header, the new-thread header and the pages below use it (`ui/PageBar.tsx`);
-  `PageHeader` has the same title size. Page content pads 28px.
+  thread header, the new-thread header and the pages below use it (`ui/PageBar.tsx`). Page content pads 28px.
 - Side panel: 380px (`--context-w`; a dragged width still wins), `--color-background`, 1px
   left border, and six fixed text tabs without icons (30px, 8px radius, 12.5px; the
   selected tab has the selected fill): Diff, Files, Browser, Activity, PRs ("Pull

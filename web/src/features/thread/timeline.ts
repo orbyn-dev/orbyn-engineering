@@ -1,5 +1,6 @@
 import type { ReasoningItem, RunSpan, ThreadItem, ToolItem } from "./projection";
-import { summarizeWork, workDuration } from "./toolTrace";
+import { summarizeWork } from "./toolTrace";
+import { workDuration } from "../../lib/format";
 
 export type WorkItem = ReasoningItem | ToolItem;
 

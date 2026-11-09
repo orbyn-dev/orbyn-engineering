@@ -7,18 +7,8 @@ import { IconButton } from "../../ui/controls";
 import { ErrorState, Loading } from "../../ui/states";
 import { BytesFallback, rawUrl } from "./FileMedia";
 import { FilePreview, previewKind } from "./FilePreview";
-import {
-  ZipError,
-  buildZipTree,
-  decodeEntryText,
-  formatBytes,
-  looksBinary,
-  readEntryBytes,
-  readZipArchive,
-  type ZipEntry,
-  type ZipReadResult,
-  type ZipTreeNode,
-} from "./zipArchive";
+import { ZipError, buildZipTree, decodeEntryText, looksBinary, readEntryBytes, readZipArchive, type ZipEntry, type ZipReadResult, type ZipTreeNode } from "./zipArchive";
+import { formatBytes } from "../../lib/format";
 
 /** Only the name decides, the way a path is typed elsewhere in the panel. */
 export function isZipPath(path: string): boolean {

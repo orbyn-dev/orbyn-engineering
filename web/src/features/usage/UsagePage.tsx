@@ -18,20 +18,8 @@ import { PageBar } from "../../ui/PageBar";
 import { ErrorState, Loading } from "../../ui/states";
 import { UsageChart } from "./UsageChart";
 import { useUsageReport } from "./useUsageReport";
-import {
-  cacheHit,
-  costPerMillion,
-  engineShares,
-  formatPercent,
-  formatTokens,
-  formatUsd,
-  modelTrend,
-  TIER_LABELS,
-  USAGE_PERIODS,
-  usageTotals,
-  type UsageDays,
-  type UsageMetric,
-} from "./usageModel";
+import { cacheHit, costPerMillion, engineShares, formatPercent, formatUsd, modelTrend, TIER_LABELS, USAGE_PERIODS, usageTotals, type UsageDays, type UsageMetric } from "./usageModel";
+import { formatTokens } from "../../lib/format";
 
 const PREFS_KEY = "orbyn.usage.v1";
 /** Set once a usage report has loaded, so only the first visit says the history is being read. */

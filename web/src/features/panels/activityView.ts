@@ -1,5 +1,6 @@
 import type { TimelineEntry } from "../thread/projection";
-import { traceTool, workDuration } from "../thread/toolTrace";
+import { traceTool } from "../thread/toolTrace";
+import { workDuration } from "../../lib/format";
 
 export type ActivityFilter = "all" | "commands" | "edits";
 

@@ -155,22 +155,6 @@ export function usageTotals(reports: readonly EngineUsage[], days: number, today
   };
 }
 
-export function formatTokens(value: number): string {
-  const steps = [
-    [1e12, "T"],
-    [1e9, "B"],
-    [1e6, "M"],
-    [1e3, "K"],
-  ] as const;
-  for (const [size, unit] of steps) {
-    if (value >= size) {
-      const scaled = value / size;
-      return `${scaled >= 100 ? Math.round(scaled) : Number(scaled.toPrecision(3))}${unit}`;
-    }
-  }
-  return String(Math.round(value));
-}
-
 export const formatUsd = (value: number) =>
   value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 

@@ -4,11 +4,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Viewer } from "./FilesPanel";
 import { useUi } from "../../state/ui";
 import { buildZipArchive } from "./zipArchive.test-support";
-import { formatBytes } from "./zipArchive";
 import { buildDocx, buildXlsx, docxParagraph, stubWorker, worksheet } from "./office.test-support";
 import { useComposerChips } from "../thread/composerChipStore";
 import { FileComments } from "./FileComments";
 import { useWorkspace } from "../../state/workspace";
+import { formatBytes } from "../../lib/format";
 
 /** The toast the last action raised. */
 const lastToast = () => useUi.getState().toasts.at(-1)?.text;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ToolItem } from "./projection";
-import { callDuration, callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, sourceLines } from "./toolCalls";
+import { callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, sourceLines } from "./toolCalls";
+import { callDuration } from "../../lib/format";
 
 const call = (name: string, args: unknown, extra: Partial<ToolItem> = {}): ToolItem => ({
   kind: "tool",

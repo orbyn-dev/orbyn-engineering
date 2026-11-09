@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { axisTicks, formatTokens, formatUsd, type EngineTotals } from "./usageModel";
+import { axisTicks, formatUsd, type EngineTotals } from "./usageModel";
+import { formatTokens } from "../../lib/format";
 
 const HEIGHT = 200;
 const PAD = { top: 8, right: 0, bottom: 22, left: 40 };

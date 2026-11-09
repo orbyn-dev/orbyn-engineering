@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineUsage } from "../../api/types";
-import { axisTicks, cacheHit, engineShares, costBreakdown, costPerMillion, formatTokens, modelTrend, periodDates, usageTotals } from "./usageModel";
+import { axisTicks, cacheHit, engineShares, costBreakdown, costPerMillion, modelTrend, periodDates, usageTotals } from "./usageModel";
+import { formatTokens } from "../../lib/format";
 
 const engine = (over: Partial<EngineUsage>): EngineUsage => ({
   engine: "codex",
