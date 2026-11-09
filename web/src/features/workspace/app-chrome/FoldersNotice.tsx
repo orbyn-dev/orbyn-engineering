@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
-import { useUi } from "../../state/ui";
-import { Button, IconButton } from "../../ui/controls";
+import { useUi } from "../../../state/ui";
+import { Button, IconButton } from "../../../ui/controls";
 import { useToastSwipe } from "./useToastSwipe";
 
 /** Shown once to people whose saved sidebar settings moved to project folders. */

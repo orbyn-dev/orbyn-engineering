@@ -1,19 +1,19 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { useWorkspace } from "../../state/workspace";
-import type { Thread } from "../../api/types";
+import { useWorkspace } from "../../../state/workspace";
+import type { Thread } from "../../../api/types";
 import { QuitConfirmation } from "./QuitConfirmation";
 
 let mode = "hold";
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
+vi.mock("../../../api/client", async (original) => {
+  const actual = await original<typeof import("../../../api/client")>();
   return {
     ...actual,
     request: vi.fn(async () => [{ key: "quit_confirmation", value: mode }]),
     api: { ...actual.api, info: vi.fn(async () => ({ platform: "macos" })), shellAction: vi.fn(async () => undefined) },
   };
 });
-vi.mock("../../api/shell", () => ({ inDesktopApp: () => true, readShellStatus: async () => undefined }));
+vi.mock("../../../api/shell", () => ({ inDesktopApp: () => true, readShellStatus: async () => undefined }));
 
 beforeEach(() => {
   useWorkspace.setState({
