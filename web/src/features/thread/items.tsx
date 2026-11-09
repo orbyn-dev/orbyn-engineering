@@ -34,7 +34,6 @@ import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
 import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../lib/timeline/types";
 
-
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {
     return (

@@ -34,12 +34,12 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 Existing violations of some rules are recorded in a baseline that may only shrink.
 A new violation fails, and so does a baselined item that no longer exists, so a
 fixed violation cannot quietly return: re-record the baseline in the same PR.
-Deep cross-feature imports and import cycles have no baseline any more: one fails
+Deep cross-feature imports, import cycles and cycles between features have no baseline: one fails
 at once.
 
 | Check | Run | Baseline |
 | --- | --- | --- |
-| Web import direction, feature front doors, import cycles, file size (600 lines TypeScript, 1500 CSS) | `npm run check` in `web` (`scripts/arch-check.mjs`) | `web/scripts/arch-baseline.json` (direction and file size only; front doors and cycles are always errors) |
+| Web import direction, feature front doors, import cycles, file size (600 lines TypeScript, 1500 CSS) | `npm run check` in `web` (`scripts/arch-check.mjs`) | `web/scripts/arch-baseline.json` (direction and file size only; front doors, file cycles and feature cycles are always errors) |
 | Rust: no new `.rs` file over 1500 lines; `orbynd` gains no `Command::new("git")` and no new core `store` references | `python3 scripts/check_rust_arch.py` (CI "Cheap checks") | `scripts/rust-arch-baseline.json` |
 | Unused exports (report only, not in `check`) | `npm run arch:report` in `web` (knip) | none |
 
