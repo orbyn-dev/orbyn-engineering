@@ -1,7 +1,7 @@
 import { useCommand } from "../../../product/shell/shortcuts";
 import { Check, ChevronDown, ChevronUp, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { ProjectFileView, TerminalInfo } from "../../../api/types";
 import { elapsed } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";

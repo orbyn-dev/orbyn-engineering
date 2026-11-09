@@ -1,4 +1,4 @@
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { useAsync } from "../../../lib/useAsync";
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";

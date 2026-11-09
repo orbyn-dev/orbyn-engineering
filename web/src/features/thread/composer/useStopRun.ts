@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { Thread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { useWorkspace } from "../../../product/state/workspace";

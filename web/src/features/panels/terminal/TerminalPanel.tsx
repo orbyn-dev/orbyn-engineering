@@ -2,7 +2,7 @@ import { RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isTerminalShortcut } from "../../../product/shell/shortcuts";
 import { readingKey } from "./terminalKeys";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";

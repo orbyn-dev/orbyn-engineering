@@ -1,6 +1,6 @@
 import { Lock, RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";

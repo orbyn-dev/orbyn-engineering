@@ -1,6 +1,6 @@
 import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { ServerSettings } from "../../../api/types";
 import type { SnoozePreset } from "../../../generated/SnoozePreset";
 import { toFailure, useAsync } from "../../../lib/useAsync";

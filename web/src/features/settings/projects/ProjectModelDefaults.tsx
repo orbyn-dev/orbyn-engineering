@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import { toFailure, useAsync } from "../../../lib/useAsync";

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { EngineStatus, JsonValue } from "../../../api/types";
 import type { ProviderInstance } from "../../../generated/ProviderInstance";
 import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";

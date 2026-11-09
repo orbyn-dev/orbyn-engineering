@@ -1,7 +1,7 @@
 import { MousePointer2 } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
-import { serviceSocketUrl } from "../../../api/origin";
-import { readToken } from "../../../api/token";
+import { serviceSocketUrl } from "../api";
+import { readToken } from "../api";
 import type { PreviewPointer } from "../../../generated/PreviewPointer";
 import { MOTION } from "../../../lib/motion";
 import { usePrefersReducedMotion } from "../../../lib/useLayout";

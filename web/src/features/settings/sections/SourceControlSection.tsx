@@ -2,7 +2,7 @@ import { Check, CloudOff, RefreshCw } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useRef } from "react";
 import { useConnection } from "../../../product/state/connection";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { ForgeStatus } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";

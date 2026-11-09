@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ApiFailure } from "../../../api/client";
+import { ApiFailure } from "../api";
 import { useAsync } from "../../../lib/useAsync";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { BytesFallback } from "./FileMedia";

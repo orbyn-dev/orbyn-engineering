@@ -6,14 +6,14 @@ import { ACTION_ICONS, ProjectActionIcon } from "../../../product/ui/ProjectActi
 import { Button } from "../../../ui/controls";
 import { formatShortcut } from "../../../product/shell/shortcuts";
 import { actionCommand } from "../../../product/composer/actionCommand";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { KeybindingsView } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
 import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
 import type { PreferenceControl, PreferenceSaveResult } from "../rows/preferenceTypes";
 import { useActionKeybinding } from "./actionKeybinding";
 import { toFailure } from "../../../lib/useAsync";
-import { ApiFailure } from "../../../api/client";
+import { ApiFailure } from "../api";
 
 function actionsFrom(value: unknown): ProjectScript[] {
   if (!Array.isArray(value)) return [];

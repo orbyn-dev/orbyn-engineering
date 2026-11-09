@@ -1,5 +1,5 @@
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { Collapsible } from "../../../ui/Collapsible";

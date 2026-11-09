@@ -7,9 +7,9 @@ import {
   type MouseEvent,
   type WheelEvent,
 } from "react";
-import { serviceSocketUrl } from "../../../api/origin";
-import { request } from "../../../api/client";
-import { readToken } from "../../../api/token";
+import { serviceSocketUrl } from "../api";
+import { request } from "../api";
+import { readToken } from "../api";
 import type { PickedElement, PreviewTab } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

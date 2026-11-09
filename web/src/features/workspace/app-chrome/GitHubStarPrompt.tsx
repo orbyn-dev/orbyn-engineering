@@ -1,6 +1,6 @@
 import { Star, X } from "lucide-react";
 import { create } from "zustand";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { Button, IconButton } from "../../../ui/controls";
 import { StarPromptSession } from "./starPrompt";
 import { useToastSwipe } from "./useToastSwipe";

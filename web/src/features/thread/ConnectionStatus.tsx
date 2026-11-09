@@ -1,5 +1,5 @@
 import { CircleAlert, CloudOff, Loader2 } from "lucide-react";
-import { inDesktopApp } from "../../api/shell";
+import { inDesktopApp } from "./api";
 import { checkConnectionNow, useConnection, useConnectionKind } from "../../product/state/connection";
 import { Button } from "../../ui/controls";
 

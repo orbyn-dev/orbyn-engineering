@@ -1,8 +1,8 @@
 import { Check, CloudOff, GitPullRequest, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useCommand } from "../../product/shell/shortcuts";
-import { ApiFailure } from "../../api/client";
-import { pullsApi } from "../../api/pulls";
+import { ApiFailure } from "./api";
+import { pullsApi } from "./api";
 import type { PullRequest, Thread } from "../../api/types";
 import { useWaited } from "../../lib/motion";
 import { toFailure } from "../../lib/useAsync";

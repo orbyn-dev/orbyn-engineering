@@ -1,7 +1,7 @@
 import { DRow } from "../../product/ui/DetailRows";
 import { Check, ChevronDown, CloudUpload, GitCommitHorizontal, GitBranch, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { useCommand } from "../../product/shell/shortcuts";
 import type { BranchInfo, Thread } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";

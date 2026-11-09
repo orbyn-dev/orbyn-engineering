@@ -1,7 +1,7 @@
 import { Ellipsis } from "lucide-react";
 import { use, useState } from "react";
 import { useOpenState } from "../../ui/openState";
-import { request } from "../../api/client";
+import { request } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { Dialog } from "../../ui/Dialog";

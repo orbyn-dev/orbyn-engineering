@@ -1,6 +1,6 @@
 import { AlertTriangle, ChevronLeft, CloudOff, RefreshCw, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { AcpRegistryEntry } from "../../../api/types";
 import type { HistoryScan } from "../../../generated/HistoryScan";
 import type { HistorySession } from "../../../generated/HistorySession";

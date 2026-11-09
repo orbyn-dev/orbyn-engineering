@@ -1,9 +1,9 @@
 import { ChevronRight, Copy, GitPullRequest, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { FileDiff } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import { useWorkspace } from "../../../product/state/workspace";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { useUi } from "../../../product/state/ui";

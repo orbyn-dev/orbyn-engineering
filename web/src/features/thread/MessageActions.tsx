@@ -1,6 +1,6 @@
 import { Check, Copy, GitBranch, Pencil, Quote, Undo2 } from "lucide-react";
 import { createContext, useContext, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { navigate, parseRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";

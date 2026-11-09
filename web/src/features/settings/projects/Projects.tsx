@@ -1,6 +1,6 @@
 import { TriangleAlert } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ApiFailure, api, request } from "../../../api/client";
+import { ApiFailure, api, request } from "../api";
 import type { LibraryStatus, Thread } from "../../../api/types";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";

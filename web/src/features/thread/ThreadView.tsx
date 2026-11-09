@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { runHandlers, useCommand } from "../../product/shell/shortcuts";
 import type { Project, RunState, Thread } from "../../api/types";

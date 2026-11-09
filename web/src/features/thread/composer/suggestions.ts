@@ -1,5 +1,5 @@
-import { api } from "../../../api/client";
-import { pullsApi } from "../../../api/pulls";
+import { api } from "../api";
+import { pullsApi } from "../api";
 import type { Thread } from "../../../api/types";
 import { pullToken, threadToken, type Trigger } from "../../../product/composer/skillMention";
 import { LOCAL_COMMANDS, MENU_ROWS, PLAN_COMMANDS } from "./composerConstants";

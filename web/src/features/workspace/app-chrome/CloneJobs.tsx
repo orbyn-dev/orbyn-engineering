@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { CloneJob, Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

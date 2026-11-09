@@ -1,7 +1,7 @@
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { Thread, UpdateThread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import { threadToken } from "../../../product/composer/skillMention";
 import { navigate, parseRoute } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";

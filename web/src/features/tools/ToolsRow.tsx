@@ -1,6 +1,6 @@
 import { ChevronRight, Plug } from "lucide-react";
 import type { Thread } from "../../api/types";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited as useWaitedFor } from "../../lib/motion";
 import { engineById, useWorkspace } from "../../product/state/workspace";

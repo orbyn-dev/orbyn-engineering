@@ -1,7 +1,7 @@
 import { settingsLabel } from "../settingsSearch";
 import { useEffect } from "react";
-import { api } from "../../../api/client";
-import { onShellChange } from "../../../api/shell";
+import { api } from "../api";
+import { onShellChange } from "../api";
 import type { ShellAction } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

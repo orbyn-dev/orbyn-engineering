@@ -1,6 +1,6 @@
 import { FileCode, Square } from "lucide-react";
 import { createContext, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { useAsync } from "../../lib/useAsync";
 import { Dialog } from "../../ui/Dialog";
 import { Button } from "../../ui/controls";

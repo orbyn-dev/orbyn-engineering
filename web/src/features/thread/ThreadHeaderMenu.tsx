@@ -1,6 +1,6 @@
 import { Archive, ArchiveRestore, CircleCheck, Clock, Copy, Ellipsis, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { SnoozePreset } from "../../generated/SnoozePreset";
 import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";

@@ -7,7 +7,7 @@ import { Button, IconButton, Pill } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Markdown } from "../../content";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 
 const checkIcon = (check: PullCheck) =>
   check.state === "pass" ? (

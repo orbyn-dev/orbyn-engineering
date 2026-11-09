@@ -1,6 +1,6 @@
 import { File, FolderPlus, MessageSquare, RotateCcw, Search, Settings, SquarePen, SunMoon, TextSearch } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { compactAge } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate, parseRoute, SETTINGS_SECTIONS, type Route } from "../../../product/state/route";

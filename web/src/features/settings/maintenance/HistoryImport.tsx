@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { HistoryScan } from "../../../generated/HistoryScan";
 import type { HistorySession } from "../../../generated/HistorySession";
 import type { HistorySessionImported } from "../../../generated/HistorySessionImported";

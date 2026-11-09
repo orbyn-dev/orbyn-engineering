@@ -5,7 +5,7 @@ import type { PullList, PullListEntry } from "../../../api/types";
 import { agoWords, relativeTime } from "../../../lib/format";
 import { useWaited } from "../../../lib/motion";
 import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
-import { ApiFailure } from "../../../api/client";
+import { ApiFailure } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { navigate, useRoute } from "../../../product/state/route";
@@ -39,7 +39,7 @@ import {
   type PullSort,
   emptyColumns,
 } from "../model/pullModel";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 /** One request per state the service is asked for, merged into one list. */
 async function loadPulls(states: readonly string[], query: string, signal: AbortSignal): Promise<PullList> {
   const lists = await Promise.all(states.map((state) => pullsApi.list(state, query, signal)));

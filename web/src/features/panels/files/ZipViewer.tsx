@@ -1,6 +1,6 @@
 import { ChevronRight, Download, File, Folder } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
-import { ApiFailure } from "../../../api/client";
+import { ApiFailure } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";

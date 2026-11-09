@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { EngineUpdateOutcome } from "../../../generated/EngineUpdateOutcome";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderInstance } from "../../../generated/ProviderInstance";

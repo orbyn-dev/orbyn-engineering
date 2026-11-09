@@ -2,7 +2,7 @@ import { ChevronDown, RefreshCw } from "lucide-react";
 import "./usage.css";
 import { useEffect, useId, useRef, useState } from "react";
 import { tabKeys } from "../../ui/tabKeys";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { useCommand } from "../../product/shell/shortcuts";
 import { useWaited } from "../../lib/motion";
 import { readJson, writeJson } from "../../lib/storage";

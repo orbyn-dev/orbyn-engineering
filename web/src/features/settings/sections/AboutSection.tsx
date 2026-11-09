@@ -1,7 +1,7 @@
 import { ChevronLeft, Search } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";

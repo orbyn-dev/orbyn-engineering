@@ -1,6 +1,6 @@
 import { AppWindow, ChevronRight, Copy, Download, ExternalLink, File, Folder, Paperclip, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { FileContent, FileEntry, SearchHit } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

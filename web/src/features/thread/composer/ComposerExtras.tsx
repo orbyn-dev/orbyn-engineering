@@ -2,7 +2,7 @@ import { TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { offerCompact } from "./compactOffer";
 import type { ThreadItem } from "../../../product/timeline/types";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { EngineLimits, EngineStatus, JsonValue } from "../../../api/types";
 import { relativeTime } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";

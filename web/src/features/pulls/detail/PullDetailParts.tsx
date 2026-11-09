@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { PullRequestDetail } from "../../../api/types";
 import type { ApiFailure } from "../../../api/client";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import type { useConnectionKind } from "../../../product/state/connection";
 import { Button } from "../../../ui/controls";
 import type { MenuItem } from "../../../ui/Menu";

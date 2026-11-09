@@ -1,4 +1,4 @@
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { useUi } from "../../../product/state/ui";
 import { ConfirmDialog } from "../../../ui/Dialog";

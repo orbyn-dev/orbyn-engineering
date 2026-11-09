@@ -1,4 +1,4 @@
-import { api } from "../../../../api/client";
+import { api } from "../../api";
 import type { ToolItem } from "../../../../product/timeline/types";
 import { useAsync } from "../../../../lib/useAsync";
 import { Dialog } from "../../../../ui/Dialog";

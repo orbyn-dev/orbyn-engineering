@@ -106,7 +106,7 @@ Notes:
 | W1 | Dead code and shared helpers | done |
 | W2 | CSS ownership: no class defined twice | open, needs the owner's go-ahead |
 | W3 | Break feature cycles; `features/content` and `index.ts` front doors | done |
-| W4 | Per-feature `api.ts` and hooks | open (not started) |
+| W4 | Per-feature `api.ts` and hooks | in progress: front doors done |
 | W5 | Giant components into sub-folders (composer, trail, sidebar, panels, settings, pulls, usage) | done |
 | W6 | Naming pass and `web/README.md` | `web/README.md` exists (W7a); the naming pass is open |
 | W7a | Product and generic tiers for shared web code (`product/`) | done |
@@ -220,6 +220,13 @@ The backend (B) and web (W) tracks can run in parallel.
   transport and its tests use and `source_control::git` only `is_git_repo`; the rest is
   `pub(crate)`, with no call site changed.
 
+- W4 (per-feature API doors): started. Every feature now has `api.ts`: it re-exports the
+  client pieces that feature uses, and 119 files import it instead of `api/`. Value imports
+  from `api/client`, `shell`, `pulls`, `sse`, `token` and `origin` in feature code went from
+  158 to 0; type-only imports of `api/types` stay, since they carry no call. Named
+  operations and hooks are next: the maintenance page, `BrowserPanel`, the terminal drawer
+  and the settings pages still call `request(...)` with endpoint paths through that door.
+
 - W7a (product and generic tiers): done for the shared folders; front-door helpers are open (see
   the audit below). `state/` became `product/state/`, and `lib/timeline` became `product/timeline`.
   The shared files that carry product vocabulary and have two or more feature users moved to
@@ -301,7 +308,7 @@ have no baseline.
 | Unit | Work | Size and notes |
 | --- | --- | --- |
 | W2 | CSS ownership: `styles/thread.css` (about 4,500 lines, mostly panels and onboarding rules), `pages.css`, `shell.css`, `base.css` move next to the components they style; shared pieces (`btn`, `dialog`, `pill`, `empty` and the like, defined in up to 10 files) are defined once in `ui/` | **Needs the owner's go-ahead.** The tests cannot see a changed cascade. Compare screenshots before and after in Light, Dark and Dim for every moved rule, and keep the CSS load order identical (compare the first-import order from `main.tsx`, as the W7a review did). |
-| W4 | Per-feature `api.ts` and hooks: components stop calling the API client directly (about 150 direct imports, for example Maintenance, BrowserPanel, the terminal drawer, the settings pages) | Web. Not started. |
+| W4 | Per-feature `api.ts` and hooks: named operations replace the raw `request(...)` calls the feature front doors still re-export | Web. Front doors are in (119 files). Next: Maintenance, `BrowserPanel`, the terminal drawer and the settings pages. |
 | W6 | Naming pass: Page is a route, Panel is a side-panel tab, Dialog is a modal, no "Pane" (`SurfacePane`, `SideChatPane`, `PullsPage` against `PullPage`); keep `web/README.md` in step | Do after W2 so files are renamed once. |
 | Front-door TODO rows | Hoist the helper exports in the audit table (one other feature uses each) to `product/` or `lib/` when a second feature needs them; hoist `copyText` to `lib/` | Opportunistic. |
 | Closeout | Turn any remaining baselined rule into a hard error, run a packaged-app build and walk-through (`cd desktop && npm run build -- --bundles app`), run the worktree cleanup report | The packaged-app check has not been run since the logo, tools, picker and tab strip merged into main. |

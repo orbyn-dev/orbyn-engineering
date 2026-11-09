@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { request } from "../../../api/client";
-import { inDesktopApp } from "../../../api/shell";
+import { request } from "../api";
+import { inDesktopApp } from "../api";
 import { commandLabel, whenPhrase } from "./commandLabels";
 import { formatShortcut, runHandlers } from "../../../product/shell/shortcuts";
 import type { KeybindingsView } from "../../../api/types";

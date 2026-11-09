@@ -1,6 +1,6 @@
 import { CircleCheck, CircleSlash, Clock, FileDiff, SquareTerminal, Wrench } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { Approval, JsonValue } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 import { useWorkspace } from "../../product/state/workspace";

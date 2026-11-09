@@ -1,5 +1,5 @@
-import { serviceSocketUrl } from "../../../api/origin";
-import { readToken } from "../../../api/token";
+import { serviceSocketUrl } from "../api";
+import { readToken } from "../api";
 
 export function terminalUrl(
   threadId: string,

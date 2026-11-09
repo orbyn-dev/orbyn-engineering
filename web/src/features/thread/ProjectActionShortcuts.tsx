@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { request } from "../../api/client";
+import { request } from "./api";
 import type { ProjectFileView } from "../../api/types";
 import { useCommand } from "../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../lib/useAsync";

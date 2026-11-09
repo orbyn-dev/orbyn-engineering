@@ -1,6 +1,6 @@
 import { Maximize2, Minimize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { resolveTheme, useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";

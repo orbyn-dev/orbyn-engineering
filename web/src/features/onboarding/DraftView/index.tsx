@@ -3,7 +3,7 @@ import { useDraftModelDefaults } from "../useDraftModelDefaults";
 import { useDraftCheckout } from "../useDraftCheckout";
 import { ArrowUp, Bot, Folder, GitBranch, Paperclip, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { useCommand } from "../../../product/shell/shortcuts";
 import type { PermissionMode, Project } from "../../../api/types";
 import { slugify } from "../../../lib/format";

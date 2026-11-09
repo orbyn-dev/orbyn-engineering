@@ -1,5 +1,5 @@
 import type { ClipboardEvent, MutableRefObject } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import {
   CHIP_MIME,
   chipsFromClipboard,

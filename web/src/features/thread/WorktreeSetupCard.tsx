@@ -1,6 +1,6 @@
 import { CircleCheck, CircleX, LoaderCircle, Square, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../../api/client";
+import { api, request } from "./api";
 import type { TerminalInfo, Thread } from "../../api/types";
 import type { ThreadSetup } from "../../generated/ThreadSetup";
 import { toFailure, useAsync } from "../../lib/useAsync";

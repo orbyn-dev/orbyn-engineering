@@ -1,4 +1,4 @@
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { ReleaseChannel } from "../../../generated/ReleaseChannel";
 import { useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

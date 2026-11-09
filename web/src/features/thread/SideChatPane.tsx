@@ -1,6 +1,6 @@
 import { CornerUpLeft, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { Thread } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 import { useThreadStream } from "../../product/state/threadLogs";

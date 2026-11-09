@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, type ApiFailure } from "../../api/client";
+import { api, type ApiFailure } from "./api";
 import type { UsageReport } from "../../api/types";
 import { readKept, writeKept } from "../../lib/keptData";
 import { toFailure } from "../../lib/useAsync";

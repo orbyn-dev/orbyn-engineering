@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { navigate, routeHref, type Route } from "../../product/state/route";
 import { useWorkspace } from "../../product/state/workspace";
