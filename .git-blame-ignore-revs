@@ -21,3 +21,5 @@ ff729cfa4ec1e3b71c956ed013aee5a9706c36cf # refactor(core): move forge into its o
 0b6e3a36e79764b2d73854e25b4ded064b721910 # refactor(core): move scm into its own folder
 d6cb0514c515aa58c86a86a2b2c79dbf32f47325 # refactor(core): move scm_writing and its style into the scm folder as writing
 46cbc88a24a5cba1355a18f95b62ef1d1eeba64d # refactor(core): move the scm and scm writing tests into their own files
+47a39b9191aacf686268efd117ed8a0b8e452258 # refactor(core): move preview into its own folder
+c199f6f33aff8b98747ce337f8afc70ebeed3232 # refactor(core): move the MCP server into its own folder
