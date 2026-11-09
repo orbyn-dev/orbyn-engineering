@@ -2352,7 +2352,9 @@ and reports `ended: false`. A request can be 512 KiB and a reply is cut at 256 K
 ## Service access
 
 - Binds `127.0.0.1` by default on a random port. A per-launch token is required
-  on every `/api`, `/agui` and `/ws` route.
+  on every `/api`, `/agui` and `/ws` route. Only `/auth/session`, `/hooks/...`, the
+  thread-token `/mcp/...` route and the UI fallback sit outside that layer; the
+  layers are applied in `crates/orbynd/src/routes/mod.rs`.
 - `Host` must be a loopback name or a configured host (DNS rebinding defence), and
   a present `Origin` must match it.
 - Non-loopback binds need `--remote`, a persisted hashed access key, and
@@ -2579,6 +2581,11 @@ All bodies are JSON and errors are `ApiError` with a stable `code`. Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
+
+Routes live in `crates/orbynd/src/routes/`, one module per area, each with its
+route list and handlers; `routes/mod.rs` applies the credential, activity and origin
+layers. The table below is the contract, and `crates/orbynd/tests/routes.json` pins
+every method, path and which routes need a credential.
 
 | Method and path | Purpose |
 | --- | --- |

@@ -85,7 +85,7 @@ Notes:
 | --- | --- |
 | R0 | Guardrail checks (this page) |
 | B1 | Split the contracts crate by area |
-| B2 | `orbynd` routes by area |
+| B2 | `orbynd` routes by area (done: `routes/`, `http/`, `cli/`) |
 | B3 | Big core files into folders |
 | B4 | One process-spawn path; narrower visibility |
 | W1 | Dead code and shared helpers |
