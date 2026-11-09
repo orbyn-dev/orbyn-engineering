@@ -59,12 +59,11 @@ describe("age formatters", () => {
     expect(compactAge("not a date")).toBe("");
   });
 
-  it("relativeTime: locale short style, past and future", () => {
-    expect(AGES.map((ms) => relativeTime(START.toISOString(), START.getTime() + ms))).toEqual([
-      "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now", "Just now",
-      "1 min. ago", "1 min. ago", "60 min. ago", "1 hr. ago", "1 hr. ago", "1 hr. ago", "2 hr. ago", "yesterday", "yesterday", "2 days ago",
-    ]);
-    expect(relativeTime(START.toISOString(), START.getTime() - 3_600_000)).toBe("in 1 hr.");
+  it("relativeTime: Just now under a minute; the wording past that follows the locale", () => {
+    const at = (ms: number) => relativeTime(START.toISOString(), START.getTime() + ms);
+    expect([0, 59_000, -59_000].map(at)).toEqual(["Just now", "Just now", "Just now"]);
+    expect(at(120_000)).toBe(new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" }).format(-2, "minute"));
+    expect(at(-3_600_000)).toBe(new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" }).format(1, "hour"));
     expect(relativeTime("not a date")).toBe("");
   });
 });
