@@ -1,4 +1,11 @@
-import type { DropSection, DropTarget, DropVerb, SidebarSection, ThreadSections } from "./groups";
+import { api } from "../../../api/client";
+import type { Thread } from "../../../api/types";
+import { toFailure } from "../../../lib/useAsync";
+import { DRAFT_KEY } from "../../../state/draftStore";
+import { threadToken } from "../../../lib/skillMention";
+import { useUi } from "../../../state/ui";
+import { dropPatch, projectDrop, type DropSection, type DropTarget, type DropVerb, type SidebarSection, type ThreadSections } from "./groups";
+import { reorderThreads, settleThreads, unpinThreads } from "./threadActions";
 
 export interface DragState {
   id: string;
@@ -48,3 +55,45 @@ export const threadIdAt = (list: HTMLElement, y: number) => {
 
 export const sameTarget = (a: DropTarget | null, b: DropTarget | null) =>
   a?.section === b?.section && a?.index === b?.index;
+
+/** What a finished drag needs from the sidebar: the latest sections and two store actions. */
+export interface DropContext {
+  sectionsRef: { current: ThreadSections };
+  putThread(thread: Thread): void;
+  pushToast(message: string): void;
+}
+
+export async function finishDrop(
+  thread: Thread,
+  from: SidebarSection,
+  target: DropTarget,
+  { sectionsRef, putThread, pushToast }: DropContext,
+) {
+  if (target.section === "settled") {
+    if (from !== "settled") await settleThreads([thread]);
+    return;
+  }
+  const ordered = projectDrop(sectionsRef.current, thread.id, target)[target.section];
+  const patch = dropPatch(from, target.section);
+  if (!patch) {
+    const before = sectionsRef.current[target.section].map((row) => row.id).join();
+    if (before !== ordered.map((row) => row.id).join()) await reorderThreads(ordered);
+    return;
+  }
+  try {
+    if (from === "pinned" && target.section === "active") await unpinThreads([thread]);
+    else putThread(await api.patchThread(thread.id, patch));
+    await reorderThreads(ordered);
+  } catch (failure) {
+    pushToast(`Couldn't move the thread. ${toFailure(failure).message}`);
+  }
+}
+
+/** A thread dropped on a composer becomes a link the agent can read. */
+export function mentionInComposer(rows: Thread[], selectedThread: string | null) {
+  const key = selectedThread ?? DRAFT_KEY;
+  const { drafts, setDraft } = useUi.getState();
+  const links = rows.map((row) => threadToken(row.id, row.title)).join(" ");
+  const before = drafts[key] ?? "";
+  setDraft(key, before ? `${before.trimEnd()} ${links} ` : `${links} `);
+}

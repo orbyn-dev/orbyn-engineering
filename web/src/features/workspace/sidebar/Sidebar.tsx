@@ -1,4 +1,4 @@
-import { Copy, Layers, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -8,25 +8,19 @@ import {
   useRef,
   useState,
 } from "react";
-import { api, request } from "../../../api/client";
-import type { ServerSettings, Thread } from "../../../api/types";
+import type { Thread } from "../../../api/types";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
-import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
-import { toFailure } from "../../../lib/useAsync";
-import { DRAFT_KEY, useDraftStore } from "../../../state/draftStore";
-import { threadToken } from "../../../lib/skillMention";
+import { useDraftStore } from "../../../state/draftStore";
 import { navigate, type Route } from "../../../state/route";
 import { useUi } from "../../../state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../state/workspace";
 import { IconButton } from "../../../ui/controls";
-import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { ErrorState, Loading } from "../../../ui/states";
 import {
   arrangeThreads,
   attentionRank,
-  dropPatch,
   dropVerb,
   foldersOf,
   projectDrop,
@@ -43,10 +37,8 @@ import {
 import { trackPress } from "./pressGesture";
 import { ProjectFilter } from "../palette/ProjectFilter";
 import {
-  copyText,
   deleteThreads,
   dismissWoke,
-  reorderThreads,
   settleThreads,
   unpinThreads,
   unsettleThreads,
@@ -57,16 +49,14 @@ import { ThreadRow, type RowActions } from "./ThreadRow";
 import { useDrawnOrder } from "./drawnOrder";
 import { DragBoundary, DraftRow, DropPlaceholder, EmptyProjectRow, FolderHeader, Group } from "./listRows";
 import { SidebarFoot, SidebarNav, SidebarRail } from "./SidebarChrome";
-import { dropTargetAt, sameTarget, sweepVerbs, threadIdAt, type DragState } from "./dragDrop";
-import { searchFields, useJumpHeld } from "./sidebarHooks";
+import { dropTargetAt, finishDrop, mentionInComposer, sameTarget, sweepVerbs, threadIdAt, type DragState } from "./dragDrop";
+import { DeleteThreadsDialog } from "./DeleteThreadsDialog";
+import { SearchField } from "./ThreadSearchField";
+import { folderMenuItems } from "./folderMenu";
+import { handleTreeKey } from "./treeKeys";
+import { searchFields, useJumpHeld, useSelectionDismiss, useSidebarCatalog } from "./sidebarHooks";
 
 const SETTLED_PAGE = 10;
-
-const GROUPING_LABELS: Record<ProjectGroupingMode, string> = {
-  repository: "Repository",
-  repository_path: "Repository path",
-  separate: "Separate",
-};
 
 interface MenuState {
   x: number;
@@ -121,8 +111,6 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   };
   const [drag, setDrag] = useState<DragState | null>(null);
   const [sweep, setSweep] = useState<{ verb: DropVerb; ids: ReadonlySet<string> } | null>(null);
-  const [settings, setSettings] = useState<ServerSettings | null>(null);
-  const [groupingCatalog, setGroupingCatalog] = useState<ProjectScopeCatalog | null>(null);
 
   const nav = useRef<HTMLElement>(null);
   const tree = useRef<HTMLDivElement>(null);
@@ -131,43 +119,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   const selectedThread = route.name === "thread" ? route.id : null;
   const list = useMemo(() => visibleProjects ?? [], [visibleProjects]);
 
-  useEffect(() => {
-    const abort = new AbortController();
-    api.settings(abort.signal).then(setSettings, () => undefined);
-    return () => abort.abort();
-  }, []);
-  const presets = useMemo(() => settings?.snooze_presets ?? [], [settings]);
-  const groupingOverrides = useMemo(
-    () =>
-      Object.entries(projectGroupingOverrides)
-        .filter(([id]) => list.some((project) => project.id === id))
-        .map(([project_id, mode]) => ({ project_id, mode }))
-        .sort((a, b) => a.project_id.localeCompare(b.project_id)),
-    [list, projectGroupingOverrides],
-  );
-
-  // The polled project list gives `groupingOverrides` a new identity every few seconds; the
-  // catalog is asked again only when its content changes.
-  const overridesKey = JSON.stringify(groupingOverrides);
-  // A renamed, added or re-iconed project changes the catalog's labels and members too.
-  const projectsKey = list.map((project) => `${project.id}:${project.name}:${project.metadata_revision ?? ""}`).join("|");
-  useEffect(() => {
-    // Separate grouping with no overrides is one folder per project, which needs no catalog.
-    if (!projectFolders || (projectGrouping === "separate" && overridesKey === "[]")) {
-      setGroupingCatalog(null);
-      return;
-    }
-    const abort = new AbortController();
-    request<ProjectScopeCatalog>(
-      "POST",
-      "/api/settings/project-scopes",
-      { recipe: { mode: projectGrouping, overrides: JSON.parse(overridesKey) as typeof groupingOverrides } },
-      abort.signal,
-    ).then(setGroupingCatalog, () => {
-      if (!abort.signal.aborted) setGroupingCatalog(null);
-    });
-    return () => abort.abort();
-  }, [overridesKey, projectsKey, projectFolders, projectGrouping]);
+  const { presets, groupingCatalog } = useSidebarCatalog(list, projectFolders, projectGrouping, projectGroupingOverrides);
 
   const scoped = useMemo(() => {
     const all = Object.values(threads);
@@ -202,24 +154,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
       !Object.values(threads).some((thread) => thread.project_id === project.id),
   );
 
-  // Clicks on anything but a row drop the selection.
-  useEffect(() => {
-    if (selection.size === 0) return;
-    const clear = (event: PointerEvent) => {
-      if (!(event.target as Element | null)?.closest?.("[data-thread-item], [data-menu-root]")) {
-        setSelection(new Set());
-      }
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelection(new Set());
-    };
-    document.addEventListener("pointerdown", clear);
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("pointerdown", clear);
-      document.removeEventListener("keydown", key);
-    };
-  }, [selection]);
+  useSelectionDismiss(selection, setSelection);
 
   const follow = useCallback(() => {
     if (!drag) return;
@@ -230,36 +165,6 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
     row.style.transform = `translateY(${pointerY.current - grabOffset.current - top}px)`;
   }, [drag]);
   useLayoutEffect(follow);
-
-  const finishDrop = async (thread: Thread, from: SidebarSection, target: DropTarget) => {
-    if (target.section === "settled") {
-      if (from !== "settled") await settleThreads([thread]);
-      return;
-    }
-    const ordered = projectDrop(sectionsRef.current, thread.id, target)[target.section];
-    const patch = dropPatch(from, target.section);
-    if (!patch) {
-      const before = sectionsRef.current[target.section].map((row) => row.id).join();
-      if (before !== ordered.map((row) => row.id).join()) await reorderThreads(ordered);
-      return;
-    }
-    try {
-      if (from === "pinned" && target.section === "active") await unpinThreads([thread]);
-      else putThread(await api.patchThread(thread.id, patch));
-      await reorderThreads(ordered);
-    } catch (failure) {
-      pushToast(`Couldn't move the thread. ${toFailure(failure).message}`);
-    }
-  };
-
-  /** A thread dropped on a composer becomes a link the agent can read. */
-  const mentionInComposer = (rows: Thread[]) => {
-    const key = selectedThread ?? DRAFT_KEY;
-    const { drafts, setDraft } = useUi.getState();
-    const links = rows.map((row) => threadToken(row.id, row.title)).join(" ");
-    const before = drafts[key] ?? "";
-    setDraft(key, before ? `${before.trimEnd()} ${links} ` : `${links} `);
-  };
 
   const actions: RowActions = {
     onClick(event, thread) {
@@ -326,8 +231,8 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
         onEnd: (at) => {
           reset();
           const composer = document.elementFromPoint(at.x, at.y)?.closest(".composer");
-          if (composer) mentionInComposer(selection.has(thread.id) ? orderedRef.current.filter((row) => selection.has(row.id)) : [thread]);
-          else if (reorder && target) void finishDrop(thread, section, target);
+          if (composer) mentionInComposer(selection.has(thread.id) ? orderedRef.current.filter((row) => selection.has(row.id)) : [thread], selectedThread);
+          else if (reorder && target) void finishDrop(thread, section, target, { sectionsRef, putThread, pushToast });
         },
         onCancel: reset,
       });
@@ -413,35 +318,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
     },
   };
 
-  const onTreeKey = (event: React.KeyboardEvent) => {
-    const target = event.target as HTMLElement;
-    if (target.tagName === "INPUT") return;
-    const rows = [...(tree.current?.querySelectorAll<HTMLElement>("a.thread-row, button.group-head") ?? [])];
-    const at = rows.indexOf(target);
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (at < 0) return;
-      event.preventDefault();
-      rows[Math.min(rows.length - 1, Math.max(0, at + (event.key === "ArrowDown" ? 1 : -1)))]?.focus();
-      return;
-    }
-    const id = target.closest<HTMLElement>("[data-thread-item]")?.dataset.threadItem;
-    if ((event.key === "ArrowRight" || event.key === "ArrowLeft") && target.matches("button.group-head")) {
-      const open = target.getAttribute("aria-expanded") === "true";
-      if (open === (event.key === "ArrowLeft")) target.click();
-      event.preventDefault();
-      return;
-    }
-    const thread = id ? threads[id] : undefined;
-    if (!thread) return;
-    if (event.key === "F2") {
-      event.preventDefault();
-      setRenaming(thread.id);
-    } else if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
-      event.preventDefault();
-      const rect = target.getBoundingClientRect();
-      actions.onMenu({ clientX: rect.left + 12, clientY: rect.bottom }, thread);
-    }
-  };
+  const onTreeKey = (event: React.KeyboardEvent) => handleTreeKey(event, { tree, threads, setRenaming, actions });
 
   const foldersView = projectFolders && !ledger;
   const settledRows = shown.settled.slice(0, Math.max(settledVisible, 1));
@@ -548,54 +425,11 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   };
 
   const folderMenu = (event: React.MouseEvent, folder: ProjectFolder) => {
-    const project = folder.project;
-    const groupingItems: MenuItem[] = folder.projects.map((member) => ({
-      label: member.name,
-      children: [
-        {
-          label: "Default grouping",
-          selected: projectGroupingOverrides[member.id] === undefined,
-          onSelect: () => setGroupingOverride(member.id, null),
-        },
-        ...(Object.entries(GROUPING_LABELS) as [ProjectGroupingMode, string][]).map(([mode, label]) => ({
-          label,
-          selected: (projectGroupingOverrides[member.id] ?? projectGrouping) === mode,
-          onSelect: () => setGroupingOverride(member.id, mode),
-        })),
-      ],
-    }));
-    const overridden = folder.projects.some((member) => projectGroupingOverrides[member.id]);
     setMenu({
       x: event.clientX,
       y: event.clientY,
       label: `Actions for ${folder.label}`,
-      items: [
-        {
-          label: "New thread",
-          icon: <SquarePen size={14} aria-hidden />,
-          onSelect: () => navigate({ name: "new", projectId: project.id }),
-        },
-        {
-          label: "Copy path",
-          icon: <Copy size={14} aria-hidden />,
-          onSelect: () => void copyText(project.path, "Copied path"),
-        },
-        {
-          label: "Project settings",
-          icon: <Settings size={14} aria-hidden />,
-          onSelect: () => navigate({ name: "settings", section: "projects" }),
-        },
-        ...(folder.projects.length > 1 || overridden
-          ? [
-              {
-                label: "Grouping",
-                icon: <Layers size={14} aria-hidden />,
-                separatorBefore: true,
-                children: groupingItems,
-              },
-            ]
-          : []),
-      ],
+      items: folderMenuItems(folder, { projectGroupingOverrides, projectGrouping, setGroupingOverride }),
     });
   };
 
@@ -629,33 +463,14 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
         </span>
       </div>
       {searching ? (
-        <div className="search-field">
-          <Search size={14} aria-hidden />
-          <input
-            type="search"
-            aria-label="Search threads"
-            placeholder="Filter threads"
-            value={query}
-            autoFocus
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setHighlight(0);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setQuery("");
-                setSearching(false);
-              } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                event.preventDefault();
-                const step = event.key === "ArrowDown" ? 1 : -1;
-                setHighlight((at) => Math.min(results.length - 1, Math.max(0, at + step)));
-              } else if (event.key === "Enter") {
-                const hit = results[highlight];
-                if (hit) navigate({ name: "thread", id: hit.id });
-              }
-            }}
-          />
-        </div>
+        <SearchField
+          query={query}
+          highlight={highlight}
+          results={results}
+          setQuery={setQuery}
+          setHighlight={setHighlight}
+          setSearching={setSearching}
+        />
       ) : null}
       <div className="sidebar-scroll" ref={tree} onKeyDown={onTreeKey} data-dragging={dragging || undefined}>
         {projects.error && !projects.data ? (
@@ -768,19 +583,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
       {renamingThread ? <RenameThreadDialog thread={renamingThread} onClose={() => setRenaming(null)} /> : null}
       {snoozing ? <CustomSnoozeDialog threads={snoozing} onClose={() => setSnoozing(null)} /> : null}
       {deleting ? (
-        <ConfirmDialog
-          title={deleting.length === 1 ? `Delete “${deleting[0]?.title ?? "thread"}”?` : `Delete ${deleting.length} threads?`}
-          confirmLabel="Delete"
-          tone="danger"
-          onClose={() => setDeletingState(null)}
-          onConfirm={() => deleteThreads(deleting)}
-        >
-          <p>
-            {deleting.length === 1
-              ? "Its messages and checkpoints are deleted. Code changes in its worktree stay."
-              : "Their messages and checkpoints are deleted. Code changes in their worktrees stay."}
-          </p>
-        </ConfirmDialog>
+        <DeleteThreadsDialog threads={deleting} onClose={() => setDeletingState(null)} />
       ) : null}
     </nav>
   );
