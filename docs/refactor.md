@@ -226,6 +226,10 @@ Counts of hand-written files (no tests): `product/` 43 (40 TypeScript, 3 CSS), `
 `ui/` 11 (was 25), `app/` 9 (was 12), `state/` 0 (was 10). `ui/openState` keeps thread words in comments
 only, and its names are generic, so it stays generic.
 
+Classification TODOs (not moved now): `product/state/connection.ts` is a generic offline store
+and could move to `lib/`; `lib/useLayout.ts` names `panelOverlays`, so it may be product; `ui/openState.ts`
+mentions threads in comments only.
+
 ### Front-door audit
 
 Every export of a `features/<x>/index.ts` another feature imports. API is a view, dialog, command

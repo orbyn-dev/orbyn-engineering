@@ -23,7 +23,7 @@ enforces that.
 | `src/app` | The shell, title bar and startup; only the shell uses what lives here |
 | `src/features/<name>` | One capability each: onboarding, panels, pulls, settings, thread, usage, workspace |
 | `src/api` | The HTTP client, streams, origin and token |
-| `src/product` | Code that carries this product's vocabulary and two or more features use: `state/` (route, UI, workspace stores), `timeline/`, `projects/`, `composer/`, `shell/` (shortcuts), `ui/` (product components) |
+| `src/product` | Code that carries this product's vocabulary and two or more features use: `state/` (route, UI, workspace stores), `timeline/`, `projects/`, `composer/`, `shell/` (shortcuts), `tasks/`, `media/`, `panels/` (panel motion), `runs/` (state labels), `ui/` (product components) |
 | `src/ui` | Generic visual primitives with no product words |
 | `src/lib` | Generic helpers that would work in any repository |
 | `src/styles` | Tokens, themes and page styles |
