@@ -43,9 +43,9 @@ describe("arch-check", () => {
   });
 
   it("fails a baselined item that no longer exists, and only notes a shrink", () => {
-    const old = { ...empty, deep: ["x -> y"], lines: { "lib/long.ts": 700 } };
+    const old = { ...empty, direction: ["x -> y"], lines: { "lib/long.ts": 700 } };
     const r = compare(analyze(base().set("lib/long.ts", lines(650))), old);
-    expect(r.stale).toEqual(["deep: x -> y"]);
+    expect(r.stale).toEqual(["direction: x -> y"]);
     expect(r.shrunk).toHaveLength(1);
     expect(r.fresh).toEqual([]);
     expect(compare(analyze(base()), old).stale).toHaveLength(2);
@@ -54,6 +54,21 @@ describe("arch-check", () => {
   it("flags a deep import into another feature but not its index", () => {
     const s = base().set("features/a/C.tsx", `import { x } from "../b/Inner";\n`).set("features/b/Inner.ts", "export const x = 1;\n");
     expect(analyze(s).deep).toEqual(["features/a/C.tsx -> features/b/Inner.ts"]);
+  });
+
+  it("always fails a deep import or a cycle, with no baseline to hide it", () => {
+    const s = base()
+      .set("features/a/C.tsx", `import { x } from "../b/Inner";\n`)
+      .set("features/b/Inner.ts", "export const x = 1;\n")
+      .set("lib/p.ts", `import "./q";\n`)
+      .set("lib/q.ts", `import "./p";\n`);
+    const found = analyze(s);
+    expect(compare(found, found).fresh).toEqual([
+      "deep: features/a/C.tsx -> features/b/Inner.ts",
+      "cycle: lib/p.ts -> lib/q.ts",
+      "cycle: lib/q.ts -> lib/p.ts",
+    ]);
+    expect(compare(found, found).stale).toEqual([]);
   });
 
   it("flags edges inside a new import cycle", () => {

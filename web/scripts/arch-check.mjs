@@ -7,11 +7,12 @@
 // Rules, over hand-written files (tests, generated code and test helpers excluded):
 //   direction  app -> features -> ui, lib, state -> api, one way: features never import app;
 //              ui, lib, state and api never import app or a feature; api never imports ui, lib or state
-//   deep       a feature imports another feature only through its index.ts
-//   cycle      no import cycle between files; an edge inside a cycle is a violation
+//   deep       a feature imports another feature only through its index.ts (always an error)
+//   cycle      no import cycle between files; an edge inside a cycle is a violation (always an error)
 //   lines      TypeScript over 600 lines, CSS over 1500 lines; may not grow past baseline
-// Existing violations live in the baseline, which may only shrink: a new violation or growth fails,
-// and so does a baselined item that no longer exists (re-run --update so it cannot quietly return).
+// direction and lines keep their existing violations in the baseline, which may only shrink: a new
+// violation or growth fails, and so does a baselined item that no longer exists (re-run --update so it
+// cannot quietly return). deep and cycle have no baseline: any violation fails.
 // A long file that shrinks but stays long only prints a notice; --update lowers its recorded size.
 // Type-only imports count as edges. Imports inside comments are ignored. CI runs this on Ubuntu only.
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -133,7 +134,8 @@ export function compare(current, baseline) {
   const fresh = [];
   const stale = [];
   const shrunk = [];
-  for (const rule of ["direction", "deep", "cycle"]) {
+  for (const rule of ["deep", "cycle"]) for (const v of current[rule]) fresh.push(`${rule}: ${v}`);
+  for (const rule of ["direction"]) {
     const known = new Set(baseline[rule] ?? []);
     const now = new Set(current[rule]);
     for (const v of now) if (!known.has(v)) fresh.push(`${rule}: ${v}`);
@@ -174,9 +176,11 @@ function main() {
   if (process.argv.includes("--update")) {
     const recorded = { ...current };
     delete recorded.unresolved;
+    delete recorded.deep;
+    delete recorded.cycle;
     const body = { _note: "Recorded architecture debt (docs/refactor.md). Only shrink it; npm run arch:update rewrites it.", limits: LIMITS, ...recorded };
     writeFileSync(baselinePath, `${JSON.stringify(body, null, 2)}\n`);
-    console.log(`arch baseline written: ${current.direction.length} direction, ${current.deep.length} deep, ${current.cycle.length} cycle, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
+    console.log(`arch baseline written: ${current.direction.length} direction, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
     return;
   }
   const { fresh, stale, shrunk } = compare(current, JSON.parse(readFileSync(baselinePath, "utf8")));
