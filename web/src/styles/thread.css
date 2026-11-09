@@ -1528,13 +1528,6 @@
   border-radius: var(--radius-lg);
   background: var(--color-sunken);
 }
-.detail-row > span:not(.pill, .engine-glyph, .detail-meta) {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .details-head {
   display: flex;
   align-items: center;

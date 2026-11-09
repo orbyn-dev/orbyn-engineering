@@ -666,13 +666,6 @@ button.folder-row:hover {
   padding: 8px;
   border-top: 1px solid var(--color-divider);
 }
-.engine-option:has(input:checked) {
-  background: var(--color-selected);
-}
-.engine-option:has(input:focus-visible) {
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
-}
 
 @media (max-width: 599px) {
   .settings-page {
@@ -1175,16 +1168,6 @@ button.folder-row:hover {
   width: 100%;
   margin-bottom: 4px;
 }
-.pull-pick {
-  flex: none;
-  margin: 0 4px 0 8px;
-}
-.pull-quick {
-  display: flex;
-  flex: none;
-  gap: 2px;
-  padding-right: 4px;
-}
 
 .setting-line-control:has(> :nth-child(2)) {
   display: flex;
@@ -1204,13 +1187,6 @@ button.folder-row:hover {
   width: auto;
   min-height: var(--control-h-sm);
   font-size: var(--control-fs-sm);
-}
-.pull-quick .icon-btn {
-  opacity: 0;
-}
-.pull-quick .icon-btn:focus-visible,
-.pull-quick .icon-btn[aria-pressed="true"] {
-  opacity: 1;
 }
 .settings-folded-head {
   display: flex;
