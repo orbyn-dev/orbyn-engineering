@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { applyEvents, emptyLog } from "../../lib/timeline/projection";
+import { applyEvents, emptyLog } from "../../product/timeline/projection";
 import type { AgUiEvent, WireThreadEvent } from "../../api/types";
-import { summarizeWork } from "../../lib/timeline/toolTrace";
+import { summarizeWork } from "../../product/timeline/toolTrace";
 
 const wire = (seq: number, event: AgUiEvent): WireThreadEvent => ({ seq, thread_id: "t", run_id: "r", ts: "", event });
 

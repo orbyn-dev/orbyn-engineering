@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import { act } from "@testing-library/react";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { SkillsNav } from "./SkillsNav";
 import { SkillsPage } from "./SkillsPage";
 import { resetSkillsStore } from "./skillsStore";

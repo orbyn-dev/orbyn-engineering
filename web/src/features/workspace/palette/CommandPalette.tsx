@@ -3,10 +3,10 @@ import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Re
 import { api } from "../../../api/client";
 import { compactAge } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { navigate, parseRoute, SETTINGS_SECTIONS, type Route } from "../../../state/route";
-import { useUi, type PaletteStart } from "../../../state/ui";
-import { useVisibleProjects, useWorkspace } from "../../../state/workspace";
-import { ProjectBadge } from "../../../ui/badges";
+import { navigate, parseRoute, SETTINGS_SECTIONS, type Route } from "../../../product/state/route";
+import { useUi, type PaletteStart } from "../../../product/state/ui";
+import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
+import { ProjectBadge } from "../../../product/ui/badges";
 import { AddProjectPalette } from "./AddProjectPalette";
 
 interface Entry {

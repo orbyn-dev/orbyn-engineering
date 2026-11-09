@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "../../../api/client";
 import { pullsApi } from "../../../api/pulls";
-import { useComposerChips } from "../../../state/composerChipStore";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { DiffPanel } from "./DiffPanel";
 import { diffCommentRange, nextPageEnd, numberedLines, parsePatch } from "./diffModel";
 afterEach(() => {

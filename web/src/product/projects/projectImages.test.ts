@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectIconResource } from "../generated/ProjectIconResource";
+import type { ProjectIconResource } from "../../generated/ProjectIconResource";
 const mock = vi.hoisted(() => ({ request: vi.fn(), preview: vi.fn(), read: vi.fn(), store: vi.fn(),
   remove: vi.fn(), purge: vi.fn(), clear: vi.fn(), origin: "http://127.0.0.1:1234" }));
-vi.mock("../api/client", () => ({ request: mock.request }));
-vi.mock("../api/origin", () => ({ serviceUrl: (path: string) => `${mock.origin}${path}` }));
+vi.mock("../../api/client", () => ({ request: mock.request }));
+vi.mock("../../api/origin", () => ({ serviceUrl: (path: string) => `${mock.origin}${path}` }));
 vi.mock("./projectImagePreview", () => ({ projectImagePreview: mock.preview,
   PROJECT_IMAGE_MIME: { png: "image/png", svg: "image/svg+xml" }, MissingProjectImage: class extends Error {} }));
 vi.mock("./projectImagePersistence", () => ({ readStoredProjectImage: mock.read, storeProjectImage: mock.store,

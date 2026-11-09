@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import type { ToolItem } from "../../lib/timeline/types";
-import { summarizeWork } from "../../lib/timeline/toolTrace";
-import { arrangeTimeline } from "../../lib/timeline/timeline";
+import type { ToolItem } from "../../product/timeline/types";
+import { summarizeWork } from "../../product/timeline/toolTrace";
+import { arrangeTimeline } from "../../product/timeline/timeline";
 
 const tool = (name: string, exitCode: number | null, done = true): ToolItem => ({ kind: "tool", seq: 1, runId: "r", ts: "", key: name,
   callId: name, name, args: JSON.stringify({ paths: ["a", "b"] }), result: done ? "result" : null, output: "", done, exitCode });

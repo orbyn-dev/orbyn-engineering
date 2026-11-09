@@ -1,7 +1,7 @@
 import { Layers } from "lucide-react";
 import { useState } from "react";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
 import { pullsApi } from "../../../api/pulls";
 

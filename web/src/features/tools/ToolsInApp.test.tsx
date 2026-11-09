@@ -5,7 +5,7 @@ import { api } from "../../api/client";
 import { engineTools } from "../../../mock/fixtures";
 import { App } from "../../app/App";
 import { installMockFetch } from "../../test-support";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 
 beforeEach(() => {
   installMockFetch();

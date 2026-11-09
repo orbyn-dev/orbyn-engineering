@@ -7,11 +7,11 @@ import {
   useWorkspace,
   type UpdateRun,
   type UpdateRunStep,
-} from "../../../state/workspace";
+} from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Markdown } from "../../content";
 import { Dialog } from "../../../ui/Dialog";
-import { Logo, LogoTile } from "../../../ui/Logo";
+import { Logo, LogoTile } from "../../../product/ui/Logo";
 
 const short = (value: string | null) =>
   value && /^[0-9a-f]{12,}$/.test(value) ? value.slice(0, 8) : (value ?? "Unknown");

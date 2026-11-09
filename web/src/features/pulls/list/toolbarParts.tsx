@@ -1,6 +1,6 @@
 import { Check, Search } from "lucide-react";
 import { type ReactNode } from "react";
-import { deriveProjectIdentity } from "../../../lib/projectIdentity";
+import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
 import { type CheckKey, type PullState, type ReviewKey } from "../model/pullModel";
 
 export type Kind = "project" | "filters" | "sort";

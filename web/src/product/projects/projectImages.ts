@@ -1,9 +1,9 @@
-import { request } from "../api/client";
-import { serviceUrl } from "../api/origin";
-import { readToken } from "../api/token";
-import type { Project } from "../api/types";
-import type { ProjectIconResource } from "../generated/ProjectIconResource";
-import type { ProjectIconResourceData } from "../generated/ProjectIconResourceData";
+import { request } from "../../api/client";
+import { serviceUrl } from "../../api/origin";
+import { readToken } from "../../api/token";
+import type { Project } from "../../api/types";
+import type { ProjectIconResource } from "../../generated/ProjectIconResource";
+import type { ProjectIconResourceData } from "../../generated/ProjectIconResourceData";
 import { MissingProjectImage, PROJECT_IMAGE_MIME, projectImagePreview } from "./projectImagePreview";
 import { clearStoredProjectImages, deleteStoredProjectImage, purgeStoredProjectImages,
   readStoredProjectImage, storeProjectImage, type StoredProjectImage } from "./projectImagePersistence";

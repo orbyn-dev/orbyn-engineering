@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
 import type { Thread } from "../../../api/types";
-import { navigate } from "../../../state/route";
+import { navigate } from "../../../product/state/route";
 
 /** The thread filter under the Projects label; Enter opens the highlighted hit. */
 export function SearchField({

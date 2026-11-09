@@ -1,6 +1,6 @@
 import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Loading, Splash } from "../ui/states";
+import { Loading, Splash } from "../product/ui/states";
 import { MOTION, useWaited } from "./motion";
 
 beforeEach(() => vi.useFakeTimers());

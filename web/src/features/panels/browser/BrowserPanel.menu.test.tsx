@@ -5,7 +5,7 @@ import { readShellStatus } from "../../../api/shell";
 import type { PreviewTab } from "../../../api/types";
 import { BrowserPane, BrowserPanel } from "./BrowserPanel";
 import { previewWindowRoute, useBrowserPanels } from "./browserPanels";
-import { runHandlers } from "../../../app/shortcuts";
+import { runHandlers } from "../../../product/shell/shortcuts";
 import { PreviewWindow } from "../preview/PreviewWindow";
 
 class FakeSocket {

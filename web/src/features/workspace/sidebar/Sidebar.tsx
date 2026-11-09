@@ -10,14 +10,14 @@ import {
 } from "react";
 import type { Thread } from "../../../api/types";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
-import { useDraftStore } from "../../../state/draftStore";
-import { navigate, type Route } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { useVisibleProjects, useWorkspace } from "../../../state/workspace";
+import { useDraftStore } from "../../../product/state/draftStore";
+import { navigate, type Route } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
-import { ErrorState, Loading } from "../../../ui/states";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import {
   arrangeThreads,
   attentionRank,

@@ -2,14 +2,14 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineStatus, PullGuideState } from "../../../api/types";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { PullGuide, guideIsStale } from "./PullGuide";
 import { pullsApi } from "../../../api/pulls";
 
 const navigateTo = vi.hoisted(() => vi.fn());
-vi.mock("../../../state/route", async (original) => ({
-  ...(await original<typeof import("../../../state/route")>()),
+vi.mock("../../../product/state/route", async (original) => ({
+  ...(await original<typeof import("../../../product/state/route")>()),
   navigate: navigateTo,
 }));
 

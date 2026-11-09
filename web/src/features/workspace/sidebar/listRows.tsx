@@ -1,11 +1,11 @@
 import { ChevronRight, FilePen, Plus, ShieldAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Project } from "../../../api/types";
-import { DRAFT_KEY, useDraftStore } from "../../../state/draftStore";
-import { routeHref, type Route } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { ProjectBadge } from "../../../ui/badges";
-import { deriveProjectIdentity } from "../../../lib/projectIdentity";
+import { DRAFT_KEY, useDraftStore } from "../../../product/state/draftStore";
+import { routeHref, type Route } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { ProjectBadge } from "../../../product/ui/badges";
+import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
 import { Collapsible } from "../../../ui/Collapsible";
 import type { DropSection } from "./groups";
 import { pushUndo } from "./threadUndo";

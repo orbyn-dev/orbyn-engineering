@@ -1,11 +1,11 @@
 import { ChevronRight, Eye, FileText, Folder, Globe, GitFork, Image as ImageIcon, Loader2, Plug, Search, Square, SquarePen, SquareTerminal, X, AppWindow, Wrench, type LucideIcon } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { callDuration } from "../../../lib/format";
-import { traceTool } from "../../../lib/timeline/toolTrace";
-import type { ToolItem } from "../../../lib/timeline/types";
+import { traceTool } from "../../../product/timeline/toolTrace";
+import type { ToolItem } from "../../../product/timeline/types";
 import { useNow } from "../../../lib/useNow";
-import { useThreadLogs } from "../../../state/threadLogs";
-import { useWorkspace } from "../../../state/workspace";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Collapsible } from "../../../ui/Collapsible";
 import { useOpenControl, useOpenState } from "../../../ui/openState";
 import { HtmlRender } from "../HtmlRender";

@@ -2,12 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { Viewer } from "./FilesPanel";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { buildZipArchive } from "./zipArchive.test-support";
 import { buildDocx, buildXlsx, docxParagraph, stubWorker, worksheet } from "./office.test-support";
-import { useComposerChips } from "../../../state/composerChipStore";
+import { useComposerChips } from "../../../product/state/composerChipStore";
 import { FileComments } from "./FileComments";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import { formatBytes } from "../../../lib/format";
 
 /** The toast the last action raised. */

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { ProjectSettingsSelection } from "../generated/ProjectSettingsSelection";
+import type { ProjectSettingsSelection } from "../../generated/ProjectSettingsSelection";
 
 export const SETTINGS_SECTIONS = [
   "general",

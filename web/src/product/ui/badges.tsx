@@ -1,9 +1,9 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useWorkspace } from "../state/workspace";
-import type { Project } from "../api/types";
-import { projectImageKey, readProjectImage, rejectProjectImage, subscribeProjectImage } from "../lib/projectImages";
+import type { Project } from "../../api/types";
+import { projectImageKey, readProjectImage, rejectProjectImage, subscribeProjectImage } from "../projects/projectImages";
 import { ProjectIconVisual } from "./ProjectIconVisual";
-import { deriveProjectIdentity } from "../lib/projectIdentity";
+import { deriveProjectIdentity } from "../projects/projectIdentity";
 
 /** Keep the last decoded image visible while a replacement loads. */
 function ProjectImageDisplay({ url, cacheKey, fallback }: { url: string; cacheKey: string; fallback: ReactNode }) {

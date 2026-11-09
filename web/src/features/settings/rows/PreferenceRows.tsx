@@ -1,7 +1,7 @@
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import { request } from "../../../api/client";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { ErrorState, Loading } from "../../../ui/states";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import { Collapsible } from "../../../ui/Collapsible";
 import { ChevronRight } from "lucide-react";
 import { useSettingsScope } from "./SettingsScopeContext";

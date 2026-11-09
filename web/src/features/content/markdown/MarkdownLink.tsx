@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { api } from "../../../api/client";
-import { navigate, parseRoute } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { navigate, parseRoute } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { PullLinkPreview } from "./PullLinkPreview";

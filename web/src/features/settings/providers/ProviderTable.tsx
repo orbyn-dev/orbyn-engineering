@@ -5,7 +5,7 @@ import type { EngineStatus } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
 import type { InstanceStore } from "./ProviderInstances";
 import { PreferenceInheritance } from "../rows/PreferenceInheritance";

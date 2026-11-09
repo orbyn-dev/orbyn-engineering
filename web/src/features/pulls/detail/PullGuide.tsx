@@ -3,11 +3,11 @@ import { useState } from "react";
 import type { PullGuide as Guide } from "../../../api/types";
 import { relativeTime } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { navigate } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { navigate } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
-import { Empty, ErrorState, Loading } from "../../../ui/states";
+import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { Markdown } from "../../content";
 import { pullsApi } from "../../../api/pulls";
 

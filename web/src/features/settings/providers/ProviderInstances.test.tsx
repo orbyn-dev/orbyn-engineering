@@ -7,7 +7,7 @@ import { ProvidersSection } from "./Providers";
 
 const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
 vi.mock("../../../api/client", async (original) => ({ ...await original<typeof import("../../../api/client")>(), request: vi.fn() }));
-vi.mock("../../../state/workspace", () => ({
+vi.mock("../../../product/state/workspace", () => ({
   useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null } }),
 }));
 vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));

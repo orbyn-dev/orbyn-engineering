@@ -2,13 +2,13 @@ import { act, render } from "@testing-library/react";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { ProjectBadge } from "./badges";
 import { useWorkspace } from "../state/workspace";
-import { projects, workspaceStatus } from "../../mock/fixtures";
-import type { Project } from "../api/types";
+import { projects, workspaceStatus } from "../../../mock/fixtures";
+import type { Project } from "../../api/types";
 const images = vi.hoisted(() => ({
   subscribe: vi.fn<(key: string, project: { id: string; path: string }, listener: () => void) => () => void>(() => () => {}),
   read: vi.fn<() => string | null>(() => null),
 }));
-vi.mock("../lib/projectImages", () => ({
+vi.mock("../projects/projectImages", () => ({
   projectImageKey: (project: { id: string; path: string; favicon_path?: string | null }) => JSON.stringify([project.id, project.path, project.favicon_path ?? null]),
   readProjectImage: images.read, subscribeProjectImage: images.subscribe,
   rejectProjectImage: vi.fn(), invalidateProjectImages: vi.fn(),

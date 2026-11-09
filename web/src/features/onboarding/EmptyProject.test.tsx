@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../api/client";
 import type { Project } from "../../api/types";
-import { parseRoute, routeHref } from "../../state/route";
-import { useWorkspace } from "../../state/workspace";
+import { parseRoute, routeHref } from "../../product/state/route";
+import { useWorkspace } from "../../product/state/workspace";
 import { EmptyProject } from "./EmptyProject";
 
 const project = (extra: Partial<Project> = {}) => ({ id: "p1", name: "orbyn-engineering", trusted: true, path: "/work/p1", ...extra }) as Project;

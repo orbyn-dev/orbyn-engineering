@@ -1,8 +1,8 @@
 import { Check, ChevronRight, Copy } from "lucide-react";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { useRoute } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useRoute } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { IconButton } from "../../../ui/controls";
 import { Collapsible } from "../../../ui/Collapsible";
 import { CodeBlock } from "../code/CodeBlock";

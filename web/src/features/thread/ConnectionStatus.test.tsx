@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import { readShellStatus } from "../../api/shell";
-import { checkConnectionNow, useConnection, watchConnection } from "../../state/connection";
+import { checkConnectionNow, useConnection, watchConnection } from "../../product/state/connection";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
 
 afterEach(async () => {

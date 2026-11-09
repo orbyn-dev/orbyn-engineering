@@ -2,8 +2,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure, request } from "../../../api/client";
-import { useConnection } from "../../../state/connection";
-import { useWorkspace } from "../../../state/workspace";
+import { useConnection } from "../../../product/state/connection";
+import { useWorkspace } from "../../../product/state/workspace";
 import { MaintenanceSection } from "./Maintenance";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 

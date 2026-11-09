@@ -1,5 +1,5 @@
 import { FileText, Folder, FolderOpen, ChevronDown } from "lucide-react";
-import type { ToolItem } from "../../../../lib/timeline/types";
+import type { ToolItem } from "../../../../product/timeline/types";
 import { useOpenState } from "../../../../ui/openState";
 import { ENTRIES_SHOWN, pluralize } from "../../toolCalls";
 import { BlockHead, Dot, FooterText, MoreBar } from "./BlockParts";

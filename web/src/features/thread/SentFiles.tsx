@@ -2,13 +2,13 @@ import { FileCode, FileText } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { attachmentBlob } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { Dialog } from "../../ui/Dialog";
 import { TimelineThread } from "./timelineThread";
 import { Lightbox } from "../content";
 import { fileLinkTarget } from "../content";
-import type { SentAttachment } from "../../lib/timeline/types";
+import type { SentAttachment } from "../../product/timeline/types";
 
 /** A typed `@path` the message referred to. */
 const PATH_TOKEN = /(^|\s)@([^\s@]+)/g;

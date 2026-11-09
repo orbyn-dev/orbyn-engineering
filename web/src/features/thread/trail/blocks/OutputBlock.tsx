@@ -1,6 +1,6 @@
 import { WrapText, ChevronDown } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import type { ToolItem } from "../../../../lib/timeline/types";
+import type { ToolItem } from "../../../../product/timeline/types";
 import { useOpenState } from "../../../../ui/openState";
 import { outputSpans } from "../../../content";
 import { LINES_SHOWN, lineCount } from "../../toolCalls";

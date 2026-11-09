@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { ScheduledTask } from "../api/types";
+import type { ScheduledTask } from "../../api/types";
 import { scheduleLabel, taskTone } from "./taskSchedule";
 
 const task = (over: Partial<ScheduledTask> = {}): ScheduledTask => ({

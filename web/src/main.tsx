@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { captureToken } from "./api/token";
 import { App } from "./app/App";
 import { trackInputModality } from "./lib/inputModality";
-import { applyTheme, useUi } from "./state/ui";
+import { applyTheme, useUi } from "./product/state/ui";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";

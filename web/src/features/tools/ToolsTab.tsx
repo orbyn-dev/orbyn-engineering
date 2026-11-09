@@ -3,10 +3,10 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited } from "../../lib/motion";
-import { navigate } from "../../state/route";
-import { engineById, useWorkspace } from "../../state/workspace";
+import { navigate } from "../../product/state/route";
+import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
-import { Empty } from "../../ui/states";
+import { Empty } from "../../product/ui/states";
 import { ToolsList } from "./ToolsList";
 import { groupOf } from "./toolsModel";
 

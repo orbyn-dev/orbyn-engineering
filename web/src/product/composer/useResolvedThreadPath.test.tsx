@@ -1,8 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { api } from "../api/client";
-import type { Thread } from "../api/types";
-import type { ResolvedThreadPath } from "../generated/ResolvedThreadPath";
+import { api } from "../../api/client";
+import type { Thread } from "../../api/types";
+import type { ResolvedThreadPath } from "../../generated/ResolvedThreadPath";
 import { useUi } from "../state/ui";
 import { useWorkspace } from "../state/workspace";
 import { useResolvedThreadPath } from "./useResolvedThreadPath";

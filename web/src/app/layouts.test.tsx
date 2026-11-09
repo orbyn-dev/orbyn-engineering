@@ -2,9 +2,9 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
-import { useUi } from "../state/ui";
+import { useUi } from "../product/state/ui";
 import { App } from "./App";
-import { useSidebarDrawer } from "./sidebarDrawer";
+import { useSidebarDrawer } from "../product/shell/sidebarDrawer";
 
 beforeEach(() => {
   installMockFetch();

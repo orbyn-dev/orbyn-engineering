@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { request } from "../../api/client";
-import { useRoute } from "../../state/route";
+import { useRoute } from "../../product/state/route";
 import { SettingsPage } from "./SettingsPage";
 import { SETTINGS, searchSettings } from "./settingsSearch";
 

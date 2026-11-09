@@ -1,9 +1,9 @@
 import { api } from "../../../api/client";
 import type { Thread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { DRAFT_KEY } from "../../../state/draftStore";
-import { threadToken } from "../../../lib/skillMention";
-import { useUi } from "../../../state/ui";
+import { DRAFT_KEY } from "../../../product/state/draftStore";
+import { threadToken } from "../../../product/composer/skillMention";
+import { useUi } from "../../../product/state/ui";
 import { dropPatch, projectDrop, type DropSection, type DropTarget, type DropVerb, type SidebarSection, type ThreadSections } from "./groups";
 import { reorderThreads, settleThreads, unpinThreads } from "./threadActions";
 

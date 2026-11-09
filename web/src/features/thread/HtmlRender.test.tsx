@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { HtmlRender } from "./HtmlRender";
 import { isHtmlRenderTool, renderFrameFrom } from "./renderFrame";
-import type { ToolItem } from "../../lib/timeline/types";
+import type { ToolItem } from "../../product/timeline/types";
 
 const THREAD = "01jc8xw9kq00000000000000aa";
 const RENDER = "01jc8xw9kq00000000000000bb";

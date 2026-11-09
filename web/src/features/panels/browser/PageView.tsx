@@ -12,7 +12,7 @@ import { request } from "../../../api/client";
 import { readToken } from "../../../api/token";
 import type { PickedElement, PreviewTab } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { AgentCursor } from "./AgentCursor";
 import { copyFromPage } from "./PageBridge";
 import { RESIZE_DELAY_MS, RESIZE_SLACK, q } from "./browserModel";

@@ -1,7 +1,7 @@
-import { forgetProjectImages, invalidateProjectImages } from "../lib/projectImages";
+import { forgetProjectImages, invalidateProjectImages } from "../projects/projectImages";
 import { useMemo } from "react";
 import { create } from "zustand";
-import { ApiFailure, api } from "../api/client";
+import { ApiFailure, api } from "../../api/client";
 import type {
   ApplyAllResult,
   Approval,
@@ -10,8 +10,8 @@ import type {
   Thread,
   UpdateStatus,
   WorkspaceStatus,
-} from "../api/types";
-import { toFailure } from "../lib/useAsync";
+} from "../../api/types";
+import { toFailure } from "../../lib/useAsync";
 
 export interface Loadable<T> {
   data: T | null;

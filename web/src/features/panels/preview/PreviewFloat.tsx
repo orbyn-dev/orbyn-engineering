@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { request } from "../../../api/client";
 import type { PreviewTab } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
 import { PageView } from "../browser/PageView";
 

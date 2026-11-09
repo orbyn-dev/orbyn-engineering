@@ -1,11 +1,11 @@
 import { AlertTriangle, ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ApiFailure } from "../api/client";
-import { NETWORK_ERROR } from "../api/client";
+import type { ApiFailure } from "../../api/client";
+import { NETWORK_ERROR } from "../../api/client";
 import { routeHref, type Route } from "../state/route";
-import { useLayoutWidth } from "../lib/useLayout";
-import { useWaited } from "../lib/motion";
-import { Button } from "./controls";
+import { useLayoutWidth } from "../../lib/useLayout";
+import { useWaited } from "../../lib/motion";
+import { Button } from "../../ui/controls";
 import { Logo } from "./Logo";
 
 /** A static skeleton, drawn only if the wait outlasts 400 ms. The label is read at once. */

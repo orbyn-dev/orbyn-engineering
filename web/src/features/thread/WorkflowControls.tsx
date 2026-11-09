@@ -5,7 +5,7 @@ import { useAsync } from "../../lib/useAsync";
 import { Dialog } from "../../ui/Dialog";
 import { Button } from "../../ui/controls";
 import { CodeBlock } from "../content";
-import type { ReasoningItem, ToolItem, WorkflowState } from "../../lib/timeline/types";
+import type { ReasoningItem, ToolItem, WorkflowState } from "../../product/timeline/types";
 
 /** True inside a folded group whose workflow cards are drawn outside it. */
 export const SurfacedWorkflows = createContext(false);

@@ -1,5 +1,5 @@
-import type { TimelineEntry } from "../../../lib/timeline/types";
-import { traceTool } from "../../../lib/timeline/toolTrace";
+import type { TimelineEntry } from "../../../product/timeline/types";
+import { traceTool } from "../../../product/timeline/toolTrace";
 import { workDuration } from "../../../lib/format";
 
 export type ActivityFilter = "all" | "commands" | "edits";

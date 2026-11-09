@@ -1,12 +1,12 @@
 import { RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { isTerminalShortcut } from "../../../app/shortcuts";
+import { isTerminalShortcut } from "../../../product/shell/shortcuts";
 import { readingKey } from "./terminalKeys";
 import { api } from "../../../api/client";
 import { toFailure } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
-import { useComposerChips } from "../../../state/composerChipStore";
-import { charactersOver, chipId, promptWithChips, terminalSelection } from "../../../lib/composerContext";
+import { useUi } from "../../../product/state/ui";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { charactersOver, chipId, promptWithChips, terminalSelection } from "../../../product/composer/composerContext";
 import { Button, Pill } from "../../../ui/controls";
 import { terminalUrl } from "./terminalSocket";
 import { registerTerminal, terminalKey } from "./terminalControls";

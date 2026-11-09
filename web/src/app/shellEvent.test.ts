@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { useUi } from "../state/ui";
+import { useUi } from "../product/state/ui";
 import { onShellEvent } from "./Shell";
 
 describe("onShellEvent", () => {

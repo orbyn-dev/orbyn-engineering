@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { api } from "../api/client";
-import { useWorkspace } from "../state/workspace";
-import { useUi } from "../state/ui";
+import { useWorkspace } from "../product/state/workspace";
+import { useUi } from "../product/state/ui";
 import { App } from "./App";
 
 beforeEach(() => {

@@ -1,12 +1,12 @@
-import { DRow } from "../../ui/DetailRows";
+import { DRow } from "../../product/ui/DetailRows";
 import { Check, ChevronDown, CloudUpload, GitCommitHorizontal, GitBranch, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "../../api/client";
-import { useCommand } from "../../app/shortcuts";
+import { useCommand } from "../../product/shell/shortcuts";
 import type { BranchInfo, Thread } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useWorkspace } from "../../state/workspace";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { useWorkspace } from "../../product/state/workspace";
 import { Dialog } from "../../ui/Dialog";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";

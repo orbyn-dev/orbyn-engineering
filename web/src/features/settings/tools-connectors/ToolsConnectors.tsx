@@ -3,9 +3,9 @@ import { useState } from "react";
 import { api } from "../../../api/client";
 import { useAsync } from "../../../lib/useAsync";
 import { useWaited } from "../../../lib/motion";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
-import { Loading } from "../../../ui/states";
+import { Loading } from "../../../product/ui/states";
 import { tabKeys } from "../../../ui/tabKeys";
 import { ToolsList } from "../../tools";
 

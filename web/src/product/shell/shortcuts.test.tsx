@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { KeybindingRule } from "../api/types";
+import type { KeybindingRule } from "../../api/types";
 import { isTerminalShortcut, commandShortcut, formatShortcut, runHandlers, setTerminalRules, useCommand } from "./shortcuts";
 
 const command = "script.fixture-action.run";

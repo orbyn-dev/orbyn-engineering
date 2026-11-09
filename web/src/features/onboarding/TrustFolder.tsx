@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
-import { navigate, routeHref, type Route } from "../../state/route";
-import { useWorkspace } from "../../state/workspace";
+import { navigate, routeHref, type Route } from "../../product/state/route";
+import { useWorkspace } from "../../product/state/workspace";
 import { Button, LinkButton } from "../../ui/controls";
-import { Empty, Loading } from "../../ui/states";
+import { Empty, Loading } from "../../product/ui/states";
 import "./onboarding.css";
 
 export function TrustFolder({ projectId, threadId }: { projectId: string; threadId: string | null }) {

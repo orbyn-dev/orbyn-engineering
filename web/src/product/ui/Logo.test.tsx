@@ -38,7 +38,7 @@ describe("Logo", () => {
 });
 
 describe("logo tokens", () => {
-  const css = readFileSync(join(import.meta.dirname, "../styles/tokens.css"), "utf8");
+  const css = readFileSync(join(import.meta.dirname, "../../styles/tokens.css"), "utf8");
   /** The declarations of the first rule whose selector is exactly `selector`. */
   const rule = (selector: string) => {
     const start = css.indexOf(`${selector} {`);

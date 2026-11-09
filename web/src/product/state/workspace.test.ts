@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
-import * as projectImages from "../lib/projectImages";
-import { projects } from "../../mock/fixtures";
-import type { Approval, Project } from "../api/types";
+import { api } from "../../api/client";
+import * as projectImages from "../projects/projectImages";
+import { projects } from "../../../mock/fixtures";
+import type { Approval, Project } from "../../api/types";
 import { useWorkspace } from "./workspace";
 
 const approval = (id: string) => ({ id }) as Approval;

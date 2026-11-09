@@ -1,5 +1,5 @@
-import type { ServerInfo } from "../generated/ServerInfo";
-import type { WireThreadEvent } from "../api/types";
+import type { ServerInfo } from "../../generated/ServerInfo";
+import type { WireThreadEvent } from "../../api/types";
 
 const UPGRADE_KEY = "orbyn.database-upgrade";
 

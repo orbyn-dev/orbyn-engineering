@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
-import type { TimelineEntry } from "../../lib/timeline/timeline";
+import type { TimelineEntry } from "../../product/timeline/timeline";
 import { buildOffsets, indexAt, planRows, sizesFor, totalHeight, visibleRange, type Segment } from "./windowing";
 
 /** A row near the top of the view and how far its top sits from the view's top. */

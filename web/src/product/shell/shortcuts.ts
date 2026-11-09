@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import type { KeybindingRule } from "../api/types";
-import { inDesktopApp } from "../api/shell";
-import { actionIdFromCommand } from "../lib/actionCommand";
+import type { KeybindingRule } from "../../api/types";
+import { inDesktopApp } from "../../api/shell";
+import { actionIdFromCommand } from "../composer/actionCommand";
 
 /** Handlers live with what they act on, and register while mounted. */
 type CommandHandler = { run(argument?: string): boolean | void; available(argument?: string): boolean };

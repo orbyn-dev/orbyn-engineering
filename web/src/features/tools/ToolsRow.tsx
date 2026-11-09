@@ -3,9 +3,9 @@ import type { Thread } from "../../api/types";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited as useWaitedFor } from "../../lib/motion";
-import { engineById, useWorkspace } from "../../state/workspace";
-import { useUi } from "../../state/ui";
-import { DRow } from "../../ui/DetailRows";
+import { engineById, useWorkspace } from "../../product/state/workspace";
+import { useUi } from "../../product/state/ui";
+import { DRow } from "../../product/ui/DetailRows";
 import { problemLine, summarize } from "./toolsModel";
 
 /** The details card's Tools row: how many are ready, what is not, and it opens the Tools tab. */

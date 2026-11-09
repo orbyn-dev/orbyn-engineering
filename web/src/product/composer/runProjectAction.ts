@@ -1,6 +1,6 @@
-import { request } from "../api/client";
-import type { TerminalInfo } from "../api/types";
-import type { ProjectScript } from "../generated/ProjectScript";
+import { request } from "../../api/client";
+import type { TerminalInfo } from "../../api/types";
+import type { ProjectScript } from "../../generated/ProjectScript";
 import { parseRoute } from "../state/route";
 import { useUi } from "../state/ui";
 import { openActionPreview } from "./actionPreview";

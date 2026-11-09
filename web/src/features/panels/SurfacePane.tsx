@@ -4,7 +4,7 @@ import { flushSync } from "react-dom";
 import { captureFocusReturn } from "../../ui/focusReturn";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Thread } from "../../api/types";
-import { useUi, type RightTab } from "../../state/ui";
+import { useUi, type RightTab } from "../../product/state/ui";
 import { Button, IconButton } from "../../ui/controls";
 import { ActivityPanel } from "./activity/ActivityPanel";
 import { BrowserPanel } from "./browser/BrowserPanel";
@@ -13,7 +13,7 @@ import { FilesPanel } from "./files/FilesPanel";
 import { ToolsTab } from "../tools";
 import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./strip/tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
-import { useConnectionKind } from "../../state/connection";
+import { useConnectionKind } from "../../product/state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 

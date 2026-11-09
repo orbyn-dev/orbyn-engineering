@@ -6,19 +6,19 @@ import { NETWORK_ERROR, request } from "../../../api/client";
 import type { ScheduledTask, WebhookFilter } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { relativeTime } from "../../../lib/format";
-import { scheduleLabel, taskTone, WEEKDAYS } from "../../../lib/taskSchedule";
-import { useConnection } from "../../../state/connection";
-import { navigate, useRoute } from "../../../state/route";
+import { scheduleLabel, taskTone, WEEKDAYS } from "../../../product/tasks/taskSchedule";
+import { useConnection } from "../../../product/state/connection";
+import { navigate, useRoute } from "../../../product/state/route";
 import { TaskPage } from "./TaskPage";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { settingsLabel } from "../settingsSearch";
-import { useUi } from "../../../state/ui";
-import { useVisibleProjects, useWorkspace } from "../../../state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { Button, Field, IconButton } from "../../../ui/controls";
 import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
-import { PageBar } from "../../../ui/PageBar";
-import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
-import { Empty, Loading } from "../../../ui/states";
+import { PageBar } from "../../../product/ui/PageBar";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
+import { Empty, Loading } from "../../../product/ui/states";
 
 const listTasks = (signal?: AbortSignal) => request<ScheduledTask[]>("GET", "/api/tasks", undefined, signal);
 

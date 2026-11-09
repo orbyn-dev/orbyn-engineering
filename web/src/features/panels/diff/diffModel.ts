@@ -1,4 +1,4 @@
-import { CHIP_EXCERPT_LIMIT } from "../../../lib/composerContext";
+import { CHIP_EXCERPT_LIMIT } from "../../../product/composer/composerContext";
 
 export const LINE_LIMIT = 2000;
 /** A large diff renders files in pages, so a huge change set never mounts at once. */

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useUi } from "../state/ui";
+import { useUi } from "../product/state/ui";
 import { adoptEnvironmentTheme } from "./environmentTheme";
 
 describe("adoptEnvironmentTheme", () => {

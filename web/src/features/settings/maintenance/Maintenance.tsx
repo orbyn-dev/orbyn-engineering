@@ -8,9 +8,9 @@ import type { CleanupReport, Diagnostics, JsonValue, OtlpResult } from "../../..
 import type { ServiceProcess } from "../../../generated/ServiceProcess";
 import { fullTime, mebibytes, sizeWords, uptime } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useWorkspace } from "../../../state/workspace";
-import { useUi } from "../../../state/ui";
-import { ErrorState, Loading } from "../../../ui/states";
+import { useWorkspace } from "../../../product/state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
@@ -20,9 +20,9 @@ import { Collapsible } from "../../../ui/Collapsible";
 import { DialogCard } from "../rows/DialogCard";
 import { LibraryChoice } from "../projects/LibraryChoice";
 import { SettingsBanner, SettingsEmpty } from "../rows/SettingsBanner";
-import { useConnection } from "../../../state/connection";
+import { useConnection } from "../../../product/state/connection";
 import { FallbackNotice, Library } from "../projects/Projects";
-import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
 
 /** Past this, the space a repair gets back is worth a mention. */
 const REPAIR_NOTICE_BYTES = 1024 ** 3;

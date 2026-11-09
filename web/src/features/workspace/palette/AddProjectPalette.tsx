@@ -3,11 +3,11 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { api, request } from "../../../api/client";
 import type { PreferenceView, Project } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { navigate, routeHref } from "../../../state/route";
-import { useWorkspace } from "../../../state/workspace";
+import { navigate, routeHref } from "../../../product/state/route";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
-import { FolderBrowser } from "../../../ui/FolderBrowser";
+import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
 import "../addProject.css";

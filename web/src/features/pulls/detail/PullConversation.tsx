@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { PullComment, PullThread } from "../../../api/types";
 import { relativeTime } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";

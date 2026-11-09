@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { ApiFailure, request } from "../../api/client";
 import type { EngineStatus, PreferenceView } from "../../api/types";
 import { useDraftModelDefaults } from "./useDraftModelDefaults";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 const mocked = vi.mocked(request);

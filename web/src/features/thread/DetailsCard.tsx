@@ -5,20 +5,20 @@ import type { EngineLimits, LocalServer, ProjectFileView, Thread } from "../../a
 import type { ProjectScript } from "../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../lib/motion";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { IconButton } from "../../ui/controls";
 import { usageShare } from "./composer/ComposerExtras";
-import { DRow } from "../../ui/DetailRows";
+import { DRow } from "../../product/ui/DetailRows";
 import { BranchRow } from "./GitControl";
 import { OpenInEditor } from "./OpenInEditor";
 import { PullsRow } from "./PullChip";
-import { runProjectAction } from "../../lib/runProjectAction";
+import { runProjectAction } from "../../product/composer/runProjectAction";
 import { ThreadAutomations } from "./ThreadAutomations";
 import { ToolsRow } from "../tools";
-import { useThreadLogs } from "../../state/threadLogs";
+import { useThreadLogs } from "../../product/state/threadLogs";
 import { pluralize } from "./toolCalls";
 
 export const DETAIL_ROWS: { id: string; label: string }[] = [

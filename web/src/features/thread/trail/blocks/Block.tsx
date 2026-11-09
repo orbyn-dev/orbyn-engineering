@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { callDuration } from "../../../../lib/format";
-import { parsed, toolFailed } from "../../../../lib/timeline/toolTrace";
-import type { ToolItem } from "../../../../lib/timeline/types";
-import { useUi } from "../../../../state/ui";
+import { parsed, toolFailed } from "../../../../product/timeline/toolTrace";
+import type { ToolItem } from "../../../../product/timeline/types";
+import { useUi } from "../../../../product/state/ui";
 import { useThreadOfTimeline } from "../../timelineThread";
 import { callKind, callPath, listEntries, shownPath, type CallState } from "../../toolCalls";
 import { Dot, FooterText } from "./BlockParts";

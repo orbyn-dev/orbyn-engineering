@@ -1,4 +1,4 @@
-import type { ScheduledTask } from "../api/types";
+import type { ScheduledTask } from "../../api/types";
 
 export const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

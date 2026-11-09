@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { clockTime, fullTime } from "../../../lib/format";
-import { useUi } from "../../../state/ui";
-import { useThreadLogs } from "../../../state/threadLogs";
-import { Empty } from "../../../ui/states";
+import { useUi } from "../../../product/state/ui";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { Empty } from "../../../product/ui/states";
 import { ThisRun } from "./ThisRun";
 import { filterActivity, summarizeActivity, type ActivityFilter } from "./activityView";
 

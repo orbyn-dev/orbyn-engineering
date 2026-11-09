@@ -72,7 +72,7 @@ test("the real browser image store enforces byte/count bounds and fences clear, 
     await page.goto(`${service.page}#/new/${projectId}`);
     const result = await page.evaluate(async () => {
       const modulePath = "/src/lib/projectImagePersistence.ts";
-      const cache = await import(/* @vite-ignore */ modulePath) as typeof import("../../src/lib/projectImagePersistence");
+      const cache = await import(/* @vite-ignore */ modulePath) as typeof import("../../src/product/projects/projectImagePersistence");
       const item = (key: string, project_id = "cache-fixture", large = false) => ({ key, project_id, revision: "a".repeat(64),
         data_url: `data:image/png;base64,${large ? "A".repeat(32000) : "AQID"}`, used_at: Date.now() });
       const readAll = async () => {

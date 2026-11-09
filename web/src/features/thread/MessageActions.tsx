@@ -2,12 +2,12 @@ import { Check, Copy, GitBranch, Pencil, Quote, Undo2 } from "lucide-react";
 import { createContext, useContext, useState } from "react";
 import { api } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
-import { navigate, parseRoute } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { useComposerChips } from "../../state/composerChipStore";
+import { navigate, parseRoute } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
+import { useComposerChips } from "../../product/state/composerChipStore";
 import { IconButton } from "../../ui/controls";
-import { chipId } from "../../lib/composerContext";
+import { chipId } from "../../product/composer/composerContext";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { RestoreFilesDialog } from "../panels";
 

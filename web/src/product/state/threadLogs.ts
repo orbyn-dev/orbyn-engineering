@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import { create } from "zustand";
-import type { ApiFailure } from "../api/client";
-import { followThread, type StreamStatus } from "../api/sse";
-import type { WireThreadEvent } from "../api/types";
-import { applyEvents, emptyLog } from "../lib/timeline/projection";
-import type { ThreadLog } from "../lib/timeline/types";
+import type { ApiFailure } from "../../api/client";
+import { followThread, type StreamStatus } from "../../api/sse";
+import type { WireThreadEvent } from "../../api/types";
+import { applyEvents, emptyLog } from "../timeline/projection";
+import type { ThreadLog } from "../timeline/types";
 import { useWorkspace } from "./workspace";
 import { useUi } from "./ui";
 import { permissionToasts } from "./healthToasts";

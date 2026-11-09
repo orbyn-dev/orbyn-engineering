@@ -6,9 +6,9 @@ import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesR
 import type { EngineStatus, PermissionMode, Project } from "../../api/types";
 import { AddProjectPalette } from "../workspace";
 import { ACCESS, offeredModes, shownAccess } from "../thread";
-import { navigate, routeHref } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { navigate, routeHref } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
 import "./onboarding.css";
 

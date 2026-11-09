@@ -5,12 +5,12 @@ import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
 import { attentionRank } from "../features/workspace/sidebar/groups";
 import { EnvironmentIdentity } from "../features/workspace/app-chrome/EnvironmentIdentity";
 import { useAsync } from "../lib/useAsync";
-import { navigate } from "../state/route";
+import { navigate } from "../product/state/route";
 import { useReadingNav } from "./readingNav";
-import { toggleSidebarDrawer, useSidebarDrawer } from "./sidebarDrawer";
+import { toggleSidebarDrawer, useSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
-import { useUi } from "../state/ui";
-import { useWorkspace } from "../state/workspace";
+import { useUi } from "../product/state/ui";
+import { useWorkspace } from "../product/state/workspace";
 import { goBack, goForward, useNavHistory } from "./navHistory";
 import { attachBarDrag } from "./barDrag";
 

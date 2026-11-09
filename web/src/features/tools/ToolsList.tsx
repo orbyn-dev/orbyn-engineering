@@ -2,7 +2,7 @@ import { Check, ChevronDown, ChevronRight, ExternalLink, Link2, LoaderCircle, Pl
 import { useState } from "react";
 import type { EngineTools, ToolEntry, ToolGroup } from "../../api/types";
 import { Button } from "../../ui/controls";
-import { navigate } from "../../state/route";
+import { navigate } from "../../product/state/route";
 import { GROUP_LABEL, notReportedNotes } from "./toolsModel";
 
 /** Groups that start open: the ones a person set up. The rest are always there. */

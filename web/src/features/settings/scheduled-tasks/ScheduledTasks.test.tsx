@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import * as fixtures from "../../../../mock/fixtures";
 import { api } from "../../../api/client";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import { installMockFetch } from "../../../test-support";
 import { ScheduledTasksSection } from "./ScheduledTasks";
 

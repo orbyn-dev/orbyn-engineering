@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api } from "../../../api/client";
 import type { CloneJob, Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
 
 const POLL_MS = 1000;

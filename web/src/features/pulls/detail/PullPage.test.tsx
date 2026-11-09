@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pullsApi } from "../../../api/pulls";
 import { ApiFailure } from "../../../api/client";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
-import { useConnection } from "../../../state/connection";
+import { useConnection } from "../../../product/state/connection";
 import { PullDetail } from "./PullDetail";
 
 const pull = (over: Record<string, unknown> = {}): PullRequestDetail["pull"] =>

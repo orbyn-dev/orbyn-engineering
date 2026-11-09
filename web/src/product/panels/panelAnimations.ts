@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useUi } from "../state/ui";
-import { MOTION } from "./motion";
-import { usePrefersReducedMotion } from "./useLayout";
+import { MOTION } from "../../lib/motion";
+import { usePrefersReducedMotion } from "../../lib/useLayout";
 
 export const MAX_PANEL_ANIMATION_MS = 400;
 

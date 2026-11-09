@@ -1,10 +1,10 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ProjectIconOverride } from "../../../generated/ProjectIconOverride";
-import { deriveProjectIdentity, PROJECT_ICON_COLORS, type ProjectIconColor } from "../../../lib/projectIdentity";
+import { deriveProjectIdentity, PROJECT_ICON_COLORS, type ProjectIconColor } from "../../../product/projects/projectIdentity";
 import { toFailure } from "../../../lib/useAsync";
 import { Dialog } from "../../../ui/Dialog";
 import { Button } from "../../../ui/controls";
-import { ProjectIconVisual } from "../../../ui/ProjectIconVisual";
+import { ProjectIconVisual } from "../../../product/ui/ProjectIconVisual";
 import { emojiChoices, iconChoiceLabel, pastedProjectEmoji, pickerMonogram, searchProjectIcons } from "./projectIconChoices";
 import "../ProjectIconPicker.css";
 

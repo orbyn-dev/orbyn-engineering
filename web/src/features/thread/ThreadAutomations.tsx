@@ -4,11 +4,11 @@ import { request } from "../../api/client";
 import type { ScheduledTask } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
-import { scheduleLabel, taskTone } from "../../lib/taskSchedule";
+import { scheduleLabel, taskTone } from "../../product/tasks/taskSchedule";
 import { useWaited } from "../../lib/motion";
-import { DRow } from "../../ui/DetailRows";
-import { navigate, useRoute } from "../../state/route";
-import { useUi } from "../../state/ui";
+import { DRow } from "../../product/ui/DetailRows";
+import { navigate, useRoute } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
 import { Button, IconButton } from "../../ui/controls";
 
 const q = encodeURIComponent;

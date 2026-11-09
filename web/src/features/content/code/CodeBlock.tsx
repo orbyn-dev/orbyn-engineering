@@ -1,6 +1,6 @@
 import { Check, Copy, WrapText } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
 import { highlight, type Token } from "./codeHighlight";
 

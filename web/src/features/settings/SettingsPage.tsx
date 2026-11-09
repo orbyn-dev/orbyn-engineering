@@ -1,14 +1,14 @@
 import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./rows/SettingsScopeContext";
 import { ScopeSentence } from "./rows/ScopeSentence";
-import { SettingRowIds } from "../../ui/SettingRow";
+import { SettingRowIds } from "./rows/SettingRow";
 import { searchSettings, settingSearchId } from "./settingsSearch";
 import { api } from "../../api/client";
 import { onShellChange } from "../../api/shell";
 import { useAsync } from "../../lib/useAsync";
-import { navigate, useRoute } from "../../state/route";
+import { navigate, useRoute } from "../../product/state/route";
 import { Info, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { routeHref, type SettingsSection } from "../../state/route";
+import { routeHref, type SettingsSection } from "../../product/state/route";
 import { IconButton } from "../../ui/controls";
 import { AppearanceSection } from "./pages/Appearance";
 import { KeybindingsSection } from "./pages/Keybindings";

@@ -1,10 +1,10 @@
 import { ArrowUpLeft, Check, Loader2, X } from "lucide-react";
 import type { Thread } from "../../api/types";
 import { runStateLabels } from "../../lib/format";
-import { navigate } from "../../state/route";
+import { navigate } from "../../product/state/route";
 import { Button } from "../../ui/controls";
 import { threadRunState } from "../workspace";
-import type { SubagentActivity } from "../../lib/timeline/types";
+import type { SubagentActivity } from "../../product/timeline/types";
 
 const DONE = /^(completed|done|finished|success)/i;
 const FAILED = /^(failed|errored|error|cancel)/i;

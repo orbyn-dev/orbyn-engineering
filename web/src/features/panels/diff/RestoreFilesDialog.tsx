@@ -1,6 +1,6 @@
 import { api } from "../../../api/client";
-import { useThreadLogs } from "../../../state/threadLogs";
-import { useUi } from "../../../state/ui";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useUi } from "../../../product/state/ui";
 import { ConfirmDialog } from "../../../ui/Dialog";
 
 /** Confirms, then puts the folder back to how it was before a turn. */

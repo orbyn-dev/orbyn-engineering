@@ -1,9 +1,9 @@
 import { MessageSquare } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
-import { useWorkspace } from "../../../state/workspace";
-import { useUi } from "../../../state/ui";
-import { useComposerChips } from "../../../state/composerChipStore";
-import { charactersOver, chipId, chipLabel, promptWithChips, type ReviewChip } from "../../../lib/composerContext";
+import { useWorkspace } from "../../../product/state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { charactersOver, chipId, chipLabel, promptWithChips, type ReviewChip } from "../../../product/composer/composerContext";
 import { Button } from "../../../ui/controls";
 import { LINE_LIMIT, diffCommentRange, markers, numberedLines, parsePatch, splitNumbered, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 

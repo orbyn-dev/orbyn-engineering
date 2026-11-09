@@ -1,6 +1,6 @@
 import { settingsLabel } from "../settingsSearch";
-import { useUi } from "../../../state/ui";
-import { SettingGroup } from "../../../ui/SettingRow";
+import { useUi } from "../../../product/state/ui";
+import { SettingGroup } from "../rows/SettingRow";
 import { heading, Toggle } from "./parts";
 
 export function LabsSection() {

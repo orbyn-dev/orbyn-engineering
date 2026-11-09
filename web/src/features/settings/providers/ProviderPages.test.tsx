@@ -5,7 +5,7 @@ import { request } from "../../../api/client";
 import { AcpRegistryPage, HistoryImportPage } from "./ProviderPages";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-vi.mock("../../../state/workspace", () => ({ useWorkspace: Object.assign((select: (state: unknown) => unknown) => select({ refreshEngines: vi.fn() }), { getState: () => ({ refreshAll: vi.fn() }) }) }));
+vi.mock("../../../product/state/workspace", () => ({ useWorkspace: Object.assign((select: (state: unknown) => unknown) => select({ refreshEngines: vi.fn() }), { getState: () => ({ refreshAll: vi.fn() }) }) }));
 
 it("filters the registry as you type and says when nothing matches", async () => {
   const user = userEvent.setup();

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { CodeBlock } from "../code/CodeBlock";
 
 const dark = (theme: string) =>

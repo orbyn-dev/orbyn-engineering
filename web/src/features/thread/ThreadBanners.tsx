@@ -5,9 +5,9 @@ import { api } from "../../api/client";
 import type { Thread, UpdateThread } from "../../api/types";
 import { waitLeft } from "../../lib/format";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 
 const dismissed = new Set<string>();

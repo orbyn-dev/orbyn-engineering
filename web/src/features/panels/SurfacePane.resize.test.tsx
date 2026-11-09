@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { PaneResizer } from "./SurfacePane";
 
 beforeEach(() => {

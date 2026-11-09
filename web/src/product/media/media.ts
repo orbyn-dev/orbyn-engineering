@@ -1,5 +1,5 @@
-import { serviceUrl } from "../api/origin";
-import { readToken } from "../api/token";
+import { serviceUrl } from "../../api/origin";
+import { readToken } from "../../api/token";
 
 export type MediaKind = "image" | "video" | "audio" | "pdf" | "font";
 

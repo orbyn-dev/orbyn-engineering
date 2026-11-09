@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { SnoozePreset } from "../../generated/SnoozePreset";
 import type { Thread } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";

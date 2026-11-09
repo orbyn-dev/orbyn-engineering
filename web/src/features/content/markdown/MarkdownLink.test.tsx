@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, request } from "../../../api/client";
 import type { PullRequest } from "../../../api/types";
 import { threads } from "../../../../mock/fixtures";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import { pullChecks, pullPreviewPlacement, pullReview, pullState } from "./PullLinkPreview";
 import { pullNumberOf, pullRepositoryLabel, samePullRequest } from "./pullLink";
 import { Markdown } from "./Markdown";

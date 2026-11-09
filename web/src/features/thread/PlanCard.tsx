@@ -3,7 +3,7 @@ import { use, useState } from "react";
 import { useOpenState } from "../../ui/openState";
 import { request } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Dialog } from "../../ui/Dialog";
 import { Button, IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";

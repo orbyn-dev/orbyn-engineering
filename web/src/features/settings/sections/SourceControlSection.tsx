@@ -1,12 +1,12 @@
 import { Check, CloudOff, RefreshCw } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useRef } from "react";
-import { useConnection } from "../../../state/connection";
+import { useConnection } from "../../../product/state/connection";
 import { request } from "../../../api/client";
 import type { ForgeStatus } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
-import { Empty, ErrorState, Loading } from "../../../ui/states";
+import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { SourceControlWriting } from "./SourceControlWriting";
 import { heading } from "./parts";

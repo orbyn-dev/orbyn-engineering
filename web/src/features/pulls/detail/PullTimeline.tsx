@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { relativeTime } from "../../../lib/format";
 import { useAsync } from "../../../lib/useAsync";
-import { ErrorState, Loading } from "../../../ui/states";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import { pullsApi } from "../../../api/pulls";
 
 /**

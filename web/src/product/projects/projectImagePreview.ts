@@ -1,5 +1,5 @@
-import { authHeaders } from "../api/client";
-import type { ProjectIconMediaType } from "../generated/ProjectIconMediaType";
+import { authHeaders } from "../../api/client";
+import type { ProjectIconMediaType } from "../../generated/ProjectIconMediaType";
 import { smallProjectImage } from "./projectImagePersistence";
 
 export const PROJECT_IMAGE_MIME: Record<ProjectIconMediaType, string> = {

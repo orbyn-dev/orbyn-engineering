@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
 import { useToastSwipe } from "./useToastSwipe";
 

@@ -3,11 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { FallbackControl } from "./ProjectModelDefaults";
 
-vi.mock("../../../state/modelStore", () => ({
+vi.mock("../../../product/state/modelStore", () => ({
   useEngineModels: () => ({ models: [{ id: "sonnet", label: "Sonnet 5.5" }, { id: "opus", label: "Opus 5.5" }] }),
   useModelStore: Object.assign(() => undefined, { getState: () => ({}) }),
 }));
-vi.mock("../../../state/workspace", () => ({
+vi.mock("../../../product/state/workspace", () => ({
   useWorkspace: (select: (state: unknown) => unknown) => select({ engines: { data: [{ id: "claude", installed: true }] } }),
 }));
 

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { RightTab } from "../../../state/ui";
+import type { RightTab } from "../../../product/state/ui";
 import { tabSlots, visibleTabs } from "./tabs";
 
 const ids: RightTab[] = ["diff", "files", "browser", "activity", "side", "tools"];

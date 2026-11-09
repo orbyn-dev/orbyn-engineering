@@ -1,5 +1,5 @@
-import type { StashedPrompt } from "../../../state/ui";
-import type { ComposerChip } from "../../../lib/composerContext";
+import type { StashedPrompt } from "../../../product/state/ui";
+import type { ComposerChip } from "../../../product/composer/composerContext";
 import type { Suggestion } from "./MentionMenu";
 
 /** Past this a keystroke would lag behind the styling, so the text stays plain. */

@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import type { ToolItem } from "../../../../lib/timeline/types";
-import type { useUi } from "../../../../state/ui";
+import type { ToolItem } from "../../../../product/timeline/types";
+import type { useUi } from "../../../../product/state/ui";
 import type { callPath } from "../../toolCalls";
-import type { parsed } from "../../../../lib/timeline/toolTrace";
+import type { parsed } from "../../../../product/timeline/toolTrace";
 
 /** What Block works out once and hands to the renderer for the call's kind. */
 export interface BlockContext {

@@ -1,7 +1,7 @@
 import { Check, Copy, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useUi, type ToastKind } from "../state/ui";
-import { Button } from "./controls";
+import { Button } from "../../ui/controls";
 
 function ToastIcon({ kind }: { kind?: ToastKind }) {
   switch (kind) {

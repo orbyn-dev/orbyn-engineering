@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
 import type { EngineStatus } from "../../../api/types";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import { KeybindingsSection } from "../pages/Keybindings";
 import { AboutSection } from "./AboutSection";
 import { ProviderTable } from "../providers/ProviderTable";

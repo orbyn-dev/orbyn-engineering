@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PreviewTab } from "../../../api/types";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { BrowserPanel } from "./BrowserPanel";
 import { PreviewFloat } from "../preview/PreviewFloat";
 

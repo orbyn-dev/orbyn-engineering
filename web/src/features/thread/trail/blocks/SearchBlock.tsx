@@ -1,6 +1,6 @@
 import { Search, ChevronDown } from "lucide-react";
-import { parsed } from "../../../../lib/timeline/toolTrace";
-import type { ToolItem } from "../../../../lib/timeline/types";
+import { parsed } from "../../../../product/timeline/toolTrace";
+import type { ToolItem } from "../../../../product/timeline/types";
 import { useOpenState } from "../../../../ui/openState";
 import { resultRows, ROWS_SHOWN, scalar, pluralize } from "../../toolCalls";
 import { BlockHead, FooterText, MoreBar } from "./BlockParts";

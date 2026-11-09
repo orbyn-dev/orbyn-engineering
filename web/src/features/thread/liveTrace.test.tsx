@@ -2,8 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { TimelineRow } from "./items";
-import type { ToolItem } from "../../lib/timeline/types";
-import { arrangeTimeline } from "../../lib/timeline/timeline";
+import type { ToolItem } from "../../product/timeline/types";
+import { arrangeTimeline } from "../../product/timeline/timeline";
 
 const calls: ToolItem[] = Array.from({ length: 44 }, (_, n) => ({ kind: "tool", key: `tool:${n}`, callId: `${n}`, seq: n,
   runId: "r", ts: "", name: "Read", args: JSON.stringify({ path: `file${n}` }), output: "", result: `contents ${n}`, exitCode: 0, done: true }));

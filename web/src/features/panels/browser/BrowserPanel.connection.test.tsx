@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreviewTab } from "../../../api/types";
-import { useConnection } from "../../../state/connection";
+import { useConnection } from "../../../product/state/connection";
 import { BrowserPanel } from "./BrowserPanel";
 import { isLocalUrl } from "./browserModel";
 import { useBrowserPanels } from "./browserPanels";

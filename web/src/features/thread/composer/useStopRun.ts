@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../../../api/client";
 import type { Thread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 
 /** Stops the thread's active run and remembers which one, for the notice that follows. */
 export function useStopRun(thread: Thread, setError: (message: string | null) => void) {
