@@ -37,7 +37,6 @@
     "features/pulls/PullsToolbar.tsx": 676,
     "features/settings/PreferenceSections.tsx": 796,
     "features/usage/UsagePage.tsx": 763,
-    "features/workspace/sidebar/Sidebar.tsx": 1199,
     "state/ui.ts": 783
   },
   "css": {
