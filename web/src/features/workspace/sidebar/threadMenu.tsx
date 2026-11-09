@@ -20,15 +20,15 @@ import {
   SquarePen,
   Trash2,
 } from "lucide-react";
-import { runHandlers } from "../../app/shortcuts";
+import { runHandlers } from "../../../app/shortcuts";
 import { useState } from "react";
-import type { Thread } from "../../api/types";
-import type { SnoozePreset } from "../../generated/SnoozePreset";
-import { navigate } from "../../state/route";
-import { useDraftStore, worktreePurpose } from "../../state/draftStore";
-import { Button, Field } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
-import type { MenuItem } from "../../ui/Menu";
+import type { Thread } from "../../../api/types";
+import type { SnoozePreset } from "../../../generated/SnoozePreset";
+import { navigate } from "../../../state/route";
+import { useDraftStore, worktreePurpose } from "../../../state/draftStore";
+import { Button, Field } from "../../../ui/controls";
+import { Dialog } from "../../../ui/Dialog";
+import type { MenuItem } from "../../../ui/Menu";
 import {
   archiveThreads,
   copyReference,

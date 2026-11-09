@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Thread } from "../../api/types";
+import type { Thread } from "../../../api/types";
 import {
   arrangeThreads,
   attentionRank,

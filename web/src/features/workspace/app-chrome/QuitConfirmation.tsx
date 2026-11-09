@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useCommand } from "../../app/shortcuts";
-import { api, request } from "../../api/client";
-import { inDesktopApp, readShellStatus } from "../../api/shell";
-import type { PreferenceView } from "../../api/types";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useCommand } from "../../../app/shortcuts";
+import { api, request } from "../../../api/client";
+import { inDesktopApp, readShellStatus } from "../../../api/shell";
+import type { PreferenceView } from "../../../api/types";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
 import { HOLD_MS, isQuitKey, quitTracker, type QuitMode, type QuitState } from "./quitTracker";
 
 const MODES: readonly QuitMode[] = ["direct", "hold", "double_press"];

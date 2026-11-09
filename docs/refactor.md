@@ -114,7 +114,12 @@ The backend (B) and web (W) tracks can run in parallel.
   and thread-setting hooks, field, bar, context row and suggestion loading each in a file
   of their own) and `features/thread/trail/` holds the tool trail (`ToolTrail.tsx` 876 to
   261 lines, `PlanRow.tsx`, and `blocks/` with one renderer file per kind). Both left the
-  long-files baseline (13 to 11 long TypeScript files); the rest of W5 (Sidebar, PullDetail,
+  long-files baseline (13 to 11 long TypeScript files). `features/workspace/` now has `sidebar/`
+  (`Sidebar.tsx` 1,199 to 590 lines, with its list rows, chrome, drag-and-drop helpers, folder menu,
+  hooks, search field and delete dialog in files of their own, plus thread rows, menu, actions, undo
+  and grouping), `palette/` (command palette, add-project palette, project filter, path input) and
+  `app-chrome/` (updates, quit confirmation, environment identity, notices, star prompt, clone jobs);
+  `Sidebar.tsx` left the baseline (11 to 10 long TypeScript files). The rest of W5 (PullDetail,
   BrowserPanel and others) is still open.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to

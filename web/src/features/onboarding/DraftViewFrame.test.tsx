@@ -5,7 +5,7 @@ import { useWorkspace } from "../../state/workspace";
 import { DraftView } from "./DraftView";
 
 vi.mock("../../app/shortcuts", () => ({ useCommand: () => undefined }));
-vi.mock("../workspace/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
+vi.mock("../workspace/app-chrome/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
 vi.mock("./useDraftCheckout", () => ({ useDraftCheckout: () => ({ worktree: null, setWorktree: () => undefined, loading: false, error: null }) }));
 vi.mock("./useDraftModelDefaults", () => ({ useDraftModelDefaults: () => ({ installed: [], engine: null, model: null, effort: null, loading: false, error: null, choose: () => undefined, reload: () => undefined }) }));
 

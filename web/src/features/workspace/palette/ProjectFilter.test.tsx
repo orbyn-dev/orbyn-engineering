@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { Project } from "../../api/types";
+import type { Project } from "../../../api/types";
 import { popupPlace, POPUP_HEIGHT, POPUP_WIDTH, ProjectFilter } from "./ProjectFilter";
 
 const window1280 = { width: 1280, height: 800 };

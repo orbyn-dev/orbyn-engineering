@@ -1,16 +1,16 @@
 import { ArrowUp, Download, Folder, GitBranch, Plus, Search, SquareCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api, request } from "../../api/client";
-import type { PreferenceView, Project } from "../../api/types";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { navigate, routeHref } from "../../state/route";
-import { useWorkspace } from "../../state/workspace";
-import { Button } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
-import { FolderBrowser } from "../../ui/FolderBrowser";
+import { api, request } from "../../../api/client";
+import type { PreferenceView, Project } from "../../../api/types";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { navigate, routeHref } from "../../../state/route";
+import { useWorkspace } from "../../../state/workspace";
+import { Button } from "../../../ui/controls";
+import { Dialog } from "../../../ui/Dialog";
+import { FolderBrowser } from "../../../ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
-import { trackClone } from "./CloneJobs";
-import "./addProject.css";
+import { trackClone } from "../app-chrome/CloneJobs";
+import "../addProject.css";
 
 export type AddProjectView = "folders" | "new" | "clone";
 

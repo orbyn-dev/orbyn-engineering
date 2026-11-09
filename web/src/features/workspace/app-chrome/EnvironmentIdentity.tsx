@@ -1,8 +1,8 @@
-import { api } from "../../api/client";
-import type { ReleaseChannel } from "../../generated/ReleaseChannel";
-import { useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { Pill } from "../../ui/controls";
+import { api } from "../../../api/client";
+import type { ReleaseChannel } from "../../../generated/ReleaseChannel";
+import { useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { Pill } from "../../../ui/controls";
 
 const CHANNEL_LABEL: Record<ReleaseChannel, string> = { stable: "Stable", nightly: "Nightly", dev: "Dev" };
 

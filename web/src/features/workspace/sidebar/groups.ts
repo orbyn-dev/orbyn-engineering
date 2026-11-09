@@ -1,4 +1,4 @@
-import type { Project, Thread, UpdateThread } from "../../api/types";
+import type { Project, Thread, UpdateThread } from "../../../api/types";
 
 const DAY_MS = 86_400_000;
 
