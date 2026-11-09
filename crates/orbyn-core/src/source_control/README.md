@@ -12,6 +12,6 @@ Source control on a thread's checkout, always through the person's own installed
 | `forge::cache` | Short-lived memory of GitHub pull request details |
 | `pull_guides` | An agent's reading order for one pull request |
 
-Each folder's `mod.rs` is its front door: the old paths such as `source_control::forge::list_pulls` still resolve through its re-exports. Tests sit beside the module in `tests.rs`.
+Each folder's `mod.rs` is its front door: the old paths such as `source_control::forge::list_pulls` still resolve through its re-exports. Larger folders keep their tests in a `tests.rs` beside `mod.rs` (`forge` also has `revision_tests.rs`); small modules such as `forge::cache`, `scm::writing::style`, `git`, `jj` and `pull_guides` keep theirs inline.
 
 The crate's [group table](../../README.md#groups) lists every group.
