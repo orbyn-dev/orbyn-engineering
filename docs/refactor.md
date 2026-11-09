@@ -104,7 +104,7 @@ Notes:
 | B3c2 | `conversation/runs.rs` (1,996 lines) and `agents/engines/mod.rs` (1,659) into folders | done |
 | B4 | One process-spawn path; narrower visibility | done |
 | W1 | Dead code and shared helpers | done |
-| W2 | CSS ownership: no class defined twice | open, needs the owner's go-ahead |
+| W2 | CSS ownership: split the root stylesheets by concern | done |
 | W3 | Break feature cycles; `features/content` and `index.ts` front doors | done |
 | W4 | Per-feature `api.ts` and hooks | done |
 | W5 | Giant components into sub-folders (composer, trail, sidebar, panels, settings, pulls, usage) | done |
@@ -117,6 +117,19 @@ The backend (B) and web (W) tracks can run in parallel.
 ### Status
 
 - R0, W1: done.
+- W2: done. `styles/thread.css` (4,497 lines) split at rule boundaries, in source order,
+  into 11 concern files: `thread.css` 621, `thread-ask.css` 321, `composer.css` 526,
+  `thread-panels.css` 525, `model-picker.css` 392, `thread-home.css` 247, `documents.css` 251,
+  `rich-content.css` 316, `thread-overlays.css` 258, `diff.css` 127 and `browser.css` 905.
+  `main.tsx` imports them where `thread.css` sat, so the cascade order is unchanged. The split
+  keeps all 784 rules in the same order (the 8 blank separator lines at the new boundaries are
+  dropped, 4,497 lines to 4,489), and the Light, Dark and Dim
+  screenshots of the thread, shell and pages (kept in `docs/refactor/w2/`) are unchanged:
+  Light is pixel-identical, and Dark and Dim differ only on 2–15 glyph-edge pixels of
+  1,049,600, inside the 0–12 pixel noise a repeated capture shows. `pages.css` (1,214),
+  `shell.css` (1,432) and `base.css` (1,134) stay intact: each already owns one concern and
+  is under the 1,500-line limit, so cutting them would add load-order risk without gaining
+  ownership. The CSS baseline is now empty.
 - W5: `features/thread/composer/` holds the composer (`Composer.tsx` 1,109 to 597
   lines, with the mention menu, constants, key and paste handling, attachment, stash, stop
   and thread-setting hooks, field, bar, context row and suggestion loading each in a file
@@ -138,7 +151,8 @@ The backend (B) and web (W) tracks can run in parallel.
   `rows/` (scoped preference rows, scope context and sentence, banner, dialog card), `sections/`
   (one file per settings section; `PreferenceSections.tsx` 796 lines is gone), `pages/`
   (Appearance, Keybindings, Threads), `providers/`, `projects/`, `maintenance/`, `tools-connectors/`
-  and `scheduled-tasks/`; its CSS stays at the root until W2. `features/pulls/` has `list/`, `detail/`
+  and `scheduled-tasks/`; its CSS stays at the root (W2 split the root stylesheets by concern
+  rather than moving feature CSS). `features/pulls/` has `list/`, `detail/`
   and `model/` (`PullDetail.tsx` 900 to 573 lines, `PullsToolbar.tsx` 676 to 289), and
   `features/usage/` keeps its files side by side (`UsagePage.tsx` 763 to 247, with the view, limits,
   parts and price dialog in files of their own). All four left the baseline (7 to 3 long TypeScript
@@ -156,7 +170,7 @@ The backend (B) and web (W) tracks can run in parallel.
   `index.ts`, which exports exactly what the single file did, so about 60 importers are untouched.
   `features/onboarding/DraftView.tsx` (608 to 532) is `DraftView/`: `index.tsx` (the component),
   `DraftModelControls.tsx`, `suggestions.ts` and `draftHelpers.ts`. The web long-file baseline is
-  empty of TypeScript (3 to 0); only `styles/thread.css` stays, for W2.
+  empty of TypeScript (3 to 0) and, after W2, CSS.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
@@ -168,7 +182,8 @@ The backend (B) and web (W) tracks can run in parallel.
   `content`, `onboarding`, `panels`, `pulls`, `skills`, `thread`, `tools` and `workspace`.
   Deep imports 69 to 0 and cycle edges 8 to 0; both rules are now hard errors. The 21
   `direction` entries it left baselined (features importing `app/shortcuts`,
-  `app/commandLabels`, `app/sidebarDrawer`) were removed by W7a. CSS stays where it was (W2).
+  `app/commandLabels`, `app/sidebarDrawer`) were removed by W7a. CSS stays where it was;
+  W2 later split it by concern.
 
 - B3a (engine drivers): done. `agents/driver/{claude,codex,acp}` are folders with the
   driver in `mod.rs` and its pieces beside it (`claude`: args, settings, mcp, catalog,
@@ -295,8 +310,7 @@ curated list of API names; the table is the record).
 ## Handoff
 
 The refactor stops here for now. Whoever continues starts from this section. Current numbers:
-the web architecture baseline has no long TypeScript files and 1 long CSS file (`styles/thread.css`,
-which is W2); the Rust baseline
+the web architecture baseline has no long TypeScript files and no long CSS file; the Rust baseline
 has 1 long file (`bin/orbyn_fake_engine.rs`, a test double). The
 `direction` and `tier` web baselines are empty, and deep imports, file cycles and feature cycles
 have no baseline.
@@ -305,7 +319,6 @@ have no baseline.
 
 | Unit | Work | Size and notes |
 | --- | --- | --- |
-| W2 | CSS ownership: `styles/thread.css` (about 4,500 lines, mostly panels and onboarding rules), `pages.css`, `shell.css`, `base.css` move next to the components they style; shared pieces (`btn`, `dialog`, `pill`, `empty` and the like, defined in up to 10 files) are defined once in `ui/` | **Needs the owner's go-ahead.** The tests cannot see a changed cascade. Compare screenshots before and after in Light, Dark and Dim for every moved rule, and keep the CSS load order identical (compare the first-import order from `main.tsx`, as the W7a review did). |
 | W6 | Naming pass: Page is a route, Panel is a side-panel tab, Dialog is a modal, no "Pane" (`SurfacePane`, `SideChatPane`, `PullsPage` against `PullPage`); keep `web/README.md` in step | Do after W2 so files are renamed once. |
 | Front-door TODO rows | Hoist the helper exports in the audit table (one other feature uses each) to `product/` or `lib/` when a second feature needs them; hoist `copyText` to `lib/` | Opportunistic. |
 | Closeout | Turn any remaining baselined rule into a hard error, run a packaged-app build and walk-through (`cd desktop && npm run build -- --bundles app`), run the worktree cleanup report | The packaged-app check has not been run since the logo, tools, picker and tab strip merged into main. |
