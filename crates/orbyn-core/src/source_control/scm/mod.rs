@@ -3,16 +3,11 @@
 //! of it needs a trusted folder, and commit hooks do run here, as they would for
 //! the user. Writes wait for the thread's run to finish.
 
-mod pulls;
-
-mod review;
-
-mod stack;
-
 mod forges;
-
+mod pulls;
+mod review;
+mod stack;
 mod watch;
-
 pub(crate) mod writing;
 
 use std::path::Path;
@@ -35,6 +30,7 @@ use crate::util::tail;
 
 const FORGE_TIMEOUT: Duration = Duration::from_secs(120);
 const PUSH_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Runs git for a real user action: hooks stay on, and nothing may prompt.
 pub(crate) async fn git_user(cwd: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     let mut command = Command::new("git");

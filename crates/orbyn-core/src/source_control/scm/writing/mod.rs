@@ -2,6 +2,7 @@
 //! Context collection never stages files, runs filters, or contacts a forge.
 
 mod candidate;
+mod style;
 
 use std::path::Path;
 
@@ -17,13 +18,12 @@ use candidate::{
     utf8,
 };
 
-mod style;
-
 pub(crate) fn validate_style(value: &serde_json::Value) -> Result<()> {
     style::parse(value).map(|_| ())
 }
 
 const REPLY_BYTES: usize = 32 * 1024;
+
 fn invalid(message: &str) -> CoreError {
     CoreError::Invalid(message.into())
 }
