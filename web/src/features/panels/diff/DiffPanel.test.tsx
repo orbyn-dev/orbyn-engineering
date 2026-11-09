@@ -6,7 +6,8 @@ import { pullsApi } from "../../../api/pulls";
 import { useComposerChips } from "../../../state/composerChipStore";
 import { useUi } from "../../../state/ui";
 import { useWorkspace } from "../../../state/workspace";
-import { DiffPanel, diffCommentRange, nextPageEnd, numberedLines, parsePatch } from "./DiffPanel";
+import { DiffPanel } from "./DiffPanel";
+import { diffCommentRange, nextPageEnd, numberedLines, parsePatch } from "./diffModel";
 afterEach(() => {
   vi.restoreAllMocks();
   useComposerChips.setState({ chips: {} });
