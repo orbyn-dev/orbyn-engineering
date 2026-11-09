@@ -1720,6 +1720,14 @@ store, policy or UI logic. Tiers: `native` (Claude, Codex), `acp` (one shared
 driver), `agui` (one shared driver, also the OpenBot connector) and `terminal`
 (PTY only, always unmanaged).
 
+Each engine driver is a folder under `agents/driver/` whose `mod.rs` holds the driver type
+and its `EngineDriver` impl and keeps the public paths: `claude/` (`args`, `settings`,
+`mcp`, `catalog`, `protocol`, `events`, `plan`, `usage`, `workflows`), `codex/` (`protocol`,
+`sandbox`, `turn`, `events`, `catalog`, `tools`, `limits`, `short_sessions`) and `acp/`
+(`sessions`, `events`, `models`, `permissions`, `replay`, `sign_in`). Tests sit in
+`tests.rs` beside the module, and the pieces the drivers share (`pipes`, `rpc`,
+`terminal`, `diagnostics`) stay beside them.
+
 `engines/known.rs` lists CLIs that speak ACP from their own binary, with what each needs
 to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, fx, Grok
 Build, Hermes, Kilo, Kimi and OpenCode. One is listed only when its program is found, and

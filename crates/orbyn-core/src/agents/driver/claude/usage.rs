@@ -3,7 +3,7 @@
 use orbyn_contracts::LimitWindow;
 use serde_json::{Value, json};
 
-use super::probe_failed;
+use super::catalog::probe_failed;
 use crate::error::Result;
 
 fn reported_percent(value: &Value) -> Option<f64> {

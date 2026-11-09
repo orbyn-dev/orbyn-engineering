@@ -5,7 +5,7 @@ Everything about the coding engines Orbyn runs: which exist, how to talk to each
 | Module | Owns |
 | --- | --- |
 | `engines` | Engine registry, status and updates through the installer that owns each binary |
-| `driver` | One driver per engine protocol, turning it into `EngineEvent`s |
+| `driver` | One driver per engine protocol, turning it into `EngineEvent`s: `claude/`, `codex/` and `acp/` are folders (`mod.rs` is the driver, the other files its pieces, `tests.rs` its tests) beside the shared `pipes`, `rpc`, `terminal` and `diagnostics` |
 | `acp_registry` | The public ACP agent registry and installing an agent as a custom engine |
 | `acp_mcp_bridge` | Stdio access to a run's MCP endpoint for ACP agents |
 | `native_sessions` | An engine's own saved conversations: list, import, delete |

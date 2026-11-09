@@ -141,6 +141,14 @@ The backend (B) and web (W) tracks can run in parallel.
   `app/commandLabels`, `app/sidebarDrawer`), the long files and `styles/thread.css`.
   Left for later units: CSS stays where it was (W2), giant components stay whole (W5).
 
+- B3a (engine drivers): done. `agents/driver/{claude,codex,acp}` are folders with the
+  driver in `mod.rs` and its pieces beside it (`claude`: args, settings, mcp, catalog,
+  protocol, events, plan; `codex`: protocol, sandbox, turn, events, catalog, tools, limits,
+  short_sessions; `acp`: sessions, events, models, permissions, replay, sign_in), tests in
+  `tests.rs`. `claude.rs` (3,438 lines), `codex.rs` (2,726) and `acp.rs` (1,507) left the
+  Rust size baseline; the largest driver file is now 642 lines (`claude/events.rs`). Public
+  paths such as `agents::driver::claude::run_args` are unchanged.
+
 ## Done when
 
 - No hand-written source file over about 800 lines.
