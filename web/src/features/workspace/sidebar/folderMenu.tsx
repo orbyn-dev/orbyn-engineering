@@ -2,7 +2,7 @@ import { Copy, Layers, Settings, SquarePen } from "lucide-react";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import { navigate } from "../../../product/state/route";
 import type { MenuItem } from "../../../ui/Menu";
-import { copyText } from "./threadActions";
+import { copyText } from "../../../product/ui/copyText";
 import type { ProjectFolder } from "./groups";
 
 const GROUPING_LABELS: Record<ProjectGroupingMode, string> = {

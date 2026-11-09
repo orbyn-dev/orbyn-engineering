@@ -19,7 +19,6 @@ use orbyn_core::CoreError;
 use orbyn_core::host::terminal::{
     MAIN_TERMINAL, PtyOutputState, PtySession, PtySpec, TerminalLabel, default_shell,
 };
-use orbyn_core::store::AuditRecord;
 use orbyn_core::util::new_id;
 use serde::Deserialize;
 use serde_json::json;
@@ -68,16 +67,13 @@ pub async fn terminal(
     let session = match state.core.terminals.session(&thread_id) {
         Some(session) => session,
         None => {
-            state.core.store.append_audit(&AuditRecord {
-                actor: LOCAL_USER.to_owned(),
-                action: "terminal.open".into(),
-                target: thread.cwd.clone(),
-                decision: None,
-                source: "user".into(),
-                thread_id: Some(thread_id.clone()),
-                run_id: None,
-                detail: json!({ "managed": false }),
-            })?;
+            state.core.record_user_audit(
+                LOCAL_USER,
+                "terminal.open",
+                &thread.cwd,
+                &thread_id,
+                json!({ "managed": false }),
+            )?;
             state.core.terminals.open(
                 &thread_id,
                 PtySpec {
@@ -157,16 +153,13 @@ pub async fn open(
         None => None,
     };
     let terminal = new_id();
-    state.core.store.append_audit(&AuditRecord {
-        actor: LOCAL_USER.to_owned(),
-        action: "terminal.open".into(),
-        target: thread.cwd.clone(),
-        decision: None,
-        source: "user".into(),
-        thread_id: Some(id.clone()),
-        run_id: None,
-        detail: json!({ "managed": false, "terminal": terminal }),
-    })?;
+    state.core.record_user_audit(
+        LOCAL_USER,
+        "terminal.open",
+        &thread.cwd,
+        &id,
+        json!({ "managed": false, "terminal": terminal }),
+    )?;
     let info = state.core.terminals.open_named(
         &id,
         &terminal,

@@ -2,7 +2,7 @@ import { MessageSquare, SquareCheck, Users, X } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 import type { PullListEntry } from "../../../api/types";
 import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
-import { forgeName } from "../model/pullStore";
+import { forgeName } from "../../../product/pulls/labels";
 import { checksView, requestedName, yourReview, type PullDetails } from "../model/pullModel";
 import type { DetailsStatus } from "../model/usePullDetails";
 

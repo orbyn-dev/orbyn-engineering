@@ -6,6 +6,7 @@ import { threadToken } from "../../../product/composer/skillMention";
 import { navigate, parseRoute } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
+import { copyText } from "../../../product/ui/copyText";
 import { arrangeThreads, threadsFlat } from "./groups";
 import { pushUndo } from "./threadUndo";
 
@@ -181,16 +182,6 @@ export async function turnIntoProject(thread: Thread) {
     await refreshThreads(project.id);
   } catch (failure) {
     toastFailure("turn it into a project", failure);
-  }
-}
-
-export async function copyText(text: string, done: string) {
-  const { pushToast } = useUi.getState();
-  try {
-    await navigator.clipboard.writeText(text);
-    pushToast(done, "copied");
-  } catch {
-    pushToast("Couldn't copy.");
   }
 }
 

@@ -19,21 +19,6 @@ export function previewProjectId(hash = window.location.hash): string | null {
   return route.name === "thread" ? (useWorkspace.getState().threads[route.id]?.project_id ?? null) : null;
 }
 
-/** `orbyn://thread/<id>` opens a thread here. */
-export const threadLinkId = (href: string): string | null =>
-  /^orbyn:\/\/thread\/([\w-]+)$/.exec(href.trim())?.[1] ?? null;
-
-/** A path relative to the checkout or absolute, with an optional line: `src/a.ts:12`. */
-export function fileLinkTarget(raw: string): { path: string; line: number | null } | null {
-  const href = raw.trim().replace(/^file:\/\//, "");
-  if (!href || /^[a-z][a-z0-9+.-]*:\/\//i.test(href) || /^mailto:/i.test(href) || href.startsWith("#")) return null;
-  const hash = /#L(\d+)(?:C\d+)?$/.exec(href);
-  const colon = /:(\d+)(?::\d+)?$/.exec(href);
-  const line = Number(hash?.[1] ?? colon?.[1]) || null;
-  const path = decodeURI(href.replace(/#.*$/, "").replace(/:\d+(?::\d+)?$/, ""));
-  return /[/.]/.test(path) ? { path, line } : null;
-}
-
 export function ThreadLink({ id, children }: { id: string; children: ReactNode }) {
   return (
     <a

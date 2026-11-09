@@ -3,7 +3,7 @@ import { readPreferences } from "./api";
 import type { EngineStatus, PreferenceView } from "../../api/types";
 import { useUi } from "../../product/state/ui";
 import { toFailure } from "../../lib/useAsync";
-import { chooseDraftEngine } from "./draftEngine";
+import { chooseDraftEngine } from "../../product/engines/draftEngine";
 
 type Choice = { engine: string; model: string | null; effort: string | null };
 type Defaults = { engine: string; model: string; effort: string; disabled: string[] };

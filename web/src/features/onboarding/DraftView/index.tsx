@@ -19,7 +19,7 @@ import { IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Loading, NarrowBack } from "../../../product/ui/states";
-import { ACCESS, shownAccess } from "../../thread";
+import { ACCESS, shownAccess } from "../../../product/composer/access";
 import { ModelPickerTrigger } from "../../thread";
 import { DraftProjectPicker } from "../DraftProjectPicker";
 import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";

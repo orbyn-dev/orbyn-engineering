@@ -1,40 +1,16 @@
-import { Lock, PenLine, ShieldOff, Sparkles, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EngineStatus, ModelInfo, ModelOption, PermissionMode } from "../../../api/types";
-import { FloatingPicker } from "./ModelPicker";
+import type { ModelInfo, ModelOption, PermissionMode } from "../../../api/types";
+import { ACCESS } from "../../../product/composer/access";
 import { effortOption, effortValue } from "../../../product/state/modelStore";
-import { EffortGlyph } from "./EffortGlyph";
 import { useUi } from "../../../product/state/ui";
 import { Presence } from "../../../ui/Presence";
 import { usePopover } from "../../../ui/usePopover";
+import { EffortGlyph } from "./EffortGlyph";
+import { FloatingPicker } from "./ModelPicker";
 
-export const ACCESS: Record<PermissionMode, { label: string; description: string; icon: LucideIcon }> = {
-  supervised: { label: "Supervised", description: "Ask before commands and file changes.", icon: Lock },
-  auto_edits: {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
-    icon: PenLine,
-  },
-  auto: {
-    label: "Auto",
-    description: "Supported engines approve routine actions; others still ask.",
-    icon: Sparkles,
-  },
-  full_access: { label: "Full access", description: "Allow commands and edits without prompts.", icon: ShieldOff },
-};
+export { ACCESS, offeredModes, shownAccess } from "../../../product/composer/access";
 
 const MODES = Object.keys(ACCESS) as PermissionMode[];
-
-/** The modes an engine offers, in menu order. An older service that does not say offers all. */
-export function offeredModes(engine: Pick<EngineStatus, "capabilities"> | null): PermissionMode[] {
-  const offered = engine?.capabilities.permission_modes;
-  return offered ? MODES.filter((mode) => offered.includes(mode)) : MODES;
-}
-
-/** What a saved mode runs as: one the engine does not offer runs, and shows, Supervised. */
-export function shownAccess(engine: Pick<EngineStatus, "capabilities"> | null, saved: PermissionMode): PermissionMode {
-  return offeredModes(engine).includes(saved) ? saved : "supervised";
-}
 
 function TraitsMenu({
   model,

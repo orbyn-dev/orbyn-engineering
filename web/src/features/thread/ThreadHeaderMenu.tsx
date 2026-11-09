@@ -8,7 +8,8 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { archiveThreads, copyText, deleteThreadNow, settleThreads, unarchiveThread, unsettleThreads, wakeThreads } from "../workspace";
+import { archiveThreads, deleteThreadNow, settleThreads, unarchiveThread, unsettleThreads, wakeThreads } from "../workspace";
+import { copyText } from "../../product/ui/copyText";
 import { RenameThreadDialog, snoozeChildren } from "../workspace";
 
 /** Every thread below this one (side chats, children) and the thread itself. */

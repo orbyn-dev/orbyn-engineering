@@ -20,7 +20,7 @@ import { PullGuide } from "./PullGuide";
 import { pullsApi } from "../api";
 import { checkConnectionNow, useConnectionKind } from "../../../product/state/connection";
 import { useThreadPulls } from "../model/pullStore";
-import { forgeName, numberLabel } from "../model/pullStore";
+import { forgeName, numberLabel } from "../../../product/pulls/labels";
 import { useVisibleProjects } from "../../../product/state/workspace";
 import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";

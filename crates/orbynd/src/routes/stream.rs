@@ -12,7 +12,6 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures_util::{Stream, StreamExt, stream};
 use orbyn_contracts::{AgUiEvent, ApprovalState, ThreadEvent};
-use orbyn_core::store::Store;
 use orbyn_core::{Core, CoreError};
 use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
@@ -37,7 +36,7 @@ const KEEP_ALIVE: Duration = Duration::from_secs(15);
 const AGUI_ACTOR: &str = "agui-client";
 
 struct Follower {
-    store: Arc<Store>,
+    core: Arc<Core>,
     thread_id: String,
     cursor: i64,
     wake: watch::Receiver<i64>,
@@ -48,7 +47,11 @@ impl Follower {
     /// read and the wait still ends the wait.
     async fn next_batch(&mut self) -> Option<Vec<ThreadEvent>> {
         loop {
-            let batch = match self.store.events_after(&self.thread_id, self.cursor, BATCH) {
+            let batch = match self
+                .core
+                .store
+                .events_after(&self.thread_id, self.cursor, BATCH)
+            {
                 Ok(batch) => batch,
                 Err(error) => {
                     tracing::warn!(%error, "could not read the event log");
@@ -65,10 +68,10 @@ impl Follower {
     }
 }
 
-fn follower(core: &Core, thread_id: &str, cursor: i64) -> Follower {
+fn follower(core: &Arc<Core>, thread_id: &str, cursor: i64) -> Follower {
     let wake = core.store.hub().subscribe(thread_id);
     Follower {
-        store: core.store.clone(),
+        core: core.clone(),
         thread_id: thread_id.to_owned(),
         cursor,
         wake,
@@ -234,6 +237,7 @@ impl Projection {
     fn open_interrupts(&self) -> Vec<Value> {
         let pending = self
             .log
+            .core
             .store
             .pending_for_thread(&self.log.thread_id)
             .unwrap_or_default();
@@ -375,7 +379,7 @@ pub async fn agui_run(
     };
     let projection = Projection {
         log: Follower {
-            store: core.store.clone(),
+            core: core.clone(),
             thread_id: id,
             cursor,
             wake,

@@ -9,7 +9,7 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { BaseDirectoryDialog } from "../projects/BaseDirectoryDialog";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
-import { DETAIL_ROWS, detailsMenuItems } from "../../thread";
+import { DETAIL_ROWS, detailsMenuItems } from "../../../product/ui/details";
 import { DesktopApp } from "./DesktopApp";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { heading, Toggle } from "./parts";

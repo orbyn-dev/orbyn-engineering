@@ -1,4 +1,4 @@
-import { Check, GitCommitHorizontal, GitPullRequest, Upload, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
 import type { GitActionResult, GitPhase, Thread } from "../../../api/types";
@@ -8,33 +8,7 @@ import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button, Field } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
-
-export interface Plan {
-  title: string;
-  commit: boolean;
-  push: boolean;
-  pull: boolean;
-}
-
-export const PLANS: { label: string; plan: Plan; icon: typeof Upload }[] = [
-  { label: "Commit", plan: { title: "Commit", commit: true, push: false, pull: false }, icon: GitCommitHorizontal },
-  { label: "Commit and push", plan: { title: "Commit and push", commit: true, push: true, pull: false }, icon: Upload },
-  {
-    label: "Commit, push and create pull request",
-    plan: { title: "Commit, push and create pull request", commit: true, push: true, pull: true },
-    icon: GitPullRequest,
-  },
-  { label: "Push", plan: { title: "Push", commit: false, push: true, pull: false }, icon: Upload },
-  {
-    label: "Create pull request",
-    plan: { title: "Create pull request", commit: false, push: true, pull: true },
-    icon: GitPullRequest,
-  },
-];
-
-/** The menu's own "Create pull request" entry, for other places that offer it. */
-export const createPullRequestPlan = (): Plan => PLANS.find((entry) => entry.label === "Create pull request")!.plan;
-
+import type { Plan } from "../../../product/git/plans";
 /** False when the checkout can't answer Git questions, where the header menu hides too. */
 export function useGitAvailable(threadId: string): boolean {
   const branches = useAsync(`git-branches:${threadId}`, (signal) => api.branches(threadId, signal));

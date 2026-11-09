@@ -1,4 +1,5 @@
 import { mediaKind, rawUrl } from "../../../product/media/media";
+import { safeHref } from "../../../lib/links";
 import { serviceUrl } from "../api";
 import { readToken } from "../api";
 
@@ -25,21 +26,6 @@ export const MEDIA_ATTRIBUTE = "data-md-media";
 
 /** The message container one dialog expands; a thread's other messages stay out. */
 const GALLERY_SCOPE = ".md";
-
-export function safeHref(raw: string): string | null {
-  const href = raw.trim();
-  // Control characters and whitespace can hide a scheme from a naive check.
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\s]/.test(href)) return null;
-  try {
-    const url = new URL(href);
-    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:"
-      ? url.href
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const DRIVE = /^[a-z]:[\\/]/i;

@@ -83,7 +83,8 @@ Notes:
 - `crates/orbynd/src`: `main.rs` (start-up only), `routes/` by area, `http/`
   (errors, json, access, remote images), `cli/`, `bin/`.
 - `web/src`: `app/` (shell only), `api/`, `product/` (`state/`, `timeline/`, `projects/`,
-  `composer/`, `shell/`, `tasks/`, `media/`, `panels/`, `runs/`, `ui/`), `lib/` and `ui/`
+  `composer/`, `engines/`, `git/`, `pulls/`, `shell/`, `tasks/`, `media/`, `panels/`, `runs/`,
+  `ui/`), `lib/` and `ui/`
   (generic: each control with its CSS), `styles/` (tokens, base, layouts only), `generated/`, and
   `features/`: `thread/` (header, composer, timeline, trail, messages, approvals,
   details, git, mcp-apps), `content/` (markdown, code), `panels/` (host, strip,
@@ -172,11 +173,11 @@ The backend (B) and web (W) tracks can run in parallel.
   `DraftModelControls.tsx`, `suggestions.ts` and `draftHelpers.ts`. The web long-file baseline is
   empty of TypeScript (3 to 0) and, after W2, CSS.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
-  Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
-  shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
-  useResolvedThreadPath,editorPreferences,runProjectAction,actionPreview,media}`,
-  `lib/timeline/{projection,types,timeline,toolTrace,mcpAppBridge}`,
-  `ui/{DetailRows,FolderBrowser}`. `pullStore` moved to `pulls`; `SideChatPanel` and
+  Tex, the pull-link hover card, code blocks and highlighting; the ANSI parser is
+  `lib/ansi.ts`. Moved down to shared layers: `product/state/{composerChipStore,threadLogs}`,
+  `product/composer/{composerContext,useResolvedThreadPath,editorPreferences,runProjectAction,actionPreview}`,
+  `product/media`, `product/timeline/{projection,types,timeline,toolTrace,mcpAppBridge}`,
+  `product/ui/{DetailRows,FolderBrowser}`. `pullStore` moved to `pulls`; `SideChatPanel` and
   `sideChat` moved to `thread`, which hands the tab's content to `PanelHost`; the git
   dialog and the restore-files dialog moved to `panels`. Front doors exist for
   `content`, `onboarding`, `panels`, `pulls`, `skills`, `thread`, `tools` and `workspace`.
@@ -240,8 +241,8 @@ The backend (B) and web (W) tracks can run in parallel.
   the transport or builds an endpoint path. Type-only `api/types` imports stay, since they
   carry no call. Every operation keeps its original path, method and payload.
 
-- W7a (product and generic tiers): done for the shared folders; front-door helpers are open (see
-  the audit below). `state/` became `product/state/`, and `lib/timeline` became `product/timeline`.
+- W7a (product and generic tiers): done, including the front-door helpers. `state/` became
+  `product/state/`, and `lib/timeline` became `product/timeline`.
   The shared files that carry product vocabulary and have two or more feature users moved to
   `product/` (`git mv`, then an import commit). Files with one feature user moved into it
   (`SettingRow`, `commandLabels`, `SlidersIcon`, `pageLabel`). The 21 `direction` entries
@@ -250,6 +251,12 @@ The backend (B) and web (W) tracks can run in parallel.
   `arch-check` and by ESLint. Non-move edits: `useLingering` and `useSettledAfter` moved verbatim
   from `panelAnimations` into `lib/lingering.ts` (so `ui/Presence` stays generic), and `runStateLabels`
   and `authLabels` moved verbatim out of `lib/format.ts` into `product/runs/stateLabels.ts`.
+  The closeout hoisted the front-door helpers: `draftEngine` is `product/engines/`; the Markdown
+  parser, plain-text extraction and link builders are `lib/markdown.ts` and `lib/links.ts`; ANSI
+  is `lib/ansi.ts`; composer access is `product/composer/access.ts`; git plans are
+  `product/git/plans.ts`; pull labels are `product/pulls/labels.ts`; clipboard and detail-row
+  helpers are `product/ui/`; and `pulls` exposes `useThreadPullEntry` instead of `entryOf`.
+  Every feature front door now exports API only.
 
 ### Tiers for shared code
 
@@ -280,47 +287,55 @@ Classification of the former shared folders (features = how many features import
 | `ui/{Collapsible,Dialog,Menu,Presence,Segmented,controls,focusReturn,openState,tabKeys,useEscapeClose,usePopover}` | 11 | generic | stay |
 | `lib/{format,storage,motion,useAsync,useLayout,useNow,keptData,clearSelection,inputModality}` | 9 | generic | stay (`lib/lingering` is new: the two verbatim hooks above) |
 
-Counts of hand-written files (no tests): `product/` 43 (40 TypeScript, 3 CSS), `lib/` 10 (was 28),
-`ui/` 11 (was 25), `app/` 9 (was 12), `state/` 0 (was 10). `ui/openState` keeps thread words in comments
+Counts of hand-written files (no tests): `product/` 54 (51 TypeScript, 3 CSS), `lib/` 13,
+`ui/` 11, `app/` 17, `state/` 0 (was 10). `ui/openState` keeps thread words in comments
 only, and its names are generic, so it stays generic.
 
-Classification TODOs (not moved now): `product/state/connection.ts` is a generic offline store
-and could move to `lib/`; `lib/useLayout.ts` names `panelOverlays`, so it may be product; `ui/openState.ts`
-mentions threads in comments only.
+Classification review: `product/state/connection.ts` stays product because it names the Orbyn
+service; `lib/useLayout.ts` stays generic because `ui/Presence` uses its reduced-motion hook, while
+its panel-specific names are documented beside the exports; `ui/openState.ts` stays generic because
+only its comments mention threads.
 
 ### Front-door audit
 
-Every export of a `features/<x>/index.ts` another feature imports. API is a view, dialog, command
-or state other features use. A helper is a builder, formatter or pure function; one used by a single
-other feature is a TODO row, hoisted to `product/` or `lib/` when a second feature needs it or it
-breaks a cycle. The check does not yet limit what a front door may export (skipped: it needs a
-curated list of API names; the table is the record).
+Every export of a `features/<x>/index.ts` another feature imports is an API: a view, dialog,
+command or state. The closeout removed the last helpers, so no front door exports a builder,
+formatter or pure function; each lives in `product/` or `lib/`. The check still does not limit
+what a front door may export (that needs a curated list of API names; this table is the record).
 
-| Feature | API | Helpers (TODO) |
+| Feature | API |
+| --- | --- |
+| `content` | `Markdown`, `CodeBlock`, `Mermaid`, `Lightbox` |
+| `onboarding` | none |
+| `panels` | `GitActionDialog`, `PublishDialog`, `RestoreFilesDialog`, `PanelHost`, `TerminalBar`, `TerminalDrawerBody`, `useGitAvailable` |
+| `pulls` | `ToolbarPopover`, `useThreadPullEntry`, `useThreadPulls` |
+| `skills` | `SkillsNav` |
+| `thread` | `ModelPickerTrigger`, `EffortTrigger`, `useTraitsMenu` |
+| `tools` | `ToolsList`, `ToolsRow`, `ToolsTab` |
+| `workspace` | `AddProjectPalette`, `GitHubStarPrompt`, `RenameThreadDialog`, `recordUserPrompt`, `archiveThreads`, `deleteThreadNow`, `settleThreads`, `unarchiveThread`, `unsettleThreads`, `wakeThreads`, `snoozeChildren`, `threadRunState` |
+
+## Closeout
+
+The folder-architecture refactor is complete. Both architecture baselines are empty: web
+`direction`, `tier`, TypeScript and CSS lines; Rust `long_files`, `orbynd_git_spawns` and
+`orbynd_store_refs`. The Rust test double is a folder,
+`crates/orbynd/src/bin/orbyn_fake_engine/`, split by protocol (main, shared, one_shot,
+claude, codex, acp, agui, pty; `codex/` is a folder, largest `codex/turn.rs`, 493 lines). `orbynd` no longer names an
+`orbyn_core::store` type: `Core::record_user_audit` owns the terminal audit row and the stream
+follower holds `Arc<Core>`. Every feature front door exports API only; the hoists are listed
+under W7a.
+
+### Closeout evidence
+
+| Check | Command | Result |
 | --- | --- | --- |
-| `content` | `Markdown`, `CodeBlock`, `Mermaid`, `Lightbox` | `fileLinkTarget`, `markdownText`, `outputSpans` (all `thread` only) |
-| `onboarding` | none | `chooseDraftEngine` (`settings` only) |
-| `panels` | `GitActionDialog`, `PublishDialog`, `RestoreFilesDialog`, `PanelHost`, `TerminalBar`, `TerminalDrawerBody`, `useGitAvailable` | `PLANS`, `Plan`, `createPullRequestPlan` (`thread` only) |
-| `pulls` | `ToolbarPopover`, `useThreadPulls` | `WATCH_TIP`, `checksSummary`, `chipDot`, `chipLabel`, `entryOf`, `forgeName`, `numberLabel`, `readyToMerge`, `stateWord` (`thread` only) |
-| `skills` | `SkillsNav` | none |
-| `thread` | `ModelPickerTrigger`, `EffortTrigger`, `useTraitsMenu` | `ACCESS`, `offeredModes`, `shownAccess` (`onboarding` only), `DETAIL_ROWS`, `detailsMenuItems` (`settings` only) |
-| `tools` | `ToolsList`, `ToolsRow`, `ToolsTab` | none |
-| `workspace` | `AddProjectPalette`, `GitHubStarPrompt`, `RenameThreadDialog`, `recordUserPrompt`, `archiveThreads`, `deleteThreadNow`, `settleThreads`, `unarchiveThread`, `unsettleThreads`, `wakeThreads`, `snoozeChildren`, `threadRunState` | `copyText` (`thread` only; generic, wants `lib/`) |
-
-## Handoff
-
-The refactor stops here for now. Whoever continues starts from this section. Current numbers:
-the web architecture baseline has no long TypeScript files and no long CSS file; the Rust baseline
-has 1 long file (`bin/orbyn_fake_engine.rs`, a test double). The
-`direction` and `tier` web baselines are empty, and deep imports, file cycles and feature cycles
-have no baseline.
-
-### What is open, in the order to do it
-
-| Unit | Work | Size and notes |
-| --- | --- | --- |
-| Front-door TODO rows | Hoist the helper exports in the audit table (one other feature uses each) to `product/` or `lib/` when a second feature needs them; hoist `copyText` to `lib/` | Opportunistic. |
-| Closeout | Turn any remaining baselined rule into a hard error, run a packaged-app build and walk-through (`cd desktop && npm run build -- --bundles app`), run the worktree cleanup report | The packaged-app check has not been run since the logo, tools, picker and tab strip merged into main. |
+| Web architecture and types | `cd web && npm run check` | pass: `arch: no new violations` |
+| Web tests | `cd web && npm test` | 210 files, 1,727 tests passed |
+| Rust format and lint | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | pass |
+| Rust tests | `cargo test --workspace`; `cargo test --workspace --doc` | 1,636 passed, 0 failed, 13 ignored; docs passed |
+| Rust architecture | `python3 scripts/check_rust_arch.py` | `rust arch: no new violations` |
+| Packaged app | `cd desktop && npm run build -- --bundles app`; `node scripts/smoke-app.mjs` | pass: macOS `.app` built; smoke covered UI, providers, usage, handoff and service exit |
+| Worktree cleanup | `worktree_retire.py report` | 0 eligible items |
 
 ### How a unit is run
 
@@ -359,8 +374,10 @@ have no baseline.
 
 ## Done when
 
-- No hand-written source file over about 800 lines.
+- No hand-written source file over the enforced limits: 600 lines for web TypeScript, 1,500 for
+  CSS and 1,500 for Rust; all three baselines are empty.
 - No web feature import cycles; the check fails if one returns.
 - Global stylesheets hold only tokens, base and layout, with no class defined twice.
 - `orbynd` holds routing and transport only, with one process-spawn path.
-- Full checks pass, and so does a packaged-app check.
+- Full checks pass, and so does a packaged-app check. All conditions are met at closeout; the
+  evidence table above records the commands and results.

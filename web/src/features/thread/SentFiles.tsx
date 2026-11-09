@@ -7,7 +7,7 @@ import { useWorkspace } from "../../product/state/workspace";
 import { Dialog } from "../../ui/Dialog";
 import { TimelineThread } from "./timelineThread";
 import { Lightbox } from "../content";
-import { fileLinkTarget } from "../content";
+import { fileLinkTarget } from "../../lib/links";
 import type { SentAttachment } from "../../product/timeline/types";
 
 /** A typed `@path` the message referred to. */

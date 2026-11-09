@@ -248,6 +248,27 @@ impl Core {
         Ok(core)
     }
 
+    /// Records a user action without exposing store types to transport.
+    pub fn record_user_audit(
+        &self,
+        actor: &str,
+        action: &str,
+        target: &str,
+        thread_id: &str,
+        detail: serde_json::Value,
+    ) -> Result<i64> {
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: actor.to_owned(),
+            action: action.to_owned(),
+            target: target.to_owned(),
+            decision: None,
+            source: "user".to_owned(),
+            thread_id: Some(thread_id.to_owned()),
+            run_id: None,
+            detail,
+        })
+    }
+
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo
     /// hooks, so it needs a trusted folder like an engine does.
     pub async fn create_thread(&self, request: orbyn_contracts::CreateThread) -> Result<Thread> {

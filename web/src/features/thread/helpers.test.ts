@@ -6,7 +6,7 @@ import { touchesOf } from "./approvalDetail";
 import { percentLabel } from "./composer/ComposerExtras";
 import type { ThreadItem } from "../../product/timeline/types";
 import { insertToken, pullToken, threadToken, triggerAt } from "../../product/composer/skillMention";
-import { outputSpans } from "../content";
+import { outputSpans } from "../../lib/ansi";
 import type { ToolItem } from "../../product/timeline/types";
 import { arrangeTimeline, groupWork } from "../../product/timeline/timeline";
 import { summarizeWork } from "../../product/timeline/toolTrace";

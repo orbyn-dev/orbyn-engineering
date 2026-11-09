@@ -21,9 +21,9 @@ enforces that.
 | Folder | Owns |
 | --- | --- |
 | `src/app` | The shell, title bar and startup; only the shell uses what lives here |
-| `src/features/<name>` | One capability each: onboarding, panels, pulls, settings, thread, usage, workspace |
+| `src/features/<name>` | One capability each: content, onboarding, panels, platform, pulls, settings, skills, thread, tools, usage, workspace |
 | `src/api` | The HTTP client, streams, origin and token |
-| `src/product` | Code that carries this product's vocabulary and two or more features use: `state/` (route, UI, workspace stores), `timeline/`, `projects/`, `composer/`, `shell/` (shortcuts), `tasks/`, `media/`, `panels/` (panel motion), `runs/` (state labels), `ui/` (product components) |
+| `src/product` | Code that carries this product's vocabulary and two or more features use: `state/` (route, UI, workspace stores), `timeline/`, `projects/`, `composer/`, `engines/`, `git/`, `pulls/`, `shell/` (shortcuts), `tasks/`, `media/`, `panels/` (panel motion), `runs/` (state labels), `ui/` (product components) |
 | `src/ui` | Generic visual primitives with no product words |
 | `src/lib` | Generic helpers that would work in any repository |
 | `src/styles` | Tokens, themes and page styles |
@@ -34,6 +34,8 @@ Imports point inward: `app` -> `features` -> `product` -> generic (`ui`, `lib`,
 folders never import a feature or `app`, generic code never imports `product`, and
 ESLint and `npm run check` fail the change that tries. A file used by one feature
 lives in that feature; shared code appears only by hoisting (docs/refactor.md).
+Each feature's `index.ts` exports API views, dialogs, commands and state only; pure
+helpers live in `src/product` or `src/lib`.
 
 ## Names
 
@@ -52,7 +54,6 @@ Browser tests are in `e2e/`, against the mock API (`mock/`) or a real service
 
 - Features still import each other, most often `panels` and `thread`. Each such
   import is a candidate for moving the shared piece to its real owner.
-- Front doors still export some helpers (docs/refactor.md lists them).
 - ESLint enforces the inward direction for shared folders only, and only for
   static `import` and `export … from`. Dynamic `import()`, type queries, imports
   between features and tests are not checked.
