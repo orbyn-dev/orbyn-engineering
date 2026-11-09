@@ -4,21 +4,15 @@
 //! asking, so each one with an effect goes through the gate here, as a `tool` action:
 //! it needs a person unless the thread is in full access or a rule allows it.
 
-mod dispatch;
-
-mod preview;
-
-mod render;
-
-mod project;
-
-mod guide;
-
 mod definitions;
+mod dispatch;
+mod guide;
+mod preview;
+mod project;
+mod render;
 
 use serde_json::{Value, json};
 
-use crate::app::Core;
 use crate::error::{CoreError, Result};
 use definitions::TOOLS;
 
@@ -27,6 +21,7 @@ const MAX_WAIT_SECONDS: u64 = 40;
 const MAX_SEARCH_CHARS: usize = 200_000;
 const MAX_HITS: usize = 50;
 const MAX_BATCH: usize = 16;
+
 /// The tool list for `tools/list`.
 pub(crate) fn tool_specs() -> impl Iterator<Item = Value> {
     TOOLS.iter().map(|tool| {
@@ -95,8 +90,6 @@ pub(crate) fn matches_words(haystack: &str, query: &str) -> bool {
     let mut words = query.split_whitespace().peekable();
     words.peek().is_some() && words.all(|word| haystack.contains(&word.to_lowercase()))
 }
-
-impl Core {}
 
 #[cfg(test)]
 mod tests;
