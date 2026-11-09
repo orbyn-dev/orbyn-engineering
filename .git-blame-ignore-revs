@@ -1,0 +1,3 @@
+# Commits that only move or reformat files, so `git blame` skips them.
+# One full commit hash per line, with a comment saying what it did.
+# Each folder-architecture move commit (docs/refactor.md) is listed here.
