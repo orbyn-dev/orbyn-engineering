@@ -1,5 +1,6 @@
 use crate::error::CoreError;
 
+use super::candidate::{base_spec, candidate, git_version, head, read_git, symbolic_head};
 use super::*;
 use crate::testing::{TempDir, run_git};
 

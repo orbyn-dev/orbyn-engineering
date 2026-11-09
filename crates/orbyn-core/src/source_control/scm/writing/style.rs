@@ -5,7 +5,8 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{invalid, read_git, utf8};
+use super::candidate::{read_git, utf8};
+use super::invalid;
 use crate::error::Result;
 
 #[derive(Default, Deserialize)]
