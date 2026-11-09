@@ -4,6 +4,10 @@
 //! watches or records. This is local: a client watches over the same access as the
 //! rest of the API, and nothing here reaches another machine.
 
+pub mod bridge;
+pub(crate) mod recording;
+pub(crate) mod trace;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
