@@ -13,7 +13,6 @@ use orbyn_contracts::{
     ResolvedProjectSettingsScope,
 };
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -155,7 +154,7 @@ async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32,
     if budget.is_zero() {
         return None;
     }
-    let mut command = Command::new("git");
+    let mut command = crate::source_control::git::command(&std::env::temp_dir());
     command
         .args([
             "-c",
@@ -170,15 +169,9 @@ async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32,
         .arg("-C")
         .arg(path)
         .args(args)
-        .current_dir(std::env::temp_dir())
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "Never")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    crate::host::child_env::for_tool(command.as_std_mut());
+        .stderr(Stdio::null());
     // Metadata must come from this checkout, not an enclosing Git invocation.
     // Disable trace sinks too: config tracing can otherwise emit remote userinfo.
     for (name, _) in std::env::vars_os() {
