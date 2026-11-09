@@ -2204,7 +2204,7 @@ mod tests {
     }
 
     /// Two real entries from a 0.166.0 `model/list`.
-    const RECORDED: &str = include_str!("fixtures/codex-0.166.0-model-list.json");
+    const RECORDED: &str = include_str!("../fixtures/codex-0.166.0-model-list.json");
 
     #[test]
     fn a_recorded_list_parses_as_the_live_one_will() {
