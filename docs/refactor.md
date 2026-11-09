@@ -93,20 +93,24 @@ Notes:
 
 ## Units
 
-| Unit | Work |
-| --- | --- |
-| R0 | Guardrail checks (this page) |
-| B1 | Split the contracts crate by area |
-| B2 | `orbynd` routes by area (done: `routes/`, `http/`, `cli/`) |
-| B3 | Big core files into folders |
-| B4 | One process-spawn path; narrower visibility |
-| W1 | Dead code and shared helpers |
-| W2 | CSS ownership: no class defined twice |
-| W3 | Break feature cycles; `features/content` and `index.ts` front doors |
-| W4 | Per-feature `api.ts` and hooks |
-| W5 | Giant components into sub-folders |
-| W6 | Naming pass and `web/README.md` |
-| W7a | Product and generic tiers for shared web code (`product/`) |
+| Unit | Work | State |
+| --- | --- | --- |
+| R0 | Guardrail checks (this page) | done |
+| B1 | Split the contracts crate by area | done |
+| B2 | `orbynd` routes by area (`routes/`, `http/`, `cli/`) | done |
+| B3a | Engine drivers into folders (`claude`, `codex`, `acp`) | done |
+| B3b | Source control into folders (`forge/`, `scm/`) | done |
+| B3c1 | Preview and MCP tools into folders | done |
+| B3c2 | `conversation/runs.rs` (1,996 lines) and `agents/engines/mod.rs` (1,659) into folders | open, see [Handoff](#handoff) |
+| B4 | One process-spawn path; narrower visibility | open |
+| W1 | Dead code and shared helpers | done |
+| W2 | CSS ownership: no class defined twice | open, needs the owner's go-ahead |
+| W3 | Break feature cycles; `features/content` and `index.ts` front doors | done |
+| W4 | Per-feature `api.ts` and hooks | open (not started) |
+| W5 | Giant components into sub-folders (composer, trail, sidebar, panels, settings, pulls, usage) | done except the three files in W7b |
+| W6 | Naming pass and `web/README.md` | `web/README.md` exists (W7a); the naming pass is open |
+| W7a | Product and generic tiers for shared web code (`product/`) | done |
+| W7b | Split `app/Shell.tsx` (732 lines), `product/state/ui.ts` (783) and `onboarding/DraftView.tsx` (608) | open |
 
 The backend (B) and web (W) tracks can run in parallel.
 
@@ -139,8 +143,8 @@ The backend (B) and web (W) tracks can run in parallel.
   `features/usage/` keeps its files side by side (`UsagePage.tsx` 763 to 247, with the view, limits,
   parts and price dialog in files of their own). All four left the baseline (7 to 3 long TypeScript
   files). `features/tools` stays its own feature: `thread` and `panels` import it, and `settings`
-  sits above them, so folding it into `settings/tools-connectors/` would be a cycle. The rest of W5
-  (the remaining long files) is still open.
+  sits above them, so folding it into `settings/tools-connectors/` would be a cycle. The three
+  remaining long web files (`Shell.tsx`, `product/state/ui.ts`, `DraftView.tsx`) are W7b.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
@@ -150,10 +154,9 @@ The backend (B) and web (W) tracks can run in parallel.
   `sideChat` moved to `thread`, which hands the tab's content to `SurfacePane`; the git
   dialog and the restore-files dialog moved to `panels`. Front doors exist for
   `content`, `onboarding`, `panels`, `pulls`, `skills`, `thread`, `tools` and `workspace`.
-  Deep imports 69 to 0 and cycle edges 8 to 0; both rules are now hard errors. Still
-  baselined: 21 `direction` entries (features importing `app/shortcuts`,
-  `app/commandLabels`, `app/sidebarDrawer`), the long files and `styles/thread.css`.
-  Left for later units: CSS stays where it was (W2), giant components stay whole (W5).
+  Deep imports 69 to 0 and cycle edges 8 to 0; both rules are now hard errors. The 21
+  `direction` entries it left baselined (features importing `app/shortcuts`,
+  `app/commandLabels`, `app/sidebarDrawer`) were removed by W7a. CSS stays where it was (W2).
 
 - B3a (engine drivers): done. `agents/driver/{claude,codex,acp}` are folders with the
   driver in `mod.rs` and its pieces beside it (`claude`: args, settings, mcp, catalog,
@@ -248,6 +251,63 @@ curated list of API names; the table is the record).
 | `thread` | `ModelPickerTrigger`, `EffortTrigger`, `useTraitsMenu` | `ACCESS`, `offeredModes`, `shownAccess` (`onboarding` only), `DETAIL_ROWS`, `detailsMenuItems` (`settings` only) |
 | `tools` | `ToolsList`, `ToolsRow`, `ToolsTab` | none |
 | `workspace` | `AddProjectPalette`, `GitHubStarPrompt`, `RenameThreadDialog`, `recordUserPrompt`, `archiveThreads`, `deleteThreadNow`, `settleThreads`, `unarchiveThread`, `unsettleThreads`, `wakeThreads`, `snoozeChildren`, `threadRunState` | `copyText` (`thread` only; generic, wants `lib/`) |
+
+## Handoff
+
+The refactor stops here for now. Whoever continues starts from this section. Current numbers:
+the web architecture baseline has 3 long TypeScript files (`app/Shell.tsx`, `product/state/ui.ts`,
+`features/onboarding/DraftView.tsx`) and 1 long CSS file (`styles/thread.css`); the Rust baseline
+has 3 long files (`conversation/runs.rs`, `agents/engines/mod.rs`, `bin/orbyn_fake_engine.rs`). The
+`direction` and `tier` web baselines are empty, and deep imports, file cycles and feature cycles
+have no baseline.
+
+### What is open, in the order to do it
+
+| Unit | Work | Size and notes |
+| --- | --- | --- |
+| W7b | Split `app/Shell.tsx`, `product/state/ui.ts` (stores, persistence and migration are separate concerns) and `features/onboarding/DraftView.tsx` | Web only. Keep hook order and effects; `state/ui.ts` holds the persisted prefs (`prefsMigration` tests exist). Finishes the web long-file baseline. |
+| B3c2 | `conversation/runs.rs` (1,996 lines: admission, queue, warm next turn, limits, checkpoints, rewind hold) and `agents/engines/mod.rs` (1,659) into folders, same method as B3a to B3c1 | Rust. Needs a warm `target/` (a clean build takes several GB). `bin/orbyn_fake_engine.rs` (1,715) is a test double: split it only if a cut is clean, otherwise keep it baselined. |
+| B4 | One process-spawn path (git always through the wrapper; today about 8 direct `Command::new("git")` sites in core), one JSON helper (three different `field()` helpers), one home-directory lookup (about five private copies), and visibility narrowing checked with the compiler (the scout's name-matching list is not enough) | Rust. Changes behaviour paths, so each change needs its own test. |
+| W2 | CSS ownership: `styles/thread.css` (about 4,500 lines, mostly panels and onboarding rules), `pages.css`, `shell.css`, `base.css` move next to the components they style; shared pieces (`btn`, `dialog`, `pill`, `empty` and the like, defined in up to 10 files) are defined once in `ui/` | **Needs the owner's go-ahead.** The tests cannot see a changed cascade. Compare screenshots before and after in Light, Dark and Dim for every moved rule, and keep the CSS load order identical (compare the first-import order from `main.tsx`, as the W7a review did). |
+| W4 | Per-feature `api.ts` and hooks: components stop calling the API client directly (about 150 direct imports, for example Maintenance, BrowserPanel, the terminal drawer, the settings pages) | Web. Not started. |
+| W6 | Naming pass: Page is a route, Panel is a side-panel tab, Dialog is a modal, no "Pane" (`SurfacePane`, `SideChatPane`, `PullsPage` against `PullPage`); keep `web/README.md` in step | Do after W2 so files are renamed once. |
+| Front-door TODO rows | Hoist the helper exports in the audit table (one other feature uses each) to `product/` or `lib/` when a second feature needs them; hoist `copyText` to `lib/` | Opportunistic. |
+| Closeout | Turn any remaining baselined rule into a hard error, run a packaged-app build and walk-through (`cd desktop && npm run build -- --bundles app`), run the worktree cleanup report | The packaged-app check has not been run since the logo, tools, picker and tab strip merged into main. |
+
+### How a unit is run
+
+1. One worktree per unit, created by the lead from `origin/main`; a worker never creates its own.
+   Reuse the worktree of a merged unit (and its `target/` or `node_modules`) instead of making a new one.
+2. First pin what must not change: a route table or string-literal set for Rust, a characterization
+   test where the code has no coverage, and `rg` the old path across the repo (`web/`, `docs/`,
+   `scripts/`, configs) before moving anything: a Rust-only PR skips the Web CI job, so a web test that
+   reads a Rust file by path fails only on `main`.
+3. Move with `git mv` in one commit (renames only), fix imports in the next, then cut pieces out in
+   verbatim commits. List in `.git-blame-ignore-revs` only commits that are renames with zero edits,
+   verified with `git diff -M --stat`, in the `<40-hex> # subject` format. A split into new files also
+   needs `git blame -C -C -C`.
+4. Prove neutrality: Rust item names and the test list (`cargo test -p orbyn-core -- --list`) before and
+   after, plus the multiset of string literals; web test counts and, for a move, the first-import order
+   of CSS and stores. Extract loading and error JSX as plain functions, not new components, or React
+   remounts the page and drops focus (a failing test first).
+5. An Opus review reads the PR before merge. Re-run `npm run arch:update` or
+   `python3 scripts/check_rust_arch.py --update` in the same PR when a baselined file moves or shrinks.
+6. Merge main into the branch right before each push, and queue PRs that edit the shared registry files
+   (`.git-blame-ignore-revs`, this page, the arch baselines) one at a time: the first merge makes the next
+   conflict. Merge by merge commit with every check green on the current head.
+
+### Open items outside the units
+
+- Issue #381: harden request values that reach git, `gh`, `glab`, the OTLP check and batch sizes. Five
+  CodeQL alerts (10, 13 to 16) were dismissed as won't-fix with that issue as the reason, after moving
+  handlers re-fingerprinted them as new on a PR. Close them with fixes, not dismissals.
+- Issue #390: three flaky real specs (two preview-browser crashes, one pulls reload wait). A re-run is
+  fine for a named infrastructure failure only (the NSIS download 504 in the Windows desktop build, `gh`
+  network timeouts), after the run finishes and with the cause written in the PR. Caching the NSIS tool in
+  the desktop build workflow would remove the most frequent one.
+- Disk: each Rust worktree builds its own `target/` (several GB each) and the cleanup tool only moves
+  retired worktrees to the Trash, so the space comes back when the Trash is emptied. Run
+  `worktree_retire.py report` before creating a worktree.
 
 ## Done when
 
