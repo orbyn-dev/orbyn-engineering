@@ -3,3 +3,4 @@
 # Each folder-architecture move commit (docs/refactor.md) is listed here.
 42198af3341155022a8395b694aa45e4fe5745e2 # refactor(orbynd): move route modules, access and cli files into routes, http and cli
 127db0da1e42c72c1a09066188f3ebf39fe0bcf3 # refactor(orbynd): split api.rs and the route list into one module per area
+d381a2dcfa9c578fbcf432e3fc13d0df8a3b914c # refactor(contracts): move wire types into domain modules
