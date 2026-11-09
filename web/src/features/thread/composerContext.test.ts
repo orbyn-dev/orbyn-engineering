@@ -65,6 +65,9 @@ describe("composer context", () => {
       "File `src/main.rs:12`\n```rust\n` ` `js\ninner\n` ` `\n```\n\nPlease fix this",
     );
     expect(promptWithChips("", [chip({ kind: "citation" })])).toBe("> Clicked save");
+    const picked = chipPrompt(chip({ kind: "annotation", text: "a\n\nb", html: "<b>```</b>" }));
+    expect(picked).toContain("> a b");
+    expect(picked.match(/```/g)).toHaveLength(2);
   });
 
   it("round-trips chips through the clipboard's JSON and HTML forms", () => {
