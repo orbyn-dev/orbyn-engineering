@@ -2,8 +2,6 @@
   "_note": "Recorded Rust architecture debt (docs/refactor.md). Only shrink it.",
   "max_lines": 1500,
   "long_files": {
-    "crates/orbyn-core/src/agents/engines/mod.rs": 1659,
-    "crates/orbyn-core/src/conversation/runs.rs": 1996,
     "crates/orbynd/src/bin/orbyn_fake_engine.rs": 1715
   },
   "orbynd_git_spawns": {},

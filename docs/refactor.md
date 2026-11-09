@@ -101,7 +101,7 @@ Notes:
 | B3a | Engine drivers into folders (`claude`, `codex`, `acp`) | done |
 | B3b | Source control into folders (`forge/`, `scm/`) | done |
 | B3c1 | Preview and MCP tools into folders | done |
-| B3c2 | `conversation/runs.rs` (1,996 lines) and `agents/engines/mod.rs` (1,659) into folders | open, see [Handoff](#handoff) |
+| B3c2 | `conversation/runs.rs` (1,996 lines) and `agents/engines/mod.rs` (1,659) into folders | done |
 | B4 | One process-spawn path; narrower visibility | open |
 | W1 | Dead code and shared helpers | done |
 | W2 | CSS ownership: no class defined twice | open, needs the owner's go-ahead |
@@ -197,6 +197,17 @@ The backend (B) and web (W) tracks can run in parallel.
   `preview/recording.rs` (934, moved whole) and the largest cut file `tools/dispatch.rs` (682, one
   match). The old paths `browser::preview_bridge` and `tools::mcp_tools` still resolve.
 
+- B3c2 (run manager and engine manager): done. `conversation/runs/` holds `RunManager` in `mod.rs`
+  (372 lines: the structs, constants, `new` and the shared helpers) with `admission` (admission,
+  launch, titles, the queue, steering, workflow stops and app notes), `stops` (cancel, forced stop,
+  shutdown and the parent report), `execute` (one turn's execution, the next turn's warm process and
+  limit stops), `checkpoints` (start and end snapshots, close, drive and session recovery), `turn`
+  (attempt, start, model fallback, the event pump, event writes and approvals), plus `shape.rs` and
+  tests. `agents/engines/mod.rs` keeps the registry and manager (1,113 lines) and its inline tests
+  moved whole to `tests.rs` (539). `runs.rs` (1,996) and `engines/mod.rs` (1,659) left the Rust size
+  baseline (3 to 1 long files). Methods a sibling module calls are `pub(super)`; no public path
+  changed, and a model pool's item list and the 839-test list are identical before and after.
+
 - W7a (product and generic tiers): done for the shared folders; front-door helpers are open (see
   the audit below). `state/` became `product/state/`, and `lib/timeline` became `product/timeline`.
   The shared files that carry product vocabulary and have two or more feature users moved to
@@ -269,7 +280,7 @@ curated list of API names; the table is the record).
 The refactor stops here for now. Whoever continues starts from this section. Current numbers:
 the web architecture baseline has no long TypeScript files and 1 long CSS file (`styles/thread.css`,
 which is W2); the Rust baseline
-has 3 long files (`conversation/runs.rs`, `agents/engines/mod.rs`, `bin/orbyn_fake_engine.rs`). The
+has 1 long file (`bin/orbyn_fake_engine.rs`, a test double). The
 `direction` and `tier` web baselines are empty, and deep imports, file cycles and feature cycles
 have no baseline.
 
@@ -277,7 +288,6 @@ have no baseline.
 
 | Unit | Work | Size and notes |
 | --- | --- | --- |
-| B3c2 | `conversation/runs.rs` (1,996 lines: admission, queue, warm next turn, limits, checkpoints, rewind hold) and `agents/engines/mod.rs` (1,659) into folders, same method as B3a to B3c1 | Rust. Needs a warm `target/` (a clean build takes several GB). `bin/orbyn_fake_engine.rs` (1,715) is a test double: split it only if a cut is clean, otherwise keep it baselined. |
 | B4 | One process-spawn path (git always through the wrapper; today about 8 direct `Command::new("git")` sites in core), one JSON helper (three different `field()` helpers), one home-directory lookup (about five private copies), and visibility narrowing checked with the compiler (the scout's name-matching list is not enough) | Rust. Changes behaviour paths, so each change needs its own test. |
 | W2 | CSS ownership: `styles/thread.css` (about 4,500 lines, mostly panels and onboarding rules), `pages.css`, `shell.css`, `base.css` move next to the components they style; shared pieces (`btn`, `dialog`, `pill`, `empty` and the like, defined in up to 10 files) are defined once in `ui/` | **Needs the owner's go-ahead.** The tests cannot see a changed cascade. Compare screenshots before and after in Light, Dark and Dim for every moved rule, and keep the CSS load order identical (compare the first-import order from `main.tsx`, as the W7a review did). |
 | W4 | Per-feature `api.ts` and hooks: components stop calling the API client directly (about 150 direct imports, for example Maintenance, BrowserPanel, the terminal drawer, the settings pages) | Web. Not started. |
