@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { matchesKey, runHandlers, whenHolds } from "../../../product/shell/shortcuts";
 import { useAsync } from "../../../lib/useAsync";
 import { ErrorState } from "../../../product/ui/states";

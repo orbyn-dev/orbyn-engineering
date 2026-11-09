@@ -1,6 +1,6 @@
 import { ArrowUp, Download, Folder, GitBranch, Plus, Search, SquareCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { PreferenceView, Project } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate, routeHref } from "../../../product/state/route";

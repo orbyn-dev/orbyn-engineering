@@ -1,6 +1,6 @@
 import { CalendarClock, CirclePlay, Pause, Pencil, Play } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { request } from "../../api/client";
+import { request } from "./api";
 import type { ScheduledTask } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";

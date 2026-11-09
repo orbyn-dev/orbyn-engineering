@@ -37,7 +37,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { EngineStatus, Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { toFailure, useAsync } from "../../../lib/useAsync";

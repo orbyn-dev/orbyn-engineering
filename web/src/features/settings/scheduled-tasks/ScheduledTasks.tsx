@@ -2,7 +2,7 @@ import { chooseDraftEngine } from "../../onboarding";
 import { AlertTriangle, Check, CloudOff, Plus, RefreshCw, X } from "lucide-react";
 import "../ScheduledTasks.css";
 import { useEffect, useState } from "react";
-import { NETWORK_ERROR, request } from "../../../api/client";
+import { NETWORK_ERROR, request } from "../api";
 import type { ScheduledTask, WebhookFilter } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { relativeTime } from "../../../lib/format";

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import type { PullRequest } from "../../../api/types";
 import { checksOf } from "./pullModel";
 

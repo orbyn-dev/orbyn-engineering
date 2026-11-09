@@ -1,6 +1,6 @@
 import { Archive, GitFork, Loader2 } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { Thread } from "../../api/types";
 import { useNow } from "../../lib/useNow";
 import { toFailure } from "../../lib/useAsync";

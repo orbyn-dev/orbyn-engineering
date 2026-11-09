@@ -1,6 +1,6 @@
 import { Maximize2, X } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { PreviewTab } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

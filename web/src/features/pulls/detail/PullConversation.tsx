@@ -8,7 +8,7 @@ import { Button, IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Markdown } from "../../content";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 
 const REACTIONS: [string, string][] = [
   ["+1", "👍"],

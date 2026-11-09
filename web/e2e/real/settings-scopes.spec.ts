@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,16 +55,28 @@ test("logical project settings resolve Mixed and reset explicit overrides throug
     await prefix.fill("one-only"); await prefix.press("Tab");
     await expect.poll(async () => (await pref(one.id, "branch_name_prefix"))?.value).toBe("one-only");
     expect((await pref(two.id, "branch_name_prefix"))?.value).toBe("shared");
-    const branchPreferences = page.waitForResponse(async (response) => {
-      if (response.request().method() !== "POST" || new URL(response.url()).pathname !== "/api/settings/preferences/query" || !response.ok()) return false;
-      const query = response.request().postDataJSON() as ScopedPreferencesQuery;
-      if (query.scope.selection !== undefined || !query.keys?.includes("branch_name_prefix")) return false;
-      const result = await response.json() as ScopedPreferencesResult;
-      const branch = result.rows.find((entry) => entry.key === "branch_name_prefix");
-      return result.catalog.selection.kind === "all_projects"
-        && [one.id, two.id].every((id) => branch?.overrides.some((entry) => entry.project_id === id));
-    }, { timeout: 10_000 });
-    await Promise.all([branchPreferences, page.goto(`${service.page}#/settings/worktrees`)]);
+    // Read the body in the route, not in a waitForResponse predicate: the navigation that
+    // triggers the query can evict the response body before the predicate can parse it.
+    const preferenceQuery = "**/api/settings/preferences/query";
+    let branchResult: ScopedPreferencesResult | undefined;
+    const captureBranchPreferences = async (route: Route) => {
+      const request = route.request();
+      const query = request.postDataJSON() as ScopedPreferencesQuery;
+      if (request.method() !== "POST" || query.scope.selection !== undefined || !query.keys?.includes("branch_name_prefix")) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      const body = await response.text();
+      if (response.ok()) branchResult = JSON.parse(body) as ScopedPreferencesResult;
+      await route.fulfill({ response, body });
+    };
+    await page.route(preferenceQuery, captureBranchPreferences);
+    await page.goto(`${service.page}#/settings/worktrees`);
+    await expect.poll(() => branchResult?.catalog.selection.kind, { timeout: 10_000 }).toBe("all_projects");
+    await page.unroute(preferenceQuery, captureBranchPreferences);
+    const branch = branchResult!.rows.find((entry) => entry.key === "branch_name_prefix");
+    expect([one.id, two.id].every((id) => branch?.overrides.some((entry) => entry.project_id === id))).toBe(true);
     const row = page.locator("#worktrees-branch-prefix");
     await row.getByRole("button", { name: "Default", exact: true }).click();
     await expect(row.getByText("Overridden by", { exact: true })).toBeVisible();

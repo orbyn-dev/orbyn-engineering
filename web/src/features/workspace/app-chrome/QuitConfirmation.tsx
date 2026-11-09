@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useCommand } from "../../../product/shell/shortcuts";
-import { api, request } from "../../../api/client";
-import { inDesktopApp, readShellStatus } from "../../../api/shell";
+import { api, request } from "../api";
+import { inDesktopApp, readShellStatus } from "../api";
 import type { PreferenceView } from "../../../api/types";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";

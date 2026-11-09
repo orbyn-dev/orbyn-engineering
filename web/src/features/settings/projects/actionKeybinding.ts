@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { KeybindingsView } from "../../../api/types";
 import { runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";

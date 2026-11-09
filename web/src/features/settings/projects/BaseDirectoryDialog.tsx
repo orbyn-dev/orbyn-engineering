@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowUp, ChevronRight, Folder } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { useAsync } from "../../../lib/useAsync";
 import { Button, IconButton } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";

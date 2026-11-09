@@ -1,6 +1,6 @@
 import { mediaKind, rawUrl } from "../../../product/media/media";
-import { serviceUrl } from "../../../api/origin";
-import { readToken } from "../../../api/token";
+import { serviceUrl } from "../api";
+import { readToken } from "../api";
 
 /** A media element of a message, and everything the expanded view acts on. */
 export interface MediaItem {

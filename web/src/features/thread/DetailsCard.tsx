@@ -1,6 +1,6 @@
 import { Activity, ChevronDown, ChevronRight, FileDiff, Gauge, Globe, Play, SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "../../api/client";
+import { api, request } from "./api";
 import type { EngineLimits, LocalServer, ProjectFileView, Thread } from "../../api/types";
 import type { ProjectScript } from "../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../lib/motion";

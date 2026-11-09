@@ -1,6 +1,6 @@
 import { Check, Copy, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "../../api/client";
+import { api, request } from "./api";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { EngineStatus, PermissionMode, Project } from "../../api/types";

@@ -1,4 +1,4 @@
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { Wired } from "../../../api/types";
 import type { PreviewRecording as RecordingWire } from "../../../generated/PreviewRecording";
 import { toFailure } from "../../../lib/useAsync";

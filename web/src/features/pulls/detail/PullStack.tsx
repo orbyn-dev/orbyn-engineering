@@ -3,7 +3,7 @@ import { useState } from "react";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 
 /** Where this pull request sits among the ones stacked on each other. */
 export function Stack({ projectId, number, onOpen }: { projectId: string; number: number; onOpen?(number: number): void }) {

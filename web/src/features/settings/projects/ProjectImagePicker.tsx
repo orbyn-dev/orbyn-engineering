@@ -1,6 +1,6 @@
 import { File } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { ProjectImageSearchResult } from "../../../generated/ProjectImageSearchResult";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import { projectImageCandidateUrl } from "../../../product/projects/projectImages";

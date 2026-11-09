@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiFailure, request } from "../../../api/client";
+import { ApiFailure, request } from "../api";
 import type { EngineStatus } from "../../../api/types";
 import type { AcpNativeSession } from "../../../generated/AcpNativeSession";
 import type { AcpNativeSessionImported } from "../../../generated/AcpNativeSessionImported";

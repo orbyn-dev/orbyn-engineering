@@ -3,7 +3,7 @@ import { ChevronRight, Copy, RefreshCw } from "lucide-react";
 import { EnvironmentIcon } from "../EnvironmentIcon";
 import { useLayoutEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "../../../ui/Dialog";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { CleanupReport, Diagnostics, JsonValue, OtlpResult } from "../../../api/types";
 import type { ServiceProcess } from "../../../generated/ServiceProcess";
 import { fullTime, mebibytes, sizeWords, uptime } from "../../../lib/format";

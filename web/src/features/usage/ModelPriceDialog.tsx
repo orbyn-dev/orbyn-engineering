@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";

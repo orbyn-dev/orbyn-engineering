@@ -1,6 +1,6 @@
 import { AppWindow, ArrowLeft, ArrowRight, Clock, CloudOff, Crosshair, EyeOff, Hand, MoreHorizontal, Plus, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { PickedElement, PreviewTab } from "../../../api/types";
 import { useCommand } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -16,7 +16,7 @@ import { BrowserRecording } from "./BrowserRecording";
 import { PreviewRecordings } from "./previewRecording";
 import { PageBridge } from "./PageBridge";
 import { useBrowserPanels } from "./browserPanels";
-import { inDesktopApp } from "../../../api/shell";
+import { inDesktopApp } from "../api";
 import { DEVICES, TAB_POLL_MS, VIEWPORT, addRecent, isLocalUrl, q, resolveAddress, stepZoom } from "./browserModel";
 import { PageView } from "./PageView";
 import { StartPage } from "./StartPage";

@@ -1,6 +1,6 @@
 import { Paperclip, X } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
-import { api, request } from "../../api/client";
+import { api, request } from "./api";
 import type { Question, QuestionRequest } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { Button } from "../../ui/controls";

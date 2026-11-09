@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { relativeTime } from "../../../lib/format";
 import { useAsync } from "../../../lib/useAsync";
 import { ErrorState, Loading } from "../../../product/ui/states";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 
 /**
  * The pull request's activity: comments, reviews, commits and the rest. It is paginated on the forge, so it is read

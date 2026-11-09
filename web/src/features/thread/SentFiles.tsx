@@ -1,6 +1,6 @@
 import { FileCode, FileText } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
-import { attachmentBlob } from "../../api/client";
+import { attachmentBlob } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";

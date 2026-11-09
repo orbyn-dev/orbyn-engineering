@@ -1,6 +1,6 @@
 import { Copy, Lock } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";

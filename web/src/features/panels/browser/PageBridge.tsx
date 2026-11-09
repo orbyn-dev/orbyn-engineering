@@ -1,6 +1,6 @@
 import { useRef } from "react";
-import { authHeaders, request } from "../../../api/client";
-import { serviceUrl } from "../../../api/origin";
+import { authHeaders, request } from "../api";
+import { serviceUrl } from "../api";
 import type { PreviewCopy } from "../../../generated/PreviewCopy";
 import type { PreviewDownload } from "../../../generated/PreviewDownload";
 import type { PreviewTab } from "../../../generated/PreviewTab";

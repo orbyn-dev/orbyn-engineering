@@ -1,6 +1,6 @@
 import { RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import type { PullRequestDetail } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { Button, Field } from "../../../ui/controls";

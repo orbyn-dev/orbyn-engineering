@@ -1,6 +1,6 @@
 import { RefreshCw, Settings } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited } from "../../lib/motion";
 import { navigate } from "../../product/state/route";

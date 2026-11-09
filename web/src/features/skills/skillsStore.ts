@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { create } from "zustand";
-import { api, type ApiFailure } from "../../api/client";
+import { api, type ApiFailure } from "./api";
 import type { SkillPackStatus } from "../../generated/SkillPackStatus";
 import { toFailure } from "../../lib/useAsync";
 import { useWorkspace } from "../../product/state/workspace";

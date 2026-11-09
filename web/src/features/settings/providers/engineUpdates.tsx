@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { authHeaders } from "../../../api/client";
-import { serviceUrl } from "../../../api/origin";
-import { SseParser } from "../../../api/sse";
+import { authHeaders } from "../api";
+import { serviceUrl } from "../api";
+import { SseParser } from "../api";
 import type { EngineUpdateProgress } from "../../../generated/EngineUpdateProgress";
 
 const RETRY_MS = 3000;

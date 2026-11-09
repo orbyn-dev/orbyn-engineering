@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import { navigate, parseRoute } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";

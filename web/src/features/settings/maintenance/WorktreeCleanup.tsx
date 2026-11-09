@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { JsonValue } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";

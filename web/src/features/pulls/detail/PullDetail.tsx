@@ -17,7 +17,7 @@ import { PageBar } from "../../../product/ui/PageBar";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
-import { pullsApi } from "../../../api/pulls";
+import { pullsApi } from "../api";
 import { checkConnectionNow, useConnectionKind } from "../../../product/state/connection";
 import { useThreadPulls } from "../model/pullStore";
 import { forgeName, numberLabel } from "../model/pullStore";

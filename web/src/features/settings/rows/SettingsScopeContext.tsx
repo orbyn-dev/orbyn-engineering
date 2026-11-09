@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, type ReactNode } from "react";
-import { request, type ApiFailure } from "../../../api/client";
+import { request, type ApiFailure } from "../api";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectSettingsSelection } from "../../../generated/ProjectSettingsSelection";

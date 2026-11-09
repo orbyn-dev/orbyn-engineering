@@ -1,4 +1,4 @@
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { PermissionMode, Thread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";

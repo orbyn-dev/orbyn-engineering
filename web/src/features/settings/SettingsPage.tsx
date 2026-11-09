@@ -2,8 +2,8 @@ import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./rows/SettingsScope
 import { ScopeSentence } from "./rows/ScopeSentence";
 import { SettingRowIds } from "./rows/SettingRow";
 import { searchSettings, settingSearchId } from "./settingsSearch";
-import { api } from "../../api/client";
-import { onShellChange } from "../../api/shell";
+import { api } from "./api";
+import { onShellChange } from "./api";
 import { useAsync } from "../../lib/useAsync";
 import { navigate, useRoute } from "../../product/state/route";
 import { Info, Search, X } from "lucide-react";

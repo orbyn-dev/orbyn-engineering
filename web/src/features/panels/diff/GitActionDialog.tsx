@@ -1,6 +1,6 @@
 import { Check, GitCommitHorizontal, GitPullRequest, Upload, X } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { GitActionResult, GitPhase, Thread } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useThreadLogs } from "../../../product/state/threadLogs";

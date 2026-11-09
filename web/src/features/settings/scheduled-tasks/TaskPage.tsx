@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, ChevronLeft, CloudOff, Copy, Loader2, Play, RefreshCw } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../../api/client";
-import { serviceUrl } from "../../../api/origin";
+import { api } from "../api";
+import { serviceUrl } from "../api";
 import type { ScheduledTask, TaskRun, WebhookDelivery, WebhookEndpoint } from "../../../api/types";
 import { dayStamp, tookWords, weekdayDate, weekdayStamp } from "../../../lib/format";
 import { scheduleLabel } from "../../../product/tasks/taskSchedule";

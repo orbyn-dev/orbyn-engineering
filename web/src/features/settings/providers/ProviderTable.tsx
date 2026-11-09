@@ -1,6 +1,6 @@
 import { Check, Plus, RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
-import { request } from "../../../api/client";
+import { request } from "../api";
 import type { EngineStatus } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";

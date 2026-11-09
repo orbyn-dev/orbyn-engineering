@@ -1,6 +1,6 @@
 import { ChevronDown, SquareArrowOutUpRight } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { commandShortcut, formatShortcut, useCommand } from "../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";

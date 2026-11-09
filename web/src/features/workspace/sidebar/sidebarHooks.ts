@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, request } from "../../../api/client";
+import { api, request } from "../api";
 import type { Project, ServerSettings, Thread } from "../../../api/types";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";

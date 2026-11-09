@@ -1,7 +1,7 @@
 import { useNow } from "../../lib/useNow";
 import { CircleAlert, Clock, Gauge, RotateCcw, X } from "lucide-react";
 import { useRef, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { Thread, UpdateThread } from "../../api/types";
 import { waitLeft } from "../../lib/format";
 import { toFailure, useAsync } from "../../lib/useAsync";

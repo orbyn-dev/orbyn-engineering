@@ -1,6 +1,6 @@
 import { RotateCcw } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { api } from "../../../api/client";
+import { api } from "../api";
 import type { Project } from "../../../api/types";
 import type { ProjectIconOverride } from "../../../generated/ProjectIconOverride";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";

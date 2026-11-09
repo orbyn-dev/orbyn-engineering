@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { request } from "../../api/client";
+import { request } from "./api";
 import type { PreferenceView, Project } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 
