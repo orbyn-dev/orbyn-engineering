@@ -13,7 +13,7 @@ import { useThreadLogs } from "../../../product/state/threadLogs";
 import { useUi } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { SkillsNotice } from "../SkillsNotice";
-import "./onboarding.css";
+import "../onboarding.css";
 import { NoProjects } from "../NoProjects";
 import { IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
