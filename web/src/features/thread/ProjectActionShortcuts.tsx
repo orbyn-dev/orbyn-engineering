@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { request } from "../../api/client";
 import type { ProjectFileView } from "../../api/types";
-import { useCommand } from "../../app/shortcuts";
+import { useCommand } from "../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { parseRoute } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { actionCommand, actionIdFromCommand } from "../../lib/actionCommand";
-import { runProjectAction } from "../../lib/runProjectAction";
+import { parseRoute } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
+import { actionCommand, actionIdFromCommand } from "../../product/composer/actionCommand";
+import { runProjectAction } from "../../product/composer/runProjectAction";
 
 function useActionRunner(threadId: string) {
   const pending = useRef(new Set<string>());

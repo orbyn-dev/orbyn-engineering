@@ -3,12 +3,12 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import type { Approval, JsonValue } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { touchesOf } from "./approvalDetail";
-import { approvalFromContent } from "../../lib/timeline/projection";
+import { approvalFromContent } from "../../product/timeline/projection";
 
 const outcome = {
   allowed: { icon: CircleCheck, label: "Approved" },

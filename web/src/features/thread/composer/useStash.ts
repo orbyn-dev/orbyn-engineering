@@ -1,6 +1,6 @@
 import { useState, type RefObject } from "react";
 import type { Thread } from "../../../api/types";
-import { useUi, type StashedPrompt } from "../../../state/ui";
+import { useUi, type StashedPrompt } from "../../../product/state/ui";
 
 /** Parks the draft for later and brings a parked one back. */
 export function useStash({

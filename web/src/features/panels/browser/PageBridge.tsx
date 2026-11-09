@@ -6,7 +6,7 @@ import type { PreviewDownload } from "../../../generated/PreviewDownload";
 import type { PreviewTab } from "../../../generated/PreviewTab";
 import type { PreviewUpload } from "../../../generated/PreviewUpload";
 import { toFailure } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 
 const q = encodeURIComponent;
 

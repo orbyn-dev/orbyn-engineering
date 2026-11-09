@@ -2,7 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api } from "../../../api/client";
 import type { ReleaseChannel } from "../../../generated/ReleaseChannel";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { EnvironmentIdentity } from "./EnvironmentIdentity";
 
 vi.mock("../../../api/client", async (original) => {

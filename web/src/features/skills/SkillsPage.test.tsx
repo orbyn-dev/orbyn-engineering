@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure } from "../../api/client";
 import type { SkillPackStatus } from "../../generated/SkillPackStatus";
-import { DRAFT_KEY, SCRATCH, useDraftStore } from "../../state/draftStore";
-import { useUi } from "../../state/ui";
+import { DRAFT_KEY, SCRATCH, useDraftStore } from "../../product/state/draftStore";
+import { useUi } from "../../product/state/ui";
 import { SkillsPage } from "./SkillsPage";
 import { resetSkillsStore, useSkillsStore } from "./skillsStore";
 

@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { ChatSection } from "./ChatSection";
 import { DiffsSection } from "./DiffsSection";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";

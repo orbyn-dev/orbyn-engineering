@@ -7,7 +7,7 @@ import {
   languageForPath,
   refillExcerpts,
   type ComposerChip,
-} from "../../../lib/composerContext";
+} from "../../../product/composer/composerContext";
 import { LARGE_PASTE_BYTES } from "./composerInput";
 
 /** Paste in the field: carried chips, files, or a long text kept as an attachment. */

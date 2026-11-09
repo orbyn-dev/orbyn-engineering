@@ -8,11 +8,11 @@ import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferenc
 import type { ScopedPreferenceRow } from "../../../generated/ScopedPreferenceRow";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
-import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
-import { ErrorState, Loading } from "../../../ui/states";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import { PreferenceInheritance } from "../rows/PreferenceInheritance";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 
 /** Turning cleanup on without a number of days uses this one. */
 const DEFAULT_DAYS = 7;

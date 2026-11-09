@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 import type { PullRequestDetail } from "../../../api/types";
 import type { ApiFailure } from "../../../api/client";
 import { pullsApi } from "../../../api/pulls";
-import type { useConnectionKind } from "../../../state/connection";
+import type { useConnectionKind } from "../../../product/state/connection";
 import { Button } from "../../../ui/controls";
 import type { MenuItem } from "../../../ui/Menu";
-import { ErrorState, Loading } from "../../../ui/states";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import { baseChangeAllowed } from "../model/pullModel";
 import { PullPageSkeleton, SignedOutBlock, UnreachableBlock } from "./PullPage";
-import { navigate } from "../../../state/route";
+import { navigate } from "../../../product/state/route";
 
 export type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
 

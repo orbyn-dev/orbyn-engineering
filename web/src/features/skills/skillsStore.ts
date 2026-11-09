@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { api, type ApiFailure } from "../../api/client";
 import type { SkillPackStatus } from "../../generated/SkillPackStatus";
 import { toFailure } from "../../lib/useAsync";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 
 interface SkillsStore {
   data: SkillPackStatus | null;

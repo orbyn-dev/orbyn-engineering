@@ -2,10 +2,10 @@ import { api } from "../../../api/client";
 import type { Thread, UpdateThread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { pullsApi } from "../../../api/pulls";
-import { threadToken } from "../../../lib/skillMention";
-import { navigate, parseRoute } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { threadToken } from "../../../product/composer/skillMention";
+import { navigate, parseRoute } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { arrangeThreads, threadsFlat } from "./groups";
 import { pushUndo } from "./threadUndo";
 

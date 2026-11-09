@@ -1,15 +1,15 @@
 import { TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { offerCompact } from "./compactOffer";
-import type { ThreadItem } from "../../../lib/timeline/types";
+import type { ThreadItem } from "../../../product/timeline/types";
 import { api } from "../../../api/client";
 import type { EngineLimits, EngineStatus, JsonValue } from "../../../api/types";
 import { relativeTime } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useThreadLogs } from "../../../state/threadLogs";
-import { useWorkspace } from "../../../state/workspace";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button, IconButton } from "../../../ui/controls";
-import type { StashedPrompt } from "../../../state/ui";
+import type { StashedPrompt } from "../../../product/state/ui";
 
 export const usageShare = (usage: JsonValue | null | undefined): { used: number; window: number } | null => {
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;

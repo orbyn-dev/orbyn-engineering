@@ -1,5 +1,5 @@
 import { Check, ChevronRight, ListChecks, Loader2 } from "lucide-react";
-import type { PlanItem } from "../../../lib/timeline/types";
+import type { PlanItem } from "../../../product/timeline/types";
 import { Collapsible } from "../../../ui/Collapsible";
 import { pluralize } from "../toolCalls";
 import { BlockHead, FooterText } from "./blocks/BlockParts";

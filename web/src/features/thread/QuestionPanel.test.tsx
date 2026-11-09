@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ApiFailure, api, request } from "../../api/client";
 import type { QuestionRequest, Thread } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { QuestionPanel } from "./QuestionPanel";
 
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));

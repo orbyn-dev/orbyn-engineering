@@ -1,5 +1,5 @@
 import { cloneElement, Fragment, isValidElement, useState, type ReactElement } from "react";
-import { useLingering } from "../lib/panelAnimations";
+import { useLingering } from "../lib/lingering";
 import { MOTION } from "../lib/motion";
 import { usePrefersReducedMotion } from "../lib/useLayout";
 

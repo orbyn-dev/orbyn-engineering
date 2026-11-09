@@ -1,7 +1,7 @@
 import { Maximize2, Minimize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
-import { resolveTheme, useUi } from "../../state/ui";
+import { resolveTheme, useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import {
@@ -12,8 +12,8 @@ import {
   toolNotifications,
   type AppHost,
   type McpAppDisplayMode,
-} from "../../lib/timeline/mcpAppBridge";
-import type { ToolItem } from "../../lib/timeline/types";
+} from "../../product/timeline/mcpAppBridge";
+import type { ToolItem } from "../../product/timeline/types";
 
 const parseArgs = (args: string): unknown => {
   try {

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../mock/api";
 import { installMockFetch, setViewportWidth } from "../test-support";
-import { useUi } from "../state/ui";
+import { useUi } from "../product/state/ui";
 import { App } from "./App";
 
 let mock: MockApi;

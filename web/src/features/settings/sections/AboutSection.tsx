@@ -3,16 +3,16 @@ import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
 import { api, request } from "../../../api/client";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import licenses from "../licenses.json";
 import { Segmented } from "../../../ui/Segmented";
-import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import type { TriagePlaybook } from "../../../generated/TriagePlaybook";
-import { navigate } from "../../../state/route";
-import { LogoTile } from "../../../ui/Logo";
-import { DRAFT_KEY, SCRATCH } from "../../../state/draftStore";
+import { navigate } from "../../../product/state/route";
+import { LogoTile } from "../../../product/ui/Logo";
+import { DRAFT_KEY, SCRATCH } from "../../../product/state/draftStore";
 import { heading, Toggle } from "./parts";
 
 /** The two lists of open-source packages, one for the interface and one for the service. */

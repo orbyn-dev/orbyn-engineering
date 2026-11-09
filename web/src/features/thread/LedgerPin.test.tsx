@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Approval } from "../../api/types";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { LedgerPin } from "./LedgerPin";
 
 const approval = (id: string, threadId: string, state: Approval["state"] = "pending"): Approval =>

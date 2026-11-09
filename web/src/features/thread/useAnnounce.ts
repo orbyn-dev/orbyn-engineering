@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ThreadItem } from "../../lib/timeline/types";
+import type { ThreadItem } from "../../product/timeline/types";
 
 /** How long the words stay in the region before it empties, so it is not found stale later. */
 const CLEAR_MS = 5000;

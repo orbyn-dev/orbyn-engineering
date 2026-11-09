@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../api/client";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequest, Thread } from "../../api/types";
-import { useConnection } from "../../state/connection";
+import { useConnection } from "../../product/state/connection";
 import { PullChip, PullsRow } from "./PullChip";
 import { useThreadPulls, WATCH_TIP } from "../pulls";
 

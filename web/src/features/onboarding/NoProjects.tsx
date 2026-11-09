@@ -1,5 +1,5 @@
 import { Download, Folder, Plus } from "lucide-react";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 import { SkillsNotice } from "./SkillsNotice";
 import "./onboarding.css";

@@ -2,11 +2,11 @@ import { Book, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SkillSummary } from "../../generated/SkillSummary";
 import { useWaited } from "../../lib/motion";
-import { DRAFT_KEY } from "../../state/draftStore";
-import { navigate, routeHref } from "../../state/route";
-import { useUi } from "../../state/ui";
+import { DRAFT_KEY } from "../../product/state/draftStore";
+import { navigate, routeHref } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
-import { ErrorState } from "../../ui/states";
+import { ErrorState } from "../../product/ui/states";
 import { useSkills } from "./skillsStore";
 import "./skills.css";
 

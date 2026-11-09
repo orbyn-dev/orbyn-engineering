@@ -2,11 +2,12 @@ import { AlarmClock, Check, CircleCheck, CircleDashed, Clock, GitBranch, Pin, Pi
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Project, Thread } from "../../../api/types";
-import { compactAge, elapsed, runStateLabels } from "../../../lib/format";
+import { compactAge, elapsed } from "../../../lib/format";
+import { runStateLabels } from "../../../product/runs/stateLabels";
 import { useNow } from "../../../lib/useNow";
-import { routeHref } from "../../../state/route";
-import { engineById, useWorkspace } from "../../../state/workspace";
-import { EngineGlyph, ProjectBadge } from "../../../ui/badges";
+import { routeHref } from "../../../product/state/route";
+import { engineById, useWorkspace } from "../../../product/state/workspace";
+import { EngineGlyph, ProjectBadge } from "../../../product/ui/badges";
 import type { DropVerb, SidebarSection } from "./groups";
 import { createLongPress } from "./longPress";
 import { threadRunState } from "./RunState";

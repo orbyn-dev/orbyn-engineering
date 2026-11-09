@@ -17,12 +17,12 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 
 | n | id | group | title | component | status | phase | Proof |
 |---|---|---|---|---|---|---|---|
-| 1 | `shell-console` | Shell and layouts | Console layout | `app/Shell.tsx:559; state/ui.ts:9` | exists | P1 | |
-| 2 | `shell-ledger` | Shell and layouts | Ledger layout | `state/ui.ts:9; app/TitleBar.tsx:84; features/thread/LedgerPin.tsx` | exists | P1 | |
+| 1 | `shell-console` | Shell and layouts | Console layout | `app/Shell.tsx:559; product/state/ui.ts:9` | exists | P1 | |
+| 2 | `shell-ledger` | Shell and layouts | Ledger layout | `product/state/ui.ts:9; app/TitleBar.tsx:84; features/thread/LedgerPin.tsx` | exists | P1 | |
 | 3 | `shell-reading` | Shell and layouts | Reading layout | `app/readingNav.ts; app/Shell.tsx:137` | exists | P1 | |
 | 4 | `welcome` | Getting started | Welcome | `features/onboarding/WelcomeWizard.tsx:152` | exists | P1 | |
 | 5 | `connect-agent` | Getting started | Connect an agent | `features/onboarding/WelcomeWizard.tsx:52` | exists | P1 | |
-| 6 | `add-project` | Getting started | Add a project | `features/workspace/palette/AddProjectPalette.tsx:392; ui/FolderBrowser.tsx` | exists | P1 | |
+| 6 | `add-project` | Getting started | Add a project | `features/workspace/palette/AddProjectPalette.tsx:392; product/ui/FolderBrowser.tsx` | exists | P1 | |
 | 7 | `trust` | Getting started | Trust this folder | `features/onboarding/TrustFolder.tsx:12` | exists | P1 | |
 | 8 | `no-projects` | Getting started | No projects yet | `features/onboarding/NoProjects.tsx:10` | exists | P1 | |
 | 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView.tsx:118` | exists | P2 | |
@@ -37,9 +37,9 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 18 | `find` | Threads | Find, minimap and related threads | `features/thread/ThreadFind.tsx:34; features/thread/Minimap.tsx:14; features/thread/RelatedThreads.tsx:25` | exists | P2 | |
 | 19 | `thread-menu` | Threads | Thread menu and undo | `features/workspace/sidebar/threadMenu.tsx; features/workspace/sidebar/threadUndo.ts` | exists | P2 | |
 | 20 | `palette` | Threads | Command palette | `features/workspace/palette/CommandPalette.tsx:67` | exists | P2 | |
-| 21 | `thread-empty` | Threads | Loading, empty and error | `ui/states.tsx:9; features/thread/Transcript.tsx` | exists | P2 | |
+| 21 | `thread-empty` | Threads | Loading, empty and error | `product/ui/states.tsx:9; features/thread/Transcript.tsx` | exists | P2 | |
 | 22 | `tc-collapsed` | Tool calls, every state | Collapsed groups | `features/thread/items.tsx:396` | partial | P2 | |
-| 23 | `tc-rows` | Tool calls, every state | Every kind of row, collapsed | `lib/timeline/toolTrace.ts:49; features/thread/items.tsx:116` | partial | P2 | |
+| 23 | `tc-rows` | Tool calls, every state | Every kind of row, collapsed | `product/timeline/toolTrace.ts:49; features/thread/items.tsx:116` | partial | P2 | |
 | 24 | `tc-group-open` | Tool calls, every state | Group expanded | `features/thread/items.tsx:420` | exists | P2 | |
 | 25 | `tc-command-open` | Tool calls, every state | Command expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx` | partial | P2 | |
 | 26 | `tc-output-capped` | Tool calls, every state | Output capped at 12 lines | `features/thread/items.tsx:128` | missing | P2 | |
@@ -47,12 +47,12 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 28 | `tc-running` | Tool calls, every state | Running, output streaming | `features/thread/items.tsx:190` | partial | P2 | |
 | 29 | `tc-running-group` | Tool calls, every state | Running group, collapsed and open | `features/thread/items.tsx:374,445` | partial | P2 | |
 | 30 | `tc-failed` | Tool calls, every state | Failed, with stderr in red | `features/thread/items.tsx:190` | partial | P2 | |
-| 31 | `tc-failed-collapsed` | Tool calls, every state | Failed, collapsed | `lib/timeline/toolTrace.ts:116` | partial | P2 | |
+| 31 | `tc-failed-collapsed` | Tool calls, every state | Failed, collapsed | `product/timeline/toolTrace.ts:116` | partial | P2 | |
 | 32 | `tc-timeout` | Tool calls, every state | Timed out | `features/thread/items.tsx:190` | missing | P2 | |
 | 33 | `tc-denied` | Tool calls, every state | Blocked by the access mode, needs you | `features/thread/ApprovalCard.tsx:24` | partial | P2 | |
 | 34 | `tc-denied-resolved` | Tool calls, every state | After the choice | `features/thread/ApprovalCard.tsx:13` | partial | P2 | |
-| 35 | `tc-cancelled` | Tool calls, every state | Cancelled | `lib/timeline/types.ts:32` | missing | P2 | |
-| 36 | `tc-output-file` | Tool calls, every state | Output too large, saved to a file | `lib/timeline/types.ts:32` | missing | P2 | |
+| 35 | `tc-cancelled` | Tool calls, every state | Cancelled | `product/timeline/types.ts:32` | missing | P2 | |
+| 36 | `tc-output-file` | Tool calls, every state | Output too large, saved to a file | `product/timeline/types.ts:32` | missing | P2 | |
 | 37 | `tc-binary` | Tool calls, every state | Binary output | `features/thread/items.tsx:128` | missing | P2 | |
 | 38 | `tc-empty` | Tool calls, every state | Empty output | `features/thread/items.tsx:137` | exists | P2 | |
 | 39 | `tc-long-hover` | Tool calls, every state | Very long command, collapsed | `features/thread/items.tsx:208` | partial | P2 | |
@@ -61,16 +61,16 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 42 | `tc-many` | Tool calls, every state | Many groups, Expand all and Collapse all | `features/thread/items.tsx:396` | missing | P2 | |
 | 43 | `tc-focus` | Tool calls, every state | Keyboard focus on a row | `ui/Collapsible.tsx` | partial | P2 | |
 | 44 | `tc-terminal` | Tool calls, every state | Open in terminal | `generated/OpenTerminal.ts` | missing | P2 | |
-| 45 | `tc-read` | Tool calls, every state | Read file, with a line range | `lib/timeline/toolTrace.ts:14,49` | partial | P2 | |
+| 45 | `tc-read` | Tool calls, every state | Read file, with a line range | `product/timeline/toolTrace.ts:14,49` | partial | P2 | |
 | 46 | `tc-edit` | Tool calls, every state | Edit file, with a mini diff | `features/thread/items.tsx:295` | partial | P2 | |
-| 47 | `tc-create` | Tool calls, every state | Create file | `lib/timeline/toolTrace.ts:15` | missing | P2 | |
-| 48 | `tc-search` | Tool calls, every state | Search, with a result list | `lib/timeline/toolTrace.ts:16` | partial | P2 | |
-| 49 | `tc-list` | Tool calls, every state | List files | `lib/timeline/toolTrace.ts:16` | missing | P2 | |
-| 50 | `tc-fetch` | Tool calls, every state | Web fetch, with the page title | `lib/timeline/toolTrace.ts:17` | partial | P2 | |
-| 51 | `tc-mcp` | Tool calls, every state | MCP tool, with server and arguments | `features/thread/McpApp.tsx; lib/timeline/toolTrace.ts:49` | partial | P2 | |
+| 47 | `tc-create` | Tool calls, every state | Create file | `product/timeline/toolTrace.ts:15` | missing | P2 | |
+| 48 | `tc-search` | Tool calls, every state | Search, with a result list | `product/timeline/toolTrace.ts:16` | partial | P2 | |
+| 49 | `tc-list` | Tool calls, every state | List files | `product/timeline/toolTrace.ts:16` | missing | P2 | |
+| 50 | `tc-fetch` | Tool calls, every state | Web fetch, with the page title | `product/timeline/toolTrace.ts:17` | partial | P2 | |
+| 51 | `tc-mcp` | Tool calls, every state | MCP tool, with server and arguments | `features/thread/McpApp.tsx; product/timeline/toolTrace.ts:49` | partial | P2 | |
 | 52 | `tc-subagent` | Tool calls, every state | Subagent, with a link to its thread | `features/thread/SubagentBar.tsx:40; features/thread/RelatedThreads.tsx:25` | partial | P2 | |
 | 53 | `tc-plan` | Tool calls, every state | Plan or to-do update | `features/thread/items.tsx:254` | exists | P2 | |
-| 54 | `tc-image` | Tool calls, every state | Image viewed | `lib/timeline/toolTrace.ts:14` | partial | P2 | |
+| 54 | `tc-image` | Tool calls, every state | Image viewed | `product/timeline/toolTrace.ts:14` | partial | P2 | |
 | 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/thread/SideChatPane.tsx:16` | partial | P2 | |
 | 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/thread/SideChatPane.tsx:16; features/thread/ApprovalCard.tsx:24` | partial | P2 | |
 | 57 | `tc-phone-list` | Tool calls, every state | Phone: groups and rows | `missing` | missing | P2 | |
@@ -208,7 +208,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 189 | `x-chat-ratelimit` | Threads, every state | Rate limited, with time to wait | `features/thread/ThreadBanners.tsx:19` | partial | P2 | |
 | 190 | `x-chat-context` | Threads, every state | Context nearly full | `features/thread/composer/ComposerExtras.tsx:30` | partial | P2 | |
 | 191 | `x-chat-compacting` | Threads, every state | Compacting the thread | `features/thread/composer/ComposerExtras.tsx:53` | partial | P2 | |
-| 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `lib/timeline/projection.ts:133` | partial | P2 | |
+| 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `product/timeline/projection.ts:133` | partial | P2 | |
 | 193 | `x-chat-edit` | Threads, every state | Edit a message and branch | `features/thread/MessageActions.tsx:81,94` | partial | P2 | |
 | 194 | `x-chat-message-menu` | Threads, every state | Message actions | `features/thread/MessageActions.tsx:41` | exists | P2 | |
 | 195 | `x-chat-long` | Threads, every state | Very long thread, jump to latest | `features/thread/Transcript.tsx:218` | partial | P2 | |
@@ -233,7 +233,7 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 214 | `x-phone-panel` | Phone, more | Phone: Diff and checks | `missing` | missing | P2 | |
 | 215 | `update` | Updates, dialogs and toasts | Updates | `features/workspace/app-chrome/Updates.tsx:275` | exists | P1 | |
 | 216 | `quit` | Updates, dialogs and toasts | Quit while agents run | `features/workspace/app-chrome/QuitConfirmation.tsx:17` | exists | P1 | |
-| 217 | `toasts` | Updates, dialogs and toasts | Toasts and dialogs | `ui/Toasts.tsx:6; ui/Dialog.tsx` | exists | P1 | |
+| 217 | `toasts` | Updates, dialogs and toasts | Toasts and dialogs | `product/ui/Toasts.tsx:6; ui/Dialog.tsx` | exists | P1 | |
 | 218 | `account` | Orbyn account and other devices | Sign in to Orbyn | `features/platform/AccountCard.tsx; features/platform/previews.ts` | preview-only | Later | |
 | 219 | `connect-planner` | Orbyn account and other devices | Connect Orbyn Planner | `features/platform/ConnectPlanner.tsx` | preview-only | Later | |
 | 220 | `pair-phone` | Orbyn account and other devices | Remote access and pairing | `features/platform/PairPhone.tsx` | preview-only | P2 | |
@@ -267,19 +267,19 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 13 | `tooltip` | Tooltip delay | opacity, translateY -2px to 0 | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, same delay | `web/src/styles/base.css:845 .hover-card (ThreadRow.tsx:116, features/content/markdown/PullLinkPreview.tsx:112); native title= elsewhere (ui/controls.tsx:74)` | differs | P1 | |
 | 14 | `context` | Context menu | opacity, translateY -4px and scale .98 from the pointer position | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only | `web/src/features/panels/files/FilesPanel.tsx:260; features/workspace/palette/ProjectFilter.tsx:126 (via ui/Menu.tsx)` | differs | P1 | |
 | 15 | `modal` | Modal and scrim | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
-| 16 | `confirm` | Confirm a destructive action | dialog and scrim as the modal; row opacity, siblings translateY one slot; toast translateY 12px | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | dialog fades; row fades out and the list closes up at once | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog; web/src/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
+| 16 | `confirm` | Confirm a destructive action | dialog and scrim as the modal; row opacity, siblings translateY one slot; toast translateY 12px | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | dialog fades; row fades out and the list closes up at once | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog; web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
 | 17 | `sheet` | Phone bottom sheet | sheet translateY 100% to 0; scrim opacity; drag follows the pointer 1:1 | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | sheet and scrim fade; drag still works | `missing (no bottom sheet; dialogs are centred)` | missing | P1 | |
-| 18 | `sidepanel` | Side panel slide | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread.css:1710-1722 .context; web/src/lib/panelAnimations.ts` | differs | P1 | |
+| 18 | `sidepanel` | Side panel slide | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread.css:1710-1722 .context; web/src/product/panels/panelAnimations.ts` | differs | P1 | |
 | 19 | `sidetabs` | Side panel tabs | tab background-color and color; content opacity cross-fade | fast 150ms, exit 105ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | colour and fade only, same as full motion | `web/src/styles/thread.css:1760-1850 .ptab/.surface-tab; features/panels/SurfacePane.tsx` | missing | P1 | |
 | 20 | `sidetabs` | Side panel tabs | tab flex-basis, max-width and padding to 0, opacity out; neighbours slide in as it collapses (one small strip, layout) | base 200ms | cubic-bezier(.4,0,.2,1) | tab disappears at once, content fades | `web/src/features/panels/SurfacePane.tsx; web/src/styles/thread.css:1801 .surface-tab` | missing | P1 | |
 | 21 | `sidetabs` | Side panel tabs | tab flex-basis, max-width and padding from 0 to full, opacity in | base 200ms | cubic-bezier(.2,.8,.2,1) | tab appears at once, content fades | `web/src/features/panels/SurfacePane.tsx; web/src/styles/thread.css:1801 .surface-tab` | missing | P1 | |
 | 22 | `sidetabs` | Side panel tabs | dragged tab lifts (translateY -2px, shadow) and follows the pointer; the others transform translateX one tab width | fast 150ms | cubic-bezier(.2,.8,.2,1) | tab order changes at once; no lift or slide | `n/a (Engineering has no tab drag-reorder; SurfacePane has no drag handlers)` | n/a | Not this app | |
 | 23 | `termdrawer` | Terminal drawer | drawer transform translateY 100% to 0 over the thread | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | drawer fades in place | `web/src/features/thread/ThreadView.tsx:277-286 TerminalDrawer; web/src/styles/thread.css:1685 .drawer` | missing | P2 | |
 | 24 | `settings` | Settings navigation | highlight transform translateY; pane opacity and translateY 6px to 0 | base 200ms, page 240ms, exit 170ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | highlight jumps; pane cross-fades | `web/src/features/settings/SettingsPage.tsx` | missing | P1 | |
-| 25 | `toast` | Toasts | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
+| 25 | `toast` | Toasts | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
 | 26 | `banner` | Banner | opacity, translateY -8px to 0 in a reserved slot, nothing below shifts | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | banner fades in place | `web/src/styles/base.css:506 .banner` | missing | P1 | |
 | 27 | `spinner` | Spinner | spinner opacity; rotate 360deg loop, linear 900ms | fast 150ms, wait 400ms | cubic-bezier(.4,0,.2,1) | static ring, no rotation | `web/src/styles/base.css:647 .spin (Loader2 in items.tsx:265, SubagentBar.tsx:24, Updates.tsx:95)` | differs | P1 | |
-| 28 | `skeleton` | Skeleton to content | skeleton opacity; content opacity | fast 150ms, base 200ms, exit 105ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same fades | `web/src/ui/states.tsx; web/src/styles/base.css:447-453 .skeleton` | differs | P1 | |
+| 28 | `skeleton` | Skeleton to content | skeleton opacity; content opacity | fast 150ms, base 200ms, exit 105ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same fades | `web/src/product/ui/states.tsx; web/src/styles/base.css:447-453 .skeleton` | differs | P1 | |
 | 29 | `progress` | Progress bar | fill transform scaleX from the left; colour blue while running, green when done | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1) | fill jumps to each value | `web/src/styles/shell.css:1250-1265 .quit-progress (hold-to-quit bar only); update install progress is a text line (features/settings/providers/engineUpdates.tsx:80)` | differs | P1 | |
 | 30 | `syncline` | Sync line | label opacity cross-fade; colour from the label's own state | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade | `n/a (Planner only)` | n/a | Not this app | |
 | 31 | `status` | Status labels | label opacity cross-fade; background and text colour per state | fast 150ms, exit 105ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade | `web/src/ui/controls.tsx:116 .pill; web/src/styles/base.css:721 .status-dot` | missing | P1 | |
@@ -318,19 +318,19 @@ Rows with status `n/a` belong to another Orbyn app and have no Engineering scree
 | 64 | `consent` | Consent allow | toggle knob translateX; button spinner after 400ms; card content cross-fade | fast 150ms, wait 400ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | same cross-fade, static ring | `n/a (Account only)` | n/a | Not this app | |
 | 65 | `update` | Launcher update progress | progress transform scaleX; button, bar and caption opacity cross-fade; blue while downloading | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | fill jumps; labels cross-fade | `web/src/features/workspace/app-chrome/Updates.tsx:95,296; web/src/features/settings/providers/engineUpdates.tsx:80` | missing | P1 | |
 | 66 | `sidenav` | Sidebar select | highlight transform translateY; label color; title opacity | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | highlight jumps; colour and title fade | `web/src/features/workspace/sidebar/Sidebar.tsx; web/src/styles/shell.css:309 .thread-row` | differs | P1 | |
-| 67 | `pagechange` | Page change | outgoing opacity; incoming opacity and translateY 6px to 0 | exit 170ms, page 240ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | plain cross-fade | `web/src/app/Shell.tsx; lib/panelAnimations.ts:19-31` | missing | P1 | |
+| 67 | `pagechange` | Page change | outgoing opacity; incoming opacity and translateY 6px to 0 | exit 170ms, page 240ms | cubic-bezier(.4,0,.2,1), exit cubic-bezier(.2,.8,.2,1) | plain cross-fade | `web/src/app/Shell.tsx; product/panels/panelAnimations.ts:19-31` | missing | P1 | |
 | 68 | `pushpop` | Phone push and pop | pushed screen transform translateX 100% to 0; the screen below stays still | page 240ms, exit 170ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | screen fades in place | `missing (no push/pop; narrow layout swaps views, thread.css:1722-1733)` | missing | P1 | |
 | 69 | `tabbar` | Tab bar switch | indicator transform translateX; label colour; screen opacity (frequent, no travel) | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | indicator jumps; colour and screen fade | `n/a (no phone tab bar in the web app; only PreviewScreens.tsx mock)` | n/a | Not this app | |
-| 70 | `collapse` | Sidebar to drawer | drawer transform translateX -100% to 0; scrim opacity | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | drawer and scrim fade in place | `web/src/styles/shell.css:651-657 [data-panel-motion=on] .sidebar; web/src/lib/panelAnimations.ts` | differs | P1 | |
-| 71 | `themes` | Theme switch | background-color, color, border-color, box-shadow on every surface | fast 150ms | cubic-bezier(.4,0,.2,1) | same colour change (it is not movement) | `web/src/styles/themes.ts; state/ui.ts:677; app/App.tsx:48` | missing | P1 | |
+| 70 | `collapse` | Sidebar to drawer | drawer transform translateX -100% to 0; scrim opacity | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | drawer and scrim fade in place | `web/src/styles/shell.css:651-657 [data-panel-motion=on] .sidebar; web/src/product/panels/panelAnimations.ts` | differs | P1 | |
+| 71 | `themes` | Theme switch | background-color, color, border-color, box-shadow on every surface | fast 150ms | cubic-bezier(.4,0,.2,1) | same colour change (it is not movement) | `web/src/styles/themes.ts; product/state/ui.ts:677; app/App.tsx:48` | missing | P1 | |
 | 72 | `reduced` | Reduced motion | opacity, transform translateY -4px and scale .98 from the trigger corner | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, 150ms | `web/src/ui/Menu.tsx; web/src/styles/base.css:772 .popup-menu` | differs | P1 | |
 | 73 | `reduced` | Reduced motion | opacity, transform translateY -4px and scale .98 from the trigger corner | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | opacity only, 150ms | `web/src/ui/Menu.tsx; web/src/styles/base.css:772 .popup-menu` | differs | P1 | |
 | 74 | `reduced` | Reduced motion | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
 | 75 | `reduced` | Reduced motion | scrim opacity; dialog opacity, translateY 8px to 0, scale .98 to 1 | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | scrim and dialog fade only | `web/src/ui/Dialog.tsx; web/src/styles/base.css:547-562 .dialog` | differs | P1 | |
-| 76 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread.css:1710-1722 .context; web/src/lib/panelAnimations.ts` | differs | P2 | |
-| 77 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread.css:1710-1722 .context; web/src/lib/panelAnimations.ts` | differs | P2 | |
-| 78 | `reduced` | Reduced motion | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
-| 79 | `reduced` | Reduced motion | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
+| 76 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread.css:1710-1722 .context; web/src/product/panels/panelAnimations.ts` | differs | P2 | |
+| 77 | `reduced` | Reduced motion | panel transform translateX 100% to 0; content does not reflow | slow 300ms, exit 210ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | panel fades in place, no travel | `web/src/features/panels/SurfacePane.tsx:209; web/src/styles/thread.css:1710-1722 .context; web/src/product/panels/panelAnimations.ts` | differs | P2 | |
+| 78 | `reduced` | Reduced motion | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
+| 79 | `reduced` | Reduced motion | opacity, translateY 12px to 0; older toasts translateY up one slot | base 200ms, exit 140ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | toasts fade and stack without moving | `web/src/product/ui/Toasts.tsx; web/src/styles/base.css:925 .toast` | differs | P1 | |
 | 80 | `reduced` | Reduced motion | tick opacity and scale; strike transform scaleX; row opacity; row translateY to Done after a 1.5s pause with Undo | fast 150ms, base 200ms, slow 300ms | cubic-bezier(.2,.8,.2,1) | tick and strike appear; row fades and reappears in Done | `n/a (Planner only)` | n/a | Not this app | |
 | 81 | `reduced` | Reduced motion | tick opacity and scale; strike transform scaleX; row opacity; row translateY to Done after a 1.5s pause with Undo | fast 150ms, base 200ms, slow 300ms | cubic-bezier(.2,.8,.2,1) | tick and strike appear; row fades and reappears in Done | `n/a (Planner only)` | n/a | Not this app | |
 | 82 | `reduced` | Reduced motion | card opacity and translateY 8px to 0; amber to neutral background and border; content cross-fade | base 200ms, fast 150ms | cubic-bezier(.2,.8,.2,1), exit cubic-bezier(.4,0,.2,1) | card and content fade only | `web/src/features/thread/items.tsx; web/src/styles/thread.css:691 .approval` | missing | P2 | |

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { request } from "../../api/client";
 import type { EngineStatus, PreferenceView } from "../../api/types";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { toFailure } from "../../lib/useAsync";
 import { chooseDraftEngine } from "./draftEngine";
 

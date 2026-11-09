@@ -1,10 +1,10 @@
 import { useMemo } from "react";
 import { elapsed } from "../../../lib/format";
 import { useNow } from "../../../lib/useNow";
-import { useWorkspace } from "../../../state/workspace";
-import { EngineGlyph } from "../../../ui/badges";
-import { useThreadLogs } from "../../../state/threadLogs";
-import { runningTools } from "../../../lib/timeline/timeline";
+import { useWorkspace } from "../../../product/state/workspace";
+import { EngineGlyph } from "../../../product/ui/badges";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { runningTools } from "../../../product/timeline/timeline";
 
 /** The tool calls running now in this thread's run, newest first; nothing when none run. */
 export function ThisRun({ threadId }: { threadId: string }) {

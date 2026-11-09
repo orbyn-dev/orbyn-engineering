@@ -6,12 +6,12 @@ import type { HistoryScan } from "../../../generated/HistoryScan";
 import type { HistorySession } from "../../../generated/HistorySession";
 import type { HistorySessionImported } from "../../../generated/HistorySessionImported";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useConnection } from "../../../state/connection";
-import { navigate } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useConnection } from "../../../product/state/connection";
+import { navigate } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
-import { Empty, Loading } from "../../../ui/states";
+import { Empty, Loading } from "../../../product/ui/states";
 
 const q = encodeURIComponent;
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });

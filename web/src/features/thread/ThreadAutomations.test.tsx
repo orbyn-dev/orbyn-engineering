@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { installMockFetch } from "../../test-support";
 import { ThreadAutomations } from "./ThreadAutomations";
-import { navigate } from "../../state/route";
-import { useUi } from "../../state/ui";
+import { navigate } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
 
 function failNextTaskRead() {
   const inner = globalThis.fetch;

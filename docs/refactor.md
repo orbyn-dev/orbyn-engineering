@@ -17,9 +17,10 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 - One folder per capability or feature; big topics get sub-folders.
 - One front door per feature: `features/<x>/index.ts` is the only file another
   feature imports. No deep imports across features.
-- One-way dependencies: `app` -> `features` -> `ui`, `lib`, `state` -> `api`.
-  Shared pieces move to a shared place (`features/content` for markdown and code
-  rendering, or `ui`).
+- One-way dependencies: `app` -> `features` -> `product` -> generic (`lib`, `ui`, `api`).
+  Shared code has two tiers (see "Tiers for shared code" below); a piece two features
+  need moves to the lowest tier that fits (`features/content` for markdown and code
+  rendering, `product`, `ui` or `lib`).
 - Styles, tests and API hooks sit beside the component they belong to. Global
   styles hold only tokens, base and layout.
 - One name, one meaning: Page is a route, Panel is a side-panel tab, Dialog is a
@@ -39,7 +40,7 @@ at once.
 
 | Check | Run | Baseline |
 | --- | --- | --- |
-| Web import direction, feature front doors, import cycles, file size (600 lines TypeScript, 1500 CSS) | `npm run check` in `web` (`scripts/arch-check.mjs`) | `web/scripts/arch-baseline.json` (direction and file size only; front doors, file cycles and feature cycles are always errors) |
+| Web import direction, tiers, feature front doors, import cycles, file size (600 lines TypeScript, 1500 CSS) | `npm run check` in `web` (`scripts/arch-check.mjs`, plus the ESLint import rules) | `web/scripts/arch-baseline.json` (direction, tier and file size only; front doors, file cycles and feature cycles are always errors) |
 | Rust: no new `.rs` file over 1500 lines; `orbynd` gains no `Command::new("git")` and no new core `store` references | `python3 scripts/check_rust_arch.py` (CI "Cheap checks") | `scripts/rust-arch-baseline.json` |
 | Unused exports (report only, not in `check`) | `npm run arch:report` in `web` (knip) | none |
 
@@ -50,17 +51,18 @@ notice, and `--update` lowers its recorded size.
 
 Notes:
 
-- The web layering is one way: `app` -> `features` -> `ui`, `lib`, `state` -> `api`.
-  So features never import `app`, shared folders never import `app` or a feature,
-  and `api` never imports `ui`, `lib` or `state`. These rules live here;
+- The web layering is one way: `app` -> `features` -> `product` -> generic (`ui`, `lib`, `api`).
+  So features never import `app`, `product` and the generic folders never import `app` or a
+  feature, generic code never imports `product` (rule `tier`), and `api` never imports `ui` or
+  `lib`. Both `direction` and `tier` have empty baselines. These rules live here;
   [architecture.md](architecture.md) has no layering section.
 - Features form one acyclic order. A feature imports only the `index.ts` of one lower
   down: `settings` > `onboarding` > `thread` > `panels` > `workspace` > `skills`, with
   `pulls` and `tools` below `thread` and `panels`, and `content` at the bottom.
   `usage` and `platform` import no feature. A piece two
   features need moves to the lowest layer that fits: `features/content` (markdown and
-  code rendering), `ui`, `lib` (for example `lib/timeline`, the thread projection) or
-  `state` (for example `composerChipStore`, `threadLogs`), not a re-export from the old place.
+  code rendering), `product` (for example `product/timeline`, the thread projection, or
+  `product/state/threadLogs`), `ui` or `lib`, not a re-export from the old place.
 - Type-only imports count as edges, like any import. Imports inside comments are
   ignored, and an unresolved relative import prints a warning.
 - Both checks are text matching, not parsers; the Rust one lists its known gaps
@@ -80,8 +82,9 @@ Notes:
   `operations/`, `host/`.
 - `crates/orbynd/src`: `main.rs` (start-up only), `routes/` by area, `http/`
   (errors, json, access, remote images), `cli/`, `bin/`.
-- `web/src`: `app/`, `api/`, `state/`, `lib/`, `ui/` (each control in its own folder
-  with its CSS), `styles/` (tokens, base, layouts only), `generated/`, and
+- `web/src`: `app/` (shell only), `api/`, `product/` (`state/`, `timeline/`, `projects/`,
+  `composer/`, `shell/`, `tasks/`, `media/`, `panels/`, `runs/`, `ui/`), `lib/` and `ui/`
+  (generic: each control with its CSS), `styles/` (tokens, base, layouts only), `generated/`, and
   `features/`: `thread/` (header, composer, timeline, trail, messages, approvals,
   details, git, mcp-apps), `content/` (markdown, code), `panels/` (host, strip,
   browser, diff, files, terminal, activity, side-chat, preview), `workspace/`
@@ -103,6 +106,7 @@ Notes:
 | W4 | Per-feature `api.ts` and hooks |
 | W5 | Giant components into sub-folders |
 | W6 | Naming pass and `web/README.md` |
+| W7a | Product and generic tiers for shared web code (`product/`) |
 
 The backend (B) and web (W) tracks can run in parallel.
 
@@ -177,6 +181,73 @@ The backend (B) and web (W) tracks can run in parallel.
   (1,920) left the Rust size baseline (5 to 3 long files); the largest non-test file is now
   `preview/recording.rs` (934, moved whole) and the largest cut file `tools/dispatch.rs` (682, one
   match). The old paths `browser::preview_bridge` and `tools::mcp_tools` still resolve.
+
+- W7a (product and generic tiers): done for the shared folders; front-door helpers are open (see
+  the audit below). `state/` became `product/state/`, and `lib/timeline` became `product/timeline`.
+  The shared files that carry product vocabulary and have two or more feature users moved to
+  `product/` (`git mv`, then an import commit). Files with one feature user moved into it
+  (`SettingRow`, `commandLabels`, `SlidersIcon`, `pageLabel`). The 21 `direction` entries
+  (features importing `app/`) are gone: `app/shortcuts` and `app/sidebarDrawer` are
+  `product/shell/`. New rule `tier` (generic code never imports `product/`), enforced by
+  `arch-check` and by ESLint. Non-move edits: `useLingering` and `useSettledAfter` moved verbatim
+  from `panelAnimations` into `lib/lingering.ts` (so `ui/Presence` stays generic), and `runStateLabels`
+  and `authLabels` moved verbatim out of `lib/format.ts` into `product/runs/stateLabels.ts`.
+
+### Tiers for shared code
+
+Two tiers, one owner per file. `product/` holds code whose names or types carry this
+product's vocabulary (threads, projects, runs, models, pulls, panels, composer) and that two or
+more features use. Generic code (`lib/`, `ui/`, `api/`) would work in any repository. Code only
+one feature uses stays in that feature. Shared tiers grow only by hoisting, and breaking a cycle
+may hoist at the second caller. The old tier names `lib` and `ui` keep their names.
+
+Classification of the former shared folders (features = how many features import it):
+
+| Old home | Files | Tier | Where now |
+| --- | --- | --- | --- |
+| `state/*` stores (`ui`, `route`, `workspace`, `connection`, `draftStore`, `modelStore`, `composerChipStore`, `threadLogs`, `healthToasts`) | 9 | product (app state; 3 to 10 features) | `product/state/` |
+| `state/pageLabel` | 1 | local (`pulls` only) | `features/pulls/detail/` |
+| `lib/timeline/*` | 5 | product (thread projection; `thread`, `panels`) | `product/timeline/` |
+| `lib/{projectIdentity,projectImages,projectImagePersistence,projectImagePreview}` | 4 | product (3 features, `ui`, `state`) | `product/projects/` |
+| `lib/{composerContext,skillMention,actionCommand,runProjectAction,actionPreview,editorPreferences,useResolvedThreadPath}` | 7 | product (2 to 3 features) | `product/composer/` |
+| `lib/taskSchedule` | 1 | product (`settings`, `thread`) | `product/tasks/` |
+| `lib/media` (`rawUrl(threadId, ...)`) | 1 | product (`content`, `panels`) | `product/media/` |
+| `lib/panelAnimations` (`usePanelMotion`, reads the UI store) | 1 | product (`settings`, `thread`, `app`) | `product/panels/` |
+| `lib/format`: `runStateLabels`, `authLabels` | 2 consts | product (5 features) | `product/runs/stateLabels.ts` |
+| `app/shortcuts`, `app/sidebarDrawer` | 2 | product (6 features and `app`; 1 feature and `app`) | `product/shell/` |
+| `app/commandLabels` | 1 | local (`settings` only) | `features/settings/pages/` |
+| `app/{barDrag,environmentTheme,navHistory,pollSchedule,readingNav,taskNotifications}`, `App`, `Shell`, `TitleBar` | 9 | app only | stay in `app/` |
+| `ui/{DetailRows,FolderBrowser,Logo,ProjectActionIcon,ProjectIconVisual,PageBar,Toasts,badges,states}` (and their CSS and tests) | 9 | product (name or import carries a product word: thread details, project, route, UI store; 2 to 11 features) | `product/ui/` |
+| `ui/SettingRow`, `ui/SlidersIcon` | 2 | local (`settings`; `workspace`) | into those features |
+| `ui/{Collapsible,Dialog,Menu,Presence,Segmented,controls,focusReturn,openState,tabKeys,useEscapeClose,usePopover}` | 11 | generic | stay |
+| `lib/{format,storage,motion,useAsync,useLayout,useNow,keptData,clearSelection,inputModality}` | 9 | generic | stay (`lib/lingering` is new: the two verbatim hooks above) |
+
+Counts of hand-written files (no tests): `product/` 43 (40 TypeScript, 3 CSS), `lib/` 10 (was 28),
+`ui/` 11 (was 25), `app/` 9 (was 12), `state/` 0 (was 10). `ui/openState` keeps thread words in comments
+only, and its names are generic, so it stays generic.
+
+Classification TODOs (not moved now): `product/state/connection.ts` is a generic offline store
+and could move to `lib/`; `lib/useLayout.ts` names `panelOverlays`, so it may be product; `ui/openState.ts`
+mentions threads in comments only.
+
+### Front-door audit
+
+Every export of a `features/<x>/index.ts` another feature imports. API is a view, dialog, command
+or state other features use. A helper is a builder, formatter or pure function; one used by a single
+other feature is a TODO row, hoisted to `product/` or `lib/` when a second feature needs it or it
+breaks a cycle. The check does not yet limit what a front door may export (skipped: it needs a
+curated list of API names; the table is the record).
+
+| Feature | API | Helpers (TODO) |
+| --- | --- | --- |
+| `content` | `Markdown`, `CodeBlock`, `Mermaid`, `Lightbox` | `fileLinkTarget`, `markdownText`, `outputSpans` (all `thread` only) |
+| `onboarding` | none | `chooseDraftEngine` (`settings` only) |
+| `panels` | `GitActionDialog`, `PublishDialog`, `RestoreFilesDialog`, `SurfacePane`, `TerminalBar`, `TerminalDrawerBody`, `useGitAvailable` | `PLANS`, `Plan`, `createPullRequestPlan` (`thread` only) |
+| `pulls` | `ToolbarPopover`, `useThreadPulls` | `WATCH_TIP`, `checksSummary`, `chipDot`, `chipLabel`, `entryOf`, `forgeName`, `numberLabel`, `readyToMerge`, `stateWord` (`thread` only) |
+| `skills` | `SkillsNav` | none |
+| `thread` | `ModelPickerTrigger`, `EffortTrigger`, `useTraitsMenu` | `ACCESS`, `offeredModes`, `shownAccess` (`onboarding` only), `DETAIL_ROWS`, `detailsMenuItems` (`settings` only) |
+| `tools` | `ToolsList`, `ToolsRow`, `ToolsTab` | none |
+| `workspace` | `AddProjectPalette`, `GitHubStarPrompt`, `RenameThreadDialog`, `recordUserPrompt`, `archiveThreads`, `deleteThreadNow`, `settleThreads`, `unarchiveThread`, `unsettleThreads`, `wakeThreads`, `snoozeChildren`, `threadRunState` | `copyText` (`thread` only; generic, wants `lib/`) |
 
 ## Done when
 

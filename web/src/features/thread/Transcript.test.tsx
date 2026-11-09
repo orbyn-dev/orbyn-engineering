@@ -1,19 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Transcript } from "./Transcript";
 import { ThreadFind } from "./ThreadFind";
 import type { Approval } from "../../api/types";
 import { forgetOpenState } from "../../ui/openState";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { LedgerPin } from "./LedgerPin";
 import { findMatches } from "./threadSearch";
 import { rangesIn } from "./ThreadFind";
-import { emptyLog } from "../../lib/timeline/projection";
-import type { ApprovalItem, MessageItem, ThreadItem, ToolItem } from "../../lib/timeline/types";
-import { useThreadLogs } from "../../state/threadLogs";
-import { arrangeTimeline } from "../../lib/timeline/timeline";
+import { emptyLog } from "../../product/timeline/projection";
+import type { ApprovalItem, MessageItem, ThreadItem, ToolItem } from "../../product/timeline/types";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { arrangeTimeline } from "../../product/timeline/timeline";
 import { transcriptFor } from "./transcriptRegistry";
 import { estimateRow, sizesFor } from "./windowing";
 

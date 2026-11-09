@@ -1,7 +1,7 @@
 import { settingsLabel } from "../settingsSearch";
 import { useEffect, useState } from "react";
 import { Segmented } from "../../../ui/Segmented";
-import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { WorktreeCleanup } from "../maintenance/WorktreeCleanup";
 import { heading } from "./parts";

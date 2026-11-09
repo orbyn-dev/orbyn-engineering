@@ -1,8 +1,8 @@
 import { api } from "../../../api/client";
 import type { PermissionMode, Thread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 
 /** Changes to the thread's mode, access, effort and model, each reporting its own failure. */
 export function useThreadSettings(thread: Thread, setError: (message: string | null) => void) {

@@ -1,7 +1,7 @@
 import { ChartColumn, Clock, GitPullRequest, Settings, SquarePen } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
-import { routeHref, type Route } from "../../../state/route";
-import { DEFAULT_SIDEBAR_WIDTH, useUi } from "../../../state/ui";
+import { routeHref, type Route } from "../../../product/state/route";
+import { DEFAULT_SIDEBAR_WIDTH, useUi } from "../../../product/state/ui";
 import { UpdatePill } from "../app-chrome/Updates";
 import { SkillsNav } from "../../skills";
 import { undoLabel, undoLatest, useUndoNotice } from "./threadUndo";

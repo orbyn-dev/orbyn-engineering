@@ -4,7 +4,7 @@ import { api, request } from "../../api/client";
 import type { TerminalInfo, Thread } from "../../api/types";
 import type { ThreadSetup } from "../../generated/ThreadSetup";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 
 /** How often a setup that is still going is read again. */

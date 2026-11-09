@@ -6,7 +6,7 @@ import { api } from "../../../api/client";
 import type { EngineModels, EngineStatus } from "../../../api/types";
 import type { ModelInfo } from "../../../generated/ModelInfo";
 import type { ModelOption } from "../../../generated/ModelOption";
-import { resolveModel, useEngineModels, useModelStore } from "../../../state/modelStore";
+import { resolveModel, useEngineModels, useModelStore } from "../../../product/state/modelStore";
 import { EffortTrigger, useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
 

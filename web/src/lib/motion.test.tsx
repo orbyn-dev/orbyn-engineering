@@ -1,6 +1,5 @@
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Loading, Splash } from "../ui/states";
 import { MOTION, useWaited } from "./motion";
 
 beforeEach(() => vi.useFakeTimers());
@@ -29,20 +28,4 @@ it("never reports a wait for work that ends inside it, and clears its timer on u
   rerender({ active: true });
   unmount();
   expect(vi.getTimerCount()).toBe(0);
-});
-
-it("draws the static skeleton only after the wait, with the label read at once", () => {
-  const { container } = render(<Loading label="Loading usage" rows={3} />);
-  expect(screen.getByRole("status")).toHaveTextContent("Loading usage");
-  expect(container.querySelectorAll(".skeleton")).toHaveLength(0);
-  act(() => vi.advanceTimersByTime(MOTION.wait));
-  expect(container.querySelectorAll(".skeleton")).toHaveLength(3);
-});
-
-it("draws the 64 px splash mark only after the wait, with the label read at once", () => {
-  const { container } = render(<Splash label="Connecting to Orbyn" />);
-  expect(screen.getByRole("status")).toHaveTextContent("Connecting to Orbyn");
-  expect(container.querySelector("svg.logo")).toBeNull();
-  act(() => vi.advanceTimersByTime(MOTION.wait));
-  expect(container.querySelector("svg.logo")).toHaveAttribute("data-logo", "64");
 });

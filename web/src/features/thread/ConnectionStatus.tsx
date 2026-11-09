@@ -1,6 +1,6 @@
 import { CircleAlert, CloudOff, Loader2 } from "lucide-react";
 import { inDesktopApp } from "../../api/shell";
-import { checkConnectionNow, useConnection, useConnectionKind } from "../../state/connection";
+import { checkConnectionNow, useConnection, useConnectionKind } from "../../product/state/connection";
 import { Button } from "../../ui/controls";
 
 /** The header's word for a connection failure, in place of the run state. Null when all is well. */

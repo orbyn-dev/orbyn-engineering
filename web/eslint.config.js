@@ -22,7 +22,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/{ui,state,lib,api,styles}/**/*.{ts,tsx}"],
+    files: ["src/{ui,lib,api,styles,product}/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -32,6 +32,27 @@ export default tseslint.config(
             {
               group: ["**/features/**", "**/app/**"],
               message: "Shared folders never import a feature or app. Move the code to its owner (web/README.md).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/{ui,lib,api,styles}/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ...everywhere,
+            {
+              group: ["**/features/**", "**/app/**"],
+              message: "Shared folders never import a feature or app. Move the code to its owner (web/README.md).",
+            },
+            {
+              group: ["**/product/**"],
+              message: "Generic code (ui, lib, api) never imports product code; move the file to product/ if it carries product vocabulary (web/README.md).",
             },
           ],
         },

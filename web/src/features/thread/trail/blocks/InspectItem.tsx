@@ -1,5 +1,5 @@
 import { api } from "../../../../api/client";
-import type { ToolItem } from "../../../../lib/timeline/types";
+import type { ToolItem } from "../../../../product/timeline/types";
 import { useAsync } from "../../../../lib/useAsync";
 import { Dialog } from "../../../../ui/Dialog";
 import { useOpenState } from "../../../../ui/openState";

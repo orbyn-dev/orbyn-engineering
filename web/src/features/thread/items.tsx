@@ -1,5 +1,5 @@
 import { PreparationRetryButton } from "./ThreadBanners";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { MessageActions } from "./MessageActions";
 import {
   Brain,
@@ -11,10 +11,10 @@ import { memo, useMemo, useState } from "react";
 import { Square } from "lucide-react";
 import { clockTime, elapsed } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
-import { EngineGlyph } from "../../ui/badges";
+import { EngineGlyph } from "../../product/ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
 import { OpenStatePrefix, useOpenControl, useOpenState } from "../../ui/openState";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Button, Pill } from "../../ui/controls";
 import { ApprovalCard, useResolvedApproval } from "./ApprovalCard";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
@@ -28,12 +28,12 @@ import {
   type WorkGroup,
   type WorkingRow,
   type WorkItem,
-} from "../../lib/timeline/timeline";
+} from "../../product/timeline/timeline";
 import { workSegments } from "./toolCalls";
 import { PlanRow } from "./trail/PlanRow";
 import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
-import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../lib/timeline/types";
+import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../product/timeline/types";
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {

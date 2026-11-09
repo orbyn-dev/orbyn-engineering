@@ -8,10 +8,10 @@ import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferenc
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import { ProjectModelDefaults } from "./ProjectModelDefaults";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
-import { useModelStore } from "../../../state/modelStore";
+import { useModelStore } from "../../../product/state/modelStore";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-vi.mock("../../../state/workspace", () => ({ useWorkspace: (select: (state: unknown) => unknown) =>
+vi.mock("../../../product/state/workspace", () => ({ useWorkspace: (select: (state: unknown) => unknown) =>
   select({ engines: { data: [{ id: "codex", name: "Codex", installed: true }] } }) }));
 vi.mock("../../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick, disabled, triggerLabel }: {
   selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void; disabled: boolean; triggerLabel?: string;

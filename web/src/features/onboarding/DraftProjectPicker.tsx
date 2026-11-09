@@ -1,7 +1,7 @@
 import { FolderPlus } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../../api/types";
-import { ProjectBadge } from "../../ui/badges";
+import { ProjectBadge } from "../../product/ui/badges";
 import { usePopover } from "../../ui/usePopover";
 
 const WIDTH = 288;

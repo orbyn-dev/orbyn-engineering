@@ -11,7 +11,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../api/client")>();
   return { ...original, api: { ...original.api, ...actions } };
 });
-vi.mock("../../../state/workspace", () => ({
+vi.mock("../../../product/state/workspace", () => ({
   useWorkspace: (select: (state: {
     refreshEngines: typeof mock.refresh;
     engines: { data: EngineStatus[]; error: null };

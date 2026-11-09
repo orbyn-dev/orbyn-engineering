@@ -1,4 +1,4 @@
-import { useCommand } from "../../../app/shortcuts";
+import { useCommand } from "../../../product/shell/shortcuts";
 import { Check, ChevronDown, ChevronUp, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { request } from "../../../api/client";
@@ -6,8 +6,8 @@ import type { ProjectFileView, TerminalInfo } from "../../../api/types";
 import { elapsed } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useNow } from "../../../lib/useNow";
-import { useConnectionKind } from "../../../state/connection";
-import { useUi } from "../../../state/ui";
+import { useConnectionKind } from "../../../product/state/connection";
+import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu, type MenuItem } from "../../../ui/Menu";
@@ -17,8 +17,8 @@ import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
 import { addTerminalChip } from "./terminalChip";
 import type { ProjectScript } from "../../../generated/ProjectScript";
-import { runProjectAction } from "../../../lib/runProjectAction";
-import { ProjectActionIcon } from "../../../ui/ProjectActionIcon";
+import { runProjectAction } from "../../../product/composer/runProjectAction";
+import { ProjectActionIcon } from "../../../product/ui/ProjectActionIcon";
 
 const MAIN = "main";
 const q = encodeURIComponent;

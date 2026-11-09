@@ -1,7 +1,7 @@
 import { ArrowUp, Archive, ListChecks, Paperclip, SlidersHorizontal, Square } from "lucide-react";
 import type { RefObject } from "react";
 import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../api/types";
-import type { StashedPrompt } from "../../../state/ui";
+import type { StashedPrompt } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
 import { ContextMeter } from "./ComposerExtras";
 import { ACCESS, EffortTrigger, type useTraitsMenu } from "./ComposerTraits";

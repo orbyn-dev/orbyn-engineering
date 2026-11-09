@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { PaneResizer } from "./SurfacePane";
 
 /** A pane whose right edge is at 1400, in a window 1400 wide, so the pointer's x is 1400 minus the width. */

@@ -1,5 +1,5 @@
 import { THEME_TOKENS } from "../../styles/themes";
-import type { SettingsSection } from "../../state/route";
+import type { SettingsSection } from "../../product/state/route";
 
 export interface SettingSearchItem {
   id: string;

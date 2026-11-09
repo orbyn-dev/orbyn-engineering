@@ -7,7 +7,7 @@ import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog
 import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
 import { ProjectIconSetting } from "./ProjectIconSetting";
 
-vi.mock("../../../ui/badges", () => ({ ProjectBadge: () => <span>badge</span> }));
+vi.mock("../../../product/ui/badges", () => ({ ProjectBadge: () => <span>badge</span> }));
 
 const member: ProjectScopeCheckout = {
   project_id: "p1", physical_key: "k1", name: "One", metadata_revision: "4", path: "/one",

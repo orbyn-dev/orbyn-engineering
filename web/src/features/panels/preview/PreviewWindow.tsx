@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { api } from "../../../api/client";
-import { matchesKey, runHandlers, whenHolds } from "../../../app/shortcuts";
+import { matchesKey, runHandlers, whenHolds } from "../../../product/shell/shortcuts";
 import { useAsync } from "../../../lib/useAsync";
-import { ErrorState } from "../../../ui/states";
-import { Toasts } from "../../../ui/Toasts";
+import { ErrorState } from "../../../product/ui/states";
+import { Toasts } from "../../../product/ui/Toasts";
 import { GitHubStarPrompt } from "../../workspace";
 import { BrowserPane } from "../browser/BrowserPanel";
 

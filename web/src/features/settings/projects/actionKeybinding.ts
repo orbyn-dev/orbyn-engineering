@@ -1,9 +1,9 @@
 import { useState, type KeyboardEvent } from "react";
 import { request } from "../../../api/client";
 import type { KeybindingsView } from "../../../api/types";
-import { runHandlers, shortcutForEvent } from "../../../app/shortcuts";
+import { runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { actionCommand } from "../../../lib/actionCommand";
+import { actionCommand } from "../../../product/composer/actionCommand";
 
 /** The environment owns shortcuts; an action save and a shortcut save are separate effects. */
 export function useActionKeybinding(initialId: string | null) {

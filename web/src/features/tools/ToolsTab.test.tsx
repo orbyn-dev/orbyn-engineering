@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { engineTools } from "../../../mock/fixtures";
 import { api } from "../../api/client";
 import { ApiFailure } from "../../api/client";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ToolsTab } from "./ToolsTab";
 
 beforeEach(() => {

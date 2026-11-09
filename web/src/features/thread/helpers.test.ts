@@ -4,12 +4,12 @@ import { parsePatch } from "../panels/diff/diffModel";
 import { arrangeThreads } from "../workspace/sidebar/groups";
 import { touchesOf } from "./approvalDetail";
 import { percentLabel } from "./composer/ComposerExtras";
-import type { ThreadItem } from "../../lib/timeline/types";
-import { insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
+import type { ThreadItem } from "../../product/timeline/types";
+import { insertToken, pullToken, threadToken, triggerAt } from "../../product/composer/skillMention";
 import { outputSpans } from "../content";
-import type { ToolItem } from "../../lib/timeline/types";
-import { arrangeTimeline, groupWork } from "../../lib/timeline/timeline";
-import { summarizeWork } from "../../lib/timeline/toolTrace";
+import type { ToolItem } from "../../product/timeline/types";
+import { arrangeTimeline, groupWork } from "../../product/timeline/timeline";
+import { summarizeWork } from "../../product/timeline/toolTrace";
 import { withLocalPrompts } from "./Transcript";
 
 describe("triggers", () => {

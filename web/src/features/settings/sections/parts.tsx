@@ -1,4 +1,4 @@
-import { SettingRow } from "../../../ui/SettingRow";
+import { SettingRow } from "../rows/SettingRow";
 
 export const heading = (title: string) => (
   <h1 className="sr-only" tabIndex={-1} data-page-title>

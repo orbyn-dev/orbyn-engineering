@@ -6,12 +6,12 @@ import type { ProjectIconOverride } from "../../../generated/ProjectIconOverride
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
-import { invalidateProjectImages } from "../../../lib/projectImages";
+import { invalidateProjectImages } from "../../../product/projects/projectImages";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
-import { ProjectBadge } from "../../../ui/badges";
-import { SettingRow } from "../../../ui/SettingRow";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
+import { ProjectBadge } from "../../../product/ui/badges";
+import { SettingRow } from "../rows/SettingRow";
 import { Button, IconButton } from "../../../ui/controls";
 import { ProjectIconPicker } from "./ProjectIconPicker";
 import { Presence } from "../../../ui/Presence";

@@ -2,12 +2,12 @@ import { AppWindow, ArrowLeft, ArrowRight, Clock, CloudOff, Crosshair, EyeOff, H
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { request } from "../../../api/client";
 import type { PickedElement, PreviewTab } from "../../../api/types";
-import { useCommand } from "../../../app/shortcuts";
+import { useCommand } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useConnection, useConnectionKind } from "../../../state/connection";
-import { useUi } from "../../../state/ui";
-import { useComposerChips } from "../../../state/composerChipStore";
-import { chipId } from "../../../lib/composerContext";
+import { useConnection, useConnectionKind } from "../../../product/state/connection";
+import { useUi } from "../../../product/state/ui";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { chipId } from "../../../product/composer/composerContext";
 import { Button, IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";

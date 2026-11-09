@@ -3,12 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../api/client";
 import type { Thread } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import * as actions from "../workspace/sidebar/threadActions";
 import { ArchivedBanner } from "./ThreadStates";
-import { emptyLog } from "../../lib/timeline/projection";
+import { emptyLog } from "../../product/timeline/projection";
 import { familyOf, ThreadHeaderMenu } from "./ThreadHeaderMenu";
-import { useThreadLogs } from "../../state/threadLogs";
+import { useThreadLogs } from "../../product/state/threadLogs";
 
 vi.mock("../workspace/sidebar/threadActions", async (original) => ({
   ...(await original<typeof import("../workspace/sidebar/threadActions")>()),

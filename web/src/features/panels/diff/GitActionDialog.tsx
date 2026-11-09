@@ -3,9 +3,9 @@ import { useState } from "react";
 import { api } from "../../../api/client";
 import type { GitActionResult, GitPhase, Thread } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useThreadLogs } from "../../../state/threadLogs";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button, Field } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
-import { rawUrl, type MediaKind } from "../../../lib/media";
+import { rawUrl, type MediaKind } from "../../../product/media/media";
 
 const CHUNK_BYTES = 64 * 1024;
 const ROW_BYTES = 16;

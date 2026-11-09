@@ -1,10 +1,10 @@
 import { Plus } from "lucide-react";
 import { useEffect } from "react";
-import { redirect, navigate, routeHref } from "../../state/route";
-import { useWorkspace, useVisibleProjects } from "../../state/workspace";
+import { redirect, navigate, routeHref } from "../../product/state/route";
+import { useWorkspace, useVisibleProjects } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
-import { Logo } from "../../ui/Logo";
-import { ErrorState, Loading } from "../../ui/states";
+import { Logo } from "../../product/ui/Logo";
+import { ErrorState, Loading } from "../../product/ui/states";
 import "./onboarding.css";
 
 /**

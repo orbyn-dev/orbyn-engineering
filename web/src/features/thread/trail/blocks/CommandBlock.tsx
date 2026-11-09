@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { traceTool } from "../../../../lib/timeline/toolTrace";
+import { traceTool } from "../../../../product/timeline/toolTrace";
 import { commandText } from "../../toolCalls";
 import { BlockHead, CopyButton, Dot, FooterText } from "./BlockParts";
 import { InspectItem } from "./InspectItem";

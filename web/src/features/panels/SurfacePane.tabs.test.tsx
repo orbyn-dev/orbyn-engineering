@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
-import { useConnection } from "../../state/connection";
-import { useUi, type RightTab } from "../../state/ui";
+import { useConnection } from "../../product/state/connection";
+import { useUi, type RightTab } from "../../product/state/ui";
 import { SurfacePane, type PaneMode } from "./SurfacePane";
 
 vi.mock("./browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));

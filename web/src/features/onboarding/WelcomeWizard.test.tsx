@@ -2,8 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EngineStatus } from "../../api/types";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { engineReadiness, WelcomeWizard } from "./WelcomeWizard";
 
 const saved: unknown[] = [];

@@ -1,7 +1,7 @@
 import { markdownText } from "../content";
-import type { ThreadItem } from "../../lib/timeline/types";
+import type { ThreadItem } from "../../product/timeline/types";
 import { callFindText } from "./toolCalls";
-import type { TimelineEntry } from "../../lib/timeline/timeline";
+import type { TimelineEntry } from "../../product/timeline/timeline";
 
 /**
  * Text a person can find in one item, taken from the log rather than from what is mounted, and

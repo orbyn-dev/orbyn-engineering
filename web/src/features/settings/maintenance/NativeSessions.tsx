@@ -6,12 +6,12 @@ import type { AcpNativeSessionImported } from "../../../generated/AcpNativeSessi
 import type { AcpNativeSessionPage } from "../../../generated/AcpNativeSessionPage";
 import type { AcpSessionCapabilities } from "../../../generated/AcpSessionCapabilities";
 import { toFailure } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
-import { useWorkspace } from "../../../state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
-import { ErrorState } from "../../../ui/states";
-import { SettingRow } from "../../../ui/SettingRow";
+import { ErrorState } from "../../../product/ui/states";
+import { SettingRow } from "../rows/SettingRow";
 
 /** A capability read turned away as busy is asked again up to this many times, a little later each time. */
 const CAPABILITY_RETRIES = 6;

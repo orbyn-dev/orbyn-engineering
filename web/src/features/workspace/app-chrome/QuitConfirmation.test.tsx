@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import type { Thread } from "../../../api/types";
 import { QuitConfirmation } from "./QuitConfirmation";
 

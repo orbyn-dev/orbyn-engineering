@@ -2,9 +2,9 @@ import { Copy, Lock } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../../api/client";
 import { useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
-import { Empty, ErrorState, Loading } from "../../../ui/states";
+import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { FilePreview, previewKind } from "./FilePreview";
 import { formatBytes } from "../../../lib/format";
 

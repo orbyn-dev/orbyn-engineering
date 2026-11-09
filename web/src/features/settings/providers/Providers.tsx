@@ -4,12 +4,12 @@ import type { EngineUpdateOutcome } from "../../../generated/EngineUpdateOutcome
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderInstance } from "../../../generated/ProviderInstance";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useConnection } from "../../../state/connection";
-import { useWorkspace } from "../../../state/workspace";
+import { useConnection } from "../../../product/state/connection";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button, CopyCommand } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
-import { SettingRow } from "../../../ui/SettingRow";
-import { ErrorState, Loading } from "../../../ui/states";
+import { SettingRow } from "../rows/SettingRow";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import { AddProviderDialog, InstanceEditor, useProviderInstances } from "./ProviderInstances";
 import { ProviderDetail } from "./ProviderDetail";
 import { AcpRegistryPage, HistoryImportPage } from "./ProviderPages";

@@ -2,10 +2,10 @@ import { useState } from "react";
 import { api } from "../../../api/client";
 import type { WorkspaceSetup } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
-import { useWorkspace } from "../../../state/workspace";
+import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
-import { SettingGroup, SettingRow } from "../../../ui/SettingRow";
-import { FolderBrowser } from "../../../ui/FolderBrowser";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
+import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { Advanced } from "../rows/PreferenceRows";
 
 /** A way back when skills are unavailable, and the choice of a library of your own. */

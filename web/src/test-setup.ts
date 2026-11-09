@@ -2,10 +2,10 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 import { forgetKept } from "./lib/keptData";
-import { useThreadLogs } from "./state/threadLogs";
-import { useConnection } from "./state/connection";
-import { useUi } from "./state/ui";
-import { useWorkspace } from "./state/workspace";
+import { useThreadLogs } from "./product/state/threadLogs";
+import { useConnection } from "./product/state/connection";
+import { useUi } from "./product/state/ui";
+import { useWorkspace } from "./product/state/workspace";
 
 afterEach(() => {
   cleanup();

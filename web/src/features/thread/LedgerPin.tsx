@@ -1,6 +1,6 @@
 import { Button } from "../../ui/controls";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { rowWhere } from "./threadSearch";
 import { transcriptFor } from "./transcriptRegistry";
 

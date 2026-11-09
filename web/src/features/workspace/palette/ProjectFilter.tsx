@@ -1,10 +1,10 @@
 import { Check, Folder, Settings } from "lucide-react";
-import { SlidersIcon } from "../../../ui/SlidersIcon";
+import { SlidersIcon } from "./SlidersIcon";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../../../api/types";
-import { navigate } from "../../../state/route";
-import { useUi } from "../../../state/ui";
-import { ProjectBadge } from "../../../ui/badges";
+import { navigate } from "../../../product/state/route";
+import { useUi } from "../../../product/state/ui";
+import { ProjectBadge } from "../../../product/ui/badges";
 import { usePopover } from "../../../ui/usePopover";
 
 export const POPUP_WIDTH = 288;

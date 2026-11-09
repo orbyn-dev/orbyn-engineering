@@ -2,7 +2,7 @@ import { Check, CircleDashed, ExternalLink, Pencil, Plus, X } from "lucide-react
 import { useState } from "react";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useUi } from "../../../state/ui";
+import { useUi } from "../../../product/state/ui";
 import { Button, IconButton, Pill } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";

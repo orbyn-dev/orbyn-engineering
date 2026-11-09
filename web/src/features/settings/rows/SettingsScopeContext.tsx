@@ -4,7 +4,7 @@ import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectSettingsSelection } from "../../../generated/ProjectSettingsSelection";
 import { useAsync, toFailure } from "../../../lib/useAsync";
-import { navigate, useRoute, type SettingsSection } from "../../../state/route";
+import { navigate, useRoute, type SettingsSection } from "../../../product/state/route";
 
 // Device pages deliberately edit this client's/environment's defaults.
 export const DEVICE_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set([

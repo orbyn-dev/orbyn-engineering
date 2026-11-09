@@ -2,8 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/types";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { TimelineThread } from "./timelineThread";
 import { SentFiles, sentPaths } from "./SentFiles";
 

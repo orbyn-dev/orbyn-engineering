@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { navigate } from "../../../state/route";
+import { navigate } from "../../../product/state/route";
 import { PullsToolbar } from "./PullsToolbar";
 import { defaultSort, noFilters } from "../model/pullModel";
 

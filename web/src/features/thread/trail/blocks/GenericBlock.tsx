@@ -1,5 +1,5 @@
 import { prettyJson } from "../../../../lib/format";
-import type { ToolItem } from "../../../../lib/timeline/types";
+import type { ToolItem } from "../../../../product/timeline/types";
 import { FooterText } from "./BlockParts";
 import { InspectItem } from "./InspectItem";
 import { OutputBlock } from "./OutputBlock";

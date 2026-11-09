@@ -1,9 +1,9 @@
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 
 export const sideChatsOf = (threads: Record<string, Thread>, parentId: string) =>
   Object.values(threads)

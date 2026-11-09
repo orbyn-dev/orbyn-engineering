@@ -4,7 +4,7 @@ import { expect, it, vi } from "vitest";
 import { ApiFailure, request } from "../../../api/client";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
-import { navigate, useRoute } from "../../../state/route";
+import { navigate, useRoute } from "../../../product/state/route";
 import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { ScopeSentence } from "./ScopeSentence";
 
