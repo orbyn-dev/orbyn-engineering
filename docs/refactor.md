@@ -159,6 +159,15 @@ The backend (B) and web (W) tracks can run in parallel.
   Rust size baseline; the largest driver file is now 642 lines (`claude/events.rs`). Public
   paths such as `agents::driver::claude::run_args` are unchanged.
 
+- B3b (source control): done. `source_control/forge/` holds `Forge` and the public functions
+  in `mod.rs` (130 lines) with `process` (one CLI call), `parse`, `github`, `gitlab`,
+  `details`, `pulls`, `review`, `merge`, `create`, `status`, `cache` (was `forge_cache.rs`)
+  and tests in `tests.rs`; `source_control/scm/` holds the thread actions in `mod.rs` with
+  `pulls`, `review`, `stack`, `watch`, `forges` and `writing/` (`candidate`, `style`;
+  was `scm_writing`). `forge.rs` (2,987 lines) left the Rust size baseline; the largest
+  non-test file is now 472 lines (`scm/writing/mod.rs`). `git.rs` stays whole (609 lines
+  without tests). Public paths such as `source_control::forge::list_pulls` are unchanged.
+
 ## Done when
 
 - No hand-written source file over about 800 lines.

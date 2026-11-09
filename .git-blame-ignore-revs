@@ -17,3 +17,9 @@ cb0d36fa7a89a7087a51eba5774fcc923ae78933 # refactor(core): move the acp driver t
 d3d07b8993b1087b5ae7575490932a519132b80b # refactor(web): move settings files into rows, sections, pages, providers, projects, maintenance folders
 a5bc46604ec4d7df90af747068f35e65bef45ef0 # refactor(web): move pulls files into list, detail and model folders
 6f4e756ad452cf8492291a11c36a93363261c5b2 # refactor(web): move panel files into strip, browser, diff, files, terminal, activity and preview folders
+ff729cfa4ec1e3b71c956ed013aee5a9706c36cf # refactor(core): move forge into its own folder
+4a8a17919098a3bedd4132088a110d30b8a7c611 # refactor(core): move forge_cache into the forge folder as cache
+5c8eb42c8294b8e48a3263eae09184d7b83fb6af # refactor(core): move the forge tests into their own files
+0b6e3a36e79764b2d73854e25b4ded064b721910 # refactor(core): move scm into its own folder
+d6cb0514c515aa58c86a86a2b2c79dbf32f47325 # refactor(core): move scm_writing and its style into the scm folder as writing
+46cbc88a24a5cba1355a18f95b62ef1d1eeba64d # refactor(core): move the scm and scm writing tests into their own files

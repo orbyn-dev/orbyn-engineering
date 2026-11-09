@@ -5,7 +5,6 @@
     "crates/orbyn-core/src/agents/engines/mod.rs": 1659,
     "crates/orbyn-core/src/browser/preview.rs": 2507,
     "crates/orbyn-core/src/conversation/runs.rs": 1996,
-    "crates/orbyn-core/src/source_control/forge.rs": 2987,
     "crates/orbyn-core/src/tools/mcp_tools.rs": 1920,
     "crates/orbynd/src/bin/orbyn_fake_engine.rs": 1715
   },
