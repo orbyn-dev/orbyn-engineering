@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use orbyn_contracts::{AgUiEvent, EngineCapabilities, EngineTier, ProviderInstance, SkillDelivery};
+use orbyn_contracts::{EngineCapabilities, EngineTier, ProviderInstance, SkillDelivery};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -31,14 +31,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::pipes::{EngineProcess, one_shot_at, resolve_engine, spawn_engine, spawn_engine_with};
 use super::{
-    EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, MCP_SERVER_NAME,
-    ModelCatalog, ProbeDir, RunHandle, RunKind, RunSpec, UpdatePlan, WarmProcess,
-    proposed_plan_events,
+    EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, MCP_SERVER_NAME, ModelCatalog,
+    ProbeDir, RunHandle, RunSpec, UpdatePlan, WarmProcess,
 };
 use crate::agents::console::{ConsoleCommand, ConsoleSpec};
 use crate::agents::engines::maintenance;
 use crate::agents::engines::probe::{probe_cli, read_login};
-use crate::agents::selection::FAST_MODE;
 use crate::error::{CoreError, Result};
 use crate::util::write_private;
 use args::CAPABILITY_ENV;

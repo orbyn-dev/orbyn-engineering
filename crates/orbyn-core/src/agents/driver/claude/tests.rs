@@ -7,7 +7,9 @@ use super::settings::{
     GUARDED_TOOLS, MAX_AGENTS, launch_settings, library_agents, rule_name, run_settings,
 };
 use super::*;
-use crate::agents::driver::CLAUDE_APPROVE_TOOL;
+use crate::agents::driver::{CLAUDE_APPROVE_TOOL, EngineOutcome, RunKind, proposed_plan_events};
+use crate::agents::selection::FAST_MODE;
+use orbyn_contracts::AgUiEvent;
 
 fn launch_frame() -> Value {
     json!({
