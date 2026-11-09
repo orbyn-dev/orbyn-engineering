@@ -119,8 +119,17 @@ The backend (B) and web (W) tracks can run in parallel.
   hooks, search field and delete dialog in files of their own, plus thread rows, menu, actions, undo
   and grouping), `palette/` (command palette, add-project palette, project filter, path input) and
   `app-chrome/` (updates, quit confirmation, environment identity, notices, star prompt, clone jobs);
-  `Sidebar.tsx` left the baseline (11 to 10 long TypeScript files). The rest of W5 (PullDetail,
-  BrowserPanel and others) is still open.
+  `Sidebar.tsx` left the baseline (11 to 10 long TypeScript files). `features/settings/` has
+  `rows/` (scoped preference rows, scope context and sentence, banner, dialog card), `sections/`
+  (one file per settings section; `PreferenceSections.tsx` 796 lines is gone), `pages/`
+  (Appearance, Keybindings, Threads), `providers/`, `projects/`, `maintenance/`, `tools-connectors/`
+  and `scheduled-tasks/`; its CSS stays at the root until W2. `features/pulls/` has `list/`, `detail/`
+  and `model/` (`PullDetail.tsx` 900 to 573 lines, `PullsToolbar.tsx` 676 to 289), and
+  `features/usage/` keeps its files side by side (`UsagePage.tsx` 763 to 247, with the view, limits,
+  parts and price dialog in files of their own). All four left the baseline (10 to 6 long TypeScript
+  files). `features/tools` stays its own feature: `thread` and `panels` import it, and `settings`
+  sits above them, so folding it into `settings/tools-connectors/` would be a cycle. The rest of W5
+  (BrowserPanel, DiffPanel and others) is still open.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
