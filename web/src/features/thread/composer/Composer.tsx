@@ -20,10 +20,11 @@ import { loadSuggestions } from "./suggestions";
 import { handleComposerKey } from "./composerKeys";
 import { handleComposerPaste } from "./composerPaste";
 import { useAttachments } from "./useAttachments";
+import { ComposerBar } from "./ComposerBar";
+import { ComposerField } from "./ComposerField";
 import { useOwnCommand } from "./useOwnCommand";
 import { useStash } from "./useStash";
 import { recordUserPrompt } from "../../workspace";
-import { ArrowUp, Archive, ListChecks, Paperclip, SlidersHorizontal, Square } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -43,18 +44,16 @@ import { useDraftStore } from "../../../state/draftStore";
 import { navigate } from "../../../state/route";
 import { useThreadLogs } from "../../../state/threadLogs";
 import { useUi } from "../../../state/ui";
-import { IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { useWorkspace } from "../../../state/workspace";
-import { CompactOffer, ComposerBanners, ContextMeter, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
+import { CompactOffer, ComposerBanners, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import {
   localCommand,
   promptHistory,
   type RecallPosition,
 } from "./composerInput";
-import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
-import { ModelPickerTrigger } from "./ModelPicker";
+import { offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 import { QuestionPanel } from "../QuestionPanel";
 import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../state/modelStore";
@@ -413,7 +412,6 @@ export function Composer({
   const planMode = thread.lifecycle?.plan_mode ?? false;
   // A saved mode this engine does not offer runs Supervised, so it shows that way.
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
-  const AccessIcon = ACCESS[access].icon;
   const engineName = engine?.name ?? thread.engine;
   const allEngines = useWorkspace((state) => state.engines.data);
   const installed = useMemo(() => (allEngines ?? []).filter((entry) => entry.installed), [allEngines]);
@@ -566,154 +564,58 @@ export function Composer({
             {overBy.toLocaleString()} characters over the {MAX_PROMPT_CHARS.toLocaleString()} limit. Your message stays here.
           </p>
         ) : null}
-        <div className="composer-field">
-        {styled ? (
-          <div ref={mirror} className="composer-mirror" aria-hidden>
-            {styled.map((span, at) => (
-              <span key={at} data-md={span.kind === "text" ? undefined : span.kind}>
-                {span.text}
-              </span>
-            ))}
-            {"\n"}
-          </div>
-        ) : null}
-        <textarea
-          ref={field}
-          data-styled={styled ? true : undefined}
-          onScroll={(event) => {
-            if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop;
-          }}
-          rows={1}
-          value={draft}
-          onChange={(event) => {
-            setDraft(thread.id, event.target.value);
-            setCaret(event.target.selectionStart);
-            setHighlight(0);
-            setMenuDismissed(false);
-          }}
-          onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+        <ComposerField
+          field={field}
+          mirror={mirror}
+          thread={thread}
+          engine={engine}
+          draft={draft}
+          styled={styled}
+          layout={layout}
+          compacting={compacting}
+          serviceDown={serviceDown}
+          pendingHere={pendingHere}
+          setDraft={setDraft}
+          setCaret={setCaret}
+          setHighlight={setHighlight}
+          setMenuDismissed={setMenuDismissed}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          dir="auto"
-          aria-label={`Message ${thread.title}`}
-          aria-describedby="composer-help"
-          placeholder={
-            compacting
-              ? "Waiting for compact to finish"
-              : serviceDown
-              ? "Your draft is kept. Sending waits for the Orbyn service."
-              : pendingHere.length > 0
-              ? engine?.capabilities.decline_feedback
-                ? "Type a reply to decline with feedback"
-                : "Send a message to decline and redirect the agent"
-              : "Ask anything. @ files, $ skills, / commands"
-          }
-          data-autofocus={layout === "phone" ? undefined : true}
         />
-        </div>
         <span id="composer-help" className="sr-only">
           Enter to send, Shift+Enter for a new line
         </span>
-        <div ref={bar} className="composer-bar">
-          <input
-            ref={filePicker}
-            type="file"
-            multiple
-            hidden
-            aria-label="Attach files"
-            onChange={(event) => upload(event.target.files)}
-          />
-          <IconButton
-            label="Attach files"
-            onClick={() => filePicker.current?.click()}
-          >
-            <Paperclip size={16} aria-hidden />
-          </IconButton>
-          {stashes.length > 0 ? (
-            <button
-              type="button"
-              className="composer-control"
-              aria-label={`${stashes.length} stashed prompts`}
-              onClick={() => setStashOpen(!stashOpen)}
-            >
-              <Archive size={14} aria-hidden />
-              <span>{stashes.length}</span>
-            </button>
-          ) : null}
-          {(planControls || planMode) && !narrowBar ? (
-            <button
-              type="button"
-              className="composer-control"
-              aria-pressed={planMode}
-              data-on={planMode || undefined}
-              disabled={busy || !thread.lifecycle}
-              onClick={() => void setPlanMode(!planMode)}
-            >
-              <ListChecks size={14} aria-hidden />
-              <span>Plan</span>
-            </button>
-          ) : null}
-          <span className="composer-spacer" />
-          {contextMeter ? <ContextMeter threadId={thread.id} disabled={busy} /> : null}
-          {narrowBar ? (
-            <IconButton label="Composer controls" onClick={(event) => openOverflow(event.currentTarget)}>
-              <SlidersHorizontal size={16} aria-hidden />
-            </IconButton>
-          ) : null}
-          <span className="composer-controls" data-folded={narrowBar || undefined}>
-          {engine ? (
-            <ModelPickerTrigger
-              engines={installed}
-              selected={{ engine: thread.engine, model: thread.model }}
-              disabled={busy}
-              onPick={(next) => void pickModel(next)}
-            />
-          ) : (
-            <span className="composer-control">{thread.model ?? engineName}</span>
-          )}
-          <EffortTrigger
-            model={model}
-            effort={thread.effort ?? null}
-            access={unmanaged ? null : access}
-            disabled={busy}
-            onOpen={(element) => traits.openAt(element, false)}
-          />
-          {!showContext && !unmanaged ? (
-            <button
-              type="button"
-              className="composer-control composer-access"
-              aria-haspopup="menu"
-              aria-label={`Permissions: ${ACCESS[access].label}`}
-              disabled={busy || !thread.lifecycle}
-              onClick={(event) => traits.openAt(event.currentTarget, true)}
-            >
-              <AccessIcon size={14} aria-hidden />
-              <span>{ACCESS[access].label}</span>
-            </button>
-          ) : null}
-          </span>
-          {busy && !draft.trim() ? (
-            <button
-              type="button"
-              className="send-btn stop-btn"
-              aria-label="Stop"
-              disabled={stopping}
-              onClick={() => void stop()}
-            >
-              <Square size={12} fill="currentColor" aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="send-btn"
-              aria-label={serviceDown ? "Send, unavailable" : busy ? "Queue" : "Send"}
-              aria-busy={sending || undefined}
-              disabled={!canSend}
-            >
-              <ArrowUp size={16} aria-hidden />
-            </button>
-          )}
-        </div>
+        <ComposerBar
+          bar={bar}
+          filePicker={filePicker}
+          thread={thread}
+          engine={engine}
+          engineName={engineName}
+          installed={installed}
+          model={model}
+          draft={draft}
+          stashes={stashes}
+          stashOpen={stashOpen}
+          planControls={planControls}
+          planMode={planMode}
+          narrowBar={narrowBar}
+          contextMeter={contextMeter}
+          showContext={showContext}
+          unmanaged={unmanaged}
+          access={access}
+          busy={busy}
+          stopping={stopping}
+          sending={sending}
+          canSend={canSend}
+          serviceDown={serviceDown}
+          traits={traits}
+          upload={upload}
+          setStashOpen={setStashOpen}
+          setPlanMode={setPlanMode}
+          openOverflow={openOverflow}
+          pickModel={pickModel}
+          stop={stop}
+        />
       </div>
       <ComposerContext
         thread={thread}
