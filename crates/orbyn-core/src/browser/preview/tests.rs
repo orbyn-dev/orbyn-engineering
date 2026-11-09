@@ -11,6 +11,11 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use super::crash::{CRASH_WINDOW, Crashes};
+use super::expressions::{
+    DEFAULT_WAIT_MS, MAX_EXPRESSION_CHARS, MAX_RESULT_BYTES, MAX_WAIT_MS, WAIT_POLL, WAIT_ROUNDS,
+    bounded_result, checked_expression, focus_expression, parses_expression, scroll_expression,
+    wait_selector_expression, wait_text_expression, wait_timeout,
+};
 use super::favicon::favicon_url;
 use super::lock;
 use super::open::file_url;
