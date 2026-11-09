@@ -895,7 +895,7 @@ portion of K7 on the same section branch after verified delivery.
 
 `feat/provider-sessions` delivers I33 and the settings half of I35. Native-session
 management is service-owned (`native_sessions.rs`, four routes under
-`/api/engines/{id}/native-sessions`); the driver half is `driver/acp_sessions.rs`.
+`/api/engines/{id}/native-sessions`); the driver half is `driver/acp/sessions.rs`.
 Real-`orbynd` tests (`crates/orbynd/tests/native_sessions.rs`) use the protocol double
 with a file-backed session store (`ORBYN_FAKE_ACP_NATIVE`) and cover list paging,
 import with replayed history, continuing the session, delete refusal while a thread
