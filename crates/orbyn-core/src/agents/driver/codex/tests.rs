@@ -1,3 +1,4 @@
+use super::catalog::{apply_configured_tier, parse_model};
 use super::events::{TurnMapper, plan_content};
 use super::protocol::{
     approval_content, approval_response, classify_request, feedback_params, feedback_receipt,
