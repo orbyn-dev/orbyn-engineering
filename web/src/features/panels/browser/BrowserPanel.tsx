@@ -19,7 +19,7 @@ import { useBrowserPanels } from "./browserPanels";
 import { inDesktopApp } from "../api";
 import { DEVICES, TAB_POLL_MS, VIEWPORT, addRecent, isLocalUrl, resolveAddress, stepZoom } from "./browserModel";
 import { PageView } from "./PageView";
-import { StartPage } from "./StartPage";
+import { StartView } from "./StartView";
 import { deviceChoice, pageSize, type PageSize } from "./viewportResize";
 
 /** The Browser tab's body when the device has no network and the page needs one. */
@@ -41,25 +41,25 @@ export function BrowserPanel({ threadId }: { threadId: string }) {
   const move = useBrowserPanels((state) => state.move);
   return (
     <div className="browser-panels">
-      <section className="browser-pane" aria-label="Browser panel">
-        <BrowserPane threadId={threadId} excludedTabId={moved} onMove={(id) => move(threadId, id)} />
+      <section className="browser-view" aria-label="Browser panel">
+        <BrowserView threadId={threadId} excludedTabId={moved} onMove={(id) => move(threadId, id)} />
       </section>
-      {moved ? <section className="browser-pane" aria-label="Second Browser panel">
-        <BrowserPane threadId={threadId} onlyTabId={moved} onMove={() => move(threadId, null)} />
+      {moved ? <section className="browser-view" aria-label="Second Browser panel">
+        <BrowserView threadId={threadId} onlyTabId={moved} onMove={() => move(threadId, null)} />
       </section> : null}
     </div>
   );
 }
 
-export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detached = false }: {
+export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detached = false }: {
   threadId: string;
   onlyTabId?: string;
   excludedTabId?: string;
   onMove?(tabId: string): void;
   detached?: boolean;
 }) {
-  const pane = useRef<HTMLDivElement>(null);
-  const ownsFocus = () => Boolean(pane.current?.contains(document.activeElement)) ||
+  const chrome = useRef<HTMLDivElement>(null);
+  const ownsFocus = () => Boolean(chrome.current?.contains(document.activeElement)) ||
     (document.activeElement === document.body && (!onlyTabId || detached));
   const tabs = useAsync(`previews:${threadId}`, (signal) => listPreviewTabs(threadId, signal));
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -84,7 +84,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
   const pushToast = useUi((state) => state.pushToast);
   const reload = tabs.reload;
   useCommand("preview.focusUrl", () => {
-    pane.current?.querySelector<HTMLInputElement>("[data-preview-address]")?.focus();
+    chrome.current?.querySelector<HTMLInputElement>("[data-preview-address]")?.focus();
   }, ownsFocus);
   const list = (tabs.data ?? []).filter((tab) => tab.id !== excludedTabId && (!onlyTabId || tab.id === onlyTabId));
   const active = draftTab ? null : (list.find((tab) => tab.id === activeId) ?? list[0] ?? null);
@@ -266,7 +266,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
   };
 
   return (
-    <div ref={pane} className="browser-panel">
+    <div ref={chrome} className="browser-panel">
       {waitsForNetwork && list.length === 0 ? null : <div className="browser-tabs" role="tablist" aria-label="Browser tabs">
         {list.map((tab) => (
           <span key={tab.id} className="surface-tab" data-selected={tab.id === active?.id || undefined}>
@@ -431,7 +431,7 @@ export function BrowserPane({ threadId, onlyTabId, excludedTabId, onMove, detach
       ) : onlyTabId ? (
         <p className="browser-note" role="status">{tabs.status === "loading" ? "Connecting..." : "This preview tab is closed."}</p>
       ) : (
-        <StartPage threadId={threadId} onOpen={go} profile={profile} setProfile={setProfile} isPrivate={isPrivate} />
+        <StartView threadId={threadId} onOpen={go} profile={profile} setProfile={setProfile} isPrivate={isPrivate} />
       )}
       </>}
     </div>

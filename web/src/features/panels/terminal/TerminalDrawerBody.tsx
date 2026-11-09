@@ -440,9 +440,9 @@ export function TerminalDrawerBody({
         <div className="terminal-splits" data-direction={shown?.[1]?.direction ?? undefined}>
           {shown ? (
             shown.map((terminal) => (
-              <div key={`${terminal.id}:${terminal.created_at}`} className="term-pane">
+              <div key={`${terminal.id}:${terminal.created_at}`} className="term-view">
                 {shown.length > 1 ? (
-                  <div className="term-pane-title">
+                  <div className="term-view-title">
                     {terminal.alive && terminal.script ? <i className="spin" aria-label="Working" /> : null}
                     <span>{terminal.id === MAIN ? "Terminal" : terminal.title}</span>
                   </div>

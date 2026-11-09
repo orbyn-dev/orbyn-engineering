@@ -27,7 +27,7 @@ function BackBar({ title, onBack, children }: { title: string; onBack(): void; c
 }
 
 /** Agents that speak ACP, listed for adding as instances. */
-export function AcpRegistryPage({ onBack }: { onBack(): void }) {
+export function AcpRegistryView({ onBack }: { onBack(): void }) {
   const [text, setText] = useState("");
   const [working, setWorking] = useState<string | null>(null);
   const offline = useConnection((state) => state.offline);
@@ -93,7 +93,7 @@ export function AcpRegistryPage({ onBack }: { onBack(): void }) {
 }
 
 /** Claude and Codex sessions kept outside Orbyn, picked and imported as threads. */
-export function HistoryImportPage({ onBack }: { onBack(): void }) {
+export function HistoryImportView({ onBack }: { onBack(): void }) {
   const pushToast = useUi((state) => state.pushToast);
   const [scan, setScan] = useState<HistoryScan | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());

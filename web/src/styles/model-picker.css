@@ -371,7 +371,7 @@
     min-width: 0;
   }
 }
-.pane-resizer {
+.panel-resizer {
   position: absolute;
   z-index: 3;
   top: 0;
@@ -381,7 +381,7 @@
   cursor: col-resize;
   touch-action: none;
 }
-.pane-resizer:hover {
+.panel-resizer:hover {
   background: var(--color-divider);
 }
 .draft-layout {

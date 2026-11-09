@@ -28,3 +28,4 @@ c199f6f33aff8b98747ce337f8afc70ebeed3232 # refactor(core): move the MCP server i
 3a3c6354870bdb5df43cf610a625ab56ba2531c7 # refactor(web): move product-vocabulary shared files into product/
 68045665928a08c5c6addb0933ce97616fd303e7 # refactor(web): move the ui store, the shell and the draft view into folders
 818efd7df01229831ea2a120b28a54152589face # refactor(core): move the run manager into a folder
+0451f1199638255f64858e388bba76cdb10c2593 # refactor(web): rename page, panel and pane files

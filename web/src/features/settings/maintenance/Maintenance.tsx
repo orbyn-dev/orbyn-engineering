@@ -16,7 +16,7 @@ import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferenc
 import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { Button } from "../../../ui/controls";
 import { Collapsible } from "../../../ui/Collapsible";
-import { DialogCard } from "../rows/DialogCard";
+import { ConfirmFacts } from "../rows/ConfirmFacts";
 import { LibraryChoice } from "../projects/LibraryChoice";
 import { SettingsBanner, SettingsEmpty } from "../rows/SettingsBanner";
 import { useConnection } from "../../../product/state/connection";
@@ -323,7 +323,7 @@ export function EnvironmentCleanup({ query, disabled }: { query: ProjectScopesQu
         <ConfirmDialog title="Delete old files now?" confirmLabel="Delete now" tone="danger" cancelFocus onClose={() => setConfirming(false)}
           onConfirm={async () => { await run(); preview.reload(); }}>
           <p>They are removed from disk. This can’t be undone.</p>
-          <DialogCard facts={[
+          <ConfirmFacts facts={[
             ...(saved("browser_artifacts_after_days") !== null ? [{ label: `Browser artifacts older than ${saved("browser_artifacts_after_days")} days`, value: factLine(counts.artifact) }] : []),
             ...(saved("logs_after_days") !== null ? [{ label: `Rotated logs older than ${saved("logs_after_days")} days`, value: factLine(counts.log) }] : []),
             ...(counts.worktree.count > 0 ? [{ label: "Settled worktrees", value: factLine(counts.worktree) }] : []),

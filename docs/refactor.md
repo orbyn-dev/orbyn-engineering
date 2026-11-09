@@ -108,7 +108,7 @@ Notes:
 | W3 | Break feature cycles; `features/content` and `index.ts` front doors | done |
 | W4 | Per-feature `api.ts` and hooks | done |
 | W5 | Giant components into sub-folders (composer, trail, sidebar, panels, settings, pulls, usage) | done |
-| W6 | Naming pass and `web/README.md` | `web/README.md` exists (W7a); the naming pass is open |
+| W6 | Naming pass and `web/README.md` | done |
 | W7a | Product and generic tiers for shared web code (`product/`) | done |
 | W7b | Split `app/Shell.tsx` (732 lines), `product/state/ui.ts` (783) and `onboarding/DraftView.tsx` (608) | done |
 
@@ -145,7 +145,7 @@ The backend (B) and web (W) tracks can run in parallel.
   resize handles, start page and the address, zoom, device and recent-page rules in files of their
   own), `diff/` (`DiffPanel.tsx` 665 to 377 lines, with the diff model and the patch view; the git
   action and restore-files dialogs), `files/` (viewers, zip and Office readers; `office.ts` 720 to
-  457 lines), `terminal/`, `activity/` and `preview/`; `SurfacePane.tsx` keeps its name and sits at the
+  457 lines), `terminal/`, `activity/` and `preview/`; the side-panel host is `PanelHost.tsx`, at the
   front door. The three long files left the baseline (10 to 7 long TypeScript files).
   `features/settings/` has
   `rows/` (scoped preference rows, scope context and sentence, banner, dialog card), `sections/`
@@ -176,8 +176,8 @@ The backend (B) and web (W) tracks can run in parallel.
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,
   useResolvedThreadPath,editorPreferences,runProjectAction,actionPreview,media}`,
   `lib/timeline/{projection,types,timeline,toolTrace,mcpAppBridge}`,
-  `ui/{DetailRows,FolderBrowser}`. `pullStore` moved to `pulls`; `SideChatPane` and
-  `sideChat` moved to `thread`, which hands the tab's content to `SurfacePane`; the git
+  `ui/{DetailRows,FolderBrowser}`. `pullStore` moved to `pulls`; `SideChatPanel` and
+  `sideChat` moved to `thread`, which hands the tab's content to `PanelHost`; the git
   dialog and the restore-files dialog moved to `panels`. Front doors exist for
   `content`, `onboarding`, `panels`, `pulls`, `skills`, `thread`, `tools` and `workspace`.
   Deep imports 69 to 0 and cycle edges 8 to 0; both rules are now hard errors. The 21
@@ -300,7 +300,7 @@ curated list of API names; the table is the record).
 | --- | --- | --- |
 | `content` | `Markdown`, `CodeBlock`, `Mermaid`, `Lightbox` | `fileLinkTarget`, `markdownText`, `outputSpans` (all `thread` only) |
 | `onboarding` | none | `chooseDraftEngine` (`settings` only) |
-| `panels` | `GitActionDialog`, `PublishDialog`, `RestoreFilesDialog`, `SurfacePane`, `TerminalBar`, `TerminalDrawerBody`, `useGitAvailable` | `PLANS`, `Plan`, `createPullRequestPlan` (`thread` only) |
+| `panels` | `GitActionDialog`, `PublishDialog`, `RestoreFilesDialog`, `PanelHost`, `TerminalBar`, `TerminalDrawerBody`, `useGitAvailable` | `PLANS`, `Plan`, `createPullRequestPlan` (`thread` only) |
 | `pulls` | `ToolbarPopover`, `useThreadPulls` | `WATCH_TIP`, `checksSummary`, `chipDot`, `chipLabel`, `entryOf`, `forgeName`, `numberLabel`, `readyToMerge`, `stateWord` (`thread` only) |
 | `skills` | `SkillsNav` | none |
 | `thread` | `ModelPickerTrigger`, `EffortTrigger`, `useTraitsMenu` | `ACCESS`, `offeredModes`, `shownAccess` (`onboarding` only), `DETAIL_ROWS`, `detailsMenuItems` (`settings` only) |
@@ -319,7 +319,6 @@ have no baseline.
 
 | Unit | Work | Size and notes |
 | --- | --- | --- |
-| W6 | Naming pass: Page is a route, Panel is a side-panel tab, Dialog is a modal, no "Pane" (`SurfacePane`, `SideChatPane`, `PullsPage` against `PullPage`); keep `web/README.md` in step | Do after W2 so files are renamed once. |
 | Front-door TODO rows | Hoist the helper exports in the audit table (one other feature uses each) to `product/` or `lib/` when a second feature needs them; hoist `copyText` to `lib/` | Opportunistic. |
 | Closeout | Turn any remaining baselined rule into a hard error, run a packaged-app build and walk-through (`cd desktop && npm run build -- --bundles app`), run the worktree cleanup report | The packaged-app check has not been run since the logo, tools, picker and tab strip merged into main. |
 

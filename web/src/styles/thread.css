@@ -3,7 +3,7 @@
   display: flex;
   height: 100%;
   min-height: 0;
-  /* Nothing here may hand .main something to scroll: each pane has its own scroller. */
+  /* Nothing here may hand .main something to scroll: each panel has its own scroller. */
   overflow: clip;
 }
 .thread-main {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 /**
- * True two frames after `key` becomes non-null, and false again when it changes. A pane
+ * True two frames after `key` becomes non-null, and false again when it changes. A panel
  * that was already there when its page loaded stays still; only later opens and closes move.
  */
 export function useSettledAfter(key: string | null): boolean {
@@ -17,8 +17,8 @@ export function useSettledAfter(key: string | null): boolean {
 }
 
 /**
- * Stays true for `exitMs` after `open` drops, so a closing pane can animate out. The change
- * is taken while rendering, so the pane never unmounts for a frame between closing and lingering.
+ * Stays true for `exitMs` after `open` drops, so a closing panel can animate out. The change
+ * is taken while rendering, so the panel never unmounts for a frame between closing and lingering.
  */
 export function useLingering(open: boolean, exitMs: number): boolean {
   const [lingering, setLingering] = useState(false);

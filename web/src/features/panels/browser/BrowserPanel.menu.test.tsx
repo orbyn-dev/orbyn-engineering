@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readShellStatus } from "../../../api/shell";
 import type { PreviewTab } from "../../../api/types";
-import { BrowserPane, BrowserPanel } from "./BrowserPanel";
+import { BrowserView, BrowserPanel } from "./BrowserPanel";
 import { previewWindowRoute, useBrowserPanels } from "./browserPanels";
 import { runHandlers } from "../../../product/shell/shortcuts";
 import { PreviewWindow } from "../preview/PreviewWindow";
@@ -71,7 +71,7 @@ it("offers popout only with an attached shell and keeps the requested tab in a d
   serve();
   await readShellStatus();
   const user = userEvent.setup();
-  render(<BrowserPane threadId="t" onlyTabId="first" detached />);
+  render(<BrowserView threadId="t" onlyTabId="first" detached />);
   expect(await screen.findAllByRole("tab")).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "New tab" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Pick an element" })).toBeNull();
@@ -84,7 +84,7 @@ it("sends popout to the existing tab's service boundary when a shell is attached
   const { calls } = serve(true);
   await readShellStatus();
   const user = userEvent.setup();
-  render(<BrowserPane threadId="t" onlyTabId="second" detached />);
+  render(<BrowserView threadId="t" onlyTabId="second" detached />);
   await user.click(await screen.findByRole("button", { name: "More page actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Open in separate window" }));
   expect(calls).toContainEqual({ method: "POST", path: "/api/threads/t/previews/second/window" });
@@ -93,7 +93,7 @@ it("sends popout to the existing tab's service boundary when a shell is attached
 it("cannot create a hidden replacement when a dedicated tab closes", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   const { calls, tabs } = serve();
-  render(<BrowserPane threadId="t" onlyTabId="first" detached />);
+  render(<BrowserView threadId="t" onlyTabId="first" detached />);
   await screen.findByRole("tab", { name: "first" });
   const openedAddress = screen.getByRole("combobox", { name: "Search or enter URL" });
   tabs.length = 0;

@@ -70,7 +70,7 @@ function QuestionRow({
 }
 
 /** The engine is waiting on an answer. Dismissing tells it no answer is coming. */
-export function QuestionPanel({ threadId, waiting }: { threadId: string; waiting: boolean }) {
+export function QuestionCard({ threadId, waiting }: { threadId: string; waiting: boolean }) {
   const list = useAsync(`questions:${threadId}:${waiting}`, (signal) =>
     waiting ? pending(threadId, signal) : Promise.resolve([]),
   );
@@ -137,7 +137,7 @@ export function QuestionPanel({ threadId, waiting }: { threadId: string; waiting
 
   return (
     <section
-      className="question-panel"
+      className="question-card"
       aria-label="Question from the agent"
       tabIndex={-1}
       onKeyDown={(event) => {

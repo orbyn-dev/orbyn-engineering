@@ -31,7 +31,7 @@ export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
 export interface Prefs {
   theme: ThemeChoice;
-  /** The surface pane, one choice for every thread. It opens only when asked, or for
+  /** The surface panel, one choice for every thread. It opens only when asked, or for
    * something the person triggered (a diff, file or pull request chip), at any width. */
   panelOpen: boolean;
   /** The surface showing; null when none is. */
@@ -47,7 +47,7 @@ export interface Prefs {
   /** The terminal drawer under the conversation. */
   terminalOpen: boolean;
   panelMaximized: boolean;
-  /** The pane's width for this thread; null follows the window. */
+  /** The panel's width for this thread; null follows the window. */
   panelWidth: number | null;
   /** The side chat the panel shows. */
   sideChat: string | null;

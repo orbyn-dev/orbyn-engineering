@@ -1,7 +1,7 @@
 import { Lock, PenLine, ShieldOff, Sparkles, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EngineStatus, ModelInfo, ModelOption, PermissionMode } from "../../../api/types";
-import { FloatingPanel } from "./ModelPicker";
+import { FloatingPicker } from "./ModelPicker";
 import { effortOption, effortValue } from "../../../product/state/modelStore";
 import { EffortGlyph } from "./EffortGlyph";
 import { useUi } from "../../../product/state/ui";
@@ -88,7 +88,7 @@ function TraitsMenu({
     }
   };
   return (
-    <FloatingPanel anchor={anchor} label="Composer options" className="traits-menu" closing={closing} panelRef={panel}>
+    <FloatingPicker anchor={anchor} label="Composer options" className="traits-menu" closing={closing} panelRef={panel}>
       <div ref={body} className="traits-body" role="menu" aria-label="Composer options" onKeyDown={onKey}>
         {options.map((option, index) => (
           <div key={option.id} role="group" aria-label={option.label}>
@@ -139,7 +139,7 @@ function TraitsMenu({
           </div>
         ) : null}
       </div>
-    </FloatingPanel>
+    </FloatingPicker>
   );
 }
 

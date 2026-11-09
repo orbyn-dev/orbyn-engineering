@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { PreviewTab } from "../../../api/types";
-import { BrowserPane } from "./BrowserPanel";
+import { BrowserView } from "./BrowserPanel";
 
 class FakeSocket {
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -42,11 +42,11 @@ function serve(recording: boolean) {
   return { writes, failedReads: () => failedReads };
 }
 
-// These render the actual BrowserPane + useAsync polling owner. A refresh mock
+// These render the actual BrowserView + useAsync polling owner. A refresh mock
 // that rejects cannot reproduce useAsync.reload consuming the GET rejection.
 it("a committed start retains Stop and exposes the actual GET failure despite stale false tab data", async () => {
   const server = serve(false);
-  render(<BrowserPane threadId="thread" />);
+  render(<BrowserView threadId="thread" />);
   await userEvent.click(await screen.findByRole("button", { name: "Start recording" }));
   expect(await screen.findByRole("button", { name: "Stop recording" })).toBeEnabled();
   await waitFor(() => expect(server.failedReads()).toBeGreaterThan(0));
@@ -56,7 +56,7 @@ it("a committed start retains Stop and exposes the actual GET failure despite st
 
 it("a committed stop retains its receipt and Start despite stale true tab data and a failed GET", async () => {
   const server = serve(true);
-  render(<BrowserPane threadId="thread" />);
+  render(<BrowserView threadId="thread" />);
   await userEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
   expect(await screen.findByText("Saved 4 frames.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();

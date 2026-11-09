@@ -96,13 +96,13 @@ function SideChatChips({ parent, shown }: { parent: Thread; shown: string | null
   );
 }
 
-export function SideChatPane({ parent }: { parent: Thread }) {
+export function SideChatPanel({ parent }: { parent: Thread }) {
   const id = useUi((state) => state.sideChat);
   const side = useWorkspace((state) => (id ? state.threads[id] : undefined));
   const chips = <SideChatChips parent={parent} shown={side && side.lifecycle?.parent_thread_id === parent.id ? side.id : null} />;
   if (!side || side.lifecycle?.parent_thread_id !== parent.id) {
     return (
-      <div className="side-chat-pane">
+      <div className="side-chat-panel">
         {chips}
         <Empty title="No side chat open">
           <Button small onClick={() => void openSideChat(parent, null)}>
@@ -113,7 +113,7 @@ export function SideChatPane({ parent }: { parent: Thread }) {
     );
   }
   return (
-    <div className="side-chat-pane">
+    <div className="side-chat-panel">
       {chips}
       <SideChat key={side.id} side={side} parent={parent} />
     </div>

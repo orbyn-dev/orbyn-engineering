@@ -151,8 +151,8 @@
   box-shadow: none;
 }
 /* Slide in from the right over --panel-duration (--m-slow, ease-out) and out over
-   --m-slow-out. Only a pane that opens or closes moves: data-moves is set once the thread
-   has settled, so a pane already open at page load never animates. */
+   --m-slow-out. Only a panel that opens or closes moves: data-moves is set once the thread
+   has settled, so a panel already open at page load never animates. */
 [data-panel-motion="on"] .context[data-moves] {
   transition: translate var(--panel-duration) var(--ease-drawer);
 }
