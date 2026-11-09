@@ -2,13 +2,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { Viewer } from "./FilesPanel";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../../state/ui";
 import { buildZipArchive } from "./zipArchive.test-support";
 import { buildDocx, buildXlsx, docxParagraph, stubWorker, worksheet } from "./office.test-support";
-import { useComposerChips } from "../../state/composerChipStore";
+import { useComposerChips } from "../../../state/composerChipStore";
 import { FileComments } from "./FileComments";
-import { useWorkspace } from "../../state/workspace";
-import { formatBytes } from "../../lib/format";
+import { useWorkspace } from "../../../state/workspace";
+import { formatBytes } from "../../../lib/format";
 
 /** The toast the last action raised. */
 const lastToast = () => useUi.getState().toasts.at(-1)?.text;

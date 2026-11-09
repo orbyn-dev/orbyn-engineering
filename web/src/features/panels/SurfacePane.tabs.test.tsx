@@ -7,10 +7,10 @@ import { useConnection } from "../../state/connection";
 import { useUi, type RightTab } from "../../state/ui";
 import { SurfacePane, type PaneMode } from "./SurfacePane";
 
-vi.mock("./BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
-vi.mock("./DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
-vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div>Files content</div> }));
-vi.mock("./ActivityPanel", () => ({ ActivityPanel: () => null }));
+vi.mock("./browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
+vi.mock("./diff/DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
+vi.mock("./files/FilesPanel", () => ({ FilesPanel: () => <div>Files content</div> }));
+vi.mock("./activity/ActivityPanel", () => ({ ActivityPanel: () => null }));
 
 const thread = { id: "thread-1" } as Thread;
 const names = () => screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));

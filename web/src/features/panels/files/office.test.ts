@@ -13,7 +13,7 @@ import {
   type XlsxDocument,
 } from "./office";
 import { buildDocx, buildOfficePackage, buildXlsx, docxParagraph, workbookParts, worksheet } from "./office.test-support";
-import { formatBytes } from "../../lib/format";
+import { formatBytes } from "../../../lib/format";
 
 /** The model of a Word document the reader accepted. */
 async function read(bytes: Uint8Array<ArrayBuffer>): Promise<DocxDocument> {

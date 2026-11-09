@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { ApiFailure } from "../../api/client";
+import { ApiFailure } from "../../../api/client";
 import { PreviewRecordings } from "./previewRecording";
 
 function deferred<T>() {

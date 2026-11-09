@@ -1,7 +1,7 @@
-import { request } from "../../api/client";
-import type { Wired } from "../../api/types";
-import type { PreviewRecording as RecordingWire } from "../../generated/PreviewRecording";
-import { toFailure } from "../../lib/useAsync";
+import { request } from "../../../api/client";
+import type { Wired } from "../../../api/types";
+import type { PreviewRecording as RecordingWire } from "../../../generated/PreviewRecording";
+import { toFailure } from "../../../lib/useAsync";
 
 export interface RecordingChoices {
   fps: number;

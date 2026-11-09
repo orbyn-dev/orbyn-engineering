@@ -1,8 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PreviewTab } from "../../api/types";
-import { useConnection } from "../../state/connection";
+import type { PreviewTab } from "../../../api/types";
+import { useConnection } from "../../../state/connection";
 import { BrowserPanel, isLocalUrl } from "./BrowserPanel";
 import { useBrowserPanels } from "./browserPanels";
 

@@ -1,7 +1,7 @@
-import { api } from "../../api/client";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useUi } from "../../state/ui";
-import { ConfirmDialog } from "../../ui/Dialog";
+import { api } from "../../../api/client";
+import { useThreadLogs } from "../../../state/threadLogs";
+import { useUi } from "../../../state/ui";
+import { ConfirmDialog } from "../../../ui/Dialog";
 
 /** Confirms, then puts the folder back to how it was before a turn. */
 export function RestoreFilesDialog({ threadId, runId, onClose }: { threadId: string; runId: string; onClose(): void }) {

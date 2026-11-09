@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, it } from "vitest";
-import type { Thread } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
-import { emptyLog } from "../../lib/timeline/projection";
-import type { ThreadItem } from "../../lib/timeline/types";
-import { useThreadLogs } from "../../state/threadLogs";
+import type { Thread } from "../../../api/types";
+import { useWorkspace } from "../../../state/workspace";
+import { emptyLog } from "../../../lib/timeline/projection";
+import type { ThreadItem } from "../../../lib/timeline/types";
+import { useThreadLogs } from "../../../state/threadLogs";
 import { ActivityPanel } from "./ActivityPanel";
 
 const thread = { id: "t", active_run: { id: "r", thread_id: "t", state: "running", error: null, started_at: "", ended_at: null } } as unknown as Thread;

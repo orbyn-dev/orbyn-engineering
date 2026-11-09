@@ -1,12 +1,12 @@
 import { Copy, Lock } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
-import { useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { Button, IconButton } from "../../ui/controls";
-import { Empty, ErrorState, Loading } from "../../ui/states";
+import { api } from "../../../api/client";
+import { useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { Button, IconButton } from "../../../ui/controls";
+import { Empty, ErrorState, Loading } from "../../../ui/states";
 import { FilePreview, previewKind } from "./FilePreview";
-import { formatBytes } from "../../lib/format";
+import { formatBytes } from "../../../lib/format";
 
 /** A full path: `/…`, `C:\…`, `C:/…` or `\\…`. Only routing; the service decides. */
 export function isFullPath(path: string): boolean {

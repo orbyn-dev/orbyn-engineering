@@ -1,6 +1,6 @@
-import { useUi } from "../../state/ui";
-import { useComposerChips } from "../../state/composerChipStore";
-import { charactersOver, chipId, promptWithChips, type TerminalChip } from "../../lib/composerContext";
+import { useUi } from "../../../state/ui";
+import { useComposerChips } from "../../../state/composerChipStore";
+import { charactersOver, chipId, promptWithChips, type TerminalChip } from "../../../lib/composerContext";
 
 /** Adds terminal output to the thread's message as a chip, unless it would not fit in one message. */
 export function addTerminalChip(threadId: string, fields: Omit<TerminalChip, "id" | "kind">, tooBig: string): boolean {

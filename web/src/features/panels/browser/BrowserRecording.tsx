@@ -1,7 +1,7 @@
 import { Circle, Square } from "lucide-react";
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
-import type { PreviewTab } from "../../api/types";
-import { Button } from "../../ui/controls";
+import type { PreviewTab } from "../../../api/types";
+import { Button } from "../../../ui/controls";
 import { PreviewRecordings, type RecordingStatus } from "./previewRecording";
 
 export function BrowserRecording({ tab, endpoint, actions, refresh }: {

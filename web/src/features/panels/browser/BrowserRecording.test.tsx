@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import type { PreviewTab } from "../../api/types";
+import type { PreviewTab } from "../../../api/types";
 import { BrowserRecording } from "./BrowserRecording";
 import { PreviewRecordings } from "./previewRecording";
 

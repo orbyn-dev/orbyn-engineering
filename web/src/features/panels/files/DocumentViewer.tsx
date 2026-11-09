@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { ApiFailure } from "../../api/client";
-import { useAsync } from "../../lib/useAsync";
-import { ErrorState, Loading } from "../../ui/states";
+import { ApiFailure } from "../../../api/client";
+import { useAsync } from "../../../lib/useAsync";
+import { ErrorState, Loading } from "../../../ui/states";
 import { BytesFallback } from "./FileMedia";
-import { rawUrl } from "../../lib/media";
+import { rawUrl } from "../../../lib/media";
 import { MAX_ARCHIVE_BYTES } from "./zipArchive";
 import {
   MAX_COLUMNS_PER_SHEET,
@@ -16,7 +16,7 @@ import {
   type OfficeSheet,
   type XlsxDocument,
 } from "./office";
-import { formatBytes } from "../../lib/format";
+import { formatBytes } from "../../../lib/format";
 
 /**
  * The Word and spreadsheet formats this viewer opens, by name. `.docm` and

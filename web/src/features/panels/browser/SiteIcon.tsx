@@ -1,6 +1,6 @@
 import { Globe } from "lucide-react";
 import { useState } from "react";
-import type { PreviewTab } from "../../api/types";
+import type { PreviewTab } from "../../../api/types";
 import { iconUrl, proxyIconUrl, useBrowserHistory } from "./browserHistory";
 
 /** Failed and refused icons keep the neutral tab identity, without remote fallback. */

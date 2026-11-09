@@ -1,11 +1,11 @@
 import { useEffect } from "react";
-import { api } from "../../api/client";
-import { matchesKey, runHandlers, whenHolds } from "../../app/shortcuts";
-import { useAsync } from "../../lib/useAsync";
-import { ErrorState } from "../../ui/states";
-import { Toasts } from "../../ui/Toasts";
-import { GitHubStarPrompt } from "../workspace";
-import { BrowserPane } from "./BrowserPanel";
+import { api } from "../../../api/client";
+import { matchesKey, runHandlers, whenHolds } from "../../../app/shortcuts";
+import { useAsync } from "../../../lib/useAsync";
+import { ErrorState } from "../../../ui/states";
+import { Toasts } from "../../../ui/Toasts";
+import { GitHubStarPrompt } from "../../workspace";
+import { BrowserPane } from "../browser/BrowserPanel";
 
 /** A native viewer has preview shortcuts, without the main chat's navigation/actions. */
 export function PreviewWindow({ threadId, tabId }: { threadId: string; tabId: string }) {

@@ -1,4 +1,4 @@
-import { serviceSocketUrl } from "../../api/origin";
+import { serviceSocketUrl } from "../../../api/origin";
 import { AppWindow, ArrowLeft, ArrowRight, Clock, CloudOff, Crosshair, EyeOff, Hand, MoreHorizontal, Plus, RotateCw, Square, X } from "lucide-react";
 import {
   useEffect,
@@ -10,25 +10,25 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent,
 } from "react";
-import { request } from "../../api/client";
-import { readToken } from "../../api/token";
-import type { BrowserProfile, LocalServer, PickedElement, PreviewTab } from "../../api/types";
-import { useCommand } from "../../app/shortcuts";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useConnection, useConnectionKind } from "../../state/connection";
-import { useUi } from "../../state/ui";
-import { useComposerChips } from "../../state/composerChipStore";
-import { chipId } from "../../lib/composerContext";
-import { Button, IconButton } from "../../ui/controls";
-import { Menu, type MenuItem } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
+import { request } from "../../../api/client";
+import { readToken } from "../../../api/token";
+import type { BrowserProfile, LocalServer, PickedElement, PreviewTab } from "../../../api/types";
+import { useCommand } from "../../../app/shortcuts";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useConnection, useConnectionKind } from "../../../state/connection";
+import { useUi } from "../../../state/ui";
+import { useComposerChips } from "../../../state/composerChipStore";
+import { chipId } from "../../../lib/composerContext";
+import { Button, IconButton } from "../../../ui/controls";
+import { Menu, type MenuItem } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
 import { SiteIcon } from "./SiteIcon";
 import { AgentCursor } from "./AgentCursor";
 import { BrowserRecording } from "./BrowserRecording";
 import { PreviewRecordings } from "./previewRecording";
 import { PageBridge, copyFromPage } from "./PageBridge";
 import { useBrowserPanels } from "./browserPanels";
-import { inDesktopApp } from "../../api/shell";
+import { inDesktopApp } from "../../../api/shell";
 import {
   RESIZE_HANDLES,
   RESIZE_KEY_HINT,

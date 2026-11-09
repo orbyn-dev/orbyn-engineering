@@ -1,13 +1,13 @@
 import { Check, GitCommitHorizontal, GitPullRequest, Upload, X } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
-import type { GitActionResult, GitPhase, Thread } from "../../api/types";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { Button, Field } from "../../ui/controls";
-import { Dialog } from "../../ui/Dialog";
+import { api } from "../../../api/client";
+import type { GitActionResult, GitPhase, Thread } from "../../../api/types";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useThreadLogs } from "../../../state/threadLogs";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
+import { Button, Field } from "../../../ui/controls";
+import { Dialog } from "../../../ui/Dialog";
 
 export interface Plan {
   title: string;

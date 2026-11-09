@@ -1,5 +1,5 @@
 import { Activity, FileDiff, Files, Globe, MessagesSquare, Plug } from "lucide-react";
-import { CLOSED_AT_FIRST, RIGHT_TAB_IDS, type RightTab } from "../../state/ui";
+import { CLOSED_AT_FIRST, RIGHT_TAB_IDS, type RightTab } from "../../../state/ui";
 
 /** The panel's six surfaces. `label` is the tab's name and what it reads. */
 export const RIGHT_TABS: { id: RightTab; label: string; icon: typeof FileDiff }[] = [

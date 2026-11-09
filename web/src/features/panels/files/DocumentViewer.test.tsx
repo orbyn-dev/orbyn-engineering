@@ -5,7 +5,7 @@ import { DocumentViewer, OFFICE_READ_TIMEOUT_MS, officeKind, runInWorker, type O
 import { MAX_ARCHIVE_BYTES } from "./zipArchive";
 import { buildDocx, buildXlsx, docxParagraph, stubWorker, worksheet } from "./office.test-support";
 import { MAX_CELLS, type DocxDocument, type OfficeModel, type OfficeRequest, type OfficeResponse, type XlsxDocument } from "./office";
-import { formatBytes } from "../../lib/format";
+import { formatBytes } from "../../../lib/format";
 
 afterEach(() => {
   vi.useRealTimers();

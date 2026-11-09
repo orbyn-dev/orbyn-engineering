@@ -1,12 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { readShellStatus } from "../../api/shell";
-import type { PreviewTab } from "../../api/types";
+import { readShellStatus } from "../../../api/shell";
+import type { PreviewTab } from "../../../api/types";
 import { BrowserPane, BrowserPanel } from "./BrowserPanel";
 import { previewWindowRoute, useBrowserPanels } from "./browserPanels";
-import { runHandlers } from "../../app/shortcuts";
-import { PreviewWindow } from "./PreviewWindow";
+import { runHandlers } from "../../../app/shortcuts";
+import { PreviewWindow } from "../preview/PreviewWindow";
 
 class FakeSocket {
   static last: FakeSocket | null = null;

@@ -1,19 +1,19 @@
 import { ChevronRight, Copy, GitPullRequest, MessageSquare, RefreshCw, Undo2 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../api/client";
-import type { FileDiff } from "../../api/types";
-import { useAsync } from "../../lib/useAsync";
-import { pullsApi } from "../../api/pulls";
-import { useWorkspace } from "../../state/workspace";
-import { useThreadLogs } from "../../state/threadLogs";
-import { useUi } from "../../state/ui";
-import { useComposerChips } from "../../state/composerChipStore";
-import { CHIP_EXCERPT_LIMIT, charactersOver, chipId, chipLabel, promptWithChips, type ReviewChip } from "../../lib/composerContext";
-import { Button, IconButton } from "../../ui/controls";
-import { Empty, ErrorState, Loading } from "../../ui/states";
+import { api } from "../../../api/client";
+import type { FileDiff } from "../../../api/types";
+import { useAsync } from "../../../lib/useAsync";
+import { pullsApi } from "../../../api/pulls";
+import { useWorkspace } from "../../../state/workspace";
+import { useThreadLogs } from "../../../state/threadLogs";
+import { useUi } from "../../../state/ui";
+import { useComposerChips } from "../../../state/composerChipStore";
+import { CHIP_EXCERPT_LIMIT, charactersOver, chipId, chipLabel, promptWithChips, type ReviewChip } from "../../../lib/composerContext";
+import { Button, IconButton } from "../../../ui/controls";
+import { Empty, ErrorState, Loading } from "../../../ui/states";
 import { RestoreFilesDialog } from "./RestoreFilesDialog";
 import { GitActionDialog, createPullRequestPlan, useGitAvailable } from "./GitActionDialog";
-import { useResolvedThreadPath } from "../../lib/useResolvedThreadPath";
+import { useResolvedThreadPath } from "../../../lib/useResolvedThreadPath";
 
 const LINE_LIMIT = 2000;
 /** A large diff renders files in pages, so a huge change set never mounts at once. */

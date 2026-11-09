@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useComposerChips } from "../../state/composerChipStore";
-import { useUi } from "../../state/ui";
-import { Button } from "../../ui/controls";
-import { CHIP_EXCERPT_LIMIT, charactersOver, chipId, chipLabel, promptWithChips } from "../../lib/composerContext";
+import { useComposerChips } from "../../../state/composerChipStore";
+import { useUi } from "../../../state/ui";
+import { Button } from "../../../ui/controls";
+import { CHIP_EXCERPT_LIMIT, charactersOver, chipId, chipLabel, promptWithChips } from "../../../lib/composerContext";
 
 /** A range captures exactly the displayed lines, never a second filesystem read. */
 export function fileCommentRange(text: string, start: number, end: number) {

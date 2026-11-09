@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { serviceUrl } from "../../api/origin";
-import { readToken } from "../../api/token";
-import { readJson, writeJson } from "../../lib/storage";
+import { serviceUrl } from "../../../api/origin";
+import { readToken } from "../../../api/token";
+import { readJson, writeJson } from "../../../lib/storage";
 
 const KEY = "orbyn.browser-icons.v1";
 const LIMIT = 50;

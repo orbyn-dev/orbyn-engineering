@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { PreviewTab } from "../../api/types";
+import type { PreviewTab } from "../../../api/types";
 import { PageView } from "./BrowserPanel";
 import { PageBridge } from "./PageBridge";
 

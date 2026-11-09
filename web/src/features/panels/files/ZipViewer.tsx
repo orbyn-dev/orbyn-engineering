@@ -1,15 +1,15 @@
 import { ChevronRight, Download, File, Folder } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
-import { ApiFailure } from "../../api/client";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { IconButton } from "../../ui/controls";
-import { ErrorState, Loading } from "../../ui/states";
+import { ApiFailure } from "../../../api/client";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useUi } from "../../../state/ui";
+import { IconButton } from "../../../ui/controls";
+import { ErrorState, Loading } from "../../../ui/states";
 import { BytesFallback } from "./FileMedia";
-import { rawUrl } from "../../lib/media";
+import { rawUrl } from "../../../lib/media";
 import { FilePreview, previewKind } from "./FilePreview";
 import { ZipError, buildZipTree, decodeEntryText, looksBinary, readEntryBytes, readZipArchive, type ZipEntry, type ZipReadResult, type ZipTreeNode } from "./zipArchive";
-import { formatBytes } from "../../lib/format";
+import { formatBytes } from "../../../lib/format";
 
 /** Only the name decides, the way a path is typed elsewhere in the panel. */
 export function isZipPath(path: string): boolean {

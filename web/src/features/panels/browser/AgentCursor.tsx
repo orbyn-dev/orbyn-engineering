@@ -1,10 +1,10 @@
 import { MousePointer2 } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
-import { serviceSocketUrl } from "../../api/origin";
-import { readToken } from "../../api/token";
-import type { PreviewPointer } from "../../generated/PreviewPointer";
-import { MOTION } from "../../lib/motion";
-import { usePrefersReducedMotion } from "../../lib/useLayout";
+import { serviceSocketUrl } from "../../../api/origin";
+import { readToken } from "../../../api/token";
+import type { PreviewPointer } from "../../../generated/PreviewPointer";
+import { MOTION } from "../../../lib/motion";
+import { usePrefersReducedMotion } from "../../../lib/useLayout";
 
 /** Validate at the transport boundary; old or malformed cues never move the mark. */
 export function readPointer(text: string, previous: number): PreviewPointer | null {

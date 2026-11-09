@@ -1,11 +1,11 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { api } from "../../api/client";
-import { pullsApi } from "../../api/pulls";
-import { useComposerChips } from "../../state/composerChipStore";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { api } from "../../../api/client";
+import { pullsApi } from "../../../api/pulls";
+import { useComposerChips } from "../../../state/composerChipStore";
+import { useUi } from "../../../state/ui";
+import { useWorkspace } from "../../../state/workspace";
 import { DiffPanel, diffCommentRange, nextPageEnd, numberedLines, parsePatch } from "./DiffPanel";
 afterEach(() => {
   vi.restoreAllMocks();

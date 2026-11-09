@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { TimelineEntry } from "../../lib/timeline/types";
+import type { TimelineEntry } from "../../../lib/timeline/types";
 import { filterActivity, summarizeActivity } from "./activityView";
 
 const at = (seq: number, label: string, ts: string): TimelineEntry => ({ seq, ts, label, detail: null, tone: "neutral" });

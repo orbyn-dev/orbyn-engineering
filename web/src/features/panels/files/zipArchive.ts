@@ -9,7 +9,7 @@
  * display and then only used as text.
  */
 
-import { formatBytes } from "../../lib/format";
+import { formatBytes } from "../../../lib/format";
 
 /** The largest archive the viewer opens. */
 export const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
