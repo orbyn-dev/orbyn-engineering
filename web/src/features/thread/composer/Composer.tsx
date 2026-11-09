@@ -1,7 +1,7 @@
 import { useCompacting } from "../ThreadStates";
 import { composerMarkup } from "./composerMarkup";
 import { MentionMenu, type Suggestion } from "./MentionMenu";
-import { AttachmentStrip, type ShownAttachment } from "./AttachmentStrip";
+import { AttachmentStrip } from "./AttachmentStrip";
 import { CodeBar } from "./CodeBar";
 import { ComposerContext } from "./ComposerContext";
 import { controlsMenuItems } from "./controlsMenu";
@@ -17,7 +17,11 @@ import {
   WIDE,
 } from "./composerConstants";
 import { loadSuggestions } from "./suggestions";
+import { handleComposerKey } from "./composerKeys";
+import { handleComposerPaste } from "./composerPaste";
+import { useAttachments } from "./useAttachments";
 import { useOwnCommand } from "./useOwnCommand";
+import { useStash } from "./useStash";
 import { recordUserPrompt } from "../../workspace";
 import { ArrowUp, Archive, ListChecks, Paperclip, SlidersHorizontal, Square } from "lucide-react";
 import {
@@ -30,7 +34,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from "react";
-import { api, request } from "../../../api/client";
+import { api } from "../../../api/client";
 import type { EngineStatus, PermissionMode, Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -45,12 +49,8 @@ import { Presence } from "../../../ui/Presence";
 import { useWorkspace } from "../../../state/workspace";
 import { CompactOffer, ComposerBanners, ContextMeter, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import {
-  continueListLine,
-  indentListLine,
-  LARGE_PASTE_BYTES,
   localCommand,
   promptHistory,
-  recallStep,
   type RecallPosition,
 } from "./composerInput";
 import { ACCESS, EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
@@ -62,17 +62,12 @@ import { QueuedMessages } from "../QueuedMessages";
 import { openSideChat } from "../sideChat";
 import { FILE_MENTION_TYPE, insertToken, triggerAt } from "../../../lib/skillMention";
 import { useComposerChips } from "../../../state/composerChipStore";
-import { exitCodeBlock, indentCodeLines, openFenceAt } from "./composerCodeBlock";
+import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
 import {
-  CHIP_MIME,
   MAX_PROMPT_CHARS,
   charactersOver,
-  chipsFromClipboard,
-  fileExcerpt,
-  languageForPath,
   promptWithChips,
-  refillExcerpts,
 } from "../../../lib/composerContext";
 
 export function Composer({
@@ -104,11 +99,10 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
-  const [attachments, setAttachments] = useState<ShownAttachment[]>([]);
+  const { attachments, setAttachments, filePicker, uploading, startUpload, upload } = useAttachments(thread, setError);
   const [dragging, setDragging] = useState(false);
   const [recall, setRecall] = useState<RecallPosition | null>(null);
   const [limitsOpen, setLimitsOpen] = useState(false);
-  const [stashOpen, setStashOpen] = useState(false);
   const shiftPaste = useRef(false);
   const bar = useRef<HTMLDivElement>(null);
   const [narrowBar, setNarrowBar] = useState(false);
@@ -144,7 +138,6 @@ export function Composer({
   const [stopping, setStopping] = useState(false);
   const [stoppedRun, setStoppedRun] = useState<string | null>(null);
   const refreshAll = useWorkspace((state) => state.refreshAll);
-  const filePicker = useRef<HTMLInputElement>(null);
   const putThread = useWorkspace((state) => state.putThread);
   const projectBranch = useWorkspace(
     (state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null,
@@ -159,7 +152,6 @@ export function Composer({
       (state.projects.data?.find((project) => project.id === thread.project_id)?.is_git ?? false),
   );
   const busy = thread.active_run !== null;
-  const uploading = attachments.some((file) => file.id === null);
   const outbound = useMemo(() => promptWithChips(draft, chips), [draft, chips]);
   const overBy = charactersOver(outbound);
   const styled = useMemo(() => (draft && draft.length <= STYLED_CHARS ? composerMarkup(draft) : null), [draft]);
@@ -314,127 +306,33 @@ export function Composer({
     }
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (menuOpen) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const step = event.key === "ArrowDown" ? 1 : -1;
-        setHighlight((active + step + matches.length) % matches.length);
-        return;
-      }
-      if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
-        event.preventDefault();
-        const suggestion = matches[active];
-        if (suggestion) pick(suggestion);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        setMenuDismissed(true);
-        return;
-      }
-    }
-    if (event.nativeEvent.isComposing) return;
-    shiftPaste.current = event.shiftKey && event.key.toLowerCase() === "v";
-    const element = event.currentTarget;
-    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      const edge = event.key === "ArrowUp" ? element.selectionStart === 0 : element.selectionEnd === draft.length;
-      const step = edge ? recallStep(history, recall, draft, event.key === "ArrowUp" ? -1 : 1) : null;
-      if (step) {
-        event.preventDefault();
-        setRecall(step.position);
-        setDraft(thread.id, step.text);
-      }
-      return;
-    }
-    if (event.key === "Tab" && !menuOpen) {
-      const code = indentCodeLines(draft, element.selectionStart, element.selectionEnd, event.shiftKey);
-      if (code) {
-        event.preventDefault();
-        setDraft(thread.id, code.text);
-        caretAfterEdit.current = code.start;
-        // A multi-line selection stays selected, so Tab and Shift+Tab can repeat over it.
-        selectionEndAfterEdit.current = code.end;
-        return;
-      }
-      const next = indentListLine(draft, element.selectionStart, event.shiftKey);
-      if (next) {
-        event.preventDefault();
-        setDraft(thread.id, next.text);
-        caretAfterEdit.current = next.caret;
-        return;
-      }
-      if (event.shiftKey && planControls && !busy && thread.lifecycle) {
-        event.preventDefault();
-        void setPlanMode(!planMode);
-        return;
-      }
-    }
-    if (event.key !== "Enter") return;
-    // Left to the shell, whose rule sends and opens a new thread.
-    if (event.altKey && (event.metaKey || event.ctrlKey)) return;
-    // A fenced block keeps its own lines; only Mod+Enter leaves it to send.
-    if (!event.shiftKey && !event.metaKey && !event.ctrlKey && openFenceAt(draft, element.selectionStart)) {
-      const exit = exitCodeBlock(draft, element.selectionStart);
-      if (exit) {
-        event.preventDefault();
-        setDraft(thread.id, exit.text);
-        caretAfterEdit.current = exit.caret;
-        return;
-      }
-      event.preventDefault();
-      const at = element.selectionStart;
-      setDraft(thread.id, `${draft.slice(0, at)}\n${draft.slice(element.selectionEnd)}`);
-      caretAfterEdit.current = at + 1;
-      return;
-    }
-    if (event.shiftKey && !event.metaKey && !event.ctrlKey) {
-      const next = continueListLine(draft, element.selectionStart);
-      if (next) {
-        event.preventDefault();
-        setDraft(thread.id, next.text);
-        caretAfterEdit.current = next.caret;
-      }
-      return;
-    }
-    const mod = event.metaKey || event.ctrlKey;
-    const multiline = draft.includes("\n");
-    const enterSends = sendShortcut === "enter" || (sendShortcut === "mod-enter-multiline" && !multiline);
-    if (!enterSends && !mod) return;
-    event.preventDefault();
-    void send(busy && (enterSends ? mod : event.shiftKey) ? "opposite" : "default");
-  };
-
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const carried = chipsFromClipboard({
-      json: event.clipboardData.getData(CHIP_MIME),
-      html: event.clipboardData.getData("text/html"),
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) =>
+    handleComposerKey(event, {
+      thread,
+      draft,
+      menuOpen,
+      matches,
+      active,
+      history,
+      recall,
+      planControls,
+      planMode,
+      busy,
+      sendShortcut,
+      shiftPaste,
+      caretAfterEdit,
+      selectionEndAfterEdit,
+      setHighlight,
+      setMenuDismissed,
+      setRecall,
+      setDraft,
+      pick,
+      setPlanMode,
+      send,
     });
-    if (carried) {
-      event.preventDefault();
-      void refillExcerpts(carried, async (path) => {
-        const found = await request<{ content: string }>(
-          "GET",
-          `/api/threads/${encodeURIComponent(thread.id)}/files/content?path=${encodeURIComponent(path)}`,
-        );
-        return { text: fileExcerpt(found.content, null), language: languageForPath(path) };
-      }).then((filled) => addChips(thread.id, filled));
-      return;
-    }
-    const files = [...event.clipboardData.files];
-    if (files.length > 0) {
-      event.preventDefault();
-      upload(files);
-      return;
-    }
-    const text = event.clipboardData.getData("text/plain");
-    if (text.length >= LARGE_PASTE_BYTES && !shiftPaste.current) {
-      event.preventDefault();
-      upload([new File([text], "pasted-text.txt", { type: "text/plain" })]);
-    }
-    shiftPaste.current = false;
-  };
+
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) =>
+    handleComposerPaste(event, { thread, shiftPaste, addChips, upload });
 
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
@@ -452,37 +350,13 @@ export function Composer({
     upload(useDraftStore.getState().takeDropped(thread.id));
   });
 
-  const stash = () => {
-    const stored = useUi.getState().stashes;
-    const list = stored[thread.id] ?? [];
-    const { setPrefs: save } = useUi.getState();
-    if (draft.trim()) {
-      const entry = { id: crypto.randomUUID(), text: draft, at: new Date().toISOString() };
-      save({ stashes: { ...stored, [thread.id]: [entry, ...list] } });
-      setDraft(thread.id, "");
-      useUi.getState().pushToast("Prompt stashed");
-    } else if (list.length === 1 && list[0]) {
-      restoreStash(list[0].id);
-    } else if (list.length > 1) {
-      setStashOpen(true);
-    }
-  };
-
-  const dropStash = (id: string) => {
-    const stored = useUi.getState().stashes;
-    useUi.getState().setPrefs({
-      stashes: { ...stored, [thread.id]: (stored[thread.id] ?? []).filter((entry) => entry.id !== id) },
-    });
-  };
-
-  const restoreStash = (id: string) => {
-    const entry = stashes.find((candidate) => candidate.id === id);
-    if (!entry) return;
-    setDraft(thread.id, entry.text);
-    dropStash(id);
-    setStashOpen(false);
-    field.current?.focus();
-  };
+  const { stashOpen, setStashOpen, stash, dropStash, restoreStash } = useStash({
+    thread,
+    draft,
+    stashes,
+    field,
+    setDraft,
+  });
 
   useOwnCommand(side, "composer.focus", () => {
     field.current?.focus();
@@ -504,33 +378,6 @@ export function Composer({
       .then(() => api.removeQueued(oldest.id))
       .then(reloadQueue, (failure: unknown) => setError(`Couldn't steer. ${toFailure(failure).message}`));
   });
-
-  const startUpload = (entry: ShownAttachment) => {
-    const settle = (patch: Partial<ShownAttachment>) =>
-      setAttachments((current) => current.map((file) => (file.key === entry.key ? { ...file, ...patch } : file)));
-    settle({ failure: null });
-    api.uploadAttachment(thread.id, entry.file).then(
-      (kept) => settle({ id: kept.id, name: kept.name }),
-      (failure: unknown) => settle({ failure: toFailure(failure).message }),
-    );
-  };
-
-  /** Each file starts at once and ends up kept or refused on its own. */
-  const upload = (files: FileList | File[] | null) => {
-    if (!files || files.length === 0) return;
-    setError(null);
-    const added = [...files].map((file) => ({
-      key: crypto.randomUUID(),
-      file,
-      name: file.name,
-      preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
-      id: null,
-      failure: null,
-    }));
-    setAttachments((current) => [...current, ...added]);
-    added.forEach(startUpload);
-    if (filePicker.current) filePicker.current.value = "";
-  };
 
   const setAccess = async (mode: PermissionMode) => {
     setError(null);
