@@ -32,16 +32,14 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use orbyn_contracts::{PreviewPointer, PreviewRecordingOptions, PreviewTab};
+use orbyn_contracts::{PreviewPointer, PreviewTab};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::Core;
 use crate::browser::preview_bridge::Bridge;
 use crate::browser::preview_recording::Recording;
 use crate::error::{CoreError, Result};
 use crate::governance::computer::cdp::{BrowserSession, HistoryState, LaunchOptions};
-use crate::util::new_id;
 pub(crate) use expressions::{DEFAULT_SCROLL, MAX_SCROLL, MAX_TYPE_CHARS, MAX_WAIT_TEXT_CHARS};
 pub(crate) use snapshots::MAX_SELECTOR_CHARS;
 
@@ -209,24 +207,6 @@ impl PreviewManager {
             .filter(|tab| lock(&tab.info).thread_id == thread_id)
             .cloned()
             .ok_or_else(|| CoreError::NotFound("preview".into()))
-    }
-}
-
-impl Core {
-    pub fn start_preview_recording(
-        &self,
-        thread_id: &str,
-        id: &str,
-        options: PreviewRecordingOptions,
-    ) -> Result<()> {
-        let root = self.config.data_dir.join("browser-artifacts");
-        crate::browser::preview_recording::ensure_room(
-            &root,
-            crate::browser::preview_recording::TOTAL_BUDGET,
-        )?;
-        let folder = root.join(format!("{id}-{}", new_id()));
-        self.previews
-            .start_recording(thread_id, id, folder, options)
     }
 }
 

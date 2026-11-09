@@ -2,9 +2,11 @@
 
 use super::{PreviewManager, RECORDING_SAFE_FOCUS, ZOOMS, check_size};
 use super::{Tab, lock};
+use crate::app::Core;
 use crate::browser::preview_recording::Recording;
 use crate::error::{CoreError, Result};
 use crate::governance::computer::cdp::normalize_url;
+use crate::util::new_id;
 use orbyn_contracts::{
     PreviewInput, PreviewPointer, PreviewRecording, PreviewRecordingOptions, PreviewTab,
     PreviewView,
@@ -331,5 +333,23 @@ impl PreviewManager {
         for (_, tab) in lock(&self.tabs).drain() {
             forget(&tab);
         }
+    }
+}
+
+impl Core {
+    pub fn start_preview_recording(
+        &self,
+        thread_id: &str,
+        id: &str,
+        options: PreviewRecordingOptions,
+    ) -> Result<()> {
+        let root = self.config.data_dir.join("browser-artifacts");
+        crate::browser::preview_recording::ensure_room(
+            &root,
+            crate::browser::preview_recording::TOTAL_BUDGET,
+        )?;
+        let folder = root.join(format!("{id}-{}", new_id()));
+        self.previews
+            .start_recording(thread_id, id, folder, options)
     }
 }
