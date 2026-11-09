@@ -3,6 +3,7 @@
 //! agent cannot act through Orbyn without asking.
 
 mod events;
+mod permissions;
 mod sessions;
 
 use std::collections::HashMap;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use orbyn_contracts::{
-    ActionKind, AuthState, CustomEngine, EngineCapabilities, EngineTier, ModelInfo, ModelOption,
+    AuthState, CustomEngine, EngineCapabilities, EngineTier, ModelInfo, ModelOption,
     ModelOptionValue, SkillDelivery,
 };
 use serde_json::{Value, json};
@@ -22,12 +23,12 @@ use super::pipes::{EngineProcess, exit_message, resolve_engine, spawn_engine_wit
 use super::rpc::{Inbound, RpcClient};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, MCP_SERVER_NAME,
-    ModelCatalog, ProbeDir, RunHandle, RunSpec, ask_paths,
+    ModelCatalog, ProbeDir, RunHandle, RunSpec,
 };
 use crate::agents::selection::MODE;
 use crate::error::{CoreError, Result};
-use crate::governance::approvals::Verdict;
 use events::{UpdateMapper, field};
+use permissions::{answer_request, stop_outcome};
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// How many models one probe tries, and how long it may take over them.
@@ -943,108 +944,6 @@ fn parse_models(session: &Value) -> Vec<ModelInfo> {
             })
         })
         .collect()
-}
-
-fn stop_outcome(reply: &Value) -> EngineOutcome {
-    match reply.get("stopReason").and_then(Value::as_str) {
-        Some("end_turn") => EngineOutcome::Completed,
-        Some("cancelled") => EngineOutcome::Cancelled,
-        Some(reason) => EngineOutcome::Failed(format!("The agent stopped: {reason}.")),
-        None => EngineOutcome::Completed,
-    }
-}
-
-fn answer_request(
-    rpc: &RpcClient,
-    events: &mpsc::Sender<EngineEvent>,
-    cancel: &CancellationToken,
-    id: Value,
-    method: String,
-    params: Value,
-) {
-    let rpc = rpc.clone();
-    if method != "session/request_permission" {
-        tokio::spawn(async move {
-            let text = format!("Orbyn does not serve {method}.");
-            let _ = rpc.respond_error(id, METHOD_NOT_FOUND, &text).await;
-        });
-        return;
-    }
-    let events = events.clone();
-    let cancel = cancel.clone();
-    tokio::spawn(async move {
-        let (kind, target, summary) = classify(&params);
-        let paths = if kind == ActionKind::FileChange {
-            vec![target.clone()]
-        } else {
-            Vec::new()
-        };
-        let verdict = ask_paths(&events, kind, target, summary, params.clone(), paths).await;
-        let outcome = permission_outcome(&params, &verdict, cancel.is_cancelled());
-        let _ = rpc.respond(id, json!({ "outcome": outcome })).await;
-    });
-}
-
-/// Picks the option that matches the verdict. Fails closed: with no matching
-/// option the request is reported cancelled, never allowed.
-fn permission_outcome(params: &Value, verdict: &Verdict, cancelled: bool) -> Value {
-    if cancelled {
-        return json!({ "outcome": "cancelled" });
-    }
-    let wanted: &[&str] = if verdict.is_allowed() {
-        &["allow_once", "allow_always"]
-    } else {
-        &["reject_once", "reject_always"]
-    };
-    let options = params
-        .get("options")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    wanted
-        .iter()
-        .find_map(|kind| {
-            options
-                .iter()
-                .find(|option| option.get("kind").and_then(Value::as_str) == Some(kind))
-        })
-        .and_then(|option| option.get("optionId").and_then(Value::as_str))
-        .map_or_else(
-            || json!({ "outcome": "cancelled" }),
-            |id| json!({ "outcome": "selected", "optionId": id }),
-        )
-}
-
-fn classify(params: &Value) -> (ActionKind, String, String) {
-    let call = params.get("toolCall").cloned().unwrap_or(Value::Null);
-    let title = call
-        .get("title")
-        .or_else(|| params.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("Agent action")
-        .to_owned();
-    let path = call
-        .pointer("/locations/0/path")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let command = call
-        .pointer("/rawInput/command")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    match call.get("kind").and_then(Value::as_str) {
-        Some("execute") => (
-            ActionKind::Command,
-            command.unwrap_or_else(|| title.clone()),
-            title,
-        ),
-        Some("edit" | "delete" | "move") => (
-            ActionKind::FileChange,
-            path.unwrap_or_else(|| title.clone()),
-            title,
-        ),
-        Some("fetch" | "search") => (ActionKind::Network, title.clone(), title),
-        _ => (ActionKind::Tool, title.clone(), title),
-    }
 }
 
 #[cfg(test)]
