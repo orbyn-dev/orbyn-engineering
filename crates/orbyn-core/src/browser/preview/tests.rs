@@ -11,6 +11,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use super::favicon::favicon_url;
+use super::pump::{decode_base64, pump};
 use super::*;
 
 fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
