@@ -1,6 +1,7 @@
 use super::events::UpdateMapper;
 use super::models::{parse_models, parse_session_options, require_offered};
 use super::permissions::{classify, permission_outcome};
+use super::sign_in::{MAX_SIGN_IN_ARGS, SignInSlot, known_sign_in, terminal_sign_in};
 use super::*;
 use crate::governance::approvals::Verdict;
 use orbyn_contracts::ActionKind;
