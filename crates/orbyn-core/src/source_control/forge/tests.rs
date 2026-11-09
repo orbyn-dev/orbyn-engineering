@@ -6,6 +6,7 @@ use orbyn_contracts::{MergePull, PullChecks, ReviewLineComment};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
+use super::create::number_from_url;
 use super::details::{
     DetailsOutcome, classify_details, details_query, graphql_reset, parse_details,
 };

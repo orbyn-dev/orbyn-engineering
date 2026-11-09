@@ -4,6 +4,8 @@
 //! DevOps and Forgejo cover the basics their CLIs have, and Bitbucket has no CLI to
 //! go through, so it reports that instead of asking for a token.
 
+mod create;
+
 mod merge;
 
 mod review;
@@ -26,12 +28,12 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use serde_json::Value;
 use tokio::process::Command;
 
 use crate::error::{CoreError, Result};
 use crate::host::process::resolve;
 use crate::source_control::git::{git, text};
+pub use create::{create_pull, number_from_url, publish};
 pub use details::{
     DETAIL_FIELDS, DETAILS_ROW_LIMIT, DetailsOutcome, github_details, github_graphql_reset,
     graphql_reset,
@@ -41,7 +43,7 @@ pub use merge::{
     strip_agent_credits, update_pull,
 };
 pub use parse::parse_pull;
-use parse::{id_of, person};
+use parse::person;
 pub use process::{call, no_such_pull};
 use process::{call_json, spawn};
 pub use pulls::{
@@ -177,116 +179,6 @@ pub async fn forge_of(cwd: &Path) -> Result<Forge> {
 
 #[cfg(test)]
 mod revision_tests;
-
-pub async fn create_pull(
-    forge: Forge,
-    cwd: &Path,
-    branch: &str,
-    title: &str,
-    body: &str,
-    base: Option<&str>,
-) -> Result<String> {
-    let mut args: Vec<&str> = match forge {
-        Forge::GitHub => vec![
-            "pr", "create", "--title", title, "--body", body, "--head", branch,
-        ],
-        Forge::GitLab => vec![
-            "mr",
-            "create",
-            "--title",
-            title,
-            "--description",
-            body,
-            "--source-branch",
-            branch,
-            "--yes",
-        ],
-        Forge::Azure => vec![
-            "repos",
-            "pr",
-            "create",
-            "--detect",
-            "true",
-            "--title",
-            title,
-            "--description",
-            body,
-            "--source-branch",
-            branch,
-            "--output",
-            "json",
-        ],
-        Forge::Forgejo => vec![
-            "pulls",
-            "create",
-            "--title",
-            title,
-            "--description",
-            body,
-            "--head",
-            branch,
-        ],
-        Forge::Bitbucket => return Err(forge.unsupported("open pull requests")),
-    };
-    if let Some(base) = base {
-        args.push(match forge {
-            Forge::GitHub | Forge::Forgejo => "--base",
-            Forge::GitLab => "--target-branch",
-            Forge::Azure | Forge::Bitbucket => "--target-branch",
-        });
-        args.push(base);
-    }
-    let output = call(forge, cwd, &args).await?;
-    if forge == Forge::Azure {
-        let value: Value = serde_json::from_str(&output)?;
-        return Ok(format!("azure:{}", id_of(&value, "pullRequestId")));
-    }
-    Ok(output
-        .lines()
-        .rfind(|line| line.trim_start().starts_with("http"))
-        .unwrap_or(&output)
-        .trim()
-        .to_owned())
-}
-
-pub fn number_from_url(url: &str) -> Option<u64> {
-    url.trim_end_matches('/')
-        .rsplit(['/', ':'])
-        .next()?
-        .parse()
-        .ok()
-}
-
-/// Creates a remote from a local repository with this forge's CLI and pushes.
-pub async fn publish(forge: Forge, cwd: &Path, name: &str, private: bool) -> Result<()> {
-    let visibility = if private { "--private" } else { "--public" };
-    match forge {
-        Forge::GitHub => call(
-            forge,
-            cwd,
-            &[
-                "repo", "create", name, visibility, "--source", ".", "--push",
-            ],
-        )
-        .await
-        .map(|_| ()),
-        Forge::GitLab => call(
-            forge,
-            cwd,
-            &[
-                "repo",
-                "create",
-                name,
-                visibility,
-                "--defaultBranch",
-                "main",
-            ],
-        )
-        .await
-        .map(|_| ()),
-        _ => Err(forge.unsupported("publish a repository")),
-    }
-}
 
 /// What the CLI says about itself, without touching a token.
 pub async fn forge_status(forge: Forge) -> orbyn_contracts::ForgeStatus {
