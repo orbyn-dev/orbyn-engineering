@@ -11,6 +11,10 @@ use super::details::{
 };
 use super::github::{github_threads, parse_github_event};
 use super::gitlab::gitlab_conversation;
+use super::merge::{
+    check_head, head_changed, head_in, head_moved, head_precheck_needed, merge_args,
+    strip_agent_credits,
+};
 use super::review::review_payload;
 use super::*;
 use crate::error::CoreError;
