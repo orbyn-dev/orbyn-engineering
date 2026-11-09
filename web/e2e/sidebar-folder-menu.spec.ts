@@ -93,6 +93,18 @@ test.describe("Grouping submenu", () => {
     await expect(folder(page)).toBeVisible();
   });
 
+  /** Opens Grouping, then the project's modes, waiting for each submenu: it opens on a click and again on a 100 ms hover timer. */
+  const openModes = async (page: Page) => {
+    await folder(page).click({ button: "right" });
+    await menu(page).getByRole("menuitem", { name: "Grouping" }).click();
+    const projects = page.getByRole("menu", { name: "Grouping", exact: true });
+    await expect(projects).toBeVisible();
+    await projects.getByRole("menuitem", { name: APP }).click();
+    const modes = page.getByRole("menu", { name: APP, exact: true });
+    await expect(modes).toBeVisible();
+    return modes;
+  };
+
   const savedOverrides = (page: Page) =>
     page.evaluate(() => (JSON.parse(localStorage.getItem("orbyn.prefs.v1") ?? "{}") as { projectGroupingOverrides?: unknown }).projectGroupingOverrides);
 
@@ -111,9 +123,11 @@ test.describe("Grouping submenu", () => {
     await folder(page).click({ button: "right" });
     await menu(page).getByRole("menuitem", { name: "Grouping" }).click();
     const projects = page.getByRole("menu", { name: "Grouping", exact: true });
+    await expect(projects).toBeVisible();
     await expect(projects.getByRole("menuitem")).toHaveText([APP]);
     await projects.getByRole("menuitem", { name: APP }).click();
     const modes = page.getByRole("menu", { name: APP, exact: true });
+    await expect(modes).toBeVisible();
     await expect(modes.getByRole("menuitem")).toHaveText(["Default grouping", "Repository", "Repository path", "Separate"]);
     await expect(modes.getByRole("menuitem", { name: "Repository", exact: true })).toHaveAttribute("aria-current", "true");
     await expect(modes.getByRole("menuitem", { name: "Default grouping" })).not.toHaveAttribute("aria-current", "true");
@@ -121,19 +135,15 @@ test.describe("Grouping submenu", () => {
   });
 
   test("choosing a mode saves it as that project's override and closes the menu", async ({ page }) => {
-    await folder(page).click({ button: "right" });
-    await menu(page).getByRole("menuitem", { name: "Grouping" }).click();
-    await page.getByRole("menu", { name: "Grouping", exact: true }).getByRole("menuitem", { name: APP }).click();
-    await page.getByRole("menu", { name: APP, exact: true }).getByRole("menuitem", { name: "Separate" }).click();
+    const modes = await openModes(page);
+    await modes.getByRole("menuitem", { name: "Separate" }).click();
     await expect(menu(page)).toBeHidden();
     await expect.poll(() => savedOverrides(page)).toEqual({ "p-app": "separate" });
   });
 
   test("Default grouping removes the override, and with it the Grouping entry", async ({ page }) => {
-    await folder(page).click({ button: "right" });
-    await menu(page).getByRole("menuitem", { name: "Grouping" }).click();
-    await page.getByRole("menu", { name: "Grouping", exact: true }).getByRole("menuitem", { name: APP }).click();
-    await page.getByRole("menu", { name: APP, exact: true }).getByRole("menuitem", { name: "Default grouping" }).click();
+    const modes = await openModes(page);
+    await modes.getByRole("menuitem", { name: "Default grouping" }).click();
     await expect.poll(() => savedOverrides(page)).toEqual({});
     await folder(page).click({ button: "right" });
     await expect(menu(page).getByRole("menuitem")).toHaveText(["New thread", "Copy path", "Project settings"]);

@@ -42,6 +42,7 @@ test.describe("tree keys", () => {
     await expect(last).toBeFocused();
   });
 
+  // Current behaviour, not necessarily desired: folder headers are not arrow-key stops.
   test("the arrows step over a project folder's header", async ({ page }) => {
     const running = row(page, "Tool calls, running");
     await running.focus();
@@ -65,6 +66,7 @@ test.describe("tree keys", () => {
     await expect(head).toBeFocused();
   });
 
+  // Current behaviour, not necessarily desired: only group heads answer ArrowLeft and ArrowRight.
   test("ArrowLeft and ArrowRight on a thread row do nothing", async ({ page }) => {
     const done = row(page, "Explain how the event log resumes");
     await done.focus();
@@ -105,7 +107,8 @@ test.describe("tree keys", () => {
       await expect(menu).toBeVisible();
       await expect(menu.getByRole("menuitem", { name: "Rename thread" })).toBeVisible();
       // The menu opens at the row's left edge plus 12px, just under it. Its placed position is read from
-      // its style: the box is scaled while the open animation runs.
+      // its inline left/top, not its bounding box: the box is scaled while the open animation runs, so a
+      // box read is off by a few pixels and flaky.
       const at = await target.boundingBox();
       const placed = await menu.evaluate((node) => ({ x: parseFloat((node as HTMLElement).style.left), y: parseFloat((node as HTMLElement).style.top) }));
       if (!at) throw new Error("no box");
@@ -214,7 +217,7 @@ test.describe("selection dismissal", () => {
 
   test("a click outside the rows clears it", async ({ page }) => {
     await select(page, "Tool call states", "Explain how the event log resumes");
-    await page.mouse.click(900, 300);
+    await page.locator(".msg-bubble").first().click();
     await expect(picked(page)).toHaveCount(0);
   });
 

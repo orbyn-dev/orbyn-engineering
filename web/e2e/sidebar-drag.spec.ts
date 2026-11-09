@@ -17,13 +17,28 @@ const centre = async (target: Locator) => {
   return { x: box.x + 40, y: box.y + box.height / 2, box };
 };
 
-/** Presses on a row and moves just past the drag threshold; the pointer stays down. */
+/**
+ * Presses on a row and moves just past the drag threshold; the pointer stays down. It then waits for proof that
+ * the press became a drag: trackPress's window listener calls preventDefault on every move once the drag is live,
+ * and this probe, added after it, sees the event already prevented. (The composer's own data-dragging is the HTML5
+ * dragover state, which a pointer drag never sets, so it cannot serve as the signal.)
+ */
 async function pickUp(page: Page, target: Locator) {
   const at = await centre(target);
   await page.mouse.move(at.x, at.y);
   await page.mouse.down();
+  await page.evaluate(() => {
+    const probe = window as unknown as { __dragLive: boolean };
+    probe.__dragLive = false;
+    window.addEventListener("pointermove", (event) => void (probe.__dragLive = event.defaultPrevented));
+  });
   await page.mouse.move(at.x, at.y + 10, { steps: 3 });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __dragLive: boolean }).__dragLive)).toBe(true);
 }
+
+/** Two frames and a macrotask: whatever a release set in motion has run, so a "nothing was saved" check is not early. */
+const settled = (page: Page) =>
+  page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 0)))));
 
 const drawnIds = (page: Page) =>
   tree(page).locator("li[data-thread-item]").evaluateAll((items) => items.map((item) => (item as HTMLElement).dataset.threadItem ?? ""));
@@ -83,7 +98,7 @@ test.describe("onto the composer", () => {
     const target = await centre(row(page, "Upgrade tokio"));
     await page.mouse.move(target.x, target.y, { steps: 10 });
     await page.mouse.up();
-    // The press's click is swallowed: no navigation either.
+    await settled(page);
     await expect(page).toHaveURL(/#\/threads\/t-done$/);
     await expect(composer(page)).toHaveValue("");
     expect(await drawnIds(page)).toEqual(before);
@@ -97,17 +112,25 @@ test.describe("onto the composer", () => {
     if (!box) throw new Error("no composer box");
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 });
     await page.mouse.up();
+    await settled(page);
     await expect(composer(page)).toHaveValue("");
     await expect(page).toHaveURL(/#\/threads\/t-done$/);
   });
 
+  // Current behaviour, not necessarily desired: folder view reserves the drag for the composer.
   test("project folders keep a drag to the composer: rows are not reordered", async ({ page }) => {
     const saved = await recordOrderSaves(page);
+    const before = await drawnIds(page);
+    // pickUp has already shown the drag is live.
     await pickUp(page, row(page, "Tool call states"));
-    // No drop markers while dragging in a folder view.
+    const target = await centre(row(page, "Upgrade tokio"));
+    await page.mouse.move(target.x, target.y, { steps: 10 });
+    // No drop markers and no drag state while dragging in a folder view.
     await expect(tree(page).locator(".drag-boundary")).toHaveCount(0);
-    await expect(tree(page)).not.toHaveAttribute("data-dragging", "");
+    await expect(tree(page)).not.toHaveAttribute("data-dragging");
     await page.mouse.up();
+    await settled(page);
+    expect(await drawnIds(page)).toEqual(before);
     expect(saved).toEqual([]);
   });
 });
@@ -142,10 +165,11 @@ test.describe("Ledger", () => {
       return ids.indexOf("t-site-approval") < ids.indexOf("t-approval");
     }).toBe(true);
     await page.mouse.up();
-    await expect.poll(() => saved.length).toBe(1);
-    expect(saved[0]?.slice(0, 2)).toEqual(["t-site-approval", "t-approval"]);
+    // The mock keeps no order, so the 4 s poll would put the old one back: read the result right away.
     await expect(dragging(page)).toHaveCount(0);
     expect((await drawnIds(page)).slice(0, 2)).toEqual(["t-site-approval", "t-approval"]);
+    await expect.poll(() => saved.length).toBe(1);
+    expect(saved[0]?.slice(0, 2)).toEqual(["t-site-approval", "t-approval"]);
   });
 
   test("a row cannot be placed in another section: nothing moves, nothing is saved", async ({ page }) => {
@@ -161,6 +185,7 @@ test.describe("Ledger", () => {
     expect(await drawnIds(page)).toEqual(before);
     await page.mouse.up();
     await expect(dragging(page)).toHaveCount(0);
+    await settled(page);
     expect(await drawnIds(page)).toEqual(before);
     expect(saved).toEqual([]);
   });
@@ -176,6 +201,7 @@ test.describe("Ledger", () => {
     expect(await drawnIds(page)).toEqual(before);
     await page.mouse.up();
     await expect(dragging(page)).toHaveCount(0);
+    await settled(page);
     expect(await drawnIds(page)).toEqual(before);
     expect(saved).toEqual([]);
   });
