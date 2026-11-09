@@ -5,21 +5,30 @@
 //   node scripts/arch-check.mjs --update   rewrite scripts/arch-baseline.json
 //
 // Rules, over hand-written files (tests, generated code and test helpers excluded):
-//   direction  ui, lib, state and api never import app or a feature
+//   direction  app -> features -> ui, lib, state -> api, one way: features never import app;
+//              ui, lib, state and api never import app or a feature; api never imports ui, lib or state
 //   deep       a feature imports another feature only through its index.ts
 //   cycle      no import cycle between files; an edge inside a cycle is a violation
 //   lines      TypeScript over 600 lines, CSS over 1500 lines; may not grow past baseline
-// Existing violations live in the baseline; fixing one only needs a re-run of --update.
+// Existing violations live in the baseline, which may only shrink: a new violation or growth fails,
+// and so does a baselined item that no longer exists (re-run --update so it cannot quietly return).
+// A long file that shrinks but stays long only prints a notice; --update lowers its recorded size.
+// Type-only imports count as edges. Imports inside comments are ignored. CI runs this on Ubuntu only.
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const LIMITS = { ts: 600, css: 1500 };
 const SHARED = new Set(["ui", "lib", "state", "api"]);
+const ASSET = /\.(css|json|svg|png|jpe?g|gif|webp|woff2?|ttf|txt|md)$/;
 const SKIP_DIRS = new Set(["generated", "node_modules"]);
 const TEST_FILE = /\.test\.(ts|tsx)$|(^|\/)test-(setup|support)\.ts$/;
 const SOURCE = /\.(ts|tsx)$/;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)["'](\.{1,2}\/[^"']*|\.{1,2})["']/g;
+
+export function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'\\])\/\/.*$/gm, "$1");
+}
 
 export function isHandWritten(rel) {
   return !rel.startsWith("generated/") && !TEST_FILE.test(rel);
@@ -77,15 +86,23 @@ export function analyze(sources) {
   const files = new Set([...sources.keys()].filter((f) => SOURCE.test(f) && isHandWritten(f)));
   const direction = [];
   const deep = [];
+  const unresolved = [];
   const graph = new Map([...files].map((f) => [f, new Set()]));
   for (const from of files) {
-    for (const m of sources.get(from).matchAll(IMPORT)) {
+    for (const m of stripComments(sources.get(from)).matchAll(IMPORT)) {
       const to = resolveImport(from, m[1], files);
-      if (!to || to === from) continue;
+      if (!to) {
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(from), m[1]));
+        if (!ASSET.test(m[1]) && !target.startsWith("generated/")) unresolved.push(`${from}: ${m[1]}`);
+        continue;
+      }
+      if (to === from) continue;
       graph.get(from).add(to);
       const a = layerOf(from);
       const b = layerOf(to);
-      if (SHARED.has(a.layer) && (b.layer === "app" || b.layer === "features")) direction.push(`${from} -> ${to}`);
+      const up = b.layer === "app" || b.layer === "features";
+      const apiUp = a.layer === "api" && (b.layer === "ui" || b.layer === "lib" || b.layer === "state");
+      if ((SHARED.has(a.layer) && up) || (a.layer === "features" && b.layer === "app") || apiUp) direction.push(`${from} -> ${to}`);
       if (a.layer === "features" && b.layer === "features" && a.feature !== b.feature) {
         const front = /^features\/[^/]+\/index\.tsx?$/.test(to);
         if (!front) deep.push(`${from} -> ${to}`);
@@ -108,13 +125,14 @@ export function analyze(sources) {
   }
   const sort = (xs) => [...new Set(xs)].sort();
   const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
-  return { direction: sort(direction), deep: sort(deep), cycle: sort(cycle), lines: sortObj(lines), css: sortObj(css) };
+  return { direction: sort(direction), deep: sort(deep), cycle: sort(cycle), lines: sortObj(lines), css: sortObj(css), unresolved: sort(unresolved) };
 }
 
-/** What the baseline does not already allow. */
+/** fresh: fails. stale: baselined items that are gone (fails). shrunk: still long but smaller (notice). */
 export function compare(current, baseline) {
   const fresh = [];
   const stale = [];
+  const shrunk = [];
   for (const rule of ["direction", "deep", "cycle"]) {
     const known = new Set(baseline[rule] ?? []);
     const now = new Set(current[rule]);
@@ -126,10 +144,11 @@ export function compare(current, baseline) {
     for (const [file, n] of Object.entries(current[rule])) {
       if (!(file in known)) fresh.push(`${rule}: ${file} has ${n} lines, over the ${limit} limit`);
       else if (n > known[file]) fresh.push(`${rule}: ${file} grew from ${known[file]} to ${n} lines (limit ${limit})`);
+      else if (n < known[file]) shrunk.push(`${rule}: ${file} shrank from ${known[file]} to ${n} lines`);
     }
-    for (const file of Object.keys(known)) if (!(file in current[rule])) stale.push(`${rule}: ${file}`);
+    for (const file of Object.keys(known)) if (!(file in current[rule])) stale.push(`${rule}: ${file} is gone or back under ${limit} lines`);
   }
-  return { fresh, stale };
+  return { fresh, stale, shrunk };
 }
 
 export function readSources(srcDir) {
@@ -153,18 +172,23 @@ function main() {
   const baselinePath = path.join(root, "scripts", "arch-baseline.json");
   const current = analyze(readSources(path.join(root, "src")));
   if (process.argv.includes("--update")) {
-    const body = { _note: "Recorded architecture debt (docs/refactor.md). Only shrink it; npm run arch:update rewrites it.", limits: LIMITS, ...current };
+    const recorded = { ...current };
+    delete recorded.unresolved;
+    const body = { _note: "Recorded architecture debt (docs/refactor.md). Only shrink it; npm run arch:update rewrites it.", limits: LIMITS, ...recorded };
     writeFileSync(baselinePath, `${JSON.stringify(body, null, 2)}\n`);
     console.log(`arch baseline written: ${current.direction.length} direction, ${current.deep.length} deep, ${current.cycle.length} cycle, ${Object.keys(current.lines).length} long ts, ${Object.keys(current.css).length} long css`);
     return;
   }
-  const { fresh, stale } = compare(current, JSON.parse(readFileSync(baselinePath, "utf8")));
-  if (stale.length) console.log(`arch: ${stale.length} baselined item(s) are fixed; run \`npm run arch:update\` to shrink the baseline.`);
-  if (fresh.length) {
-    console.error(`arch: ${fresh.length} new violation(s) (docs/refactor.md):\n${fresh.map((v) => `  ${v}`).join("\n")}`);
+  const { fresh, stale, shrunk } = compare(current, JSON.parse(readFileSync(baselinePath, "utf8")));
+  for (const u of current.unresolved) console.warn(`arch: warning: unresolved import ${u}`);
+  if (shrunk.length) console.log(`arch: ${shrunk.length} file(s) shrank; run \`npm run arch:update\` to lower the recorded size.\n${shrunk.map((v) => `  ${v}`).join("\n")}`);
+  if (fresh.length || stale.length) {
+    if (fresh.length) console.error(`arch: ${fresh.length} new violation(s) (docs/refactor.md):\n${fresh.map((v) => `  ${v}`).join("\n")}`);
+    if (stale.length) console.error(`arch: ${stale.length} baselined item(s) no longer exist; run \`npm run arch:update\` so the baseline shrinks:\n${stale.map((v) => `  ${v}`).join("\n")}`);
     process.exit(1);
   }
   console.log("arch: no new violations");
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+const norm = (href) => (process.platform === "win32" ? href.toLowerCase() : href);
+if (process.argv[1] && norm(pathToFileURL(path.resolve(process.argv[1])).href) === norm(import.meta.url)) main();

@@ -31,7 +31,9 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 ## Checks
 
-Existing violations are recorded in a baseline, so only new ones fail.
+Existing violations are recorded in a baseline that may only shrink. A new
+violation fails, and so does a baselined item that no longer exists, so a fixed
+violation cannot quietly return: re-record the baseline in the same PR.
 
 | Check | Run | Baseline |
 | --- | --- | --- |
@@ -40,8 +42,21 @@ Existing violations are recorded in a baseline, so only new ones fail.
 | Unused exports (report only, not in `check`) | `npm run arch:report` in `web` (knip) | none |
 
 A unit that fixes violations or moves a baselined file runs `npm run arch:update`
-or `python3 scripts/check_rust_arch.py --update` in the same PR, so the baseline
-only shrinks. A web file may not grow past its baselined size.
+or `python3 scripts/check_rust_arch.py --update` in the same PR. A baselined file
+that grows fails (web and Rust); one that shrinks but stays long only prints a
+notice, and `--update` lowers its recorded size.
+
+Notes:
+
+- The web layering is one way: `app` -> `features` -> `ui`, `lib`, `state` -> `api`.
+  So features never import `app`, shared folders never import `app` or a feature,
+  and `api` never imports `ui`, `lib` or `state`. These rules live here;
+  [architecture.md](architecture.md) has no layering section.
+- Type-only imports count as edges, like any import. Imports inside comments are
+  ignored, and an unresolved relative import prints a warning.
+- Both checks are text matching, not parsers; the Rust one lists its known gaps
+  (for example `Command::new` with a const) in its docstring. CI runs them on Ubuntu
+  only.
 
 ## Target tree
 
