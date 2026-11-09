@@ -12,9 +12,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::time::Instant;
 
-use super::acp::UpdateMapper;
-use super::pipes::{resolve_engine, spawn_engine_with};
-use super::{EngineEvent, NativeSessionReplay, ProbeDir};
+use super::UpdateMapper;
+use crate::agents::driver::pipes::{resolve_engine, spawn_engine_with};
+use crate::agents::driver::{EngineEvent, NativeSessionReplay, ProbeDir};
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
 

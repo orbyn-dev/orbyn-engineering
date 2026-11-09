@@ -11,7 +11,7 @@ use orbyn_contracts::AgUiEvent;
 use serde_json::{Value, json};
 
 use super::super::{EngineEvent, ItemRecord, workflow_item_id};
-use super::text_of;
+use super::events::text_of;
 
 const TASK_TYPE: &str = "local_workflow";
 /// Control request ids the driver sends to stop a workflow start with this.

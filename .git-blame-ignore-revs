@@ -7,4 +7,10 @@ d381a2dcfa9c578fbcf432e3fc13d0df8a3b914c # refactor(contracts): move wire types 
 ded9bd5371558390f5a2ce07c0b0249df843f7ab # refactor(web): move markdown and code rendering into features/content
 5f0449347773efab37c4acdd7e19ba70a85853be # refactor(web): move shared thread logic down to state, lib and ui
 1d1268bfd3b27736c39806303b417ceefe61d335 # refactor(web): move composer and tool trail files into folders
+f9c25bcc5f1a41d6787b1a8ecabc2f2a8fa9b94e # refactor(core): move claude driver into its own folder
+e8fd507f99b92ce936d5e50569218d1ada41dc67 # refactor(core): move the claude driver tests into their own file
+ba6ddc48866d5221f8182d93917e562574d7fa50 # refactor(core): move codex driver into its own folder
+e5278fd577dadd1cd11800f0ca2b7abd908343cc # refactor(core): move the codex driver tests into their own file
+7b0113845b30dd3645a43f5f2ccc25a2f625b237 # refactor(core): move the acp driver and its sessions into an acp folder
+cb0d36fa7a89a7087a51eba5774fcc923ae78933 # refactor(core): move the acp driver tests into their own file
 8678212e2ca296ee089964e96848e26372567217 # refactor(web): move workspace files into sidebar, palette and app-chrome folders
