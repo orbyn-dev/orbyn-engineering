@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import type { EngineStatus, ModelInfo, PermissionMode } from "../../api/types";
+import type { EngineStatus, ModelInfo, PermissionMode } from "../../../api/types";
 import { EffortTrigger, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 
 const withModes = (permission_modes?: PermissionMode[]) =>

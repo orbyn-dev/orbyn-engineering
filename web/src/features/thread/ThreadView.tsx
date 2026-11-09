@@ -33,7 +33,7 @@ import { Empty, ErrorState, Loading, NarrowBack } from "../../ui/states";
 import { SurfacePane, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
 import { RelatedThreads } from "./RelatedThreads";
-import { Composer } from "./Composer";
+import { Composer } from "./composer/Composer";
 import { DetailsCard } from "./DetailsCard";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";

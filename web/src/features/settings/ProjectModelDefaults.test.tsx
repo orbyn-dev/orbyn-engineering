@@ -13,7 +13,7 @@ import { useModelStore } from "../../state/modelStore";
 vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 vi.mock("../../state/workspace", () => ({ useWorkspace: (select: (state: unknown) => unknown) =>
   select({ engines: { data: [{ id: "codex", name: "Codex", installed: true }] } }) }));
-vi.mock("../thread/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick, disabled, triggerLabel }: {
+vi.mock("../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick, disabled, triggerLabel }: {
   selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void; disabled: boolean; triggerLabel?: string;
 }) => <button disabled={disabled} onClick={() => onPick({ engine: "codex", model: "chosen" })}>
   {triggerLabel ?? `Choose model (${selected.engine}/${selected.model ?? "automatic"})`}</button> }));

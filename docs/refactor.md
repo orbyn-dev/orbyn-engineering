@@ -109,6 +109,13 @@ The backend (B) and web (W) tracks can run in parallel.
 ### Status
 
 - R0, W1: done.
+- W5 (in progress): `features/thread/composer/` holds the composer (`Composer.tsx` 1,109 to 597
+  lines, with the mention menu, constants, key and paste handling, attachment, stash, stop
+  and thread-setting hooks, field, bar, context row and suggestion loading each in a file
+  of their own) and `features/thread/trail/` holds the tool trail (`ToolTrail.tsx` 876 to
+  261 lines, `PlanRow.tsx`, and `blocks/` with one renderer file per kind). Both left the
+  long-files baseline (13 to 11 long TypeScript files); the rest of W5 (Sidebar, PullDetail,
+  BrowserPanel and others) is still open.
 - W3: done. `features/content/{markdown,code}` holds Markdown, its links, media, Mermaid,
   Tex, the pull-link hover card, code blocks, highlighting and ANSI. Moved down to
   shared layers: `state/{composerChipStore,threadLogs}`, `lib/{composerContext,

@@ -3,7 +3,7 @@ import type { Thread } from "../../api/types";
 import { parsePatch } from "../panels/DiffPanel";
 import { arrangeThreads } from "../workspace/groups";
 import { touchesOf } from "./approvalDetail";
-import { percentLabel } from "./ComposerExtras";
+import { percentLabel } from "./composer/ComposerExtras";
 import type { ThreadItem } from "../../lib/timeline/types";
 import { insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
 import { outputSpans } from "../content";
