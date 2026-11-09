@@ -1,4 +1,8 @@
 use super::events::{TurnMapper, plan_content};
+use super::protocol::{
+    approval_content, approval_response, classify_request, feedback_params, feedback_receipt,
+    is_tool_approval,
+};
 #[test]
 fn limits_keep_only_windows_and_the_plan() {
     let kept = super::limit_fields(serde_json::json!({
