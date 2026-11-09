@@ -3,20 +3,10 @@
 use orbyn_contracts::{PullChecks, PullRequest};
 use serde_json::Value;
 
+use crate::util::json::{field, optional};
+
 /// Failing check names kept per pull request, so a list stays small.
 pub(super) const MAX_FAILING_NAMES: usize = 20;
-
-pub(super) fn field<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or_default()
-}
-
-pub(super) fn optional(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
-}
 
 pub(super) fn id_of(value: &Value, key: &str) -> String {
     match value.get(key) {

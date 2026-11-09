@@ -6,9 +6,10 @@ use super::github::{
     parse_github_event, parse_github_file, parse_github_revision, raw_github_checks,
 };
 use super::gitlab::{gitlab_conversation, parse_gitlab_file, parse_gitlab_revision};
-use super::parse::{check_state, field, id_of, optional, parse_pull, person};
+use super::parse::{check_state, id_of, parse_pull, person};
 use super::process::{call, call_json, call_pages};
 use crate::error::{CoreError, Result};
+use crate::util::json::{field, optional};
 use orbyn_contracts::{
     PullCheck, PullConversation, PullFile, PullRequest, PullRequestDetail, PullRevision,
     PullTimelineEvent,

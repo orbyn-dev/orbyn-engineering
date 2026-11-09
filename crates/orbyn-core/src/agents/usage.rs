@@ -201,9 +201,7 @@ fn jsonl_files(root: &Path, found: &mut Vec<PathBuf>) {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    crate::util::home_dir()
 }
 
 pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
