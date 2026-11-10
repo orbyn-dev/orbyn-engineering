@@ -20,6 +20,21 @@ use crate::util::{now, parse_time, unix_now};
 
 const REPAIR_THRESHOLD: u64 = 1024 * 1024 * 1024;
 const OTLP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A diagnostic tests exactly the entered endpoint, without implicit credentials.
+fn otlp_endpoint(value: &str) -> Option<reqwest::Url> {
+    if value.trim() != value || value.chars().any(char::is_control) || !value.contains("://") {
+        return None;
+    }
+    let url = reqwest::Url::parse(value).ok()?;
+    (matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none())
+    .then_some(url)
+}
+
 const REPORT_SETTING: &str = "storage_cleanup_report";
 const DAY: i64 = 24 * 60 * 60;
 /// A preview stops measuring one worktree after this many files.
@@ -120,10 +135,18 @@ impl Core {
             status: None,
             message: Some(message),
         };
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return failed("Use an http or https URL.".to_owned());
-        }
-        let client = reqwest::Client::new();
+        let Some(url) = otlp_endpoint(url) else {
+            return failed(
+                "Use an absolute http or https URL without credentials or a fragment.".to_owned(),
+            );
+        };
+        let client = match reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => return failed(error.without_url().to_string()),
+        };
         match client
             .post(url)
             .header("content-type", "application/json")
@@ -357,6 +380,27 @@ mod tests {
     use super::*;
     use crate::CoreConfig;
     use crate::testing::TempDir;
+
+    #[test]
+    fn codeql_10_otlp_endpoint_keeps_local_and_lan_collectors_supported() {
+        for endpoint in [
+            "http://localhost:4318/v1/traces",
+            "http://127.0.0.1:4318/v1/traces",
+            "http://[::1]:4318/v1/traces",
+            "http://192.168.1.10:4318/v1/traces",
+            "https://collector.lan/v1/traces?signal=test",
+        ] {
+            assert!(otlp_endpoint(endpoint).is_some(), "{endpoint}");
+        }
+        for endpoint in [
+            "http:collector.lan",
+            "http://",
+            "file:///collector",
+            "http://collector.lan/\n",
+        ] {
+            assert!(otlp_endpoint(endpoint).is_none(), "{endpoint:?}");
+        }
+    }
 
     #[test]
     fn a_tree_is_measured_by_its_files_in_every_folder() {

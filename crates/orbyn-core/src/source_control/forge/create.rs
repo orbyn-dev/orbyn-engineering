@@ -3,9 +3,18 @@
 use super::Forge;
 use super::parse::id_of;
 use super::process::call;
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use serde_json::Value;
 use std::path::Path;
+
+pub(super) fn check_branch_operand(name: &str) -> Result<()> {
+    if name.trim().is_empty() || name.starts_with('-') || name.chars().any(char::is_control) {
+        return Err(CoreError::Invalid(
+            "That is not a valid branch name.".into(),
+        ));
+    }
+    Ok(())
+}
 
 pub async fn create_pull(
     forge: Forge,
@@ -15,6 +24,10 @@ pub async fn create_pull(
     body: &str,
     base: Option<&str>,
 ) -> Result<String> {
+    check_branch_operand(branch)?;
+    if let Some(base) = base {
+        check_branch_operand(base)?;
+    }
     let mut args: Vec<&str> = match forge {
         Forge::GitHub => vec![
             "pr", "create", "--title", title, "--body", body, "--head", branch,

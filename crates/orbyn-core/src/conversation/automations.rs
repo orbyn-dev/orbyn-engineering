@@ -22,6 +22,7 @@ use crate::store::{AuditRecord, NewThread};
 use crate::util::{hex, new_id, now, parse_time, random_bytes, random_token, sha256_hex, unix_now};
 
 const MAX_FILTERS: usize = 16;
+const MAX_BATCH_THREADS: usize = 100;
 /// A clock-fired task waits when its engine has used this much of any limit window.
 const NEAR_LIMIT_PERCENT: f64 = 90.0;
 const MAX_STORED_BODY: usize = 64 * 1024;
@@ -782,7 +783,12 @@ impl Core {
 
     /// Creates each thread and sends its first message. One failure is reported in
     /// its place and does not stop the rest.
-    pub async fn batch_threads(&self, threads: Vec<BatchThread>) -> Vec<BatchThreadResult> {
+    pub async fn batch_threads(&self, threads: Vec<BatchThread>) -> Result<Vec<BatchThreadResult>> {
+        if threads.len() > MAX_BATCH_THREADS {
+            return Err(CoreError::Invalid(format!(
+                "Create at most {MAX_BATCH_THREADS} threads in one batch."
+            )));
+        }
         let mut results = Vec::with_capacity(threads.len());
         for item in threads {
             let made = async {
@@ -802,7 +808,7 @@ impl Core {
                 },
             });
         }
-        results
+        Ok(results)
     }
 }
 

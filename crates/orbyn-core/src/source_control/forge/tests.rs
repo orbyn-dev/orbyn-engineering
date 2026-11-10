@@ -22,6 +22,52 @@ use super::status::auth_accounts;
 use super::*;
 use crate::error::CoreError;
 
+#[tokio::test]
+async fn codeql_14_pull_creation_validates_branch_operands_before_spawning() {
+    let dir = crate::testing::TempDir::new();
+    // An absent cwd prevents even the unchanged implementation from starting a CLI.
+    let absent = dir.path().join("absent");
+    for forge in [Forge::GitHub, Forge::GitLab] {
+        for (branch, base) in [
+            ("--help", Some("main")),
+            ("feature/safe", Some("--help")),
+            ("feature/safe", Some("")),
+            ("feature/safe", Some("main\nother")),
+        ] {
+            let error = create_pull(forge, &absent, branch, "Title", "Body", base)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, CoreError::Invalid(_)), "{forge:?}: {error}");
+        }
+    }
+    // A valid operand reaches the forge dispatch, rather than the invalid-input guard.
+    let error = create_pull(
+        Forge::Bitbucket,
+        &absent,
+        "feature/safe",
+        "--help; title",
+        "$(literal) body",
+        Some("main"),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, CoreError::Unsupported(_)), "{error}");
+}
+
+#[tokio::test]
+async fn codeql_14_pull_updates_use_the_same_base_operand_boundary() {
+    let dir = crate::testing::TempDir::new();
+    let absent = dir.path().join("absent");
+    for forge in [Forge::GitHub, Forge::GitLab] {
+        for base in ["--help", "", "main\nother", "main\0other"] {
+            let update: orbyn_contracts::UpdatePull =
+                serde_json::from_value(json!({ "base": base })).unwrap();
+            let error = update_pull(forge, &absent, 1, &update).await.unwrap_err();
+            assert!(matches!(error, CoreError::Invalid(_)), "{forge:?}: {error}");
+        }
+    }
+}
+
 #[test]
 fn a_committed_timeline_event_takes_its_author_date_message_and_sha() {
     let commit = serde_json::json!({
