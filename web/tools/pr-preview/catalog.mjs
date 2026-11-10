@@ -25,6 +25,17 @@ export const FRAMES = {
   // The shell.
   "shell-home": { route: "#/" },
   "shell-new-thread": { route: "#/new" },
+  "shell-ledger": {
+    route: "#/threads/t-done",
+    steps: [
+      click("link", "Settings", { exact: true }),
+      click("link", "Appearance", { exact: true }),
+      click("radio", "Ledger", { prefix: true }),
+      click("link", "Chat", { exact: true }),
+      click("radio", "Full", { exact: true }),
+      { do: "press", key: "Escape" },
+    ],
+  },
 
   // Pull requests: the list and its states (mock scenarios "pulls*").
   "pr-row-variants": { route: "#/pulls", scenario: "pulls" },

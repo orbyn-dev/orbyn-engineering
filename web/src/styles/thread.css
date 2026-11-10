@@ -14,19 +14,16 @@
   min-width: 0;
   min-height: 0;
 }
-/* The column moves aside for the details card only when they'd collide. */
+/* Container queries also adapt the thread's content to its available width. */
 .thread-main {
   container-type: inline-size;
 }
-@container (width < 1322px) {
-  .thread-stage {
-    --details-reserve: 0px;
-  }
-  .thread-main[data-details="reserved"] > .thread-stage {
-    --details-reserve: calc(var(--details-w) + var(--details-gap));
-  }
+/* The Ledger details rail occupies its full height at every column width. */
+.thread-main[data-details="reserved"] > .thread-stage {
+  --details-reserve: calc(var(--details-w) + var(--details-gap));
 }
 .thread-stage {
+  --details-reserve: 0px;
   display: flex;
   flex-direction: column;
   flex: 1;

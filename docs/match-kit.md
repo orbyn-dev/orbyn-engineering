@@ -38,7 +38,7 @@ Images are written to `/tmp/preview/images/<frame>/<theme>.png` and the comment 
 `web/tools/pr-preview/catalog.mjs` is the list: each id says which route to open, which mock scenario to use (`web/mock/api.ts`), what to hold
 or fail on the network, and what to click first. Use the design's frame id for a screen that has one.
 
-**The shell.** `shell-home`, `shell-new-thread`
+**The shell.** `shell-home`, `shell-new-thread`, `shell-ledger`
 
 **Pull requests, the list and its states.** `pr-row-variants`, `pr-row-pending`, `pr-row-pending-failed`, `pr-list-none`, `pr-list-loading`, `pr-list-error`, `pr-list-signedout`, `pr-list-offline`, `pr-list-filtered`, `pr-tb-filter-waiting`, `pr-tb-filter-failed`
 
