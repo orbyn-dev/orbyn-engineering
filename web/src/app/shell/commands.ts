@@ -1,8 +1,6 @@
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
-import { useDrawnOrder } from "../../features/workspace/sidebar/drawnOrder";
-import { arrangeThreads, threadsFlat } from "../../features/workspace/sidebar/groups";
-import { copyReference, pinThreads, settleThreads, unpinThreads, unsettleThreads } from "../../features/workspace/sidebar/threadActions";
+import { arrangeThreads, copyReference, pinThreads, settleThreads, threadsFlat, unpinThreads, unsettleThreads, useDrawnOrder } from "../../features/workspace";
 import { toFailure } from "../../lib/useAsync";
 import { layoutForWidth } from "../../lib/useLayout";
 import { navigate, type Route } from "../../product/state/route";
