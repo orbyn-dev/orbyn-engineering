@@ -7,6 +7,7 @@ import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
+import { editForgeState, readForgeState } from "./forge-state";
 
 const WEB = resolve(import.meta.dirname, "../..");
 const BIN = process.env.ORBYN_BIN ?? resolve(WEB, "../target/debug/orbynd");
@@ -34,7 +35,8 @@ function previewBrowser(dir: string): string {
   const wrapper = join(dir, "preview-browser");
   // Linux runners restrict user namespaces, which the shell's sandbox needs; Playwright drops it the same way.
   const flags = process.platform === "linux" ? "--in-process-gpu --no-sandbox" : "--in-process-gpu";
-  writeFileSync(wrapper, `#!/bin/sh\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
+  // Kept only in a startup-failure diagnostic, so CI can verify the wrapper's actual flags.
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
   return wrapper;
 }
 
@@ -248,13 +250,9 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     repo,
     remote: join(dir, "github.com/o/r.git"),
     ghPull: (number) =>
-      (JSON.parse(readFileSync(forge?.state ?? "", "utf8")) as { pulls: PullFixture[] }).pulls.find((pull) => pull.number === number) ?? {},
+      readForgeState(forge?.state ?? "").pulls.find((pull) => pull.number === number) ?? {},
     ghEdit: (number, patch) => {
-      const path = forge?.state ?? "";
-      const state = JSON.parse(readFileSync(path, "utf8")) as { pulls: PullFixture[] } & Record<string, unknown>;
-      const target = number === 0 ? state : state.pulls.find((pull) => pull.number === number);
-      if (target) Object.assign(target, patch);
-      writeFileSync(path, JSON.stringify(state));
+      editForgeState(forge?.state ?? "", number, patch);
     },
     ghCalls: () =>
       forge

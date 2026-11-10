@@ -2,6 +2,7 @@
 //! resolve the target, evaluate policy, write audit, then act. A denied action
 //! never reaches a backend.
 
+mod browser_stderr;
 pub mod cdp;
 pub mod desktop;
 

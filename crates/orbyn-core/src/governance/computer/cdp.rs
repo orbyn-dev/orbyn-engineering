@@ -14,6 +14,7 @@ use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
+use super::browser_stderr::BrowserStderr;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
 
@@ -220,6 +221,7 @@ pub struct BrowserSession {
     document: Document,
     on_document_change: Option<Box<dyn Fn() + Send + Sync>>,
     _child: Option<ManagedChild>,
+    _stderr: Option<BrowserStderr>,
     /// Events a caller asked to keep, which would otherwise pass unread between replies.
     kept: Vec<Value>,
     /// Navigation signals received before the corresponding command reply.
@@ -320,19 +322,38 @@ impl BrowserSession {
             .arg("--remote-debugging-port=0")
             .arg(profile_arg)
             .args(["--no-first-run", "--no-default-browser-check"]);
-        command.args(launch_flags(path, options.headless, options.in_process_gpu));
+        let flags = launch_flags(path, options.headless, options.in_process_gpu);
+        command.args(&flags);
         command
             .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
         crate::host::child_env::for_tool(command.as_std_mut());
         let mut child = ManagedChild::spawn(command)?;
-        let url = wait_for_port(&mut child, &port_file).await?;
-        Self::connect(&url, Some(child)).await
+        let mut stderr = BrowserStderr::start(
+            child
+                .child_mut()
+                .stderr
+                .take()
+                .ok_or_else(|| failed("browser stderr is missing"))?,
+        );
+        let url = match wait_for_port(&mut child, &port_file).await {
+            Ok(url) => url,
+            Err(error) => {
+                let detail = stderr.failure_text().await;
+                return Err(CoreError::Computer(format!(
+                    "{error}; startup flags: {flags:?}; stderr: {detail}"
+                )));
+            }
+        };
+        stderr.startup_complete();
+        let mut session = Self::connect(&url, Some(child)).await?;
+        session._stderr = Some(stderr);
+        Ok(session)
     }
 
     /// Attaches to a browser-level WebSocket endpoint.
@@ -345,6 +366,7 @@ impl BrowserSession {
             document: Document::default(),
             on_document_change: None,
             _child: child,
+            _stderr: None,
             kept: Vec::new(),
             navigation_events: VecDeque::new(),
         };
@@ -1257,6 +1279,25 @@ mod tests {
                 .to_string()
                 .contains("exited before opening its debugging port")
         );
+    }
+
+    #[tokio::test]
+    async fn browser_startup_failure_retains_the_childs_stderr() {
+        // The Rust test runner refuses browser flags, so this needs no browser or engine.
+        let profile =
+            std::env::temp_dir().join(format!("browser-stderr-{}", crate::util::new_id()));
+        let error = BrowserSession::launch(
+            &std::env::current_exe().unwrap(),
+            &profile,
+            LaunchOptions::default(),
+        )
+        .await
+        .err()
+        .expect("the test runner cannot launch as a browser")
+        .to_string();
+        std::fs::remove_dir_all(profile).unwrap();
+        assert!(error.contains("exited before opening its debugging port"));
+        assert!(error.contains("Unrecognized option"), "{error}");
     }
 
     #[tokio::test]

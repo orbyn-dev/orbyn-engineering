@@ -387,26 +387,6 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   await expect(page.locator(".pull-rows > li").first()).toBeVisible();
 });
 
-/**
- * Waits until the forge calls go quiet. The page keeps an event stream open, so "idle" is read from the calls
- * stopping rather than from the network.
- */
-async function forgeQuiet(page: Page) {
-  let seen = -1;
-  await expect
-    .poll(
-      async () => {
-        const now = service.ghCalls().length;
-        const quiet = now === seen;
-        seen = now;
-        await page.waitForTimeout(600);
-        return quiet;
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(true);
-}
-
 test("a merge is refused when the branch moved after the page was read, and Reload reads it again", async ({ page }) => {
   const article = await openPull(page, "Unrelated fix");
   // The branch gets a commit after the page was read, for this test only.
@@ -418,17 +398,20 @@ test("a merge is refused when the branch moved after the page was read, and Relo
   await expect(dialog.getByRole("button", { name: "Reload" })).toBeFocused();
   await expect(dialog.getByRole("button", { name: "Merge", exact: true })).toHaveCount(0);
   expect(service.ghPull(3).state ?? "OPEN").toBe("OPEN");
-  // Whatever the page was still reading is finished first, so the count below moves only for the Reload.
-  await forgeQuiet(page);
-  const reads = service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length;
+  // A changed field proves the returned detail reached the screen, not merely that gh started.
+  const title = "Unrelated fix after the push";
+  service.ghEdit(3, { title, headRefOid: "ddddddd" });
+  const reloaded = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === `/api/projects/${projectId}/pulls/3`,
+  );
   await dialog.getByRole("button", { name: "Reload" }).click();
+  const response = await reloaded;
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toMatchObject({ head_sha: "ddddddd", pull: { title } });
   await expect(dialog).toBeHidden();
+  await expect(detail(page, title)).toBeVisible();
+  // Keep the changed head until the reload has finished reading it.
   service.ghEdit(3, { headNow: undefined });
-  await expect
-    .poll(() => service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length, { timeout: 30_000 })
-    .toBeGreaterThan(reads);
-  // The reload's own reads finish before the next test starts, so they do not queue behind it at the forge.
-  await forgeQuiet(page);
 });
 
 test("a merged pull request can be reverted", async ({ page }) => {
