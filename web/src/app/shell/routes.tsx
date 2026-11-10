@@ -5,7 +5,7 @@ import { TrustFolder } from "../../features/onboarding/TrustFolder";
 import { WelcomeHost } from "../../features/onboarding/WelcomeWizard";
 import { PullsPage } from "../../features/pulls/list/PullsPage";
 import { ScheduledTasksPage } from "../../features/settings";
-import { SkillsPage } from "../../features/skills/SkillsPage";
+import { SkillsPage } from "../../features/skills";
 import { ThreadView } from "../../features/thread/ThreadView";
 import { UsagePage } from "../../features/usage";
 import { useUi } from "../../product/state/ui";
