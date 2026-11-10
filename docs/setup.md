@@ -176,6 +176,23 @@ Or build an unsigned Windows installer from `desktop` in PowerShell:
 npx tauri build --bundles nsis
 ```
 
+Tauri's `beforeBuildCommand` checks the effective `build.frontendDist` before
+native compilation, including platform JSON configuration and `--config`
+overrides. It must be a relative directory containing a nonempty `index.html`.
+The repository default, `../../build/ui`, is already safe. In a separate local
+build configuration, keep the path relative to that build's `desktop/src-tauri`
+directory; an absolute Windows drive path such as `C:/work/orbyn/build/ui` can be
+parsed as a URL and embed no UI assets. Leave the preflight hook enabled.
+
+After preparing the bundle, run `node ../scripts/check-desktop-assets.mjs` from
+`desktop` to check the default configuration alone. For custom builds, use
+`npx tauri build --config <local-config.json> --bundles nsis` so Tauri passes the
+actual merged override to the hook. Direct Cargo builds do not run this CLI hook.
+Before sharing a test package, launch it with an isolated application identity
+and profile and confirm that the native window renders the product UI. Service
+readiness and the packaged smoke tests alone do not establish that the UI rendered.
+Do not change the installed app or its data, and do not start a provider run.
+
 ## When something fails
 
 - **PowerShell blocks `npm.ps1`:** use `npm.cmd` (and `npx.cmd`) for the commands
