@@ -30,6 +30,31 @@ function projectRevision(project: Project): bigint | null {
   return revision <= 9223372036854775807n ? revision : null;
 }
 
+/** Deep equality over the plain JSON the API answers with: an unchanged poll compares equal at every key. */
+function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  for (const key of keys) if (!sameData(left[key], right[key])) return false;
+  return true;
+}
+
+/** Merges polled threads, keeping the objects whose content did not change, so their rows keep their props. */
+function reuseThreads(base: Record<string, Thread>, list: readonly Thread[]) {
+  let next: Record<string, Thread> | null = null;
+  for (const thread of list) {
+    const known = (next ?? base)[thread.id];
+    if (known !== undefined && sameData(known, thread)) continue;
+    next ??= { ...base };
+    next[thread.id] = thread;
+  }
+  return { changed: next !== null, threads: next ?? base };
+}
+
 const idle = <T>(): Loadable<T> => ({ data: null, error: null, loading: false });
 
 interface WorkspaceState {
@@ -247,18 +272,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async refreshProjects() {
     const current = claim("projects");
-    set((state) => ({ projects: { ...state.projects, loading: true } }));
+    // Loading means the first read. A poll over data already on screen must not replace the objects the
+    // sidebar holds, or every row re-renders for nothing.
+    if (!get().projects.data) set((state) => ({ projects: { ...state.projects, loading: true } }));
     try {
       const data = await api.projects();
-      if (current()) {
-        const previous = get().projects;
-        for (const project of previous.data ?? []) {
-          const next = data.find((entry) => entry.id === project.id);
-          if (!next || next.path !== project.path || projectImageChanged(project, next)) invalidateProjectImages(project.id);
-        }
-        set({ projects: { data, error: null, loading: false } });
-        if (previous.error) invalidateProjectImages();
+      if (!current()) return;
+      const previous = get().projects;
+      if (previous.data && sameData(previous.data, data)) {
+        if (previous.error || previous.loading) set({ projects: { data: previous.data, error: null, loading: false } });
+        return;
       }
+      for (const project of previous.data ?? []) {
+        const next = data.find((entry) => entry.id === project.id);
+        if (!next || next.path !== project.path || projectImageChanged(project, next)) invalidateProjectImages(project.id);
+      }
+      set({ projects: { data, error: null, loading: false } });
+      if (previous.error) invalidateProjectImages();
     } catch (error) {
       if (!current()) return;
       const failure = toFailure(error);
@@ -269,22 +299,36 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async refreshThreads(projectId) {
     const current = claim(`threads:${projectId}`);
-    set((state) => ({
-      threadIds: {
-        ...state.threadIds,
-        [projectId]: { ...(state.threadIds[projectId] ?? idle()), loading: true },
-      },
-    }));
-    try {
-      const list = await api.threads(projectId);
-      if (!current()) return;
+    if (!get().threadIds[projectId]?.data) {
       set((state) => ({
         threadIds: {
           ...state.threadIds,
-          [projectId]: { data: list.map((t) => t.id), error: null, loading: false },
+          [projectId]: { ...(state.threadIds[projectId] ?? idle()), loading: true },
         },
-        threads: { ...state.threads, ...Object.fromEntries(list.map((t) => [t.id, t])) },
       }));
+    }
+    try {
+      const list = await api.threads(projectId);
+      if (!current()) return;
+      const state = get();
+      const known = state.threadIds[projectId];
+      const ids = list.map((t) => t.id);
+      const orderChanged =
+        !known?.data || known.data.length !== ids.length || known.data.some((id, at) => id !== ids[at]);
+      const merged = reuseThreads(state.threads, list);
+      const entryChanged = orderChanged || !known || known.loading || known.error;
+      if (!merged.changed && !entryChanged) return;
+      set({
+        ...(merged.changed ? { threads: merged.threads } : {}),
+        ...(entryChanged
+          ? {
+              threadIds: {
+                ...state.threadIds,
+                [projectId]: { data: orderChanged ? ids : (known?.data ?? ids), error: null, loading: false },
+              },
+            }
+          : {}),
+      });
     } catch (error) {
       if (!current()) return;
       set((state) => ({
@@ -305,9 +349,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     try {
       const list = (await api.allThreads()).filter((thread) => thread.scratch);
       if (!current()) return;
-      set((state) => ({
-        threads: { ...state.threads, ...Object.fromEntries(list.map((t) => [t.id, t])) },
-      }));
+      const merged = reuseThreads(get().threads, list);
+      if (merged.changed) set({ threads: merged.threads });
     } catch {
       // Project threads still load; the next poll tries again.
     }
@@ -333,10 +376,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async refreshApprovals() {
     const current = claim("approvals");
-    set((state) => ({ approvals: { ...state.approvals, loading: true } }));
+    if (!get().approvals.data) set((state) => ({ approvals: { ...state.approvals, loading: true } }));
     try {
       const data = await api.pendingApprovals();
-      if (current()) set({ approvals: { data, error: null, loading: false } });
+      if (!current()) return;
+      const previous = get().approvals;
+      if (previous.data && sameData(previous.data, data)) {
+        if (previous.error || previous.loading) set({ approvals: { data: previous.data, error: null, loading: false } });
+        return;
+      }
+      set({ approvals: { data, error: null, loading: false } });
     } catch (error) {
       if (current()) {
         set((state) => ({
