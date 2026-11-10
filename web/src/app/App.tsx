@@ -9,8 +9,7 @@ import { ErrorState, Splash } from "../product/ui/states";
 import { onShellEvent, Shell } from "./shell";
 import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
-import { PreviewWindow } from "../features/panels/preview/PreviewWindow";
-import { previewWindowRoute } from "../features/panels/browser/browserPanels";
+import { PreviewWindow, previewWindowRoute } from "../features/panels";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
 
 type Boot =
