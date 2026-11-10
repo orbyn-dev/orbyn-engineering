@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { CommandPalette } from "../../features/workspace/palette/CommandPalette";
 import { CloneJobs } from "../../features/workspace/app-chrome/CloneJobs";
 import { Sidebar } from "../../features/workspace/sidebar/Sidebar";
-import { SettingsPage } from "../../features/settings/SettingsPage";
+import { SettingsPage } from "../../features/settings";
 import { Toasts } from "../../product/ui/Toasts";
 import { GitHubStarPrompt } from "../../features/workspace/app-chrome/GitHubStarPrompt";
 import { FoldersNotice } from "../../features/workspace/app-chrome/FoldersNotice";
