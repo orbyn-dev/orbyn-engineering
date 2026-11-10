@@ -4,6 +4,7 @@
   "identifier": "com.kinqsradio.orbyn.engineering",
   "version": "0.1.0",
   "build": {
+    "beforeBuildCommand": "node ../scripts/check-desktop-assets.mjs",
     "frontendDist": "../../build/ui"
   },
   "app": {
