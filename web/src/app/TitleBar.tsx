@@ -113,10 +113,14 @@ export function TitleBar({ layout }: { layout: LayoutWidth }) {
   const waiting = useWaitingCount();
 
   const shown = small ? drawerOpen : reading ? readingNav : !collapsed;
-  // Folding the sidebar away must not strand focus on a row that no longer exists.
+  // Folding the sidebar away must not strand focus on a row that no longer exists; a docked sidebar
+  // keeps its rows mounted, so focus can also be left inside one of them.
   const wasShown = useRef(shown);
   useEffect(() => {
-    if (wasShown.current && !shown && (!document.activeElement || document.activeElement === document.body)) {
+    const active = document.activeElement;
+    const stranded =
+      !active || active === document.body || (active instanceof Element && active.closest(".sidebar") !== null);
+    if (wasShown.current && !shown && stranded) {
       document.querySelector<HTMLElement>("[data-sidebar-toggle]")?.focus();
     }
     wasShown.current = shown;

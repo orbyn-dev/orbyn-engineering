@@ -79,6 +79,9 @@ export function Shell() {
   const drawerOpen = useSidebarDrawer((state) => state.open);
   const closeDrawer = useSidebarDrawer((state) => state.close);
   const showNav = layout === "phone" ? onHome && route.name !== "settings" : small ? drawerOpen : reading ? readingNav : !collapsed;
+  // A docked sidebar stays mounted while collapsed: showing it again must not rebuild every row.
+  const docked = !small && layout !== "phone" && !reading;
+  const navMounted = showNav || docked;
   // Choosing something closes it, and a window that grows past small leaves nothing open behind.
   useEffect(() => {
     closeDrawer();
@@ -107,7 +110,7 @@ export function Shell() {
       </a>
       <TitleBar layout={layout} />
       {small && drawerOpen ? <div className="drawer-scrim" aria-hidden onClick={dismissDrawer} /> : null}
-      {showNav ? (
+      {navMounted ? (
         small ? (
           // Choosing a thread or page closes the drawer, even one already open.
           <div className="sidebar-drawer" onClick={(event) => (event.target as Element).closest("a[href]") && dismissDrawer()}>

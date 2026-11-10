@@ -208,6 +208,15 @@
 .shell[data-layout="small"] > .titlebar > :not(.titlebar-drag) {
   z-index: 9;
 }
+/* Collapsed on a docked window, the sidebar stays mounted: out of the grid and unpainted, so showing it
+   again is a visibility change rather than a rebuild of every row, and its scroll and search survive. */
+.shell[data-nav="hidden"]:is([data-layout="medium"], [data-layout="wide"], [data-layout="xwide"]) > .sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-w);
+  visibility: hidden;
+  pointer-events: none;
+}
 .sidebar-search {
   flex: none;
   margin: 0 0 4px;
