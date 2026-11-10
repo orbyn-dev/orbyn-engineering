@@ -6,11 +6,10 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
+import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
 
 const WEB = resolve(import.meta.dirname, "../..");
 const BIN = process.env.ORBYN_BIN ?? resolve(WEB, "../target/debug/orbynd");
-const SCRIPTED = resolve(WEB, "e2e/real/scripted-engine.mjs");
-const USAGE_ENGINE = resolve(WEB, "e2e/real/usage-engine.mjs");
 
 /** The shell from `npm run test:e2e:install`, so the service's previews never open an installed browser. */
 function headlessShell(): string {
@@ -175,7 +174,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   const dir = mkdtempSync(join(tmpdir(), "orbyn-e2e-"));
   const fake = resolve(BIN, "../orbyn-fake-engine");
   const engines = options.scenes
-    ? { ORBYN_CLAUDE_BIN: join(dir, "no-claude"), ORBYN_CODEX_BIN: SCRIPTED, ORBYN_E2E_FAKE: fake }
+    ? { ORBYN_CLAUDE_BIN: join(dir, "no-claude"), ORBYN_CODEX_BIN: SCRIPTED_ENGINE, ORBYN_E2E_FAKE: fake }
     : options.claudeUsage
       ? { ORBYN_CLAUDE_BIN: USAGE_ENGINE, ORBYN_CODEX_BIN: fake, ORBYN_E2E_FAKE: fake, ORBYN_E2E_USAGE: JSON.stringify(options.claudeUsage) }
       : options.fakeEngines
