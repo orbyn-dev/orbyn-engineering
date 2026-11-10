@@ -91,11 +91,11 @@ try {
   $launcherText = @(
     '@echo off'
     'setlocal DisableDelayedExpansion'
-    'for /f "tokens=2 delims=:" %%c in (''chcp'') do set "_orbyn_cp=%%c"'
-    'chcp 65001 >nul'
+    'for /f "tokens=2 delims=:" %%c in (''""%SystemRoot%\System32\chcp.com""'') do set "_orbyn_cp=%%c"'
+    '"%SystemRoot%\System32\chcp.com" 65001 >nul'
     "`"$($installed.Replace('%', '%%'))\orbyn.exe`" %*"
     'set "_orbyn_exit=%errorlevel%"'
-    'chcp %_orbyn_cp% >nul'
+    '"%SystemRoot%\System32\chcp.com" %_orbyn_cp% >nul'
     'endlocal & exit /b %_orbyn_exit%'
     ''
   ) -join "`r`n"
