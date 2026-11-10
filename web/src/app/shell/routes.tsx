@@ -2,7 +2,7 @@ import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from ".
 import { PullsPage } from "../../features/pulls";
 import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills";
-import { ThreadView } from "../../features/thread/ThreadView";
+import { ThreadView } from "../../features/thread";
 import { UsagePage } from "../../features/usage";
 import { useUi } from "../../product/state/ui";
 import type { Route } from "../../product/state/route";
