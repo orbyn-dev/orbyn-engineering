@@ -18,7 +18,7 @@ import { TitleBar } from "../TitleBar";
 import { useReadingNav } from "../readingNav";
 import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
 import { useEscapeClose } from "../../ui/useEscapeClose";
-import { PreviewFloat } from "../../features/panels/preview/PreviewFloat";
+import { PreviewFloat } from "../../features/panels";
 import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
 import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
 import { useGlobalKeys } from "./keys";
