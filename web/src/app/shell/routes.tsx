@@ -3,7 +3,7 @@ import { EmptyProject } from "../../features/onboarding/EmptyProject";
 import { NoProjects } from "../../features/onboarding/NoProjects";
 import { TrustFolder } from "../../features/onboarding/TrustFolder";
 import { WelcomeHost } from "../../features/onboarding/WelcomeWizard";
-import { PullsPage } from "../../features/pulls/list/PullsPage";
+import { PullsPage } from "../../features/pulls";
 import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills";
 import { ThreadView } from "../../features/thread/ThreadView";
