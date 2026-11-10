@@ -4,7 +4,7 @@ import { NoProjects } from "../../features/onboarding/NoProjects";
 import { TrustFolder } from "../../features/onboarding/TrustFolder";
 import { WelcomeHost } from "../../features/onboarding/WelcomeWizard";
 import { PullsPage } from "../../features/pulls/list/PullsPage";
-import { ScheduledTasksPage } from "../../features/settings/scheduled-tasks/ScheduledTasks";
+import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills/SkillsPage";
 import { ThreadView } from "../../features/thread/ThreadView";
 import { UsagePage } from "../../features/usage";
