@@ -1344,7 +1344,10 @@ Storage cleanup removes logs, browser artifacts and worktrees settled past their
 retention. A worktree goes only through `git worktree remove` with no force, so Git
 keeps uncommitted work. Candidates observed as owned by another live thread are
 kept. `?dry_run=true` only reports. Database repair is a `VACUUM`, refused during a run, and suggested at
-1 GiB reclaimable. The OTLP check posts an empty export and reports the status.
+1 GiB reclaimable. The OTLP check posts an empty export to the entered absolute
+HTTP(S) URL and reports its status without following redirects. Localhost and LAN
+collectors are supported. Credentials in the URL, fragments and control characters
+are refused before a request is sent.
 
 ## Environment identity
 
@@ -2620,7 +2623,7 @@ every method, path and which routes need a credential.
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
 | `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
-| `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; one failure does not stop the rest |
+| `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |
 | `POST /api/threads/:id/delegate` | `DelegateTask`: a child thread that reports back |
 | `POST /api/threads/:id/project` | `MoveThread`, before the first run; no `project_id` means a new scratch folder |
 | `POST /api/threads/:id/adopt` | `AdoptScratch`: the scratch folder becomes a project in place |

@@ -1,6 +1,7 @@
 //! Changing and merging a pull request, and the head check that keeps a merge on the head the person saw.
 
 use super::Forge;
+use super::create::check_branch_operand;
 use super::process::{call, call_json};
 use crate::error::{CoreError, Result};
 use orbyn_contracts::{MergePull, UpdatePull};
@@ -9,14 +10,8 @@ use std::path::Path;
 
 pub async fn update_pull(forge: Forge, cwd: &Path, number: u64, update: &UpdatePull) -> Result<()> {
     let id = number.to_string();
-    if update
-        .base
-        .as_deref()
-        .is_some_and(|base| base.starts_with('-'))
-    {
-        return Err(CoreError::Invalid(
-            "That is not a valid branch name.".into(),
-        ));
+    if let Some(base) = update.base.as_deref() {
+        check_branch_operand(base)?;
     }
     match forge {
         Forge::GitHub => {
