@@ -121,6 +121,49 @@ test("the latest stable release installs and its launcher runs the command", { s
   assert.equal(output, windows ? process.version : "orbyn --version");
 });
 
+test("the Windows launcher preserves Unicode paths, arguments, exit status and code page", { skip: !windows }, async () => {
+  const home = join(root, "r\u00e9sum\u00e9-\u65e5\u672c\u8a9e with spaces");
+  const bin = join(home, "command bin");
+  const result = await install({ ORBYN_HOME: join(home, "data"), ORBYN_INSTALL_DIR: bin });
+  assert.equal(result.status, 0, result.stderr);
+  const probe = join(home, "argument probe.cjs");
+  const receipt = join(home, "arguments.json");
+  writeFileSync(probe, `require("node:fs").writeFileSync(process.env.ORBYN_TEST_RECEIPT, JSON.stringify(process.argv.slice(2))); process.exit(37);`);
+  const driver = join(root, "launch.cmd");
+  // Environment expansion supplies Unicode paths without encoding them in this driver.
+  writeFileSync(driver, [
+    "@echo off",
+    "chcp %ORBYN_TEST_CODEPAGE% >nul",
+    'call "%ORBYN_TEST_LAUNCHER%" "%ORBYN_TEST_PROBE%" "two words" "" "a&b" "%ORBYN_TEST_ARGUMENT%"',
+    'set "result=%errorlevel%"',
+    "chcp",
+    "exit /b %result%",
+    "",
+  ].join("\r\n"));
+  for (const codepage of [437, 932, 65001]) {
+    for (const shell of ["cmd.exe", "powershell.exe"]) {
+      const args = shell === "cmd.exe"
+        ? ["/d", "/c", driver]
+        : ["-NoProfile", "-Command", "& $env:ORBYN_TEST_DRIVER; exit $LASTEXITCODE"];
+      const actual = await new Promise((done) => execFile(shell, args, {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ORBYN_TEST_DRIVER: driver,
+          ORBYN_TEST_LAUNCHER: join(bin, "orbyn.cmd"),
+          ORBYN_TEST_PROBE: probe,
+          ORBYN_TEST_RECEIPT: receipt,
+          ORBYN_TEST_CODEPAGE: String(codepage),
+          ORBYN_TEST_ARGUMENT: "r\u00e9sum\u00e9 \u65e5\u672c\u8a9e",
+        },
+      }, (error, stdout, stderr) => done({ status: error?.code ?? 0, stdout, stderr })));
+      assert.equal(actual.status, 37, `${shell}, code page ${codepage}: ${actual.stderr}`);
+      assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), ["two words", "", "a&b", "r\u00e9sum\u00e9 \u65e5\u672c\u8a9e"]);
+      assert.match(actual.stdout, new RegExp(`\\b${codepage}\\b`), "the caller's code page changed");
+    }
+  }
+});
+
 test("an exact version and the nightly channel pick their own release", { skip }, async () => {
   for (const [env, folder] of [
     [{ ORBYN_VERSION: "v1.2.3" }, "/download/v1.2.3/"],
