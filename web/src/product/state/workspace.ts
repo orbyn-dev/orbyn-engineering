@@ -361,9 +361,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     try {
       const thread = await api.thread(id);
       if (!current()) return;
+      // A run's events ask for this often; writing an identical answer would replace the
+      // object every subscriber below it renders.
+      const unchanged = get().threads[id] !== undefined && sameData(get().threads[id], thread);
+      if (unchanged && get().missingThreads[id] === undefined) return;
       set((state) => {
         const { [id]: _gone, ...missing } = state.missingThreads;
-        return { threads: { ...state.threads, [id]: thread }, missingThreads: missing };
+        return {
+          threads: unchanged ? state.threads : { ...state.threads, [id]: thread },
+          missingThreads: missing,
+        };
       });
     } catch (error) {
       if (current()) {
