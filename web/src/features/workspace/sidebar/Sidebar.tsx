@@ -14,6 +14,7 @@ import { useDraftStore } from "../../../product/state/draftStore";
 import { navigate, type Route } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
+import { useNow } from "../../../lib/useNow";
 import { IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
@@ -22,6 +23,7 @@ import {
   arrangeThreads,
   attentionRank,
   dropVerb,
+  emptyProjectsOf,
   foldersOf,
   projectDrop,
   sectionOf,
@@ -126,8 +128,14 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
     return projectFilter.length === 0 ? all : all.filter((thread) => projectFilter.includes(thread.project_id));
   }, [threads, projectFilter]);
 
+  // Sectioning reads the clock, so an expired snooze returns on its own; memoized, a keystroke
+  // no longer sorts every thread again.
+  const sectionClock = useNow(true, 30_000);
   // Ledger lists running threads in its own Running section, not on the Working shelf.
-  const sections = arrangeThreads(scoped, Date.now(), workingSection && !ledger, ledger);
+  const sections = useMemo(
+    () => arrangeThreads(scoped, sectionClock, workingSection && !ledger, ledger),
+    [scoped, sectionClock, workingSection, ledger],
+  );
   const shown = drag?.target ? projectDrop(sections, drag.id, drag.target) : sections;
   // What the list draws, in order; set below, once the folders and groups are known.
   const orderedRef = useRef<Thread[]>([]);
@@ -148,11 +156,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   }, [scoped, list, query]);
   const isSearching = query.trim() !== "";
 
-  const emptyProjects = list.filter(
-    (project) =>
-      (projectFilter.length === 0 || projectFilter.includes(project.id)) &&
-      !Object.values(threads).some((thread) => thread.project_id === project.id),
-  );
+  const emptyProjects = useMemo(() => emptyProjectsOf(list, projectFilter, threads), [list, projectFilter, threads]);
 
   useSelectionDismiss(selection, setSelection);
 

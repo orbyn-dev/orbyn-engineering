@@ -68,6 +68,31 @@ describe("workspace store", () => {
     spy.mockRestore();
   });
 
+  it("keeps the thread object when a single-thread refresh finds nothing new", async () => {
+    const thread = { id: "t-same", title: "Same" } as Thread;
+    useWorkspace.setState({ threads: { "t-same": thread }, missingThreads: {} });
+    const before = useWorkspace.getState().threads;
+    const spy = vi.spyOn(api, "thread").mockResolvedValue({ ...thread });
+    await useWorkspace.getState().refreshThread("t-same");
+    expect(useWorkspace.getState().threads).toBe(before);
+    expect(useWorkspace.getState().threads["t-same"]).toBe(thread);
+    spy.mockRestore();
+  });
+
+  it("replaces a changed thread and keeps its neighbours", async () => {
+    const thread = { id: "t-two", title: "Before" } as Thread;
+    const other = { id: "t-three", title: "Other" } as Thread;
+    useWorkspace.setState({ threads: { "t-two": thread, "t-three": other }, missingThreads: {} });
+    const before = useWorkspace.getState().threads;
+    const spy = vi.spyOn(api, "thread").mockResolvedValue({ ...thread, title: "After" });
+    await useWorkspace.getState().refreshThread("t-two");
+    const after = useWorkspace.getState().threads;
+    expect(after).not.toBe(before);
+    expect(after["t-two"]?.title).toBe("After");
+    expect(after["t-three"]).toBe(other);
+    spy.mockRestore();
+  });
+
   it("keeps the last data when a refresh fails", async () => {
     useWorkspace.setState({ approvals: { data: [approval("a")], error: null, loading: false } });
     const spy = vi.spyOn(api, "pendingApprovals").mockRejectedValueOnce(new Error("down"));
