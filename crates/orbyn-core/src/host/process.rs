@@ -10,6 +10,10 @@ use tokio::process::{Child, Command};
 
 use crate::error::{CoreError, Result};
 
+#[cfg(all(test, windows))]
+#[path = "process/windows_tests.rs"]
+mod windows_tests;
+
 /// A program ready to spawn. Windows shims resolve to their real entry point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedCommand {
@@ -19,7 +23,7 @@ pub struct ResolvedCommand {
     pub path: PathBuf,
 }
 
-/// Resolves a bare name through PATH, or an explicit path as given.
+/// Resolves a bare name through PATH, or an explicit path, before a child changes cwd.
 pub fn resolve(name: &str) -> Option<ResolvedCommand> {
     let search = crate::host::child_env::widened(std::env::var_os("PATH").as_deref());
     let path = find_on_path(name, Some(&search))?;
@@ -28,12 +32,15 @@ pub fn resolve(name: &str) -> Option<ResolvedCommand> {
 
 fn find_on_path(name: &str, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let direct = Path::new(name);
-    if direct.components().count() > 1 || direct.is_absolute() {
-        return candidates(direct).into_iter().find(|path| path.is_file());
-    }
-    std::env::split_paths(path_var?)
-        .flat_map(|dir| candidates(&dir.join(name)))
-        .find(|path| is_runnable(path))
+    let path = if direct.components().count() > 1 || direct.is_absolute() {
+        candidates(direct).into_iter().find(|path| path.is_file())
+    } else {
+        std::env::split_paths(path_var?)
+            .flat_map(|dir| candidates(&dir.join(name)))
+            .find(|path| is_runnable(path))
+    }?;
+    // Keep the shim's location (including symlinks), but not its dependency on cwd.
+    std::path::absolute(path).ok()
 }
 
 #[cfg(unix)]
