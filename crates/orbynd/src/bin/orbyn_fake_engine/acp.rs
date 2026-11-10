@@ -89,6 +89,20 @@ pub(crate) fn acp() {
             "session/list" if native_dir().is_some() => {
                 record_launch("acp-list", &[message["params"].to_string()]);
 
+                if message["params"]["cursor"] == "blocked"
+                    && let Some(gate) = std::env::var_os("ORBYN_FAKE_ACP_LIST_GATE")
+                {
+                    // A failed integration assertion may force-stop the service
+                    // before its process owners can drop on Unix.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    while !std::path::Path::new(&gate).exists() {
+                        if std::time::Instant::now() >= deadline {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+
                 if let Some(ms) = std::env::var("ORBYN_FAKE_ACP_LIST_DELAY_MS")
                     .ok()
                     .and_then(|n| n.parse().ok())

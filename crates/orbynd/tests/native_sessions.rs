@@ -11,6 +11,65 @@ use support::*;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_orbyn-fake-engine");
 
+#[tokio::test]
+async fn cancelled_list_releases_the_engine_for_the_next_request() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    use tokio::time::{Duration, timeout};
+
+    let gates = TempDir::new();
+    let gate = gates.path().join("release");
+    let w = world(&[("ORBYN_FAKE_ACP_LIST_GATE", gate.to_str().unwrap())]).await;
+    let address = w.service.url.strip_prefix("http://").unwrap();
+    let mut connection = TcpStream::connect(address).await.unwrap();
+    connection
+        .write_all(
+            format!(
+                "GET /api/engines/agent/native-sessions?project_id={}&cursor=blocked HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {}\r\n\r\n",
+                w.project, w.service.token,
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(30), async {
+        while launches(&w.launch, "acp-list").is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the first list must reach the agent");
+    assert_eq!(
+        w.list("agent", None).await.0,
+        409,
+        "live lists exclude rivals"
+    );
+
+    // A write-side EOF lets us observe the server close the cancelled request,
+    // rather than racing a new socket against delivery of the client's FIN.
+    connection.shutdown().await.unwrap();
+    let mut abandoned_response = Vec::new();
+    timeout(
+        Duration::from_secs(20),
+        connection.read_to_end(&mut abandoned_response),
+    )
+    .await
+    .expect("the service must close the cancelled request before the ACP deadline")
+    .unwrap();
+    assert!(
+        abandoned_response.is_empty(),
+        "the blocked list must not complete"
+    );
+
+    let (code, page) = w.list("agent", None).await;
+    assert_eq!(code, 200, "a cancelled list must release admission: {page}");
+    assert_eq!(page["sessions"][0]["session_id"], "s1");
+    assert!(
+        !gate.exists(),
+        "the cancelled agent was never released to reply"
+    );
+}
+
 async fn put_preferences(service: &Service, body: Value) -> (u16, Value) {
     let response = service
         .client
