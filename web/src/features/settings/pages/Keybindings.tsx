@@ -2,7 +2,7 @@ import { useState } from "react";
 import { readKeybindings, saveKeybinding } from "../api";
 import { inDesktopApp } from "../api";
 import { commandLabel, whenPhrase } from "./commandLabels";
-import { formatShortcut, runHandlers } from "../../../product/shell/shortcuts";
+import { formatShortcut, runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { AlertCircle, MoreHorizontal, Pencil, Search } from "lucide-react";
 import { IconButton } from "../../../ui/controls";
@@ -31,20 +31,13 @@ export function KeybindingsSection() {
   const pushToast = useUi((state) => state.pushToast);
 
   const capture = (event: React.KeyboardEvent, command: string, when: string | null) => {
-    if (["Meta", "Control", "Shift", "Alt"].includes(event.key)) return;
+    const key = shortcutForEvent(event);
+    if (key === null) return;
     event.preventDefault();
     if (event.key === "Escape") {
       setEditing(null);
       return;
     }
-    const key = [
-      event.metaKey || event.ctrlKey ? "mod" : null,
-      event.altKey ? "alt" : null,
-      event.shiftKey ? "shift" : null,
-      event.key.toLowerCase(),
-    ]
-      .filter(Boolean)
-      .join("+");
     setEditing(null);
     saveKeybinding({ key, command, when, remove: false }).then(
       (next) => {
