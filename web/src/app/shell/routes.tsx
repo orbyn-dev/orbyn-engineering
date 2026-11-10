@@ -7,7 +7,7 @@ import { PullsPage } from "../../features/pulls/list/PullsPage";
 import { ScheduledTasksPage } from "../../features/settings/scheduled-tasks/ScheduledTasks";
 import { SkillsPage } from "../../features/skills/SkillsPage";
 import { ThreadView } from "../../features/thread/ThreadView";
-import { UsagePage } from "../../features/usage/UsagePage";
+import { UsagePage } from "../../features/usage";
 import { useUi } from "../../product/state/ui";
 import type { Route } from "../../product/state/route";
 
