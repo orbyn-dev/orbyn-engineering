@@ -11,7 +11,7 @@ import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
 import { PreviewWindow } from "../features/panels/preview/PreviewWindow";
 import { previewWindowRoute } from "../features/panels/browser/browserPanels";
-import { PreviewScreen, previewScreenRoute } from "../features/platform/previews";
+import { PreviewScreen, previewScreenRoute } from "../features/platform";
 
 type Boot =
   | { state: "loading" }
