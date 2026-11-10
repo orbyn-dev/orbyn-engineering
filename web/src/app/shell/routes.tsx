@@ -1,8 +1,4 @@
-import { DraftView } from "../../features/onboarding/DraftView";
-import { EmptyProject } from "../../features/onboarding/EmptyProject";
-import { NoProjects } from "../../features/onboarding/NoProjects";
-import { TrustFolder } from "../../features/onboarding/TrustFolder";
-import { WelcomeHost } from "../../features/onboarding/WelcomeWizard";
+import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from "../../features/onboarding";
 import { PullsPage } from "../../features/pulls";
 import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills";
