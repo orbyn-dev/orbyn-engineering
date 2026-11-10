@@ -4,3 +4,6 @@ crates/orbyn-core/src/agents/engines/tested-versions.* -text
 # Embedded or generated: every checkout gets the same bytes on every platform.
 crates/**/fixtures/** text eol=lf
 web/src/generated/** text eol=lf
+
+# Stylesheet contract tests read source bytes, including LF-delimited rules.
+*.css text eol=lf

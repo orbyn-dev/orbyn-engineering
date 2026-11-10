@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../../api/types";
-import { parsePatch } from "../panels/DiffPanel";
-import { arrangeThreads } from "../workspace/groups";
+import { parsePatch } from "../panels/diff/diffModel";
+import { arrangeThreads } from "../workspace/sidebar/groups";
 import { touchesOf } from "./approvalDetail";
-import { percentLabel } from "./ComposerExtras";
-import type { ThreadItem } from "./projection";
-import { insertToken, pullToken, threadToken, triggerAt } from "../../lib/skillMention";
-import { outputSpans } from "./ansi";
-import type { ToolItem } from "./projection";
-import { arrangeTimeline, groupWork } from "./timeline";
-import { summarizeWork } from "./toolTrace";
+import { percentLabel } from "./composer/ComposerExtras";
+import type { ThreadItem } from "../../product/timeline/types";
+import { insertToken, pullToken, threadToken, triggerAt } from "../../product/composer/skillMention";
+import { outputSpans } from "../../lib/ansi";
+import type { ToolItem } from "../../product/timeline/types";
+import { arrangeTimeline, groupWork } from "../../product/timeline/timeline";
+import { summarizeWork } from "../../product/timeline/toolTrace";
 import { withLocalPrompts } from "./Transcript";
 
 describe("triggers", () => {

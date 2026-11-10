@@ -1,59 +1,29 @@
 import { Activity, ChevronDown, ChevronRight, FileDiff, Gauge, Globe, Play, SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, request } from "../../api/client";
-import type { EngineLimits, LocalServer, ProjectFileView, Thread } from "../../api/types";
+import { api, listThreadScripts, listThreadServers } from "./api";
+import type { EngineLimits, LocalServer, Thread } from "../../api/types";
 import type { ProjectScript } from "../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../lib/motion";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { Menu, type MenuItem } from "../../ui/Menu";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
+import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { IconButton } from "../../ui/controls";
-import { usageShare } from "./ComposerExtras";
-import { DRow } from "./DetailRows";
+import { usageShare } from "./composer/ComposerExtras";
+import { DRow } from "../../product/ui/DetailRows";
 import { BranchRow } from "./GitControl";
 import { OpenInEditor } from "./OpenInEditor";
 import { PullsRow } from "./PullChip";
-import { runProjectAction } from "./runProjectAction";
+import { runProjectAction } from "../../product/composer/runProjectAction";
 import { ThreadAutomations } from "./ThreadAutomations";
-import { useThreadLogs } from "./threadLogs";
+import { ToolsRow } from "../tools";
+import { useThreadLogs } from "../../product/state/threadLogs";
 import { pluralize } from "./toolCalls";
-
-export const DETAIL_ROWS: { id: string; label: string }[] = [
-  { id: "branch", label: "Branch" },
-  { id: "changes", label: "Changes" },
-  { id: "pulls", label: "Pull requests" },
-  { id: "automations", label: "Automations" },
-  { id: "servers", label: "Local servers" },
-  { id: "limits", label: "Limits" },
-  { id: "usage", label: "Usage" },
-  { id: "scripts", label: "Scripts" },
-  { id: "editor", label: "Open in editor" },
-];
-
-/** The rows as a checklist, for the card's menu and for Settings. */
-export function detailsMenuItems(): MenuItem[] {
-  const { detailsHidden, setPrefs } = useUi.getState();
-  return [
-    ...DETAIL_ROWS.map((row) => ({
-      label: row.label,
-      selected: !detailsHidden.includes(row.id),
-      keepOpen: true,
-      onSelect: () =>
-        setPrefs({
-          detailsHidden: detailsHidden.includes(row.id)
-            ? detailsHidden.filter((id) => id !== row.id)
-            : [...detailsHidden, row.id],
-        }),
-    })),
-    { label: "Reset to default", separatorBefore: true, onSelect: () => setPrefs({ detailsHidden: ["usage"] }) },
-  ];
-}
-
+import { detailsMenuItems } from "../../product/ui/details";
 function ServersRow({ threadId }: { threadId: string }) {
   const servers = useAsync(`details-servers:${threadId}`, (signal) =>
-    request<LocalServer[]>("GET", `/api/threads/${encodeURIComponent(threadId)}/servers`, undefined, signal),
+    listThreadServers(threadId, signal),
   );
   const showInBrowser = useUi((state) => state.showInBrowser);
   const waited = useWaitedFor(servers.status === "loading");
@@ -109,10 +79,7 @@ function UsageRow({ threadId }: { threadId: string }) {
 }
 
 function ScriptsRow({ threadId }: { threadId: string }) {
-  const base = `/api/threads/${encodeURIComponent(threadId)}`;
-  const scripts = useAsync(`details-scripts:${threadId}`, (signal) =>
-    request<ProjectFileView>("GET", `${base}/scripts`, undefined, signal),
-  );
+  const scripts = useAsync(`details-scripts:${threadId}`, (signal) => listThreadScripts(threadId, signal));
   const pushToast = useUi((state) => state.pushToast);
   const [expanded, setExpanded] = useState(false);
   const waited = useWaitedFor(scripts.status === "loading");
@@ -286,6 +253,7 @@ export function DetailsCard({ thread }: { thread: Thread }) {
             {shows("changes") ? <ChangesRow threadId={thread.id} /> : null}
             {shows("pulls") ? <PullsRow thread={thread} /> : null}
             {shows("automations") ? <ThreadAutomations threadId={thread.id} /> : null}
+            {shows("tools") ? <ToolsRow thread={thread} /> : null}
             {shows("servers") ? <ServersRow threadId={thread.id} /> : null}
             {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
             {shows("usage") ? <UsageRow threadId={thread.id} /> : null}

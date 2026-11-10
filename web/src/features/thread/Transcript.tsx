@@ -1,14 +1,16 @@
+import { useClearSelectionOnLeave } from "../../lib/clearSelection";
 import { ArrowDown } from "lucide-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useThreadLogs, type LocalPrompt } from "./threadLogs";
-import { useUi } from "../../state/ui";
+import { useThreadLogs, type LocalPrompt } from "../../product/state/threadLogs";
+import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
-import { Empty, ErrorState, Loading } from "../../ui/states";
-import { TimelineRow, TimelineThread } from "./items";
+import { Empty, ErrorState, Loading } from "../../product/ui/states";
+import { TimelineRow } from "./items";
+import { TimelineThread } from "./timelineThread";
 import { Minimap, type MinimapItem } from "./Minimap";
-import type { MessageItem, ThreadItem } from "./projection";
+import type { MessageItem, ThreadItem } from "../../product/timeline/types";
 import { rowOfItems } from "./threadSearch";
-import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "./timeline";
+import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "../../product/timeline/timeline";
 import { registerTranscript } from "./transcriptRegistry";
 import { OpenStateScope } from "../../ui/openState";
 import { useAnnounce } from "./useAnnounce";
@@ -70,6 +72,7 @@ export function Transcript({
   header?: ReactNode;
   footer?: ReactNode;
 }) {
+  useClearSelectionOnLeave("transcript");
   const log = useThreadLogs((state) => state.logs[threadId]);
   const stream = useThreadLogs((state) => state.streams[threadId]);
   const prompts = useThreadLogs((state) => state.prompts[threadId]);

@@ -92,6 +92,8 @@ jobs:
           components: rustfmt
       - if: env.RUST == 'true'
         run: cargo fmt --all --check
+      - if: env.RUST == 'true'
+        run: python3 scripts/test_check_rust_arch.py && python3 scripts/check_rust_arch.py
       - if: env.WEB == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -139,6 +141,11 @@ jobs:
           components: rustfmt, clippy
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # The scripted-engine regressions launch the browser suite's Node fixtures.
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
       - if: env.RUN == 'true'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - if: env.RUN == 'true'

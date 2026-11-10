@@ -66,7 +66,8 @@
   display: none;
 }
 :root[data-workspace="reading"] .shell:not([data-reading-nav="open"]):is([data-layout="medium"], [data-layout="wide"], [data-layout="xwide"]) > .main {
-  grid-area: 2 / 1;
+  /* The one row: the title bar floats over the top of the page (see shell.css), so there is no row above it. */
+  grid-area: 1 / 1;
   border-top: 0;
   border-left: 0;
   border-top-left-radius: 0;
@@ -118,42 +119,14 @@
 :root[data-workspace="reading"] .shell:is([data-layout="wide"], [data-layout="xwide"]) .context:not([data-maximized]) {
   width: var(--drawer-w);
 }
-/* Reading sets the title as the column's own 26px heading, on the column. */
-:root[data-workspace="reading"] .thread-main > .topbar {
-  box-sizing: border-box;
-  width: min(calc(var(--reading-w) + 32px), 100%);
-  height: auto;
-  min-height: var(--topbar-h);
-  margin: 0 auto;
-  padding-inline: 16px;
-}
-/* The meta line (branch, status) and the actions share the first row; the title sits alone
-   below it at the column's full width and wraps rather than truncating. */
-:root[data-workspace="reading"] .thread-main > .topbar {
-  flex-wrap: wrap;
-  align-items: center;
-  row-gap: 6px;
-}
+/* Reading keeps the one 44px bar of every layout (the shell-reading frame, v60): its header is the same single
+   row, title and chips left, actions right. Only the text column below it is narrower, with larger type. The
+   frame sets the title in the bar's own 13.5px. */
 :root[data-workspace="reading"] .thread-main > .topbar .crumbs {
-  display: contents;
-}
-:root[data-workspace="reading"] .thread-main > .topbar > .icon-btn {
-  order: 0;
-}
-:root[data-workspace="reading"] .thread-main > .topbar .page-sub {
-  order: 1;
-  flex: 1 1 0;
-  min-width: 0;
-}
-:root[data-workspace="reading"] .thread-main > .topbar > :not(.crumbs):not(.icon-btn) {
-  order: 2;
+  align-items: center;
 }
 :root[data-workspace="reading"] .thread-main > .topbar .crumbs h1 {
-  order: 3;
-  flex: 0 0 100%;
-  overflow: visible;
-  font-size: var(--text-display);
-  line-height: 1.2;
-  text-overflow: clip;
-  white-space: normal;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: 0;
 }

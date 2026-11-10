@@ -237,8 +237,9 @@ async fn a_claude_instance_passes_its_auto_compact_window_to_each_run() {
             .iter()
             .filter(|entry| entry["mode"] == "claude-settings")
             .map(|entry| serde_json::from_str::<Value>(entry["args"][0].as_str().unwrap()).unwrap())
-            // The capability probe has its own settings, which a run never sends.
-            .filter(|settings| settings.get("disableAllHooks").is_none())
+            // The capability probe has its own settings, which are only the hooks switch; a run's also carry the
+            // permission protection.
+            .filter(|settings| *settings != json!({ "disableAllHooks": true }))
             .collect()
     };
     let thread = service.thread(&project, "claude-wide").await;
@@ -246,10 +247,16 @@ async fn a_claude_instance_passes_its_auto_compact_window_to_each_run() {
     assert_eq!(service.finished(&thread).await, "completed");
     // The completed turn may already have started the next one's process, with the
     // same settings.
-    let wide = json!({ "autoCompactWindow": 300000 });
     let sent = settings(&launches(&launch));
     assert!(
-        !sent.is_empty() && sent.iter().all(|one| *one == wide),
+        !sent.is_empty() && sent.iter().all(|one| one["autoCompactWindow"] == 300000),
+        "{sent:?}"
+    );
+    // Every run's settings also carry the connector approval guard.
+    assert!(
+        sent.iter().all(|one| one["permissions"]["ask"]
+            .as_array()
+            .is_some_and(|ask| ask.contains(&json!("mcp__*")))),
         "{sent:?}"
     );
     let thread = service.thread(&project, "claude-plain").await;
@@ -257,8 +264,13 @@ async fn a_claude_instance_passes_its_auto_compact_window_to_each_run() {
     assert_eq!(service.finished(&thread).await, "completed");
     let sent = settings(&launches(&launch));
     assert!(
-        sent.iter().all(|one| *one == wide),
-        "an instance without a window passes no settings: {sent:?}"
+        sent.iter()
+            .filter(|one| one.get("autoCompactWindow").is_some())
+            .all(|one| one["autoCompactWindow"] == 300000)
+            && sent
+                .iter()
+                .any(|one| one.get("autoCompactWindow").is_none()),
+        "an instance without a window passes settings without one: {sent:?}"
     );
     // Out-of-range, malformed and non-Claude values never reach a launch.
     for bad in [

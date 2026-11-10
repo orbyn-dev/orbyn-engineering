@@ -1,7 +1,4 @@
 /* The add-project views inside the command palette: one-line rows with a trailing hint. */
-.palette-list button.palette-two-line {
-  min-height: 32px;
-}
 .add-project-hint {
   margin-left: auto;
   padding-left: 18px;

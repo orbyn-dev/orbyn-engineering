@@ -5,7 +5,11 @@ behaviour. Timestamps are RFC 3339 UTC strings and ids are opaque strings.
 
 ## Contract
 
-Every public type in `src/lib.rs`. `npm run generate` in `web` (which runs
+Every public type, one file per domain under `src/` (projects, threads, runs,
+checkpoints, files, git, pulls, engines, tools, acp, history, usage, settings,
+updates, workspace, terminal, preview, shell, automations, governance,
+operations). `lib.rs` only re-exports them, so paths stay `orbyn_contracts::Type`.
+`npm run generate` in `web` (which runs
 `cargo test -p orbyn-contracts`) writes their TypeScript into `web/src/generated`.
 
 ## Consumers
@@ -17,4 +21,5 @@ Every public type in `src/lib.rs`. `npm run generate` in `web` (which runs
 
 - `web/src/generated` is committed, not built. Commit it in the same commit as
   every contract change, or the UI and service disagree.
-- One file holds every type, so any contract edit touches `src/lib.rs`.
+- A type's domain file is the only place to edit it; the `wire!` and `wire_enum!`
+  macros live in `src/macros.rs`.

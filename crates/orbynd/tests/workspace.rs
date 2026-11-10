@@ -110,7 +110,7 @@ fn launch_options(dir: &TempDir) -> (std::path::PathBuf, Options) {
 }
 
 #[tokio::test]
-async fn claude_starts_at_the_workspace_root_with_no_plugin_dir() {
+async fn claude_starts_in_the_checkout_with_the_library_added_and_no_plugin_dir() {
     let dir = TempDir::new();
     let (file, options) = launch_options(&dir);
     let (service, thread) = setup(&dir, options, "claude").await;
@@ -118,13 +118,18 @@ async fn claude_starts_at_the_workspace_root_with_no_plugin_dir() {
     assert_eq!(service.finished(&thread).await, "completed");
     let launch = &launches(&file, "claude")[0];
     let root = dir.path().join("library");
-    assert_eq!(launch["cwd"], root.to_str().unwrap());
+    assert_eq!(
+        launch["cwd"],
+        root.join("repo").join("project").to_str().unwrap()
+    );
     let args: Vec<&str> = launch["args"]
         .as_array()
         .unwrap()
         .iter()
         .filter_map(Value::as_str)
         .collect();
+    let at = args.iter().position(|arg| *arg == "--add-dir").unwrap();
+    assert_eq!(args[at + 1], root.to_str().unwrap());
     assert!(!args.contains(&"--plugin-dir"), "{args:?}");
     assert!(!args.contains(&"--bare"));
 }
@@ -154,7 +159,7 @@ async fn codex_thread_and_turns_run_in_the_checkout() {
     assert!(text.contains("Checkout: "), "{text}");
     assert!(text.contains("open its files directly"), "{text}");
     assert!(text.contains("skill_search"), "{text}");
-    assert!(text.len() < 1_000, "the context stays short: {text}");
+    assert!(text.len() < 1_200, "the context stays short: {text}");
     assert_eq!(turn["input"][0]["text"], "hi");
 }
 

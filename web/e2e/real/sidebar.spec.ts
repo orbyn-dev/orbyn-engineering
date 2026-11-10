@@ -164,7 +164,7 @@ test("usage reads the real report and limits", async ({ page }) => {
   await expect(usage.getByText(/reports limits|left|:/).first()).toBeVisible({ timeout: 15_000 });
 });
 
-test("the composer picks model and effort, sets access, and keeps favourites", async ({ page }) => {
+test("the composer picks model and effort and sets access", async ({ page }) => {
   const id = ids.Delta ?? "";
   await page.goto(`${service.page}#/threads/${id}`);
   await expect(page.getByRole("textbox", { name: /^Message Delta/ })).toBeVisible();
@@ -173,14 +173,15 @@ test("the composer picks model and effort, sets access, and keeps favourites", a
   await trigger.click();
   const picker = page.getByRole("dialog", { name: "Choose a model" });
   await expect(picker.getByRole("option").first()).toBeVisible({ timeout: 15_000 });
-  await expect(picker.getByRole("button", { name: "Favorites", exact: true })).toBeVisible();
   const choice = picker.getByRole("option").nth(1);
-  const label = (await choice.locator(".model-row-text span").first().innerText()).trim();
-  await choice.hover();
-  await choice.getByRole("button", { name: "Add to favorites" }).click();
-  await picker.getByRole("button", { name: "Favorites", exact: true }).click();
-  await expect(picker.getByRole("option")).toHaveCount(1);
-  await picker.getByRole("textbox", { name: "Search models" }).press("ControlOrMeta+1");
+  const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
+  // The thread.jump shortcuts are listed in Keybindings and belong to the page: the open picker keeps them off it.
+  await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+2");
+  await expect(picker).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`#/threads/${id}$`));
+  const exact = picker.getByRole("option").filter({ has: page.locator("b", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
+  await expect(exact).toHaveCount(1);
+  await exact.click();
   await expect.poll(async () => (await thread(id) as unknown as { model: string | null }).model).not.toBeNull();
   await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
 
@@ -205,10 +206,10 @@ test("the composer picks model and effort, sets access, and keeps favourites", a
   await service.api("PATCH", `/api/threads/${id}`, { permission_mode: "supervised" });
 });
 
-test("each thread restores its own panel across switches and a reload", async ({ page }) => {
+test("the side panel is one open or closed state across thread switches and a reload, and phone width ignores it", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const open = (title: string) => row(page, title).click();
-  const pane = page.getByRole("complementary", { name: "Thread context" });
+  const panel = page.getByRole("complementary", { name: "Thread context" });
   const newest = await page.locator("li[data-section=active] .thread-row-title").allInnerTexts();
   const [first, second, third] = newest;
   if (!first || !second || !third) throw new Error("needs three threads");
@@ -216,33 +217,46 @@ test("each thread restores its own panel across switches and a reload", async ({
   await open(first);
   await expect(page.getByRole("heading", { name: first })).toBeVisible();
   await openPanelTab(page);
-  await expect(pane).toBeVisible();
-  const handle = await pane.getByRole("separator", { name: "Resize panel" }).boundingBox();
+  await expect(panel).toBeVisible();
+  const handle = await panel.getByRole("separator", { name: "Resize panel" }).boundingBox();
   await page.mouse.move((handle?.x ?? 0) + 3, 300);
   await page.mouse.down();
   await page.mouse.move((handle?.x ?? 0) - 60, 300, { steps: 4 });
   await page.mouse.up();
-  const wide = (await pane.boundingBox())?.width ?? 0;
+  const wide = (await panel.boundingBox())?.width ?? 0;
 
+  // Open stays open on every thread, and survives a reload.
   await open(second);
   await expect(page.getByRole("heading", { name: second })).toBeVisible();
-  await expect(pane).toBeHidden();
-  await page.getByRole("button", { name: "Terminal" }).click();
-
+  await expect(panel).toBeVisible();
   await open(third);
   await expect(page.getByRole("heading", { name: third })).toBeVisible();
-  await expect(pane).toBeHidden();
-  await expect(page.getByRole("region", { name: /Terminal/ })).toBeHidden();
-
+  await expect(panel).toBeVisible();
   await open(first);
-  await expect(pane).toBeVisible();
-  expect((await pane.boundingBox())?.width).toBe(wide);
-
+  await expect(panel).toBeVisible();
+  await expect.poll(async () => (await panel.boundingBox())?.width).toBe(wide);
   await page.reload();
-  await expect(pane).toBeVisible();
-  expect((await pane.boundingBox())?.width).toBe(wide);
+  await expect(panel).toBeVisible();
+  await expect.poll(async () => (await panel.boundingBox())?.width).toBe(wide);
+
+  // Closing closes it everywhere: on the other threads and after a reload.
+  await page.getByRole("button", { name: "Show side panel", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await open(second);
+  await expect(page.getByRole("heading", { name: second })).toBeVisible();
+  await expect(panel).toBeHidden();
   await open(third);
-  await expect(pane).toBeHidden();
+  await expect(panel).toBeHidden();
+  await page.reload();
+  await expect(panel).toBeHidden();
+
+  // Phone width has no side panel, whatever the state says.
+  await openPanelTab(page);
+  await expect(panel).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel).toBeHidden();
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await expect(panel).toBeVisible();
 });
 
 test("the terminal drawer opens tabs, and files and diff sources read the checkout", async ({ page }) => {
@@ -256,8 +270,8 @@ test("the terminal drawer opens tabs, and files and diff sources read the checko
   await expect(drawer.getByRole("tab")).toHaveCount(2);
   await drawer.getByRole("button", { name: /^Close Terminal|^Close [^t]/ }).first().click();
 
-  const pane = await openPanelTab(page, "Files");
-  await expect(pane.locator(".file-tree button").first()).toBeVisible({ timeout: 10_000 });
+  const panel = await openPanelTab(page, "Files");
+  await expect(panel.locator(".file-tree button").first()).toBeVisible({ timeout: 10_000 });
   await page.keyboard.press("ControlOrMeta+f");
   await expect(page.getByRole("textbox", { name: "Find in thread" })).toBeFocused();
   await page.keyboard.press("Escape");

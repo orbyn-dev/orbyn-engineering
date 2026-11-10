@@ -4,7 +4,7 @@ import { ConnectPlanner } from "./ConnectPlanner";
 import { PairPhone } from "./PairPhone";
 import { PhoneOffline } from "./PhoneOffline";
 import { PhoneView } from "./PhoneView";
-import type { PreviewScreenName } from "./previews";
+import type { PreviewScreenName } from "./previewNames";
 import { sampleAccount, sampleConsent, samplePairing, samplePhoneApproval, samplePhoneThreads } from "./sample";
 
 /** Loaded only through `previews.ts`, so a production build never includes it. */

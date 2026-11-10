@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../api/client";
 import type { TaskRun } from "../api/types";
 import * as fixtures from "../../mock/fixtures";
-import { useUi } from "../state/ui";
+import { useUi } from "../product/state/ui";
 import { useTaskRunNotifications } from "./taskNotifications";
 
 function Probe() {

@@ -1,0 +1,415 @@
+import { TriangleAlert } from "lucide-react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ApiFailure, api, listProjectThreads, queryProjectScopes } from "../api";
+import type { LibraryStatus } from "../../../api/types";
+import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import type { ProjectScopeGroup } from "../../../generated/ProjectScopeGroup";
+import type { ProjectScopeCheckout } from "../../../generated/ProjectScopeCheckout";
+import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
+import { toFailure } from "../../../lib/useAsync";
+import { useWorkspace } from "../../../product/state/workspace";
+import { useUi } from "../../../product/state/ui";
+import { PreferenceGroups } from "../rows/PreferenceRows";
+import { ConfirmFacts } from "../rows/ConfirmFacts";
+import { ProjectActions } from "./ProjectActions";
+import { useSettingsScope } from "../rows/SettingsScopeContext";
+import { SettingGroup, SettingRow } from "../rows/SettingRow";
+import { Button, Pill } from "../../../ui/controls";
+import { ConfirmDialog } from "../../../ui/Dialog";
+import { Loading } from "../../../product/ui/states";
+import { ProjectIconSetting } from "./ProjectIconSetting";
+import { FallbackModel, ProjectModelDefaults } from "./ProjectModelDefaults";
+
+const short = (revision: string | null) => revision?.slice(0, 8) ?? "Unknown";
+
+export function FallbackNotice() {
+  return (
+    <p className="banner banner-warn">
+      <TriangleAlert size={16} aria-hidden />
+      Skill links didn't materialize here, so skills are reaching engines through the fallback route.
+    </p>
+  );
+}
+
+export function Library({ library }: { library: LibraryStatus }) {
+  const updates = useWorkspace((state) => state.updates.data);
+  const refreshManaged = useWorkspace((state) => state.refreshManaged);
+  const refreshUpdates = useWorkspace((state) => state.refreshUpdates);
+  const [dialog, setDialog] = useState<"update" | "rollback" | null>(null);
+  const blocked =
+    updates?.library.blocked_reason ??
+    (library.dirty ? "The library has local changes. Commit or discard them first." : null);
+  const canUpdate = blocked === null && library.behind > 0;
+  const refresh = () => Promise.all([refreshManaged(), refreshUpdates()]).then(() => undefined);
+
+  return (
+    <>
+      {library.problem ? <p className="banner banner-warn">{library.problem}</p> : null}
+      <dl className="facts facts-block">
+        <div>
+          <dt>Skills library</dt>
+          <dd>
+            <code>{library.path}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>Revision</dt>
+          <dd>
+            <code>{short(library.revision)}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>Branch</dt>
+          <dd>{library.branch ?? "Detached"}</dd>
+        </div>
+        <div>
+          <dt>Changes</dt>
+          <dd>
+            {library.dirty ? (
+              <Pill tone="warn">
+                {library.dirty_files.length === 1 ? "1 modified file" : `${library.dirty_files.length} modified files`}
+              </Pill>
+            ) : (
+              "None"
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Remote</dt>
+          <dd>
+            {library.ahead} ahead, {library.behind} behind
+          </dd>
+        </div>
+      </dl>
+      <div className="form-actions">
+        <Button tone="primary" small disabled={!canUpdate} onClick={() => setDialog("update")}>
+          Review update
+        </Button>
+        <Button
+          small
+          disabled={blocked !== null || !library.previous_revision}
+          onClick={() => setDialog("rollback")}
+        >
+          Roll back
+        </Button>
+      </div>
+      {blocked ? (
+        <p className="update-reason">{blocked}</p>
+      ) : library.behind === 0 ? (
+        <p className="update-reason">The library is up to date.</p>
+      ) : null}
+      {dialog === "update" ? (
+        <ConfirmDialog
+          title="Update the library?"
+          confirmLabel="Update"
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            await api.updateLibrary(true);
+            await refresh();
+          }}
+        >
+          <p>
+            {updates?.library.incoming.length === 1
+              ? "1 incoming commit:"
+              : `${updates?.library.incoming.length ?? library.behind} incoming commits:`}
+          </p>
+          <ul className="commit-list">
+            {(updates?.library.incoming ?? []).map((commit) => (
+              <li key={commit.sha}>
+                <code>{short(commit.sha)}</code>
+                <span>{commit.subject}</span>
+              </li>
+            ))}
+          </ul>
+        </ConfirmDialog>
+      ) : null}
+      {dialog === "rollback" ? (
+        <ConfirmDialog
+          title="Roll back the library?"
+          confirmLabel="Roll back"
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            await api.rollbackLibrary();
+            await refresh();
+          }}
+        >
+          <p>
+            The library returns to <code>{short(library.previous_revision)}</code>. New runs use that
+            revision.
+          </p>
+        </ConfirmDialog>
+      ) : null}
+    </>
+  );
+}
+
+type NameRead = {
+  catalog: ProjectScopeCatalog;
+  label: string;
+  expectedNames: Record<string, string>;
+};
+type NameForm = { read: NameRead; draft: string; dirty: boolean; rebase: boolean };
+
+/** A name draft belongs to the physical members and read that supplied it. */
+function ProjectName({ query, catalog, group, members, disabled, reload, before, children }: {
+  query: ProjectScopesQuery;
+  catalog: ProjectScopeCatalog;
+  group: ProjectScopeGroup;
+  members: ProjectScopeCheckout[];
+  disabled: boolean;
+  reload(): void;
+  before?: ReactNode;
+  children?: ReactNode;
+}) {
+  const current = useMemo<NameRead>(() => ({ catalog, label: group.label,
+    expectedNames: Object.fromEntries(members.map((member) => [member.project_id, member.name])),
+  }), [catalog, group.label, members]);
+  const [form, setForm] = useState<NameForm>({ read: current, draft: current.label, dirty: false, rebase: false });
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  const putProject = useWorkspace((state) => state.putProject);
+  const pushToast = useUi((state) => state.pushToast);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => {
+    setForm((previous) => {
+      if (previous.read.catalog === current.catalog) return previous;
+      if (!previous.dirty) return { read: current, draft: current.label, dirty: false, rebase: false };
+      if (!previous.rebase) return previous;
+      return { ...previous, read: current, rebase: false };
+    });
+  }, [current]);
+  const busy = disabled || saving || form.rebase;
+  const save = async () => {
+    if (pending.current || busy || !form.dirty) return;
+    const name = form.draft.trim();
+    if (!name) { pushToast("Project title cannot be empty"); return; }
+    if (name === form.read.label || Object.values(form.read.expectedNames).every((value) => value === name)) {
+      setForm({ read: current, draft: current.label, dirty: false, rebase: false });
+      return;
+    }
+    pending.current = true;
+    setSaving(true);
+    let refresh = false;
+    try {
+      const projects = await api.renameSelectedProjects({ scope: query, membership_version: form.read.catalog.version,
+        expected_names: form.read.expectedNames, name });
+      if (mounted.current) {
+        for (const project of projects) putProject(project);
+        setForm((previous) => ({ read: { ...previous.read, label: name,
+          expectedNames: Object.fromEntries(projects.map((project) => [project.id, project.name])) },
+          draft: name, dirty: false, rebase: false }));
+        refresh = true;
+      }
+    } catch (error) {
+      if (mounted.current) {
+        const failure = toFailure(error);
+        pushToast(failure.message);
+        if (failure.status === 409) {
+          setForm((previous) => ({ ...previous, rebase: true }));
+          refresh = true;
+        }
+      }
+    } finally {
+      pending.current = false;
+      if (mounted.current) setSaving(false);
+    }
+    // A separate read may fail after a known commit; it is never a failed rename.
+    if (refresh && mounted.current) reload();
+  };
+  return <section className="setting-group" aria-label="Project">
+    <div className="setting-list">{before}<SettingRow title="Name">
+      <input aria-label="Project name" className="set-name-input" value={form.draft} disabled={busy} aria-busy={saving || undefined}
+        onChange={(event) => {
+          const draft = event.target.value;
+          setForm((previous) => draft === previous.read.label
+            ? { read: current, draft: current.label, dirty: false, rebase: false }
+            : { ...previous, draft, dirty: true });
+        }}
+        onBlur={() => { void save(); }}
+        onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing && !event.repeat) {
+          event.preventDefault(); event.currentTarget.blur();
+        } }} />
+    </SettingRow>{children}</div>
+  </section>;
+}
+
+type RemovalPlan = {
+  id: number;
+  members: ProjectScopeCheckout[];
+  counts: Record<string, number>;
+  removed: string[];
+  wholeGroup: boolean;
+  groupLabel: string;
+  groupKey: string;
+};
+
+/** Registered physical entries own removal; Git worktree inventories do not. */
+export function ProjectRemoval({ query, group, members, disabled, reload, clearSelection }: {
+  query: ProjectScopesQuery;
+  group: ProjectScopeGroup;
+  members: ProjectScopeCheckout[];
+  disabled: boolean;
+  reload(): void;
+  clearSelection(): void;
+}) {
+  const [plan, setPlan] = useState<RemovalPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const pending = useRef(false);
+  const deleting = useRef(false);
+  const sequence = useRef(0);
+  const mounted = useRef(true);
+  const countRequest = useRef<AbortController | null>(null);
+  const dropProject = useWorkspace((state) => state.dropProject);
+  const refreshManaged = useWorkspace((state) => state.refreshManaged);
+  const pushToast = useUi((state) => state.pushToast);
+  useLayoutEffect(() => { mounted.current = true; return () => {
+    mounted.current = false;
+    countRequest.current?.abort();
+  }; }, []);
+  const begin = async (targets: ProjectScopeCheckout[]) => {
+    if (disabled || pending.current || deleting.current || targets.length === 0) return;
+    pending.current = true;
+    setPlanning(true);
+    const abort = new AbortController();
+    countRequest.current = abort;
+    try {
+      const counts = await Promise.all(targets.map(async (member) => {
+        const lists = await Promise.all([listProjectThreads(member.project_id, false, abort.signal),
+          listProjectThreads(member.project_id, true, abort.signal)]);
+        return [member.project_id, new Set(lists.flat().map((thread) => thread.id)).size] as const;
+      }));
+      if (mounted.current) setPlan({ id: ++sequence.current, members: targets, counts: Object.fromEntries(counts), removed: [],
+        wholeGroup: targets.length === group.members.length && group.members.every((member) => targets.some((target) => target.project_id === member.project_id)),
+        groupLabel: group.label, groupKey: group.key });
+    } catch (error) {
+      if (mounted.current) pushToast(toFailure(error).message);
+    } finally {
+      pending.current = false;
+      if (mounted.current) setPlanning(false);
+    }
+  };
+  const remove = async () => {
+    if (!plan || disabled || deleting.current) return;
+    deleting.current = true;
+    try {
+      for (const member of plan.members.filter((entry) => !plan.removed.includes(entry.project_id))) {
+        try {
+          await api.removeProject(member.project_id, false);
+        } catch (error) {
+          const failure = toFailure(error);
+          throw new ApiFailure(failure.code, `Failed to remove "${member.name}": ${failure.message}`, failure.status);
+        }
+        dropProject(member.project_id);
+        if (mounted.current) setPlan((previous) => previous?.id === plan.id
+          ? { ...previous, removed: [...previous.removed, member.project_id] } : previous);
+      }
+      let clear = false;
+      if (plan.wholeGroup && mounted.current) {
+        try {
+          const catalog = await queryProjectScopes({ recipe: query.recipe });
+          clear = !catalog.groups.some((entry) => entry.key === plan.groupKey);
+        } catch {
+          // Entries are already removed. The independently owned scope read reports
+          // its own failure; it must not turn a known removal into a failed mutation.
+        }
+      }
+      if (mounted.current) {
+        setPlan(null);
+        if (clear) clearSelection();
+      }
+    } finally {
+      deleting.current = false;
+      if (mounted.current) {
+        reload();
+        void refreshManaged();
+      }
+    }
+  };
+  const hasOtherMembers = members.length < group.members.length;
+  const dangerTitle = hasOtherMembers ? "Remove checkout" : members.length > 1 ? "Remove this project everywhere" : "Remove project";
+  const dangerLabel = "Remove…";
+  const remaining = plan?.members.filter((member) => !plan.removed.includes(member.project_id)) ?? [];
+  const threadCount = remaining.reduce((count, member) => count + (plan?.counts[member.project_id] ?? 0), 0);
+    const targetLabel = remaining.length === 1 ? remaining[0]!.name : plan?.groupLabel;
+  const question = `Remove ${targetLabel}?`;
+  const folders = remaining.map((member) => member.path).filter((path): path is string => path !== null);
+  return <>
+    <SettingGroup title="Danger">
+      <SettingRow title={dangerTitle} description={hasOtherMembers
+        ? "Stops tracking this checkout in Orbyn. Files on disk stay."
+        : members.length > 1 ? `Stops tracking all ${members.length} checkouts in Orbyn. Files on disk stay.`
+        : "Stops tracking it in Orbyn. Files on disk stay."}>
+        <button type="button" className="set-red-link" disabled={disabled || planning} aria-busy={planning || undefined}
+          onClick={() => { void begin(members); }}>{dangerLabel}</button>
+      </SettingRow>
+    </SettingGroup>
+    {plan ? <ConfirmDialog title={question} confirmLabel={plan.wholeGroup ? "Remove project" : "Remove checkout"} tone="danger" cancelFocus keepOpen
+      confirmDisabled={disabled || remaining.length === 0} onClose={() => setPlan(null)} onConfirm={remove}>
+      <p>{plan.wholeGroup ? "Orbyn stops tracking this project. Files on disk are not touched."
+        : "Orbyn stops tracking this checkout. Files on disk are not touched. Other checkouts of this project are unaffected."}</p>
+      <ConfirmFacts facts={[
+        { label: folders.length === 1 ? "Folder" : "Folders", value: folders.length === 0 ? "Unknown" : <>{folders.map((folder) => <span key={folder} style={{ display: "block" }}>{folder}</span>)}</>, mono: true },
+        ...(threadCount > 0 ? [{ label: "Threads", value: `${threadCount} · stay in Archive` }] : []),
+      ]} />
+    </ConfirmDialog> : null}
+  </>;
+}
+
+/** Retain a read only within this mounted selection, with all writes disabled on read failure. */
+function ProjectSelection() {
+  const scope = useSettingsScope();
+  const lastCatalog = useRef<ProjectScopeCatalog | null>(null);
+  if (scope?.catalog) lastCatalog.current = scope.catalog;
+  const catalog = scope?.catalog ?? lastCatalog.current;
+  if (!scope) return null;
+  // ScopeSentence owns this shared read error and its Retry action.
+  if (!catalog) return scope.error ? null : <Loading label="Loading projects" />;
+  const selection = catalog.selection;
+  let group: ProjectScopeGroup | undefined;
+  let members: ProjectScopeCheckout[] = [];
+  if (selection.kind === "project_group" || selection.kind === "checkout") {
+    group = catalog.groups.find((entry) => entry.key === selection.group_key);
+    const ids = selection.kind === "checkout" ? [selection.project_id] : selection.project_ids;
+    members = group?.members.filter((member) => ids.includes(member.project_id)) ?? [];
+    if (members.length !== ids.length) group = undefined;
+  }
+  const unavailable = selection.kind === "unavailable" ||
+    ((selection.kind === "project_group" || selection.kind === "checkout") && !group);
+  const blocked = scope.loading || scope.error !== null || !scope.catalog || members.some((member) =>
+    member.unavailable !== null || (!member.metadata_complete && member.grouping_mode !== "separate"));
+  return <>
+    {unavailable ? <p className="setting-line-desc">{selection.kind === "unavailable" &&
+      (selection.reason === "checkout_missing" || selection.reason === "checkout_changed")
+        ? "This checkout is no longer available in the selected project and environment."
+        : "This project is no longer available."}</p> : !group ?
+      <><p className="setting-line-desc">Choose a project to manage its name, icon, checkouts and actions.</p>
+        <ProjectModelDefaults query={scope.query} disabled={blocked} />
+        <FallbackModel disabled={blocked} /></> : <>
+        <ProjectName query={scope.query} catalog={catalog} group={group} members={members} disabled={blocked} reload={scope.reload}
+          before={<ProjectIconSetting query={scope.query} catalog={catalog} members={members} projectName={group.label} disabled={blocked} loading={scope.loading} reload={scope.reload} />}>
+          <SettingRow title="Checkouts" description="Folders for this project">
+            <div className="set-checkouts">
+              {group.members.map((member) => <span key={member.physical_key} className="mono" title={member.path ?? undefined}>{member.path ?? member.name}</span>)}
+            </div>
+          </SettingRow>
+        </ProjectName>
+        <fieldset className="preference-control" disabled={blocked}>
+          <PreferenceGroups groups={[{ title: "", rows: [{ key: "default_project_scripts", title: "Actions", inheritance: true,
+            render: (value, _save, control) => <ProjectActions value={value} control={control} /> }] }]} />
+        </fieldset>
+        <ProjectModelDefaults query={scope.query} disabled={blocked} />
+        <FallbackModel disabled={blocked} />
+        <ProjectRemoval query={scope.query} group={group} members={members} disabled={blocked} reload={scope.reload}
+          clearSelection={() => scope.select(undefined)} />
+      </>}
+  </>;
+}
+
+export function ProjectsSection() {
+  const scope = useSettingsScope();
+  return <>
+    <div className="section-bar"><h1 className="sr-only" tabIndex={-1} data-page-title>Projects</h1></div>
+    <ProjectSelection key={JSON.stringify(scope?.query ?? {})} />
+  </>;
+}

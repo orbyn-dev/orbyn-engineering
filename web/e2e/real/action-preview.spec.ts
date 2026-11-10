@@ -36,7 +36,10 @@ for (const entry of ["terminal", "details"] as const) {
         await page.getByRole("button", { name: "Run a script", exact: true }).click();
         await page.getByRole("menuitem", { name: "Preview action", exact: true }).click();
       } else {
+        // The side panel no longer opens by itself at this width, so the Details card is opened first.
         const card = page.getByRole("complementary", { name: "Thread details" });
+        if (!(await card.isVisible())) await page.getByRole("button", { name: "Details", exact: true }).click();
+        await expect(card).toBeVisible();
         await card.getByRole("button", { name: /^Scripts/ }).click();
         await card.getByRole("button", { name: "Run Preview action", exact: true }).click();
       }

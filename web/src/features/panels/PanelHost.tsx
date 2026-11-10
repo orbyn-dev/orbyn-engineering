@@ -1,0 +1,522 @@
+import { CloudOff, Maximize2, Minimize2, MoreHorizontal, Plus, RefreshCw, X } from "lucide-react";
+import type { DragEvent, KeyboardEvent, ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { captureFocusReturn } from "../../ui/focusReturn";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Thread } from "../../api/types";
+import { useUi, type RightTab } from "../../product/state/ui";
+import { Button, IconButton } from "../../ui/controls";
+import { ActivityPanel } from "./activity/ActivityPanel";
+import { BrowserPanel } from "./browser/BrowserPanel";
+import { DiffPanel } from "./diff/DiffPanel";
+import { FilesPanel } from "./files/FilesPanel";
+import { ToolsTab } from "../tools";
+import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./strip/tabs";
+import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
+import { useConnectionKind } from "../../product/state/connection";
+import { Menu, type MenuItem } from "../../ui/Menu";
+import { Presence } from "../../ui/Presence";
+
+/** The strip's side padding (8 px each side), and the width of the "..." menu. */
+const STRIP_PAD = 16;
+const MORE_MENU_WIDTH = 190;
+/** The one line under "Waiting for the Orbyn service", by tab. The Browser is not here: it stays usable. */
+const WAITING_LINE: Partial<Record<RightTab, string>> = {
+  diff: "The diff comes back when the service does.",
+  files: "Files open again as soon as it is back.",
+  activity: "Activity shows again as soon as it is back.",
+  side: "Your side chats open again as soon as it is back. Nothing is lost.",
+  tools: "The tools list comes back when the service does.",
+};
+/** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
+const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
+
+interface PanelDrag {
+  panel: HTMLElement;
+  handle: HTMLElement;
+  pointerId: number;
+  right: number;
+  layoutKey: string;
+  startWidth: string;
+  /** The width this drag last wrote to the panel, or null before the first move. */
+  writtenWidth: string | null;
+  current: number;
+}
+
+/**
+ * The panel's left edge. Dragging it resizes the panel, snapping to 380, 520 or 720 px within 12 px
+ * and staying between 320 px and 60% of the window; a pill shows the width and faint ticks mark the
+ * snap points while it moves. Double click returns to 380 px. The width is saved when the drag ends.
+ */
+export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
+  const setWidth = useUi((state) => state.setPanelWidth);
+  const layoutKey = useUi((state) => state.layoutKey);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const drag = useRef<PanelDrag | null>(null);
+  // What the panel renders for a thread's width: the same rule as its style, so a restore never differs from a render.
+  const widthOf = (panelWidth: number | null) => {
+    const width = panelWidth ?? (drawer ? undefined : PANEL_DEFAULT);
+    return width === undefined ? "" : `${width}px`;
+  };
+  const widthOfRef = useRef(widthOf);
+  widthOfRef.current = widthOf;
+
+  /** Lets go of the pointer and clears the drag's marks on the panel. */
+  const release = (active: PanelDrag) => {
+    drag.current = null;
+    delete active.panel.dataset.resizing;
+    if (active.handle.hasPointerCapture?.(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
+  };
+
+  // A drag cut short by the handle unmounting or the thread changing must not keep selection,
+  // capture or a width that belongs to another thread's layout.
+  useEffect(() => () => {
+    const active = drag.current;
+    if (!active) return;
+    release(active);
+    setDragging(null);
+    const current = useUi.getState();
+    if (current.layoutKey !== active.layoutKey) {
+      active.panel.style.width = widthOfRef.current(current.panelWidth);
+    } else if (active.writtenWidth !== null && active.panel.style.width === active.writtenWidth) {
+      active.panel.style.width = active.startWidth;
+    }
+  }, [layoutKey]);
+
+  const stop = (pointerId: number) => {
+    const active = drag.current;
+    if (!active || active.pointerId !== pointerId) return;
+    release(active);
+    setDragging(null);
+    const current = useUi.getState();
+    if (current.layoutKey === active.layoutKey) setWidth(active.current);
+    else active.panel.style.width = widthOfRef.current(current.panelWidth);
+  };
+
+  return (
+    <>
+      <div
+        className="panel-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        title="Drag to resize"
+        onDoubleClick={() => setWidth(PANEL_DEFAULT)}
+        onPointerDown={(event) => {
+          if (event.button !== 0 || drag.current) return;
+          const panel = event.currentTarget.parentElement;
+          if (!panel) return;
+          // Without this the drag selects the text it passes over.
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const current = clampPanelWidth(panel.getBoundingClientRect().width, window.innerWidth);
+          panel.dataset.resizing = "";
+          drag.current = {
+            panel,
+            handle: event.currentTarget,
+            pointerId: event.pointerId,
+            right: panel.getBoundingClientRect().right,
+            layoutKey,
+            startWidth: panel.style.width,
+            writtenWidth: null,
+            current,
+          };
+          setDragging(current);
+        }}
+        onPointerMove={(event) => {
+          const active = drag.current;
+          if (!active || active.pointerId !== event.pointerId || useUi.getState().layoutKey !== active.layoutKey) return;
+          active.current = dragPanelWidth(active.right - event.clientX, window.innerWidth);
+          active.writtenWidth = `${active.current}px`;
+          active.panel.style.width = active.writtenWidth;
+          setDragging(active.current);
+        }}
+        onPointerUp={(event) => stop(event.pointerId)}
+        onPointerCancel={(event) => stop(event.pointerId)}
+        onLostPointerCapture={(event) => stop(event.pointerId)}
+      />
+      {dragging === null ? null : (
+        <>
+          {snapPoints(window.innerWidth)
+            .filter((point) => point !== dragging)
+            .map((point) => (
+              <span key={point} className="panel-tick" style={{ right: point }} aria-hidden>
+                <i>{point}</i>
+              </span>
+            ))}
+          <span className="panel-width" role="status">
+            {dragging} px
+          </span>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * How the panel sits in the window: "docked" beside the thread, "overlay" over its right side under
+ * the header (medium and small windows), or "sheet" in place of the thread (phone).
+ */
+export type PanelMode = "docked" | "overlay" | "sheet";
+
+const TAB_ID = "context-tab-";
+
+export function PanelHost({
+  thread,
+  mode,
+  closing,
+  moves,
+  maximized,
+  details = null,
+  sideChat = null,
+  onToggleMaximize,
+  onReturn,
+}: {
+  thread: Thread;
+  mode: PanelMode;
+  closing: boolean;
+  /** False while the panel is part of the page as it first appeared. */
+  moves: boolean;
+  maximized: boolean;
+  /** The thread's details card, which sits at the top of the panel above its tabs. */
+  details?: ReactNode;
+  /** The Side chat tab's content; the thread owns it, so it is handed in. */
+  sideChat?: ReactNode;
+  onToggleMaximize(): void;
+  onReturn(): void;
+}) {
+  const order = useUi((state) => state.panelTabOrder);
+  const closedTabs = useUi((state) => state.panelTabsClosed);
+  const rowIds = order.filter((id) => !closedTabs.includes(id));
+  // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row.
+  const chosen = useUi((state) => state.panelTab);
+  const tab: RightTab = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? "diff");
+  const toggle = useUi((state) => state.togglePanel);
+  const closeTab = useUi((state) => state.closePanelTab);
+  const reopenTab = useUi((state) => state.reopenPanelTab);
+  const moveTab = useUi((state) => state.movePanelTab);
+  const resetTabs = useUi((state) => state.resetPanelTabs);
+  const width = useUi((state) => state.panelWidth);
+  // A header row of its own, with Back to thread: the phone's sheet, and the reading layout's floating drawer.
+  const reading = useUi((state) => state.workspaceLayout === "reading");
+  const drawer = mode === "sheet" || (reading && mode === "docked");
+
+  const list = useRef<HTMLDivElement>(null);
+  const strip = useRef<HTMLElement>(null);
+  const kind = useConnectionKind();
+  // Every tab is a fixed slot. When they don't fit, the last ones fold into "..."; the open tab always shows.
+  const [slots, setSlots] = useState(Number.POSITIVE_INFINITY);
+  const [promoted, setPromoted] = useState<RightTab | null>(null);
+  const [plusMenu, setPlusMenu] = useState<{ x: number; y: number } | null>(null);
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState<RightTab | null>(null);
+  const [over, setOver] = useState<RightTab | null>(null);
+  const count = rowIds.length;
+  const latest = useRef({ count });
+  latest.current = { count };
+  const refit = useCallback(() => {
+    const head = strip.current;
+    if (!head) return;
+    // A strip with no width yet (not laid out, or hidden) folds nothing.
+    if (head.clientWidth === 0) return setSlots(Number.POSITIVE_INFINITY);
+    const end = head.querySelector<HTMLElement>(".ctx-end");
+    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0);
+    setSlots(tabSlots(room, latest.current.count));
+  }, []);
+  useLayoutEffect(() => {
+    const head = strip.current;
+    if (!head) return;
+    refit();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refit);
+    observer?.observe(head);
+    return () => observer?.disconnect();
+  }, [refit]);
+  useLayoutEffect(refit, [count, refit]);
+  // A hidden tab that became the open one by any route keeps the slot it took.
+  const { shown, hidden, holder } = visibleTabs(rowIds, tab, promoted, slots);
+  useLayoutEffect(() => {
+    if (holder !== promoted) setPromoted(holder);
+  }, [holder, promoted]);
+  const folded = hidden.length > 0;
+  const changed = tabsChanged(order, closedTabs);
+
+  const reset: MenuItem = { label: "Reset tab order", icon: <RefreshCw size={14} aria-hidden />, separatorBefore: true, onSelect: resetTabs };
+  // The "..." menu: the tabs that do not fit, by name. The one chosen takes the last visible slot.
+  const hiddenTabs: MenuItem[] = hidden.map((id) => {
+    const { label, icon: Icon } = tabOf(id);
+    return {
+      label,
+      icon: <Icon size={14} aria-hidden />,
+      onSelect: () => {
+        setPromoted(id);
+        toggle(id);
+        focusTab(id);
+      },
+    };
+  });
+  // The "+" lists the closed surfaces, and Reset tab order once the row has changed.
+  const closedItems: MenuItem[] = [
+    ...order
+      .filter((id) => closedTabs.includes(id))
+      .map((id) => {
+        const { label, icon: Icon } = tabOf(id);
+        return { label, icon: <Icon size={14} aria-hidden />, onSelect: () => reopenTab(id) };
+      }),
+    ...(closedTabs.length === 0 && !changed ? [{ label: "All tabs are open.", disabled: true }] : []),
+    ...(changed ? [{ ...reset, separatorBefore: closedTabs.length > 0 }] : []),
+  ];
+  const [said, setSaid] = useState("");
+  const plusButton = useRef<HTMLButtonElement>(null);
+  const focusTab = (id: RightTab) =>
+    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`#${TAB_ID}${id}`)?.focus());
+  /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
+  const closeWithFocus = (id: RightTab) => {
+    const at = rowIds.indexOf(id);
+    const neighbour = rowIds[at + 1] ?? rowIds[at - 1];
+    // A neighbour folded into "..." has no slot to hold focus: the tab that opens takes the last slot.
+    const hiddenNext = neighbour !== undefined && !shown.includes(neighbour);
+    const target =
+      (neighbour ? list.current?.querySelector<HTMLElement>(`#${TAB_ID}${neighbour}`) : null) ?? plusButton.current ?? list.current;
+    const back = captureFocusReturn(target);
+    flushSync(() => closeTab(id));
+    back.restore();
+    if (hiddenNext) requestAnimationFrame(() => list.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus());
+    setSaid("Tab closed");
+  };
+  // One Tab stop: the chosen tab. Arrows move between tabs, Delete closes one, Alt+Shift+Arrow moves it.
+  const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const at = shown.indexOf(tab);
+    const current = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as RightTab | undefined;
+    if (!current) return;
+    if (event.altKey && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      const neighbour = shown[shown.indexOf(current) + (event.key === "ArrowLeft" ? -1 : 1)];
+      if (!neighbour) return;
+      event.preventDefault();
+      moveTab(current, order.indexOf(neighbour));
+      setSaid("Tab moved");
+      focusTab(current);
+      return;
+    }
+    if ((event.key === "Delete" || event.key === "Backspace") && rowIds.length > 1) {
+      event.preventDefault();
+      closeWithFocus(current);
+      return;
+    }
+    const next =
+      event.key === "ArrowRight" ? (at + 1) % shown.length
+      : event.key === "ArrowLeft" ? (at - 1 + shown.length) % shown.length
+      : event.key === "Home" ? 0
+      : event.key === "End" ? shown.length - 1
+      : -1;
+    const target = shown[next];
+    if (!target) return;
+    event.preventDefault();
+    // The tab already open stays open: toggle would close the panel.
+    if (target === tab) return;
+    toggle(target);
+    focusTab(target);
+  };
+  const onDrop = (event: DragEvent<HTMLElement>, onto: RightTab) => {
+    event.preventDefault();
+    if (dragging && dragging !== onto) {
+      moveTab(dragging, order.indexOf(onto));
+      setSaid("Tab moved");
+    }
+    setDragging(null);
+    setOver(null);
+  };
+
+  return (
+    <aside
+      className="context"
+      aria-label="Thread context"
+      data-closing={closing || undefined}
+      data-moves={moves || undefined}
+      data-maximized={maximized || undefined}
+      data-mode={mode}
+      style={mode !== "sheet" && !maximized ? { width: width ?? (drawer ? undefined : PANEL_DEFAULT) } : undefined}
+    >
+      {mode === "sheet" || maximized ? null : <PanelResizer drawer={drawer} />}
+      {drawer ? (
+        <header className="drawer-head">
+          <Button small onClick={onReturn}>
+            Back to thread
+          </Button>
+          <span className="end">
+            {mode === "sheet" ? null : (
+              <IconButton label={maximized ? "Restore" : "Maximise panel"} onClick={onToggleMaximize}>
+                {maximized ? <Minimize2 size={16} aria-hidden /> : <Maximize2 size={16} aria-hidden />}
+              </IconButton>
+            )}
+            <IconButton label="Close side panel" onClick={onReturn}>
+              <X size={16} aria-hidden />
+            </IconButton>
+          </span>
+        </header>
+      ) : null}
+      {details}
+      <header ref={strip} className="ctx-strip">
+        <div ref={list} className="ctx-tabs" role="tablist" aria-label="Panel tabs" onKeyDown={onTabKey}>
+          {shown.map((id) => {
+            const { label, icon: Icon } = tabOf(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                className="ctx-slot"
+                id={`${TAB_ID}${id}`}
+                data-tab={id}
+                data-tip={label}
+                data-selected={tab === id || undefined}
+                data-dragging={dragging === id || undefined}
+                data-over={over === id && dragging !== id ? "" : undefined}
+                aria-label={label}
+                aria-selected={tab === id}
+                aria-controls={tab === id ? `context-${id}` : undefined}
+                tabIndex={tab === id ? 0 : -1}
+                draggable
+                onClick={() => {
+                  if (tab !== id) toggle(id);
+                }}
+                onDragStart={(event) => {
+                  setDragging(id);
+                  event.dataTransfer?.setData("text/plain", id);
+                }}
+                onDragEnd={() => {
+                  setDragging(null);
+                  setOver(null);
+                }}
+                onDragOver={(event) => {
+                  if (!dragging) return;
+                  event.preventDefault();
+                  setOver(id);
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver((current) => (current === id ? null : current));
+                }}
+                onDrop={(event) => onDrop(event, id)}
+              >
+                <Icon size={14} aria-hidden />
+              </button>
+            );
+          })}
+        </div>
+        {folded ? (
+          <button
+            type="button"
+            className="ctx-slot"
+            data-tip="More tabs"
+            aria-label="More tabs"
+            aria-haspopup="menu"
+            aria-expanded={moreMenu !== null}
+            data-open={moreMenu !== null || undefined}
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setMoreMenu(moreMenu ? null : { x: rect.right - MORE_MENU_WIDTH, y: rect.bottom + 4 });
+            }}
+          >
+            <MoreHorizontal size={14} aria-hidden />
+          </button>
+        ) : null}
+        <button
+          ref={plusButton}
+          type="button"
+          className="ctx-slot"
+          data-tip="Open a tab"
+          aria-label="Open a tab"
+          aria-haspopup="menu"
+          aria-expanded={plusMenu !== null}
+          data-open={plusMenu !== null || undefined}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setPlusMenu(plusMenu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
+          }}
+        >
+          <Plus size={14} aria-hidden />
+        </button>
+        <div className="ctx-end">
+          {drawer ? null : (
+            <>
+              <IconButton label={maximized ? "Restore" : "Maximise panel"} onClick={onToggleMaximize}>
+                {maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
+              </IconButton>
+              <IconButton label="Close side panel" onClick={onReturn}>
+                <X size={14} aria-hidden />
+              </IconButton>
+            </>
+          )}
+        </div>
+      </header>
+      <div className="ctx-title">
+        <b>{tabOf(tab).label}</b>
+        {rowIds.length > 1 ? (
+          <IconButton
+            label="Tab menu"
+            pressed={tabMenu !== null}
+            aria-haspopup="menu"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setTabMenu(tabMenu ? null : { x: rect.right - 160, y: rect.bottom + 4 });
+            }}
+          >
+            <MoreHorizontal size={14} aria-hidden />
+          </IconButton>
+        ) : null}
+      </div>
+      <Presence>
+        {plusMenu ? (
+          <Menu x={plusMenu.x} y={plusMenu.y} label="Open a tab" items={closedItems} onClose={() => setPlusMenu(null)} />
+        ) : null}
+      </Presence>
+      <Presence>
+        {moreMenu ? <Menu x={moreMenu.x} y={moreMenu.y} label="More tabs" items={hiddenTabs} onClose={() => setMoreMenu(null)} /> : null}
+      </Presence>
+      <Presence>
+        {tabMenu ? (
+          <Menu
+            x={tabMenu.x}
+            y={tabMenu.y}
+            label="Tab menu"
+            items={[{ label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) }]}
+            onClose={() => setTabMenu(null)}
+          />
+        ) : null}
+      </Presence>
+      <div className="context-body" data-connection={kind ?? undefined}>
+        {kind === "offline" && tab !== "browser" && NEEDS_NETWORK.includes(tab) ? (
+          <p className="conn-banner conn-panel-banner" role="status">
+            <CloudOff size={13} aria-hidden />
+            <span>You’re offline.</span>
+          </p>
+        ) : null}
+        {kind === "service-down" && tab !== "browser" ? (
+          <div className="conn-wait">
+            <b>Waiting for the Orbyn service</b>
+            {WAITING_LINE[tab] ? <span>{WAITING_LINE[tab]}</span> : null}
+          </div>
+        ) : (
+          <div id={`context-${tab}`} role="tabpanel" aria-labelledby={`${TAB_ID}${tab}`} className="tabpanel">
+            {tab === "browser" ? (
+              <BrowserPanel threadId={thread.id} />
+            ) : tab === "diff" ? (
+              <DiffPanel threadId={thread.id} />
+            ) : tab === "files" ? (
+              <FilesPanel threadId={thread.id} />
+            ) : tab === "activity" ? (
+              <ActivityPanel key={thread.id} threadId={thread.id} />
+            ) : tab === "tools" ? (
+              <ToolsTab key={thread.id} threadId={thread.id} engine={thread.engine} />
+            ) : (
+              sideChat
+            )}
+          </div>
+        )}
+      </div>
+      <span className="sr-only" role="status" aria-live="polite">
+        {said}
+      </span>
+    </aside>
+  );
+}

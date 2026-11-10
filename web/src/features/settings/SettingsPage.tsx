@@ -1,32 +1,31 @@
-import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./SettingsScopeContext";
-import { ScopeSentence } from "./ScopeSentence";
-import { SettingRowIds } from "../../ui/SettingRow";
+import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./rows/SettingsScopeContext";
+import { ScopeSentence } from "./rows/ScopeSentence";
+import { SettingRowIds } from "./rows/SettingRow";
 import { searchSettings, settingSearchId } from "./settingsSearch";
-import { api } from "../../api/client";
-import { onShellChange } from "../../api/shell";
+import { api } from "./api";
+import { onShellChange } from "./api";
 import { useAsync } from "../../lib/useAsync";
-import { navigate, useRoute } from "../../state/route";
+import { navigate, useRoute } from "../../product/state/route";
 import { Info, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { routeHref, type SettingsSection } from "../../state/route";
+import { routeHref, type SettingsSection } from "../../product/state/route";
 import { IconButton } from "../../ui/controls";
-import { AppearanceSection } from "./Appearance";
-import { KeybindingsSection } from "./Keybindings";
-import { MaintenanceSection } from "./Maintenance";
-import { ProjectsSection } from "./Projects";
-import { ProvidersSection } from "./Providers";
-import {
-  AboutSection,
-  ArchiveSection,
-  ChatSection,
-  DiffsSection,
-  GeneralSection,
-  LabsSection,
-  SourceControlSection,
-  WorktreesSection,
-} from "./PreferenceSections";
-import { ScheduledTasksSection } from "./ScheduledTasks";
-import { ThreadsSection } from "./Threads";
+import { AppearanceSection } from "./pages/Appearance";
+import { KeybindingsSection } from "./pages/Keybindings";
+import { MaintenanceSection } from "./maintenance/Maintenance";
+import { ProjectsSection } from "./projects/Projects";
+import { ProvidersSection } from "./providers/Providers";
+import { AboutSection } from "./sections/AboutSection";
+import { ArchiveSection } from "./sections/ArchiveSection";
+import { ChatSection } from "./sections/ChatSection";
+import { DiffsSection } from "./sections/DiffsSection";
+import { GeneralSection } from "./sections/GeneralSection";
+import { LabsSection } from "./sections/LabsSection";
+import { SourceControlSection } from "./sections/SourceControlSection";
+import { WorktreesSection } from "./sections/WorktreesSection";
+import { ScheduledTasksSection } from "./scheduled-tasks/ScheduledTasks";
+import { ThreadsSection } from "./pages/Threads";
+import { ToolsConnectorsSection } from "./tools-connectors/ToolsConnectors";
 import "./settingsDesign.css";
 
 export const labels: Record<SettingsSection, string> = {
@@ -36,6 +35,7 @@ export const labels: Record<SettingsSection, string> = {
   diffs: "Diffs & pull requests",
   keybindings: "Keybindings",
   providers: "Providers",
+  tools: "Tools and connectors",
   threads: "Threads",
   tasks: "Scheduled tasks",
   projects: "Projects",
@@ -50,7 +50,7 @@ export const labels: Record<SettingsSection, string> = {
 /** The reference product's order. Sections without a backend here stay out. */
 const groups: { label: string | null; sections: SettingsSection[] }[] = [
   { label: null, sections: ["general", "appearance", "chat", "diffs", "keybindings"] },
-  { label: "Agents", sections: ["providers", "threads", "tasks"] },
+  { label: "Agents", sections: ["providers", "tools", "threads", "tasks"] },
   { label: "Code", sections: ["projects", "source-control", "worktrees"] },
   { label: null, sections: ["maintenance", "labs", "about", "archive"] },
 ];
@@ -68,6 +68,7 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
   archive: ArchiveSection,
   keybindings: KeybindingsSection,
   providers: ProvidersSection,
+  tools: ToolsConnectorsSection,
   threads: ThreadsSection,
   projects: ProjectsSection,
   maintenance: MaintenanceSection,
@@ -84,7 +85,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
   const ref = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string } | null>(null);
-  const shell = useAsync("settings-search-shell", (signal) => api.shell(signal));
+  const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
   const current = section ?? "general";
   const View = views[current];
 

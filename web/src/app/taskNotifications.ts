@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { api } from "../api/client";
 import type { TaskRun } from "../api/types";
-import { navigate } from "../state/route";
-import { useUi } from "../state/ui";
+import { navigate } from "../product/state/route";
+import { useUi } from "../product/state/ui";
 
 const FIRST_POLL_MS = 5_000;
 const POLL_MS = 30_000;

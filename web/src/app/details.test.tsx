@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { api } from "../api/client";
-import { useWorkspace } from "../state/workspace";
-import { useUi } from "../state/ui";
+import { useWorkspace } from "../product/state/workspace";
+import { useUi } from "../product/state/ui";
 import { App } from "./App";
 
 beforeEach(() => {
@@ -68,7 +68,7 @@ describe("the Details button and the details card", () => {
     await user.click(await screen.findByRole("button", { name: "Show side panel" }, wait));
     const inside = panel()!;
     expect(inside).toContainElement(card());
-    const tabs = screen.getByRole("tablist", { name: "Context" });
+    const tabs = screen.getByRole("tablist", { name: "Panel tabs" });
     expect(card()!.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector(".details-popover")).toBeNull();
     // The same button hides and shows it there.
@@ -135,7 +135,7 @@ describe("the Details button and the details card", () => {
     expect(within(card()!).queryByRole("button", { name: /Copy folder path/ })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Thread menu" }));
     const menu = await screen.findByRole("menu", { name: "Thread menu" });
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Rename", "Copy folder path", "Archive", "Delete thread"]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Archive", "Delete thread"]);
     await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
     expect(await screen.findByRole("dialog", { name: /Delete “/ })).toBeInTheDocument();
   });

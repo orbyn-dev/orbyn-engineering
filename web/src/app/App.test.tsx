@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../mock/api";
 import { installMockFetch, setViewportWidth } from "../test-support";
-import { useUi } from "../state/ui";
+import { useUi } from "../product/state/ui";
 import { App } from "./App";
 
 let mock: MockApi;
@@ -27,12 +27,14 @@ describe("App against the mock API", () => {
     expect(within(nav).queryByRole("link", { name: /Approvals/ })).toBeNull();
   });
 
-  it("marks the whole title bar strip as the window drag region", async () => {
+  it("covers the whole title bar strip with the window drag layer, handled by our own code", async () => {
     const { container } = render(<App />);
     await screen.findByRole("navigation", { name: "Workspace" });
     const bar = container.querySelector(".titlebar");
-    expect(bar).toHaveAttribute("data-tauri-drag-region");
-    expect(bar?.querySelector(".titlebar-drag")).toHaveAttribute("data-tauri-drag-region");
+    expect(bar?.querySelector(".titlebar-drag")).toBeInTheDocument();
+    // Tauri's own script would count clicks across different spots as a double click and zoom the window.
+    expect(bar?.querySelector("[data-tauri-drag-region]")).toBeNull();
+    expect(bar).not.toHaveAttribute("data-tauri-drag-region");
   });
 
   it("heads a thread with Terminal then Show side panel, each pressed while its panel is open", async () => {
@@ -53,7 +55,7 @@ describe("App against the mock API", () => {
     await user.click(side);
     expect(useUi.getState().panelOpen).toBe(true);
     expect(side).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByRole("tablist", { name: "Context" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tablist", { name: "Panel tabs" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
   });
 
   it("creates the thread on first send from the draft", async () => {
@@ -71,7 +73,7 @@ describe("App against the mock API", () => {
     const picker = await screen.findByRole("dialog", { name: "Choose a model" });
     expect(within(picker).getByRole("button", { name: /Aider \(terminal\) \(Unmanaged\)/ })).toBeInTheDocument();
     expect(within(picker).queryByRole("button", { name: /Cursor Agent/ })).toBeNull();
-    await user.click(within(picker).getByRole("option", { name: /Claude Opus/ }));
+    await user.click(within(picker).getAllByRole("option", { name: /Claude Opus/ })[0]!);
     expect(await screen.findByRole("button", { name: "Claude Opus" })).toBeInTheDocument();
   });
 
@@ -105,6 +107,18 @@ describe("App against the mock API", () => {
     expect(await screen.findByRole("button", { name: /^Working/ })).toHaveAttribute("aria-expanded", "true");
     await user.click(settled);
     expect(settled).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it.each([true, false])("keeps the Working shelf above the project list (folders %s)", async (folders) => {
+    useUi.setState({ projectFolders: folders });
+    const running = mock.threads.find((thread) => thread.active_run)!;
+    running.active_run = { ...running.active_run!, state: "running" };
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const shelf = await within(nav).findByRole("button", { name: /^Working/ });
+    const other = mock.threads.find((thread) => thread.id !== running.id && !thread.active_run)!;
+    const row = await within(nav).findByText(other.title);
+    expect(shelf.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("searches threads from the sidebar", async () => {
@@ -187,6 +201,20 @@ describe("App against the mock API", () => {
       expect(within(dialog).getByText("Faster thread loading")).toBeInTheDocument();
       await user.click(within(dialog).getAllByRole("button", { name: "What’s new" })[1]!);
       expect(within(dialog).getByText(/\d+ new changes?/)).toBeInTheDocument();
+    });
+
+    it("marks the pill with the 16 px mark and gives only the app row a 28 px tile", async () => {
+      idle();
+      const user = userEvent.setup();
+      render(<App />);
+      const pill = await screen.findByRole("button", { name: "Updates available · 3" });
+      expect(pill.querySelector("svg.logo")).toHaveAttribute("data-logo", "16");
+      await user.click(pill);
+      const dialog = await screen.findByRole("dialog", { name: "Update everything" });
+      const rows = within(dialog).getAllByRole("listitem");
+      expect(rows[0]?.querySelector(".logo-tile")).toHaveAttribute("data-size", "28");
+      expect(rows[0]).toHaveTextContent("Orbyn Engineering");
+      expect(dialog.querySelectorAll(".logo-tile")).toHaveLength(1);
     });
 
     it("keeps the Skills library row, saying it is up to date, when nothing newer exists", async () => {
@@ -531,6 +559,8 @@ describe("App against the mock API", () => {
   });
 
   it("shows the thread details with real data only", async () => {
+    // The card sits at the top of the side panel, which is open because it was asked for.
+    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     window.matchMedia = ((query: string) => ({
       matches: query.includes("min-width"),
@@ -588,6 +618,27 @@ describe("App against the mock API", () => {
     await waitFor(() => expect(mock.threads.find((t) => t.id === "t-done")?.lifecycle?.settled_at).not.toBeNull());
   });
 
+  it("opens the row's context menu on a long touch press, and not on a short tap or a drag", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const row = (await within(nav).findByText("Explain how the event log resumes")).closest("a") as HTMLElement;
+    const touch = (type: string, over: Record<string, number> = {}) =>
+      fireEvent(row, Object.assign(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 40, clientY: 60, ...over }), { pointerType: "touch" }));
+    // A short tap opens nothing.
+    touch("pointerdown");
+    touch("pointerup");
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(screen.queryByRole("menu")).toBeNull();
+    // (A press that moves is covered by longPress.test.ts, with fake timers.)
+    // A long press holds still and opens the menu with the same actions as the strip.
+    touch("pointerdown");
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Settle thread" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Snooze" })).toBeInTheDocument();
+    touch("pointerup");
+  });
+
   it("shows a hover card for a row after the delay", async () => {
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "Workspace" });
@@ -600,13 +651,50 @@ describe("App against the mock API", () => {
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   });
 
-  it("opens the panel on its first tab, with the plus drawn, when the window is wide enough to open it itself", async () => {
-    setViewportWidth(1700);
+  it("closes the hover card on a right-click and does not bring it back over the menu", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Workspace" });
+    const row = (await within(nav).findByText("Explain how the event log resumes")).closest("a") as HTMLElement;
+    fireEvent.pointerEnter(row, { pointerType: "mouse" });
+    await screen.findByRole("tooltip");
+    fireEvent.contextMenu(row);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    // The right-click focuses the row afterwards; that must not start the card again.
+    row.focus();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it.each([1100, 1700, 2400])("does not open the panel by itself when a thread opens at %i px", async (width) => {
+    setViewportWidth(width);
+    useUi.setState({ panelOpen: false });
     go("#/threads/t-done");
     render(<App />);
-    const row = await screen.findByRole("tablist", { name: "Context" });
+    await screen.findByRole("button", { name: "Show side panel" });
+    expect(screen.queryByRole("tablist", { name: "Panel tabs" })).toBeNull();
+    expect(useUi.getState().panelOpen).toBe(false);
+  });
+
+  it("shows the chat, not the panel, on a phone-width window when the panel was opened on a wide one", async () => {
+    setViewportWidth(1700);
+    useUi.setState({ panelOpen: true });
+    setViewportWidth(420);
+    go("#/threads/t-done");
+    const { container } = render(<App />);
+    await waitFor(() => expect(container.querySelector(".thread-main")).not.toBeNull());
+    await waitFor(() => expect(useUi.getState().desktopPanelOpen).toBe(true));
+    expect(container.querySelector(".thread-main")).not.toHaveAttribute("hidden");
+    expect(useUi.getState().panelOpen).toBe(false);
+  });
+
+  it("keeps the panel open from one thread to the next once it was opened, at any width", async () => {
+    setViewportWidth(1700);
+    useUi.setState({ panelOpen: true, panelTab: "diff" });
+    go("#/threads/t-done");
+    render(<App />);
+    const row = await screen.findByRole("tablist", { name: "Panel tabs" });
     expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByLabelText("Open a surface")).toBeNull();
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });
 

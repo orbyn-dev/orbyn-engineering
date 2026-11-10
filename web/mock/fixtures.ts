@@ -2,6 +2,9 @@
 import type {
   Approval,
   EngineStatus,
+  EngineTools,
+  ToolEntry,
+  ToolState,
   EngineUsage,
   FileDiff,
   Project,
@@ -1137,3 +1140,42 @@ export const skills = [
   { name: "social-preview", category: "Social content and visuals", description: "Prepare previews for an announcement.", enabled: true },
   { name: "orbyn-upstream-review", category: "Engineering practice", description: "Inspect changes in upstream references.", enabled: true },
 ];
+
+/** What an engine reports as available, as the service sends it: Claude after a run, Codex when asked. */
+export function engineTools(engine: string): EngineTools {
+  const entry = (name: string, state: ToolState, extra: Partial<ToolEntry> = {}): ToolEntry => ({ name, state, ...extra });
+  if (engine.startsWith("codex")) {
+    return {
+      engine, source: "check", checked_at: "2026-11-08T14:02:00Z", reported: true, incomplete: false,
+      not_reported: ["builtin"],
+      groups: [
+        { id: "orbyn", count: 5, items: [] },
+        { id: "mcp", count: 1, items: [entry("filesystem", "ready", { tools: 14, description: "Read files in the project" })] },
+        { id: "connectors", count: 3, items: [
+          entry("GitHub", "ready", { description: "Repositories, issues and pull requests", source: "Codex app" }),
+          entry("Gmail", "needs_sign_in", { description: "Search and read mail", source: "Codex app", sign_in_url: "https://chatgpt.com/apps/gmail" }),
+          entry("Google Calendar", "starting", { description: "Read your calendar", source: "Codex app" }),
+        ] },
+        { id: "plugins", count: 1, items: [entry("orbyn-skills", "ready", { description: "3 commands" })] },
+        { id: "skills", count: 39, items: [] },
+      ],
+    };
+  }
+  return {
+    engine, source: "check+run", checked_at: "2026-11-08T14:02:00Z", reported: true, incomplete: false, not_reported: [],
+    groups: [
+      { id: "builtin", count: 3, items: ["Bash", "Read", "Edit"].map((name) => entry(name, "ready")) },
+      { id: "orbyn", count: 5, items: [] },
+      { id: "mcp", count: 2, items: [
+        entry("github", "ready", { tools: 26, description: "Repos, issues and pull requests" }),
+        entry("postgres-dev", "failed", { description: "Read-only queries on the dev database", reason: "Couldn’t start. Command not found.", detail: "Command not found: pg-mcp" }),
+      ] },
+      { id: "connectors", count: 2, items: [
+        entry("Vercel", "ready", { description: "Deployments and logs", source: "claude.ai connector" }),
+        entry("Google Drive", "needs_sign_in", { description: "Search and read your Drive files", source: "claude.ai connector", sign_in_url: "https://claude.ai/settings/connectors" }),
+      ] },
+      { id: "plugins", count: 1, items: [entry("orbyn-skills", "ready", { description: "3 commands · 2 agents" })] },
+      { id: "skills", count: 39, items: [] },
+    ],
+  };
+}

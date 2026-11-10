@@ -14,7 +14,7 @@ let service: Service;
 let projectId = "";
 
 const box = (page: Page) => page.getByRole("textbox", { name: /^Message/ }).first();
-const pane = (page: Page) => page.locator("[data-side-chat]");
+const sideChat = (page: Page) => page.locator("[data-side-chat]");
 const sideOf = async (id: string) =>
   (await service.api<Listed[]>("GET", `/api/threads?project_id=${projectId}`)).filter((thread) => thread.lifecycle.parent_thread_id === id && thread.lifecycle.relation === "side");
 
@@ -37,13 +37,13 @@ test("/side asks in a tab while the row list stays as it was, and it can be foun
   await box(page).fill("/side what did it find?");
   await box(page).press("Enter");
   await expect(page.getByRole("tab", { name: "Side chat" })).toBeVisible();
-  await expect(pane(page).getByText("what did it find?")).toBeVisible();
+  await expect(sideChat(page).getByText("what did it find?")).toBeVisible();
   const [side] = await sideOf(id);
   expect(side).toBeTruthy();
   await settled(service, side?.id ?? "");
   await expect(page.locator(`li[data-thread-item="${side?.id}"]`)).toHaveCount(0);
   await page.reload();
-  await expect(pane(page)).toBeVisible();
+  await expect(sideChat(page)).toBeVisible();
   await page.getByRole("button", { name: "Close Side chat", exact: true }).click();
   await expect(page.getByText("No side chat open")).toBeVisible();
   await expect((await sideOf(id)).length).toBe(1);
@@ -52,8 +52,8 @@ test("/side asks in a tab while the row list stays as it was, and it can be foun
   await expect(page.getByRole("group", { name: "Side chats" }).getByRole("button", { name: kept?.title?.trim() || "Side chat 1", exact: true })).toBeVisible();
   // Side chats are listed in the Side chat tab itself, not in the details card.
   await page.getByRole("group", { name: "Side chats" }).getByRole("button", { name: kept?.title?.trim() || "Side chat 1", exact: true }).click();
-  await expect(pane(page).getByText("what did it find?")).toBeVisible();
-  await pane(page).getByRole("button", { name: "Delete" }).click();
+  await expect(sideChat(page).getByText("what did it find?")).toBeVisible();
+  await sideChat(page).getByRole("button", { name: "Delete" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect.poll(async () => (await sideOf(id)).length).toBe(0);
 });
@@ -63,9 +63,9 @@ test("a side chat opens from the launcher while the thread works, and an unused 
   await expect(page.getByRole("button", { name: "Stop" })).toBeVisible({ timeout: 15_000 });
   await openPanelTab(page, "Side chat");
   await page.getByRole("button", { name: "Start a side chat" }).click();
-  await expect(pane(page)).toBeVisible();
+  await expect(sideChat(page)).toBeVisible();
   await expect.poll(async () => (await sideOf(id)).length).toBe(1);
-  await expect(pane(page).getByRole("button", { name: "Bring back" })).toBeDisabled();
+  await expect(sideChat(page).getByRole("button", { name: "Bring back" })).toBeDisabled();
   await page.getByRole("button", { name: "Close Side chat", exact: true }).click();
   await expect.poll(async () => (await sideOf(id)).length).toBe(0);
   await page.getByRole("button", { name: "Stop" }).click();
@@ -77,7 +77,7 @@ test("Bring back waits for an idle thread and reports what it did", async ({ pag
   await settled(service, id);
   await box(page).fill("/btw a note");
   await box(page).press("Enter");
-  const button = pane(page).getByRole("button", { name: "Bring back" });
+  const button = sideChat(page).getByRole("button", { name: "Bring back" });
   await expect(button).toBeEnabled({ timeout: 15_000 });
   await button.click();
   await expect(page.getByText("The thread gets this with your next message")).toBeVisible();

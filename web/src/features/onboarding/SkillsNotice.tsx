@@ -1,5 +1,5 @@
-import { routeHref } from "../../state/route";
-import { useWorkspace } from "../../state/workspace";
+import { routeHref } from "../../product/state/route";
+import { useWorkspace } from "../../product/state/workspace";
 
 /** Only when skills truly can't be used; getting them ready is the service's job and stays out of sight. */
 export function SkillsNotice() {

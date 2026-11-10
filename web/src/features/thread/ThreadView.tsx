@@ -9,39 +9,41 @@ import {
   ShieldAlert,
   Target,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
-import { runHandlers, useCommand } from "../../app/shortcuts";
+import { runHandlers, useCommand } from "../../product/shell/shortcuts";
 import type { Project, RunState, Thread } from "../../api/types";
-import { relativeTime, runStateLabels } from "../../lib/format";
-import { useLingering, usePanelMotion, useSettledAfter } from "../../lib/panelAnimations";
+import { relativeTime } from "../../lib/format";
+import { runStateLabels } from "../../product/runs/stateLabels";
+import { useLingering, useSettledAfter } from "../../lib/lingering";
+import { usePanelMotion } from "../../product/panels/panelAnimations";
 import { isWide, panelOverlays, useLayoutWidth } from "../../lib/useLayout";
 import { useEscapeClose } from "../../ui/useEscapeClose";
 import { usePopover } from "../../ui/usePopover";
-import { useSidebarDrawer } from "../../app/sidebarDrawer";
-import { markReachable, markUnreachable, useConnectionKind } from "../../state/connection";
-import { routeHref } from "../../state/route";
-import { useThreadLogs, useThreadStream } from "./threadLogs";
+import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
+import { markReachable, markUnreachable, useConnectionKind } from "../../product/state/connection";
+import { routeHref } from "../../product/state/route";
+import { useThreadLogs, useThreadStream } from "../../product/state/threadLogs";
 import { BranchShortcut, GitActions } from "./GitControl";
 import { LedgerPin } from "./LedgerPin";
-import { useUi } from "../../state/ui";
-import { engineById, useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
-import { Empty, ErrorState, Loading, NarrowBack } from "../../ui/states";
-import { SurfacePane } from "../panels/SurfacePane";
-import { TerminalBar, TerminalDrawerBody } from "../panels/TerminalDrawerBody";
-import { threadRunState } from "../workspace/RunState";
+import { Empty, ErrorState, Loading, NarrowBack } from "../../product/ui/states";
+import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
+import { threadRunState } from "../workspace";
 import { RelatedThreads } from "./RelatedThreads";
-import { Composer } from "./Composer";
+import { Composer } from "./composer/Composer";
 import { DetailsCard } from "./DetailsCard";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
-import { runningTools } from "./timeline";
+import { runningTools } from "../../product/timeline/timeline";
 import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
+import { SideChatPanel } from "./SideChatPanel";
 import { SubagentBar } from "./SubagentBar";
 import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
@@ -67,18 +69,18 @@ function TopBar({
   project,
   detailsShown,
   detailsPopup,
-  paneShown,
+  panelShown,
   onToggleDetails,
-  onTogglePane,
+  onTogglePanel,
 }: {
   thread: Thread;
   project: Project | null;
   detailsShown: boolean;
   /** The card opens as a popover under the button. */
   detailsPopup: boolean;
-  paneShown: boolean;
+  panelShown: boolean;
   onToggleDetails(): void;
-  onTogglePane(): void;
+  onTogglePanel(): void;
 }) {
   const layout = useLayoutWidth();
   const terminalOpen = useUi((state) => state.terminalOpen);
@@ -127,7 +129,7 @@ function TopBar({
           <SquareTerminal size={16} aria-hidden />
         </IconButton>
         {narrow ? null : (
-          <IconButton label="Show side panel" data-panel-toggle pressed={paneShown} onClick={onTogglePane}>
+          <IconButton label="Show side panel" data-panel-toggle pressed={panelShown} onClick={onTogglePanel}>
             <PanelRight size={16} aria-hidden />
           </IconButton>
         )}
@@ -412,7 +414,13 @@ export function ThreadView({ id }: { id: string }) {
     thread.last_run_state === null;
   const { mover, anchor, recordStart } = useComposerDock(hero, motion.enabled, motion.durationMs);
 
-  const panelOpen = panelPref ?? layout === "xwide";
+  // Open only when asked or triggered; a wider window gives the panel more room, not an opening.
+  // A phone-width window shows the panel instead of the chat, so it does not take the
+  // remembered choice and does not save its own; the choice returns with the width.
+  useLayoutEffect(() => {
+    useUi.getState().setPanelNarrow(phone);
+  }, [phone]);
+  const panelOpen = panelPref;
   // Over the thread, Escape closes the panel and focus goes back to the header button.
   useEscapeClose(panelOpen && overlays && !maximized, () => setPanelOpen(false), () =>
     document.querySelector<HTMLElement>("[data-panel-toggle]"),
@@ -426,8 +434,8 @@ export function ThreadView({ id }: { id: string }) {
     if (panelOpen && layout === "small") useSidebarDrawer.getState().close();
   }, [panelOpen, layout]);
   const panelPresent = useLingering(panelOpen, motion.exitMs);
-  // A pane that is already open when the thread appears stays still; later opens and closes slide.
-  const paneMoves = useSettledAfter(thread ? id : null);
+  // A panel that is already open when the thread appears stays still; later opens and closes slide.
+  const panelMoves = useSettledAfter(thread ? id : null);
 
   if (!thread) {
     if (missing) {
@@ -486,9 +494,9 @@ export function ThreadView({ id }: { id: string }) {
           project={project}
           detailsShown={detailsShown}
           detailsPopup={!rail && !inPanel}
-          paneShown={panelOpen && !phone}
+          panelShown={panelOpen && !phone}
           onToggleDetails={toggleDetails}
-          onTogglePane={() => setPanelOpen(!panelOpen)}
+          onTogglePanel={() => setPanelOpen(!panelOpen)}
         />
         {finding ? <ThreadFind threadId={id} onClose={() => setFinding(false)} /> : null}
         <div className="thread-stage" hidden={terminalTakesOver} data-hero={hero || undefined} data-connection={connection ?? undefined}>
@@ -543,7 +551,7 @@ export function ThreadView({ id }: { id: string }) {
             </div>
           </div>
         </div>
-        <TerminalDrawer threadId={id} open={terminalOpen} moves={paneMoves} onClose={() => togglePanel("terminal")} />
+        <TerminalDrawer threadId={id} open={terminalOpen} moves={panelMoves} onClose={() => togglePanel("terminal")} />
         {terminalOpen ? null : <TerminalBar threadId={id} onOpen={() => togglePanel("terminal")} />}
         {rail && detailsShown ? <DetailsCard thread={thread} /> : null}
         {!rail && !inPanel && detailsPopover ? (
@@ -551,13 +559,14 @@ export function ThreadView({ id }: { id: string }) {
         ) : null}
       </section>
       {panelPresent ? (
-        <SurfacePane
+        <PanelHost
           thread={thread}
           mode={phone ? "sheet" : overlays ? "overlay" : "docked"}
           closing={!panelOpen}
-          moves={paneMoves}
+          moves={panelMoves}
           maximized={maximized}
           details={inPanel && detailsPref ? <DetailsCard thread={thread} /> : null}
+          sideChat={<SideChatPanel parent={thread} />}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {
             setMaximized(false);

@@ -1,0 +1,241 @@
+import { TriangleAlert, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { offerCompact } from "./compactOffer";
+import type { ThreadItem } from "../../../product/timeline/types";
+import { api } from "../api";
+import type { EngineLimits, EngineStatus, JsonValue } from "../../../api/types";
+import { relativeTime } from "../../../lib/format";
+import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { useWorkspace } from "../../../product/state/workspace";
+import { Button, IconButton } from "../../../ui/controls";
+import type { StashedPrompt } from "../../../product/state/ui";
+
+export const usageShare = (usage: JsonValue | null | undefined): { used: number; window: number } | null => {
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  const used = usage.total_tokens;
+  const window = usage.context_window;
+  return typeof used === "number" && typeof window === "number" && window > 0 ? { used, window } : null;
+};
+
+const compactCount = (value: number) => (value >= 1000 ? `${Math.round(value / 100) / 10}k` : String(value));
+
+/** How full the context window is, as the engine last reported it. */
+/** The ring alone reads as a spinner when little is used, so the number sits beside it. */
+export const percentLabel = (value: number) =>
+  value < 10 ? `${value.toFixed(1).replace(/\.0$/, "")}%` : `${Math.round(value)}%`;
+
+export function ContextMeter({ threadId, disabled }: { threadId: string; disabled: boolean }) {
+  const usage = useThreadLogs((state) => state.logs[threadId]?.usage);
+  const share = usageShare(usage);
+  const commands = useAsync(`meter-commands:${threadId}`, (signal) => api.commands(threadId, signal));
+  const [error, setError] = useState<string | null>(null);
+  if (!share) return null;
+  const percent = Math.min((share.used / share.window) * 100, 100);
+  const shown = percentLabel(percent);
+  const label = `Context ${shown} used, ${compactCount(share.used)} of ${compactCount(share.window)} tokens`;
+  const ring = (
+    <>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+        <circle cx="12" cy="12" r="9.75" pathLength="100" />
+        <circle cx="12" cy="12" r="9.75" pathLength="100" strokeDasharray={`${percent} 100`} />
+      </svg>
+      <span aria-hidden>{shown}</span>
+    </>
+  );
+  if (!commands.data?.some((command) => command.name === "compact")) {
+    return (
+      <span className="context-meter" role="img" aria-label={label} title={label}>
+        {ring}
+      </span>
+    );
+  }
+  const compact = () => {
+    setError(null);
+    api.startRun(threadId, "/compact").then(
+      () => void useWorkspace.getState().refreshThread(threadId),
+      (failure: unknown) => setError(`Couldn't compact. ${toFailure(failure).message}`),
+    );
+  };
+  const action = error ?? `${label}. Compact the conversation`;
+  return (
+    <button type="button" className="context-meter" aria-label={action} title={action} disabled={disabled} onClick={compact}>
+      {ring}
+    </button>
+  );
+}
+
+/**
+ * Offered when someone comes back to a Claude thread after its prompt cache
+ * expired: compacting first makes the next turn cheaper. It waits for the
+ * compact command to be available and goes away for this visit when dismissed.
+ */
+export function CompactOffer({
+  threadId,
+  engine,
+  active,
+  items,
+}: {
+  threadId: string;
+  engine: string;
+  active: boolean;
+  items: readonly Pick<ThreadItem, "ts">[];
+}) {
+  const [arrivedAt] = useState(() => Date.now());
+  const [dismissed, setDismissed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Codex streams its usage into the log; Claude's is kept on the thread, so it is read once a turn.
+  const logged = useThreadLogs((state) => state.logs[threadId]?.usage);
+  const lastTs = items.at(-1)?.ts ?? "";
+  const kept = useAsync(`compact-usage:${threadId}:${lastTs}`, (signal) => api.threadUsage(threadId, signal));
+  const usage = logged ?? kept.data ?? null;
+  const commands = useAsync(`compact-commands:${threadId}`, (signal) => api.commands(threadId, signal));
+  if (dismissed || !offerCompact({ engine, activeRun: active, items, arrivedAt, usage })) return null;
+  // The lifetime decides the window, so nothing is offered before the kept report has been read.
+  if (!logged && kept.status === "loading") return null;
+  if (!commands.data?.some((command) => command.name === "compact")) return null;
+  const compact = () => {
+    setBusy(true);
+    setError(null);
+    api.startRun(threadId, "/compact").then(
+      () => {
+        setDismissed(true);
+        void useWorkspace.getState().refreshThread(threadId);
+      },
+      (failure: unknown) => {
+        setError(`Couldn't compact. ${toFailure(failure).message}`);
+        setBusy(false);
+      },
+    );
+  };
+  return (
+    <p className="compact-offer" role="status">
+      <span>{error ?? "This thread's prompt cache has expired. Compact it before the next turn?"}</span>
+      <Button small disabled={busy} onClick={compact}>
+        Compact
+      </Button>
+      <IconButton label="Dismiss compact offer" onClick={() => setDismissed(true)}>
+        <X size={14} aria-hidden />
+      </IconButton>
+    </p>
+  );
+}
+
+/** How long a run gets to answer Stop before Force stop is offered. */
+export const FORCE_STOP_AFTER_MS = 3000;
+
+/** A Stop the engine has not finished, and the way out once it stops answering. */
+export function StopNotice({ threadId, runId }: { threadId: string; runId: string }) {
+  const [late, setLate] = useState(false);
+  const [forcing, setForcing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const timer = setTimeout(() => setLate(true), FORCE_STOP_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [runId]);
+  if (!late) return null;
+  const force = () => {
+    setForcing(true);
+    setError(null);
+    api.forceStop(threadId).then(
+      () => void useWorkspace.getState().refreshThread(threadId),
+      (failure: unknown) => {
+        setError(`Couldn't force stop. ${toFailure(failure).message}`);
+        setForcing(false);
+      },
+    );
+  };
+  return (
+    <p className="composer-banner" role="status">
+      <TriangleAlert size={14} aria-hidden />
+      <span>{error ?? "Agent not responding to Stop. Force stop kills its processes."}</span>
+      <Button small tone="quiet" disabled={forcing} onClick={force}>
+        {forcing ? "Force stopping..." : "Force stop"}
+      </Button>
+    </p>
+  );
+}
+
+/** Says why the selected engine can't run, where the person is about to send. */
+export function ComposerBanners({ engine }: { engine: EngineStatus | null }) {
+  if (!engine) return null;
+  const problem = !engine.installed
+    ? `${engine.name} isn't installed on this machine.`
+    : engine.problem
+      ? `${engine.name}: ${engine.problem}`
+      : engine.auth === "logged_out"
+        ? `${engine.name} is signed out. Sign in from its own terminal.`
+        : engine.updating
+          ? `${engine.name} is updating. Wait for the update to finish.`
+          : null;
+  if (!problem) return null;
+  return (
+    <p className="composer-banner" role="status">
+      <TriangleAlert size={14} aria-hidden />
+      {problem}
+    </p>
+  );
+}
+
+const windowsOf = (report: EngineLimits | null): EngineLimits["windows"] => report?.windows ?? [];
+
+/** The `/usage-limits` result, above the composer until dismissed. */
+export function InlineLimits({ threadId, onClose }: { threadId: string; onClose(): void }) {
+  const limits = useAsync(`thread-limits:${threadId}`, (signal) => api.threadLimits(threadId, signal));
+  const windows = windowsOf(limits.data);
+  return (
+    <section className="composer-panel" aria-label="Usage limits">
+      <header>
+        <strong>Usage limits</strong>
+        <IconButton label="Close usage limits" onClick={onClose}>
+          <X size={14} aria-hidden />
+        </IconButton>
+      </header>
+      {limits.status === "loading" ? <p>Checking limits...</p> : null}
+      {limits.status === "error" ? <p>Couldn't read limits. {limits.error.message}</p> : null}
+      {limits.status === "ready" && windows.length === 0 ? <p>No limits reported.</p> : null}
+      {windows.map((window, at) => (
+        <p key={at}>
+          {window.label}: {Math.round(window.used_percent)}% used
+          {window.resets_at ? `, resets ${relativeTime(window.resets_at).toLowerCase()}` : ""}
+        </p>
+      ))}
+    </section>
+  );
+}
+
+export function StashDrawer({
+  entries,
+  onRestore,
+  onDelete,
+  onClose,
+}: {
+  entries: readonly StashedPrompt[];
+  onRestore(id: string): void;
+  onDelete(id: string): void;
+  onClose(): void;
+}) {
+  return (
+    <section className="composer-panel" aria-label="Stashed prompts">
+      <header>
+        <strong>Stashed prompts</strong>
+        <IconButton label="Close stash" onClick={onClose}>
+          <X size={14} aria-hidden />
+        </IconButton>
+      </header>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <button type="button" className="stash-restore" onClick={() => onRestore(entry.id)}>
+              {entry.text}
+            </button>
+            <IconButton label="Delete stash" onClick={() => onDelete(entry.id)}>
+              <X size={14} aria-hidden />
+            </IconButton>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}

@@ -534,3 +534,36 @@ input.welcome-radio:checked {
   color: var(--color-muted);
   font-size: var(--text-meta);
 }
+
+/* A project with no threads: left-aligned and centred in the page, as the blank-state frame draws it. */
+.empty-project {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  padding: 0 28px 40px;
+}
+.empty-project-mark {
+  display: block;
+  color: var(--color-muted);
+}
+.empty-project h1 {
+  margin: 0;
+  font-size: var(--text-section);
+  font-weight: 500;
+  color: var(--color-text);
+}
+.empty-project p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.empty-project .btn {
+  min-height: 30px;
+  padding: 0 13px;
+  border-color: transparent;
+  border-radius: var(--radius-9);
+  font-size: var(--text-nav);
+}

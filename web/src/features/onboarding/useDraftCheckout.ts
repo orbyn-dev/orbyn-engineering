@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { request } from "../../api/client";
-import type { PreferenceView, Project } from "../../api/types";
+import { readPreferences } from "./api";
+import type { Project } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 
 /** Defaults belong to the selected physical checkout; explicit draft picks win. */
@@ -16,7 +16,7 @@ export function useDraftCheckout(project: Pick<Project, "id" | "is_git"> | null,
     if (!scope || !git) return;
     const controller = new AbortController();
     // A device setting: a project never overrides where new threads start.
-    request<PreferenceView[]>("GET", "/api/preferences", undefined, controller.signal)
+    readPreferences(null, controller.signal)
       .then((views) => {
         if (controller.signal.aborted) return;
         const value = views.find((view) => view.key === "default_thread_env_mode")?.value;

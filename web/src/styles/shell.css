@@ -45,6 +45,33 @@
 .shell[data-layout="phone"] > .titlebar[data-nav="shown"] {
   background: var(--color-sidebar);
 }
+/* Floating with the sidebar away: no row of its own, the page's header sits in the bar's band, after the buttons. */
+.titlebar[data-nav="hidden"][data-bar="float"] {
+  position: absolute;
+  grid-area: auto;
+  width: auto;
+  background: transparent;
+  pointer-events: none;
+}
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) {
+  --bar-lead: calc(16px + 3 * 28px + 2 * 2px + 12px);
+}
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"][data-lights]) {
+  --bar-lead: calc(16px + var(--lights-w) + 3 * 28px + 2 * 2px + 12px);
+}
+.shell[data-nav="hidden"]:has(> .titlebar[data-bar="float"]) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.shell[data-nav="hidden"]:has(> .titlebar[data-bar="float"]) > .main {
+  grid-area: 1 / 1;
+}
+/* The bar's right end (environment pill, waiting count) takes the corner; the page header's actions stop short of it. */
+.shell :is(.topbar, .settings-head, .skills-heading) {
+  padding-right: max(28px, calc(var(--bar-end-w, 0px) + 14px + 12px));
+}
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .settings-head, .skills-heading) {
+  padding-left: max(28px, var(--bar-lead, 0px));
+}
 /* The full 44px strip drags the window; see useDragStrip for when it takes the pointer. */
 .titlebar > .titlebar-drag {
   position: absolute;
@@ -80,52 +107,16 @@
   opacity: 0.55;
   cursor: default;
 }
-.titlebar-title {
-  position: absolute;
-  left: 50%;
-  max-width: 50%;
-  overflow: hidden;
-  color: var(--color-muted);
-  font-size: var(--text-nav);
-  text-decoration: none;
-  text-overflow: ellipsis;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-.titlebar-page-label {
-  font-weight: 400;
-}
-.titlebar-title b {
-  color: var(--color-text);
-  font-weight: 500;
-}
 .titlebar-end {
   position: absolute;
-  top: 8px;
+  top: 0;
   right: 14px;
+  height: var(--titlebar-h);
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: var(--text-meta);
   white-space: nowrap;
-}
-.titlebar-diff {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--radius-9);
-  background: var(--color-chip);
-  color: var(--color-textSoft);
-  font-size: var(--text-nav);
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-.titlebar-diff[aria-pressed="true"] {
-  background: var(--color-selected);
-  color: var(--color-text);
 }
 .titlebar-waiting {
   display: inline-flex;
@@ -214,7 +205,7 @@
 .shell[data-layout="small"] > .titlebar {
   z-index: auto;
 }
-.shell[data-layout="small"] > .titlebar > :not(.titlebar-drag):not(.titlebar-title) {
+.shell[data-layout="small"] > .titlebar > :not(.titlebar-drag) {
   z-index: 9;
 }
 .sidebar-search {
@@ -383,6 +374,12 @@
   color: var(--color-muted);
 }
 .thread-row {
+  /* No iOS callout or link preview: a long press is ours (the context menu). */
+  -webkit-touch-callout: none;
+  /* The state's own fill, which the floating row actions fade into. */
+  --row-state: transparent;
+  container: thread-row / inline-size;
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -394,9 +391,11 @@
   transition: background-color var(--m-fast) var(--m-io);
 }
 .thread-row:hover {
+  --row-state: var(--color-rowHover);
   background: var(--color-rowHover);
 }
 .thread-row[aria-current="page"] {
+  --row-state: var(--color-selected);
   background: var(--color-selected);
   color: var(--color-text);
 }
@@ -420,6 +419,13 @@
   font-size: var(--text-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Titles win: on a narrow row the project chip goes (its name stays in the row's tooltip and in Details), and a row
+   never takes a second line for it. */
+@container thread-row (max-width: 240px) {
+  .thread-row-project {
+    display: none;
+  }
 }
 .row-age {
   flex: none;
@@ -463,10 +469,12 @@ li[data-dragging] {
   z-index: 2;
 }
 li[data-dragging] .thread-row {
+  --row-state: var(--color-raised);
   background: var(--color-raised);
   box-shadow: inset 0 0 0 1px var(--color-rowRing);
 }
 li[data-selected] .thread-row {
+  --row-state: var(--color-selected);
   background: var(--color-selected);
   color: var(--color-text);
 }
@@ -501,24 +509,54 @@ input.dialog-field-mono {
   font-size: var(--text-nav);
 }
 .row-trailing {
-  position: relative;
   display: inline-flex;
   align-items: center;
   flex: none;
   gap: 2px;
 }
-.row-actions {
-  display: none;
+.row-rest {
+  display: inline-flex;
+  align-items: center;
+}
+/* Snooze and Settle are icon-only buttons floating over the row's right edge with a fade: the title keeps its full
+   width underneath, and the status text stays where it is. The context menu carries the same actions. */
+/* A row with a woke mark or a pin keeps the action strip's width clear at its right end, so neither is ever under
+   Snooze and Settle (70px: the strip's two buttons and its fade). */
+.thread-row:has(.row-woke, .row-pin) .row-trailing {
+  margin-right: 70px;
+}
+/* Scoped to the sidebar row: Settings tables name their own button cells `row-actions` too, and must not be hidden. */
+.thread-row .row-actions {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
+  padding: 0 6px 0 22px;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background:
+    linear-gradient(to right, transparent, var(--row-state) 20px),
+    linear-gradient(to right, transparent, var(--color-sidebar) 20px);
+  /* Hidden means out of the Tab order as well: visibility goes after the fade, and comes back at once on show. */
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--m-fast) var(--m-io),
+    visibility 0s linear var(--m-fast);
 }
+/* Only on pointer hover or keyboard focus, the open row included; always for multi-selected rows. A mouse click
+   focuses the row without making it :focus-visible, so the strip does not stay once the pointer leaves, and Tab from
+   the row into its buttons keeps it (:has). Touch has neither: a long press opens the context menu with the same actions. */
 li:hover > .thread-row .row-actions,
-.thread-row:focus-within .row-actions {
-  display: inline-flex;
-}
-li:hover > .thread-row .row-rest,
-.thread-row:focus-within .row-rest {
-  display: none;
+li[data-selected] .thread-row .row-actions,
+.thread-row:focus-visible .row-actions,
+.thread-row:has(:focus-visible) .row-actions {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
 }
 .row-action {
   display: inline-flex;
@@ -602,6 +640,7 @@ li:hover > .thread-row .row-rest,
   color: var(--color-primary);
 }
 li[data-highlight] .thread-row {
+  --row-state: var(--color-rowHover);
   background: var(--color-rowHover);
 }
 .folder-head {
@@ -684,6 +723,15 @@ li[data-highlight] .thread-row {
 .folder-head:has(:focus-visible) > .folder-new {
   opacity: 1;
 }
+/* The plus floats over the row's right end, so the name and the waiting count stop short of it (the name used to run
+   under it). */
+/* Reserved always, so the name does not shift when the plus appears. */
+.folder-head .folder-name {
+  padding-right: 26px;
+}
+.folder-head .folder-needs {
+  margin-right: 24px;
+}
 .folder-head > .folder-new:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 1px;
@@ -699,10 +747,9 @@ li[data-highlight] .thread-row {
   margin-left: -6px;
 }
 .filter-popup {
-  position: absolute;
+  /* Placed from its trigger's box (ProjectFilter), not from an ancestor. */
+  position: fixed;
   z-index: 40;
-  top: calc(100% + 4px);
-  left: -120px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -945,24 +992,6 @@ details[open] > summary > .chev {
 .page-narrow {
   max-width: 640px;
 }
-.page-head h1 {
-  font-size: var(--text-page);
-  font-weight: 500;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-}
-.page-head {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.page-head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 .page-actions {
   display: flex;
   gap: 8px;
@@ -1001,8 +1030,7 @@ details[open] > summary > .chev {
 .rows > li {
   border-bottom: 1px solid var(--color-divider);
 }
-.row,
-.row-link {
+.row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1012,15 +1040,6 @@ details[open] > summary > .chev {
   text-decoration: none;
   min-width: 0;
 }
-.row-link:hover {
-  background: var(--color-hover);
-  border-radius: var(--radius-md);
-}
-.row-stack {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
-}
 .row-title {
   display: inline-flex;
   align-items: center;
@@ -1029,12 +1048,6 @@ details[open] > summary > .chev {
   min-width: 0;
   font-size: var(--text-body);
   overflow-wrap: anywhere;
-}
-.row-grow {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
 }
 .row-meta {
   color: var(--color-muted);
@@ -1104,15 +1117,6 @@ details[open] > summary > .chev {
   background: var(--color-raised);
   color: var(--color-text);
 }
-.plain-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 200px;
-  margin-top: 4px;
-  overflow-y: auto;
-  font-size: var(--text-meta);
-}
 .update-reason {
   color: var(--color-muted);
   font-size: var(--text-meta);
@@ -1134,6 +1138,12 @@ details[open] > summary > .chev {
   padding: 6px 4px;
   border-top: 1px solid var(--color-divider);
   font-size: var(--text-small);
+}
+.update-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 .update-row {
   border-top: 1px solid var(--color-divider);

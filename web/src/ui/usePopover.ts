@@ -1,10 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, type RefObject } from "react";
 import { captureFocusReturn, moveFocus, tabbables, watchOutside, type CloseCause, type FocusReturn, type PopoverKind } from "./focusReturn";
 
-export interface PopoverPane {
-  /** The pane's element. */
+export interface PopoverStop {
+  /** The stop's element. */
   root: RefObject<HTMLElement | null>;
-  /** Puts focus on the pane's one stop (its selected rail button, its search field). */
+  /** Puts focus on the stop's one target (its selected rail button, its search field). */
   focus(): void;
 }
 
@@ -20,11 +20,11 @@ export interface PopoverOptions {
   /** Set by `Presence` while it fades out: it listens to nothing. */
   closing?: boolean;
   /**
-   * A popover of several panes (a rail and a list, say), in Tab order. Each pane is one stop: Tab
-   * goes to the next pane's `focus()`, Shift+Tab to the previous one's. Tab past the last pane and
-   * Shift+Tab before the first close it by the usual rule. Focus in no pane follows `kind`.
+   * A popover of several stops (a rail and a list, say), in Tab order. Each stop is one place: Tab
+   * goes to the next stop's `focus()`, Shift+Tab to the previous one's. Tab past the last stop and
+   * Shift+Tab before the first close it by the usual rule. Focus in no stop follows `kind`.
    */
-  panes?: readonly PopoverPane[];
+  stops?: readonly PopoverStop[];
   /** Hides it. Focus has already moved; this runs once per opening. */
   onClose(): void;
 }
@@ -34,9 +34,10 @@ export interface PopoverOptions {
  * real user action outside and a route change. See `focusReturn.ts` for where focus goes.
  * Returns `dismiss`, for closing from inside (choosing something) with the same focus rule.
  */
-export function usePopover({ kind, root, trigger, active = true, closing, panes, onClose }: PopoverOptions) {
+export function usePopover({ kind, root, trigger, active = true, closing, stops, onClose }: PopoverOptions) {
   const state = useRef<{ focusReturn: FocusReturn | null; moved: boolean }>({ focusReturn: null, moved: false });
   const id = useId();
+  const markedRoot = useRef<HTMLElement | null>(null);
   // Taken as it opens, while rendering, before anything inside takes focus.
   if (!active) state.current = { focusReturn: null, moved: false };
   else if (!state.current.focusReturn) state.current.focusReturn = captureFocusReturn(trigger?.() ?? undefined);
@@ -48,29 +49,44 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
     moveFocus(current.focusReturn, cause, target);
     onClose();
   };
-  const latest = useRef({ dismiss, panes, trigger, kind });
-  latest.current = { dismiss, panes, trigger, kind };
+  const latest = useRef({ dismiss, stops, trigger, kind });
+  latest.current = { dismiss, stops, trigger, kind };
 
-  // The element is marked so focus never returns into it while it leaves.
+  // Keep markers across ordinary renders: a nested portal reads its ancestor's marker during layout.
   useLayoutEffect(() => {
-    const element = root.current;
-    if (!active || !element) return;
+    const element = active ? root.current : null;
+    const previous = markedRoot.current;
+    if (previous !== element) {
+      if (previous?.getAttribute("data-popover-root") === id) {
+        previous.removeAttribute("data-popover-root");
+        previous.removeAttribute("data-popover-owner");
+      }
+      markedRoot.current = element;
+    }
+    if (!element) return;
     element.setAttribute("data-popover-root", id);
     // A popover opened from inside another names it, so only that one counts as inside it.
     const owner = latest.current.trigger?.()?.closest<HTMLElement>("[data-popover-root]")?.dataset.popoverRoot;
     if (owner) element.setAttribute("data-popover-owner", owner);
-    return () => {
+    else element.removeAttribute("data-popover-owner");
+  });
+
+  // Cleanup belongs to this hook's lifetime, not each render, and only releases markers it still owns.
+  useLayoutEffect(() => () => {
+    const element = markedRoot.current;
+    if (element?.getAttribute("data-popover-root") === id) {
       element.removeAttribute("data-popover-root");
       element.removeAttribute("data-popover-owner");
-    };
-  });
+    }
+    markedRoot.current = null;
+  }, [id]);
 
   useEffect(() => {
     if (!active || closing) return;
     const inRoot = (target: EventTarget | null) => target instanceof Node && !!root.current?.contains(target);
     const inTrigger = (target: EventTarget | null) => target instanceof Node && !!latest.current.trigger?.()?.contains(target);
     const onKeyDown = (event: KeyboardEvent) => {
-      const { dismiss: close, panes: stops, kind: mode } = latest.current;
+      const { dismiss: close, stops, kind: mode } = latest.current;
       const target = event.target;
       const element = root.current;
       // Focus nowhere (its field was disabled under it) still lets Escape close it.
@@ -86,9 +102,9 @@ export function usePopover({ kind, root, trigger, active = true, closing, panes,
         return;
       }
       if (event.key !== "Tab") return;
-      const pane = stops?.findIndex((entry) => target instanceof Node && !!entry.root.current?.contains(target)) ?? -1;
-      if (stops && pane >= 0) {
-        const next = stops[pane + (event.shiftKey ? -1 : 1)];
+      const index = stops?.findIndex((entry) => target instanceof Node && !!entry.root.current?.contains(target)) ?? -1;
+      if (stops && index >= 0) {
+        const next = stops[index + (event.shiftKey ? -1 : 1)];
         stopEvent();
         if (next) next.focus();
         else close(event.shiftKey ? "shiftTab" : "tab");

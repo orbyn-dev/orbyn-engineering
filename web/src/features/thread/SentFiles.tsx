@@ -1,14 +1,14 @@
 import { FileCode, FileText } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
-import { attachmentBlob } from "../../api/client";
+import { attachmentBlob } from "./api";
 import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { Dialog } from "../../ui/Dialog";
-import { TimelineThread } from "./items";
-import { Lightbox } from "./MarkdownMedia";
-import { fileLinkTarget } from "./MarkdownLink";
-import type { SentAttachment } from "./projection";
+import { TimelineThread } from "./timelineThread";
+import { Lightbox } from "../content";
+import { fileLinkTarget } from "../../lib/links";
+import type { SentAttachment } from "../../product/timeline/types";
 
 /** A typed `@path` the message referred to. */
 const PATH_TOKEN = /(^|\s)@([^\s@]+)/g;

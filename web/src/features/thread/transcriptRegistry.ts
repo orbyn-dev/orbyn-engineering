@@ -1,4 +1,4 @@
-import type { TimelineEntry } from "./timeline";
+import type { TimelineEntry } from "../../product/timeline/timeline";
 
 /** What find, shortcuts and pins need from a mounted transcript, since most rows aren't in the DOM. */
 export interface TranscriptHandle {

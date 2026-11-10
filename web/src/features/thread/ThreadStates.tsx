@@ -1,17 +1,17 @@
 import { Archive, GitFork, Loader2 } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { Thread } from "../../api/types";
 import { useNow } from "../../lib/useNow";
 import { toFailure } from "../../lib/useAsync";
-import { navigate } from "../../state/route";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { navigate } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
-import { unarchiveThread } from "../workspace/threadActions";
-import { usageShare } from "./ComposerExtras";
-import { formatWait } from "./ThreadBanners";
-import { useThreadLogs } from "./threadLogs";
+import { unarchiveThread } from "../workspace";
+import { usageShare } from "./composer/ComposerExtras";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { waitLeft } from "../../lib/format";
 
 /** A run whose prompt is the compact command, while it runs: the thread is being compacted. */
 export function useCompacting(thread: Thread): boolean {
@@ -103,7 +103,7 @@ export function useThreadChip(thread: Thread): ReactNode {
     );
   }
   if (limit && !thread.active_run && resetsAt > now) {
-    return <span className="page-sub-item limit-label">Waiting · {formatWait(resetsAt - now)}</span>;
+    return <span className="page-sub-item limit-label">Waiting · {waitLeft(resetsAt - now)}</span>;
   }
   return null;
 }

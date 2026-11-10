@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
-const serviceSource = readFileSync(new URL("../../crates/orbynd/src/ui.rs", import.meta.url), "utf8");
+const serviceSource = readFileSync(new URL("../../crates/orbynd/src/routes/ui.rs", import.meta.url), "utf8");
 const servicePolicy = serviceSource.match(/const CSP: &str = "([\s\S]*?)";/)?.[1]
   ?.replace(/\\\r?\n\s*/g, "");
 if (!servicePolicy) throw new Error("Missing service CSP");

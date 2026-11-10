@@ -1,4 +1,4 @@
-import type { TimelineEntry } from "./timeline";
+import type { TimelineEntry } from "../../product/timeline/timeline";
 
 /** The flex gap between transcript rows, which every row boundary carries. */
 export const ROW_GAP = 16;

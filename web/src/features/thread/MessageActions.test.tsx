@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
 import { MessageActions, ThreadScope } from "./MessageActions";
 const thread: Thread = { id: "t", project_id: "p", title: "Thread", engine: "codex", model: null,
   cwd: "/fixture", worktree: null, skill_profile: null, scratch: false, active_run: null,

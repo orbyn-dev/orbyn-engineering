@@ -1,0 +1,11 @@
+{
+  "_note": "Recorded architecture debt (docs/refactor.md). Only shrink it; npm run arch:update rewrites it.",
+  "limits": {
+    "ts": 600,
+    "css": 1500
+  },
+  "direction": [],
+  "tier": [],
+  "lines": {},
+  "css": {}
+}

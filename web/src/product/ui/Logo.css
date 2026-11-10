@@ -1,0 +1,32 @@
+.logo {
+  display: block;
+  flex: none;
+}
+/* The tile behind the full mark: off-white with a near-black ring in light, near-black with an off-white ring in dark and dim. */
+.logo-tile {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--color-border);
+  background: var(--logo-tile-bg);
+  color: var(--logo-tile-ink);
+}
+.logo-tile[data-size="40"] {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-9);
+}
+.logo-tile[data-size="28"] {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-7);
+}
+/* The splash: the mark alone at 64 px, centred, shown after the 400 ms wait. */
+.logo-splash {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-background);
+  color: var(--color-textSoft);
+}

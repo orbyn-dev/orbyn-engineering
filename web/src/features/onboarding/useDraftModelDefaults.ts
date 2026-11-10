@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { request } from "../../api/client";
+import { readPreferences } from "./api";
 import type { EngineStatus, PreferenceView } from "../../api/types";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { toFailure } from "../../lib/useAsync";
-import { chooseDraftEngine } from "./draftEngine";
+import { chooseDraftEngine } from "../../product/engines/draftEngine";
 
 type Choice = { engine: string; model: string | null; effort: string | null };
 type Defaults = { engine: string; model: string; effort: string; disabled: string[] };
@@ -32,8 +32,7 @@ export function useDraftModelDefaults(projectId: string | null, engines: EngineS
   useEffect(() => {
     const controller = new AbortController();
     setLoaded(null);
-    const path = projectId === null ? "/api/preferences" : `/api/preferences?project_id=${encodeURIComponent(projectId)}`;
-    request<PreferenceView[]>("GET", path, undefined, controller.signal).then((views) => {
+    readPreferences(projectId, controller.signal).then((views) => {
       if (!controller.signal.aborted) setLoaded({ scope: projectId, defaults: readDefaults(views), error: null });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setLoaded({ scope: projectId, defaults: null,

@@ -1,10 +1,10 @@
 import { CircleCheck, CircleX, LoaderCircle, Square, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, request } from "../../api/client";
-import type { TerminalInfo, Thread } from "../../api/types";
+import { api, listTerminals } from "./api";
+import type { Thread } from "../../api/types";
 import type { ThreadSetup } from "../../generated/ThreadSetup";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 
 /** How often a setup that is still going is read again. */
@@ -65,7 +65,7 @@ export function WorktreeSetupCard({ thread }: { thread: Thread }) {
     });
   };
   const showOutput = () => {
-    request<TerminalInfo[]>("GET", `/api/threads/${encodeURIComponent(thread.id)}/terminals`).then(
+    listTerminals(thread.id).then(
       (terminals) => {
         const terminal = terminals.find((entry) => entry.id === setup.terminal_id);
         if (terminal) revealTerminal(thread.id, terminal.group);

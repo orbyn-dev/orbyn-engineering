@@ -1,22 +1,35 @@
 //! Small shared primitives: ids, timestamps, random tokens, hex and owner-only files.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use sha2::{Digest, Sha256};
+
+pub(crate) mod json;
+
+/// The current user's home folder: `HOME`, else `USERPROFILE` (checked on every OS).
+/// An empty `HOME` is still returned.
+pub fn home_dir() -> Option<PathBuf> {
+    home_from(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+}
+
+fn home_from(home: Option<OsString>, profile: Option<OsString>) -> Option<PathBuf> {
+    home.or(profile).map(PathBuf::from)
+}
 
 pub fn new_id() -> String {
     ulid::Ulid::generate().to_string().to_lowercase()
 }
 
-pub fn now() -> String {
+pub(crate) fn now() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
 }
 
 /// Unix seconds for an RFC 3339 time.
-pub fn parse_time(text: &str) -> Option<i64> {
+pub(crate) fn parse_time(text: &str) -> Option<i64> {
     time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
         .ok()
         .map(time::OffsetDateTime::unix_timestamp)
@@ -27,12 +40,12 @@ pub fn unix_now() -> i64 {
 }
 
 /// Unix milliseconds, for times two quick writes must not share.
-pub fn unix_now_ms() -> i64 {
+pub(crate) fn unix_now_ms() -> i64 {
     i64::try_from(time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
         .unwrap_or(i64::MAX)
 }
 
-pub fn random_bytes<const N: usize>() -> Result<[u8; N]> {
+pub(crate) fn random_bytes<const N: usize>() -> Result<[u8; N]> {
     let mut bytes = [0u8; N];
     getrandom::fill(&mut bytes)
         .map_err(|error| CoreError::Internal(format!("system randomness failed: {error}")))?;
@@ -53,7 +66,7 @@ pub fn hex(bytes: &[u8]) -> String {
     out
 }
 
-pub fn from_hex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn from_hex(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return None;
     }
@@ -88,7 +101,7 @@ pub fn secrets_match(presented: &str, expected_sha256_hex: &str) -> bool {
 /// On Unix the mode is set at creation. Windows has no mode bits: the file
 /// inherits the ACL of the per-user app-data directory, which already excludes
 /// other non-administrator users (see docs/architecture.md, Persistence).
-pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -198,7 +211,7 @@ fn needs_verbatim(part: &str) -> bool {
 }
 
 /// Keeps the tail of diagnostic output that is safe to bound.
-pub fn tail(text: &str, max_bytes: usize) -> String {
+pub(crate) fn tail(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.trim().to_owned();
     }
@@ -212,6 +225,16 @@ pub fn tail(text: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_comes_from_home_then_userprofile() {
+        let os = |text: &str| Some(OsString::from(text));
+        assert_eq!(home_from(os("/h"), os("/p")), Some(PathBuf::from("/h")));
+        assert_eq!(home_from(None, os("/p")), Some(PathBuf::from("/p")));
+        assert_eq!(home_from(None, None), None);
+        // An empty HOME is returned as it is, not skipped.
+        assert_eq!(home_from(os(""), os("/p")), Some(PathBuf::new()));
+    }
 
     #[test]
     fn published_private_files_are_never_partial() {

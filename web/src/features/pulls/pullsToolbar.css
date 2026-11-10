@@ -509,11 +509,6 @@
   font-size: var(--text-title);
   font-weight: 500;
 }
-.pulls-sheet-acts {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 .pulls-show {
   flex: 1;
 }

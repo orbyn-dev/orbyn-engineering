@@ -1,0 +1,31 @@
+# Commits that only move or reformat files, so `git blame` skips them.
+# One full commit hash per line, with a comment saying what it did.
+# Each folder-architecture move commit (docs/refactor.md) is listed here.
+42198af3341155022a8395b694aa45e4fe5745e2 # refactor(orbynd): move route modules, access and cli files into routes, http and cli
+127db0da1e42c72c1a09066188f3ebf39fe0bcf3 # refactor(orbynd): split api.rs and the route list into one module per area
+d381a2dcfa9c578fbcf432e3fc13d0df8a3b914c # refactor(contracts): move wire types into domain modules
+ded9bd5371558390f5a2ce07c0b0249df843f7ab # refactor(web): move markdown and code rendering into features/content
+5f0449347773efab37c4acdd7e19ba70a85853be # refactor(web): move shared thread logic down to state, lib and ui
+1d1268bfd3b27736c39806303b417ceefe61d335 # refactor(web): move composer and tool trail files into folders
+f9c25bcc5f1a41d6787b1a8ecabc2f2a8fa9b94e # refactor(core): move claude driver into its own folder
+e8fd507f99b92ce936d5e50569218d1ada41dc67 # refactor(core): move the claude driver tests into their own file
+ba6ddc48866d5221f8182d93917e562574d7fa50 # refactor(core): move codex driver into its own folder
+e5278fd577dadd1cd11800f0ca2b7abd908343cc # refactor(core): move the codex driver tests into their own file
+7b0113845b30dd3645a43f5f2ccc25a2f625b237 # refactor(core): move the acp driver and its sessions into an acp folder
+cb0d36fa7a89a7087a51eba5774fcc923ae78933 # refactor(core): move the acp driver tests into their own file
+8678212e2ca296ee089964e96848e26372567217 # refactor(web): move workspace files into sidebar, palette and app-chrome folders
+d3d07b8993b1087b5ae7575490932a519132b80b # refactor(web): move settings files into rows, sections, pages, providers, projects, maintenance folders
+a5bc46604ec4d7df90af747068f35e65bef45ef0 # refactor(web): move pulls files into list, detail and model folders
+6f4e756ad452cf8492291a11c36a93363261c5b2 # refactor(web): move panel files into strip, browser, diff, files, terminal, activity and preview folders
+ff729cfa4ec1e3b71c956ed013aee5a9706c36cf # refactor(core): move forge into its own folder
+4a8a17919098a3bedd4132088a110d30b8a7c611 # refactor(core): move forge_cache into the forge folder as cache
+5c8eb42c8294b8e48a3263eae09184d7b83fb6af # refactor(core): move the forge tests into their own files
+0b6e3a36e79764b2d73854e25b4ded064b721910 # refactor(core): move scm into its own folder
+d6cb0514c515aa58c86a86a2b2c79dbf32f47325 # refactor(core): move scm_writing and its style into the scm folder as writing
+46cbc88a24a5cba1355a18f95b62ef1d1eeba64d # refactor(core): move the scm and scm writing tests into their own files
+47a39b9191aacf686268efd117ed8a0b8e452258 # refactor(core): move preview into its own folder
+c199f6f33aff8b98747ce337f8afc70ebeed3232 # refactor(core): move the MCP server into its own folder
+3a3c6354870bdb5df43cf610a625ab56ba2531c7 # refactor(web): move product-vocabulary shared files into product/
+68045665928a08c5c6addb0933ce97616fd303e7 # refactor(web): move the ui store, the shell and the draft view into folders
+818efd7df01229831ea2a120b28a54152589face # refactor(core): move the run manager into a folder
+0451f1199638255f64858e388bba76cdb10c2593 # refactor(web): rename page, panel and pane files

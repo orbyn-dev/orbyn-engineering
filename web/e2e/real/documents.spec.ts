@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildDocx, buildXlsx, docxParagraph, worksheet } from "../../src/features/panels/office.test-support";
+import { buildDocx, buildXlsx, docxParagraph, worksheet } from "../../src/features/panels/files/office.test-support";
 import { send, settled, startProject, threadIdOf, type Service } from "./service";
 
 /**

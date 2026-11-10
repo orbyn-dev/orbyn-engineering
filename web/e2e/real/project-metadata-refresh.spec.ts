@@ -44,7 +44,7 @@ test("a committed icon survives an older in-flight project refresh", async ({ pa
     const responseFinished = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "GET");
     await picker.getByRole("button", { name: "Save icon", exact: true }).click();
     await expect(picker).toHaveCount(0);
-    const identity = page.getByRole("link", { name: `New thread in ${before.name}`, exact: true }).locator(".project-icon-visual");
+    const identity = page.getByRole("link", { name: `Open ${before.name}`, exact: true }).locator(".project-icon-visual");
     await expect(identity).toHaveText("🤖");
     const committed = (await service.api<Project[]>("GET", "/api/projects")).find((project) => project.id === projectId)!;
     expect(committed.project_icon).toEqual({ kind: "emoji", emoji: "🤖" });

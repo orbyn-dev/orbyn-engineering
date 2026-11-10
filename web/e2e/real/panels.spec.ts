@@ -62,8 +62,8 @@ test("each panel scrolls alone, past both ends, with the chat parked mid-way", a
   await page.locator("[data-diff-file='big.txt']").waitFor();
   expect(await chatTop(page)).toBe(parked);
   await expectChatUntouched(page, page.locator(".patch-line").nth(20));
-  const pane = page.getByRole("tabpanel");
-  expect(await pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const panel = page.getByRole("tabpanel");
+  expect(await panel.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
   await page.keyboard.press("ControlOrMeta+p");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("combobox", { name: "Search" }).fill("big.txt");

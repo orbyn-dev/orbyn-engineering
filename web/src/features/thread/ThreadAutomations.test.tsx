@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { installMockFetch } from "../../test-support";
 import { ThreadAutomations } from "./ThreadAutomations";
-import { navigate } from "../../state/route";
-import { useUi } from "../../state/ui";
+import { navigate } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
 
 function failNextTaskRead() {
   const inner = globalThis.fetch;
@@ -183,8 +183,8 @@ it("lists only the tasks bound to the thread", async () => {
 it("says there are none for a thread with no automations, and nothing while the list loads", async () => {
   installMockFetch();
   render(<ThreadAutomations threadId="t-empty" />);
-  expect(screen.queryByText("No automations on this thread")).toBeNull();
-  expect(await screen.findByText("No automations on this thread")).toBeVisible();
+  expect(screen.queryByText("None on this thread")).toBeNull();
+  expect(await screen.findByText("None on this thread")).toBeVisible();
 });
 
 it("offers Run now for scheduled work but not for a webhook", async () => {

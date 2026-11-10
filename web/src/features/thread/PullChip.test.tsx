@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../api/client";
 import { pullsApi } from "../../api/pulls";
 import type { PullRequest, Thread } from "../../api/types";
-import { useConnection } from "../../state/connection";
+import { useConnection } from "../../product/state/connection";
 import { PullChip, PullsRow } from "./PullChip";
-import { useThreadPulls, WATCH_TIP } from "./pullStore";
+import { useThreadPulls } from "../pulls";
+import { WATCH_TIP } from "../../product/pulls/labels";
 
 const thread = { id: "t1", project_id: "p1" } as Thread;
 

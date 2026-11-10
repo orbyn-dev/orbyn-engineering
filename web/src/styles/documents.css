@@ -1,0 +1,251 @@
+/* A Word or a spreadsheet document, read from its own bytes. */
+.office-doc {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.office-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px 12px;
+  overflow: auto;
+}
+.office-heading,
+.office-para {
+  margin: 0 0 6px;
+}
+.office-heading {
+  font-weight: 600;
+  line-height: 1.3;
+}
+.office-heading[data-level="1"] {
+  margin-top: 4px;
+  font-size: 20px;
+}
+.office-heading[data-level="2"] {
+  font-size: 18px;
+}
+.office-heading[data-level="3"] {
+  font-size: 16px;
+}
+.office-heading[data-level="4"] {
+  font-size: 14px;
+}
+.office-table {
+  margin: 8px 0;
+  overflow: auto;
+}
+.office-table table {
+  border-collapse: collapse;
+  font-size: var(--text-small);
+}
+.office-table td {
+  padding: 3px 8px;
+  border: 1px solid var(--color-divider);
+  text-align: left;
+  vertical-align: top;
+}
+.office-empty {
+  padding: 8px;
+  font-size: var(--text-small);
+}
+/* What a sheet's own caps left out: said above the grid, not inside its scroll. */
+.office-note {
+  flex: none;
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.office-refusal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+}
+.file-bytes-fallback {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 0;
+}
+.office-book {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.office-tabs {
+  flex: none;
+  align-self: flex-start;
+  max-width: calc(100% - 16px);
+  margin: 4px 8px;
+  overflow-x: auto;
+}
+.office-tabs button[aria-selected="true"] {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+.office-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.office-grid table {
+  border-collapse: collapse;
+  font-size: var(--text-small);
+}
+.office-grid th,
+.office-grid td {
+  padding: 2px 8px;
+  border: 1px solid var(--color-divider);
+  text-align: left;
+  vertical-align: top;
+}
+.office-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-raised);
+  color: var(--color-muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.office-grid td {
+  white-space: pre-wrap;
+}
+.file-source {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 1.5;
+}
+.file-source span {
+  display: block;
+  padding: 0 8px;
+}
+.file-source span[data-line] {
+  background: var(--color-selected);
+}
+.file-source i {
+  display: inline-block;
+  width: 40px;
+  color: var(--color-muted);
+  font-style: normal;
+  text-align: right;
+  user-select: none;
+  margin-right: 12px;
+}
+
+.file-comment-source span[data-selected] { background: var(--color-selected); }
+.file-comment-source span > button {
+  display: inline-block;
+  width: 4em;
+  margin-right: 1em;
+  padding: 0 0.5em;
+  color: var(--color-muted);
+  text-align: right;
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+}
+.file-comment-source span > button:focus-visible { outline: 2px solid var(--color-focus); }
+.file-comment-hint { padding: 6px 12px; font-size: 12px; color: var(--color-muted); }
+.file-comment-form, .file-comment-list { padding: 12px; }
+.file-comment-form textarea, .dialog-body textarea[aria-label="Review comment"] {
+  display: block; width: 100%; min-height: 5em; margin: 6px 0; resize: vertical;
+}
+.file-comment-form > div { display: flex; justify-content: flex-end; gap: 8px; }
+.file-comment-list { flex: none; max-height: 35%; overflow: auto; list-style: none; overflow-wrap: anywhere; }
+.file-comment-list li + li { margin-top: 12px; }
+.file-comment-list p { white-space: pre-wrap; }
+.context-chips .review-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.review-chip-excerpt { max-height: 35vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-actions {
+  display: flex;
+  gap: 2px;
+  height: 24px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--m-fast);
+}
+.msg-user .msg-actions {
+  justify-content: flex-end;
+}
+.msg-user:hover .msg-actions,
+.msg-assistant:hover .msg-actions,
+.msg-actions:focus-within {
+  opacity: 1;
+}
+.msg-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+.diff-sources {
+  display: flex;
+  min-width: 0;
+  margin: 8px 8px 0;
+}
+.diff-sources.segment button {
+  flex: 1 1 auto;
+  padding: 0 6px;
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+.thread-find {
+  position: absolute;
+  z-index: 8;
+  top: var(--topbar-h);
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-lg);
+  background: var(--color-raised);
+  box-shadow:
+    0 10px 30px var(--color-shadow),
+    0 0 0 1px var(--color-borderStrong);
+}
+.thread-find input {
+  width: 180px;
+  min-height: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  font-size: var(--text-small);
+  outline: none !important;
+}
+.thread-find-count {
+  min-width: 36px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: right;
+}
+::highlight(thread-find) {
+  background-color: color-mix(in srgb, var(--color-warn) 30%, transparent);
+}
+::highlight(thread-find-current) {
+  background-color: color-mix(in srgb, var(--color-warn) 60%, transparent);
+}
+.thread-main {
+  position: relative;
+}
+.terminal-tabs-gap {
+  flex: 1;
+}
+.terminal-tabs .icon-btn {
+  flex: none;
+}

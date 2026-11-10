@@ -73,7 +73,7 @@ test("selected project names update the group or checkout without changing paths
     await expect(nameField(page)).toBeEnabled();
     expect(writes).toEqual([expect.objectContaining({ scope: { selection: { kind: "project_group", group_key: group.key } },
       membership_version: expect.any(String), expected_names: { [one.id]: one.name, [two.id]: two.name }, name: "Shared detail name" })]);
-    await expect(page.getByRole("link", { name: "New thread in Shared detail name", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open Shared detail name", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Review trust for Shared detail name", exact: true })).toBeVisible();
     const settings = page.getByRole("region", { name: "Settings", exact: true });
     await expect(settings.getByText("Git root", { exact: true })).toHaveCount(0);

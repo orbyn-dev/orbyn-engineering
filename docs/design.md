@@ -89,8 +89,7 @@ details), `--drawer-w` 360px (Reading panel), `--lights-w` 78px. The sizes 12.5p
   left and top. It has no border or radius when the sidebar is hidden.
 - Page heading (`.topbar`, the shared `.ph`): 22px/28px padding, a 22px medium title with
   -0.015em tracking, a muted sub line (branch, run status) and actions at the right. The
-  thread header, the new-thread header and the pages below use it (`ui/PageBar.tsx`);
-  `PageHeader` has the same title size. Page content pads 28px.
+  thread header, the new-thread header and the pages below use it (`product/ui/PageBar.tsx`). Page content pads 28px.
 - Side panel: 380px (`--context-w`; a dragged width still wins), `--color-background`, 1px
   left border, and six fixed text tabs without icons (30px, 8px radius, 12.5px; the
   selected tab has the selected fill): Diff, Files, Browser, Activity, PRs ("Pull
@@ -189,7 +188,7 @@ It is a device preference (`workspaceLayout`), set on `<html data-workspace>`, a
 changes arrangement and density only, never colour or behaviour.
 
 - Console, the default: sidebar by project with its threads nested, the thread in the
-  middle, the side panel as a 380px column on the right.
+  middle, the side panel as a 380px column on the right. The side panel opens only when asked, or for a diff, commit, file or page the person clicks, at every width; open or closed is one choice for all threads, and a wider window gives it more room, not an opening.
 - Ledger: the sidebar lists Needs you (amber), Failed (red), Running and Done today, each
   with a count, instead of project folders; every row names its project. The nav moves to
   the bottom, above Settings. Rows give the title the room: no project column, and only a waiting or failed status word. Rows are denser and the 300px details rail opens at the

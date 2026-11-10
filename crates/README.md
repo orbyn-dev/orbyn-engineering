@@ -7,7 +7,7 @@ Each crate has one role. Dependencies point one way:
 | --- | --- | --- |
 | [orbyn-contracts](orbyn-contracts/README.md) | Contract | Wire types shared with the UI; generates `web/src/generated` |
 | [orbyn-core](orbyn-core/README.md) | Provider | Every product rule and effect, grouped by capability |
-| [orbynd](orbynd/README.md) | Consumer | HTTP, SSE and WebSocket transport, access control and the CLI |
+| [orbynd](orbynd/README.md) | Consumer | HTTP, SSE and WebSocket transport (`routes/` by area, `http/` shared plumbing), access control and the CLI (`cli/`) |
 
 `desktop/src-tauri` sits outside this workspace and depends on none of these
 crates. It starts `orbynd` as a process.

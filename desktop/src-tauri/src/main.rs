@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
+mod chrome;
 mod core_process;
 mod desktop_origin;
 mod image_picker;
@@ -320,13 +321,24 @@ fn open_window(app: &AppHandle) -> tauri::Result<()> {
     config.url = tauri::WebviewUrl::External(desktop_origin::startup());
     let navigating = app.clone();
     let opening = app.clone();
-    let window = WebviewWindowBuilder::from_config(app, &config)?
+    let builder = WebviewWindowBuilder::from_config(app, &config)?
         .on_navigation(move |url| links::on_navigation(&navigating, url))
         .on_new_window(move |url, _| {
             links::open_outside(&opening, &url);
             NewWindowResponse::Deny
-        })
-        .build()?;
+        });
+    // One title bar: the web bar, with the native title bar merged into it and the traffic lights over it.
+    #[cfg(target_os = "macos")]
+    let builder = match chrome::frame_for(std::env::consts::OS) {
+        chrome::Frame::Unified { x, y } => builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(x, y)),
+        chrome::Frame::Native => builder,
+    };
+    let window = builder.build()?;
+    #[cfg(not(target_os = "macos"))]
+    sync_tray(app, current_theme(app));
     shell_state::load(app);
     let zoom = *app.state::<Zoom>().0.lock().expect("zoom");
     window.set_zoom(zoom)?;
@@ -429,11 +441,43 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+    // The one-colour mark, never the colour app icon (Engineer Designs, "Menu bar and tray mark").
+    // macOS: a template image, so the menu bar tints it for light, dark and a selected bar.
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.icon(tray_mark(tauri::Theme::Light)).icon_as_template(true);
+    }
+    // Elsewhere: black or white by the main window's theme (the app theme, not the taskbar's own setting), set again when it changes (`sync_tray`).
+    #[cfg(not(target_os = "macos"))]
+    {
+        tray = tray.icon(tray_mark(current_theme(app)));
     }
     tray.build(app)?;
     Ok(())
+}
+
+/// The tray mark for a theme: the black file on a light one, the white file on a dark one.
+fn tray_mark(theme: tauri::Theme) -> tauri::image::Image<'static> {
+    match theme {
+        tauri::Theme::Dark => tauri::include_image!("icons/tray-template-white@2x.png"),
+        _ => tauri::include_image!("icons/tray-template@2x.png"),
+    }
+}
+
+/// The main window's theme, which follows the system's; light until the window exists.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn current_theme(app: &AppHandle) -> tauri::Theme {
+    app.get_webview_window("main")
+        .and_then(|window| window.theme().ok())
+        .unwrap_or(tauri::Theme::Light)
+}
+
+/// Picks the black or white tray mark again for the current theme. macOS tints its template itself.
+#[cfg(not(target_os = "macos"))]
+fn sync_tray(app: &AppHandle, theme: tauri::Theme) {
+    if let Some(tray) = app.tray_by_id(activity::TRAY) {
+        let _ = tray.set_icon(Some(tray_mark(theme)));
+    }
 }
 
 fn main() {
@@ -514,6 +558,9 @@ fn main() {
             WindowEvent::Destroyed => {
                 window.app_handle().state::<Zoom>().1.lock().expect("viewer zoom").forget(window.label());
             }
+            // The tray mark follows the main window's theme (the app theme, which follows the system's) on Windows and Linux.
+            #[cfg(not(target_os = "macos"))]
+            WindowEvent::ThemeChanged(theme) if window.label() == "main" => sync_tray(window.app_handle(), *theme),
             // A permission is granted in System Settings, away from this window.
             WindowEvent::Focused(true) => system::report(window.app_handle()),
             _ => {}

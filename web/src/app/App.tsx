@@ -4,13 +4,13 @@ import { followShell, readShellStatus } from "../api/shell";
 import { SignIn } from "../features/onboarding/SignIn";
 import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
-import { useUi, applyTheme } from "../state/ui";
-import { ErrorState, Loading } from "../ui/states";
-import { onShellEvent, Shell } from "./Shell";
-import { useConnection, watchConnection } from "../state/connection";
-import { upgradeToast } from "../state/healthToasts";
-import { PreviewWindow } from "../features/panels/PreviewWindow";
-import { previewWindowRoute } from "../features/panels/browserPanels";
+import { useUi, applyTheme } from "../product/state/ui";
+import { ErrorState, Splash } from "../product/ui/states";
+import { onShellEvent, Shell } from "./shell";
+import { useConnection, watchConnection } from "../product/state/connection";
+import { upgradeToast } from "../product/state/healthToasts";
+import { PreviewWindow } from "../features/panels/preview/PreviewWindow";
+import { previewWindowRoute } from "../features/panels/browser/browserPanels";
 import { PreviewScreen, previewScreenRoute } from "../features/platform/previews";
 
 type Boot =
@@ -102,9 +102,7 @@ function BootedApp() {
   switch (boot.state) {
     case "loading":
       return (
-        <main className="boot">
-          <Loading label="Connecting to Orbyn" rows={3} />
-        </main>
+        <Splash label="Connecting to Orbyn" />
       );
     case "sign-in":
       return <SignIn onSignedIn={start} />;

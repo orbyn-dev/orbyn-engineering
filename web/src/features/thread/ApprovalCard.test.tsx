@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../api/client";
 import type { Approval } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ApprovalCard } from "./ApprovalCard";
 
 const approval: Approval = {

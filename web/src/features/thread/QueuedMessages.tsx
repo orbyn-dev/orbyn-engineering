@@ -1,6 +1,6 @@
 import { CornerDownRight, Pencil, Send, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import type { QueuedMessage } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 import { Button, IconButton } from "../../ui/controls";

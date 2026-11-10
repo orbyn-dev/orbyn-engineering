@@ -4,6 +4,7 @@
  */
 import type { Approval as ApprovalWire } from "../generated/Approval";
 import type { EngineLimits as EngineLimitsWire } from "../generated/EngineLimits";
+import type { EngineTools as EngineToolsWire } from "../generated/EngineTools";
 import type { EngineUsage as EngineUsageWire } from "../generated/EngineUsage";
 import type { LimitsOverview as LimitsOverviewWire } from "../generated/LimitsOverview";
 import type { ModelUsage as ModelUsageWire } from "../generated/ModelUsage";
@@ -113,6 +114,10 @@ export type EngineUsage = Wired<EngineUsageWire>;
 export type ModelUsage = Wired<ModelUsageWire>;
 export type LimitsOverview = Wired<LimitsOverviewWire>;
 export type EngineLimits = Wired<EngineLimitsWire>;
+export type EngineTools = Wired<EngineToolsWire>;
+export type { ToolEntry } from "../generated/ToolEntry";
+export type { ToolGroup } from "../generated/ToolGroup";
+export type { ToolState } from "../generated/ToolState";
 export type PullRequest = Wired<PullRequestWire>;
 export type PullRequestDetail = Wired<PullRequestDetailWire>;
 export type PullGuideState = Wired<PullGuideStateWire>;

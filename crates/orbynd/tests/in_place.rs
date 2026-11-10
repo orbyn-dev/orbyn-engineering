@@ -213,12 +213,19 @@ async fn an_added_folder_still_needs_trust_before_anything_runs() {
 }
 
 #[tokio::test]
-async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
+async fn claude_starts_in_the_checkout_and_reaches_the_library_by_path() {
     let dir = TempDir::new();
     let launch_file = dir.path().join("l");
     let service = start(&dir, options(&launch_file, None)).await;
     let library = support::canonical(dir.path().join("library"));
     let repo = external_repo(&dir.path().join("app"));
+    // A checkout can carry settings that allow every tool before the approval tool is asked.
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    std::fs::write(
+        repo.join(".claude/settings.json"),
+        r#"{"permissions":{"allow":["Bash","Edit","Write(//**)"]}}"#,
+    )
+    .unwrap();
     let project = added(&service, &repo).await;
     let id = project["id"].as_str().unwrap();
     trust(&service, id).await;
@@ -226,7 +233,8 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
     service.admit(&thread, "hi").await;
     assert_eq!(service.finished(&thread).await, "completed");
     let launch = &launches(&launch_file, "claude")[0];
-    assert_eq!(launch["cwd"], library.to_str().unwrap());
+    // The project is the primary folder; the library comes in only as an added one.
+    assert_eq!(launch["cwd"], repo.to_str().unwrap());
     let args: Vec<&str> = launch["args"]
         .as_array()
         .unwrap()
@@ -234,7 +242,18 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
         .map(|arg| arg.as_str().unwrap())
         .collect();
     let at = args.iter().position(|arg| *arg == "--add-dir").unwrap();
-    assert_eq!(args[at + 1], repo.to_str().unwrap());
+    assert_eq!(args[at + 1], library.to_str().unwrap());
+    // Every settings source still loads (CLAUDE.md and skills depend on it); the checkout's allow rules are
+    // outweighed by the run's own `--settings`, which is passed.
+    assert!(
+        !args.contains(&"--setting-sources"),
+        "no source is dropped: {args:?}"
+    );
+    assert!(args.contains(&"--settings"), "{args:?}");
+    assert!(
+        !args.iter().any(|arg| *arg == repo.to_str().unwrap()),
+        "the checkout is the cwd, not an added folder: {args:?}"
+    );
     let prompt = launches(&launch_file, "claude-prompt");
     let prompt = prompt[0]["args"][0].as_str().unwrap();
     let head = std::process::Command::new("git")
@@ -244,7 +263,61 @@ async fn claude_starts_at_the_library_and_reaches_the_checkout_by_path() {
         .unwrap();
     let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
     assert!(prompt.contains(&format!("Checkout: {} on main at {head}", repo.display())));
-    assert!(prompt.contains("use absolute paths"), "{prompt}");
+    // The engine's banner would call its first folder the primary one, so the prompt
+    // says the checkout is the working directory and the library is not the project.
+    assert!(
+        prompt.contains(&format!(
+            "Your working directory is the checkout, {}: that is the project",
+            repo.display()
+        )),
+        "{prompt}"
+    );
+    assert!(prompt.contains("not the project"), "{prompt}");
+    assert!(
+        !prompt.contains("Your shell starts in the shared library"),
+        "{prompt}"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn a_branch_switch_shows_in_the_next_workspace_read_not_minutes_later() {
+    let dir = TempDir::new();
+    let service = start(&dir, options(&dir.path().join("l"), None)).await;
+    let repo = external_repo(&dir.path().join("app"));
+    let project = added(&service, &repo).await;
+    let id = project["id"].as_str().unwrap();
+    trust(&service, id).await;
+    let thread = service.thread(id, "claude").await;
+    let branch_of = |status: &Value| -> String {
+        status["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|target| target["project_id"] == id)
+            .map(|target| target["branch"].as_str().unwrap_or_default().to_owned())
+            .unwrap_or_default()
+    };
+    // The first read is kept for a few seconds, so a stale answer would show `main`.
+    assert_eq!(branch_of(&service.json("/api/workspace").await), "main");
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/branches"),
+            json!({ "name": "feature/x" }),
+        )
+        .await;
+    assert_eq!(code, 201, "{body}");
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/branches/switch"),
+            json!({ "name": "feature/x" }),
+        )
+        .await;
+    assert!(code < 300, "{body}");
+    assert_eq!(
+        branch_of(&service.json("/api/workspace").await),
+        "feature/x"
+    );
     service.stop().await;
 }
 
@@ -385,7 +458,6 @@ async fn a_thread_without_a_project_gets_a_dated_folder_that_outlives_it() {
     let dir = TempDir::new();
     let launch_file = dir.path().join("l");
     let service = start(&dir, options(&launch_file, None)).await;
-    let library = support::canonical(dir.path().join("library"));
     let body = scratch_thread(&service).await;
     assert_eq!(body["scratch"], true);
     let cwd = PathBuf::from(body["cwd"].as_str().unwrap());
@@ -407,7 +479,8 @@ async fn a_thread_without_a_project_gets_a_dated_folder_that_outlives_it() {
     service.admit(thread, "hi").await;
     assert_eq!(service.finished(thread).await, "completed");
     let launch = &launches(&launch_file, "claude")[0];
-    assert_eq!(launch["cwd"], library.to_str().unwrap());
+    // A scratch thread works in its own dated folder, with the library added.
+    assert_eq!(launch["cwd"], cwd.to_str().unwrap());
     let quoted = json!(cwd.to_str().unwrap()).to_string();
     assert!(launch.to_string().contains(quoted.trim_matches('"')));
     let gone = service

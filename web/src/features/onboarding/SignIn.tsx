@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../../api/client";
+import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { Button, Field } from "../../ui/controls";
 

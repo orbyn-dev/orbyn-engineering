@@ -65,7 +65,7 @@ test("the model picker moves a thread to another engine between turns", async ({
   await settled(service, id);
   const before = (await thread(id)).engine;
   await page.locator(".composer-bar [aria-haspopup]").first().click();
-  await page.getByRole("toolbar", { name: "Providers" }).getByRole("button").last().click();
+  await page.getByRole("toolbar", { name: "Provider" }).getByRole("button").last().click();
   await page.getByRole("listbox", { name: "Models" }).getByRole("option").first().click();
   await expect.poll(async () => (await thread(id)).engine).not.toBe(before);
 });
@@ -196,7 +196,7 @@ test("scheduled tasks: create, pause, run and delete through the form", async ({
 
 test("the keybindings page rebinds and the new key runs", async ({ page }) => {
   await page.goto(`${service.page}#/settings/keybindings`);
-  await expect(page.getByText("sidebar.toggle")).toBeVisible();
+  await expect(page.getByText("Toggle sidebar", { exact: true })).toBeVisible();
   await expect(page.getByText(/Couldn't/)).toHaveCount(0);
 });
 

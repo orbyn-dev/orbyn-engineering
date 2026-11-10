@@ -1,14 +1,14 @@
 import { ChevronDown, SquareArrowOutUpRight } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
-import { commandShortcut, formatShortcut, useCommand } from "../../app/shortcuts";
+import { api } from "./api";
+import { commandShortcut, formatShortcut, useCommand } from "../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { DRow } from "./DetailRows";
-import { launchableEditors, primaryEditor } from "./editorPreferences";
+import { DRow } from "../../product/ui/DetailRows";
+import { launchableEditors, primaryEditor } from "../../product/composer/editorPreferences";
 
 /** Opens the thread's checkout in an editor; a revealed path is not a choice of editor, so it does not become the favorite. */
 function useEditorLauncher(threadId: string, fileManagerId: string | undefined) {

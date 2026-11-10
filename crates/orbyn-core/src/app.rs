@@ -122,7 +122,16 @@ pub struct Core {
     pub recovery: Recovery,
     pub(crate) keybinding_writer: Mutex<()>,
     /// Pull request details asked of GitHub, reused while a pull request is unchanged.
-    pub(crate) pull_details: Mutex<crate::source_control::forge_cache::DetailCache>,
+    pub(crate) pull_details: Mutex<crate::source_control::forge::cache::DetailCache>,
+    /// What each forge's CLI said, reused briefly: asking costs a process per forge.
+    pub(crate) forge_statuses:
+        Mutex<Option<(std::time::Instant, Vec<orbyn_contracts::ForgeStatus>)>>,
+    /// The last lists of tools and connectors each engine reported.
+    pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
+    /// What each engine id's tools check keeps between calls: one per id, because an engine
+    /// instance is a new driver on every lookup.
+    pub(crate) tool_probes:
+        Mutex<std::collections::HashMap<String, Arc<crate::agents::tools_report::ToolsProbe>>>,
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
     _lock: File,
 }
@@ -229,11 +238,35 @@ impl Core {
             recovery,
             keybinding_writer: Mutex::new(()),
             pull_details: Mutex::new(Default::default()),
+            forge_statuses: Mutex::new(None),
+            tool_lists: Mutex::new(Default::default()),
+            tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             _lock: lock,
         };
         core.apply_login_preference()?;
         Ok(core)
+    }
+
+    /// Records a user action without exposing store types to transport.
+    pub fn record_user_audit(
+        &self,
+        actor: &str,
+        action: &str,
+        target: &str,
+        thread_id: &str,
+        detail: serde_json::Value,
+    ) -> Result<i64> {
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: actor.to_owned(),
+            action: action.to_owned(),
+            target: target.to_owned(),
+            decision: None,
+            source: "user".to_owned(),
+            thread_id: Some(thread_id.to_owned()),
+            run_id: None,
+            detail,
+        })
     }
 
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo

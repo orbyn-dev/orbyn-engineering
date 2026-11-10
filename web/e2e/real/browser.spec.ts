@@ -85,7 +85,7 @@ test("a page opens, streams, takes input under control, and tabs close", async (
   const threadUrl = decodeURIComponent(page.url().split("/threads/")[1] ?? "");
   const size = async () => (await service.api<{ width: number }[]>("GET", `/api/threads/${threadUrl}/previews`))[0]?.width;
   const before = await size();
-  // The panel is a fixed 380px; maximising it gives the preview a wider pane to follow.
+  // The panel is a fixed 380px; maximising it gives the preview a wider view to follow.
   await page.getByRole("button", { name: "Maximise panel" }).click();
   await expect.poll(size, { timeout: 10_000 }).toBeGreaterThan(before ?? 0);
 

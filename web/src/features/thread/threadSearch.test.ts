@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MessageItem, ToolItem } from "./projection";
+import type { MessageItem, ToolItem } from "../../product/timeline/types";
 import { findMatches, rowOfItems, rowWhere } from "./threadSearch";
-import type { TimelineEntry } from "./timeline";
+import type { TimelineEntry } from "../../product/timeline/timeline";
 
 const message = (key: string, text: string, role = "assistant"): MessageItem => ({
   kind: "message", key, seq: 0, ts: "", runId: "r", role, text, done: true,

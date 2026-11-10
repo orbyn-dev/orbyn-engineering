@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../../app/App";
-import { PREVIEW_SCREENS, type PreviewScreenName } from "./previews";
+import { PREVIEW_SCREENS, type PreviewScreenName } from "./previewNames";
 import { UNAVAILABLE_REASON } from "./Unavailable";
 
 const headings: Record<PreviewScreenName, string> = {

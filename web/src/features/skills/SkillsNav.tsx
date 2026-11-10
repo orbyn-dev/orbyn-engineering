@@ -1,5 +1,5 @@
 import { Book } from "lucide-react";
-import { routeHref, type Route } from "../../state/route";
+import { routeHref, type Route } from "../../product/state/route";
 import { useSkills } from "./skillsStore";
 import "./skillsNav.css";
 

@@ -3,27 +3,27 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, request } from "../../api/client";
 import type { EngineStatus, PreferenceView, Project, Run, Thread } from "../../api/types";
-import { useUi } from "../../state/ui";
-import { useWorkspace } from "../../state/workspace";
-import { DRAFT_KEY } from "../../state/draftStore";
+import { useUi } from "../../product/state/ui";
+import { useWorkspace } from "../../product/state/workspace";
+import { DRAFT_KEY } from "../../product/state/draftStore";
 import { DraftView } from "./DraftView";
 
 vi.mock("../../api/client", async (original) => {
   const actual = await original<typeof import("../../api/client")>();
   return { ...actual, request: vi.fn(), api: { ...actual.api, createThread: vi.fn(), startRun: vi.fn() } };
 });
-vi.mock("../../app/shortcuts", () => ({ useCommand: () => undefined }));
-vi.mock("../workspace/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
+vi.mock("../../product/shell/shortcuts", () => ({ useCommand: () => undefined }));
+vi.mock("../workspace/app-chrome/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
 vi.mock("./useDraftCheckout", () => ({ useDraftCheckout: () => ({ worktree: null, setWorktree: () => undefined, loading: false, error: null }) }));
-vi.mock("../../state/modelStore", () => ({ useEngineModels: () => null, resolveModel: () => null }));
-vi.mock("../thread/ComposerTraits", () => ({
+vi.mock("../../product/state/modelStore", () => ({ useEngineModels: () => null, resolveModel: () => null }));
+vi.mock("../thread/composer/ComposerTraits", () => ({
   ACCESS: { supervised: { label: "Supervised", icon: () => null } },
   EffortTrigger: () => null,
   offeredModes: () => ["supervised"],
   shownAccess: (_engine: unknown, saved: string) => saved,
   useTraitsMenu: () => ({ menu: null, openAt: () => undefined }),
 }));
-vi.mock("../thread/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick }: {
+vi.mock("../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick }: {
   selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void;
 }) => <button type="button" onClick={() => onPick({ engine: "codex", model: "explicit" })}>
   Model {selected.engine}/{selected.model ?? "automatic"}</button> }));

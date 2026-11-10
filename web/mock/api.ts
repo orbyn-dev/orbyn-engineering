@@ -746,6 +746,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/threads": {
         if (seg[2]) {
           if (seg[3] === "terminals") return { status: 200, body: [] };
+          if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(threads.find((t) => t.id === seg[2])?.engine ?? "claude") };
           if (seg[3] === "branches") return { status: 200, body: [{ name: "main", current: true, remote: false }] };
           if (seg[3] === "scripts") return { status: 200, body: { path: null, file: null, problem: null, scripts: [] } satisfies ProjectFileView };
           if (seg[3] === "mentions") {
@@ -819,6 +820,7 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
         }
+        if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(seg[2] ?? "claude") };
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
           const listing = fixtures.engineModels(seg[2] ?? "");

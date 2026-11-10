@@ -1,6 +1,6 @@
 import type { EnvironmentTheme } from "../generated/EnvironmentTheme";
 import { presetById } from "../styles/themes";
-import { applyTheme, useUi } from "../state/ui";
+import { applyTheme, useUi } from "../product/state/ui";
 
 /**
  * Applies the theme the environment publishes, once per time it was set. The

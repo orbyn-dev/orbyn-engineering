@@ -3,14 +3,14 @@
 //! through `service.json` in the data folder, which the service writes at start, and
 //! removes at exit.
 
-#[path = "../cli_service.rs"]
+#[path = "../cli/service.rs"]
 mod cli_service;
 #[cfg(windows)]
-#[path = "../cli_stdio.rs"]
+#[path = "../cli/stdio.rs"]
 mod cli_stdio;
-#[path = "../cli_trace.rs"]
+#[path = "../cli/trace.rs"]
 mod cli_trace;
-#[path = "../cli_triage.rs"]
+#[path = "../cli/triage.rs"]
 mod cli_triage;
 
 use std::path::{Path, PathBuf};
@@ -962,10 +962,7 @@ async fn open_app(cli: &Cli, path: Option<&Path>) -> Outcome<()> {
 }
 
 fn home_dir() -> Outcome<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .ok_or_else(|| Failure::new("No home folder was found."))
+    orbyn_core::util::home_dir().ok_or_else(|| Failure::new("No home folder was found."))
 }
 
 #[cfg(unix)]

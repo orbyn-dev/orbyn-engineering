@@ -29,11 +29,12 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
-   it, and a folder added by path starts untrusted. Claude 2.1.150 run at the
-   library with `--add-dir <checkout>` loads the checkout's skills but not its
-   `.mcp.json` or hooks: both fired from the cwd and neither through `--add-dir`. Its
-   `CLAUDE.md` was not observed either way, and an engine still acts on the target,
-   so trust stays the gate.
+   it, and a folder added by path starts untrusted. Claude starts in the checkout, so
+   the project's own `CLAUDE.md`, hooks and `.mcp.json` are the primary ones and fire
+   from the cwd; that is why trust stays the gate. The library comes in with
+   `--add-dir`, which on 2.1.150 loads its skills but not its `.mcp.json` or hooks
+   (both fired from the cwd and neither through `--add-dir`); its `CLAUDE.md` was not
+   observed either way.
 6. Audit rows are written before the effect they describe, and are append-only.
    Policy and audit are internal safety, not a user feature.
 7. Anything unknown fails closed: an unreachable approver means deny.
@@ -162,7 +163,7 @@ A thread's permission mode is `supervised`, `auto_edits`, `auto` or `full_access
 settable per thread and per turn. Codex maps it natively: `full_access` is
 `approvalPolicy: never` with the network on, and the writable root stays the checkout.
 Claude stays on `--permission-mode default` and the gate accepts for it, because
-`acceptEdits` trusts its cwd, which is the library, and `bypassPermissions` skips
+`acceptEdits` trusts its cwd, which is the checkout, and `bypassPermissions` skips
 `mcp__orbyn_engineering__approve`, so either would defeat the write scope. A rule
 still wins, computer and browser actions still ask, and the write scope is checked
 first. Plan mode refuses file changes, runs Claude in `plan` and Codex with both
@@ -643,10 +644,29 @@ after a minute. Named terminals stay until closed. Settling or archiving closes 
 all. `?observe=true` attaches read-only: input and resizes are dropped. Fish starts
 with `no-query-term` so it does not wait on terminal replies.
 
+Tools and connectors are read-only. `GET /api/threads/:id/tools` and `GET /api/engines/:id/tools`
+(`?refresh=1` asks the engine again) return `EngineTools`: groups
+`builtin`, `orbyn`, `mcp`, `connectors`, `plugins` and `skills`, each with entries whose state is
+`ready`, `starting`, `needs_sign_in` or `failed`, and `not_reported` naming the groups the engine
+cannot report. A group an engine does not report is left out, never shown empty. Claude Code is asked
+with `claude mcp list` in a neutral folder (it starts the servers it checks, so a project's `.mcp.json`
+must not run for a page view) and the thread's last `engine.tools` event supplies what only a run
+reports: plugins, built-in tool names, Orbyn's tool count and skills. The frame alone under-reports,
+because a run that passes `--mcp-config` lists only that server at init. Codex is asked on a short
+app-server with `mcpServerStatus/list`, `app/list` and `plugin/list`; the app and plugin lists are very
+large, so they are reduced to names, states and short descriptions inside the driver, apps to those the
+person can reach and plugins to the installed and enabled. Only names, states and short reasons leave the
+engine's reply: no address, token or request body. Both checks run in a neutral folder, never a project's, so no project config or server starts for a page view.
+Each driver keeps its engine-wide answer for 30 seconds and shares one read between callers, so opening
+threads does not start `claude mcp list` or a Codex app-server each time. A check that fails, or comes back
+with an error, returns the last good list marked with that error, and `error` is never set just because a
+group is absent. There is no per-tool switch:
+the engine decides what is enabled.
+
 The engine console (`POST /api/threads/:id/console`) opens the engine's own
 interactive CLI, unmodified, in the thread's `engine-console` terminal on the session
 Orbyn's runs resume: `claude --resume <session> --permission-mode default|plan`, from
-the library like Claude's runs and with `--add-dir` for another checkout, or
+the folder Claude's runs use (the checkout, or the library for a session begun there) and with `--add-dir` for the other, or
 `codex resume <session> --sandbox <run sandbox>|read-only --ask-for-approval on-request
 --cd <checkout>`. The thread's model follows with `--model`. The program is the one runs
 use, an instance's override included, resolved through `PATH` and Windows shims and
@@ -1700,6 +1720,14 @@ store, policy or UI logic. Tiers: `native` (Claude, Codex), `acp` (one shared
 driver), `agui` (one shared driver, also the OpenBot connector) and `terminal`
 (PTY only, always unmanaged).
 
+Each engine driver is a folder under `agents/driver/` whose `mod.rs` holds the driver type
+and its `EngineDriver` impl and keeps the public paths: `claude/` (`args`, `settings`,
+`mcp`, `catalog`, `protocol`, `events`, `plan`, `usage`, `workflows`), `codex/` (`protocol`,
+`sandbox`, `turn`, `events`, `catalog`, `tools`, `limits`, `short_sessions`) and `acp/`
+(`sessions`, `events`, `models`, `permissions`, `replay`, `sign_in`). Tests sit in
+`tests.rs` beside the module, and the pieces the drivers share (`pipes`, `rpc`,
+`terminal`, `diagnostics`) stay beside them.
+
 `engines/known.rs` lists CLIs that speak ACP from their own binary, with what each needs
 to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, fx, Grok
 Build, Hermes, Kilo, Kimi and OpenCode. One is listed only when its program is found, and
@@ -1727,14 +1755,28 @@ a Windows or Unix shell would read differently, gives no command.
 
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
-- Claude starts at the workspace root and discovers `.claude/skills` and the
-  library's `AGENTS.md` natively. It has no `--plugin-dir`, and gets a per-run
-  `--mcp-config`, `--permission-prompt-tool mcp__orbyn_engineering__approve` and
-  `--add-dir <checkout>`. Its working directory is the library, so a relative path
-  means the library, and the bootstrap tells it to use absolute paths and run
-  commands from the checkout. The composer offers the same skill names the CLI
-  loads: `CLAUDE_CONFIG_DIR` (or `~/.claude`) `skills`, the start folder's and the
-  checkout's `.claude/skills`, and enabled plugins as `plugin:skill`. Discovery only
+- Claude starts in the selected checkout, so the project's own instructions are the
+  primary ones, and gets the library with `--add-dir <library>`, which loads its
+  skills only. A run passes `--setting-sources user`: a checkout's
+  `.claude/settings.json` or `settings.local.json` can hold `permissions.allow` rules,
+  `PreToolUse` hooks that answer allow, and `env`, all decided before Claude asks the
+  permission tool, so an edit outside the checkout would skip the write scope. The
+  library's own `.claude/settings.json` (fast mode off, subagent limits) is merged
+  into the run's `--settings` file, and its `.claude/agents/*.md` go in `--agents`
+  (description, prompt, model, tools, disallowedTools; `effort` is not carried),
+  because `--add-dir` loads neither. A checkout's `.mcp.json` is not a setting source
+  and still loads; folder trust is its gate. It has no `--plugin-dir`, and gets a per-run `--mcp-config` and
+  `--permission-prompt-tool mcp__orbyn_engineering__approve`. Its working directory is
+  the checkout, so a relative path means the checkout and the write scope is
+  unchanged: the checkout only, the library denied. The bootstrap says the checkout
+  is the working directory and the library is for skills only, not the project.
+  Claude keeps a session under the folder it started in, so a session begun when runs
+  started in the library is found there (`projects/<folder>/<session>.jsonl`) and
+  resumes from the library with `--add-dir <checkout>`; any other session, and every
+  new one, starts in the checkout. The engine console picks the folder the same
+  way. The composer offers the same skill names the CLI loads: `CLAUDE_CONFIG_DIR`
+  (or `~/.claude`) `skills`, the start folder's (the checkout's) and the added
+  library's `.claude/skills`, and enabled plugins as `plugin:skill`. Discovery only
   reads names and descriptions for the `$` menu; the CLI still loads and runs them.
 - Codex's process starts at the workspace root. `thread/start` and each `turn/start`
   use the selected checkout as `cwd`, with `sandboxPolicy.writableRoots` set to it,
@@ -2318,7 +2360,9 @@ and reports `ended: false`. A request can be 512 KiB and a reply is cut at 256 K
 ## Service access
 
 - Binds `127.0.0.1` by default on a random port. A per-launch token is required
-  on every `/api`, `/agui` and `/ws` route.
+  on every `/api`, `/agui` and `/ws` route. Only `/auth/session`, `/hooks/...`, the
+  thread-token `/mcp/...` route and the UI fallback sit outside that layer; the
+  layers are applied in `crates/orbynd/src/routes/mod.rs`.
 - `Host` must be a loopback name or a configured host (DNS rebinding defence), and
   a present `Origin` must match it.
 - Non-loopback binds need `--remote`, a persisted hashed access key, and
@@ -2545,6 +2589,11 @@ All bodies are JSON and errors are `ApiError` with a stable `code`. Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
+
+Routes live in `crates/orbynd/src/routes/`, one module per area, each with its
+route list and handlers; `routes/mod.rs` applies the credential, activity and origin
+layers. The table below is the contract, and `crates/orbynd/tests/routes.json` pins
+every method, path and which routes need a credential.
 
 | Method and path | Purpose |
 | --- | --- |

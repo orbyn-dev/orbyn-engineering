@@ -201,9 +201,7 @@ fn jsonl_files(root: &Path, found: &mut Vec<PathBuf>) {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    crate::util::home_dir()
 }
 
 pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
@@ -227,12 +225,16 @@ struct Cached {
     totals: FileTotals,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct ScanCache {
     files: HashMap<PathBuf, Cached>,
 }
 
-fn scan_engine(engine: Engine, cache: &mut ScanCache) -> (String, u32, u32, FileTotals) {
+fn scan_engine(
+    engine: Engine,
+    cache: &mut ScanCache,
+    stop: Option<&tokio_util::sync::CancellationToken>,
+) -> (String, u32, u32, FileTotals) {
     let Some(root) = history_root(engine).filter(|root| root.is_dir()) else {
         return ("no_history".to_owned(), 0, 0, FileTotals::new());
     };
@@ -241,6 +243,10 @@ fn scan_engine(engine: Engine, cache: &mut ScanCache) -> (String, u32, u32, File
     let (mut scanned, mut skipped) = (0, 0);
     let mut combined = FileTotals::new();
     for path in files {
+        // A warm-up ends between files when the service is quitting.
+        if stop.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+            break;
+        }
         let Ok(meta) = std::fs::metadata(&path) else {
             skipped += 1;
             continue;
@@ -480,8 +486,8 @@ impl UsageCenter {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             [
-                ("claude", scan_engine(Engine::Claude, &mut cache)),
-                ("codex", scan_engine(Engine::Codex, &mut cache)),
+                ("claude", scan_engine(Engine::Claude, &mut cache, None)),
+                ("codex", scan_engine(Engine::Codex, &mut cache, None)),
             ]
         })
         .await
@@ -495,6 +501,29 @@ impl UsageCenter {
                 .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
                 .collect(),
         })
+    }
+
+    /// Reads history into memory ahead of the first request, which otherwise waits
+    /// for gigabytes of files. It works on a copy of what is known and merges the
+    /// result in at the end, so a request never waits on the cache lock for the scan.
+    /// `stop` ends it between files when the service quits; what it read is kept.
+    pub async fn warm(&self, stop: tokio_util::sync::CancellationToken) {
+        let cache = self.cache.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let mut local = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            scan_engine(Engine::Claude, &mut local, Some(&stop));
+            scan_engine(Engine::Codex, &mut local, Some(&stop));
+            let mut shared = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (path, entry) in local.files {
+                shared.files.entry(path).or_insert(entry);
+            }
+        })
+        .await;
     }
 
     /// Forgets every scan and limit, so the next read goes back to the sources.
@@ -555,15 +584,28 @@ impl Core {
     pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
         let mut engines = Vec::new();
         let mut unavailable = Vec::new();
-        for status in self.engines.statuses(false).await? {
-            if !status.installed {
-                continue;
-            }
-            match self.engine_limits(&status.id, force).await {
+        // Each engine's report may start its own process, so they are asked together.
+        let installed: Vec<String> = self
+            .engines
+            .statuses(false)
+            .await?
+            .into_iter()
+            .filter(|status| status.installed)
+            .map(|status| status.id)
+            .collect();
+        let reads: Vec<_> = installed
+            .iter()
+            .map(|id| self.engine_limits(id, force))
+            .collect();
+        for (id, read) in installed
+            .iter()
+            .zip(futures_util::future::join_all(reads).await)
+        {
+            match read {
                 Ok(limits) => engines.push(limits),
                 Err(CoreError::Unsupported(_)) => {}
                 Err(error) => unavailable.push(LimitsUnavailable {
-                    engine: status.id,
+                    engine: id.clone(),
                     reason: error.public_message(),
                 }),
             }
@@ -961,5 +1003,18 @@ mod tests {
         let dir = crate::testing::TempDir::new();
         let first = UsageCenter::new(dir.path()).unwrap().host_id;
         assert_eq!(UsageCenter::new(dir.path()).unwrap().host_id, first);
+    }
+
+    #[tokio::test]
+    async fn a_warm_up_stopped_by_quit_returns_and_leaves_the_cache_free() {
+        let dir = crate::testing::TempDir::new();
+        let center = UsageCenter::new(dir.path()).unwrap();
+        let stop = tokio_util::sync::CancellationToken::new();
+        stop.cancel();
+        tokio::time::timeout(Duration::from_secs(10), center.warm(stop))
+            .await
+            .expect("a cancelled warm-up ends at once");
+        // A request that arrives afterwards is not left waiting on the lock.
+        assert!(center.cache.try_lock().is_ok());
     }
 }

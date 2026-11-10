@@ -1,7 +1,7 @@
 import { prettyJson } from "../../lib/format";
-import { outputSpans } from "./ansi";
-import type { ReasoningItem, ToolItem } from "./projection";
-import { baseName, parsed, paths, toolFailed, traceTool } from "./toolTrace";
+import { outputSpans } from "../../lib/ansi";
+import type { ReasoningItem, ToolItem } from "../../product/timeline/types";
+import { baseName, parsed, paths, toolFailed, traceTool } from "../../product/timeline/toolTrace";
 
 /** The kind of row a tool call is drawn as; each has its own icon, words and block. */
 export type CallKind =
@@ -56,16 +56,6 @@ export function callKind(item: Pick<ToolItem, "name" | "args">): CallKind {
 /** A short run of the same kind reads as one group; the rest are rows of their own. */
 const GROUPED: readonly CallKind[] = ["command", "read", "edit", "search", "mcp", "fetch"];
 export const groupsKind = (kind: CallKind) => GROUPED.includes(kind);
-
-/** Seconds as the rows show them: 0.1s, 4.2s, 41s, 1m 02s. */
-export function callDuration(ms: number): string {
-  const tenths = Math.max(0, Math.round(ms / 100));
-  if (tenths < 100) return `${Math.floor(tenths / 10)}.${tenths % 10}s`;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-}
 
 const stamp = (iso: string) => new Date(iso).getTime();
 
@@ -384,9 +374,6 @@ export const lineCount = (value: string): number => linesOf(value).length;
 export const LINES_SHOWN = 12;
 export const ROWS_SHOWN = 7;
 export const ENTRIES_SHOWN = 6;
-export const WIDE_LINE = 100;
-
-export const hasWideLine = (value: string): boolean => linesOf(value).some((line) => line.length > WIDE_LINE);
 
 /** Consecutive same-kind calls; reasoning and rows that never group stand alone. */
 export interface CallRun {

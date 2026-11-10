@@ -24,6 +24,7 @@ import type {
   RunChanges,
   SearchHit,
   EngineLimits,
+  EngineTools,
   KeybindingsView,
   ApplyAllResult,
   Approval,
@@ -250,6 +251,12 @@ export const api = {
   restartSession: (threadId: string) => request<void>("POST", `/api/threads/${q(threadId)}/restart-session`),
   patchThread: (id: string, body: UpdateThread) =>
     request<Thread>("PATCH", `/api/threads/${q(id)}`, body),
+  /** What the thread's engine has available. `refresh` asks the engine again. */
+  threadTools: (threadId: string, refresh = false, signal?: AbortSignal) =>
+    request<EngineTools>("GET", `/api/threads/${q(threadId)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
+  /** The same for Settings: an engine, without a thread. */
+  engineTools: (engine: string, refresh = false, signal?: AbortSignal) =>
+    request<EngineTools>("GET", `/api/engines/${q(engine)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
   threadLimits: (threadId: string, signal?: AbortSignal) =>
     request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits`, undefined, signal),
   searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal) =>
@@ -301,6 +308,10 @@ export const api = {
   settings: (signal?: AbortSignal) =>
     request<ServerSettings>("GET", "/api/settings", undefined, signal),
   putSettings: (body: ServerSettings) => request<ServerSettings>("PUT", "/api/settings", body),
+  /** Changes some settings on top of what the service holds now. PUT replaces everything,
+   * so building the body from a screen's older copy could undo someone else's change. */
+  updateSettings: async (change: (current: ServerSettings) => ServerSettings) =>
+    api.putSettings(change(await api.settings())),
 
   workspace: (signal?: AbortSignal) =>
     request<WorkspaceStatus>("GET", "/api/workspace", undefined, signal),

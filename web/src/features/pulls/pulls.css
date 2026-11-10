@@ -7,7 +7,9 @@
 
 /* The list. Its toolbar is in pullsToolbar.css. */
 .pulls-table {
-  --pulls-cols: 24px minmax(0, 1fr) 190px 96px 170px 56px 50px;
+  --c-rev: 96px;
+  --c-yours: 170px;
+  --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px 50px;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -19,23 +21,6 @@
   gap: 8px;
   padding: 4px 0 8px;
   font-size: var(--text-meta);
-}
-.pulls-empty {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 48px 0;
-  text-align: center;
-  color: var(--color-muted);
-  font-size: var(--text-small);
-}
-.pulls-empty h2 {
-  color: var(--color-text);
-  font-size: var(--text-body);
-  font-weight: 500;
 }
 .pulls-head,
 .pull-rows > li {
@@ -656,7 +641,7 @@
   width: 320px;
   height: 22px;
   border-radius: 6px;
-  background: var(--color-sunken);
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
 }
 .pulls-banner[data-tone="warn"] {
   background: var(--color-warnSoft);
@@ -787,14 +772,12 @@
 .pull-page-skel .pull-skel-card {
   gap: 10px;
 }
+/* The cards are the chip colour, so bars in the sunken colour vanished into them. */
 .pull-skel-card i {
   display: block;
   height: 12px;
   border-radius: 6px;
-  background: var(--color-sunken);
-}
-.pull-skel-card i:first-child {
-  width: 30%;
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
 }
 .pull-block {
   padding: 0 28px 40px;
@@ -876,13 +859,26 @@
   margin: 0;
 }
 
+/* A column with no data in any row leaves the table: its track empties and its cells go (the track variable holds
+   nothing, so the grid has no gap for it either). */
+.pulls-table[data-no-reviewers] {
+  --c-rev: ;
+}
+.pulls-table[data-no-review] {
+  --c-yours: ;
+}
+.pulls-table[data-no-reviewers] :is(.h-reviewers, .pull-reviewers-cell),
+.pulls-table[data-no-review] :is(.h-yours, .pull-yours-cell, .pull-skel-review) {
+  display: none;
+}
+
 /* Narrow: columns go in the order Updated, Comments, Reviewers; then Checks keeps only its icon. */
 .pulls-table {
   container: pulls / inline-size;
 }
 @container pulls (max-width: 859px) {
   .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px 96px 170px 56px;
+    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px;
   }
   .h-age {
     display: none;
@@ -890,7 +886,7 @@
 }
 @container pulls (max-width: 779px) {
   .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px 96px 170px;
+    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours);
   }
   .h-comments,
   .pull-comments-cell {
@@ -899,7 +895,7 @@
 }
 @container pulls (max-width: 699px) {
   .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px 170px;
+    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-yours);
   }
   .h-reviewers,
   .pull-reviewers-cell {
@@ -908,7 +904,7 @@
 }
 @container pulls (max-width: 559px) {
   .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 28px 170px;
+    --pulls-cols: 24px minmax(0, 1fr) 28px var(--c-yours);
   }
   .pull-res-word {
     position: absolute;

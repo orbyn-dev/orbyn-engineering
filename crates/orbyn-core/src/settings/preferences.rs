@@ -190,7 +190,7 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
         crate::project::project_file::validate_scripts(value)?;
     }
     if fits && definition.key == "source_control_writing_style" {
-        crate::source_control::scm_writing::validate_style(value)?;
+        crate::source_control::scm::writing::validate_style(value)?;
     }
     if fits && definition.key == "default_model_options" && !model_options(value) {
         return Err(CoreError::Invalid(

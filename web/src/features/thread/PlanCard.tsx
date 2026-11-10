@@ -1,15 +1,15 @@
 import { Ellipsis } from "lucide-react";
 import { use, useState } from "react";
 import { useOpenState } from "../../ui/openState";
-import { request } from "../../api/client";
+import { saveThreadFile } from "./api";
 import { toFailure } from "../../lib/useAsync";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Dialog } from "../../ui/Dialog";
 import { Button, IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { TimelineThread } from "./items";
-import { Markdown } from "./Markdown";
+import { TimelineThread } from "./timelineThread";
+import { Markdown } from "../content";
 import { planFilename, planTitle, stripPlanTitle } from "./proposedPlan";
 
 const COLLAPSE_CHARS = 900;
@@ -33,11 +33,7 @@ function SaveDialog({ threadId, text, name, onClose }: { threadId: string; text:
     setSaving(true);
     setError(null);
     try {
-      await request("PUT", `/api/threads/${encodeURIComponent(threadId)}/files/content`, {
-        path: path.trim(),
-        content: text,
-        base_revision: null,
-      });
+      await saveThreadFile(threadId, { path: path.trim(), content: text, base_revision: null });
       pushToast(`Saved ${path.trim()}`);
       onClose();
     } catch (failure) {

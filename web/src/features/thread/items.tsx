@@ -1,5 +1,5 @@
 import { PreparationRetryButton } from "./ThreadBanners";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { MessageActions } from "./MessageActions";
 import {
   Brain,
@@ -11,14 +11,14 @@ import { memo, useMemo, useState } from "react";
 import { Square } from "lucide-react";
 import { clockTime, elapsed } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
-import { EngineGlyph } from "../../ui/badges";
+import { EngineGlyph } from "../../product/ui/badges";
 import { Collapsible } from "../../ui/Collapsible";
 import { OpenStatePrefix, useOpenControl, useOpenState } from "../../ui/openState";
-import { useUi } from "../../state/ui";
+import { useUi } from "../../product/state/ui";
 import { Button, Pill } from "../../ui/controls";
 import { ApprovalCard, useResolvedApproval } from "./ApprovalCard";
 import { SurfacedWorkflows, WorkflowCards } from "./WorkflowControls";
-import { Markdown } from "./Markdown";
+import { Markdown } from "../content";
 import { PlanCard } from "./PlanCard";
 import { proposedPlanIn, textAroundPlan } from "./proposedPlan";
 import { SentFiles } from "./SentFiles";
@@ -28,21 +28,12 @@ import {
   type WorkGroup,
   type WorkingRow,
   type WorkItem,
-} from "./timeline";
+} from "../../product/timeline/timeline";
 import { workSegments } from "./toolCalls";
-import { PlanRow, TrailRun, trailKeys } from "./ToolTrail";
-import { TimelineThread, useThreadOfTimeline } from "./timelineThread";
-import type {
-  ActivityItem,
-  ApprovalItem,
-  DiffSummaryItem,
-  MessageItem,
-  NoticeItem,
-  ReasoningItem,
-  ToolItem,
-} from "./projection";
-
-export { TimelineThread };
+import { PlanRow } from "./trail/PlanRow";
+import { TrailRun, trailKeys } from "./trail/ToolTrail";
+import { useThreadOfTimeline } from "./timelineThread";
+import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../product/timeline/types";
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {
@@ -174,6 +165,7 @@ function Activity({ item }: { item: ActivityItem }) {
 
 function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
+  const timestampFormat = useUi((state) => state.timestampFormat);
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
   if (item.code === "run_stopped") {
     return (
@@ -182,7 +174,7 @@ function Notice({ item }: { item: NoticeItem }) {
         <Square size={12} aria-hidden />
         <span>
           {item.text}
-          <span data-find-skip> · {clockTime(item.ts)}</span>
+          <span data-find-skip> · {clockTime(item.ts, timestampFormat)}</span>
         </span>
         <span aria-hidden />
       </div>

@@ -1,10 +1,10 @@
 import { Maximize2 } from "lucide-react";
 import { useId, useState, type CSSProperties } from "react";
-import { resolveTheme, useUi } from "../../state/ui";
+import { resolveTheme, useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { isHtmlRenderTool, renderFrameFrom, type RenderFrame } from "./renderFrame";
-import type { ToolItem } from "./projection";
+import type { ToolItem } from "../../product/timeline/types";
 
 /** Zoom is a percentage of the frame's own layout: 50% to 200%. */
 const MIN_ZOOM = 50;

@@ -1,11 +1,11 @@
 import { act, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { EngineStatus, Project } from "../../api/types";
-import { useWorkspace } from "../../state/workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { DraftView } from "./DraftView";
 
-vi.mock("../../app/shortcuts", () => ({ useCommand: () => undefined }));
-vi.mock("../workspace/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
+vi.mock("../../product/shell/shortcuts", () => ({ useCommand: () => undefined }));
+vi.mock("../workspace/app-chrome/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
 vi.mock("./useDraftCheckout", () => ({ useDraftCheckout: () => ({ worktree: null, setWorktree: () => undefined, loading: false, error: null }) }));
 vi.mock("./useDraftModelDefaults", () => ({ useDraftModelDefaults: () => ({ installed: [], engine: null, model: null, effort: null, loading: false, error: null, choose: () => undefined, reload: () => undefined }) }));
 
