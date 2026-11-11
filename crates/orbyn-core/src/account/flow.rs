@@ -385,10 +385,15 @@ impl AccountCenter {
         let zone = settings_record::ZONE;
         // This data folder joined another account before: that account's record and unsent
         // changes must not follow the person into this one.
-        if self.store.account_known(zone)?
-            && self.store.account_owner(zone)?.as_deref() != Some(session.email.as_str())
-        {
-            self.store.account_reset(zone)?;
+        // The key is the email, compared without case or edge spaces, until the real client
+        // gives an account id (`SessionInfo` has none yet). A row from before the owner was
+        // recorded belongs to whoever signs in now.
+        if self.store.account_known(zone)? {
+            match self.store.account_owner(zone)? {
+                Some(owner) if owner.trim().eq_ignore_ascii_case(session.email.trim()) => {}
+                Some(_) => self.store.account_reset(zone)?,
+                None => self.store.account_claim(zone, &session.email)?,
+            }
         }
         let ask = ask && !self.store.account_known(zone)? && self.has_settings()?;
         if let Some(old) = inner.sync.take() {

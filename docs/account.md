@@ -388,6 +388,9 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
     run that exact action first, and an abandoned prompt leaves the confirmation live for ten minutes because there is no
     cancel route. The fix is a one-time nonce that `/confirm` returns and the action request sends back, plus a cancel
     route.
+14. Key "this computer already joined this account" by the account id when the real client provides one. `SessionInfo`
+    has none yet, so it is the email compared without case or edge spaces: a change of email on the Engine would
+    count as another account and start the settings from nothing.
 
 `LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
 the rule:

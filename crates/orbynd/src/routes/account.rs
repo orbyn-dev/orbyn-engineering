@@ -82,7 +82,7 @@ pub const OPEN: &[(&str, &str)] = &[
     ),
     (
         "POST /api/account/connect",
-        "joins the settings by combining them: the account's newer value wins and nothing is overwritten",
+        "combines the settings: where the account has a value it replaces this computer's, and settings only this computer has start to upload",
     ),
     (
         "POST /api/account/sign-in/approval",

@@ -536,3 +536,85 @@ async fn a_request_that_expired_was_answered_or_was_given_up_cannot_be_answered(
     );
     assert!(a.stand_in().decided().is_empty(), "nothing was approved");
 }
+
+#[tokio::test]
+async fn a_second_look_at_an_allowed_request_keeps_the_session_the_first_made() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "twice");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    let session = crate::account::SessionInfo {
+        email: "late@example.com".into(),
+        device_id: "dev-this".into(),
+        device_name: "This computer".into(),
+    };
+    // Two looks both heard "allowed" from the Engine; the second arrives after the first signed in.
+    let first = core.account.poll_approval().await.unwrap().unwrap();
+    assert_eq!(first.state, AccountApprovalState::Approved);
+    assert_eq!(
+        core.account
+            .finish_approval("req-mine", session)
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(core.account.view("macos").await.session.is_some());
+    assert!(
+        core.account.stand_in().signed_in(),
+        "the Engine session was not ended"
+    );
+    // And a second poll through the route does the same.
+    assert_eq!(core.account.poll_approval().await.unwrap(), None);
+    assert!(core.account.stand_in().signed_in());
+}
+
+#[tokio::test]
+async fn the_same_account_in_another_case_keeps_its_record_and_unsent_changes() {
+    let dir = TempDir::new();
+    let core = with_settings(&dir, "case").await;
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.connect(FirstSync::Combine, None).await.unwrap();
+    until(&core, |c| {
+        matches!(c.account.status().state, SyncState::Online)
+    })
+    .await;
+    a.stand_in().zones().set_online(false);
+    set(&core, "preview_appearance", json!("light"));
+    a.sign_out(false).await.unwrap();
+    let waiting = core.store.account_outbox_len(ZONE).unwrap();
+    assert!(waiting > 0);
+    // Signing in again with the address in another case is the same account; offline, so the
+    // worker cannot upload and empty the outbox before it is looked at.
+    a.sign_in(" Dev@Example.com ", pw(PASSWORD)).await.unwrap();
+    assert_eq!(core.store.account_outbox_len(ZONE).unwrap(), waiting);
+    assert!(!core.store.account_record(ZONE).unwrap().is_empty());
+    let owner = core.store.account_owner(ZONE).unwrap().unwrap();
+    assert!(owner.eq_ignore_ascii_case("dev@example.com"));
+}
+
+#[tokio::test]
+async fn a_row_from_before_the_owner_was_recorded_is_claimed_not_dropped() {
+    let dir = TempDir::new();
+    let core = with_settings(&dir, "null-owner").await;
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.connect(FirstSync::Combine, None).await.unwrap();
+    until(&core, |c| {
+        matches!(c.account.status().state, SyncState::Online)
+    })
+    .await;
+    a.stand_in().zones().set_online(false);
+    set(&core, "preview_appearance", json!("light"));
+    a.sign_out(false).await.unwrap();
+    core.store.account_forget_owner(ZONE).unwrap();
+    let waiting = core.store.account_outbox_len(ZONE).unwrap();
+    assert!(waiting > 0);
+    a.stand_in().zones().set_online(true);
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    assert_eq!(
+        core.store.account_owner(ZONE).unwrap().as_deref(),
+        Some("dev@example.com")
+    );
+    assert!(!core.store.account_record(ZONE).unwrap().is_empty());
+}

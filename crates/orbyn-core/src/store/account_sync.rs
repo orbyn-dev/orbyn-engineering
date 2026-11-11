@@ -339,6 +339,18 @@ impl Store {
         })
     }
 
+    /// Makes the zone look like one from before the owner was recorded.
+    #[cfg(test)]
+    pub(crate) fn account_forget_owner(&self, zone: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE account_sync SET account = NULL WHERE zone = ?1",
+                [zone],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Forgets the zone's local record, outbox and conflicts, as if it had never joined: the
     /// settings themselves stay. A different account is signing in; the first one's unsent
     /// changes must never go to it.

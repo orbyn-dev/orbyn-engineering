@@ -184,6 +184,12 @@ impl DevAccount {
         self.lock().incoming.retain(|(request, _)| request.id != id);
     }
 
+    /// Whether the stand-in still holds a session for this device.
+    #[cfg(test)]
+    pub fn signed_in(&self) -> bool {
+        self.lock().session.is_some()
+    }
+
     #[cfg(test)]
     pub fn zones(&self) -> Arc<FakeDeviceApi> {
         self.zones.clone()
@@ -327,7 +333,7 @@ impl AccountApi for DevAccount {
         let known = state
             .accounts
             .iter()
-            .any(|a| a.email == email && a.password == password.expose());
+            .any(|a| a.email.eq_ignore_ascii_case(email.trim()) && a.password == password.expose());
         if !known {
             return Err(DeviceError::WrongPassword);
         }
@@ -390,7 +396,7 @@ impl AccountApi for DevAccount {
             Some(Answer::Deny) => Ok(ApprovalStatus::Denied),
             Some(Answer::CodesDiffer) => Ok(ApprovalStatus::CodesDiffer),
             Some(Answer::Allow) => {
-                state.mine = None;
+                // The request stays, so a second look at it answers the same.
                 state.session = Some(email.clone());
                 Ok(ApprovalStatus::Approved(session(&email)))
             }

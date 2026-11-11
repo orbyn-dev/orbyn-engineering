@@ -125,8 +125,19 @@ impl AccountCenter {
             .as_ref()
             .is_some_and(|approval| approval.request_id == id && approval.answer.is_none());
         if !pending {
+            // Another look at the same allowed request may have signed in first: that session
+            // is this one, and must stay. Only a session this request did not make is ended.
+            let same = inner.session.as_ref().is_some_and(|current| {
+                current.device_id == session.device_id
+                    && current
+                        .email
+                        .trim()
+                        .eq_ignore_ascii_case(session.email.trim())
+            });
             drop(inner);
-            let _ = backend.account.sign_out().await;
+            if !same {
+                let _ = backend.account.sign_out().await;
+            }
             return Ok(None);
         }
         let mut shown = match inner.approval.as_mut() {
