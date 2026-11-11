@@ -33,7 +33,7 @@ mod threads;
 
 pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
-pub use crew_bus::{CrewDelivery, FactWrite};
+pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_runs::CrewRun;
 
 use std::path::Path;

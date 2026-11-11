@@ -378,3 +378,72 @@ async fn an_expired_lease_blocks_no_other_member() {
         .await;
     assert!(!error, "{sent}");
 }
+
+/// #446: a lead message to A restarts the A-B and A-C pairs, and the ledger names both with their
+/// counts before the reset. The row holds ids and counts, never the message text.
+#[tokio::test]
+async fn a_lead_message_to_one_member_is_recorded_with_every_pair_it_re_armed() {
+    let d = duo().await;
+    let (third, error) =
+        d.w.start(
+            brief(json!({
+                "engine": { "id": "alpha", "assigned_by": "person" },
+                "outcome": "Tools.",
+                "files": [{ "path": "tools/**", "mode": "write" }],
+            })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{third}");
+    let c = third["task"].as_str().unwrap().to_owned();
+    let mc = d.w.core.store.crew_run(&c).unwrap().unwrap().member;
+
+    // A-B has two exchanges and A-C one.
+    for (token, to, text) in [
+        (&d.ta, &d.mb, "one"),
+        (&d.tb, &d.ma, "two"),
+        (&d.ta, &mc, "three"),
+    ] {
+        let (answer, error) = d.call(token, "crew_post", Duo::fact(to, text)).await;
+        assert!(!error, "{answer}");
+    }
+    let crew = d.w.task(&d.a).crew_id;
+    assert!(d.w.core.store.crew_bus_events(&crew).unwrap().is_empty());
+
+    let secret_text = "private words for the lead to A";
+    let (lead, error) = d
+        .call(&d.w.lead_token, "crew_post", Duo::fact(&d.ma, secret_text))
+        .await;
+    assert!(!error, "{lead}");
+    // A message to everyone resets nothing and is not recorded.
+    let (all, error) = d
+        .call(&d.w.lead_token, "crew_post", Duo::fact("all", "carry on"))
+        .await;
+    assert!(!error, "{all}");
+
+    let events = d.w.core.store.crew_bus_events(&crew).unwrap();
+    assert_eq!(events.len(), 1, "{events:?}");
+    let row = &events[0];
+    assert_eq!(row.kind, "hop_reset");
+    assert_eq!(row.body["to"], json!(d.ma));
+    assert_eq!(row.body["message"], lead["id"]);
+    let mut pairs: Vec<(String, u64)> = row.body["pairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["with"].as_str().unwrap().to_owned(),
+                p["before"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    pairs.sort();
+    let mut want = vec![(d.mb.clone(), 2), (mc.clone(), 1)];
+    want.sort();
+    assert_eq!(pairs, want);
+    assert!(
+        !row.body.to_string().contains(secret_text),
+        "the ledger row holds message text"
+    );
+}

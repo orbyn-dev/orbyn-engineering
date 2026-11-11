@@ -58,6 +58,14 @@ the rest of [crew](../README.md): off, the four tools do not exist.
   sees a message to the lead or to another member, and nothing of the lead's thread.
 - An answer returned to a waiting `crew_ask` is not also sent to the asker's turn.
 
+## The ledger
+
+A lead message to one member restarts the exchange count of every pair that member is in (H4, kept as written). A routine message can
+therefore re-arm a looping pair the lead never looked at (option A). Every such reset is a `hop_reset` row in `crew_bus_events` (migration 35,
+append-only, written by the core only, `ledger.rs`): the member, the message id, and each pair with its count before the reset. It holds no
+message text, and passes the secret scan and the answer-key check before it is stored. Real runs show whether resets re-arm loops; a notice
+id that the lead must name (option B) is revisited then (#446).
+
 ## Tested
 
 `tests/bus.rs` runs two fake engines, one that takes input mid-turn and one that does not: a board fact

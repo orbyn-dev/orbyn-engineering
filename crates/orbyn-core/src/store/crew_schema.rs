@@ -189,3 +189,21 @@ CREATE INDEX crew_deliveries_by_message ON crew_deliveries(message_id, recipient
 CREATE TRIGGER crew_deliveries_immutable BEFORE UPDATE ON crew_deliveries
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 35: the bus ledger. One row per event the bus decides on its own, appended by the core only and never
+// changed. Today the only kind is `hop_reset`: a lead message to one member restarted the exchange count of every
+// pair that member is in (SPEC.md H4). The body names the member, the message by id and each pair with its count
+// before the reset. It holds no message text, and passes the secret scan and the answer-key check before it is stored.
+pub(super) const CREW_BUS_EVENTS: &str = r#"
+CREATE TABLE crew_bus_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    crew_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('hop_reset')),
+    body TEXT NOT NULL CHECK(json_valid(body)),
+    at TEXT NOT NULL
+);
+CREATE INDEX crew_bus_events_by_crew ON crew_bus_events(crew_id, id);
+CREATE TRIGGER crew_bus_events_immutable BEFORE UPDATE ON crew_bus_events
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;
