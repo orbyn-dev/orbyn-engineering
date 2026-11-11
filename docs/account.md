@@ -195,7 +195,7 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (21 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+**Synced keys** (20 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
 Engineering 1. Only the person-level value of a key syncs.
 
 | Group | Keys |
@@ -203,16 +203,18 @@ Engineering 1. Only the person-level value of a key syncs.
 | Appearance and reading | `default_theme`, `response_streaming_mode`, `preview_appearance`, `preview_zoom`, `open_web_links_in_app`, `quit_confirmation` |
 | Engine and model defaults | `default_engine`, `default_model`, `default_effort`, `default_model_options`, `fallback_model`, `text_generation_model` |
 | Model lists | `favorite_models` and `hidden_models` (sets), `model_order` (one field) |
-| Thread and branch defaults | `default_permission_mode`, `default_thread_env_mode`, `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
+| Thread and branch defaults | `default_thread_env_mode`, `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
 | Keybindings | One field per (key, `when`) pair |
 
 A synced `default_engine` or `default_model` may name an engine or model this computer does not have. The existing
-fallback behaviour applies; the value is kept as set. A synced `default_permission_mode` changes what agents may do
-on the receiving computer without a prompt there; the threat model lists this as an open question.
+fallback behaviour applies; the value is kept as set.
+
+The Engine crate change that drops `default_permission_mode` from its synced keys comes in a follow-up Engine pull
+request, before tag `engine-v0.1.0`. Until then the app does not stage it.
 
 ### Never synced
 
-Fifteen keys, by decision:
+Sixteen keys, by decision:
 
 | Why | Keys |
 | --- | --- |
@@ -220,11 +222,12 @@ Fifteen keys, by decision:
 | Programs, paths, endpoints | `provider_instances`, `custom_models`, `observability`, `storage_cleanup`, `worktree_cleanup` |
 | Per-computer update and polling | `app_update_mode`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
 | Login and engine availability | `prefer_saved_login`, `disabled_engines` |
+| Changes what agents may do | `default_permission_mode`: a loosened permission mode must not cross devices (agreed with Engineering 1) |
 | Service-owned stamp | `default_theme_set_at` |
 
 ### Not in v1, may sync later
 
-The other 26 keys are not synced in v1, so 21 + 15 + 26 = 62:
+The other 26 keys are not synced in v1, so 20 + 16 + 26 = 62:
 
 | Key | Reason |
 | --- | --- |
@@ -360,6 +363,4 @@ Two places where the frames and the decisions differ, for the Designer to settle
 Questions about the snapshot, the dependencies, `LocalOnly`, the local stack and the settings list are answered and
 folded in above. These remain, with Engineering 1's security reviewer:
 
-1. `default_permission_mode` syncs by the agreed list. Is that intended, given a permission raised on one computer
-   would apply on another? The threat model asks the same.
-2. The threat model's [open questions](account-threat-model.md#open-questions).
+1. The threat model's [open questions](account-threat-model.md#open-questions).

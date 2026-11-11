@@ -276,11 +276,9 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
 ## Open questions
 
 Answered by Engineering 1 and folded in above: sensitive routes (decision D12), the macOS rule with the sidecar, and the
-session lifetime. Still open, with Engineering 1's security reviewer:
+session lifetime. `default_permission_mode` is never synced (a loosened mode must not cross devices), so that question is closed. Still open, with Engineering 1's security reviewer:
 
-1. `default_permission_mode` is on the agreed synced list. A looser mode set on one device then applies to engines on
-   every other device. Is that accepted, or should a raise be held until the person confirms it on the receiving device?
-2. Which macOS keychain API (control 1), and what provisioning it needs under Developer ID: not verified.
+1. Which macOS keychain API (control 1), and what provisioning it needs under Developer ID: not verified.
 
 ## Design requests (the Designer owns these; nothing is built)
 
