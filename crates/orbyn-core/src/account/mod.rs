@@ -112,6 +112,9 @@ pub struct AccountCenter {
     inner: tokio::sync::Mutex<flow::Inner>,
     confirmed: Mutex<Option<flow::Grant>>,
     approval_life: Mutex<std::time::Duration>,
+    /// Whether the person has been told the service ended their session, and whether they ended
+    /// it themselves everywhere. In memory only, and reset by the next sign-in.
+    ended: Mutex<flow::Ended>,
     /// The development stand-in itself, so a test can play the trusted device.
     #[cfg(test)]
     stand_in: Option<Arc<dev::DevAccount>>,
@@ -153,6 +156,7 @@ impl AccountCenter {
             inner: tokio::sync::Mutex::default(),
             confirmed: Mutex::new(None),
             approval_life: Mutex::new(flow::APPROVAL_LIFETIME),
+            ended: Mutex::new(flow::Ended::default()),
         }
     }
 

@@ -90,6 +90,9 @@ pub struct AccountView {
     #[ts(optional)]
     pub approval: Option<AccountApprovalView>,
     pub connect: AccountConnectState,
+    /// The service ended this computer's session (not the person: a removal or an ended session)
+    /// and the person has not been told yet.
+    pub ended_notice: bool,
     /// Set after the first sync of a joined computer, until the person closes the summary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -131,6 +134,7 @@ pub struct AccountApprovalView {
     /// Six digits, shown in two groups: "418 207". The other device shows the same ones.
     pub digits: String,
     /// Seconds left of the ten minutes, while waiting.
+    #[ts(type = "number")]
     pub expires_in_secs: u64,
 }
 }
@@ -149,6 +153,7 @@ pub struct AccountApprovalRequest {
     /// RFC 3339.
     pub asked_at: String,
     pub digits: String,
+    #[ts(type = "number")]
     pub expires_in_secs: u64,
 }
 }

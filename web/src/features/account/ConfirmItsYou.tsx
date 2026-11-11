@@ -2,6 +2,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
+import type { AccountConnectPolicy } from "../../generated/AccountConnectPolicy";
 import { accountApi } from "./api";
 import { announceAccountChange } from "./changes";
 import { Failure } from "./Card";
@@ -15,7 +16,7 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
  * by it; the service refuses an action without one with `reauth_required`, whatever this dialog did.
  * `onConfirmed` runs the action.
  */
-export function ConfirmItsYou({ action, deviceId, subject, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; subject?: string; onConfirmed(): void | Promise<void>; onClose(): void }) {
+export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; policy?: AccountConnectPolicy; subject?: string; onConfirmed(): void | Promise<void>; onClose(): void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -31,7 +32,7 @@ export function ConfirmItsYou({ action, deviceId, subject, onConfirmed, onClose 
     setBusy(true);
     setProblem(null);
     try {
-      await accountApi.confirm(password, action, deviceId);
+      await accountApi.confirm(password, action, deviceId, policy);
       setPassword("");
       await onConfirmed();
       onClose();
@@ -68,6 +69,7 @@ export function ConfirmItsYou({ action, deviceId, subject, onConfirmed, onClose 
         {subject ? <p className="ac-sub">{subject}</p> : null}
         {throttled ? <Failure>Too many attempts. Try again {retryText(left)}.</Failure> : null}
         {network ? <Failure>{NETWORK_TEXT}</Failure> : null}
+        {problem?.kind === "gone" ? <Failure>Denied or cancelled.</Failure> : null}
         {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
         <Field label="Password" error={problem?.kind === "wrong" ? "That isn’t your password. Check it and try again." : null}>
           {(props) => (

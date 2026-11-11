@@ -11,6 +11,8 @@ export type Problem =
   | { kind: "invite" }
   /** The short check this device does before a code is sent could not finish. */
   | { kind: "check" }
+  /** A request to sign in that has ended: refused, given up or timed out on the other device. */
+  | { kind: "gone" }
   | { kind: "other"; message: string };
 
 export const NETWORK_TEXT = "Couldn’t reach Orbyn. Check your connection and try again. Nothing was changed.";
@@ -31,6 +33,8 @@ export function problemOf(error: unknown): Problem {
       return { kind: "code", triesLeft: detail.tries_left ?? null };
     case "sign_in_closed":
       return { kind: "closed" };
+    case "request_gone":
+      return { kind: "gone" };
     case "check_failed":
       return { kind: "check" };
     case "invite_required":
