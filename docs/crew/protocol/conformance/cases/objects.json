@@ -1,0 +1,154 @@
+{
+  "suite": "Content-addressed objects, versions and shape",
+  "cases": [
+    {
+      "id": "obj-id-matches",
+      "title": "A stamped example validates and its id is the hash of its canonical form",
+      "rules": [
+        "H14"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.valid.basic"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "obj-id-mismatch",
+      "title": "Changing a field without re-hashing is refused",
+      "rules": [
+        "H14"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.valid.basic",
+            "mutate": {
+              "outcome": "Something else."
+            }
+          },
+          "expect": {
+            "error": "id_mismatch"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-float-refused",
+      "title": "A floating-point number is refused, so ids stay portable",
+      "rules": [
+        "H14"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.invalid.float-minutes"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-unsupported-version",
+      "title": "An object with another version is refused",
+      "rules": [
+        "H15"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.valid.basic",
+            "mutate": {
+              "v": 1
+            }
+          },
+          "expect": {
+            "error": "unsupported_version"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-unknown-type",
+      "title": "An unknown type is refused",
+      "rules": [
+        "H15"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "type": "banana",
+            "v": 0
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-brief-has-no-answer-key",
+      "title": "A brief that carries an answer key field is refused",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.invalid.answer-key-field"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-forbidden-effect",
+      "title": "A brief cannot allow an effect outside the closed set",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.invalid.forbidden-effect"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-evidence-by-worker",
+      "title": "Evidence authored by a worker is refused by shape",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "evidence.invalid.authored-by-worker"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    }
+  ]
+}

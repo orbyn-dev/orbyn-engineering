@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/common.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Crew Protocol common definitions",
+  "description": "Shared definitions and the envelope every Crew object carries.",
+  "$defs": {
+    "hash": {
+      "description": "A content address: sha256 of the canonical object without its id.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "opaque_id": {
+      "description": "An id assigned by the core (crew, run, check). Opaque to members.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "member_id": {
+      "description": "A crew member. The words lead, all, core and person are reserved.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "not": { "enum": ["lead", "all", "core", "person"] }
+    },
+    "token": {
+      "description": "A lowercase identifier such as an engine id, a lane or a code.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40
+    },
+    "commit": {
+      "description": "A full git object id, SHA-1 or SHA-256, in lowercase hex.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "rel_path": {
+      "description": "A repository-relative path with forward slashes: no leading slash, no drive, no empty or dot-dot segment.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9._@+ -]+(/[A-Za-z0-9._@+ -]+)*$",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "path_pattern": {
+      "description": "A rel_path, optionally ending in /** to cover a directory tree. v0 has no other glob syntax.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9._@+ -]+(/[A-Za-z0-9._@+ -]+)*(/\\*\\*)?$",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "text_short": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "text_long": { "type": "string", "minLength": 1, "maxLength": 8000 },
+    "loopback_url": {
+      "description": "An http URL on a loopback address. Probes never leave the machine.",
+      "type": "string",
+      "pattern": "^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]{1,5})?(/[^\\s]*)?$"
+    },
+    "author": {
+      "description": "Who wrote the object. Always stamped by the core, never supplied by a member.",
+      "type": "object",
+      "required": ["role", "engine"],
+      "additionalProperties": false,
+      "properties": {
+        "role": { "enum": ["lead", "worker", "reviewer", "core", "person"] },
+        "engine": { "$ref": "#/$defs/token" },
+        "member": { "$ref": "#/$defs/member_id" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "role": { "enum": ["lead", "worker", "reviewer"] } }, "required": ["role"] },
+          "then": { "required": ["member"] },
+          "else": { "not": { "required": ["member"] } }
+        }
+      ]
+    },
+    "envelope": {
+      "description": "The fields every object carries. A member's draft carries none of them.",
+      "type": "object",
+      "required": ["type", "v", "id", "crew_id", "author", "created_at"],
+      "properties": {
+        "type": { "type": "string" },
+        "v": { "const": 0 },
+        "id": { "$ref": "#/$defs/hash" },
+        "crew_id": { "$ref": "#/$defs/opaque_id" },
+        "author": { "$ref": "#/$defs/author" },
+        "created_at": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  }
+}

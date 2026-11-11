@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/lease.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Lease",
+  "description": "A grant of paths to a member for a time. The core enforces it; a pre-commit guard and the worktree write filter honour it.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "if": {
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "transferred"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "to"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "to"
+          ]
+        }
+      }
+    }
+  ],
+  "required": [
+    "run_id",
+    "holder",
+    "paths",
+    "mode",
+    "state",
+    "expires_at"
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": {
+      "const": "lease"
+    },
+    "run_id": {
+      "$ref": "common.schema.json#/$defs/opaque_id"
+    },
+    "holder": {
+      "$ref": "common.schema.json#/$defs/member_id"
+    },
+    "paths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "common.schema.json#/$defs/path_pattern"
+      }
+    },
+    "mode": {
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "state": {
+      "enum": [
+        "requested",
+        "granted",
+        "denied",
+        "released",
+        "transferred",
+        "expired"
+      ]
+    },
+    "expires_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "to": {
+      "description": "The new holder, when state is transferred.",
+      "$ref": "common.schema.json#/$defs/member_id"
+    },
+    "reason": {
+      "$ref": "common.schema.json#/$defs/text_short"
+    }
+  }
+}

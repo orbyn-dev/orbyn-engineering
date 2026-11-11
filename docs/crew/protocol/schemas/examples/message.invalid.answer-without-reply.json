@@ -1,0 +1,16 @@
+{
+  "type": "message",
+  "v": 0,
+  "id": "sha256:eef696416ff82fd5fc812415e8cec89f05e276dccde1bae3eb0a4255913618f2",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "opencode",
+    "member": "worker-02"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "to": "worker-01",
+  "kind": "answer",
+  "body": "Use ParseError from the shared board fact crew-demo.error."
+}

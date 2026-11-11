@@ -1,0 +1,51 @@
+{
+  "type": "brief",
+  "v": 0,
+  "id": "sha256:00b9c6a451cbf1878054846818763781063b57af81e1845bd66b9748f3b314bd",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "lead",
+    "engine": "claude",
+    "member": "lead-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "kind": "implement",
+  "outcome": "Add a parse_duration function to crew-demo that reads 90s and 2m.",
+  "inputs": [
+    {
+      "kind": "text",
+      "text": "Return an error for an empty string."
+    },
+    {
+      "kind": "path",
+      "path": "crates/crew-demo/src/lib.rs"
+    }
+  ],
+  "files": [
+    {
+      "path": "/etc/passwd",
+      "mode": "read"
+    }
+  ],
+  "allowed_effects": [
+    "read_repo",
+    "write_leased",
+    "run_checks"
+  ],
+  "stop_when": [
+    "The function is added and its tests pass.",
+    "A required file is outside the lease."
+  ],
+  "budget": {
+    "turns": 20,
+    "minutes": 30
+  },
+  "needs": [
+    "mcp"
+  ],
+  "engine": {
+    "id": "codex",
+    "assigned_by": "person",
+    "tag": "@codex"
+  }
+}

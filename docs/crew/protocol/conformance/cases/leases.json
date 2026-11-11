@@ -1,0 +1,499 @@
+{
+  "suite": "Leases: one writer per path",
+  "cases": [
+    {
+      "id": "lease-grant",
+      "title": "A free path is granted",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/src/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "result_has": {
+              "state": "granted"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-write-write-conflict",
+      "title": "Two writers cannot hold overlapping paths; the lead is told",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/src/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/src/lib.rs"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "lease_conflict",
+            "lead_notified": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-tree-and-tree",
+      "title": "A tree overlaps a tree inside it",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/src/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "lease_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-same-file",
+      "title": "The same file conflicts",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/guide.md"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "docs/guide.md"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "lease_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-disjoint-ok",
+      "title": "Disjoint paths are both granted",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/a/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "crates/b/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker3"
+          },
+          "args": {
+            "paths": [
+              "docs/guide.md"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-sibling-prefix-not-overlap",
+      "title": "A directory whose name only starts the same does not overlap",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-read-read-ok",
+      "title": "Two readers share a path",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "read",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "read",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-read-write-conflict",
+      "title": "A writer cannot take a path another member reads",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "read",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "docs/guide.md"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "lease_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-same-holder-ok",
+      "title": "A member can request overlapping paths again",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/guide.md"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-release-then-take",
+      "title": "A released path can be taken",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.release",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ]
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-release-not-held",
+      "title": "Releasing a lease that is not held is refused",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.release",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ]
+          },
+          "expect": {
+            "error": "lease_not_held"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-escaping-path",
+      "title": "A path that leaves the worktree is refused",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "../outside/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-forged-holder",
+      "title": "A member cannot name the holder or the state itself",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z",
+            "holder": "worker-02",
+            "state": "granted"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    }
+  ]
+}

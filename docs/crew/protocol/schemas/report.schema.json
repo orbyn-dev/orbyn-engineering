@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/report.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Report",
+  "description": "What a worker hands back through crew.report at the end of an attempt. The verifier runs after every report.",
+  "type": "object",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/envelope" }],
+  "required": ["run_id", "brief", "summary", "claims", "not_verified"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": { "const": "report" },
+    "run_id": { "$ref": "common.schema.json#/$defs/opaque_id" },
+    "brief": { "$ref": "common.schema.json#/$defs/hash" },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,255}$" },
+    "commit": { "$ref": "common.schema.json#/$defs/commit" },
+    "claims": { "type": "array", "maxItems": 256, "items": { "$ref": "common.schema.json#/$defs/hash" } },
+    "not_verified": { "description": "What the worker knows no check covers.", "type": "array", "maxItems": 64, "items": { "$ref": "common.schema.json#/$defs/text_short" } }
+  }
+}

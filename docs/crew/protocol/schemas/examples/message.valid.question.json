@@ -1,0 +1,18 @@
+{
+  "type": "message",
+  "v": 0,
+  "id": "sha256:bec542be68a7da231d27f98955b36f4d6781b7b29b2170781f64a03bfb19a78a",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "codex",
+    "member": "worker-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "to": "worker-02",
+  "kind": "question",
+  "body": "Which error type should parse_duration return?",
+  "expects_reply": true,
+  "wait_seconds": 30
+}

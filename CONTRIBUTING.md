@@ -214,7 +214,8 @@ profile. `ORBYN_CARGO_PROFILE` (empty or unset means `release`) is read by `scri
 A job on pushes to main warms the `ci-release` cache, so a new pull request's first desktop build starts warm.
 
 The Windows Rust tests run on a pull request that changes `crates/`, any `.rs` file, the Cargo
-manifests, the desktop shell, the scripts or the workflows. They are split into six shards plus a
+manifests, the desktop shell, the scripts, the workflows or `docs/crew/protocol/` (the Crew Protocol
+schemas, examples and cases, which `crates/orbyn-contracts/tests/crew_protocol/main.rs` validates). They are split into six shards plus a
 lint job, and the required `Rust (windows-2022)` check is the job that passes only when all of them did.
 The Windows desktop build caches the NSIS download (`%LOCALAPPDATA%\tauri`), keyed on the Tauri CLI version.
 

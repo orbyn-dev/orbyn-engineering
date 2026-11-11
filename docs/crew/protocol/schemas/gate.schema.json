@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/gate.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Gate",
+  "description": "A decision at a stage. It is decided by code, by a confirmed finding or by a person, and needs Evidence or a person. Written only by the core.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "if": {
+        "required": [
+          "stage"
+        ],
+        "properties": {
+          "stage": {
+            "const": "finding_check"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirmed",
+              "unconfirmed"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "pass",
+              "fail"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "decided_by"
+        ],
+        "properties": {
+          "decided_by": {
+            "const": "person"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "author": {
+            "properties": {
+              "role": {
+                "const": "person"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          },
+          "author": {
+            "properties": {
+              "role": {
+                "const": "core"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "run_id",
+    "stage",
+    "subject",
+    "decision",
+    "decided_by",
+    "evidence",
+    "reason"
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": {
+      "const": "gate"
+    },
+    "author": {
+      "properties": {
+        "role": {
+          "enum": [
+            "core",
+            "person"
+          ]
+        }
+      }
+    },
+    "run_id": {
+      "$ref": "common.schema.json#/$defs/opaque_id"
+    },
+    "stage": {
+      "enum": [
+        "checks",
+        "code_review",
+        "security_review",
+        "finding_check",
+        "pr_review",
+        "disagreement",
+        "merge"
+      ]
+    },
+    "subject": {
+      "$ref": "common.schema.json#/$defs/hash"
+    },
+    "decision": {
+      "enum": [
+        "pass",
+        "fail",
+        "confirmed",
+        "unconfirmed"
+      ]
+    },
+    "decided_by": {
+      "enum": [
+        "code",
+        "confirmed_finding",
+        "person"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "common.schema.json#/$defs/hash"
+      }
+    },
+    "reason": {
+      "$ref": "common.schema.json#/$defs/text_short"
+    }
+  }
+}

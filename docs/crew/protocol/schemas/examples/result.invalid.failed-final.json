@@ -1,0 +1,32 @@
+{
+  "type": "result",
+  "v": 0,
+  "id": "sha256:68ad9981b830f5a349d363226b7320399eeca6c0d532a7f370c8dd48849a4057",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "state": "failed",
+  "final": true,
+  "summary": "One check failed; the worker retries with the reason.",
+  "branch": "feat/parse-duration",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "checks": [
+    {
+      "check": "chk-tests",
+      "evidence": "sha256:cc8a785a649bac070b0093ba346a1f66683c25048b44ce4e9742012bdb8e1973",
+      "outcome": "fail"
+    }
+  ],
+  "not_verified": [],
+  "attempts": 1,
+  "usage": {
+    "turns": 4
+  },
+  "route": "sha256:4bd2c9ef1b4930e08f13b7cebda831b23bb2b570f27cb8a447b93cd79f8a6598",
+  "report": "sha256:19a5218d86e63c16617a5e2ab214c9b15453bb28198884059747982f60da4790"
+}

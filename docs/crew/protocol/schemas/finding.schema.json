@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/finding.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Finding",
+  "description": "A reviewer's typed finding. It blocks only after a separate check confirms it.",
+  "type": "object",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/envelope" }],
+  "required": ["run_id", "lane", "severity", "path", "line", "claim", "evidence", "commit"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": { "const": "finding" },
+    "run_id": { "$ref": "common.schema.json#/$defs/opaque_id" },
+    "lane": { "description": "The reviewer lane, for example correctness or security.", "$ref": "common.schema.json#/$defs/token" },
+    "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+    "path": { "$ref": "common.schema.json#/$defs/rel_path" },
+    "line": { "type": "integer", "minimum": 1 },
+    "claim": { "$ref": "common.schema.json#/$defs/text_short" },
+    "evidence": { "$ref": "common.schema.json#/$defs/text_long" },
+    "repro": { "$ref": "common.schema.json#/$defs/text_long" },
+    "commit": { "description": "The exact commit that was read.", "$ref": "common.schema.json#/$defs/commit" }
+  }
+}

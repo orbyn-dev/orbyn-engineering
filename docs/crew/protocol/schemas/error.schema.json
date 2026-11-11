@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/error.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Error",
+  "description": "What a crew tool returns when it refuses. A tool result, not a ledger object: it has no id and is never hashed.",
+  "type": "object",
+  "required": ["v", "code", "message"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 0 },
+    "code": {
+      "enum": [
+        "invalid_object", "unsupported_version", "id_mismatch", "secret_detected",
+        "answer_key_forbidden", "protected_path_conflict", "unknown_tool", "not_authorized",
+        "depth_exceeded", "run_ended", "hop_limit_exceeded", "post_limit_exceeded",
+        "lease_conflict", "lease_not_held", "board_conflict", "gate_needs_evidence", "invalid_transition",
+        "invalid_token", "unknown_member"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "object": { "description": "The id of the object that was refused, when it had one.", "$ref": "common.schema.json#/$defs/hash" }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/claim.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Claim",
+  "description": "A statement a member makes, with the check that would prove it. Without a check it shows as unverified.",
+  "type": "object",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/envelope" }],
+  "required": ["run_id", "statement"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": { "const": "claim" },
+    "run_id": { "$ref": "common.schema.json#/$defs/opaque_id" },
+    "statement": { "$ref": "common.schema.json#/$defs/text_short" },
+    "check": { "$ref": "check.schema.json" }
+  }
+}

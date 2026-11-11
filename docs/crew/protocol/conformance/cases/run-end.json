@@ -1,0 +1,380 @@
+{
+  "suite": "No messages after a run ends",
+  "cases": [
+    {
+      "id": "end-post-refused",
+      "title": "A post after the run ends is refused",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-every-tool-refused",
+      "title": "Every crew tool refuses after the run ends",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.ask",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "question",
+            "body": "Q?"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.a",
+            "class": "observation",
+            "value": "x",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.claim",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "statement": "Done."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.report",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "summary": "Done.",
+            "claims": [],
+            "not_verified": []
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-by-cancel",
+      "title": "Cancelling the task ends the run",
+      "rules": [
+        "H7",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "cancelled",
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-by-stop",
+      "title": "Stopping the task ends the run",
+      "rules": [
+        "H7",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "stopped",
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-by-pass",
+      "title": "Passing the task ends the run",
+      "rules": [
+        "H7",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "evidence": 1,
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-unknown-tool-first",
+      "title": "An unknown tool is still unknown after the run ends",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.merge",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {},
+          "expect": {
+            "error": "unknown_tool"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-paused-run-still-accepts",
+      "title": "A task that needs a person has not ended, so tools still work",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "needs_person",
+          "expect": {
+            "run_ended": false
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "blocker",
+            "body": "Waiting for you."
+          },
+          "expect": {}
+        }
+      ]
+    }
+  ]
+}

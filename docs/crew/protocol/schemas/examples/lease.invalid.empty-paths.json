@@ -1,0 +1,17 @@
+{
+  "type": "lease",
+  "v": 0,
+  "id": "sha256:b9249fe3c4a62f6a0d74e2cc9ceeaef01e9a61663695dc839731ad3ce300ae42",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "holder": "worker-01",
+  "paths": [],
+  "mode": "write",
+  "state": "granted",
+  "expires_at": "2026-11-12T10:00:00Z"
+}

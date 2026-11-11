@@ -1,0 +1,171 @@
+{
+  "suite": "Gates need evidence or a person",
+  "cases": [
+    {
+      "id": "gate-code-with-evidence",
+      "title": "A gate decided by code with evidence is written",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "gate-code-without-evidence",
+      "title": "A gate decided by code needs evidence",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "evidence": []
+            }
+          },
+          "expect": {
+            "error": "gate_needs_evidence"
+          }
+        }
+      ]
+    },
+    {
+      "id": "gate-confirmed-finding-without-evidence",
+      "title": "A gate decided by a confirmed finding needs evidence",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "decided_by": "confirmed_finding",
+              "evidence": []
+            }
+          },
+          "expect": {
+            "error": "gate_needs_evidence"
+          }
+        }
+      ]
+    },
+    {
+      "id": "gate-person-without-evidence",
+      "title": "A person can decide without evidence",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "person"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "merge",
+              "decided_by": "person",
+              "evidence": [],
+              "reason": "Reviewed the diff."
+            }
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "gate-person-gate-by-core",
+      "title": "A gate that names a person cannot be authored by the core",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "merge",
+              "decided_by": "person",
+              "evidence": [],
+              "reason": "Reviewed."
+            }
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "gate-finding-check-vocabulary",
+      "title": "A finding check says confirmed or unconfirmed, never pass",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "finding_check",
+              "decision": "pass"
+            }
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "finding_check",
+              "decision": "confirmed"
+            }
+          },
+          "expect": {}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "type": "lease",
+  "v": 0,
+  "id": "sha256:e7133ed9cce4684ef94cdac23575bcb639759d4c921bbf4dbfb28437fe7e44e8",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "holder": "worker-01",
+  "paths": [
+    "crates/crew-demo/src/**"
+  ],
+  "mode": "write",
+  "state": "transferred",
+  "expires_at": "2026-11-12T10:00:00Z",
+  "to": "worker-02",
+  "reason": "Worker 2 owns the parser now."
+}
