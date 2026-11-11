@@ -322,7 +322,8 @@ async fn the_view_names_the_platform_and_never_a_secret() {
 /// under `cfg(debug_assertions)`, and the release arm of that function does nothing.
 #[test]
 fn the_development_account_switch_is_debug_only() {
-    let source = include_str!("../main.rs");
+    // A Windows checkout may use CRLF line endings.
+    let source = include_str!("../main.rs").replace("\r\n", "\n");
     let uses: Vec<usize> = source
         .match_indices("ORBYN_ACCOUNT_DEV")
         .map(|(at, _)| at)
