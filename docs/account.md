@@ -32,8 +32,8 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 `orbyn-core` depends on the Engine's device client:
 
 ```toml
-orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.1.0" }
-orbyn-engineering = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.1.0" }
+orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.0" }
+orbyn-engineering = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.0" }
 ```
 
 Both name the same tag, so one revision is locked for both. `orbyn-device-client` re-exports only `orbyn-sync`'s merge;
@@ -69,9 +69,49 @@ the record schema comes from `orbyn-engineering`.
   - Errors: `Offline`, `Unauthorized`, `InviteRequired`, `WrongPassword`, `RateLimited { retry_after }`, `Conflict`,
     `TooLarge`, `InvalidKey`, `Server { retryable }`, `InvalidCode`, `DeletionScheduled`, `ProtectionAdvanced` and
     `AccountGone`.
-- **Does not exist yet.** At this commit the Engine has no `orbyn-device-client` crate, no `docs/engineering.md` and no
-  `engine-v0.1.0` tag. Until they land, the app builds the account module against a fake `DeviceApi` that lives in the
-  app's test support.
+- **Engine pin.** See [Engine pin](#engine-pin). The real client exists at `engine-v0.2.0`; the app does not depend on it
+  yet, and the account module still builds against the fake `DeviceApi` in the app's test support.
+
+### Engine pin
+
+The Engine release this design is written against is tag `engine-v0.2.0`, commit
+`32f360016633ae38aebdf913603fa73a66ecfa24` (its main CI is green). It adds the `orbyn-device-client` crate (start,
+confirm and deny an approval; the new device's join, digits, finish and deny; `remove_device`; `devices`) and the v3
+approval message that binds the device's name, platform and `app` label into the approval. The earlier tag
+`engine-v0.1.0` is superseded; the `tag =` lines above name `engine-v0.2.0`.
+
+**Where the real pin lives.** Nowhere in code yet: no Engine crate is in `Cargo.toml` or `Cargo.lock`. The dependency
+lands with the adapter pull request, once `orbyn-client` re-exports `DevicePlatform` and `DeviceApp` (D6 stands: the app
+never names the Engine's `orbyn-contracts`). Then the pin is the `tag =` in `crates/orbyn-core/Cargo.toml`, the
+revision in `Cargo.lock`, and the tag-resolves-to-locked-revision check described under Pin. Until then this section is
+the record. Sign-in condition 2 below names `engine-v0.1.0`; `engine-v0.2.0` contains that tag's work, and the condition
+is not marked satisfied by this note.
+
+### The plan for the adapter
+
+Decided with the lead session. Nothing here is built, and real sign-in stays off.
+
+- **Sync.** The Engine's per-record sync on `orbyn-engineering::Settings` is the source of truth for the merge. The app's
+  whole-record `pull` and `push` with a base version are not carried over. The "offline edit lost" list is rebuilt by
+  diffing the settings before and after a pass.
+- **Sign-up order** follows the Engine: the password first, then the emailed code. The flow in the app does not change
+  until the Designer's new frame is merged; no screen is reordered before then.
+- **New device approval** uses the two-way comparison with the digits typed (or confirmed) on the new device. The adapter
+  never calls `finish_approval` with no digits to skip that step. It is built only from the merged frame for it.
+- **D6 stands.** `orbyn-client` will re-export `DevicePlatform` and `DeviceApp` (Engineering 1 is doing it), so the app
+  never names the Engine's contracts crate.
+- **"Confirm it's you"** (`verify_password`) maps to the client's `reauthenticate`, a network OPAQUE login. Its copy and
+  its error states must therefore cover a network failure. That frame is still to be requested from the Designer.
+- **`last_seen`.** The Engine's `Device` has none. The device list never shows one.
+- **Gate.** Real sign-in stays off: the gate is `Off` in release builds, the `LocalOnly` stand-in stays debug and test
+  only, and nothing makes a network call under `Off`.
+
+### The `app` label is a hint
+
+A device signs itself in with an `app` label (`planner` or `engineering`), and from v3 the approval binds the name,
+platform and label. The label is the device's **own signed claim**: it says what the device asserted at sign-in, never
+which app is actually running. It is a hint for the person approving, not proof, and no decision (code or copy) may treat
+it as proof of which app is asking. The approve prompt may show it as a hint and no more.
 
 ## Where the account module sits
 

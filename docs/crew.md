@@ -102,7 +102,7 @@ Changes come to Products Research.
 | --- | --- | --- |
 | E1 | Add the `orbyn-engineering` crate (the `engineering.settings` zone first) and `docs/engineering.md`, which names every record, key and merge rule and states the D10 key-sharing fact | Schemas validate; merge tests pass |
 | E1 | Build `orbyn-device-client` (D3). The device registration also gains an `app` label (`planner` or `engineering`) bound into the signed register message, which closes Engine issue #73 | A fake-server test passes; the device list shows the label |
-| E1 | Tag the workspace (`engine-v0.1.0` first) | The app pins the tag |
+| E1 | Tag the workspace (`engine-v0.1.0` first; `engine-v0.2.0` adds the device client and the v3 approval, see [Engine pin](account.md#engine-pin)) | The app pins the tag |
 | E1 | Keep staging working for invite-only sign-up on a desktop client, not just the Planner web app | A new invited person signs in from the app against staging |
 | E2 | A new account module in `orbyn-core` built on the `orbyn-device-client` trait, against a fake server until the crate lands: session, device keychain, trusted-device approval, a sync worker per zone, status events, and the D10 threat model | Unit tests with a fake server; no password in any request body |
 | E2 | Settings, Account for real (sign in, devices, sync status, sign out), replacing the preview-only sign-in screen. The other preview screens stay behind the flag | Built from merged Account frames (check with the Designer first) |
@@ -110,7 +110,7 @@ Changes come to Products Research.
 | E1 + E2 | A cross-repository end-to-end test: sign in against the Engine's compose stack, change a setting on machine A, see it on machine B | It passes in the app's CI on affected paths |
 
 **Engine order (E1):** (a) design note, `orbyn-engineering` crate and `docs/engineering.md`; (b) `orbyn-device-client`
-with a fake-server test; (c) the device `app` label, Engine issue #73 and tag `engine-v0.1.0`; (d) a desktop-client run
+with a fake-server test; (c) the device `app` label (a hint only, never proof), Engine issue #73 and tags `engine-v0.1.0` and `engine-v0.2.0`; (d) a desktop-client run
 against the compose stack with invite-only config; (e) the cross-repository end-to-end test with Engineering 2.
 Sign-up needs an invite, an 8-character email code and proof of work. Staging is not deployed yet, which is the owner's
 step.
