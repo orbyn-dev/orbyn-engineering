@@ -220,6 +220,48 @@ async fn every_account_route_is_a_read_open_for_a_reason_or_needs_a_confirmation
     }
 }
 
+/// Autopilot's always-denied list (N1) refuses by this module's list, so a route the list does not
+/// know would be one an agent could call. Failures name a route by its place in the sorted list.
+#[tokio::test]
+async fn every_account_route_is_a_read_or_on_the_list_autopilot_refuses() {
+    use orbyn_core::account::changes::{
+        READS as CORE_READS, STATE_CHANGING, changes_account_state,
+    };
+    let served = serve("autopilot", AccountGate::Off, false).await;
+    let routes = served.account_routes();
+    let listed = |list: &[(&str, &str)], method: &str, path: &str| {
+        list.iter().any(|(m, p)| *m == method && *p == path)
+    };
+    for (index, (method, path)) in routes.iter().enumerate() {
+        let change = listed(STATE_CHANGING, method, path);
+        let read = listed(CORE_READS, method, path);
+        assert!(
+            change != read,
+            "account route {index} must be in exactly one of the core's lists, STATE_CHANGING or READS"
+        );
+        assert_eq!(
+            changes_account_state(&concrete(path)),
+            change,
+            "account route {index} is not refused the way its list says"
+        );
+        assert_eq!(
+            read,
+            method == "GET",
+            "account route {index}: only a GET is a read"
+        );
+    }
+    for (method, path) in STATE_CHANGING.iter().chain(CORE_READS) {
+        assert!(
+            routes.contains(&((*method).to_owned(), (*path).to_owned())),
+            "a core list names a route that does not exist"
+        );
+    }
+    // The same reads as this service's own list.
+    let ours: Vec<String> = READS.iter().map(|(route, _)| (*route).to_owned()).collect();
+    let theirs: Vec<String> = CORE_READS.iter().map(|(m, p)| format!("{m} {p}")).collect();
+    assert_eq!(ours, theirs);
+}
+
 #[tokio::test]
 async fn a_confirmation_is_for_one_action_one_device_and_one_use() {
     let served = serve("one-use", AccountGate::LocalOnly, false).await;

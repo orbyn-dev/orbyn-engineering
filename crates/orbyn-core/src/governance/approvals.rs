@@ -131,8 +131,26 @@ impl Verdict {
     }
 }
 
+/// What Crew's Autopilot says about an action before a rule or a person is asked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Review {
+    /// No opinion: policy, then a person, as always.
+    Pass,
+    /// Approved by the chain. A person's deny rule still wins; a rule that allows or none lets it through.
+    Approved,
+    /// Refused, with the words the requester reads. No rule, mode or person's allow can undo it.
+    Deny(String),
+}
+
+/// The check Crew's Autopilot installs on the gate. It is bound only when the Crew Preview flag is on.
+#[async_trait::async_trait]
+pub trait ActionReview: Send + Sync {
+    async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
+}
+
 pub struct ApprovalGate {
     store: Arc<Store>,
+    review: std::sync::OnceLock<Arc<dyn ActionReview>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalState>>>,
     /// Words for the engine, between a denial and its waiter reading them.
     feedback: Mutex<HashMap<String, String>>,
@@ -143,10 +161,16 @@ impl ApprovalGate {
     pub fn new(store: Arc<Store>, timeout: Duration) -> Self {
         Self {
             store,
+            review: std::sync::OnceLock::new(),
             waiters: Mutex::new(HashMap::new()),
             feedback: Mutex::new(HashMap::new()),
             timeout,
         }
+    }
+
+    /// Installs Autopilot's check. It can be set once.
+    pub fn bind_review(&self, review: Arc<dyn ActionReview>) {
+        let _ = self.review.set(review);
     }
 
     /// Decides an action, waiting for a person when policy says ask. The audit
@@ -219,9 +243,33 @@ impl ApprovalGate {
         if scope.plan && ask.kind == ActionKind::FileChange {
             return Ok(Verdict::Deny("Plan mode changes nothing.".to_owned()));
         }
+        let review = match self.review.get() {
+            Some(review) => review.review(scope, &ask).await,
+            None => Review::Pass,
+        };
+        if let Review::Deny(words) = review {
+            self.store.append_audit(&AuditRecord {
+                actor: format!("engine:{}", scope.engine),
+                action: "action.deny".into(),
+                target: ask.target.clone(),
+                decision: Some(PolicyEffect::Deny),
+                source: "autopilot".into(),
+                thread_id: Some(scope.thread_id.clone()),
+                run_id: Some(scope.run_id.clone()),
+                detail: json!({ "kind": ask.kind }),
+            })?;
+            return Ok(Verdict::Deny(words));
+        }
         let rules = self.store.list_rules()?;
         let mut decision = policy::evaluate(&rules, ask.kind, &ask.target, &scope.family);
         if decision.effect == PolicyEffect::Ask
+            && decision.rule_id.is_none()
+            && review == Review::Approved
+        {
+            decision.effect = PolicyEffect::Allow;
+            decision.source = "autopilot".into();
+            decision.reason = "Approved by Autopilot".into();
+        } else if decision.effect == PolicyEffect::Ask
             && decision.rule_id.is_none()
             && mode_accepts(scope.mode, ask.kind)
         {

@@ -1,0 +1,364 @@
+//! Autopilot at the gate: every request of a Crew worker passes the always-denied list, the trip
+//! wires and the chain before a rule or a person is asked (see the [README](README.md)). The
+//! gate calls this through [`ActionReview`], bound by `McpService::bind_host` only when the Crew
+//! Preview flag is on. Outside a Crew task only N1, the account, is enforced.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, Weak};
+
+use async_trait::async_trait;
+use orbyn_contracts::{ActionKind, BriefEffect, LeaseMode, ResultState, StopReason};
+use serde_json::{Value, json};
+
+use super::chain::{Approvers, Outcome, Summary, decide};
+use super::hard::{self, Scene, context, refuse_in};
+use super::tier::{Grants, tier};
+use super::tripwire::{injection_in, injection_in_value, tripped};
+use super::{Mode, ledger, read_allowed_hosts};
+use crate::app::Core;
+use crate::crew::lifecycle::is_final;
+use crate::crew::wire_name;
+use crate::error::Result;
+use crate::governance::approvals::{ActionAsk, ActionReview, Review, RunScope};
+use crate::store::{CrewRun, CrewTask};
+
+/// Where a mode is chosen. A crew's choice beats its repository's, which beats the default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModeScope {
+    Default,
+    Repo(String),
+    Crew(String),
+}
+
+/// The store's key for a scope.
+pub fn scope_key(scope: &ModeScope) -> String {
+    match scope {
+        ModeScope::Default => "default".to_owned(),
+        ModeScope::Repo(id) => format!("repo:{id}"),
+        ModeScope::Crew(id) => format!("crew:{id}"),
+    }
+}
+
+/// What Core keeps for Autopilot: the approvers, set by whoever wires the lead and a second engine.
+#[derive(Default)]
+pub struct Autopilot {
+    pub(crate) approvers: Mutex<Approvers>,
+}
+
+/// The gate's side: a weak hold on the core, so the gate does not keep it alive.
+pub(crate) struct GateReview(pub Weak<Core>);
+
+#[async_trait]
+impl ActionReview for GateReview {
+    async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review {
+        match self.0.upgrade() {
+            Some(core) => core.crew_review_action(scope, ask).await,
+            None => Review::Pass,
+        }
+    }
+}
+
+impl Core {
+    /// Sets who approves for the lead and who may be a second key. A second key is the first of
+    /// `others` on another vendor than the lead.
+    pub fn set_crew_approvers(&self, approvers: Approvers) {
+        *self
+            .crew_autopilot
+            .approvers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = approvers;
+    }
+
+    /// The person's choice for a scope.
+    pub fn set_crew_autopilot_mode(&self, scope: &ModeScope, mode: Mode) -> Result<()> {
+        self.store
+            .set_crew_autopilot_mode(&scope_key(scope), mode.name())
+    }
+
+    /// The mode in force: the crew's, else the repository's, else the default, else `Full`.
+    pub fn crew_autopilot_mode(&self, project_id: &str, crew_id: &str) -> Mode {
+        [
+            ModeScope::Crew(crew_id.to_owned()),
+            ModeScope::Repo(project_id.to_owned()),
+            ModeScope::Default,
+        ]
+        .iter()
+        .find_map(|scope| {
+            self.store
+                .crew_autopilot_mode_of(&scope_key(scope))
+                .ok()
+                .flatten()
+                .and_then(|text| Mode::parse(&text))
+        })
+        .unwrap_or_default()
+    }
+
+    fn account_only(&self, ask: &ActionAsk) -> Review {
+        let text = std::iter::once(ask.target.as_str())
+            .chain(ask.paths.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if hard::account_change(&text) {
+            Review::Deny(denied_words("N1", hard::RULES[0].1))
+        } else {
+            Review::Pass
+        }
+    }
+
+    /// The whole check for one action. Any failure to check is a denial.
+    pub(crate) async fn crew_review_action(
+        self: &Arc<Self>,
+        scope: &RunScope,
+        ask: &ActionAsk,
+    ) -> Review {
+        let found = self.store.crew_task_for_worker(&scope.thread_id);
+        let Ok(found) = found else {
+            return Review::Deny("Orbyn could not check this action.".to_owned());
+        };
+        let Some((task, run)) = found else {
+            return self.account_only(ask);
+        };
+        match self.review_for_task(&task, &run, scope, ask).await {
+            Ok(review) => review,
+            Err(error) => {
+                tracing::warn!(%error, "autopilot could not check an action; denying");
+                Review::Deny("Orbyn could not check this action.".to_owned())
+            }
+        }
+    }
+
+    async fn review_for_task(
+        self: &Arc<Self>,
+        task: &CrewTask,
+        run: &CrewRun,
+        scope: &RunScope,
+        ask: &ActionAsk,
+    ) -> Result<Review> {
+        if is_final(&task.state) {
+            return Ok(Review::Deny("This task has ended.".to_owned()));
+        }
+        let (Some(brief), Some(key)) = (
+            self.store.crew_brief(&task.id)?,
+            self.store.crew_answer_key(&task.id)?,
+        ) else {
+            return Ok(Review::Deny(
+                "This task has no brief to check against.".to_owned(),
+            ));
+        };
+        let needles = crate::crew::key_needles(&key);
+        let Some(worktree) = run
+            .worktree
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| scope.write_scope.as_ref().map(|w| w.checkout.clone()))
+        else {
+            return Ok(Review::Deny(
+                "Orbyn could not find this task's worktree.".to_owned(),
+            ));
+        };
+        let project = self.store.thread(&run.lead_thread_id)?.project_id;
+        let mode = self.crew_autopilot_mode(&project, &task.crew_id);
+        let hosts = read_allowed_hosts(&worktree, run.base_commit.as_deref()).await;
+        let branch = current_branch(&worktree).await;
+        let data = self.config.data_dir.clone();
+        let scene = Scene {
+            worktree: &worktree,
+            protected: &key.protected_paths,
+            allowed_hosts: &hosts,
+            data_dir: Some(&data),
+            branch: branch.as_deref(),
+        };
+        let ctx = context(ask.kind, &ask.target, &ask.paths, &scene);
+        let action =
+            json!({ "kind": wire_name(&ask.kind), "target": ask.target, "paths": ask.paths });
+
+        // Trip wire: text that reads as injected instructions. A file's own content is not scanned.
+        let mut scanned = injection_in(&ask.summary).or_else(|| injection_in(&ask.target));
+        if ask.kind != ActionKind::FileChange {
+            scanned = scanned.or_else(|| injection_in_value(&ask.detail));
+        }
+        if let Some(class) = scanned {
+            let body = json!({ "wire": "injection", "class": class, "action": action });
+            self.autopilot_record(task, "tripwire", &body, &needles)?;
+            self.autopilot_stop(
+                task,
+                StopReason::InjectionSuspected,
+                "injection_suspected",
+                "The task stopped: a request held text that looks like injected instructions.",
+            );
+            return Ok(Review::Deny(
+                "The task stopped: a request held text that looks like injected instructions."
+                    .to_owned(),
+            ));
+        }
+
+        // The always-denied list: before any approver, rule or mode.
+        if let Some(refusal) = refuse_in(&ctx) {
+            let body = json!({ "action": action, "decided_by": "hard_rule", "rule": refusal.id, "name": refusal.rule, "mode": mode.name() });
+            return self.autopilot_denied(
+                task,
+                &body,
+                &denied_words(refusal.id, refusal.rule),
+                &needles,
+            );
+        }
+
+        let writes: Vec<_> = brief
+            .files
+            .iter()
+            .filter(|g| g.mode == LeaseMode::Write)
+            .map(|g| g.path.clone())
+            .collect();
+        let commands: Vec<String> = key
+            .checks
+            .iter()
+            .filter_map(orbyn_contracts::CrewCheck::command)
+            .collect();
+        let tiered = tier(
+            &ctx,
+            &Grants {
+                writes: &writes,
+                check_commands: &commands,
+            },
+        );
+        let summary = Summary {
+            kind: wire_name(&ask.kind),
+            target: ledger::shown(&ask.target, &needles),
+            paths: ask
+                .paths
+                .iter()
+                .take(20)
+                .map(|p| ledger::shown(p, &needles))
+                .collect(),
+            brief: ledger::shown(&brief.outcome, &needles),
+            effects: brief.allowed_effects.iter().map(effect_name).collect(),
+            tier: tiered.need.tier().to_owned(),
+            reasons: tiered.reasons.iter().map(|r| (*r).to_owned()).collect(),
+        };
+        let approvers = self
+            .crew_autopilot
+            .approvers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let outcome = decide(mode, tiered.need, &summary, &approvers).await;
+        self.settle_review(task, &action, &summary, mode, outcome, &needles)
+    }
+
+    fn settle_review(
+        self: &Arc<Self>,
+        task: &CrewTask,
+        action: &Value,
+        summary: &Summary,
+        mode: Mode,
+        outcome: Outcome,
+        needles: &[String],
+    ) -> Result<Review> {
+        let answer = |a: &super::Answer| json!({ "approve": a.approve, "reason": a.reason });
+        let base = |decided_by: &str| json!({ "action": action, "decided_by": decided_by, "tier": summary.tier, "reasons": summary.reasons, "mode": mode.name() });
+        match outcome {
+            Outcome::Allow {
+                decided_by,
+                lead,
+                second,
+            } => {
+                let mut body = base(decided_by);
+                body["lead"] = lead.as_ref().map_or(Value::Null, answer);
+                body["second"] = second.as_ref().map_or(
+                    Value::Null,
+                    |(engine, a)| json!({ "engine": engine, "answer": answer(a) }),
+                );
+                self.autopilot_record(task, "allowed", &body, needles)?;
+                Ok(Review::Approved)
+            }
+            Outcome::Person { why } => {
+                let mut body = base("person");
+                body["why"] = json!(why);
+                self.autopilot_record(task, "person", &body, needles)?;
+                Ok(Review::Pass)
+            }
+            Outcome::Deny {
+                decided_by,
+                reason,
+                lead,
+                second,
+                disagreement,
+                needs_second_engine,
+            } => {
+                let mut body = base(decided_by);
+                body["lead"] = lead.as_ref().map_or(Value::Null, answer);
+                body["second"] = second.as_ref().map_or(
+                    Value::Null,
+                    |(engine, a)| json!({ "engine": engine, "answer": answer(a) }),
+                );
+                body["needs_second_engine"] = json!(needs_second_engine);
+                body["reason"] = json!(reason);
+                if disagreement {
+                    self.autopilot_record(task, "disagreement", &body, needles)?;
+                }
+                self.autopilot_denied(
+                    task,
+                    &body,
+                    &format!("Denied: {}", ledger::shown(&reason, needles)),
+                    needles,
+                )
+            }
+        }
+    }
+
+    /// Records a denial, trips the wire if the counts say so, and returns what the requester reads.
+    fn autopilot_denied(
+        self: &Arc<Self>,
+        task: &CrewTask,
+        body: &Value,
+        words: &str,
+        needles: &[String],
+    ) -> Result<Review> {
+        self.autopilot_record(task, "denied", body, needles)?;
+        let (in_a_row, in_a_run) = self.store.crew_autopilot_denials(&task.id)?;
+        if tripped(in_a_row, in_a_run) {
+            let wire = json!({ "wire": "denials", "in_a_row": in_a_row, "in_a_run": in_a_run });
+            self.autopilot_record(task, "tripwire", &wire, needles)?;
+            self.autopilot_stop(
+                task,
+                StopReason::TooManyDenials,
+                "too_many_denials",
+                "The task stopped: too many denials.",
+            );
+            return Ok(Review::Deny(
+                "The task stopped: too many denials.".to_owned(),
+            ));
+        }
+        Ok(Review::Deny(words.to_owned()))
+    }
+
+    /// Stops a task through the lifecycle, so its leases end, its worker's run is cancelled and the lead is told.
+    pub(crate) fn autopilot_stop(
+        self: &Arc<Self>,
+        task: &CrewTask,
+        reason: StopReason,
+        name: &str,
+        why: &str,
+    ) {
+        match self.store.move_crew_task(&task.id, "stopped", Some(name)) {
+            Ok(moved) => self.end_crew_task(&moved, ResultState::Stopped, Some(reason), why, None),
+            Err(error) => tracing::debug!(%error, "autopilot found the task already moved"),
+        }
+    }
+}
+
+fn denied_words(id: &str, rule: &str) -> String {
+    format!("Denied by Autopilot ({id}): {rule}. No approval can change this.")
+}
+
+fn effect_name(effect: &BriefEffect) -> String {
+    wire_name(effect)
+}
+
+async fn current_branch(worktree: &Path) -> Option<String> {
+    let out = crate::source_control::git::git(worktree, &["symbolic-ref", "--short", "-q", "HEAD"])
+        .await
+        .ok()?;
+    let name = crate::source_control::git::text(&out);
+    (!name.is_empty()).then_some(name)
+}

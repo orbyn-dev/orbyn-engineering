@@ -13,6 +13,7 @@ use crate::store::{Store, SyncConflict};
 
 pub mod api;
 pub mod apply;
+pub mod changes;
 pub mod codes;
 pub mod device_api;
 pub mod flow;

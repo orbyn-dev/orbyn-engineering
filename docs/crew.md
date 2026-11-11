@@ -508,6 +508,11 @@ engine. It is shown with its reasons.
   queue's merges. It reverts automatically when the cause is certain, and otherwise asks the person.
 - **Daily digest:** what merged, what is waiting for review, what was reverted.
 
+**As built (slice 4f, part 1):** the always-denied list N1 to N10 (including the account routes) in code, the approval
+chain with a lead and a second key on another vendor, trip wires, the ledger and the mode (`off`, `on`, `full` by
+default), all behind the Preview flag and with no screen. The lead and second key are an `Approver` trait, not yet backed
+by a live engine. See the [Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md).
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with

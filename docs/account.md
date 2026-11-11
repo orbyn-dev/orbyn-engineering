@@ -24,7 +24,7 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 | D7 | Confirmed | Connected apps stay after the beta. The L52 to L55 screens stay `preview-only`, behind `__ORBYN_PREVIEWS__` ([design.md](design.md#planned-with-the-orbyn-platform)) |
 | D8 | Confirmed | Crew proof signing uses a local keychain key until after the beta. That key is another asset for the threat model when it lands; it is not part of Phase 1 |
 | D9 | Confirmed | The Engine is MIT or Apache-2.0, so the app may depend on it. The wiring pull request adds the dependency to [UPSTREAM.md](../UPSTREAM.md) with its notices. The Engine never depends on app code |
-| D10 | Corrected | Confirmed: every trusted device holds every zone key, and no copy may suggest per-app isolation. Corrected: "reading credentials is already on the Autopilot hard-denied list" is **Planned** (slice 4f), not built. Today Orbyn hard-denies only writes outside the checkout, and the person's file viewer refuses the data folder. Orbyn never hears about an engine's own file reads, so it cannot deny them. The threat model therefore rests on keeping secrets out of files and out of the environment, with the hard-deny code as defence in depth |
+| D10 | Corrected | Confirmed: every trusted device holds every zone key, and no copy may suggest per-app isolation. Corrected: "reading credentials is already on the Autopilot hard-denied list" was **Planned** (slice 4f). Slice 4f now refuses a Crew worker's command that names a credential file, the data folder or a secret, behind the Crew Preview flag. Outside Crew, Orbyn still hard-denies only writes outside the checkout, and the person's file viewer refuses the data folder. Orbyn never hears about an engine's own file reads, so it cannot deny them. The threat model therefore rests on keeping secrets out of files and out of the environment, with the hard-deny code as defence in depth |
 | D11 | Clarified | See [The Engine address](#the-engine-address) and [Testing](#testing). Added: the end-to-end test drives the Engine's `scripts/local.sh` (see [Testing](#testing)), and in CI a skipped test must fail |
 
 ## Dependency on the Engine
@@ -371,9 +371,10 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
 9. When the real client lands: a test that only a loopback address is accepted under `LocalOnly`, and a test that
    the client follows no redirect.
 10. A test that request-body logging stays off the account routes, so no password reaches a log.
-11. A runtime "changes account state" marker on these routes, so Autopilot's always-denied rule (Crew slice 4f) can
-    refuse them by policy. Today governance sees only a generic command or network action.
-    Every state-changing account route must be refusable by that policy, so the list includes the new ones:
+11. Done in Crew slice 4f: the list in `orbyn_core::account::changes` marks the state-changing routes, Autopilot's
+    always-denied rule (N1) refuses a command or request that names one, and `orbynd`'s route-table test fails when a
+    route under `/api/account` is in neither list. Governance sees a command or request, not the handler, so this
+    covers what reaches the gate. Every state-changing account route must be refusable by that policy, so the list includes the new ones:
     `approvals/:id/approve`, `approvals/:id/deny`, `sign-in/approval`, `connect`, `connect/use-device`,
     `connect/use-account`, `connect/later` and `connect/seen`. A later "Refused on this computer" activity item for
     them is out of scope.
