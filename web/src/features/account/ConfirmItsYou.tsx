@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
+import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
 import { accountApi } from "./api";
 import { Failure } from "./Card";
 import { retryText } from "./codes";
@@ -9,10 +10,11 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
 
 /**
  * "Confirm it's you": the one dialog that asks for the password again before removing a device, signing out
- * everywhere and the other sensitive actions. The service enforces it too: an action sent without a recent
- * confirmation is refused with `reauth_required`, whatever this dialog did. `onConfirmed` runs the action.
+ * everywhere and the other sensitive actions. A confirmation is for this one action (and device) and is used up
+ * by it; the service refuses an action without one with `reauth_required`, whatever this dialog did.
+ * `onConfirmed` runs the action.
  */
-export function ConfirmItsYou({ onConfirmed, onClose }: { onConfirmed(): void | Promise<void>; onClose(): void }) {
+export function ConfirmItsYou({ action, deviceId, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; onConfirmed(): void | Promise<void>; onClose(): void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -28,7 +30,7 @@ export function ConfirmItsYou({ onConfirmed, onClose }: { onConfirmed(): void | 
     setBusy(true);
     setProblem(null);
     try {
-      await accountApi.confirm(password);
+      await accountApi.confirm(password, action, deviceId);
       setPassword("");
       await onConfirmed();
       onClose();
@@ -63,8 +65,7 @@ export function ConfirmItsYou({ onConfirmed, onClose }: { onConfirmed(): void | 
         {throttled ? <Failure>Too many attempts. Try again {retryText(left)}.</Failure> : null}
         {network ? <Failure>{NETWORK_TEXT}</Failure> : null}
         {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
-        <Field label="Password" error={problem?.kind === "wrong" ? "That isn’t your password. Check it and try again." : null}
-          hint="You won’t be asked again if you signed in within the last 10 minutes.">
+        <Field label="Password" error={problem?.kind === "wrong" ? "That isn’t your password. Check it and try again." : null}>
           {(props) => (
             <input {...props} ref={field} type="password" autoComplete="current-password" data-dialog-focus value={password} disabled={busy}
               onChange={(event) => setPassword(event.target.value)} />

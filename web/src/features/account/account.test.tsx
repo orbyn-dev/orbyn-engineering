@@ -208,7 +208,7 @@ describe("Confirm it’s you", () => {
     await fetch("/api/account/sign-in", { method: "POST", body: JSON.stringify({ email: "dev@example.com", password: PASSWORD }) });
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<ConfirmItsYou onConfirmed={onConfirmed} onClose={onClose} />);
+    render(<ConfirmItsYou action="remove_device" deviceId="dev-mini" onConfirmed={onConfirmed} onClose={onClose} />);
     return { user, onClose, onConfirmed };
   }
 
@@ -216,12 +216,17 @@ describe("Confirm it’s you", () => {
     const { user, onClose, onConfirmed } = await opened();
     expect(screen.getByRole("dialog", { name: "Confirm it’s you" })).toBeVisible();
     expect(screen.getByText("Enter your password to continue.")).toBeVisible();
-    expect(screen.getByText("You won’t be asked again if you signed in within the last 10 minutes.")).toBeVisible();
+    // Signing in is not a confirmation, so there is no promise of not being asked again.
+    expect(screen.queryByText(/asked again/)).toBeNull();
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
     await user.type(screen.getByLabelText("Password"), PASSWORD);
     await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalled();
+    // The confirmation names its action and device, and carries the password nowhere else.
+    const sent = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/account/confirm");
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(String(sent[0]?.[1]?.body))).toEqual({ password: PASSWORD, action: "remove_device", device_id: "dev-mini" });
   });
 
   it("a wrong password is said under the field, cleared, and the action is not done", async () => {

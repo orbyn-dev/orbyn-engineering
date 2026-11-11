@@ -1,6 +1,7 @@
 // The one door this feature uses to reach the service. The password goes to the service once,
 // on loopback, and nowhere else; it is never kept here.
 import { request } from "../../api/client";
+import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
 import type { AccountSignInResult } from "../../generated/AccountSignInResult";
 import type { AccountView } from "../../generated/AccountView";
 import { announceAccountChange } from "./changes";
@@ -22,7 +23,9 @@ export const accountApi = {
     changed(request<AccountSignInResult>("POST", "/api/account/sign-in", { email, password })),
   cancelSignIn: () => post("/sign-in/cancel"),
   secondFactor: (code: string) => post("/sign-in/second-factor", { code }),
-  confirm: (password: string) => post("/confirm", { password }),
+  /** One confirmation is for one action, and one device when it removes a device. */
+  confirm: (password: string, action: AccountConfirmAction, deviceId?: string) =>
+    post("/confirm", { password, action, device_id: deviceId ?? null }),
   syncNow: () => post("/sync/now"),
   pauseSync: () => post("/sync/pause"),
   resumeSync: () => post("/sync/resume"),

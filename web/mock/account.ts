@@ -27,7 +27,6 @@ export function createAccountMock() {
   let signup: { email: string; verified: boolean } | null = null;
   let pending: { email: string; wrong: number } | null = null;
   let session: string | null = null;
-  let confirmed = false;
   let paused = false;
   let waiting = 0;
   let lastSynced: number | null = null;
@@ -39,7 +38,6 @@ export function createAccountMock() {
     platform: "macos",
     ...(session ? { session: { email: session, device_name: "This computer" } } : {}),
     needs_second_factor: pending !== null,
-    confirmed,
     deletion_scheduled: false,
     sync: {
       kind: session ? (paused ? "paused" : "online") : "signed_out",
@@ -55,7 +53,6 @@ export function createAccountMock() {
     session = email;
     pending = null;
     paused = false;
-    confirmed = true;
     lastSynced = Math.floor(Date.now() / 1000);
   }
 
@@ -66,7 +63,6 @@ export function createAccountMock() {
       signup = null;
       pending = null;
       session = null;
-      confirmed = false;
       paused = false;
       waiting = 0;
       lastSynced = null;
@@ -139,7 +135,6 @@ export function createAccountMock() {
             return fail(403, "wrong_password", "Wrong email or password.");
           }
           wrongConfirms = 0;
-          confirmed = true;
           return { status: 204 };
         case "POST /api/account/sync/now":
           lastSynced = Math.floor(Date.now() / 1000);
