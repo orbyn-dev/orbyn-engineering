@@ -272,7 +272,13 @@ impl Core {
                 },
             )
             .await?;
-        member::resolve(records, &plain(&path))
+        // The saved path is already resolved, so one that now resolves elsewhere (a folder
+        // swapped for a link into another repository) is refused rather than followed.
+        if crate::util::canonicalize(&path).is_ok_and(|now| now != path) {
+            return Err(CoreError::NotFound("worktree".into()));
+        }
+        let entries = member::resolve(records, &plain(&path))?;
+        Ok(entries)
     }
 
     /// The worktree `worktree_id` of `project_id`, or not found. A name outside the

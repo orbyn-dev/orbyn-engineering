@@ -195,20 +195,16 @@ fn subfolder_of(entries: &[Entry], project: &Path) -> Option<Vec<Entry>> {
     let holder = entries
         .iter()
         .filter(|entry| entry.member)
-        .filter(|entry| {
-            canon(&entry.record.path)
-                .is_some_and(|path| path != project && project.starts_with(path))
-        })
-        .max_by_key(|entry| entry.record.path.components().count())?;
+        .filter_map(|entry| Some((entry, canon(&entry.record.path)?)))
+        .filter(|(_, path)| path != project && project.starts_with(path))
+        .max_by_key(|(_, path)| path.components().count())?
+        .0;
     Some(vec![Entry {
         is_main: false,
         member: true,
         subfolder: true,
         record: WorktreeRecord {
             path: project.to_path_buf(),
-            locked: false,
-            prunable: false,
-            bare: false,
             ..holder.record.clone()
         },
     }])

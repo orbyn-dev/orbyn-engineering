@@ -115,3 +115,80 @@ async fn a_repository_root_project_is_unchanged() {
         .unwrap();
     assert!(listed.worktrees[0].is_main && !listed.worktrees[0].is_subfolder);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_subfolder_swapped_for_a_link_into_another_repository_is_refused() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, _root, sub) = subfolder_project(&core, &dir).await;
+    let other = repo(&dir.path().join("work/other"));
+    write(&other.join("pkg/marker-label.txt"), "label\n");
+    commit_all(&other, "pkg");
+    for target in [other.join("pkg"), other.clone()] {
+        std::fs::remove_dir_all(&sub).unwrap();
+        std::os::unix::fs::symlink(&target, &sub).unwrap();
+        core.explorer.changed(&project.id);
+        refused(core.explorer_worktrees(&project.id, None, true).await);
+        let id = worktree_id(&plain(&target));
+        refused(core.explorer_tree(&project.id, &id, "", "", true).await);
+        refused(core.explorer_file(&project.id, &id, "a.txt").await);
+        std::fs::remove_file(&sub).unwrap();
+        std::fs::create_dir_all(&sub).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_git_file_inside_the_subfolder_is_refused() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root, sub) = subfolder_project(&core, &dir).await;
+    write(
+        &sub.join(".git"),
+        &format!("gitdir: {}\n", root.join(".git").display()),
+    );
+    core.explorer.changed(&project.id);
+    refused(core.explorer_worktrees(&project.id, None, true).await);
+}
+
+#[tokio::test]
+async fn a_subfolder_in_a_linked_worktree_or_a_locked_one_keeps_its_holder() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let root = repo(&dir.path().join("work/mono"));
+    write(&root.join("pkg/app/main.rs"), "fn main() {}\n");
+    commit_all(&root, "pkg");
+    let linked = root.with_file_name("mono-wt").join("x");
+    run_git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/x",
+            &linked.to_string_lossy(),
+        ],
+    );
+    let sub = crate::util::canonicalize(&linked.join("pkg/app")).unwrap();
+    let project = core.add_project(&sub.to_string_lossy()).await.unwrap();
+    let project = core.store.trust_project(&project.id, "test").unwrap();
+    let listed = core
+        .explorer_worktrees(&project.id, None, false)
+        .await
+        .unwrap();
+    assert_eq!(listed.worktrees.len(), 1);
+    let row = &listed.worktrees[0];
+    assert!(row.is_subfolder && !row.read_only);
+    assert_eq!(row.branch.as_deref(), Some("feat/x"));
+    run_git(&root, &["worktree", "lock", &linked.to_string_lossy()]);
+    core.explorer.changed(&project.id);
+    let listed = core
+        .explorer_worktrees(&project.id, None, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        listed.worktrees[0].read_only_reason,
+        Some(ExplorerReadOnlyReason::Locked)
+    );
+}
