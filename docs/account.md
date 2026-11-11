@@ -423,7 +423,12 @@ The app records them here so the backend carries what the screens will need.
 
 ## UI waiting for the designs
 
-**No UI is built in this pull request.** The Designer merged the frames in orbyn-designs pull request #155
+**Status.** The sign-in routes, the gate and the "Confirm it's you" guard are built
+(`account::flow`, `routes/account.rs`); the screens follow in the next pull request. The designs
+decided that with the gate `Off` Settings > Account is hidden and the sidebar footer shows no sync
+status. The sections below are the plan as written before that work.
+
+**No UI is built in the design pull request.** The Designer merged the frames in orbyn-designs pull request #155
 (`engineer-designs.html`). A full-size check of those frames is still to come in a separate pull request, and
 **building waits for that check**. The frames the UI will be built from:
 

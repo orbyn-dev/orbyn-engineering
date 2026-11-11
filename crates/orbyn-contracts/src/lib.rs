@@ -5,6 +5,7 @@
 #[macro_use]
 mod macros;
 
+mod account;
 mod acp;
 mod automations;
 mod checkpoints;
@@ -27,6 +28,7 @@ mod updates;
 mod usage;
 mod workspace;
 
+pub use account::*;
 pub use acp::*;
 pub use automations::*;
 pub use checkpoints::*;

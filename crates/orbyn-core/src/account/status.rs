@@ -25,6 +25,8 @@ pub enum PauseReason {
     ZoneFailed,
     /// The record is over its size limit and is not uploaded.
     TooLarge,
+    /// The person paused sync. Neutral, not an error.
+    ByPerson,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +61,8 @@ pub struct AccountStatus {
     /// Fields from the account stamped too far ahead of this clock to apply. They are
     /// kept and passed on.
     pub held_back: usize,
+    /// Unix seconds of the last time sync caught up; kept by the hub, not the worker.
+    pub last_synced: Option<i64>,
 }
 
 impl Default for AccountStatus {
@@ -69,6 +73,7 @@ impl Default for AccountStatus {
             not_synced: 0,
             conflicts: 0,
             held_back: 0,
+            last_synced: None,
         }
     }
 }
@@ -103,8 +108,17 @@ impl StatusHub {
 
     /// Publishes `next` when it differs, and says so on the event stream. A change in
     /// the conflict count also names `account:conflicts`.
-    pub fn publish(&self, next: AccountStatus) {
+    pub fn publish(&self, mut next: AccountStatus) {
         let previous = self.tx.borrow().clone();
+        next.last_synced = match next.state {
+            SyncState::SignedOut { .. } => None,
+            SyncState::Online
+                if previous.state != SyncState::Online || previous.waiting != next.waiting =>
+            {
+                Some(crate::util::unix_now())
+            }
+            _ => previous.last_synced,
+        };
         if previous == next {
             return;
         }

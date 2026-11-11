@@ -35,7 +35,7 @@ const METHODS: [&str; 9] = [
 ];
 
 /// Every `(method, path)` the router registers, read from its `Debug` text.
-fn registered(router: &Router) -> BTreeSet<(String, String)> {
+pub(super) fn registered(router: &Router) -> BTreeSet<(String, String)> {
     let text = format!("{router:?}");
     let (routes, node) = text
         .split_once("node: Node { paths: {")

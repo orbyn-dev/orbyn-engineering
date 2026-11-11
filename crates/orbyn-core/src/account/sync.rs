@@ -162,6 +162,7 @@ impl ZoneWorker {
             not_synced,
             conflicts,
             held_back,
+            last_synced: None,
         });
     }
 

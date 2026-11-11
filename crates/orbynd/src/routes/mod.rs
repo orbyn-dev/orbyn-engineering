@@ -2,6 +2,7 @@
 //! handlers behind it; this one merges them and applies the credential, activity and
 //! origin layers.
 
+pub mod account;
 mod agent_mcp;
 mod auth;
 mod automations;
@@ -32,6 +33,8 @@ pub mod usage;
 mod workspace;
 
 #[cfg(test)]
+mod account_tests;
+#[cfg(test)]
 mod tests;
 
 use axum::Router;
@@ -46,6 +49,7 @@ const BODY_LIMIT: usize = 4 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     let access = state.access.clone();
     let protected = Router::new()
+        .merge(account::routes(state.clone()))
         .merge(media::routes())
         .merge(settings::routes())
         .merge(projects::routes())
