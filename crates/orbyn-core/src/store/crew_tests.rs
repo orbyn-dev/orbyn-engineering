@@ -1,6 +1,7 @@
 //! Crew tables: verified objects in, the answer key kept apart, immutable rows, and the
 //! migration that creates them.
 
+use crate::crew::lifecycle::Next;
 use orbyn_contracts::{AnswerKey, Brief, CrewObject};
 use serde_json::Value;
 
@@ -184,7 +185,7 @@ fn an_object_must_verify_and_belong_to_the_task() {
     // A type with no table in this slice, and a key that belongs to another brief.
     assert!(
         store
-            .add_crew_object(&id, &object(example!("report.valid.basic")))
+            .add_crew_object(&id, &object(example!("claim.valid.unverified")))
             .is_err()
     );
     let mut wrong = key();
@@ -293,7 +294,7 @@ fn deleting_a_task_removes_its_objects() {
 }
 
 #[test]
-fn a_database_without_crew_tables_gets_them_in_30_and_31() {
+fn a_database_without_crew_tables_gets_them_in_30_to_32() {
     let dir = TempDir::new();
     let path = dir.path().join("at29.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -345,8 +346,10 @@ fn a_database_without_crew_tables_gets_them_in_30_and_31() {
             "crew_gates",
             "crew_leases",
             "crew_messages",
+            "crew_reports",
             "crew_results",
             "crew_route_decisions",
+            "crew_runs",
             "crew_tasks"
         ]
     );
@@ -375,7 +378,7 @@ fn migration_30_is_the_crew_migration_and_numbering_has_no_gap() {
         .map(|(v, _)| *v)
         .collect();
     assert!(versions.windows(2).all(|w| w[1] == w[0] + 1));
-    assert!(versions.contains(&30) && versions.contains(&31));
+    assert!(versions.contains(&30) && versions.contains(&31) && versions.contains(&32));
     let sql = super::migrations::MIGRATIONS
         .iter()
         .find(|(v, _)| *v == 30)
@@ -489,4 +492,83 @@ fn a_worker_sees_only_messages_to_all_or_to_itself() {
     assert_eq!(bodies("worker-01"), ["for A", "for everyone"]);
     assert_eq!(bodies("worker-02"), ["for B", "for everyone"]);
     assert_eq!(bodies("worker-03"), ["for everyone"]);
+}
+
+/// Migration 32: a task has a run row, and the task moves only along the lifecycle (H13).
+#[test]
+fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    store.add_crew_run(&id, "lead-thread", "worker-1").unwrap();
+    let run = store.crew_run(&id).unwrap().unwrap();
+    assert_eq!((run.attempts, run.worker_thread_id), (0, None));
+
+    let state = |store: &Store| store.crew_task(&id).unwrap().unwrap().state;
+    let refused = |to: &str, reason: Option<&str>| store.move_crew_task(&id, to, reason).is_err();
+    // `briefed` goes to `routed`, and not straight to `running`.
+    assert!(refused("running", None) && refused("verifying", None));
+    assert_eq!(
+        store.move_crew_task(&id, "routed", None).unwrap().state,
+        "routed"
+    );
+    store
+        .set_crew_worker(&id, "worker-thread", "/work", Some("abc"))
+        .unwrap();
+    assert_eq!(
+        store.move_crew_task(&id, "running", None).unwrap().state,
+        "running"
+    );
+    assert_eq!(
+        store
+            .crew_task_for_worker("worker-thread")
+            .unwrap()
+            .unwrap()
+            .0
+            .id,
+        id
+    );
+    // Only `stopped` names a reason, and nothing passes without Evidence (H8).
+    assert!(refused("stopped", None) && refused("needs_person", Some("budget")));
+    assert!(refused("passed", None));
+    assert_eq!(state(&store), "running");
+
+    // A report counts the attempt; a failure goes through `failed` to what the guard names.
+    let attempt = |store: &Store, n: u32| {
+        store
+            .begin_crew_verification(&id, &format!("engine-run-{n}"), None)
+            .unwrap();
+        assert_eq!(state(store), "verifying");
+    };
+    attempt(&store, 1);
+    let (moved, next) = store.fail_crew_verification(&id, "f1").unwrap();
+    assert_eq!((moved.state.as_str(), next), ("running", Next::Retry));
+    attempt(&store, 2);
+    let (moved, next) = store.fail_crew_verification(&id, "f1").unwrap();
+    assert_eq!(
+        (moved.state.as_str(), next),
+        ("changed_approach", Next::ChangeApproach)
+    );
+    // Only the core resumes the worker after a change of approach.
+    assert!(
+        store
+            .begin_crew_verification(&id, "engine-run-x", None)
+            .is_err()
+    );
+    store.move_crew_task(&id, "running", None).unwrap();
+    attempt(&store, 3);
+    let (moved, next) = store.fail_crew_verification(&id, "f1").unwrap();
+    assert_eq!((moved.state.as_str(), next), ("stopped", Next::Stop));
+    let ended = store.crew_task(&id).unwrap().unwrap();
+    assert_eq!(ended.stop_reason.as_deref(), Some("repeated_failure"));
+    let run = store.crew_run(&id).unwrap().unwrap();
+    assert_eq!(
+        (run.failures, run.guard.streak, run.guard.approach_changed),
+        (3, 3, true)
+    );
+    // A final task goes nowhere.
+    for to in ["running", "passed", "cancelled", "needs_person"] {
+        assert!(refused(to, None), "{to}");
+    }
+    let again = store.create_crew_task(&brief(), &key(), "run-02");
+    assert!(again.is_err(), "the same brief is one task with one run");
 }

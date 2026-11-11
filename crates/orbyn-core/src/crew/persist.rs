@@ -14,7 +14,8 @@ impl Core {
     /// Stores `decision` for the task it answers. Before it goes in, no string of it may
     /// hold a secret (H2) or any text of the task's answer key (H1): a decision is built from
     /// this machine's own engines and models, and the check proves it stays that way.
-    /// The task's state is not moved here; the lifecycle is slice 3's.
+    /// The task's state is not moved here: `route_crew_task` stores the decision and takes the
+    /// task to `routed`.
     pub fn store_route_decision(&self, task_id: &str, decision: &RouteDecision) -> Result<()> {
         let object = CrewObject::RouteDecision(decision.clone());
         let value = object.to_value();

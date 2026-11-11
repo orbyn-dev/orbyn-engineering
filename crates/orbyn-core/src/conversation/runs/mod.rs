@@ -6,7 +6,7 @@ mod shape;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use orbyn_contracts::{
@@ -284,6 +284,9 @@ pub struct RunManager {
     /// Threads being rewound. An engine rollback rewrites the session a run would
     /// resume, so no run is admitted until the rewind ends.
     rewinding: Mutex<HashSet<String>>,
+    /// Crew Preview: told when a run ends, so a worker's task can follow it. Set once the
+    /// core exists, which is built after this manager.
+    crew: OnceLock<Weak<crate::app::Core>>,
 }
 
 /// Keeps runs off a thread while it is rewound; dropping it lets them in again.
@@ -362,7 +365,26 @@ impl RunManager {
             app_notes: Mutex::new(HashMap::new()),
             notes_sent: Mutex::new(HashMap::new()),
             rewinding: Mutex::new(HashSet::new()),
+            crew: OnceLock::new(),
         }
+    }
+
+    /// Connects the Crew group, which follows a worker's runs to their end.
+    pub(crate) fn bind_crew(&self, core: &Arc<crate::app::Core>) {
+        let _ = self.crew.set(Arc::downgrade(core));
+    }
+
+    /// Tells the Crew group that a run ended. It looks the thread up itself and does nothing
+    /// for a thread that is not a Crew worker.
+    pub(super) fn crew_run_ended(&self, thread_id: &str, run_id: &str) {
+        let Some(core) = self.crew.get().and_then(Weak::upgrade) else {
+            return;
+        };
+        if !core.crew_enabled() {
+            return;
+        }
+        let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
+        tokio::spawn(async move { core.crew_worker_run_ended(thread_id, run_id).await });
     }
 }
 

@@ -2233,16 +2233,35 @@ governed `computer_*` tools and `orbyn_*` tools for threads, projects, worktrees
 attachments, preview tabs, published pages, pull requests, delegation, scheduling and
 declaring writes. `approve` is listed only for Claude.
 
-`crew_route` is the one Crew tool so far, and it is Preview: it exists only while
-`CoreConfig::crew_preview` is on (`ORBYN_CREW_PREVIEW=1` for the service; it ships off), and with it off it is neither listed nor
-callable. It is a dry run of Router v0 (no model, no run started, no engine started for limits, nothing stored) that
+The Crew tools are Preview: they exist only while
+`CoreConfig::crew_preview` is on (`ORBYN_CREW_PREVIEW=1` for the service; it ships off), and with it off they are neither listed nor
+callable. `crew_route` is a dry run of Router v0 (no model, no run started, no engine started for limits, nothing stored) that
 returns the `RouteDecision` for a brief draft: the chosen engine and model at medium effort,
 the ranked alternatives, a reason for every score and a reason for every rejected engine.
 The router reads only the brief and this machine's own engine registry, model lists and
 the limit reports already kept in the usage cache (an engine with none counts as not reporting; the tool never asks an engine for its limits), so an engine or model the machine has not configured is never routed to. An
 engine or model the lead names is still filtered and, if it fails, refused with the reason,
 never swapped. The answer key is never an input, and a decision is checked for secrets and
-for the key's text before it is stored. Its refusals use the Crew Protocol's error codes
+for the key's text before it is stored.
+
+`crew_start` (the lead only; a worker's call is `depth_exceeded`, or `run_ended` once its run is over) takes a brief
+draft and an answer-key draft. The core stamps both, scans every string for secrets (H2), refuses a brief whose
+write files overlap the key's protected paths (H11) or that holds the key's id or a check command (H1), refuses a
+write lease for a reviewer and a lease that overlaps one another member holds now (H10), stores the task `briefed`,
+routes it (a decision stored with its task takes it to `routed`; a brief no engine can take goes to `needs_person` with
+the reasons), grants the brief's files and runs the worker through `delegate`, which takes it to `running`. The worker
+is sent the brief as data and nothing the `WorkerObject` type does not allow. One start runs at a time.
+`crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
+the task `running` to `verifying`. The verifier is code: it runs every check of the key in the task's checkout, writes
+one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. A pass needs
+Evidence (H8). A failure goes through `failed` to the state the loop guard names, in one transaction: a different failure
+retries with the reason, the same failure twice changes approach once, and the same failure after that stops the run
+(`repeated_failure`). The worker is told the reason a check failed, never the check, its id or any other part of the key,
+and the text is proven free of the key and of secrets before it is queued (H1). `failed` and `needs_person` are interim;
+`final` is true only for `passed`, `stopped` and `cancelled`, and the lead is told through its queue when a run ends or
+needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`).
+After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
+A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
 
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
@@ -2531,7 +2550,10 @@ JSON keyed by their content address and verified on the way in: valid, hashing t
 `id`, and part of the task's crew and run. They are immutable; only a task's state moves. The
 answer key has its own table and reader, so the brief a worker reads comes from a table that
 cannot hold it (H1). The router's decisions (migration 31) have their own immutable table, and
-a decision is stored only for the brief it answers.
+a decision is stored only for the brief it answers. Migration 32 adds a run row per task (who leads and who
+works, the checkout, the commit the worker started from and the loop guard's counters, which hold a hash and never a
+check) and an immutable table of the workers' reports. The task's state moves only along the lifecycle, checked in
+the transaction that writes it.
 
 Secret files are created with mode `0600` on Unix. Windows has no mode bits: they
 inherit the ACL of the per-user `%LOCALAPPDATA%` directory, which excludes other

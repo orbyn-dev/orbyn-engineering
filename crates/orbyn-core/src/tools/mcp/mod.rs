@@ -89,9 +89,11 @@ impl McpService {
         }
     }
 
-    /// Connects Orbyn's own tools. Until then they refuse rather than guess.
+    /// Connects Orbyn's own tools, and the Crew group's follow of a worker's runs. Until then
+    /// they refuse rather than guess.
     pub fn bind_host(&self, core: &Arc<Core>) {
         let _ = self.host.set(Arc::downgrade(core));
+        core.runs.bind_crew(core);
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {
@@ -216,15 +218,20 @@ impl McpService {
                     Err(error) => Ok(text_result(&error.public_message(), true)),
                 }
             }
-            crate::crew::ROUTE_TOOL if self.crew_enabled() => {
+            tool if crate::crew::is_tool(tool) && self.crew_enabled() => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {
                     return Ok(text_result("This service is not ready.", true));
                 };
-                if let Err(error) = core.note_tool(binding, crate::crew::ROUTE_TOOL) {
+                if let Err(error) = core.note_tool(binding, tool) {
                     tracing::warn!(%error, "could not record a tool call");
                 }
-                // A Crew refusal is the protocol's error object, so the lead reads its code.
-                Ok(match core.crew_route_tool(binding, &args).await {
+                // A Crew refusal is the protocol's error object, so the caller reads its code.
+                let answer = match tool {
+                    crate::crew::START_TOOL => core.crew_start_tool(binding, &args).await,
+                    crate::crew::REPORT_TOOL => core.crew_report_tool(binding, &args).await,
+                    _ => core.crew_route_tool(binding, &args).await,
+                };
+                Ok(match answer {
                     Ok(answer) => text_result(&answer.to_string(), false),
                     Err(error) => text_result(&json!(error).to_string(), true),
                 })

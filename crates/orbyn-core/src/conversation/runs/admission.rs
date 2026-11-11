@@ -209,6 +209,7 @@ impl RunManager {
                 manager.lock().remove(&run_id);
                 manager.drain(&thread_id);
                 manager.report_to_parent(&thread_id, &run_id);
+                manager.crew_run_ended(&thread_id, &run_id);
             }
         });
         if let Some(active) = self.lock().get_mut(&run.id) {

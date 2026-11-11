@@ -10,6 +10,7 @@ mod catalog;
 mod changes;
 mod checkpoints;
 mod crew;
+mod crew_runs;
 mod crew_schema;
 #[cfg(test)]
 mod crew_tests;
@@ -28,6 +29,8 @@ mod tests;
 mod threads;
 
 pub use changes::{KeptChange, Snapshot};
+pub use crew::CrewTask;
+pub use crew_runs::CrewRun;
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};

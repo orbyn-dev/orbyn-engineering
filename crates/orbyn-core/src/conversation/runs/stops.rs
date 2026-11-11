@@ -67,6 +67,10 @@ impl RunManager {
             return;
         }
         let report = || -> Result<()> {
+            // A Crew worker answers through `crew_report`; the core tells its lead.
+            if self.store.crew_task_for_worker(thread_id)?.is_some() {
+                return Ok(());
+            }
             let thread = self.store.thread(thread_id)?;
             let lifecycle = thread.lifecycle.as_ref();
             let parent = lifecycle

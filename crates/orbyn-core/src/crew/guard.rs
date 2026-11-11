@@ -106,3 +106,26 @@ pub fn refuse_leak(value: &Value, needles: &[String]) -> Result<(), CrewError> {
     }
     Ok(())
 }
+
+/// A check's output with every secret of the spec's classes replaced by `[redacted]`. The core
+/// does this to an Evidence excerpt before the H2 scan (SPEC.md section 8, "Redaction"); no
+/// other field is redacted, so a secret anywhere else is still refused.
+pub fn redact(text: &str) -> String {
+    patterns()
+        .iter()
+        .fold(text.to_owned(), |text, (_, pattern)| {
+            pattern.replace_all(&text, "[redacted]").into_owned()
+        })
+}
+
+/// `text` with every needle replaced by `[check]`, for output that goes back to a worker: a
+/// failing test may print the command that ran it, and the command is part of the key (H1).
+pub fn withhold(text: &str, needles: &[String]) -> String {
+    needles.iter().fold(text.to_owned(), |text, needle| {
+        if needle.is_empty() {
+            text
+        } else {
+            text.replace(needle.as_str(), "[check]")
+        }
+    })
+}

@@ -112,3 +112,33 @@ CREATE INDEX crew_route_decisions_by_task ON crew_route_decisions(task_id);
 CREATE TRIGGER crew_route_decisions_immutable BEFORE UPDATE ON crew_route_decisions
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 32: how a task runs. One row per task holds who leads and who works, the checkout the
+// verifier runs in, the commit the worker started from and the loop guard's counters
+// (SPEC.md section 6). The row is mutable, since only a task's state and counters move; the
+// objects a run produces stay immutable. A report has its own immutable table. Nothing here
+// can hold the answer key: the guard keeps a fingerprint (a hash), never a check.
+pub(super) const CREW_RUNS: &str = r#"
+CREATE TABLE crew_runs (
+    task_id TEXT PRIMARY KEY REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    lead_thread_id TEXT NOT NULL,
+    member TEXT NOT NULL,
+    worker_thread_id TEXT UNIQUE,
+    worktree TEXT,
+    base_commit TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    streak INTEGER NOT NULL DEFAULT 0,
+    fingerprint TEXT,
+    approach_changed INTEGER NOT NULL DEFAULT 0 CHECK(approach_changed IN (0, 1)),
+    last_report_run TEXT
+);
+CREATE TABLE crew_reports (
+    id TEXT PRIMARY KEY CHECK(id GLOB 'sha256:*'),
+    task_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    body TEXT NOT NULL CHECK(json_valid(body))
+);
+CREATE INDEX crew_reports_by_task ON crew_reports(task_id);
+CREATE TRIGGER crew_reports_immutable BEFORE UPDATE ON crew_reports
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;

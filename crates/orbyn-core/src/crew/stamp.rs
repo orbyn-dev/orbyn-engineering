@@ -1,10 +1,10 @@
-//! A draft becomes a brief the way `crew.start` will stamp it (SPEC.md section 2.2): the
-//! caller supplies the fields it owns, and the core adds the envelope. A draft that carries
-//! any envelope field is refused, so a lead cannot forge an author or an id.
+//! A draft becomes an object the way `crew.start` and `crew.report` stamp it (SPEC.md section
+//! 2.2): the caller supplies the fields it owns, and the core adds the envelope. A draft that
+//! carries any envelope field is refused, so a member cannot forge an author, an id or a run.
 
 use orbyn_contracts::{
-    Brief, CrewAuthor, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewRole,
-    CrewTimestamp, CrewToken, ErrorCode, reject_floats,
+    AnswerKey, Brief, CrewAuthor, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewRole,
+    CrewTimestamp, CrewToken, ErrorCode, Report, reject_floats,
 };
 use serde_json::{Value, json};
 
@@ -18,7 +18,7 @@ const STAMPED: [&str; 7] = [
     "run_id",
 ];
 
-/// Who is calling: the lead's engine, and the crew its brief joins.
+/// Who is calling: the caller's engine, its member id and the crew its object joins.
 pub struct Stamper {
     pub crew_id: CrewId,
     pub engine: CrewToken,
@@ -26,21 +26,32 @@ pub struct Stamper {
     pub now: CrewTimestamp,
 }
 
+fn invalid(message: String) -> CrewError {
+    CrewError::new(ErrorCode::InvalidObject, message)
+}
+
 impl Stamper {
-    /// Reads `draft` as a brief, adds the envelope and hashes it. The result passes
-    /// `Brief::validate` and carries the id that `CrewObject::parse` would check.
-    pub fn brief(&self, draft: &Value) -> Result<Brief, CrewError> {
+    /// The draft with the envelope added and `own` (fields the core fills in) set. A draft
+    /// that names an envelope field, or one of `own`, is refused.
+    fn envelope(
+        &self,
+        what: &str,
+        draft: &Value,
+        role: CrewRole,
+        own: &[(&str, Value)],
+    ) -> Result<Value, CrewError> {
         let Some(fields) = draft.as_object() else {
-            return Err(CrewError::new(
-                ErrorCode::InvalidObject,
-                "brief: a draft is an object",
-            ));
+            return Err(invalid(format!("{what}: a draft is an object")));
         };
-        if let Some(key) = STAMPED.iter().find(|key| fields.contains_key(**key)) {
-            return Err(CrewError::new(
-                ErrorCode::InvalidObject,
-                format!("{key}: the core stamps this field; a draft does not carry it"),
-            ));
+        let named = STAMPED
+            .iter()
+            .copied()
+            .chain(own.iter().map(|(key, _)| *key))
+            .find(|key| fields.contains_key(*key));
+        if let Some(key) = named {
+            return Err(invalid(format!(
+                "{key}: the core stamps this field; a draft does not carry it"
+            )));
         }
         reject_floats(draft)?;
         let mut full = draft.clone();
@@ -51,21 +62,60 @@ impl Stamper {
         map.insert(
             "author".into(),
             json!(CrewAuthor {
-                role: CrewRole::Lead,
+                role,
                 engine: self.engine.clone(),
                 member: Some(self.member.clone()),
             }),
         );
         map.insert("created_at".into(), json!(self.now));
-        let mut brief: Brief = serde_path_to_error::deserialize(full).map_err(|e| {
-            CrewError::new(
-                ErrorCode::InvalidObject,
-                format!("{}: {}", e.path(), e.inner()),
-            )
-        })?;
+        for (key, value) in own {
+            map.insert((*key).to_owned(), value.clone());
+        }
+        Ok(full)
+    }
+
+    fn read<T: serde::de::DeserializeOwned>(full: Value) -> Result<T, CrewError> {
+        serde_path_to_error::deserialize(full)
+            .map_err(|e| invalid(format!("{}: {}", e.path(), e.inner())))
+    }
+
+    /// Reads `draft` as a brief, adds the envelope and hashes it. The result passes
+    /// `Brief::validate` and carries the id that `CrewObject::parse` would check.
+    pub fn brief(&self, draft: &Value) -> Result<Brief, CrewError> {
+        let full = self.envelope("brief", draft, CrewRole::Lead, &[])?;
+        let mut brief: Brief = Self::read(full)?;
         brief.validate()?;
-        let id: CrewHash = CrewObject::Brief(brief.clone()).computed_id()?;
-        brief.id = id;
+        brief.id = CrewObject::Brief(brief.clone()).computed_id()?;
         Ok(brief)
+    }
+
+    /// The lead's answer key for the brief `brief`. The core names the brief, so a draft that
+    /// does is refused.
+    pub fn answer_key(&self, draft: &Value, brief: &CrewHash) -> Result<AnswerKey, CrewError> {
+        let own = [("brief", json!(brief))];
+        let full = self.envelope("answer_key", draft, CrewRole::Lead, &own)?;
+        let mut key: AnswerKey = Self::read(full)?;
+        key.validate()?;
+        key.id = CrewObject::AnswerKey(key.clone()).computed_id()?;
+        Ok(key)
+    }
+
+    /// A worker's report on `brief` in `run`. An absent `claims` or `not_verified` is empty.
+    pub fn report(
+        &self,
+        draft: &Value,
+        run: &CrewId,
+        brief: &CrewHash,
+    ) -> Result<Report, CrewError> {
+        let own = [("run_id", json!(run)), ("brief", json!(brief))];
+        let mut full = self.envelope("report", draft, CrewRole::Worker, &own)?;
+        let map = full.as_object_mut().expect("an object");
+        for key in ["claims", "not_verified"] {
+            map.entry(key).or_insert_with(|| json!([]));
+        }
+        let mut report: Report = Self::read(full)?;
+        report.validate()?;
+        report.id = CrewObject::Report(report.clone()).computed_id()?;
+        Ok(report)
     }
 }

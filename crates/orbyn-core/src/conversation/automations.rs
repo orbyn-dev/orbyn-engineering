@@ -740,6 +740,18 @@ impl Core {
     /// Hands work to a child thread in the same folder. It reports back through the
     /// parent's queue when it ends.
     pub fn delegate(&self, parent: &str, task: &DelegateTask, actor: &str) -> Result<Thread> {
+        self.delegate_then(parent, task, actor, |_| Ok(()))
+    }
+
+    /// `delegate`, with `before_start` run on the new thread before its first message is
+    /// queued, so a caller can record what it is for before the engine can answer.
+    pub(crate) fn delegate_then(
+        &self,
+        parent: &str,
+        task: &DelegateTask,
+        actor: &str,
+        before_start: impl FnOnce(&Thread) -> Result<()>,
+    ) -> Result<Thread> {
         let owner = self.store.thread(parent)?;
         if !self.store.project(&owner.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
@@ -776,6 +788,7 @@ impl Core {
             effort: task.effort.clone().or(inherited(&owner.effort)),
             options,
         };
+        before_start(&child)?;
         self.runs
             .enqueue_with(&child.id, &task.prompt, &[], &wanted)?;
         self.store.thread(&child.id)

@@ -304,6 +304,16 @@ checks[], attempts, usage, route}`
 Workers report through a `crew_report` tool. The verifier runs after every report. If a check fails, the worker
 retries with the reason. The same failure twice means one change of approach, and then the run stops.
 
+- **As built (slice 3, differs from the plan):**
+  - The failure fingerprint is the failing checks and their output with timings, colour codes and temporary paths
+    dropped. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
+  - A turn that ends with no `crew_report` is a failed attempt with its own fingerprint. An engine that fails ends the
+    task (`engine_error`). `budget.minutes` ends a task at its next failed attempt; `budget.turns` is not enforced yet.
+  - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
+  - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
+    `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report
+    `skipped` and are listed as not verified. A key with nothing it can run goes to `needs_person`.
+
 **Harness-to-harness communication** (the new part)
 
 | Tool | Does |
