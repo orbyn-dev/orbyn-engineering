@@ -10,8 +10,8 @@ use regex::Regex;
 use super::hard::{Ctx, written};
 use super::shell::{Simple, hosts};
 
-/// A branch name that is, or may be, the main line.
-fn is_main(name: &str) -> bool {
+/// A branch name that is, or may be, the main line: main, master, trunk, HEAD, and the repository's actual default branch.
+fn is_main(name: &str, default: Option<&str>) -> bool {
     let name = name.trim_start_matches('+');
     let name = name.rsplit_once(':').map_or(name, |(_, dst)| dst);
     let name = name
@@ -19,21 +19,21 @@ fn is_main(name: &str) -> bool {
         .or_else(|| name.strip_prefix("refs/remotes/origin/"))
         .or_else(|| name.strip_prefix("origin/"))
         .unwrap_or(name);
-    matches!(name, "main" | "master" | "trunk" | "HEAD" | "")
+    matches!(name, "main" | "master" | "trunk" | "HEAD" | "") || default.is_some_and(|d| d == name)
 }
 
 /// Whether a push of `refs` lands on the main line: a ref spec whose destination is main, a bare `HEAD` or no ref while on it.
 /// Pushing main is a person's: the merge queue merges locally and nothing here pushes.
-fn pushes_to_main(refs: &[&&str], on_main: bool) -> bool {
+fn pushes_to_main(refs: &[&&str], on_main: bool, main: &dyn Fn(&str) -> bool) -> bool {
     if refs.is_empty() {
         return on_main;
     }
     refs.iter().any(|r| {
         let r = r.trim_start_matches('+');
         match r.split_once(':') {
-            Some((_, dst)) => is_main(dst) && dst != "HEAD",
+            Some((_, dst)) => main(dst) && dst != "HEAD",
             None if r == "HEAD" => on_main,
-            None => is_main(r),
+            None => main(r),
         }
     })
 }
@@ -57,12 +57,87 @@ fn is_git(command: &Simple) -> bool {
     command.program == "git"
 }
 
-/// N5: a force-push or delete aimed at main, or a history rewrite while on it.
+/// Whether a `gh api` or `glab api` call changes something: a non-GET method, a field or an input body.
+fn api_writes(args: &[&str]) -> bool {
+    args.iter()
+        .any(|w| matches!(*w, "-f" | "-F" | "--field" | "--raw-field" | "--input"))
+        || args
+            .windows(2)
+            .any(|w| matches!(w[0], "-X" | "--method") && !w[1].eq_ignore_ascii_case("get"))
+        || args
+            .iter()
+            .any(|w| w.starts_with("--method=") && !w.eq_ignore_ascii_case("--method=get"))
+}
+
+/// The forge's own ways of moving or committing to the main line, past the merge queue.
+const FORGE_BRANCH_WORDS: [&str; 7] = [
+    "git/refs",
+    "merges",
+    "contents",
+    "branches",
+    "git/commits",
+    "git/trees",
+    "/merge",
+];
+
+/// Whether a git command carries options that change which repository it acts on: `-C`, `--git-dir`, `--work-tree`.
+fn redirected(command: &Simple) -> bool {
+    let mut args = command.args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-C" | "--git-dir" | "--work-tree" => return true,
+            a if a.starts_with("--git-dir=") || a.starts_with("--work-tree=") => return true,
+            "-c" | "--namespace" => {
+                args.next();
+            }
+            a if a.starts_with('-') => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// N5: a force-push or delete aimed at main, any push to it, or a history rewrite while on it.
 pub(super) fn n5(ctx: &Ctx<'_>) -> bool {
-    let on_main = ctx.scene.branch.is_none_or(is_main);
-    ctx.commands.iter().filter(|c| is_git(c)).any(|command| {
+    let default = ctx.scene.default_branch;
+    let main = |name: &str| is_main(name, default);
+    let on_main = ctx.scene.branch.is_none_or(main);
+    let mut moved = false;
+    for command in &ctx.commands {
+        if matches!(command.program.as_str(), "cd" | "pushd" | "chdir" | "popd") {
+            moved = true;
+            continue;
+        }
+        let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+        let words: Vec<&str> = args
+            .iter()
+            .copied()
+            .filter(|w| !w.starts_with('-'))
+            .collect();
+        match command.program.as_str() {
+            // A merge on the forge, or a write to its refs, contents, merges or branches, is a push to main by another road.
+            "gh" if words.first() == Some(&"pr") && words.get(1) == Some(&"merge") => return true,
+            "glab" if words.first() == Some(&"mr") && words.get(1) == Some(&"merge") => {
+                return true;
+            }
+            "gh" | "glab" if words.first() == Some(&"api") && api_writes(&args) => {
+                let all = args.join(" ").to_lowercase();
+                // Protection and settings paths are N6's.
+                if FORGE_BRANCH_WORDS.iter().any(|w| all.contains(w))
+                    && !PROTECTION_WORDS.iter().any(|w| all.contains(w))
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        if !is_git(command) {
+            continue;
+        }
+        // Through `-C` or after a `cd` the branch that is checked out is another repository's: read as main.
+        let here = on_main || moved || redirected(command);
         let Some((sub, rest)) = git_sub(command) else {
-            return false;
+            continue;
         };
         let flags = |names: &[&str]| {
             rest.iter().any(|w| {
@@ -74,7 +149,7 @@ pub(super) fn n5(ctx: &Ctx<'_>) -> bool {
             .copied()
             .filter(|w| !w.starts_with('-'))
             .collect();
-        match sub {
+        let hit = match sub {
             "push" => {
                 let force = flags(&[
                     "--force",
@@ -86,35 +161,57 @@ pub(super) fn n5(ctx: &Ctx<'_>) -> bool {
                     "--prune",
                 ]) || named.iter().any(|w| w.starts_with('+'));
                 let delete = flags(&["--delete", "-d"]) || named.iter().any(|w| w.starts_with(':'));
+                // `--all` and `--mirror` push every branch, the main line the queue moves among them.
+                let every = flags(&["--all", "--mirror", "--branches"]);
                 let refs: Vec<&&str> = named.iter().skip(1).collect();
-                ((force || delete) && (refs.is_empty() || refs.iter().any(|r| is_main(r))))
-                    || pushes_to_main(&refs, on_main)
+                every
+                    || ((force || delete) && (refs.is_empty() || refs.iter().any(|r| main(r))))
+                    || pushes_to_main(&refs, here, &main)
             }
             "filter-branch" | "filter-repo" => true,
             "reflog" => rest.iter().any(|w| matches!(*w, "expire" | "delete")),
             "update-ref" => {
-                rest.contains(&"-d") || rest.iter().any(|w| is_main(w) && w.contains("refs/"))
+                rest.contains(&"-d") || rest.iter().any(|w| main(w) && w.contains("refs/"))
             }
-            "rebase" | "replace" => on_main,
-            "commit" => on_main && flags(&["--amend"]),
+            "rebase" | "replace" => here,
+            "commit" => here && flags(&["--amend"]),
             "reset" => {
-                on_main
-                    && (flags(&["--hard", "--soft", "--mixed", "--keep", "--merge"])
-                        || named.iter().any(|w| {
-                            w.starts_with("HEAD~")
-                                || w.starts_with("HEAD^")
-                                || w.starts_with("origin/")
-                        }))
+                here && (flags(&["--hard", "--soft", "--mixed", "--keep", "--merge"])
+                    || named.iter().any(|w| {
+                        w.starts_with("HEAD~") || w.starts_with("HEAD^") || w.starts_with("origin/")
+                    }))
             }
             "branch" => {
                 flags(&["-f", "--force", "-D", "-d", "-m", "-M", "--delete"])
-                    && named.iter().any(|w| is_main(w))
+                    && named.iter().any(|w| main(w))
             }
-            "checkout" => flags(&["-B"]) && named.iter().any(|w| is_main(w)),
-            "switch" => flags(&["-C", "--force-create"]) && named.iter().any(|w| is_main(w)),
+            "checkout" => flags(&["-B"]) && named.iter().any(|w| main(w)),
+            "switch" => flags(&["-C", "--force-create"]) && named.iter().any(|w| main(w)),
             _ => false,
+        };
+        if hit {
+            return true;
         }
-    })
+    }
+    false
+}
+
+/// Whether a git command sets configuration for itself (`-c alias.p=push`, `--config-env`): an alias hides the sub-command, and any
+/// override can switch off a protection. A worker never needs it.
+fn git_config_override(command: &Simple) -> bool {
+    let mut args = command.args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-c" | "--config-env" => return true,
+            a if a.starts_with("--config-env=") => return true,
+            "-C" | "--git-dir" | "--work-tree" | "--namespace" => {
+                args.next();
+            }
+            a if a.starts_with('-') => {}
+            _ => return false,
+        }
+    }
+    false
 }
 
 const PROTECTION_WORDS: [&str; 14] = [
@@ -170,6 +267,9 @@ pub(super) fn n6(ctx: &Ctx<'_>) -> bool {
                         .any(|w| matches!(*w, "set" | "delete" | "edit"))
             }
             "git" => {
+                if git_config_override(command) {
+                    return true;
+                }
                 let Some((sub, rest)) = git_sub(command) else {
                     return false;
                 };
@@ -207,13 +307,7 @@ pub(super) fn n6(ctx: &Ctx<'_>) -> bool {
                         Some("login" | "logout" | "refresh" | "setup-git" | "switch")
                     ),
                     Some("api") => {
-                        let writing = args.iter().any(|w| {
-                            matches!(*w, "-f" | "-F" | "--field" | "--raw-field" | "--input")
-                        }) || args.windows(2).any(|w| {
-                            matches!(w[0], "-X" | "--method") && !w[1].eq_ignore_ascii_case("get")
-                        }) || args.iter().any(|w| {
-                            w.starts_with("--method=") && !w.eq_ignore_ascii_case("--method=get")
-                        });
+                        let writing = api_writes(&args);
                         let all = args.join(" ").to_lowercase();
                         writing && PROTECTION_WORDS.iter().any(|w| all.contains(w))
                     }
