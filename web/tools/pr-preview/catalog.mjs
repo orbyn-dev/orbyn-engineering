@@ -105,6 +105,7 @@ export const FRAMES = {
   "thread-tools": { route: "#/threads/t-tools" },
   "thread-tools-live": { route: "#/threads/t-tools-live" },
   "thread-details": { route: "#/threads/t-done", steps: [click("button", "Details")] },
+  "details-popover": { route: "#/threads/t-done", steps: [click("button", "Details")] },
 
   // The side panel: starts with no tab, the + launcher, the tab menu (Engineer Designs v98). panel-tabs-drag is a pointer drag and has no verb here.
   "panel-empty": { route: "#/threads/t-done", steps: [click("button", "Show side panel")] },

@@ -178,7 +178,6 @@ export function PanelHost({
   closing,
   moves,
   maximized,
-  details = null,
   sideChat = null,
   onToggleMaximize,
   onReturn,
@@ -189,8 +188,6 @@ export function PanelHost({
   /** False while the panel is part of the page as it first appeared. */
   moves: boolean;
   maximized: boolean;
-  /** The thread's details card, which sits at the top of the panel above its tabs. */
-  details?: ReactNode;
   /** The Side chat tab's content; the thread owns it, so it is handed in. */
   sideChat?: ReactNode;
   onToggleMaximize(): void;
@@ -391,7 +388,6 @@ export function PanelHost({
           </span>
         </header>
       ) : null}
-      {details}
       <header ref={strip} className="ctx-strip">
         <div ref={list} className="ctx-tabs" role={shown.length > 0 ? "tablist" : undefined} aria-label={shown.length > 0 ? "Panel tabs" : undefined} onKeyDown={onTabKey}>
           {shown.map((id) => {

@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../api/client";
+import { api, ApiFailure } from "../../api/client";
 import { engineTools } from "../../../mock/fixtures";
 import { App } from "../../app/App";
 import { installMockFetch } from "../../test-support";
@@ -18,15 +18,18 @@ beforeEach(() => {
   window.location.hash = "#/threads/t-done";
 });
 
-it("the details card's Tools row counts what is ready, names what is not, and opens the Tools tab", async () => {
+it("the Details popover's Tools row counts what is ready, names what is not, and opens the Tools tab", async () => {
   const user = userEvent.setup();
   render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Details" }));
   const row = await screen.findByRole("button", { name: "Tools" });
   await waitFor(() => expect(row).toHaveTextContent("8 ready"));
   expect(row).toHaveTextContent("1 needs sign-in · 1 failed");
   // The tab is not in the row until it is asked for.
   expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
   await user.click(row);
+  // Opening the tab puts the popover away.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Thread details" })).toBeNull());
   const tab = await screen.findByRole("tab", { name: "Tools" });
   expect(tab).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("region", { name: "Your MCP servers" })).toBeInTheDocument();
@@ -36,11 +39,23 @@ it("the details card's Tools row counts what is ready, names what is not, and op
   expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
 });
 
-it("says Not reported yet on the card before an engine has reported anything", async () => {
+it("says Shown once this engine has run on the row before a reporting engine has run", async () => {
+  const user = userEvent.setup();
   vi.spyOn(api, "threadTools").mockResolvedValue({ ...engineTools("claude"), reported: false, groups: [], not_reported: [] });
   render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Details" }));
   const row = await screen.findByRole("button", { name: "Tools" });
-  await waitFor(() => expect(row).toHaveTextContent("Not reported yet"));
+  await waitFor(() => expect(row).toHaveTextContent("Shown once this engine has run"));
+});
+
+it("says Not reported by the engine on the row for one that lists no tools", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "threadTools").mockRejectedValue(new ApiFailure("unsupported", "This engine does not report its tools.", 422));
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Details" }));
+  const row = await screen.findByRole("button", { name: "Tools" });
+  await waitFor(() => expect(row).toHaveTextContent(/^Tools\s*Not reported by Claude Code/));
+  expect(row).not.toHaveTextContent("Couldn’t read");
 });
 
 it("Settings › Agents lists Tools and connectors, one tab per engine, read-only, with Check again", async () => {

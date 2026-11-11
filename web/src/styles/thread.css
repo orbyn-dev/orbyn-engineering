@@ -18,10 +18,6 @@
 .thread-main {
   container-type: inline-size;
 }
-/* The Ledger details rail occupies its full height at every column width. */
-.thread-main[data-details="reserved"] > .thread-stage {
-  --details-reserve: calc(var(--details-w) + var(--details-gap));
-}
 .thread-stage {
   --details-reserve: 0px;
   display: flex;

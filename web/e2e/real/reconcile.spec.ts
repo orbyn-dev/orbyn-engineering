@@ -75,7 +75,7 @@ test("the header toggles the details card, terminal and surfaces", async ({ page
   await make("Header");
   await page.goto(service.page);
   await row(page, "Header").click();
-  const details = page.getByRole("complementary", { name: "Thread details" });
+  const details = page.getByRole("dialog", { name: "Thread details" });
   // With the side panel closed the card opens as a popover under the Details button.
   await expect(details).toBeHidden();
   await page.getByRole("button", { name: "Details" }).click();

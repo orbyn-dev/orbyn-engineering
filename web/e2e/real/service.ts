@@ -341,15 +341,15 @@ export async function projectSettingsUrl(service: Service, projectId: string, se
 }
 
 /**
- * Opens the thread's Details card and returns it. The card is a popover under the Details button while the side
- * panel is closed and sits at the top of the panel while it is open; either way the button shows whether it is on.
+ * Opens the thread's Details popover and returns it. It is a popover under the thread header's Details button, whether
+ * or not the side panel is open; the button shows whether it is on.
  */
 export async function openDetails(page: Page) {
   const toggle = page.getByRole("button", { name: "Details", exact: true });
   // A freshly started dev server compiles the page on its first load.
   await expect(toggle).toBeVisible({ timeout: 30_000 });
   if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-  const card = page.getByRole("complementary", { name: "Thread details" });
+  const card = page.getByRole("dialog", { name: "Thread details" });
   await expect(card).toBeVisible();
   return card;
 }

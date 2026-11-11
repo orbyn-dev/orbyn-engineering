@@ -14,48 +14,62 @@
   background: var(--color-selected);
   color: var(--color-text);
 }
-/* At the top of the side panel, above its tabs. */
-.context > .details {
-  position: static;
-  flex: none;
-  width: auto;
-  max-height: 45%;
-  margin: 8px 10px 0;
-}
-/* While the panel is closed: a popover under the Details button. */
+/* The Details popover, under the thread header's Details button; its right edge is set to the button's. */
 .details-popover {
   position: absolute;
   z-index: 12;
   top: calc(var(--topbar-h) + 4px);
-  /* Under the Details button: its right edge, left of the Terminal and panel buttons. */
   right: 88px;
-  width: min(392px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  width: min(392px, calc(100% - 24px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: var(--radius-lg);
   background: var(--color-background);
   box-shadow:
     0 10px 30px var(--color-shadow),
     0 0 0 1px var(--color-borderStrong);
 }
-.details-popover > .details {
-  position: static;
-  width: auto;
-  max-height: min(70vh, 560px);
+.details-popover .dcard {
+  border: 0;
+  background: transparent;
 }
-
-/* Details card */
-.details {
-  position: absolute;
-  z-index: 4;
-  top: calc(var(--topbar-h) + 12px);
-  right: var(--details-gap);
-  display: flex;
-  flex-direction: column;
-  width: var(--details-w);
-  max-height: calc(100% - var(--topbar-h) - 24px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border-radius: var(--radius-lg);
-  background: var(--color-sunken);
+/* In a narrow window it is 320px wide; long paths and branch names are cut with an ellipsis and read in full in a tooltip. */
+@container (max-width: 640px) {
+  .details-popover {
+    width: min(320px, calc(100% - 24px));
+  }
+}
+.details-popover .drow .dv .mono,
+.details-popover .drow .dv small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.details-grab {
+  display: none;
+}
+/* Under 600px it is a sheet from the bottom with a grabber, like the phone layout. */
+.details-popover[data-sheet] {
+  position: fixed;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  max-height: 80vh;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+.details-popover[data-sheet] .details-grab {
+  display: block;
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 2px;
+  border-radius: var(--radius-pill);
+  background: var(--color-borderStrong);
 }
 .details-head {
   display: flex;
@@ -481,10 +495,6 @@
   .text-action {
     min-height: var(--hit);
     padding: 0 8px 0 2px;
-  }
-  .details {
-    left: 12px;
-    width: auto;
   }
   .drawer {
     flex: 1;
