@@ -12,6 +12,7 @@ import { routeHref, type SettingsSection } from "../../product/state/route";
 import { IconButton } from "../../ui/controls";
 import { AppearanceSection } from "./pages/Appearance";
 import { KeybindingsSection } from "./pages/Keybindings";
+import { AccountSection, useAccountAvailable } from "../account";
 import { MaintenanceSection } from "./maintenance/Maintenance";
 import { ProjectsSection } from "./projects/Projects";
 import { ProvidersSection } from "./providers/Providers";
@@ -30,6 +31,7 @@ import "./settingsDesign.css";
 
 export const labels: Record<SettingsSection, string> = {
   general: "General",
+  account: "Account",
   appearance: "Appearance",
   chat: "Chat",
   diffs: "Diffs & pull requests",
@@ -49,7 +51,7 @@ export const labels: Record<SettingsSection, string> = {
 
 /** The reference product's order. Sections without a backend here stay out. */
 const groups: { label: string | null; sections: SettingsSection[] }[] = [
-  { label: null, sections: ["general", "appearance", "chat", "diffs", "keybindings"] },
+  { label: null, sections: ["general", "account", "appearance", "chat", "diffs", "keybindings"] },
   { label: "Agents", sections: ["providers", "tools", "threads", "tasks"] },
   { label: "Code", sections: ["projects", "source-control", "worktrees"] },
   { label: null, sections: ["maintenance", "labs", "about", "archive"] },
@@ -57,6 +59,7 @@ const groups: { label: string | null; sections: SettingsSection[] }[] = [
 
 const views: Record<SettingsSection, () => React.JSX.Element | null> = {
   general: GeneralSection,
+  account: AccountSection,
   appearance: AppearanceSection,
   chat: ChatSection,
   diffs: DiffsSection,
@@ -86,7 +89,9 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string } | null>(null);
   const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
-  const current = section ?? "general";
+  // The Account category exists only while the sign-in gate is on: no dead entry, nothing disabled-looking.
+  const accountOn = useAccountAvailable();
+  const current = section === "account" && !accountOn ? "general" : (section ?? "general");
   const View = views[current];
 
   // Escape closes settings from anywhere, unless a dialog, menu or field is handling its own.
@@ -108,7 +113,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const sectionResults = groups.flatMap((group) => group.sections).filter((entry) => labels[entry].toLowerCase().includes(query.trim().toLowerCase()));
+  const sectionResults = groups.flatMap((group) => group.sections).filter((entry) => (entry !== "account" || accountOn) && labels[entry].toLowerCase().includes(query.trim().toLowerCase()));
   const reloadShell = shell.reload;
   useEffect(() => onShellChange(reloadShell), [reloadShell]);
   const results = useMemo(() => {
@@ -193,7 +198,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
           {groups.map((group) => (
             <div key={group.label ?? group.sections[0]} className="settings-group-list">
               {group.label ? <p className="settings-group">{group.label}</p> : null}
-              {group.sections.map((entry) => (
+              {group.sections.filter((entry) => entry !== "account" || accountOn).map((entry) => (
                 <a
                   key={entry}
                   onClick={() => setTarget(null)}

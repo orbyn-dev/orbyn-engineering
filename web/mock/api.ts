@@ -23,6 +23,7 @@ import type {
   WireThreadEvent,
   WorkspaceStatus,
 } from "../src/api/types.ts";
+import { createAccountMock } from "./account.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
@@ -42,6 +43,8 @@ export type Scenario =
   | "remote"
   | "offline"
   | "reference"
+  /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
+  | "account"
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
   | "pulls-details-failed"
@@ -104,10 +107,13 @@ export function createMockApi(options: MockOptions = {}) {
   const nextId = (prefix: string) => `${prefix}-${++idCounter}`;
   const now = () => new Date(fixtures.T0 + idCounter * 1000).toISOString();
 
+  const accountMock = createAccountMock();
+
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     scenario = next;
+    accountMock.reset(next === "account");
     signedIn = false;
     idCounter = 0;
     preferenceValues = {};
@@ -1026,7 +1032,12 @@ export function createMockApi(options: MockOptions = {}) {
         failure.remaining -= 1;
         return err(failure.status, failure.code, failure.message);
       }
+      if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       return route(method, parsed.pathname, parsed.searchParams, body);
+    },
+    /** Changes the account has waiting to upload, for the offline and paused wording. */
+    setAccountWaiting(count: number) {
+      accountMock.setWaiting(count);
     },
     events(threadId: string, after: number): WireThreadEvent[] {
       return (logs[threadId] ?? []).filter((event) => event.seq > after);

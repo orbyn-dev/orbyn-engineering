@@ -3,6 +3,7 @@ import type { ProjectSettingsSelection } from "../../generated/ProjectSettingsSe
 
 export const SETTINGS_SECTIONS = [
   "general",
+  "account",
   "appearance",
   "chat",
   "diffs",

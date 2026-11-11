@@ -115,4 +115,73 @@ export const FRAMES = {
   "s-labs": { route: "#/settings/labs" },
   "s-about": { route: "#/settings/about" },
   "s-archive": { route: "#/settings/archive" },
+
+  // Account and sync (mock scenario "account": the sign-in gate on, with the throwaway accounts in web/mock/account.ts).
+  "settings-account-gate-off": { route: "#/settings/general" },
+  "acct-settings-signed-out": { route: "#/settings/account", scenario: "account" },
+  "acct-signin": { route: "#/settings/account", scenario: "account", steps: [click("button", "Sign in")] },
+  "acct-signin-wrong-password": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "nope" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-signin-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "down@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-signup-invite": { route: "#/settings/account", scenario: "account", steps: [click("button", "Create account")] },
+  "acct-signup-email-code": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Create account"),
+      { do: "fill", label: "Invite code", value: "K7QM2XWH9QXA3C2D" },
+      click("button", "Continue"),
+      { do: "fill", label: "Email", value: "sam@example.com" },
+      { do: "fill", label: "Password", value: "a throwaway phrase" },
+      click("button", "Continue with a password"),
+    ],
+  },
+  "acct-2fa-code": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "two@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-settings-signed-in": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "sync-popover": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Account and sync", { prefix: true }),
+    ],
+  },
 };
