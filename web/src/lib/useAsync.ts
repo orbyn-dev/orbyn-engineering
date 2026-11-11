@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiFailure } from "../api/client";
 import { readKept, writeKept } from "./keptData";
+import { asBackground } from "../api/lanes";
 import { useRefreshOn } from "./dataRefresh";
 
 export type AsyncState<T> =
@@ -63,9 +64,22 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
   });
 
   const foreground = useRef(false);
+  const eventWaiting = useRef(false);
+  const settled = () => {
+    foreground.current = false;
+    if (eventWaiting.current) {
+      eventWaiting.current = false;
+      void runRef.current({ background: true, force: false });
+    }
+  };
+  const runRef = useRef<(context: LoadContext) => Promise<void>>(() => Promise.resolve());
   const run = useCallback((context: LoadContext) => {
-    // A person's read is on its way and will show its own result; an event must not cut it short.
-    if (context.background && foreground.current) return Promise.resolve();
+    // A person's read is on its way and will show its own result; an event must not cut it short,
+    // but it may mean that result is already old, so one read follows it.
+    if (context.background && foreground.current) {
+      eventWaiting.current = true;
+      return Promise.resolve();
+    }
     foreground.current = !context.background;
     const id = ++generation.current;
     const asked = keyRef.current;
@@ -74,17 +88,18 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
     controller.current = abort;
     // An event-driven read shows nothing while it runs.
     if (!context.background) setState((previous) => ({ ...previous, refreshing: true }));
-    return loader.current(abort.signal, context).then(
+    const started = context.background ? asBackground(() => loader.current(abort.signal, context)) : loader.current(abort.signal, context);
+    return started.then(
       (data) => {
         if (id === generation.current) {
-          foreground.current = false;
+          settled();
           if (keepRef.current) writeKept(asked, data);
           setState({ status: "ready", data, error: null, refreshing: false });
         }
       },
       (error: unknown) => {
         if (id !== generation.current || isAbort(error)) return;
-        foreground.current = false;
+        settled();
         // A read an event started never replaces what is on screen with an error.
         if (context.background) {
           setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: false } : previous));
@@ -99,6 +114,9 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
       },
     );
   }, []);
+  useLayoutEffect(() => {
+    runRef.current = run;
+  });
   const reload = useCallback(() => run({ background: false, force: false }), [run]);
   /** The person asked for a real read. */
   const reloadNow = useCallback(() => run({ background: false, force: true }), [run]);
@@ -114,6 +132,7 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
     return () => {
       generation.current += 1;
       foreground.current = false;
+      eventWaiting.current = false;
       controller.current?.abort();
     };
   }, [key, reload]);

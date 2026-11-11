@@ -2,6 +2,7 @@ import { forgetProjectImages, invalidateProjectImages } from "../projects/projec
 import { useMemo } from "react";
 import { create } from "zustand";
 import { ApiFailure, api } from "../../api/client";
+import { asBackground } from "../../api/lanes";
 import type {
   ApplyAllResult,
   Approval,
@@ -104,6 +105,10 @@ interface WorkspaceState {
   dropThread(thread: Thread): void;
   putReceipt(approval: Approval): void;
 }
+
+/** Reads running per resource, and the ones an event asked for meanwhile. */
+const running = { managed: 0, updates: 0 };
+const waiting = { managed: false, updates: false };
 
 /** Newest-request-wins per resource key. */
 const generations = new Map<string, number>();
@@ -236,17 +241,34 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async refreshUpdates(options) {
+    const quiet = options?.quiet === true;
+    // An event's read never takes over one that is running: it waits and reads once that one ends.
+    if (quiet && running.updates > 0) {
+      waiting.updates = true;
+      return;
+    }
     const current = claim("updates");
+    running.updates += 1;
+    let failed = false;
     try {
-      const data = await api.updates(undefined, options?.force === true);
+      const data = await (quiet ? asBackground(() => api.updates(undefined, false)) : api.updates(undefined, options?.force === true));
       if (current()) set({ updates: { data, error: null, loading: false } });
     } catch (error) {
       if (!current() || options?.quiet === true) return;
+      failed = true;
       const failure = toFailure(error);
       set((state) => ({
         updates: { data: state.updates.data, error: failure, loading: false },
         updatesUnsupported: failure.status === 404,
       }));
+    } finally {
+      running.updates -= 1;
+      // After a failure the error stays on screen until the next ordinary read.
+      if (failed) waiting.updates = false;
+      if (running.updates === 0 && waiting.updates) {
+        waiting.updates = false;
+        void get().refreshUpdates({ quiet: true });
+      }
     }
   },
 
@@ -256,18 +278,34 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async refreshManaged(options) {
+    const quiet = options?.quiet === true;
+    if (quiet && running.managed > 0) {
+      waiting.managed = true;
+      return;
+    }
     const current = claim("managed");
-    if (options?.quiet !== true) set((state) => ({ managed: { ...state.managed, loading: true } }));
+    running.managed += 1;
+    let failed = false;
+    if (!quiet) set((state) => ({ managed: { ...state.managed, loading: true } }));
     try {
-      const data = await api.workspace(undefined, options?.force === true);
+      const data = await (quiet ? asBackground(() => api.workspace(undefined, false)) : api.workspace(undefined, options?.force === true));
       if (current()) set({ managed: { data, error: null, loading: false } });
     } catch (error) {
       if (!current() || options?.quiet === true) return;
+      failed = true;
       const failure = toFailure(error);
       set((state) => ({
         managed: { data: state.managed.data, error: failure, loading: false },
         managedUnsupported: failure.status === 404,
       }));
+    } finally {
+      running.managed -= 1;
+      // After a failure the error stays on screen until the next ordinary read.
+      if (failed) waiting.managed = false;
+      if (running.managed === 0 && waiting.managed) {
+        waiting.managed = false;
+        void get().refreshManaged({ quiet: true });
+      }
     }
   },
 

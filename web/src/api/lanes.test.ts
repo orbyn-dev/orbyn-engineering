@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NETWORK_ERROR, request } from "./client";
-import { LANE_TIMEOUT_MS, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
+import { LANE_TIMEOUT_MS, asBackground, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
 
 interface Pending {
   path: string;
@@ -133,6 +133,30 @@ describe("request lanes", () => {
     );
     await expect(Promise.all(reads)).resolves.toEqual(["failed", "failed", "failed", "failed"]);
     expect(calls).toHaveLength(4);
+  });
+
+  it("lets a read the person starts jump ahead of queued background reads", async () => {
+    vi.useFakeTimers();
+    const { pending } = holdFetch();
+    const running = [request("GET", "/api/pulls?state=open&q="), request("GET", "/api/usage?days=7")];
+    const background = ["/api/limits", "/api/engines/a/models", "/api/threads/t1/tools"].map((path) =>
+      asBackground(() => request("GET", path)),
+    );
+    const person = request("GET", "/api/threads/t1/commands");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pending.map((entry) => entry.path)).toEqual(["/api/pulls?state=open&q=", "/api/usage?days=7"]);
+    pending[0]?.answer({});
+    await vi.advanceTimersByTimeAsync(1);
+    // The person's read took the slot, though three background reads were queued first.
+    expect(pending.map((entry) => entry.path)).toContain("/api/threads/t1/commands");
+    expect(pending.map((entry) => entry.path)).not.toContain("/api/limits");
+    // The cap holds, and the background reads still run, in arrival order, once the person's is done.
+    for (let round = 0; round < 8; round += 1) {
+      for (const entry of [...pending]) entry.answer({});
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    expect(pending.map((entry) => entry.path).slice(-3)).toEqual(["/api/limits", "/api/engines/a/models", "/api/threads/t1/tools"]);
+    await Promise.all([...running, ...background, person]);
   });
 
   it("lets a foreground read bypass a full slow lane", async () => {

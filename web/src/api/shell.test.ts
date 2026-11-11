@@ -111,13 +111,14 @@ describe("followShell", () => {
     stop();
   });
 
-  it("says everything may have changed when the stream comes back after a gap, and not on the first connection", async () => {
+  it("says everything may have changed after a real gap, not on the first connection or a quick retry", async () => {
     vi.useFakeTimers();
     let calls = 0;
     const open = () => new Response(new ReadableStream({ start: (controller) => { setTimeout(() => controller.close(), 10); } }), { status: 200 });
+    // Calls 2 and 3 are quick retries after a closed stream; 4 to 7 fail for over ten seconds.
     vi.stubGlobal("fetch", vi.fn(async () => {
       calls += 1;
-      if (calls === 2) throw new Error("down");
+      if (calls >= 4 && calls <= 7) throw new Error("down");
       return open();
     }));
     const heard: string[] = [];
@@ -125,8 +126,12 @@ describe("followShell", () => {
     const stop = followShell(() => undefined);
     await vi.advanceTimersByTimeAsync(5);
     expect(heard).toEqual([]);
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(heard).toEqual([ALL_DATA, ALL_DATA]);
+    // Calls 2 and 3 reconnect within 250 ms each: no storm.
+    await vi.advanceTimersByTimeAsync(600);
+    expect(heard).toEqual([]);
+    // The long outage ends: one event.
+    await vi.advanceTimersByTimeAsync(12_500);
+    expect(heard).toEqual([ALL_DATA]);
     stop();
     off();
   });

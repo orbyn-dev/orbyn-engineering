@@ -49,6 +49,8 @@ export function laneFor(method: string, path: string): Lane {
 const abortError = () => new DOMException("The request was aborted.", "AbortError");
 
 interface Waiter {
+  /** Work nobody is waiting on: it goes after every read a person started. */
+  background: boolean;
   start: () => void;
   reject: (error: unknown) => void;
 }
@@ -63,11 +65,12 @@ class Limit {
     this.queue.length = 0;
   }
 
-  /** Resolves with a release function once a slot is free, in arrival order. */
-  acquire(signal?: AbortSignal): Promise<() => void> {
+  /** Resolves with a release function once a slot is free: reads a person started first, each group in arrival order. */
+  acquire(signal?: AbortSignal, background = false): Promise<() => void> {
     if (signal?.aborted) return Promise.reject(abortError());
     return new Promise((resolve, reject) => {
       const waiter: Waiter = {
+        background,
         start: () => {
           signal?.removeEventListener("abort", onAbort);
           this.active += 1;
@@ -93,7 +96,10 @@ class Limit {
   }
 
   private drain() {
-    while (this.active < this.cap && this.queue.length > 0) this.queue.shift()?.start();
+    while (this.active < this.cap && this.queue.length > 0) {
+      const at = this.queue.findIndex((waiter) => !waiter.background);
+      this.queue.splice(at >= 0 ? at : 0, 1)[0]?.start();
+    }
   }
 }
 
@@ -108,9 +114,10 @@ export async function inLane<T>(
   signal: AbortSignal | undefined,
   work: (signal: AbortSignal | undefined) => Promise<T>,
   timedOut: () => Error,
+  background = false,
 ): Promise<T> {
   if (lane === "interactive") return work(signal);
-  const release = await slowLane.acquire(signal);
+  const release = await slowLane.acquire(signal, background);
   const controller = new AbortController();
   const follow = () => controller.abort();
   signal?.addEventListener("abort", follow, { once: true });
@@ -131,6 +138,23 @@ export async function inLane<T>(
     release();
   }
 }
+
+let backgroundDepth = 0;
+
+/**
+ * Marks the requests a function makes before it first awaits as background work, started by
+ * an event and not by a person. They queue behind the slow reads a person starts.
+ */
+export function asBackground<T>(work: () => T): T {
+  backgroundDepth += 1;
+  try {
+    return work();
+  } finally {
+    backgroundDepth -= 1;
+  }
+}
+
+export const inBackground = () => backgroundDepth > 0;
 
 /** Test only: drops every queued or running slow read. */
 export function resetLanesForTests() {

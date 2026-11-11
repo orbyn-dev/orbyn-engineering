@@ -1,6 +1,6 @@
 import { serviceUrl } from "./origin";
 import { readToken } from "./token";
-import { inLane, laneFor } from "./lanes";
+import { inBackground, inLane, laneFor } from "./lanes";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -176,7 +176,7 @@ export function request<T>(
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned), unreachable);
+  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned), unreachable, inBackground());
   return sent.finally(() => clearTimeout(slow));
 }
 

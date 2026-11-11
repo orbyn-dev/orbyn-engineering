@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import { api } from "../../api/client";
+import { asBackground } from "../../api/lanes";
 import type { EngineModels, ModelInfo } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 
@@ -16,6 +17,8 @@ interface ModelState {
 }
 
 const started = new Set<string>();
+/** Revalidations per engine, kept apart from loads so an event never makes a load lose its turn. */
+const revisions = new Map<string, number>();
 const generations = new Map<string, number>();
 
 /** Engine model lists. The service keeps a good answer for five minutes. */
@@ -30,11 +33,15 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const engines = engine === undefined ? Object.keys(get().byEngine) : get().byEngine[engine] ? [engine] : [];
     await Promise.all(
       engines.map(async (id) => {
-        const generation = (generations.get(id) ?? 0) + 1;
-        generations.set(id, generation);
+        // A read the person or the first open started owns the list while it runs; this one would only cut it short.
+        if (get().loading[id]) return;
+        const loadedAt = generations.get(id) ?? 0;
+        const mine = (revisions.get(id) ?? 0) + 1;
+        revisions.set(id, mine);
         try {
-          const models = await api.models(id);
-          if (generations.get(id) !== generation || models.error) return;
+          const models = await asBackground(() => api.models(id));
+          // A load that began meanwhile has the newer answer, and a newer revalidation supersedes this one.
+          if (generations.get(id) !== loadedAt || revisions.get(id) !== mine || models.error) return;
           set((state) => ({ byEngine: { ...state.byEngine, [id]: models }, errors: { ...state.errors, [id]: null } }));
         } catch {
           // The list on screen stays; the next open reads again.

@@ -6,6 +6,7 @@ import { usePageLabel } from "./pageLabel";
 import type { PullRequestDetail } from "../../../api/types";
 import { agoWords } from "../../../lib/format";
 import { topics } from "../../../lib/dataRefresh";
+import { pullChanged } from "../model/pullTopics";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
@@ -51,7 +52,7 @@ export function PullDetail({
   /** Moves to another pull request in the same stack. */
   onOpen?(number: number): void;
 }) {
-  const changed = topics(`pull:${projectId}:${number}`);
+  const changed = pullChanged(projectId, number);
   const detail = useAsync(`pull:${projectId}:${number}`, (signal, how) => pullsApi.detail(projectId, number, signal, how.background ? undefined : { priority: "foreground" }, how.force), { keep: true, refreshOn: changed });
   const page = layout === "page";
   // What the page layout adds beside the detail: files, checks, the details the list also reads, and who is signed in.

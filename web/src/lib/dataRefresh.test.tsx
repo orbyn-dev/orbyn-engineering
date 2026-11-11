@@ -136,3 +136,27 @@ describe("a read that shows a topic", () => {
     expect(contexts.at(-1)).toEqual({ background: false, force: false });
   });
 });
+
+describe("an event that arrives while a read is running", () => {
+  it("runs one more read after it, since the running one may already be old", async () => {
+    forgetKept();
+    const finish: ((value: number) => void)[] = [];
+    const contexts: LoadContext[] = [];
+    const { result } = renderHook(() =>
+      useAsync("pulls:busy", (_signal, how) => new Promise<number>((resolve) => { contexts.push(how); finish.push(resolve); }), { refreshOn: topics("pulls") }),
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(contexts).toHaveLength(1);
+    // Two events while the person's first read is still running.
+    dataChanged("pulls");
+    await act(async () => { await vi.advanceTimersByTimeAsync(COALESCE_MS); });
+    dataChanged("pulls");
+    await act(async () => { await vi.advanceTimersByTimeAsync(COALESCE_MS); });
+    expect(contexts).toHaveLength(1);
+    await act(async () => { finish[0]?.(1); await vi.advanceTimersByTimeAsync(0); });
+    expect(contexts).toHaveLength(2);
+    expect(contexts[1]).toEqual({ background: true, force: false });
+    await act(async () => { finish[1]?.(2); await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.data).toBe(2);
+  });
+});

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { pullsApi } from "../api";
 import type { PullRequest } from "../../../api/types";
+import { asBackground } from "../../../api/lanes";
+import { parsePullTopic } from "./pullTopics";
 import { checksOf } from "../../../product/pulls/labels";
 
 /** What the chip and every list of a thread's pull requests share, so a change in one shows in both. */
@@ -42,31 +44,42 @@ const couldBeReady = (pull: PullRequest) => pull.state === "open" && !pull.draft
 const MAX_MERGEABLE_READS = 8;
 
 /** Reads again the lists a mounted chip shows, when the service says pull requests changed. Set by the store. */
-let quietReloadHeld: (what: string) => void = () => undefined;
-export const reloadHeldPulls = (what: string) => quietReloadHeld(what);
+let quietReloadHeld: (heard: string[]) => void = () => undefined;
+export const reloadHeldPulls = (heard: string[]) => quietReloadHeld(heard);
 
 export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
   // The newest read per thread wins; an older one that lands late is ignored.
   const newest = new Map<string, number>();
   const pending = new Map<string, number>();
   const holders = new Map<string, number>();
-  const known = new Map<string, { id: string; project_id: string }>();
-  quietReloadHeld = (what) => {
-    for (const [id, thread] of known) {
+  const threads = new Map<string, { id: string; project_id: string }>();
+  // Threads whose chip heard of a change while a read was running: one more read follows it.
+  const deferred = new Set<string>();
+  /** One quiet read for a thread, however many topics of a burst named it. It never takes over a running read. */
+  const reloadQuietly = (thread: { id: string; project_id: string }) => {
+    if ((pending.get(thread.id) ?? 0) > 0) {
+      deferred.add(thread.id);
+      return;
+    }
+    // The change may have moved a pull request's mergeable state, so those are read again too.
+    void asBackground(() => read(thread, pullsApi.linked(thread.id), true, true));
+  };
+  quietReloadHeld = (heard) => {
+    for (const [id, thread] of threads) {
       if ((holders.get(id) ?? 0) <= 0) continue;
-      if (what === "pulls" || what.startsWith(`pull:${thread.project_id}:`)) void read(thread, pullsApi.linked(id), false, true);
+      if (heard.some((what) => what === "pulls" || parsePullTopic(what)?.project === thread.project_id)) reloadQuietly(thread);
     }
   };
   let counter = 0;
   const patch = (id: string, change: Partial<ThreadPullsEntry>) =>
     set((state) => ({ byThread: { ...state.byThread, [id]: { ...(state.byThread[id] ?? empty), ...change } } }));
 
-  async function mergeables(thread: { id: string; project_id: string }, pulls: PullRequest[], known: Record<number, string | null>, fresh: boolean) {
+  async function mergeables(thread: { id: string; project_id: string }, pulls: PullRequest[], known: Record<number, string | null>, fresh: boolean, quiet: boolean) {
     const wanted = pulls.filter(couldBeReady);
     const asked = wanted.filter((pull) => fresh || !(pull.number in known)).slice(0, MAX_MERGEABLE_READS);
     const entries = await Promise.all(
       asked.map((pull) =>
-        pullsApi.detail(thread.project_id, pull.number).then(
+        (quiet ? asBackground(() => pullsApi.detail(thread.project_id, pull.number)) : pullsApi.detail(thread.project_id, pull.number)).then(
           (detail) => [pull.number, detail.mergeable] as const,
           () => [pull.number, null] as const,
         ),
@@ -76,7 +89,7 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
   }
 
   async function read(thread: { id: string; project_id: string }, work: Promise<PullRequest[]>, fresh: boolean, quiet = false) {
-    known.set(thread.id, thread);
+    threads.set(thread.id, thread);
     const mine = ++counter;
     newest.set(thread.id, mine);
     pending.set(thread.id, (pending.get(thread.id) ?? 0) + 1);
@@ -89,7 +102,7 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
       if (!current()) return;
       const pulls = byNumber(raw);
       patch(thread.id, { pulls, watched: watches.map((watch) => watch.number), loadedAt: Date.now(), failed: false });
-      const mergeable = await mergeables(thread, pulls, get().byThread[thread.id]?.mergeable ?? {}, fresh);
+      const mergeable = await mergeables(thread, pulls, get().byThread[thread.id]?.mergeable ?? {}, fresh, quiet);
       if (current()) patch(thread.id, { mergeable });
     } catch {
       if (current() && !quiet) patch(thread.id, { failed: true });
@@ -99,6 +112,7 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
         pending.delete(thread.id);
         // A thread that was forgotten meanwhile stays forgotten.
         if (newest.has(thread.id)) patch(thread.id, { busy: false });
+        if (deferred.delete(thread.id) && newest.has(thread.id)) reloadQuietly(thread);
       } else pending.set(thread.id, left);
     }
   }
@@ -134,6 +148,8 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
     forget(threadId) {
       newest.delete(threadId);
       pending.delete(threadId);
+      threads.delete(threadId);
+      deferred.delete(threadId);
       set((state) => {
         const { [threadId]: _gone, ...rest } = state.byThread;
         return { byThread: rest };

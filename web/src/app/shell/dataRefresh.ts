@@ -30,7 +30,7 @@ export function startAppDataRefresh(): () => void {
     ),
     registerRefresh(
       (what) => what === "pulls" || what.startsWith("pull:"),
-      (heard) => heard.forEach((what) => reloadHeldPulls(what === EVERYTHING ? "pulls" : what)),
+      (heard) => reloadHeldPulls(heard.map((what) => (what === EVERYTHING ? "pulls" : what))),
     ),
   ];
   return () => stops.forEach((stop) => stop());

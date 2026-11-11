@@ -30,8 +30,8 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// How long `GET /api/updates` is answered without a refresh. A status reads Git and
 /// the engines, which the poll behind it asks for every few seconds.
 const STATUS_FRESH: Duration = Duration::from_secs(20);
-/// Past this, an earlier status is no longer shown without waiting for a new one. The web
-/// does not yet re-read on `data_changed`, so it stays short.
+/// Past this, an earlier status is no longer shown without waiting for a new one. A window
+/// reads again on `data_changed`, but it may have missed one, so this stays short.
 const STATUS_MAX_AGE: Duration = Duration::from_secs(60);
 
 #[derive(Default)]

@@ -26,8 +26,8 @@ pub(super) const PULL_FRESH: Duration = Duration::from_secs(10);
 pub(super) const CANDIDATES_FRESH: Duration = Duration::from_secs(120);
 /// Which forge CLIs are installed and signed in.
 pub(super) const FORGES_FRESH: Duration = Duration::from_secs(60);
-/// Pull request lists and every part of one are shown for at most this long: the web does
-/// not yet re-read on `data_changed`, so what a screen shows must never be much older.
+/// Pull request lists and every part of one are shown for at most this long. A window reads
+/// again on `data_changed`, but it may have missed one, so what a screen shows is never much older.
 pub(super) const PULL_MAX_AGE: Duration = Duration::from_secs(60);
 /// Reviewer and label candidates change rarely.
 pub(super) const CANDIDATES_MAX_AGE: Duration = Duration::from_secs(5 * 60);

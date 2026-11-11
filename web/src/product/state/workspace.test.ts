@@ -295,4 +295,38 @@ describe("an unchanged poll", () => {
       spy.mockRestore();
     }
   });
+
+  it("keeps an event's read from taking over a running one, and reads once that one ends", async () => {
+    const forced = deferred<never>();
+    const calls: boolean[] = [];
+    const spy = vi.spyOn(api, "workspace").mockImplementation(((_signal?: AbortSignal, refresh?: boolean) => {
+      calls.push(refresh === true);
+      return calls.length === 1 ? forced.promise : Promise.reject(new Error("quiet failure"));
+    }) as never);
+    useWorkspace.setState({ managed: { data: null, error: null, loading: false } });
+    const running = useWorkspace.getState().refreshManaged({ force: true });
+    expect(useWorkspace.getState().managed.loading).toBe(true);
+    await useWorkspace.getState().refreshManaged({ quiet: true });
+    expect(calls).toEqual([true]);
+    forced.resolve({ marker: 1 } as never);
+    await running;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The person's read landed and stays; the quiet read ran after it and its failure showed nothing.
+    expect(calls).toEqual([true, false]);
+    expect(useWorkspace.getState().managed).toEqual({ data: { marker: 1 }, error: null, loading: false });
+    spy.mockRestore();
+  });
+
+  it("shows the error of a forced read that fails, even when an event asked meanwhile", async () => {
+    let failForced!: (error: Error) => void;
+    const forced = new Promise<never>((_resolve, reject) => (failForced = reject));
+    const spy = vi.spyOn(api, "workspace").mockReturnValueOnce(forced).mockResolvedValue({ marker: 2 } as never);
+    useWorkspace.setState({ managed: { data: null, error: null, loading: false } });
+    const running = useWorkspace.getState().refreshManaged({ force: true });
+    await useWorkspace.getState().refreshManaged({ quiet: true });
+    failForced(new Error("forced failure"));
+    await running;
+    expect(useWorkspace.getState().managed.error).not.toBeNull();
+    spy.mockRestore();
+  });
 });
