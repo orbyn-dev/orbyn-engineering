@@ -233,4 +233,5 @@ they open by hash route only: `#/preview/account`, `#/preview/connect-planner`,
 through to the normal app and the code is not in the output (`npm run build` fails if it
 is). Every control is disabled with the reason "Available with Orbyn accounts", and the
 screens make no request. `docs/parity.md` records them as L52–L55, still excluded until
-the platform wiring lands.
+the platform wiring lands. The wiring's design and threat model are in [account.md](account.md) and
+[account-threat-model.md](account-threat-model.md).
