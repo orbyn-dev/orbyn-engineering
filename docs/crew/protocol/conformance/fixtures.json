@@ -1,0 +1,167 @@
+{
+  "description": "Named fragments the cases reuse as {\"$use\": name, \"set\": {key: value}}.",
+  "fixtures": {
+    "lead": {
+      "role": "lead",
+      "engine": "claude",
+      "member": "lead-01"
+    },
+    "worker1": {
+      "role": "worker",
+      "engine": "codex",
+      "member": "worker-01"
+    },
+    "worker2": {
+      "role": "worker",
+      "engine": "opencode",
+      "member": "worker-02"
+    },
+    "worker3": {
+      "role": "worker",
+      "engine": "claude",
+      "member": "worker-03"
+    },
+    "reviewer": {
+      "role": "reviewer",
+      "engine": "codex",
+      "member": "reviewer-01"
+    },
+    "core": {
+      "role": "core",
+      "engine": "orbyn"
+    },
+    "person": {
+      "role": "person",
+      "engine": "orbyn"
+    },
+    "start": {
+      "brief": {
+        "kind": "implement",
+        "outcome": "Add a parse_duration function to crew-demo that reads 90s and 2m.",
+        "inputs": [],
+        "files": [
+          {
+            "path": "crates/crew-demo/src/**",
+            "mode": "write"
+          }
+        ],
+        "allowed_effects": [
+          "read_repo",
+          "write_leased",
+          "run_checks"
+        ],
+        "stop_when": [
+          "The function is added."
+        ],
+        "budget": {
+          "turns": 20,
+          "minutes": 30
+        }
+      },
+      "answer_key": {
+        "checks": [
+          {
+            "id": "chk-tests",
+            "kind": "test",
+            "params": {
+              "run": "cargo test -p crew-demo"
+            },
+            "proves": "The unit tests pass."
+          }
+        ],
+        "protected_paths": [
+          "crates/crew-demo/tests/**",
+          "scripts/check.sh"
+        ]
+      }
+    },
+    "start-wide": {
+      "brief": {
+        "kind": "implement",
+        "outcome": "Work across the crates, the docs and the web app.",
+        "inputs": [],
+        "files": [
+          {
+            "path": "crates/a/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/b/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/crew/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/crew-demo/src/**",
+            "mode": "write"
+          },
+          {
+            "path": "docs/**",
+            "mode": "write"
+          },
+          {
+            "path": "web/app/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/crew-demo/tests/**",
+            "mode": "read"
+          }
+        ],
+        "allowed_effects": [
+          "read_repo",
+          "write_leased",
+          "run_checks"
+        ],
+        "stop_when": [
+          "Done."
+        ],
+        "budget": {
+          "turns": 20,
+          "minutes": 30
+        }
+      },
+      "answer_key": {
+        "checks": [
+          {
+            "id": "chk-tests",
+            "kind": "test",
+            "params": {
+              "run": "cargo test -p crew-demo"
+            },
+            "proves": "The unit tests pass."
+          }
+        ],
+        "protected_paths": [
+          "crates/crew-demo/tests/**",
+          "scripts/check.sh"
+        ]
+      }
+    },
+    "evidence": {
+      "check": "chk-tests",
+      "command": "cargo test -p crew-demo",
+      "outcome": "pass",
+      "exit_code": 0,
+      "duration_ms": 900,
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "log_hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "excerpt": "ok",
+      "artifacts": [],
+      "proves": "The unit tests pass.",
+      "does_not_prove": "Anything outside the crate."
+    },
+    "gate": {
+      "stage": "checks",
+      "subject": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "pass",
+      "decided_by": "code",
+      "evidence": [
+        "sha256:abababababababababababababababababababababababababababababababab"
+      ],
+      "reason": "All checks passed."
+    }
+  }
+}

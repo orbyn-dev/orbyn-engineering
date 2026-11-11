@@ -1,0 +1,25 @@
+{
+  "type": "result",
+  "v": 0,
+  "id": "sha256:544c9586f697a7fbd53e4150f553a6b887dc7ae6d9ec5c8b63133a43ccdb19ff",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-05",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "state": "cancelled",
+  "final": true,
+  "summary": "Cancelled by the person before the task was routed.",
+  "branch": null,
+  "commit": null,
+  "checks": [],
+  "not_verified": [
+    "Everything: nothing ran."
+  ],
+  "attempts": 0,
+  "usage": {},
+  "report": null
+}

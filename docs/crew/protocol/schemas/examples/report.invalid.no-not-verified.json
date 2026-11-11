@@ -1,0 +1,20 @@
+{
+  "type": "report",
+  "v": 0,
+  "id": "sha256:7265bd23ed3c3f9266166f8c64b65cd1f4c3bb76e918c00fb967e7ff3587d7fb",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "codex",
+    "member": "worker-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "summary": "Added parse_duration with tests.",
+  "branch": "feat/parse-duration",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "claims": [
+    "sha256:f4892ebd18016e950c38a33f712d5cb24faaca0037592563a4993ae2fd04c622"
+  ]
+}

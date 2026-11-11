@@ -1,0 +1,30 @@
+{
+  "type": "disagreement",
+  "v": 0,
+  "id": "sha256:799520065086559165cb2c7ab7fb0653dbb5ee46c303b44596bb505e0a1cb763",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-02",
+  "subject": "sha256:ccbf38640db64ca46e0eb0e9f84912a3cc63dba433c1a05d13e2c9a2c1aa1910",
+  "topic": "Is the unchecked multiplication reachable from user input?",
+  "positions": [
+    {
+      "member": "reviewer-01",
+      "engine": "codex",
+      "stance": "Reachable: the CLI passes user text straight in.",
+      "evidence": []
+    },
+    {
+      "member": "lead-01",
+      "engine": "claude",
+      "stance": "Not reachable: the CLI caps the input length first.",
+      "evidence": [
+        "sha256:cc8a785a649bac070b0093ba346a1f66683c25048b44ce4e9742012bdb8e1973"
+      ]
+    }
+  ]
+}

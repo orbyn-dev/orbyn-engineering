@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/object.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Crew object",
+  "description": "Any Crew object. The type field selects the schema; exactly one matches.",
+  "oneOf": [
+    {
+      "$ref": "brief.schema.json"
+    },
+    {
+      "$ref": "answer-key.schema.json"
+    },
+    {
+      "$ref": "lease.schema.json"
+    },
+    {
+      "$ref": "message.schema.json"
+    },
+    {
+      "$ref": "fact.schema.json"
+    },
+    {
+      "$ref": "claim.schema.json"
+    },
+    {
+      "$ref": "report.schema.json"
+    },
+    {
+      "$ref": "evidence.schema.json"
+    },
+    {
+      "$ref": "finding.schema.json"
+    },
+    {
+      "$ref": "disagreement.schema.json"
+    },
+    {
+      "$ref": "gate.schema.json"
+    },
+    {
+      "$ref": "result.schema.json"
+    },
+    {
+      "$ref": "route-decision.schema.json"
+    }
+  ]
+}

@@ -1,0 +1,300 @@
+{
+  "suite": "Who may call what",
+  "cases": [
+    {
+      "id": "auth-worker-cannot-start",
+      "title": "A worker cannot start a task: depth is 1",
+      "rules": [
+        "H3"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {
+            "error": "depth_exceeded"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-reviewer-cannot-start",
+      "title": "A reviewer cannot start a task",
+      "rules": [
+        "H3"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "reviewer"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {
+            "error": "depth_exceeded"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-lead-can-start",
+      "title": "The lead starts a task",
+      "rules": [
+        "H3"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {
+            "task_state": "routed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-member-cannot-verify",
+      "title": "A member cannot call verify",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.verify",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {},
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-lead-cannot-verify",
+      "title": "Not even the lead can call verify",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.verify",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {},
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-worker-cannot-write-evidence",
+      "title": "A worker cannot write Evidence",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-lead-cannot-write-gate",
+      "title": "The lead cannot write a Gate",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "gate"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-core-writes-evidence",
+      "title": "The core writes Evidence",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "auth-person-cannot-write-evidence",
+      "title": "A person cannot write Evidence either",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "person"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-unknown-tool",
+      "title": "A tool that does not exist is refused",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.merge",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {},
+          "expect": {
+            "error": "unknown_tool"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-forged-author",
+      "title": "A draft that names its own author is refused",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact.",
+            "author": {
+              "role": "core",
+              "engine": "orbyn"
+            }
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-forged-id",
+      "title": "A draft that names its own id is refused",
+      "rules": [
+        "H14"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact.",
+            "id": "sha256:abababababababababababababababababababababababababababababababab"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "auth-forged-run",
+      "title": "A draft that names its own run is refused",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact.",
+            "run_id": "run-99"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "type": "result",
+  "v": 0,
+  "id": "sha256:7d59a3ed793b9b9c64a5d03d0acbcfeb376302086b491d04f10f85492546c6bc",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-04",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "state": "stopped",
+  "final": true,
+  "stop_reason": "repeated_failure",
+  "summary": "The same check failed three times.",
+  "branch": null,
+  "commit": null,
+  "checks": [
+    {
+      "check": "chk-tests",
+      "evidence": "sha256:cc8a785a649bac070b0093ba346a1f66683c25048b44ce4e9742012bdb8e1973",
+      "outcome": "fail"
+    }
+  ],
+  "not_verified": [
+    "Everything: no attempt passed."
+  ],
+  "attempts": 3,
+  "usage": {
+    "turns": 20
+  },
+  "route": "sha256:4bd2c9ef1b4930e08f13b7cebda831b23bb2b570f27cb8a447b93cd79f8a6598",
+  "report": null
+}

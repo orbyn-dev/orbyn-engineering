@@ -1,0 +1,446 @@
+{
+  "suite": "The answer key never reaches a worker",
+  "cases": [
+    {
+      "id": "key-brief-read-ok",
+      "title": "A worker reads its brief and nothing of the key travels with it",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.brief.read",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {},
+          "expect": {
+            "result_text": {
+              "absent": [
+                "chk-tests",
+                "cargo test -p crew-demo",
+                "protected_paths",
+                "scripts/check.sh"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-command-leaked-in-brief",
+      "title": "A brief that repeats a key command is refused at crew.start",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start",
+            "set": {
+              "brief": {
+                "kind": "implement",
+                "outcome": "Make `cargo test -p crew-demo` pass.",
+                "inputs": [],
+                "files": [
+                  {
+                    "path": "crates/crew-demo/src/**",
+                    "mode": "write"
+                  }
+                ],
+                "allowed_effects": [
+                  "read_repo",
+                  "write_leased"
+                ],
+                "stop_when": [
+                  "Done."
+                ],
+                "budget": {
+                  "turns": 5,
+                  "minutes": 10
+                }
+              }
+            }
+          },
+          "expect": {
+            "error": "answer_key_forbidden"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-command-leaked-in-input",
+      "title": "A key command hidden in an input is refused too",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start",
+            "set": {
+              "brief": {
+                "kind": "implement",
+                "outcome": "Add the function.",
+                "inputs": [
+                  {
+                    "kind": "text",
+                    "text": "Run cargo test -p crew-demo until it is green."
+                  }
+                ],
+                "files": [
+                  {
+                    "path": "crates/crew-demo/src/**",
+                    "mode": "write"
+                  }
+                ],
+                "allowed_effects": [
+                  "read_repo",
+                  "write_leased"
+                ],
+                "stop_when": [
+                  "Done."
+                ],
+                "budget": {
+                  "turns": 5,
+                  "minutes": 10
+                }
+              }
+            }
+          },
+          "expect": {
+            "error": "answer_key_forbidden"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-lead-post-leaks-command",
+      "title": "A lead message to a worker that repeats a key command is refused",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "worker-01",
+            "kind": "handoff",
+            "body": "Make `cargo test -p crew-demo` pass."
+          },
+          "expect": {
+            "error": "answer_key_forbidden"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-lead-post-to-all-leaks",
+      "title": "So is a message to everyone",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "all",
+            "kind": "fact",
+            "body": "Remember to run cargo test -p crew-demo."
+          },
+          "expect": {
+            "error": "answer_key_forbidden"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-lead-post-benign-ok",
+      "title": "A message that does not repeat the command is delivered",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "worker-01",
+            "kind": "handoff",
+            "body": "Run the crate's tests before you report."
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "key-post-to-lead-may-name-command",
+      "title": "A message to the lead is not a message to a worker",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "I ran cargo test -p crew-demo myself and it passes."
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "key-board-fact-leaks-command",
+      "title": "A board fact that repeats a key command is refused",
+      "rules": [
+        "H1"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "key": "demo.note",
+            "class": "observation",
+            "value": "cargo test -p crew-demo",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "error": "answer_key_forbidden"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-write-lease-on-protected-path",
+      "title": "A write lease over a protected path is refused",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start",
+            "set": {
+              "brief": {
+                "kind": "implement",
+                "outcome": "Edit the tests.",
+                "inputs": [],
+                "files": [
+                  {
+                    "path": "crates/crew-demo/**",
+                    "mode": "write"
+                  }
+                ],
+                "allowed_effects": [
+                  "write_leased"
+                ],
+                "stop_when": [
+                  "Done."
+                ],
+                "budget": {
+                  "turns": 5,
+                  "minutes": 10
+                }
+              }
+            }
+          },
+          "expect": {
+            "error": "protected_path_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-protected-file-exact",
+      "title": "A write lease on one protected file is refused",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start",
+            "set": {
+              "brief": {
+                "kind": "implement",
+                "outcome": "Change the check script.",
+                "inputs": [],
+                "files": [
+                  {
+                    "path": "scripts/check.sh",
+                    "mode": "write"
+                  }
+                ],
+                "allowed_effects": [
+                  "write_leased"
+                ],
+                "stop_when": [
+                  "Done."
+                ],
+                "budget": {
+                  "turns": 5,
+                  "minutes": 10
+                }
+              }
+            }
+          },
+          "expect": {
+            "error": "protected_path_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-read-lease-on-protected-path-ok",
+      "title": "A read lease over a protected path is allowed",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start",
+            "set": {
+              "brief": {
+                "kind": "review",
+                "outcome": "Read the tests.",
+                "inputs": [],
+                "files": [
+                  {
+                    "path": "crates/crew-demo/tests/**",
+                    "mode": "read"
+                  }
+                ],
+                "allowed_effects": [
+                  "read_repo"
+                ],
+                "stop_when": [
+                  "Done."
+                ],
+                "budget": {
+                  "turns": 5,
+                  "minutes": 10
+                }
+              }
+            }
+          },
+          "expect": {}
+        }
+      ]
+    }
+  ]
+}

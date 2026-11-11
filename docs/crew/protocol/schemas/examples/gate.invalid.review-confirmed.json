@@ -1,0 +1,20 @@
+{
+  "type": "gate",
+  "v": 0,
+  "id": "sha256:fb61788e0ec2b33a2b5ac7f957b23f41601e388c16c4e25e51f37528175e655f",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "stage": "checks",
+  "subject": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "decision": "confirmed",
+  "decided_by": "code",
+  "evidence": [
+    "sha256:cc8a785a649bac070b0093ba346a1f66683c25048b44ce4e9742012bdb8e1973"
+  ],
+  "reason": "Every check in the answer key passed."
+}
