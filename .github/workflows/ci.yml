@@ -6,7 +6,9 @@ name: CI
 # Pull requests run one lane: macOS, the platform the desktop app is used on most, and
 # Linux for the browser suite. Windows runs on main, nightly and on a pull request that
 # touches the desktop shell, the scripts, the workflows or the Cargo manifests, where Windows-only breakage
-# lives. Main and nightly run every lane and every check.
+# lives. The Windows Rust tests also run on a pull request that changes Rust source
+# (crates/, any .rs file), split across runners to stay under the macOS lane. Main and nightly
+# run every lane and every check.
 on:
   push:
     branches: [main]
@@ -38,6 +40,7 @@ jobs:
       e2e: ${{ steps.scope.outputs.e2e }}
       desktop: ${{ steps.scope.outputs.desktop }}
       windows: ${{ steps.scope.outputs.windows }}
+      windows_rust: ${{ steps.scope.outputs.windows_rust }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,7 +52,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          all() { for k in rust web e2e desktop windows; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; echo "Running every check: $1"; }
+          all() { for k in rust web e2e desktop windows windows_rust; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; echo "Running every check: $1"; }
           if [ "$EVENT" != "pull_request" ]; then all "not a pull request"; exit 0; fi
           if ! files=$(git diff --no-renames --name-only "$BASE"...HEAD); then all "could not compare with the base"; exit 0; fi
           docs='^(docs/|[^/]+\.md$|\.github/ISSUE_TEMPLATE/|\.github/pull_request_template\.md$|\.github/(CODEOWNERS|labeler\.yml|labels\.json|dependabot\.yml)$)'
@@ -68,8 +71,11 @@ jobs:
           # Windows-only breakage lives in the shell, the scripts and the workflows.
           # A rename lists both paths (--no-renames), so moving code into docs still counts.
           x=$(has '^(desktop/|scripts/|\.github/workflows/|Cargo\.(toml|lock)$)')
-          printf 'rust=%s\nweb=%s\ne2e=%s\ndesktop=%s\nwindows=%s\n' "$r" "$w" "$e" "$k" "$x" >> "$GITHUB_OUTPUT"
-          echo "rust=$r web=$w e2e=$e desktop=$k windows=$x"
+          # The Windows Rust tests also cover Rust source and the Rust toolchain files, which
+          # the desktop build above does not need Windows for.
+          y=$x; [ "$x" = true ] || y=$(has '^(crates/|\.cargo/|rust-toolchain|.*\.rs$|(.*/)?Cargo\.(toml|lock)$)')
+          printf 'rust=%s\nweb=%s\ne2e=%s\ndesktop=%s\nwindows=%s\nwindows_rust=%s\n' "$r" "$w" "$e" "$k" "$x" "$y" >> "$GITHUB_OUTPUT"
+          echo "rust=$r web=$w e2e=$e desktop=$k windows=$x windows_rust=$y"
           printf '%s\n' "$files"
 
   # Format, types and lint, in about a minute, before anything builds. The heavy jobs
@@ -107,17 +113,19 @@ jobs:
         run: npm run check
         working-directory: web
 
+  # macOS runs the whole Rust lane in one job. Windows is split below, because its tests are
+  # slow to start processes (about 20 minutes in one job against 6 on macOS).
   rust:
     name: Rust (${{ matrix.os }})
     needs: [changes, lint]
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     env:
-      RUN: ${{ needs.changes.outputs.rust == 'true' && (matrix.os != 'windows-2022' || needs.changes.outputs.windows == 'true') }}
+      RUN: ${{ needs.changes.outputs.rust }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2022]
+        os: [macos-15]
     steps:
       - name: Cheap checks passed
         shell: bash
@@ -152,7 +160,7 @@ jobs:
         uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-nextest
-      # nextest runs the 51 test programs in parallel; cargo test ran them one at
+      # nextest runs the 61 test binaries in parallel; cargo test ran them one at
       # a time, which took over 20 minutes on Windows.
       - if: env.RUN == 'true'
         run: cargo nextest run --workspace --no-fail-fast
@@ -164,6 +172,120 @@ jobs:
         run: |
           git add --intent-to-add web/src/generated
           git diff --exit-code --stat -- web/src/generated
+
+  # Windows Rust tests, split into shards by test count (nextest --partition). One job took
+  # about 22 minutes (3.7 of them compiling, 19 running 1,600 tests on four cores); the test
+  # time divides almost linearly, so six shards bring each to about the macOS lane's time.
+  # Every shard compiles the same tests, so they share one cache that shard 1 saves.
+  # CARGO_PROFILE_DEV_DEBUG=0 drops the debug info the tests never read (the linker writes
+  # a large .pdb per test binary otherwise), and rust-lld links the 61 test binaries faster
+  # than link.exe. Both apply to this job only; the release profile and release.yml are untouched.
+  rust-windows-shard:
+    name: Rust Windows shard ${{ matrix.shard }}/6
+    needs: [changes, lint]
+    if: ${{ !cancelled() }}
+    runs-on: windows-2022
+    env:
+      RUN: ${{ needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true' }}
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      RUSTFLAGS: -C linker=rust-lld
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Cheap checks passed
+        shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+        run: |
+          if [ "$CHANGES" != success ] || [ "$LINT" != success ]; then
+            echo "changes=$CHANGES lint=$LINT"
+            exit 1
+          fi
+      - if: env.RUN != 'true'
+        run: echo "No Rust change for the Windows lane in this pull request."
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: rust-windows-test
+          save-if: ${{ matrix.shard == 1 }}
+      # The scripted-engine regressions launch the browser suite's Node fixtures.
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - if: env.RUN == 'true'
+        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: cargo-nextest
+      - if: env.RUN == 'true'
+        run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.shard }}/6
+      # Doc tests are 5 seconds; the generated wire types are platform-independent and
+      # checked on macOS, where every test has run in one checkout.
+      - if: env.RUN == 'true' && matrix.shard == 1
+        run: cargo test --workspace --doc
+
+  # Windows lints (cfg(windows) code that macOS never compiles), beside the shards.
+  rust-windows-clippy:
+    name: Rust Windows clippy
+    needs: [changes, lint]
+    if: ${{ !cancelled() }}
+    runs-on: windows-2022
+    env:
+      RUN: ${{ needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true' }}
+    steps:
+      - name: Cheap checks passed
+        shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+        run: |
+          if [ "$CHANGES" != success ] || [ "$LINT" != success ]; then
+            echo "changes=$CHANGES lint=$LINT"
+            exit 1
+          fi
+      - if: env.RUN != 'true'
+        run: echo "No Rust change for the Windows lane in this pull request."
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: rust-windows-clippy
+      - if: env.RUN == 'true'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # The required "Rust (windows-2022)" check: green only when every shard and the lint job
+  # passed or had nothing to do. A skipped or cancelled shard is a failure.
+  rust-windows:
+    name: Rust (windows-2022)
+    needs: [changes, lint, rust-windows-shard, rust-windows-clippy]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+          SHARDS: ${{ needs.rust-windows-shard.result }}
+          CLIPPY: ${{ needs.rust-windows-clippy.result }}
+        run: |
+          echo "changes=$CHANGES lint=$LINT shards=$SHARDS clippy=$CLIPPY"
+          [ "$CHANGES" = success ] && [ "$LINT" = success ] && [ "$SHARDS" = success ] && [ "$CLIPPY" = success ]
 
   web:
     name: Web
@@ -407,6 +529,19 @@ jobs:
       - if: env.RUN == 'true'
         run: npm ci
         working-directory: desktop
+      # Tauri downloads NSIS and its plugins at build time (a 504 from the host has failed
+      # this job). They live in the user's cache folder, keyed on the CLI that picks the versions.
+      - name: Tauri CLI version
+        id: tauri
+        if: env.RUN == 'true' && runner.os == 'Windows'
+        shell: bash
+        run: echo "version=$(node -p "require('@tauri-apps/cli/package.json').version")" >> "$GITHUB_OUTPUT"
+        working-directory: desktop
+      - if: env.RUN == 'true' && runner.os == 'Windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ steps.tauri.outputs.version }}
       - if: env.RUN == 'true'
         run: npm run prepare-bundle
         working-directory: desktop
@@ -485,6 +620,17 @@ jobs:
         working-directory: web
       - run: npm ci
         working-directory: desktop
+      - name: Tauri CLI version
+        id: tauri
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "version=$(node -p "require('@tauri-apps/cli/package.json').version")" >> "$GITHUB_OUTPUT"
+        working-directory: desktop
+      - if: runner.os == 'Windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ steps.tauri.outputs.version }}
       - run: npm run prepare-bundle
         working-directory: desktop
       - run: npx tauri build --bundles ${{ matrix.bundles }} -- --profile ci-release
