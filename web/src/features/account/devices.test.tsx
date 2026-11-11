@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
@@ -31,7 +31,7 @@ async function signedInPage(knobs: () => void = () => undefined) {
 
 async function removeFrom(user: ReturnType<typeof userEvent.setup>, name: string) {
   const row = screen.getByRole("listitem", { name });
-  await user.click(within(row).getByRole("button", { name: "Device menu" }));
+  await user.click(within(row).getByRole("button", { name: /^Device menu/ }));
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
 }
 
@@ -48,8 +48,8 @@ describe("the devices", () => {
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["This computer", "iPhone", "Mac mini"]);
     expect(within(rows[0] as HTMLElement).getByText("This device")).toBeVisible();
-    expect(within(rows[0] as HTMLElement).queryByRole("button", { name: "Device menu" })).toBeNull();
-    expect(within(rows[1] as HTMLElement).getByRole("button", { name: "Device menu" })).toBeVisible();
+    expect(within(rows[0] as HTMLElement).queryByRole("button", { name: /^Device menu/ })).toBeNull();
+    expect(within(rows[1] as HTMLElement).getByRole("button", { name: /^Device menu/ })).toBeVisible();
     expect(within(rows[1] as HTMLElement).getByText("Orbyn Planner")).toBeVisible();
     expect(within(rows[2] as HTMLElement).getByText("Orbyn Engineering")).toBeVisible();
     expect(within(rows[1] as HTMLElement).getByText(/^Trusted since .* · Seen /)).toBeVisible();
@@ -102,11 +102,11 @@ describe("the devices", () => {
     act(() => announceAccountChange());
     expect(await screen.findByText("Couldn’t load your devices.")).toBeVisible();
     expect(screen.getByRole("listitem", { name: "iPhone" })).toBeVisible();
-    expect(screen.queryAllByRole("button", { name: "Device menu" })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Device menu/ })).toHaveLength(0);
     mock.setAccount({ devices: { down: false } });
     await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.queryByText("Couldn’t load your devices.")).toBeNull());
-    expect(screen.getAllByRole("button", { name: "Device menu" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^Device menu/ })).toHaveLength(2);
   });
 
   it("adds the Windows note only on Windows", () => {
@@ -351,5 +351,63 @@ describe("the back button", () => {
     const user = await signedInPage();
     await openDevices(user);
     expect(screen.getByRole("button", { name: /^Account$/ })).toBeVisible();
+  });
+});
+
+describe("cancelling the wait", () => {
+  async function waiting() {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const view = await signedInPage(() => {
+      mock.setAccountWaiting(2);
+      mock.setAccount({ devices: { syncStuck: true } });
+    });
+    void view;
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await user.click(await screen.findByRole("button", { name: "Sync now, then sign out" }));
+    await screen.findByText("Syncing your changes before signing out…");
+    return user;
+  }
+  const signedOutCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/account/sign-out").length;
+
+  it("Cancel works while it waits, and a sync that finishes late does nothing", async () => {
+    try {
+      const user = await waiting();
+      const cancel = screen.getByRole("button", { name: "Cancel" });
+      expect(cancel).toBeEnabled();
+      await user.click(cancel);
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: /Sign out/ })).toBeNull());
+      mock.setAccountWaiting(0);
+      act(() => { announceAccountChange(); vi.advanceTimersByTime(SYNC_WAIT_MS * 2); });
+      expect(signedOutCalls()).toBe(0);
+      expect(screen.getByText("Signed in on this device · This computer")).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaving the page during the wait stops it", async () => {
+    try {
+      await waiting();
+      cleanup();
+      mock.setAccountWaiting(0);
+      act(() => { announceAccountChange(); vi.advanceTimersByTime(SYNC_WAIT_MS * 2); });
+      expect(signedOutCalls()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the 15 seconds run from the start, not from the last change in the status", async () => {
+    try {
+      await waiting();
+      for (let i = 0; i < 4; i += 1) {
+        mock.setAccountWaiting(2 + i);
+        act(() => { announceAccountChange(); vi.advanceTimersByTime(4000); });
+      }
+      expect(await screen.findByText(/Couldn’t finish syncing/)).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

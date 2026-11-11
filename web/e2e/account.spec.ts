@@ -84,7 +84,7 @@ test("removes a device with the password, then signs out and the page says what 
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Manage devices" }).click();
   await expect(page.getByRole("listitem", { name: "Mac mini" })).toBeVisible();
-  await page.getByRole("listitem", { name: "Mac mini" }).getByRole("button", { name: "Device menu" }).click();
+  await page.getByRole("listitem", { name: "Mac mini" }).getByRole("button", { name: /^Device menu/ }).click();
   await page.getByRole("menuitem", { name: "Remove" }).click();
   await page.getByRole("button", { name: "Remove device" }).click();
   const confirm = page.getByRole("dialog", { name: "Confirm it’s you" });

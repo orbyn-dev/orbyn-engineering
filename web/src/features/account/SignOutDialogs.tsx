@@ -43,6 +43,9 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
   const [problem, setProblem] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("ask");
   const startedWith = useRef<number | null>(null);
+  // The wait ends 15 s after it started, not 15 s after the last change in the status.
+  const deadline = useRef(0);
+  const [signingOut, setSigningOut] = useState(false);
   const signing = useRef(false);
 
   const fail = (error: unknown) => {
@@ -58,12 +61,14 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
     if (signing.current) return;
     signing.current = true;
     setBusy(true);
+    setSigningOut(true);
     setProblem(null);
     try {
       await accountApi.signOut(discardChanges);
       onDone();
     } catch (error) {
       signing.current = false;
+      setSigningOut(false);
       fail(error);
     }
   };
@@ -75,6 +80,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
     setBusy(true);
     setProblem(null);
     startedWith.current = view.sync.last_synced ?? 0;
+    deadline.current = Date.now() + SYNC_WAIT_MS;
     try {
       await accountApi.syncNow();
       setPhase("syncing");
@@ -92,7 +98,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
       return;
     }
     const again = setInterval(reload, 1000);
-    const giveUp = setTimeout(() => { setPhase("stuck"); setBusy(false); }, SYNC_WAIT_MS);
+    const giveUp = setTimeout(() => { setPhase("stuck"); setBusy(false); }, Math.max(0, deadline.current - Date.now()));
     return () => { clearInterval(again); clearTimeout(giveUp); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, view.sync.waiting, view.sync.last_synced]);
@@ -134,10 +140,10 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
       <Dialog
         title={title}
         onClose={onClose}
-        busy={busy && !stuck}
+        busy={signingOut}
         footer={
           <>
-            <Button onClick={onClose} disabled={busy && !stuck}>Cancel</Button>
+            <Button onClick={onClose} disabled={signingOut}>Cancel</Button>
             {stuck ? <Button tone="danger" onClick={() => void finish(false)} disabled={busy}>Sign out, keep changes</Button> : null}
           </>
         }

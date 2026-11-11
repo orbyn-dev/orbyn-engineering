@@ -208,9 +208,11 @@ export function createAccountMock() {
           return { status: 204 };
         }
         case "POST /api/account/sync/now":
-          lastSynced = Math.floor(Date.now() / 1000);
           // The worker uploads what waits, unless a spec says it cannot.
-          if (!syncStuck) waiting = 0;
+          if (!syncStuck) {
+            lastSynced = Math.floor(Date.now() / 1000);
+            waiting = 0;
+          }
           return { status: 202 };
         case "POST /api/account/sync/pause":
           paused = true;

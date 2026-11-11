@@ -35,7 +35,7 @@ export function DeviceRows({ devices, syncedAt, onRemove }: { devices: AccountDe
                 <button
                   type="button"
                   className="icon-btn"
-                  aria-label="Device menu"
+                  aria-label={`Device menu for ${device.name}`}
                   title="Device menu"
                   aria-haspopup="menu"
                   onClick={(event) => {
