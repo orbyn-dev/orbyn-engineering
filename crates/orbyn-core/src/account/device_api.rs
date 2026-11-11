@@ -1,7 +1,8 @@
 //! The app's side of the Engine's `DeviceApi`: push and pull per zone, and status.
 //! It is shaped like the contract in [docs/account.md](../../../../docs/account.md#dependency-on-the-engine)
 //! so the real `orbyn-device-client` can replace it, and it names no Engine crate: tag
-//! `engine-v0.1.0` does not exist yet. The client does no sealing here; a record
+//! `engine-v0.2.0` (commit `32f3600`) has the client, but the app does not depend on it yet
+//! (docs/account.md, "Engine pin"). The client does no sealing here; a record
 //! crosses this trait as plain fields.
 
 use std::time::Duration;
