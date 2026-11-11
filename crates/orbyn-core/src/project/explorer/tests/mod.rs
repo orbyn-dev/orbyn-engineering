@@ -109,4 +109,5 @@ mod access;
 mod browse;
 mod hardening;
 mod membership;
+mod subfolder;
 mod worktrees;

@@ -2,7 +2,8 @@
 //! rewritten by anything that writes inside a `.git` folder (a redirected `gitdir`, a
 //! rewritten `commondir`, a rewritten `.git` file), so the list is trusted only where
 //! the folders on disk agree with it, and a project whose own folder is not among the
-//! members is refused whole.
+//! members is refused whole, unless it is a plain subfolder of a member (no `.git` of its
+//! own), which is then shown as one row rooted at that folder.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,9 @@ pub(super) struct Entry {
     /// Git's records and the folder agree it belongs to this repository. A linked entry
     /// that fails stays listed, read-only, and is never read.
     pub member: bool,
+    /// The project's own folder lies inside a member checkout and holds no `.git`: the
+    /// only row, rooted at that folder and reaching nothing above it.
+    pub subfolder: bool,
     pub record: WorktreeRecord,
 }
 
@@ -151,6 +155,7 @@ pub(super) fn resolve(records: Vec<WorktreeRecord>, project: &Path) -> Result<Ve
         .map(|record| Entry {
             is_main: true,
             member: !record.prunable,
+            subfolder: false,
             record,
         })
         .collect();
@@ -161,6 +166,7 @@ pub(super) fn resolve(records: Vec<WorktreeRecord>, project: &Path) -> Result<Ve
         entries.push(Entry {
             is_main: false,
             member,
+            subfolder: false,
             record,
         });
     }
@@ -170,8 +176,36 @@ pub(super) fn resolve(records: Vec<WorktreeRecord>, project: &Path) -> Result<Ve
         .iter()
         .any(|entry| entry.member && canon(&entry.record.path).is_some_and(|path| path == project));
     if holds_project {
-        Ok(entries)
-    } else {
-        Err(refused())
+        return Ok(entries);
     }
+    subfolder_of(&entries, project).ok_or_else(refused)
+}
+
+/// The single row for a project that is a plain subfolder of a member checkout. Only a
+/// folder with no `.git` entry at all qualifies, so a rewritten `.git` file is still
+/// refused; the branch and head are those of the checkout that holds it.
+fn subfolder_of(entries: &[Entry], project: &Path) -> Option<Vec<Entry>> {
+    let absent = matches!(
+        std::fs::symlink_metadata(project.join(".git")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    );
+    if !absent || !project.is_dir() {
+        return None;
+    }
+    let holder = entries
+        .iter()
+        .filter(|entry| entry.member)
+        .filter_map(|entry| Some((entry, canon(&entry.record.path)?)))
+        .filter(|(_, path)| path != project && project.starts_with(path))
+        .max_by_key(|(_, path)| path.components().count())?
+        .0;
+    Some(vec![Entry {
+        is_main: false,
+        member: true,
+        subfolder: true,
+        record: WorktreeRecord {
+            path: project.to_path_buf(),
+            ..holder.record.clone()
+        },
+    }])
 }

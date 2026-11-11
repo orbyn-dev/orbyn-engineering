@@ -96,6 +96,9 @@ pub struct ExplorerWorktree {
     pub head: String,
     /// The primary checkout.
     pub is_main: bool,
+    /// The project's folder is a subfolder of a Git checkout: the only row, rooted at
+    /// that folder. Nothing above it is shown, and it has no change letters.
+    pub is_subfolder: bool,
     /// Orbyn must not write here; `read_only_reason` says why.
     pub read_only: bool,
     pub read_only_reason: Option<ExplorerReadOnlyReason>,
