@@ -95,3 +95,20 @@ BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 CREATE TRIGGER crew_results_immutable BEFORE UPDATE ON crew_results
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 31: the router's decision for a task. Immutable like every crew object; a task
+// can hold more than one (a re-route after `needs_person` is a new decision). The decision
+// names the brief it answers and carries only engines, models and reasons from this
+// machine's own configuration, never the answer key.
+pub(super) const CREW_ROUTES: &str = r#"
+CREATE TABLE crew_route_decisions (
+    id TEXT PRIMARY KEY CHECK(id GLOB 'sha256:*'),
+    task_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    engine TEXT NOT NULL,
+    assigned_by TEXT NOT NULL,
+    body TEXT NOT NULL CHECK(json_valid(body))
+);
+CREATE INDEX crew_route_decisions_by_task ON crew_route_decisions(task_id);
+CREATE TRIGGER crew_route_decisions_immutable BEFORE UPDATE ON crew_route_decisions
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;

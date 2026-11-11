@@ -2233,6 +2233,18 @@ governed `computer_*` tools and `orbyn_*` tools for threads, projects, worktrees
 attachments, preview tabs, published pages, pull requests, delegation, scheduling and
 declaring writes. `approve` is listed only for Claude.
 
+`crew_route` is the one Crew tool so far, and it is Preview: it exists only while
+`CoreConfig::crew_preview` is on (`ORBYN_CREW_PREVIEW=1` for the service; it ships off), and with it off it is neither listed nor
+callable. It is a dry run of Router v0 (no model, no engine started, nothing stored) that
+returns the `RouteDecision` for a brief draft: the chosen engine and model at medium effort,
+the ranked alternatives, a reason for every score and a reason for every rejected engine.
+The router reads only the brief and this machine's own engine registry, model lists and
+limit reports, so an engine or model the machine has not configured is never routed to. An
+engine or model the lead names is still filtered and, if it fails, refused with the reason,
+never swapped. The answer key is never an input, and a decision is checked for secrets and
+for the key's text before it is stored. Its refusals use the Crew Protocol's error codes
+([Crew group](../crates/orbyn-core/src/crew/README.md)).
+
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
 sets is the project's, never a global one. The owner authorized a narrow exception
@@ -2518,7 +2530,8 @@ Crew objects (the [Crew Protocol](crew/protocol/SPEC.md), migration 30) are stor
 JSON keyed by their content address and verified on the way in: valid, hashing to their own
 `id`, and part of the task's crew and run. They are immutable; only a task's state moves. The
 answer key has its own table and reader, so the brief a worker reads comes from a table that
-cannot hold it (H1).
+cannot hold it (H1). The router's decisions (migration 31) have their own immutable table, and
+a decision is stored only for the brief it answers.
 
 Secret files are created with mode `0600` on Unix. Windows has no mode bits: they
 inherit the ACL of the per-user `%LOCALAPPDATA%` directory, which excludes other

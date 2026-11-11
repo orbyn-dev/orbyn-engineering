@@ -200,8 +200,11 @@ fn stored_objects_cannot_be_rewritten() {
     store
         .add_crew_object(&id, &object(example!("message.valid.question")))
         .unwrap();
+    store
+        .add_crew_object(&id, &object(example!("route-decision.valid.explicit")))
+        .unwrap();
     let conn = store.writer();
-    for table in ["crew_briefs", "crew_messages"] {
+    for table in ["crew_briefs", "crew_messages", "crew_route_decisions"] {
         let refused = conn
             .execute(&format!("UPDATE {table} SET body = '{{}}'"), [])
             .unwrap_err();
@@ -233,6 +236,34 @@ fn stored_objects_cannot_be_rewritten() {
     );
 }
 
+/// A route decision is kept with its task, only for the brief it answers (migration 31).
+#[test]
+fn a_route_decision_is_kept_with_its_task_and_only_for_its_brief() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let decision = object(example!("route-decision.valid.explicit"));
+    store.add_crew_object(&id, &decision).unwrap();
+    store.add_crew_object(&id, &decision).unwrap();
+    let kept = store.crew_route_decisions(&id).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].engine.as_str(), "codex");
+    // A decision for another brief, or for another run, is not this task's.
+    let CrewObject::RouteDecision(mut other) = decision.clone() else {
+        unreachable!()
+    };
+    other.brief = orbyn_contracts::CrewHash::new(format!("sha256:{}", "1".repeat(64))).unwrap();
+    other.id = CrewObject::RouteDecision(other.clone())
+        .computed_id()
+        .unwrap();
+    let error = store
+        .add_crew_object(&id, &CrewObject::RouteDecision(other))
+        .unwrap_err();
+    assert!(error.to_string().contains("is not part of task"), "{error}");
+    let stray = object(example!("route-decision.valid.scored"));
+    assert!(store.add_crew_object(&id, &stray).is_err());
+    assert_eq!(store.crew_route_decisions(&id).unwrap().len(), 1);
+}
+
 #[test]
 fn deleting_a_task_removes_its_objects() {
     let (_dir, store) = open();
@@ -241,10 +272,18 @@ fn deleting_a_task_removes_its_objects() {
         .add_crew_object(&id, &object(example!("lease.valid.granted")))
         .unwrap();
     store
+        .add_crew_object(&id, &object(example!("route-decision.valid.explicit")))
+        .unwrap();
+    store
         .writer()
         .execute("DELETE FROM crew_tasks WHERE id = ?1", [&id])
         .unwrap();
-    for table in ["crew_briefs", "crew_answer_keys", "crew_leases"] {
+    for table in [
+        "crew_briefs",
+        "crew_answer_keys",
+        "crew_leases",
+        "crew_route_decisions",
+    ] {
         let left: i64 = store
             .reader()
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
@@ -254,7 +293,7 @@ fn deleting_a_task_removes_its_objects() {
 }
 
 #[test]
-fn a_database_without_crew_tables_gets_them_in_30() {
+fn a_database_without_crew_tables_gets_them_in_30_and_31() {
     let dir = TempDir::new();
     let path = dir.path().join("at29.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -307,6 +346,7 @@ fn a_database_without_crew_tables_gets_them_in_30() {
             "crew_leases",
             "crew_messages",
             "crew_results",
+            "crew_route_decisions",
             "crew_tasks"
         ]
     );
@@ -335,7 +375,7 @@ fn migration_30_is_the_crew_migration_and_numbering_has_no_gap() {
         .map(|(v, _)| *v)
         .collect();
     assert!(versions.windows(2).all(|w| w[1] == w[0] + 1));
-    assert!(versions.contains(&30));
+    assert!(versions.contains(&30) && versions.contains(&31));
     let sql = super::migrations::MIGRATIONS
         .iter()
         .find(|(v, _)| *v == 30)
