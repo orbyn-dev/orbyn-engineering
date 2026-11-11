@@ -11,20 +11,18 @@ export interface ToastAction { label: string; run(): void }
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
 export type RightTab = "diff" | "files" | "activity" | "browser" | "side" | "tools";
-/** The panel's surfaces in their default order. Terminal is the header button and the drawer, never a tab. */
-export const RIGHT_TAB_IDS: readonly RightTab[] = ["diff", "files", "browser", "activity", "side", "tools"];
-/** Tabs that are closed until opened from their own entry point, such as the details card's Tools row. */
-export const CLOSED_AT_FIRST: readonly RightTab[] = ["tools"];
+/** The panel's surfaces in their default order, the launcher's order. Terminal is the header button and the drawer, never a tab. */
+export const RIGHT_TAB_IDS: readonly RightTab[] = ["diff", "browser", "activity", "side", "tools", "files"];
 
-/** A saved order or closed set may be stale: unknown and repeated ids go, missing ones return at the end, and one tab always stays. */
+/** A saved order or closed set may be stale: unknown and repeated ids go, and missing ones return at the end, closed. */
 export function cleanTabs(order: unknown, closed: unknown): { order: RightTab[]; closed: RightTab[] } {
   const valid = (list: unknown): RightTab[] =>
     (Array.isArray(list) ? list : []).filter((id, at, all): id is RightTab => RIGHT_TAB_IDS.includes(id as RightTab) && all.indexOf(id) === at);
   const first = valid(order);
   const shut = valid(closed);
-  // A saved row from before a tab existed has not seen it, so such a tab starts closed.
-  for (const id of CLOSED_AT_FIRST) if (!first.includes(id) && !shut.includes(id)) shut.push(id);
-  return { order: [...first, ...RIGHT_TAB_IDS.filter((id) => !first.includes(id))], closed: shut.length >= RIGHT_TAB_IDS.length ? [] : shut };
+  // Every tab starts closed, so a thread's side panel starts with none; a saved row from before a tab existed has not seen it, so it starts closed too.
+  for (const id of RIGHT_TAB_IDS) if (!first.includes(id) && !shut.includes(id)) shut.push(id);
+  return { order: [...first, ...RIGHT_TAB_IDS.filter((id) => !first.includes(id))], closed: shut };
 }
 export type ContextTab = RightTab | "terminal";
 export interface ThreadNavigationOrigin { threadId: string; cwd: string }

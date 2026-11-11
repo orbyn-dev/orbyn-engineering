@@ -355,7 +355,7 @@ export async function openDetails(page: Page) {
 }
 
 /**
- * Opens the thread's side panel if it is closed and, when a tab is named ("Diff", "Files", "Browser", "Activity",
+ * Opens the thread's side panel if it is closed and, when a tab is named ("Diff" for Changes, "Files", "Browser", "Activity",
  * "Pull requests", "Side chat"), selects it. Returns the panel. The panel is closed on a narrower window until the
  * title bar's Show side panel button turns it on.
  */
@@ -367,7 +367,13 @@ export async function openPanelTab(page: Page, name?: string) {
   const panel = page.getByRole("complementary", { name: "Thread context" });
   await expect(panel).toBeVisible();
   if (name === undefined) return panel;
-  const tab = panel.getByRole("tab", { name, exact: true });
+  // The panel starts with no tab: a tab that is not in the strip opens from the + launcher. The Diff tab is named Changes.
+  const label = name === "Diff" ? "Changes" : name;
+  const tab = panel.getByRole("tab", { name: label, exact: true });
+  if ((await tab.count()) === 0) {
+    await panel.getByRole("button", { name: "Open a tab", exact: true }).click();
+    await page.getByRole("menuitem", { name: label, exact: true }).click();
+  }
   await expect(tab).toBeVisible();
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");

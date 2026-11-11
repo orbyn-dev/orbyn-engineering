@@ -5,7 +5,7 @@ const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "files", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"] });
+  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"] });
 });
 
 describe("thread layouts", () => {
@@ -118,17 +118,20 @@ describe("saved preferences", () => {
 describe("panel tab row", () => {
   it("remembers each thread's order and closed set", () => {
     ui().setLayoutKey("a");
+    ui().reopenPanelTab("files");
+    ui().reopenPanelTab("side");
     ui().movePanelTab("side", 0);
     ui().closePanelTab("files");
     ui().setLayoutKey("b");
-    expect(ui().panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
-    expect(ui().panelTabsClosed).toEqual(["tools"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
     ui().setLayoutKey("a");
-    expect(ui().panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity", "tools"]);
-    expect(ui().panelTabsClosed).toEqual(["tools", "files"]);
+    expect(ui().panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "files"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "tools", "files"]);
+    expect(ui().panelTab).toBe("side");
   });
 
-  it("drops stale ids from a saved row and never leaves it empty", async () => {
+  it("drops stale ids from a saved row and keeps every tab closed when all were", async () => {
     localStorage.setItem(
       "orbyn.prefs.v1",
       JSON.stringify({ panelTab: "pulls", panelTabOrder: ["pulls", "side", "side", "diff"], panelTabsClosed: ["diff", "files", "browser", "activity", "side"] }),
@@ -136,8 +139,33 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBeNull();
-    expect(fresh.panelTabOrder).toEqual(["side", "diff", "files", "browser", "activity", "tools"]);
-    expect(fresh.panelTabsClosed).toEqual([]);
+    expect(fresh.panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "files"]);
+    expect(fresh.panelTabsClosed).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+  });
+
+  it("starts every thread's side panel with no tab open, and the order and closed set are per thread", () => {
+    ui().setLayoutKey("fresh");
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    ui().reopenPanelTab("browser");
+    expect(ui().panelTabsClosed).not.toContain("browser");
+    ui().closeAllPanelTabs();
+    expect(ui().panelTab).toBeNull();
+    expect(ui().panelOpen).toBe(true);
+    expect(ui().panelTabsClosed).toHaveLength(6);
+  });
+
+  it("closes the other tabs and keeps the one chosen, and Reset tab order leaves the open tabs alone", () => {
+    ui().setLayoutKey("c");
+    ui().reopenPanelTab("diff");
+    ui().reopenPanelTab("browser");
+    ui().reopenPanelTab("side");
+    ui().movePanelTab("side", 0);
+    ui().resetPanelTabs();
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(ui().panelTabsClosed).toEqual(["activity", "tools", "files"]);
+    ui().closeOtherPanelTabs("browser");
+    expect(ui().panelTabsClosed).toEqual(["diff", "activity", "side", "tools", "files"]);
+    expect(ui().panelTab).toBe("browser");
   });
 
   it("gives a saved row from before the Tools tab existed that tab, closed, whatever its closed list was", async () => {

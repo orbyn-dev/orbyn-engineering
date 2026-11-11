@@ -23,7 +23,7 @@ async function closeOpenTab(user: ReturnType<typeof userEvent.setup>) {
 beforeEach(() => {
   vi.spyOn(api, "diff").mockResolvedValue([]);
   useConnection.setState({ offline: false, serviceDown: false });
-  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "files", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"] });
+  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"] });
 });
 
 function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximize?: () => void; maximized?: boolean } = {}) {
@@ -42,13 +42,13 @@ function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximiz
 }
 
 describe("surface tabs", () => {
-  it("shows the five surfaces as icon-only slots, with no Pull requests tab and no Terminal tab, and the open one's name under the strip", () => {
+  it("shows the open surfaces as icon-only slots, with no Pull requests tab and no Terminal tab, and the open one's name under the strip", () => {
     panel();
-    expect(names()).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
+    expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
     for (const tab of screen.getAllByRole("tab")) expect(tab).toHaveTextContent("");
     expect(screen.queryByRole("button", { name: /^Close .* tab$/ })).not.toBeInTheDocument();
     const line = screen.getByRole("button", { name: "Tab menu" }).closest(".ctx-title")!;
-    expect(line.querySelector("b")).toHaveTextContent("Diff");
+    expect(line.querySelector("b")).toHaveTextContent("Changes");
   });
 
   it("names the open tab on the line under the strip, and shows a tab's name on its slot for the tooltip", async () => {
@@ -60,10 +60,10 @@ describe("surface tabs", () => {
     expect(screen.getByRole("button", { name: "Open a tab" })).toHaveAttribute("data-tip", "Open a tab");
   });
 
-  it("slots the Tools tab in last once it is open, as one more icon-only slot", () => {
+  it("slots the Tools tab in once it is open, as one more icon-only slot", () => {
     useUi.setState({ panelTabsClosed: [] });
     panel();
-    expect(names()).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat", "Tools"]);
+    expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "Files"]);
     expect(screen.getByRole("tab", { name: "Tools" })).toHaveAttribute("data-tip", "Tools");
   });
 
@@ -135,27 +135,38 @@ describe("surface tabs", () => {
     expect(tabs().filter((tab) => tab.hasAttribute("aria-controls"))).toHaveLength(1);
     expect(document.getElementById("context-files")).not.toBeNull();
     screen.getByRole("tab", { name: "Files" }).focus();
-    await user.keyboard("{ArrowRight}");
-    expect(useUi.getState().panelTab).toBe("browser");
-    await user.keyboard("{End}");
-    expect(useUi.getState().panelTab).toBe("side");
-    await user.keyboard("{ArrowRight}");
-    expect(useUi.getState().panelTab).toBe("diff");
     await user.keyboard("{ArrowLeft}");
     expect(useUi.getState().panelTab).toBe("side");
+    await user.keyboard("{Home}{ArrowLeft}");
+    expect(useUi.getState().panelTab).toBe("files");
+    await user.keyboard("{ArrowRight}");
+    expect(useUi.getState().panelTab).toBe("diff");
+    await user.keyboard("{End}");
+    expect(useUi.getState().panelTab).toBe("files");
     await user.keyboard("{Home}");
     expect(useUi.getState().panelTab).toBe("diff");
   });
 
-  it("always draws the plus; Tools starts closed there, and once opened the menu offers only Reset tab order", async () => {
+  it("always draws the plus; it lists everything that can be opened, and Reset tab order only once the order has changed", async () => {
     const user = userEvent.setup();
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Tools"]);
-    expect(screen.queryByRole("menuitem", { name: "Reset tab order" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "Files"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
+    expect(useUi.getState().panelTab).toBe("tools");
+    expect(useUi.getState().panelTabsClosed).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Reset tab order"]);
+    expect(screen.queryByRole("menuitem", { name: "Reset tab order" })).not.toBeInTheDocument();
+  });
+
+  it("shows an open tab when it is chosen again from the plus, and opens no second one", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTab: "files" });
+    panel();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    await user.click(screen.getByRole("menuitem", { name: "Browser" }));
+    expect(useUi.getState().panelTab).toBe("browser");
+    expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
   });
 
   it("moves focus to the neighbouring tab after Close tab, and announces it", async () => {
@@ -163,7 +174,7 @@ describe("surface tabs", () => {
     useUi.setState({ panelTab: "files" });
     panel();
     await closeOpenTab(user);
-    expect(screen.getByRole("tab", { name: "Browser" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Side chat" })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("Tab closed");
   });
 
@@ -173,60 +184,80 @@ describe("surface tabs", () => {
     screen.getByRole("tab", { name: "Side chat" }).focus();
     await user.keyboard("{Backspace}");
     expect(useUi.getState().panelTabsClosed).toEqual(["tools", "side"]);
-    expect(screen.getByRole("tab", { name: "Activity" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Files" })).toHaveFocus();
   });
 
-  it("closes the open tab from its menu, opens the next, and brings it back from the plus with Reset tab order under it", async () => {
+  it("closes the open tab from its menu, opens the next, and brings it back from the plus", async () => {
     const user = userEvent.setup();
     useUi.setState({ panelTab: "files" });
     panel();
     await closeOpenTab(user);
     expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTab).toBe("browser");
+    expect(useUi.getState().panelTab).toBe("side");
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Tools", "Reset tab order"]);
     await user.click(screen.getByRole("menuitem", { name: "Files" }));
     expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     expect(useUi.getState().panelTab).toBe("files");
     expect(useUi.getState().panelTabsClosed).toEqual(["tools"]);
   });
 
-  it("with one tab left, hides the Tab menu and so Close tab, and Delete keeps the tab too", async () => {
+  it("with one tab left, the tab menu has only Maximise panel, Delete keeps the tab, and the × closes the panel without forgetting it", async () => {
     const user = userEvent.setup();
     const onReturn = vi.fn();
-    useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side", "tools"] });
-    panel({ onReturn });
-    expect(names()).toEqual(["Diff"]);
-    expect(screen.queryByRole("button", { name: "Tab menu" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
-    screen.getByRole("tab", { name: "Diff" }).focus();
+    const onToggleMaximize = vi.fn();
+    useUi.setState({ panelTabsClosed: ["browser", "activity", "side", "tools", "files"] });
+    panel({ onReturn, onToggleMaximize });
+    expect(names()).toEqual(["Changes"]);
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Maximise panel"]);
+    await user.click(screen.getByRole("menuitem", { name: "Maximise panel" }));
+    expect(onToggleMaximize).toHaveBeenCalled();
+    screen.getByRole("tab", { name: "Changes" }).focus();
     await user.keyboard("{Delete}");
-    expect(names()).toEqual(["Diff"]);
-    // The side panel's × at the end of the strip is what closes the last tab.
+    expect(names()).toEqual(["Changes"]);
     await user.click(screen.getByRole("button", { name: "Close side panel" }));
     expect(onReturn).toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Files", "Browser", "Activity", "Side chat", "Tools", "Reset tab order"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["browser", "activity", "side", "tools", "files"]);
   });
 
-  it("reorders by drag, and Reset tab order puts the default back", async () => {
+  it("closes the other tabs, or all of them, from the tab menu, and Close all returns to the empty panel", async () => {
     const user = userEvent.setup();
+    useUi.setState({ panelTab: "browser" });
     panel();
-    const tab = (name: string) => screen.getByRole("tab", { name });
-    fireEvent.dragStart(tab("Side chat"));
-    fireEvent.dragOver(tab("Files"));
-    fireEvent.drop(tab("Files"));
-    expect(names()).toEqual(["Diff", "Side chat", "Files", "Browser", "Activity"]);
-    await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    await user.click(screen.getByRole("menuitem", { name: "Reset tab order" }));
-    expect(names()).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]);
+    await user.click(screen.getByRole("menuitem", { name: "Close other tabs" }));
+    expect(names()).toEqual(["Browser"]);
+    expect(useUi.getState().panelTab).toBe("browser");
+    useUi.getState().reopenPanelTab("side");
+    await screen.findByRole("tab", { name: "Side chat" });
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close all tabs" }));
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.getByText("Nothing open")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a tab" })).toHaveFocus();
+    expect(useUi.getState().panelOpen).toBe(true);
+  });
+
+  it("has no tab menu and a launcher with three choices when nothing is open, and a choice opens its tab", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTabsClosed: ["diff", "browser", "activity", "side", "tools", "files"] });
+    panel();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tab menu" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
+    const choices = screen.getByText("Nothing open").parentElement!;
+    expect([...choices.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["Changes", "Browser", "Tools"]);
+    await user.click(screen.getByRole("button", { name: "Browser" }));
+    expect(useUi.getState().panelTab).toBe("browser");
+    expect(names()).toEqual(["Browser"]);
   });
 
   it("leaves the panel open when Home or an arrow lands on the tab that is already open", async () => {
     const user = userEvent.setup();
     useUi.setState({ panelTab: "diff" });
     panel();
-    screen.getByRole("tab", { name: "Diff" }).focus();
+    screen.getByRole("tab", { name: "Changes" }).focus();
     await user.keyboard("{Home}");
     expect(useUi.getState().panelOpen).toBe(true);
     expect(useUi.getState().panelTab).toBe("diff");
@@ -234,25 +265,25 @@ describe("surface tabs", () => {
 
   it("leaves the panel open when an arrow key is pressed on the only tab", async () => {
     const user = userEvent.setup();
-    useUi.setState({ panelTabsClosed: ["files", "browser", "activity", "side", "tools"], panelTab: "diff" });
+    useUi.setState({ panelTabsClosed: ["browser", "activity", "side", "tools", "files"], panelTab: "diff" });
     panel();
-    screen.getByRole("tab", { name: "Diff" }).focus();
+    screen.getByRole("tab", { name: "Changes" }).focus();
     await user.keyboard("{ArrowRight}{ArrowLeft}{End}{Home}");
     expect(useUi.getState().panelOpen).toBe(true);
-    expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("moves the focused tab with Alt+Shift+Arrow and closes it with Delete", async () => {
     const user = userEvent.setup();
     panel();
-    screen.getByRole("tab", { name: "Files" }).focus();
+    screen.getByRole("tab", { name: "Browser" }).focus();
     await user.keyboard("{Alt>}{Shift>}{ArrowRight}{/Shift}{/Alt}");
-    expect(names()).toEqual(["Diff", "Browser", "Files", "Activity", "Side chat"]);
+    expect(names()).toEqual(["Changes", "Activity", "Browser", "Side chat", "Files"]);
     expect(useUi.getState().panelTab).toBeNull();
-    screen.getByRole("tab", { name: "Files" }).focus();
+    screen.getByRole("tab", { name: "Browser" }).focus();
     await user.keyboard("{Delete}");
-    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "files"]);
+    expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "browser"]);
   });
 
   it("opens a closed surface when something reveals it", () => {
@@ -260,6 +291,64 @@ describe("surface tabs", () => {
     useUi.getState().showInBrowser("https://example.com");
     expect(useUi.getState().panelTabsClosed).toEqual([]);
     expect(useUi.getState().panelTab).toBe("browser");
+  });
+});
+
+describe("reordering by drag", () => {
+  /** Lays the slots out on the 34px pitch the strip uses, so the pointer has somewhere to land. */
+  function layout() {
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const at = this.dataset.tab ? [...(this.parentElement?.querySelectorAll("[data-tab]") ?? [])].indexOf(this) : 0;
+      return { left: at * 34, right: at * 34 + 32, width: 32, top: 0, bottom: 32, height: 32, x: at * 34, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+  }
+  const press = (name: string, x: number) => fireEvent.pointerDown(screen.getByRole("tab", { name }), { button: 0, pointerId: 1, clientX: x, clientY: 16 });
+  const move = (x: number, y = 16) => fireEvent.pointerMove(window, { pointerId: 1, clientX: x, clientY: y });
+  const release = (x: number) => fireEvent.pointerUp(window, { pointerId: 1, clientX: x, clientY: 16 });
+
+  it("lifts the dragged tab, shows a line where it lands and slides the others aside, then reorders on release", async () => {
+    const user = userEvent.setup();
+    const rects = layout();
+    try {
+      panel();
+      press("Side chat", 16 + 3 * 34);
+      move(16 + 3 * 34 - 40);
+      expect(screen.getByRole("tab", { name: "Side chat" })).toHaveAttribute("data-dragging");
+      move(10);
+      expect(document.querySelector(".ctx-ins")).not.toBeNull();
+      expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-shifted");
+      expect(screen.getByRole("tab", { name: "Files" })).not.toHaveAttribute("data-shifted");
+      release(10);
+      expect(names()).toEqual(["Side chat", "Changes", "Browser", "Activity", "Files"]);
+      expect(document.querySelector(".ctx-ins")).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent("Tab moved");
+      await user.click(screen.getByRole("button", { name: "Open a tab" }));
+      await user.click(screen.getByRole("menuitem", { name: "Reset tab order" }));
+      expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
+    } finally {
+      rects.mockRestore();
+    }
+  });
+
+  it("puts the tab back with Escape and does not open it when a drag ends on its own slot", () => {
+    const rects = layout();
+    try {
+      useUi.setState({ panelTab: "diff" });
+      panel();
+      press("Activity", 16 + 2 * 34);
+      move(20);
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      release(20);
+      expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
+      expect(document.querySelector(".ctx-ins")).toBeNull();
+      press("Activity", 16 + 2 * 34);
+      move(16 + 2 * 34 + 6);
+      release(16 + 2 * 34 + 6);
+      expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
+      expect(useUi.getState().panelTab).toBe("diff");
+    } finally {
+      rects.mockRestore();
+    }
   });
 });
 
@@ -342,25 +431,25 @@ describe("tabs that do not fit", () => {
     restore = narrow(244);
     useUi.setState({ panelTab: "side" });
     panel();
-    expect(ids()).toEqual(["diff", "files", "side"]);
+    expect(ids()).toEqual(["diff", "browser", "side"]);
     await user.click(screen.getByRole("button", { name: "More tabs" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Browser", "Activity"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Activity", "Files"]);
   });
 
   it("puts a tab chosen from the menu in the last visible slot, and leaves the other slots where they were", async () => {
     const user = userEvent.setup();
     restore = narrow(244);
     panel();
-    expect(ids()).toEqual(["diff", "files", "browser"]);
+    expect(ids()).toEqual(["diff", "browser", "activity"]);
     await user.click(screen.getByRole("button", { name: "More tabs" }));
     await user.click(screen.getByRole("menuitem", { name: "Side chat" }));
     expect(useUi.getState().panelTab).toBe("side");
-    expect(ids()).toEqual(["diff", "files", "side"]);
+    expect(ids()).toEqual(["diff", "browser", "side"]);
     // Activating a visible tab afterwards moves nothing.
-    await user.click(screen.getByRole("tab", { name: "Diff" }));
-    expect(ids()).toEqual(["diff", "files", "side"]);
+    await user.click(screen.getByRole("tab", { name: "Changes" }));
+    expect(ids()).toEqual(["diff", "browser", "side"]);
     await user.click(screen.getByRole("button", { name: "More tabs" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Browser", "Activity"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Activity", "Files"]);
   });
 
   it("closes the menu with Escape and returns focus to the ... button", async () => {
@@ -379,9 +468,9 @@ describe("tabs that do not fit", () => {
     panel();
     await user.click(screen.getByRole("button", { name: "More tabs" }));
     await user.click(screen.getByRole("menuitem", { name: "Side chat" }));
-    expect(ids()).toEqual(["diff", "files", "side"]);
-    act(() => useUi.getState().togglePanel("browser"));
-    expect(ids()).toEqual(["diff", "files", "browser"]);
+    expect(ids()).toEqual(["diff", "browser", "side"]);
+    act(() => useUi.getState().togglePanel("activity"));
+    expect(ids()).toEqual(["diff", "browser", "activity"]);
   });
 
   it("focuses the tab that opens in the last slot when the next tab is folded away", async () => {
@@ -400,7 +489,7 @@ describe("tabs that do not fit", () => {
     restore = narrow(319);
     useUi.setState({ panelTabsClosed: [] });
     panel();
-    expect(ids()).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(ids()).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
     expect(screen.queryByRole("button", { name: "More tabs" })).not.toBeInTheDocument();
   });
 
@@ -408,9 +497,9 @@ describe("tabs that do not fit", () => {
     const user = userEvent.setup();
     restore = narrow(244);
     panel();
-    screen.getByRole("tab", { name: "Diff" }).focus();
+    screen.getByRole("tab", { name: "Changes" }).focus();
     await user.keyboard("{End}");
-    expect(useUi.getState().panelTab).toBe("browser");
+    expect(useUi.getState().panelTab).toBe("activity");
     await user.keyboard("{ArrowRight}");
     expect(useUi.getState().panelTab).toBe("diff");
   });

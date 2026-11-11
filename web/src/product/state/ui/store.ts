@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { useWorkspace } from "../workspace";
 import { readJson, writeJson } from "../../../lib/storage";
 import {
-  CLOSED_AT_FIRST,
   DRAFT_LAYOUT,
   RIGHT_TAB_IDS,
   type ContextTab,
@@ -59,13 +58,17 @@ interface UiState extends Prefs {
   revealDiff(path: string, origin: ThreadNavigationOrigin): void;
   consumeDiffReveal(nonce: number): void;
   togglePanel(tab: ContextTab): void;
-  /** Takes a surface out of this thread's tab row. The last tab stays; closing the open one opens its neighbour. */
+  /** Takes a surface out of this thread's tab row; closing the open one opens its neighbour, and the last one leaves the panel empty. */
   closePanelTab(tab: RightTab): void;
+  /** Closes every tab but this one, which opens. */
+  closeOtherPanelTabs(tab: RightTab): void;
+  /** Closes every tab: the panel stays open, empty. */
+  closeAllPanelTabs(): void;
   /** Puts a closed surface back in the row, opens it and shows the panel. */
   reopenPanelTab(tab: RightTab): void;
   /** Moves a tab to `index` in the row's order. */
   movePanelTab(tab: RightTab, index: number): void;
-  /** The default order, with every tab back in the row. */
+  /** The default order. Which tabs are open stays as it is. */
   resetPanelTabs(): void;
   /** A page floating over the chat, if any. */
   previewFloat: { threadId: string; tabId: string } | null;
@@ -219,13 +222,22 @@ export const useUi = create<UiState>((set, get) => {
     closePanelTab(tab) {
       const { panelTabOrder, panelTabsClosed, panelTab } = get();
       const row = panelTabOrder.filter((id) => !panelTabsClosed.includes(id));
-      if (!row.includes(tab) || row.length < 2) return;
+      if (!row.includes(tab)) return;
       const at = row.indexOf(tab);
       const shown = panelTab && row.includes(panelTab) ? panelTab : row[0];
       set({
         panelTabsClosed: [...panelTabsClosed, tab],
         ...(shown === tab ? { panelTab: row[at + 1] ?? row[at - 1] ?? null } : {}),
       });
+      savePrefs();
+    },
+    closeOtherPanelTabs(tab) {
+      if (get().panelTabsClosed.includes(tab)) return;
+      set({ panelTabsClosed: RIGHT_TAB_IDS.filter((id) => id !== tab), panelTab: tab });
+      savePrefs();
+    },
+    closeAllPanelTabs() {
+      set({ panelTabsClosed: [...RIGHT_TAB_IDS], panelTab: null });
       savePrefs();
     },
     reopenPanelTab(tab) {
@@ -239,7 +251,7 @@ export const useUi = create<UiState>((set, get) => {
       savePrefs();
     },
     resetPanelTabs() {
-      set({ panelTabOrder: [...RIGHT_TAB_IDS], panelTabsClosed: [...CLOSED_AT_FIRST] });
+      set({ panelTabOrder: [...RIGHT_TAB_IDS] });
       savePrefs();
     },
     closePanel() {

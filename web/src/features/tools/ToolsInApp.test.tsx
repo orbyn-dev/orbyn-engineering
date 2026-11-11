@@ -9,7 +9,11 @@ import { useUi } from "../../product/state/ui";
 
 beforeEach(() => {
   installMockFetch();
-  useUi.setState({ projectFolders: true, panelOpen: true, panelTab: "diff" });
+  useUi.setState({
+    projectFolders: true,
+    panelOpen: true,
+    layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["browser", "activity", "side", "tools", "files"], detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
+  });
   useUi.getState().setPrefs({ welcomeDone: true });
   window.location.hash = "#/threads/t-done";
 });

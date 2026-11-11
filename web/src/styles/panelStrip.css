@@ -51,12 +51,6 @@
   border-radius: 2px;
   background: var(--color-text);
 }
-.ctx-slot[data-over] {
-  background: var(--color-hover);
-}
-.ctx-slot[data-dragging] {
-  opacity: 0.5;
-}
 .ctx-slot:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
@@ -127,4 +121,60 @@
   margin-left: auto;
   border-radius: var(--radius-md);
   color: var(--color-muted);
+}
+/* Reordering by drag (Engineer Designs v98, panel-tabs-drag): the dragged slot lifts with a soft shadow, a 2px
+   line shows where it lands, and the other slots slide aside over --m-fast. */
+.ctx-tabs {
+  position: relative;
+}
+.ctx-slot[data-dragging] {
+  z-index: 3;
+  opacity: 0.88;
+  background: var(--color-raised);
+  box-shadow: 0 8px 18px var(--color-panelShadow);
+  cursor: grabbing;
+  touch-action: none;
+}
+.ctx-slot[data-shifted] {
+  transition: transform var(--m-fast) var(--m-io);
+}
+.ctx-ins {
+  position: absolute;
+  top: 4px;
+  width: 2px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--color-text);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ctx-slot[data-shifted] {
+    transition: none;
+  }
+}
+/* The side panel with no tab open: what it is, how to add one, the three most used choices. */
+.panel-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--color-muted);
+  font-size: var(--text-nav);
+  text-align: center;
+}
+.panel-empty h4 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.panel-empty-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 4px;
 }

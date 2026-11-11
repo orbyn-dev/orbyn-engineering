@@ -178,6 +178,14 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
     const tablist = page.getByRole("tablist", { name: "Panel tabs" });
     if (!(await tablist.isVisible())) await page.getByRole("button", { name: "Show side panel" }).click({ timeout: 10_000 });
     await tablist.waitFor({ timeout: 10_000 }).catch(() => {});
+    // The panel starts with no tab: open the four the baseline has always timed, from the + launcher.
+    if (await tablist.isVisible()) {
+      for (const label of ["Changes", "Browser", "Activity", "Side chat"]) {
+        if ((await tablist.getByRole("tab", { name: label, exact: true }).count()) > 0) continue;
+        await page.getByRole("button", { name: "Open a tab", exact: true }).click();
+        await page.getByRole("menuitem", { name: label, exact: true }).click();
+      }
+    }
     const tabTimes: Record<string, number[]> = {};
     if (await tablist.isVisible()) {
       const tabs = tablist.getByRole("tab");

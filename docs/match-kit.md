@@ -46,6 +46,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Threads.** `thread-approval`, `thread-done`, `thread-failed`, `thread-interrupted`, `thread-empty`, `thread-tools`, `thread-tools-live`, `thread-details`
 
+**The side panel.** `panel-empty`, `panel-launcher-menu`, `panel-tab-menu`, `panel-tabs-single`, `panel-browser`, `panel-activity`, `panel-side`
+
 **Settings, one page for each section.** `s-general`, `s-appearance`, `s-chat`, `s-diffs`, `s-keybindings`, `s-providers`, `s-threads`, `s-tasks`, `s-projects`, `s-source-control`, `s-worktrees`, `s-maintenance`, `s-labs`, `s-about`, `s-archive`
 
 **Account and sync.** `settings-account-gate-off`, `acct-settings-signed-out`, `acct-signin`, `acct-signin-wrong-password`, `acct-signin-network`, `acct-signup-invite`, `acct-signup-email-code`, `acct-2fa-code`, `acct-settings-signed-in`, `acct-settings-paused`, `acct-settings-loading`, `acct-settings-error`, `acct-settings-offline`, `acct-signup-check`, `acct-signup-code-wrong`, `acct-2fa-closed`, `acct-reauth`, `sync-line`, `acct-device-waiting`, `acct-device-approved`, `acct-device-denied`, `acct-device-timeout`, `acct-device-codes-mismatch`, `acct-connect-workspace`, `acct-connect-progress`, `acct-connect-done`, `signout-other-device-removed`, `devices-waiting-approval`, `acct-device-approve-prompt`, `devices-list`, `devices-remove-confirm`, `signout-confirm`, `signout-everywhere`, `sync-popover`, `sync-popover-offline`, `sync-popover-failed`
