@@ -44,8 +44,16 @@ at requests, not at files: a network, browser or tool action that names a route,
 (curl, wget, an interpreter) that does. A file change, a search or a read of a document that merely names `/api/account/...`
 is not refused, so ordinary work does not trip the wires.
 
+Under `off` every request goes to a person, always-allowed reads and leased writes included: that is "every request", and the hard
+rules still refuse first.
+
+N1 reads a command as a whole when a connecting program (curl, wget, nc, socat, openssl, gh, glab, an interpreter, ...) is in it,
+so a route that comes through a variable or a pipe is seen. `gh` and `glab` are network, two keys; `gh pr merge`, `glab mr merge`
+and a `gh api` write to git refs, merges, contents or branches are N5 (a person's), and to protection or settings N6.
+
 **Pushing to main is a person's.** Any `git push` to main, master or trunk (`HEAD:main`, `+main`, a bare `push` while on it) is
-refused in every mode (N5), since it would bypass the merge queue and the Review queue. The queue merges locally and pushes
+refused in every mode (N5), the repository's default branch (`origin/HEAD`) included, `--all` and `--mirror`, a bare push through `-C` or after a
+`cd` (read as main), and any git `-c` override (an alias hides the sub-command; N6), since it would bypass the merge queue and the Review queue. The queue merges locally and pushes
 nothing.
 
 **Modes.** `full` (default): the lead approves; without a lead, or without a second key on another vendor for a two-key
@@ -58,7 +66,8 @@ the hard rules, the injection wire and the denial counts still apply.
 
 It reads the kind, target and paths the gate is given, and for a command the simple commands inside it. It cannot see
 what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It follows a `cd` (so `cd .. && rm x` is outside), `git -C`, `git worktree add`, `find -delete`, `tar -C` and `unzip -d`, and counts a
-patch (`patch`, `git apply`), an interpreter reading a file, its input or a pipe, as generated code (two keys). It reads
+patch (`patch`, `git apply`), an interpreter reading a file, its input or a pipe, and `python -m` of a module that is not a well-known one
+(pytest, pip, venv, ruff, black, mypy, ...), as generated code (two keys). It reads
 no script's contents, so a script that does a forbidden thing inside itself passes unless it is a generated script (two
 keys). It misses obfuscation and encoding (`base64 -d | sh` is caught as a pipe to a shell and two keys, not by name), aliases
 and shell functions. A host in `allowed_hosts` is trusted whatever runs there. A package manager's own registry is not

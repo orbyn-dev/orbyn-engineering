@@ -26,6 +26,8 @@ pub struct Scene<'a> {
     pub data_dir: Option<&'a Path>,
     /// The branch the worktree is on; `None` is read as the default branch (N5).
     pub branch: Option<&'a str>,
+    /// The repository's default branch (`origin/HEAD`), when it is known; main, master and trunk are always read as main.
+    pub default_branch: Option<&'a str>,
 }
 
 /// Why an action is refused.
@@ -123,7 +125,11 @@ pub(super) fn refuse_in(ctx: &Ctx<'_>) -> Option<Refusal> {
 }
 
 /// Programs that open a connection, or run code that can: the ones an account route can be reached with.
-const CONNECTING: [&str; 22] = [
+const CONNECTING: &[&str] = &[
+    "gh",
+    "glab",
+    "socat",
+    "openssl",
     "curl",
     "wget",
     "http",
@@ -154,10 +160,14 @@ const CONNECTING: [&str; 22] = [
 pub fn account_refused(kind: ActionKind, target: &str, paths: &[String]) -> bool {
     match kind {
         ActionKind::FileChange => false,
-        ActionKind::Command => shell::simple_commands(target).iter().any(|command| {
-            CONNECTING.contains(&command.program.as_str())
-                && account_change(&format!("{} {}", command.program, command.args.join(" ")))
-        }),
+        // A connecting program anywhere makes the whole text a request: the route can come through a variable
+        // (`U=http://.../api/account/sign-out; curl -X POST $U`) or a pipe (`printf 'POST /api/... ' | nc ...`).
+        ActionKind::Command => {
+            shell::simple_commands(target)
+                .iter()
+                .any(|command| CONNECTING.contains(&command.program.as_str()))
+                && account_change(target)
+        }
         _ => {
             let text = std::iter::once(target)
                 .chain(paths.iter().map(String::as_str))

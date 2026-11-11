@@ -20,6 +20,16 @@ fn refused_on(
     target: &str,
     paths: &[&str],
 ) -> Option<&'static str> {
+    refused_default(branch, None, kind, target, paths)
+}
+
+fn refused_default(
+    branch: Option<&str>,
+    default_branch: Option<&str>,
+    kind: ActionKind,
+    target: &str,
+    paths: &[&str],
+) -> Option<&'static str> {
     let protected = [path("tests/**")];
     let hosts = vec!["github.com".to_owned()];
     let scene = Scene {
@@ -28,6 +38,7 @@ fn refused_on(
         allowed_hosts: &hosts,
         data_dir: Some(Path::new("/data/orbyn")),
         branch,
+        default_branch,
     };
     let paths: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
     refuse(kind, target, &paths, &scene).map(|r| r.id)
@@ -323,6 +334,7 @@ fn need(kind: ActionKind, target: &str, paths: &[&str]) -> Need {
         allowed_hosts: &hosts,
         data_dir: None,
         branch: Some("feat/x"),
+        default_branch: None,
     };
     let writes = [path("src/**")];
     let checks = vec!["cargo test --lib".to_owned()];
@@ -593,4 +605,145 @@ fn code_read_from_a_file_the_input_or_a_patch_is_generated_code() {
         need(ActionKind::Command, "python3 --version", &[]),
         Need::Lead
     );
+}
+
+#[test]
+fn n1_sees_a_route_that_comes_through_a_variable_or_a_pipe() {
+    assert_eq!(
+        command("U=http://127.0.0.1:1/api/account/sign-out; curl -X POST $U"),
+        Some("N1")
+    );
+    assert_eq!(
+        command("printf 'POST /api/account/sign-out HTTP/1.0\\r\\n\\r\\n' | nc 127.0.0.1 1"),
+        Some("N1")
+    );
+    assert_eq!(
+        command("echo /API/ACCOUNT/sign-out | socat - TCP:127.0.0.1:1"),
+        Some("N1")
+    );
+    assert_eq!(
+        command("gh api http://127.0.0.1:1/api/account/sign-out -X POST"),
+        Some("N1")
+    );
+    // The ordinary-work cases still pass.
+    assert_eq!(
+        refused(
+            ActionKind::FileChange,
+            "src/pages/api/account/profile.ts",
+            &["src/pages/api/account/profile.ts"]
+        ),
+        None
+    );
+    assert_eq!(command("rg /api/account/sign-out"), None);
+    assert_eq!(command("cat docs/api/account/x.md"), None);
+}
+
+#[test]
+fn gh_and_glab_are_two_keys_and_cannot_merge_or_write_the_main_line() {
+    assert_eq!(
+        need(ActionKind::Command, "gh pr view 12", &[]),
+        Need::TwoKeys
+    );
+    assert_eq!(
+        need(ActionKind::Command, "glab mr list", &[]),
+        Need::TwoKeys
+    );
+    assert_eq!(
+        need(ActionKind::Command, "gh api repos/o/r/issues", &[]),
+        Need::TwoKeys
+    );
+    for text in [
+        "gh pr merge 12 --admin",
+        "gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=abc",
+        "gh api -X PUT repos/o/r/contents/README.md -f message=m",
+        "gh api repos/o/r/merges -f base=main -f head=x",
+        "gh api -X POST repos/o/r/branches/main/rename --input body.json",
+        "glab mr merge 3",
+    ] {
+        assert_eq!(command(text), Some("N5"), "{text}");
+    }
+    assert_eq!(
+        command("gh api -X PUT repos/o/r/branches/main/protection -f x=y"),
+        Some("N6")
+    );
+    assert_eq!(command("gh pr view 12"), None);
+    assert_eq!(command("gh api repos/o/r/contents/README.md"), None);
+}
+
+#[test]
+fn n5_reads_the_real_default_branch_and_every_road_to_a_push() {
+    let default = |text: &str| {
+        refused_default(
+            Some("feat/x"),
+            Some("develop"),
+            ActionKind::Command,
+            text,
+            &[],
+        )
+    };
+    assert_eq!(default("git push origin develop"), Some("N5"));
+    assert_eq!(default("git push origin HEAD:develop"), Some("N5"));
+    assert_eq!(default("git push origin feat/x"), None);
+    assert_eq!(
+        refused_default(
+            Some("develop"),
+            Some("develop"),
+            ActionKind::Command,
+            "git push",
+            &[]
+        ),
+        Some("N5")
+    );
+    assert_eq!(
+        command("git push origin develop"),
+        None,
+        "develop is not main unless it is the default"
+    );
+    // Every branch at once, a bare push through another folder, and an alias that hides the sub-command.
+    assert_eq!(command("git push --all origin"), Some("N5"));
+    assert_eq!(command("git push --mirror"), Some("N5"));
+    // Outside the worktree is refused on its own (N4); a folder inside it is read as another repository's main.
+    assert!(command("git -C ../main-checkout push").is_some());
+    assert_eq!(command("git -C sub push"), Some("N5"));
+    assert!(command("cd ../main-checkout && git push").is_some());
+    assert_eq!(command("cd sub && git push"), Some("N5"));
+    assert_eq!(command("git -c alias.p=push p origin main"), Some("N6"));
+    assert_eq!(
+        command("git -c core.hooksPath=x push origin feat/x"),
+        Some("N6")
+    );
+    // Already caught, still caught.
+    for text in [
+        "git push --delete origin main",
+        "git push origin :main",
+        "git push origin HEAD:main",
+        "git push origin +main",
+        "git push origin refs/heads/main",
+        "git -C x push origin main",
+    ] {
+        assert_eq!(command(text), Some("N5"), "{text}");
+    }
+    assert_eq!(command("git push origin feat/x"), None);
+}
+
+#[test]
+fn python_dash_m_is_generated_code_unless_the_module_is_well_known() {
+    for text in [
+        "python3 -m mytool",
+        "python -m http.server",
+        "python3 -m pkg.cli run",
+    ] {
+        assert_eq!(
+            need(ActionKind::Command, text, &[]),
+            Need::TwoKeys,
+            "{text}"
+        );
+    }
+    for text in [
+        "python3 -m pytest",
+        "python3 -m ruff check",
+        "python3 --version",
+    ] {
+        assert_eq!(need(ActionKind::Command, text, &[]), Need::Lead, "{text}");
+    }
 }

@@ -476,31 +476,56 @@ async fn a_read_between_denials_does_not_break_the_run_of_three() {
 }
 
 #[tokio::test]
-async fn under_off_a_threads_own_accepting_mode_does_not_stand_in_for_the_person() {
+async fn under_off_a_person_is_asked_even_for_a_read_and_the_threads_accepting_mode_does_not_answer()
+ {
     let (w, id) = running().await;
     w.core
         .set_crew_autopilot_mode(&ModeScope::Default, Mode::Off)
         .unwrap();
-    let mut accepting = scope(&w, &id);
-    accepting.mode = orbyn_contracts::PermissionMode::FullAccess;
-    // Under an accepting mode the gate used to allow this itself. Now it goes on to ask a person: the scope's run is not a
-    // real one, so creating that request fails and the gate denies, which is closed. It is never `Allow`.
-    let verdict = w
-        .core
-        .gate
-        .request(&accepting, ask(ActionKind::Command, "cargo fmt", &[]))
+    // The worker's own run, so the request a person answers can be stored.
+    let thread = w.core.store.thread(&w.worker(&id)).unwrap();
+    let run = thread.active_run.expect("the worker is running").id;
+    for (target, allow) in [("cargo fmt", true), ("ls src", false)] {
+        let mut accepting = scope(&w, &id);
+        accepting.run_id = run.clone();
+        accepting.mode = orbyn_contracts::PermissionMode::FullAccess;
+        let core = w.core.clone();
+        let asked = ask(ActionKind::Command, target, &[]);
+        let waiting = tokio::spawn(async move { core.gate.request(&accepting, asked).await });
+        w.until("a person is asked", |w| {
+            !w.core
+                .store
+                .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
+                .unwrap()
+                .is_empty()
+        })
         .await;
-    assert!(
-        matches!(verdict, Verdict::Deny(_)),
-        "the thread's own mode allowed it"
-    );
-    assert_eq!(
-        w.core
+        let pending = w
+            .core
             .store
-            .crew_autopilot_events(&id)
-            .unwrap()
-            .last()
-            .map(|e| e.kind.as_str()),
-        Some("person")
-    );
+            .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
+            .unwrap();
+        assert!(
+            pending[0].summary.contains("A request"),
+            "the approval is the worker's request"
+        );
+        w.core
+            .gate
+            .decide(&pending[0].id, allow, false, "test")
+            .unwrap();
+        let verdict = waiting.await.unwrap();
+        assert_eq!(
+            verdict == Verdict::Allow,
+            allow,
+            "the person's answer decides"
+        );
+        assert!(
+            w.core
+                .store
+                .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
+                .unwrap()
+                .is_empty()
+        );
+    }
+    assert_eq!(kinds(&w, &id), ["person", "person"]);
 }

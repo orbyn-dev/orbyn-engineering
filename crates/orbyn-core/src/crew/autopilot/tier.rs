@@ -61,9 +61,9 @@ fn is_ci(path: &str) -> bool {
         .any(|ci| lower == *ci || lower.starts_with(ci) || lower.ends_with(&format!("/{ci}")))
 }
 
-const NETWORK_PROGRAMS: [&str; 14] = [
-    "curl", "wget", "http", "https", "xh", "nc", "ncat", "netcat", "telnet", "ftp", "ssh", "sftp",
-    "scp", "mosh",
+const NETWORK_PROGRAMS: &[&str] = &[
+    "gh", "glab", "socat", "openssl", "curl", "wget", "http", "https", "xh", "nc", "ncat",
+    "netcat", "telnet", "ftp", "ssh", "sftp", "scp", "mosh",
 ];
 
 fn installs(command: &Simple) -> bool {
@@ -138,6 +138,22 @@ fn pulls_remote(command: &Simple) -> bool {
         })
 }
 
+/// Modules `python -m` may run without being counted as generated code. A module the worker wrote, or `http.server`, is not here.
+const KNOWN_MODULES: &[&str] = &[
+    "pytest",
+    "pip",
+    "venv",
+    "ruff",
+    "black",
+    "mypy",
+    "flake8",
+    "isort",
+    "build",
+    "ensurepip",
+    "compileall",
+    "json.tool",
+];
+
 fn generated(command: &Simple, ctx: &Ctx<'_>, grants: &Grants<'_>) -> bool {
     let tree = ctx.scene.worktree;
     let in_lease = |word: &str| {
@@ -171,13 +187,23 @@ fn generated(command: &Simple, ctx: &Ctx<'_>, grants: &Grants<'_>) -> bool {
             )
         });
         // A file to run, wherever it is (the repository's own scripts can be changed by the worker), code on the input
-        // (`python3 - <<EOF`, `node < x.js`, a pipe) or no argument at all. `python -m pytest` runs a module.
+        // (`python3 - <<EOF`, `node < x.js`, a pipe) or no argument at all.
+        let harmless = command
+            .args
+            .iter()
+            .any(|a| matches!(a.as_str(), "--version" | "-V" | "--help" | "-h"));
+        // `-m module` runs a module the worker may have written: only well-known ones are not generated code.
         let module = command
             .args
             .iter()
-            .any(|a| matches!(a.as_str(), "-m" | "--version" | "-V" | "--help" | "-h"));
+            .position(|a| a == "-m")
+            .map(|at| command.args.get(at + 1).map_or("", String::as_str));
+        let known_module = module.is_some_and(|m| KNOWN_MODULES.contains(&m));
         let file = command.args.iter().any(|a| !a.starts_with('-'));
-        return inline || (!module && (file || command.args.iter().all(|a| a.starts_with('-'))));
+        return inline
+            || (!harmless
+                && !known_module
+                && (module.is_some() || file || command.args.iter().all(|a| a.starts_with('-'))));
     }
     // A patch can name any path, so what it writes is not known.
     if command.program == "patch"

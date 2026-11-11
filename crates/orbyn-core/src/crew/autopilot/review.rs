@@ -156,6 +156,7 @@ impl Core {
         let mode = self.crew_autopilot_mode(&project, &task.crew_id);
         let hosts = read_allowed_hosts(&worktree, run.base_commit.as_deref()).await;
         let branch = current_branch(&worktree).await;
+        let default = default_branch(&worktree).await;
         let data = self.config.data_dir.clone();
         let scene = Scene {
             worktree: &worktree,
@@ -163,6 +164,7 @@ impl Core {
             allowed_hosts: &hosts,
             data_dir: Some(&data),
             branch: branch.as_deref(),
+            default_branch: default.as_deref(),
         };
         let ctx = context(ask.kind, &ask.target, &ask.paths, &scene);
         let action =
@@ -357,4 +359,16 @@ async fn current_branch(worktree: &Path) -> Option<String> {
         .ok()?;
     let name = crate::source_control::git::text(&out);
     (!name.is_empty()).then_some(name)
+}
+
+/// The repository's default branch as `origin/HEAD` names it, when there is such a remote.
+async fn default_branch(worktree: &Path) -> Option<String> {
+    let out = crate::source_control::git::git(
+        worktree,
+        &["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"],
+    )
+    .await
+    .ok()?;
+    let name = crate::source_control::git::text(&out);
+    name.strip_prefix("origin/").map(str::to_owned)
 }
