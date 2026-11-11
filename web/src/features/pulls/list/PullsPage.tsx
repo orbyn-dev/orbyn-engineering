@@ -42,7 +42,7 @@ import {
 import { pullsApi } from "../api";
 /** One request per state the service is asked for, merged into one list. */
 async function loadPulls(states: readonly string[], query: string, signal: AbortSignal): Promise<PullList> {
-  const lists = await Promise.all(states.map((state) => pullsApi.list(state, query, signal)));
+  const lists = await Promise.all(states.map((state) => pullsApi.list(state, query, signal, { priority: "foreground" })));
   const seen = new Set<string>();
   const pulls = lists.flatMap((list) => list.pulls).filter((entry) => {
     const key = `${entry.project_id}:${entry.pull.number}`;

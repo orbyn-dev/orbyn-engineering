@@ -50,7 +50,7 @@ export function PullDetail({
   /** Moves to another pull request in the same stack. */
   onOpen?(number: number): void;
 }) {
-  const detail = useAsync(`pull:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal), { keep: true });
+  const detail = useAsync(`pull:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal, { priority: "foreground" }), { keep: true });
   const page = layout === "page";
   // What the page layout adds beside the detail: files, checks, the details the list also reads, and who is signed in.
   const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])));

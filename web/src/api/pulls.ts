@@ -1,4 +1,4 @@
-import { request } from "./client";
+import { request, type RequestOptions } from "./client";
 import type {
   AskedAboutStop,
   ForgeStatus,
@@ -28,8 +28,8 @@ const base = (projectId: string, number: number) => `/api/projects/${q(projectId
 
 export const pullsApi = {
   forges: (signal?: AbortSignal) => request<ForgeStatus[]>("GET", "/api/forges", undefined, signal),
-  list: (state: string, query: string, signal?: AbortSignal) =>
-    request<PullList>("GET", `/api/pulls?state=${q(state)}&q=${q(query)}`, undefined, signal),
+  list: (state: string, query: string, signal?: AbortSignal, options?: RequestOptions) =>
+    request<PullList>("GET", `/api/pulls?state=${q(state)}&q=${q(query)}`, undefined, signal, options),
   /**
    * What the base list leaves out (reviewers, the viewer's review, comment totals, when
    * opened), for rows already shown, so the list paints first. Pass `fresh` only for a
@@ -37,8 +37,8 @@ export const pullsApi = {
    */
   details: (body: PullDetailsRequest, signal?: AbortSignal) =>
     request<PullDetailsResponse>("POST", "/api/pulls/details", body, signal),
-  detail: (projectId: string, number: number, signal?: AbortSignal) =>
-    request<PullRequestDetail>("GET", base(projectId, number), undefined, signal),
+  detail: (projectId: string, number: number, signal?: AbortSignal, options?: RequestOptions) =>
+    request<PullRequestDetail>("GET", base(projectId, number), undefined, signal, options),
   checks: (projectId: string, number: number, signal?: AbortSignal) =>
     request<PullCheck[]>("GET", `${base(projectId, number)}/checks`, undefined, signal),
   timeline: (projectId: string, number: number, signal?: AbortSignal) =>
