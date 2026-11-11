@@ -3,4 +3,4 @@
 /**
  * What a "Confirm it's you" confirmation is for. One confirmation is for one action.
  */
-export type AccountConfirmAction = "remove_device" | "sign_out_everywhere";
+export type AccountConfirmAction = "remove_device" | "sign_out_everywhere" | "approve_device";

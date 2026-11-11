@@ -104,6 +104,7 @@ fn any_body() -> Value {
         "code": "ABCD-EFGH",
         "password": "x",
         "action": "sign_out_everywhere",
+        "policy": "combine",
         "discard_unsynced": false,
     })
 }
@@ -200,7 +201,10 @@ async fn every_account_route_is_a_read_open_for_a_reason_or_needs_a_confirmation
         );
         guarded += 1;
     }
-    assert_eq!(guarded, 2, "removing a device and signing out everywhere");
+    assert_eq!(
+        guarded, 3,
+        "removing a device, signing out everywhere and letting a device in"
+    );
     // The lists hold no route that no longer exists.
     for (listed, _) in OPEN {
         assert!(
@@ -344,5 +348,123 @@ fn the_development_account_switch_is_debug_only() {
     ));
     assert!(
         !source.contains("AccountGate::LocalOnly") || before.contains("#[cfg(debug_assertions)]")
+    );
+}
+
+#[tokio::test]
+async fn letting_a_new_device_in_needs_the_password_for_that_request_and_is_used_up() {
+    let served = serve("approve", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    let (status, list) = served
+        .call("GET", "/api/account/approvals", json!({}))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(list[0]["digits"], "418 207");
+    assert_eq!(list[0]["device_name"], "iPad");
+    let approve = "/api/account/approvals/req-ipad/approve";
+    // Signing in did not confirm anything.
+    let (status, body) = served.call("POST", approve, json!({})).await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (403, Some("reauth_required"))
+    );
+    // A confirmation for another action or another request does not count.
+    assert_eq!(served.confirm("sign_out_everywhere", None).await.0, 204);
+    assert_eq!(served.call("POST", approve, json!({})).await.0, 403);
+    assert_eq!(
+        served.confirm("approve_device", Some("req-other")).await.0,
+        204
+    );
+    assert_eq!(served.call("POST", approve, json!({})).await.0, 403);
+    let (status, _) = served.confirm("approve_device", None).await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        served.confirm("approve_device", Some("req-ipad")).await.0,
+        204
+    );
+    assert_eq!(served.call("POST", approve, json!({})).await.0, 204);
+    let (_, list) = served
+        .call("GET", "/api/account/approvals", json!({}))
+        .await;
+    assert_eq!(list.as_array().map(Vec::len), Some(0));
+    // Used up: the same confirmation does not let a second request in.
+    let (status, body) = served.call("POST", approve, json!({})).await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (403, Some("reauth_required"))
+    );
+}
+
+#[tokio::test]
+async fn refusing_a_new_device_needs_no_password_and_lets_nobody_in() {
+    let served = serve("deny", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    let deny = "/api/account/approvals/req-ipad/deny";
+    assert_eq!(
+        served
+            .call("POST", deny, json!({ "codes_differ": true }))
+            .await
+            .0,
+        204
+    );
+    let (_, list) = served
+        .call("GET", "/api/account/approvals", json!({}))
+        .await;
+    assert_eq!(list.as_array().map(Vec::len), Some(0));
+}
+
+#[tokio::test]
+async fn a_new_device_waits_for_a_trusted_one_and_can_give_up() {
+    let served = serve("waiting", AccountGate::LocalOnly, false).await;
+    let (status, body) = served
+        .call(
+            "POST",
+            "/api/account/sign-in",
+            json!({ "email": "late@example.com", "password": SECRET }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["outcome"].as_str()),
+        (200, Some("awaiting_approval"))
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(view["approval"]["state"], "waiting");
+    assert_eq!(view["approval"]["digits"], "418 207");
+    assert!(view["session"].is_null());
+    let (status, polled) = served
+        .call("GET", "/api/account/sign-in/approval", json!({}))
+        .await;
+    assert_eq!((status, polled["state"].as_str()), (200, Some("waiting")));
+    assert_eq!(
+        served
+            .call("POST", "/api/account/sign-in/cancel", json!({}))
+            .await
+            .0,
+        204
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert!(view.get("approval").is_none());
+}
+
+#[tokio::test]
+async fn the_first_sync_asks_how_to_join_the_settings_once() {
+    let served = serve("connect", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(
+        view["connect"], "connected",
+        "a computer with no settings of its own has nothing to join"
+    );
+    assert_eq!(
+        served
+            .call(
+                "POST",
+                "/api/account/connect",
+                json!({ "policy": "combine" })
+            )
+            .await
+            .0,
+        204,
+        "connecting when already connected changes nothing"
     );
 }

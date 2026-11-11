@@ -451,9 +451,9 @@ The app records them here so the backend carries what the screens will need.
 invite, the device check, the emailed code), the signed-in page with Sync now, Pause and Resume sync, the sync
 line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
 adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
-popovers, and the code-age hint. **Not in it:** new-device approval and "Connect this computer's settings", which
-need `AwaitingApproval`, `approve` and `deny` and a first-sync policy in the account module and follow in a later
-pull request; renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
+popovers, and the code-age hint. **New-device approval and "Connect this computer's settings"** are built behind the account module against the
+stand-in (`AwaitingApproval`, `approve`, `deny`, the first-sync policy), with the screens in the pull request after
+it, and wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
 (`signout-other-device-removed`), because the Engine answers a removed device and an ended session with the same 401;
 the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
 The designs decided that with the gate `Off` Settings > Account is hidden, the palette has no Account entry, and the

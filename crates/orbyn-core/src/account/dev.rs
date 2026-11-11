@@ -16,14 +16,23 @@
 //! | `busy@example.com` | sign-up asks for a visible check first (1.5 s), then goes on |
 //! | `hard@example.com` | sign-up's check fails (`ProofFailed`) |
 //! | `delete@example.com` | signs in; Sign out everywhere says deletion is scheduled |
+//! | `approve@example.com` | asks a trusted device (digits `418 207`), which allows it 3 s later |
+//! | `deny@example.com` | the same, and the trusted device refuses |
+//! | `mismatch@example.com` | the same, and the trusted device says the codes differ |
+//! | `late@example.com` | the same, and nobody ever answers |
+//!
+//! Signed in, one request from an iPad waits for this device to answer (`approval_requests`).
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use orbyn_contracts::AccountDevice;
 
-use super::api::{AccountApi, Backend, Password, SessionInfo, SignInOutcome};
+use super::api::{
+    AccountApi, ApprovalStatus, Backend, IncomingApproval, Password, PendingApproval, SessionInfo,
+    SignInOutcome,
+};
 use super::device_api::DeviceError;
 use super::fake::FakeDeviceApi;
 
@@ -38,8 +47,31 @@ struct Account {
     password: String,
 }
 
+/// What a trusted device answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Allow,
+    Deny,
+    CodesDiffer,
+}
+
+/// This stand-in's own request to sign in, as the new device made it.
+struct Mine {
+    id: String,
+    email: String,
+    answer: Option<Answer>,
+    /// A canned answer that arrives by itself, for a developer driving the screens by hand.
+    auto: Option<(Instant, Answer)>,
+}
+
 #[derive(Default)]
 struct State {
+    mine: Option<Mine>,
+    /// Requests from other devices, waiting for this one (as a trusted device) to answer.
+    incoming: Vec<IncomingApproval>,
+    /// What this device answered, newest last: the request id and whether it allowed it.
+    decided: Vec<(String, Option<bool>)>,
+    cancelled: Vec<String>,
     accounts: Vec<Account>,
     signup: Option<String>,
     verified: bool,
@@ -51,29 +83,55 @@ struct State {
 
 pub struct DevAccount {
     state: Mutex<State>,
+    /// How long a canned answer takes to arrive.
+    auto_delay: Mutex<Duration>,
+    #[cfg(test)]
+    zones: Arc<FakeDeviceApi>,
 }
 
-pub fn backend() -> Backend {
+/// The backend, and the stand-in itself so a test can play the trusted device.
+pub fn handle() -> (Backend, Arc<DevAccount>) {
     let accounts = [
         "dev@example.com",
         "two@example.com",
         "slow@example.com",
         "down@example.com",
         "delete@example.com",
+        "approve@example.com",
+        "deny@example.com",
+        "mismatch@example.com",
+        "late@example.com",
     ]
     .map(|email| Account {
         email: email.to_owned(),
         password: PASSWORD.to_owned(),
     });
-    Backend {
-        account: Arc::new(DevAccount {
-            state: Mutex::new(State {
-                accounts: accounts.into(),
-                ..State::default()
-            }),
+    let zones = Arc::new(FakeDeviceApi::new());
+    let account = Arc::new(DevAccount {
+        state: Mutex::new(State {
+            accounts: accounts.into(),
+            incoming: vec![IncomingApproval {
+                id: "req-ipad".to_owned(),
+                device_name: "iPad".to_owned(),
+                app: "planner".to_owned(),
+                near: Some("Near Melbourne".to_owned()),
+                asked_at: "2026-11-11T09:40:00Z".to_owned(),
+                digits: "418207".to_owned(),
+                expires_in_secs: 540,
+            }],
+            ..State::default()
         }),
-        device: Arc::new(FakeDeviceApi::new()),
-    }
+        auto_delay: Mutex::new(Duration::from_secs(3)),
+        #[cfg(test)]
+        zones: zones.clone(),
+    });
+    (
+        Backend {
+            account: account.clone(),
+            device: zones,
+        },
+        account,
+    )
 }
 
 fn session(email: &str) -> SessionInfo {
@@ -105,6 +163,32 @@ fn device(
 }
 
 impl DevAccount {
+    #[cfg(test)]
+    pub fn zones(&self) -> Arc<FakeDeviceApi> {
+        self.zones.clone()
+    }
+
+    /// Plays the trusted device answering this device's own request.
+    #[cfg(test)]
+    pub fn answer(&self, answer: Answer) {
+        if let Some(mine) = self.lock().mine.as_mut() {
+            mine.answer = Some(answer);
+        }
+    }
+
+    /// The requests this device gave up.
+    #[cfg(test)]
+    pub fn cancelled(&self) -> Vec<String> {
+        self.lock().cancelled.clone()
+    }
+
+    /// What this device answered as a trusted one: the request id, and `Some(true)` for
+    /// allowed, `Some(false)` for refused with the codes differing, `None` for refused.
+    #[cfg(test)]
+    pub fn decided(&self) -> Vec<(String, Option<bool>)> {
+        self.lock().decided.clone()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()
@@ -207,6 +291,29 @@ impl AccountApi for DevAccount {
             state.pending_second_factor = Some(email.to_owned());
             return Ok(SignInOutcome::SecondFactor);
         }
+        let canned = match email {
+            "approve@example.com" => Some(Some(Answer::Allow)),
+            "deny@example.com" => Some(Some(Answer::Deny)),
+            "mismatch@example.com" => Some(Some(Answer::CodesDiffer)),
+            "late@example.com" => Some(None),
+            _ => None,
+        };
+        if let Some(canned) = canned {
+            let delay = *self
+                .auto_delay
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.mine = Some(Mine {
+                id: "req-mine".to_owned(),
+                email: email.to_owned(),
+                answer: None,
+                auto: canned.map(|answer| (Instant::now() + delay, answer)),
+            });
+            return Ok(SignInOutcome::AwaitingApproval(PendingApproval {
+                request_id: "req-mine".to_owned(),
+                digits: "418207".to_owned(),
+            }));
+        }
         state.session = Some(email.to_owned());
         Ok(SignInOutcome::Signed(session(email)))
     }
@@ -221,6 +328,70 @@ impl AccountApi for DevAccount {
         } else {
             Err(DeviceError::InvalidCode)
         }
+    }
+
+    async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError> {
+        let mut state = self.lock();
+        let Some(mine) = state.mine.as_mut().filter(|m| m.id == request_id) else {
+            return Err(DeviceError::InvalidCode);
+        };
+        if let (None, Some((at, answer))) = (mine.answer, mine.auto)
+            && Instant::now() >= at
+        {
+            mine.answer = Some(answer);
+        }
+        let email = mine.email.clone();
+        match mine.answer {
+            None => Ok(ApprovalStatus::Waiting),
+            Some(Answer::Deny) => Ok(ApprovalStatus::Denied),
+            Some(Answer::CodesDiffer) => Ok(ApprovalStatus::CodesDiffer),
+            Some(Answer::Allow) => {
+                state.mine = None;
+                state.session = Some(email.clone());
+                Ok(ApprovalStatus::Approved(session(&email)))
+            }
+        }
+    }
+
+    async fn cancel_approval(&self, request_id: &str) -> Result<(), DeviceError> {
+        let mut state = self.lock();
+        if state.mine.as_ref().is_some_and(|m| m.id == request_id) {
+            state.mine = None;
+            state.cancelled.push(request_id.to_owned());
+        }
+        Ok(())
+    }
+
+    async fn approval_requests(&self) -> Result<Vec<IncomingApproval>, DeviceError> {
+        self.email()?;
+        Ok(self.lock().incoming.clone())
+    }
+
+    async fn approve(&self, request_id: &str) -> Result<(), DeviceError> {
+        self.email()?;
+        let mut state = self.lock();
+        let before = state.incoming.len();
+        state.incoming.retain(|request| request.id != request_id);
+        if state.incoming.len() == before {
+            return Err(DeviceError::InvalidCode);
+        }
+        state.decided.push((request_id.to_owned(), Some(true)));
+        Ok(())
+    }
+
+    async fn deny(&self, request_id: &str, codes_differ: bool) -> Result<(), DeviceError> {
+        self.email()?;
+        let mut state = self.lock();
+        let before = state.incoming.len();
+        state.incoming.retain(|request| request.id != request_id);
+        if state.incoming.len() == before {
+            return Err(DeviceError::InvalidCode);
+        }
+        state.decided.push((
+            request_id.to_owned(),
+            if codes_differ { Some(false) } else { None },
+        ));
+        Ok(())
     }
 
     async fn verify_password(&self, password: &Password) -> Result<(), DeviceError> {

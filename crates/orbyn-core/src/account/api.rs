@@ -52,6 +52,41 @@ pub enum SignInOutcome {
     Signed(SessionInfo),
     /// The account has two-factor on: an authenticator or recovery code comes next.
     SecondFactor,
+    /// A trusted device has to allow this one. The digits are shown here and on that device.
+    AwaitingApproval(PendingApproval),
+}
+
+/// This device's request to sign in, waiting for a trusted device.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingApproval {
+    pub request_id: String,
+    /// Six digits, no spaces.
+    pub digits: String,
+}
+
+/// Where this device's request stands. Ten minutes without an answer is the app's own count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApprovalStatus {
+    Waiting,
+    Approved(SessionInfo),
+    Denied,
+    CodesDiffer,
+}
+
+/// A new device asking this trusted one to let it in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncomingApproval {
+    pub id: String,
+    pub device_name: String,
+    /// `planner` or `engineering`.
+    pub app: String,
+    pub near: Option<String>,
+    /// RFC 3339.
+    pub asked_at: String,
+    /// Six digits, no spaces.
+    pub digits: String,
+    /// Seconds the request has left.
+    pub expires_in_secs: u64,
 }
 
 #[async_trait]
@@ -68,6 +103,16 @@ pub trait AccountApi: Send + Sync {
     -> Result<SignInOutcome, DeviceError>;
     /// An authenticator code (six digits) or a recovery code.
     async fn second_factor(&self, code: &str) -> Result<SessionInfo, DeviceError>;
+    /// The new device asks again how its request stands.
+    async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError>;
+    /// The new device gives its request up.
+    async fn cancel_approval(&self, request_id: &str) -> Result<(), DeviceError>;
+    /// On a trusted device: the requests waiting for an answer.
+    async fn approval_requests(&self) -> Result<Vec<IncomingApproval>, DeviceError>;
+    /// On a trusted device: let the new device in, after the digits were compared.
+    async fn approve(&self, request_id: &str) -> Result<(), DeviceError>;
+    /// On a trusted device: refuse. `codes_differ` is the "Codes don't match" answer.
+    async fn deny(&self, request_id: &str, codes_differ: bool) -> Result<(), DeviceError>;
     /// Checks the password again for "Confirm it's you".
     async fn verify_password(&self, password: &Password) -> Result<(), DeviceError>;
     async fn devices(&self) -> Result<Vec<AccountDevice>, DeviceError>;
