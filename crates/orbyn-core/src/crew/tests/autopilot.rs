@@ -7,6 +7,9 @@ use super::autopilot_support::{
     Scripted, approvers, ask, events, kinds, request, running, scope, words,
 };
 use super::harness::KEY_MARKER;
+
+/// A secret-shaped value for the redaction test, named by label in every message.
+const SECRET: &str = "abcdefgh12345678";
 use crate::crew::{Answer, Mode, ModeScope};
 use crate::governance::approvals::{Review, Verdict};
 
@@ -42,7 +45,10 @@ async fn a_hard_denied_action_is_never_approved_even_if_the_lead_says_yes() {
         matches!(account, Verdict::Deny(_)),
         "the account route was allowed"
     );
-    assert!(words(&account).contains("N1"), "{}", words(&account));
+    assert!(
+        words(&account).contains("N1"),
+        "the verdict did not hold the expected words"
+    );
     let outside = w
         .core
         .gate
@@ -51,7 +57,10 @@ async fn a_hard_denied_action_is_never_approved_even_if_the_lead_says_yes() {
             ask(ActionKind::Command, "rm -rf ~/projects", &[]),
         )
         .await;
-    assert!(words(&outside).contains("N4"), "{}", words(&outside));
+    assert!(
+        words(&outside).contains("N4"),
+        "the verdict did not hold the expected words"
+    );
 
     assert_eq!(
         lead.calls(),
@@ -100,7 +109,10 @@ async fn two_keys_that_disagree_give_denied_and_the_disagreement_is_logged() {
     let second = Scripted::no("beta", "beta");
     w.core.set_crew_approvers(approvers(&lead, &[&second]));
     let verdict = request(&w, &id, ActionKind::Command, "npm install left-pad").await;
-    assert!(words(&verdict).contains("disagreed"), "{}", words(&verdict));
+    assert!(
+        words(&verdict).contains("disagreed"),
+        "the verdict did not hold the expected words"
+    );
     assert!(matches!(verdict, Verdict::Deny(_)));
     assert_eq!((lead.calls(), second.calls()), (1, 1));
     assert_eq!(kinds(&w, &id), ["disagreement", "denied"]);
@@ -132,8 +144,7 @@ async fn two_keys_that_agree_allow_and_the_second_key_must_be_on_another_vendor(
     let verdict = request(&w, &id, ActionKind::Command, "npm install left-pad").await;
     assert!(
         words(&verdict).contains("second approver"),
-        "{}",
-        words(&verdict)
+        "the verdict did not hold the expected words"
     );
     assert_eq!(same.calls(), 0);
     assert_eq!(
@@ -246,7 +257,10 @@ async fn reads_and_writes_inside_the_lease_need_no_approver_and_the_protected_fi
             ),
         )
         .await;
-    assert!(words(&key_file).contains("N7"), "{}", words(&key_file));
+    assert!(
+        words(&key_file).contains("N7"),
+        "the verdict did not hold the expected words"
+    );
     let rules = w
         .core
         .gate
@@ -259,7 +273,10 @@ async fn reads_and_writes_inside_the_lease_need_no_approver_and_the_protected_fi
             ),
         )
         .await;
-    assert!(words(&rules).contains("N7"), "{}", words(&rules));
+    assert!(
+        words(&rules).contains("N7"),
+        "the verdict did not hold the expected words"
+    );
     assert_eq!(lead.calls(), 0);
 }
 
@@ -268,18 +285,21 @@ async fn the_requester_reads_the_reason_and_never_the_key_or_a_secret() {
     let (w, id) = running().await;
     let lead = Scripted::new("alpha", "alpha", |_| Answer {
         approve: false,
-        reason: format!("No: echo {KEY_MARKER} ran and token = abcdefgh12345678 was in it."),
+        reason: format!("No: echo {KEY_MARKER} ran and token = {SECRET} was in it."),
     });
     w.core.set_crew_approvers(approvers(&lead, &[]));
     let verdict = request(&w, &id, ActionKind::Command, "cargo fmt").await;
     let text = words(&verdict);
-    assert!(text.starts_with("Denied: No:"), "{text}");
-    assert!(!text.contains(KEY_MARKER) && !text.contains("abcdefgh12345678"));
+    assert!(
+        text.starts_with("Denied: No:"),
+        "the denial did not start as expected"
+    );
+    assert!(!text.contains(KEY_MARKER) && !text.contains(SECRET));
     let key_id = w.core.store.crew_answer_key(&id).unwrap().unwrap().id;
     for event in w.core.store.crew_autopilot_events(&id).unwrap() {
         let row = event.body.to_string();
         assert!(
-            !row.contains(KEY_MARKER) && !row.contains("abcdefgh12345678"),
+            !row.contains(KEY_MARKER) && !row.contains(SECRET),
             "a ledger row held key text or a secret"
         );
         assert!(!row.contains(key_id.as_str()));
@@ -297,8 +317,7 @@ async fn an_approval_without_a_reason_is_a_denial() {
     let verdict = request(&w, &id, ActionKind::Command, "cargo fmt").await;
     assert!(
         words(&verdict).contains("needs a reason"),
-        "{}",
-        words(&verdict)
+        "the verdict did not hold the expected words"
     );
 }
 
@@ -308,8 +327,7 @@ async fn with_no_lead_available_full_denies_and_the_work_goes_on() {
     let verdict = request(&w, &id, ActionKind::Command, "cargo fmt").await;
     assert!(
         words(&verdict).contains("No lead is available"),
-        "{}",
-        words(&verdict)
+        "the verdict did not hold the expected words"
     );
     assert_eq!(w.task(&id).state, "running");
 }
@@ -327,8 +345,7 @@ async fn three_denials_in_a_row_stop_the_task() {
     let third = request(&w, &id, ActionKind::Command, "cargo fmt").await;
     assert!(
         words(&third).contains("too many denials"),
-        "{}",
-        words(&third)
+        "the verdict did not hold the expected words"
     );
     let task = w.task(&id);
     assert_eq!(
@@ -390,8 +407,7 @@ async fn text_that_looks_like_injected_instructions_stops_the_task_and_the_ledge
     let verdict = w.core.gate.request(&scope(&w, &id), hostile).await;
     assert!(
         words(&verdict).contains("injected instructions"),
-        "{}",
-        words(&verdict)
+        "the verdict did not hold the expected words"
     );
     let task = w.task(&id);
     assert_eq!(
@@ -468,8 +484,7 @@ async fn a_read_between_denials_does_not_break_the_run_of_three() {
     let third = request(&w, &id, ActionKind::Command, "cargo fmt").await;
     assert!(
         words(&third).contains("too many denials"),
-        "{}",
-        words(&third)
+        "the verdict did not hold the expected words"
     );
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
     assert_eq!(events(&w, &id, "tripwire")[0].body["in_a_row"], 3);
