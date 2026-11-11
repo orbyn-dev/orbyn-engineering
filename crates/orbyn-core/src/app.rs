@@ -79,6 +79,8 @@ pub struct CoreConfig {
     pub browser_in_process_gpu: bool,
     /// Whether the account may do anything. Ships `Off`.
     pub account_gate: crate::account::AccountGate,
+    /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
+    pub crew_preview: bool,
 }
 
 impl CoreConfig {
@@ -97,6 +99,7 @@ impl CoreConfig {
             browser_headless: false,
             browser_in_process_gpu: false,
             account_gate: crate::account::AccountGate::default(),
+            crew_preview: false,
         }
     }
 }

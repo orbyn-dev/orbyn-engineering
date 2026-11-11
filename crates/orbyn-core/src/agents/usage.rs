@@ -588,6 +588,12 @@ impl Core {
             .await
     }
 
+    /// The last limit report kept for an engine, if any. It never asks the engine, so it
+    /// starts no process and writes nothing.
+    pub fn cached_limits(&self, id: &str) -> Option<EngineLimits> {
+        self.usage.limits.peek(&crate::util::swr::key(&[id]))
+    }
+
     /// Every engine's limits, and one number per window across them.
     pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
         let mut engines = Vec::new();
