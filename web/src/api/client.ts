@@ -1,5 +1,6 @@
 import { serviceUrl } from "./origin";
 import { readToken } from "./token";
+import { inLane, laneFor, shareRead } from "./lanes";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -123,7 +124,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function request<T>(
+async function send<T>(
   method: string,
   path: string,
   body?: unknown,
@@ -156,6 +157,21 @@ export async function request<T>(
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/**
+ * Slow reads queue in their own lane and identical reads in flight share one request
+ * (see `lanes.ts`); everything else goes straight out.
+ */
+export function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (method !== "GET" || body !== undefined) return send<T>(method, path, body, signal);
+  const lane = laneFor(method, path);
+  return shareRead(`${method} ${path}`, signal, (shared) => inLane(lane, shared, () => send<T>(method, path, body, shared)));
 }
 
 /** The bytes a sent message carried. JSON requests can't carry them, so this is separate. */
