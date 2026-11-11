@@ -1,26 +1,21 @@
-import { AppWindow, ChevronRight, Copy, Download, ExternalLink, File, Folder, Paperclip, Search } from "lucide-react";
-import { useEffect, useState } from "react";
-import { api, listThreadFiles, openThreadFileInBrowser, readThreadFile, saveThreadFile, searchThreadFiles } from "../api";
-import type { FileContent, FileEntry } from "../../../api/types";
+import { AppWindow, Copy, Download, ExternalLink, Paperclip } from "lucide-react";
+import { useState } from "react";
+import { api, openThreadFileInBrowser, readThreadFile, saveThreadFile } from "../api";
+import type { FileContent } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { chipId, fileExcerpt, languageForPath } from "../../../product/composer/composerContext";
 import { Button, IconButton } from "../../../ui/controls";
-import { Menu } from "../../../ui/Menu";
-import { Presence } from "../../../ui/Presence";
-import { FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { DocumentViewer, officeKind } from "./DocumentViewer";
 import { FileBytes, FileMedia } from "./FileMedia";
 import { mediaKind, rawUrl } from "../../../product/media/media";
 import { FilePreview, previewKind } from "./FilePreview";
 import { ZipViewer, isZipPath } from "./ZipViewer";
-import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
 import { primaryEditor } from "../../../product/composer/editorPreferences";
 import { useWorkspace } from "../../../product/state/workspace";
 import { FileComments } from "./FileComments";
-import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
 import { formatBytes } from "../../../lib/format";
 
 
@@ -94,8 +89,8 @@ function FileBody({
   );
 }
 
-/** Exported so the panel bar's own controls can be tested from one file. */
-export function Viewer({ threadId, path, line, onBack }: { threadId: string; path: string; line: number | null; onBack(): void }) {
+/** A file of the thread's checkout, by what it holds. Exported so the bar's own controls can be tested from one file. */
+export function Viewer({ threadId, path, line, onBack }: { threadId: string; path: string; line: number | null; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   const media = mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -155,9 +150,11 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
   return (
     <div className="files-viewer" data-thread-id={threadId}>
       <div className="panel-bar">
-        <Button small tone="quiet" onClick={onBack}>
-          Files
-        </Button>
+        {onBack ? (
+          <Button small tone="quiet" onClick={onBack}>
+            Files
+          </Button>
+        ) : null}
         <code title={path}>{path}</code>
         {file.data && (zip || office) ? <span className="zip-size">{formatBytes(file.data.size)}</span> : null}
         <IconButton label="Copy contents" disabled={copyable === null || copying} onClick={() => void copyContents()}>
@@ -211,178 +208,6 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="text" />
       ) : (
         <FileBody threadId={threadId} cwd={cwd} path={path} file={file.data} line={line} onSaved={file.reload} />
-      )}
-    </div>
-  );
-}
-
-function FolderList({
-  threadId,
-  path,
-  depth,
-  onFile,
-}: {
-  threadId: string;
-  path: string;
-  depth: number;
-  onFile(path: string): void;
-}) {
-  const list = useAsync(`files:${threadId}:${path}`, (signal) =>
-    listThreadFiles(threadId, path, signal),
-  );
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-  const [menu, setMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
-  const editors = useAsync("editors", (signal) => api.editors(signal));
-  const pushToast = useUi((state) => state.pushToast);
-  const openWith = (path: string, editor: string) => {
-    api.openInEditor(threadId, { path, editor }).catch((failure: unknown) => {
-      pushToast(`Couldn't open it. ${toFailure(failure).message}`);
-    });
-  };
-  if (list.status === "loading") return depth === 0 ? <Loading label="Loading files" rows={6} /> : null;
-  if (list.status === "error") {
-    return <ErrorState compact title="Couldn't read this folder" failure={list.error} onRetry={list.reload} />;
-  }
-  return (
-    <ul className="file-tree">
-      {list.data.map((entry) => (
-        <li key={entry.path}>
-          <button
-            type="button"
-            style={{ paddingLeft: 8 + depth * 12 }}
-            data-ignored={entry.ignored || undefined}
-            aria-expanded={entry.is_dir ? open.has(entry.path) : undefined}
-            draggable
-            onDragStart={(event) => event.dataTransfer.setData(FILE_MENTION_TYPE, entry.path)}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              setMenu({ x: event.clientX, y: event.clientY, entry });
-            }}
-            onClick={() => {
-              if (!entry.is_dir) {
-                onFile(entry.path);
-                return;
-              }
-              const next = new Set(open);
-              if (!next.delete(entry.path)) next.add(entry.path);
-              setOpen(next);
-            }}
-          >
-            {entry.is_dir ? <ChevronRight size={12} className="chev" aria-hidden /> : <span className="file-gap" />}
-            {entry.is_dir ? <Folder size={14} aria-hidden /> : <File size={14} aria-hidden />}
-            <span>{entry.name}</span>
-          </button>
-          {entry.is_dir && open.has(entry.path) ? (
-            <FolderList threadId={threadId} path={entry.path} depth={depth + 1} onFile={onFile} />
-          ) : null}
-        </li>
-      ))}
-      <Presence>{menu ? (
-        <Menu
-          x={menu.x}
-          y={menu.y}
-          label={`Actions for ${menu.entry.name}`}
-          onClose={() => setMenu(null)}
-          items={[
-            ...(menu.entry.is_dir ? [] : [{ label: "Open", onSelect: () => onFile(menu.entry.path) }]),
-            ...(editors.data ?? []).map((editor) => ({
-              label: editor.file_manager ? `Reveal in ${editor.name}` : `Open in ${editor.name}`,
-              onSelect: () => openWith(menu.entry.path, editor.id),
-            })),
-          ]}
-        />
-      ) : null}</Presence>
-    </ul>
-  );
-}
-
-/** The checkout's files. A search finds names and, with text, lines. */
-export function FilesPanel({ threadId }: { threadId: string }) {
-  const [file, setFile] = useState<{ path: string; line: number | null } | null>(null);
-  // A full path outside the checkout, opened read-only.
-  const [outside, setOutside] = useState<string | null>(null);
-  // A link in a message opens its file here, once per click.
-  const reveal = useUi((state) => state.fileReveal);
-  const resolved = useResolvedThreadPath(threadId, reveal ? { ...reveal, basis: "thread" } : null);
-  const pushToast = useUi((state) => state.pushToast);
-  const consume = useUi((state) => state.consumeFileReveal);
-  const referenceKey = reveal ? JSON.stringify([reveal.path, reveal.line, reveal.nonce]) : null;
-  const [seen, setSeen] = useState<string | null>(null);
-  useEffect(() => {
-    if (!reveal) return;
-    if (reveal.threadId !== threadId || useWorkspace.getState().threads[threadId]?.cwd !== reveal.cwd) consume(reveal.nonce);
-  }, [reveal, threadId, resolved.key, consume]);
-  useEffect(() => {
-    if (!reveal || referenceKey === seen || (!resolved.value && !resolved.error)) return;
-    if (useUi.getState().fileReveal?.nonce !== reveal.nonce || reveal.threadId !== threadId
-      || useWorkspace.getState().threads[threadId]?.cwd !== reveal.cwd) return;
-    setSeen(referenceKey);
-    const full = fullPathOf(reveal.path);
-    if (resolved.value?.checkout_path) {
-      setOutside(null);
-      setFile({ path: resolved.value.checkout_path, line: reveal.line });
-    } else if (resolved.value && isFullPath(full)) setOutside(full);
-    else pushToast(resolved.error?.message ?? "That path is outside this checkout.");
-    consume(reveal.nonce);
-  }, [reveal, referenceKey, resolved.value, resolved.error, seen, pushToast, consume, threadId]);
-  const chooseFile = (file: { path: string; line: number | null } | null) => {
-    setSeen(referenceKey);
-    const current = useUi.getState().fileReveal;
-    if (current) consume(current.nonce);
-    setOutside(null);
-    setFile(file);
-  };
-  const chooseOutside = (path: string) => {
-    chooseFile(null);
-    setOutside(path);
-  };
-  const [text, setText] = useState("");
-  const [query, setQuery] = useState("");
-  const hits = useAsync(`file-search:${threadId}:${query}`, (signal) =>
-    query
-      ? searchThreadFiles(threadId, query, signal)
-      : Promise.resolve([]),
-  );
-  if (outside) return <OutsideFileViewer key={outside} threadId={threadId} path={outside} onBack={() => chooseFile(null)} />;
-  if (file) return <Viewer threadId={threadId} path={file.path} line={file.line} onBack={() => chooseFile(null)} />;
-  return (
-    <div className="files-panel">
-      <label className="pulls-search files-search">
-        <Search size={14} aria-hidden />
-        <input
-          aria-label="Search files"
-          placeholder="Search files, or a full path to read"
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            if (!event.target.value) setQuery("");
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            const typed = fullPathOf(text.trim());
-            // A full path opens that one file to read; anything else searches the checkout.
-            if (isFullPath(typed)) chooseOutside(typed);
-            else setQuery(text.trim());
-          }}
-        />
-      </label>
-      {query ? (
-        <ul className="file-tree">
-          {(hits.data ?? []).map((hit) => (
-            <li key={`${hit.path}:${hit.line}`}>
-              <button type="button" onClick={() => chooseFile({ path: hit.path, line: hit.line || null })}>
-                <File size={14} aria-hidden />
-                <span>
-                  {hit.path}
-                  {hit.line ? `:${hit.line}` : ""}
-                </span>
-              </button>
-            </li>
-          ))}
-          {hits.status === "ready" && hits.data.length === 0 ? <li className="muted">No matches</li> : null}
-        </ul>
-      ) : (
-        <FolderList threadId={threadId} path="" depth={0} onFile={(path) => chooseFile({ path, line: null })} />
       )}
     </div>
   );

@@ -694,7 +694,7 @@ describe("App against the mock API", () => {
     setViewportWidth(1700);
     useUi.setState({
       panelOpen: true,
-      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"], detailsOpen: false, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
+      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"], detailsOpen: false, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
     });
     go("#/threads/t-done");
     render(<App />);

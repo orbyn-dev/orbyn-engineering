@@ -1,20 +1,24 @@
-import { Activity, FileDiff, Files, Globe, MessagesSquare, Plug } from "lucide-react";
-import { RIGHT_TAB_IDS, type RightTab } from "../../../product/state/ui";
+import { Activity, FileDiff, File as FileIcon, GitBranch, Globe, MessagesSquare, Plug } from "lucide-react";
+import { defaultOrder, fileName, parseFileTab, type BuiltinTab, type RightTab } from "../../../product/state/ui";
 
-/** The panel's six surfaces, in the launcher's order. `label` is the tab's name and what it reads. */
-export const RIGHT_TABS: { id: RightTab; label: string; icon: typeof FileDiff }[] = [
+/** The panel's five surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
+export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff }[] = [
   { id: "diff", label: "Changes", icon: FileDiff },
   { id: "browser", label: "Browser", icon: Globe },
   { id: "activity", label: "Activity", icon: Activity },
   { id: "side", label: "Side chat", icon: MessagesSquare },
   { id: "tools", label: "Tools", icon: Plug },
-  { id: "files", label: "Files", icon: Files },
 ];
 
-export const tabOf = (id: RightTab) => RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
+export function tabOf(id: RightTab): { id: RightTab; label: string; icon: typeof FileDiff } {
+  const file = parseFileTab(id);
+  if (file?.kind === "worktree") return { id, label: "Worktree", icon: GitBranch };
+  if (file) return { id, label: fileName(file.path), icon: FileIcon };
+  return RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
+}
 
 /** True when the row is not in its default order: "Reset tab order" shows only then. */
-export const orderChanged = (order: readonly RightTab[]) => order.some((id, at) => id !== RIGHT_TAB_IDS[at]);
+export const orderChanged = (order: readonly RightTab[]) => defaultOrder(order).some((id, at) => id !== order[at]);
 
 /** A slot and the gap after it. */
 export const SLOT_PITCH = 34;

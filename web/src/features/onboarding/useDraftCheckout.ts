@@ -4,7 +4,7 @@ import type { Project } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 
 /** Defaults belong to the selected physical checkout; explicit draft picks win. */
-export function useDraftCheckout(project: Pick<Project, "id" | "is_git"> | null, reused: string | null) {
+export function useDraftCheckout(project: Pick<Project, "id" | "is_git"> | null, reused: string | null, currentCheckout = false) {
   const scope = project?.id ?? null;
   const git = project?.is_git === true;
   const [picked, setPicked] = useState<{ scope: string | null; value: string | null } | null>(null);
@@ -12,6 +12,10 @@ export function useDraftCheckout(project: Pick<Project, "id" | "is_git"> | null,
   useEffect(() => {
     if (reused !== null) setPicked({ scope, value: reused });
   }, [reused, scope]);
+  // Asked for the project's own checkout: an explicit pick of it, which the device default does not override.
+  useEffect(() => {
+    if (currentCheckout) setPicked({ scope, value: null });
+  }, [currentCheckout, scope]);
   useEffect(() => {
     if (!scope || !git) return;
     const controller = new AbortController();

@@ -8,12 +8,17 @@ use crate::error::{CoreError, Result};
 
 /// Entries one answer carries. More is `truncated`.
 pub(super) const TREE_LIMIT: usize = 1_000;
-/// Directory entries looked at before the read gives up on seeing the rest.
-const SCAN_LIMIT: usize = 20_000;
+/// Directory entries looked at before the read gives up on seeing the rest. It also bounds
+/// the count: a folder past it reports a floor, not the whole.
+pub(super) const SCAN_LIMIT: usize = 20_000;
 
 pub(super) struct Level {
     pub entries: Vec<ExplorerEntry>,
     pub truncated: bool,
+    /// Matching entries, counted before the cut to `TREE_LIMIT`.
+    pub total: u32,
+    /// The scan stopped at `SCAN_LIMIT`, so `total` is a floor.
+    pub total_at_least: bool,
 }
 
 fn child(dir: &str, name: &str) -> String {
@@ -42,6 +47,7 @@ pub(super) fn list(
     let wanted = |name: &str| needle.is_empty() || name.to_lowercase().contains(&needle);
     let mut entries: Vec<ExplorerEntry> = Vec::new();
     let mut truncated = false;
+    let mut at_least = false;
     // Hold the folder open while it is read, and check it is still the one inside the
     // worktree afterwards, so a parent swapped for a link in between lists nothing.
     let held = match guard.open_dir(&resolved.real) {
@@ -59,6 +65,7 @@ pub(super) fn list(
             for (seen, entry) in reader.flatten().enumerate() {
                 if seen >= SCAN_LIMIT {
                     truncated = true;
+                    at_least = true;
                     break;
                 }
                 let Ok(name) = entry.file_name().into_string() else {
@@ -150,9 +157,15 @@ pub(super) fn list(
             &b.name,
         ))
     });
+    let total = u32::try_from(entries.len()).unwrap_or(u32::MAX);
     if entries.len() > TREE_LIMIT {
         entries.truncate(TREE_LIMIT);
         truncated = true;
     }
-    Ok(Level { entries, truncated })
+    Ok(Level {
+        entries,
+        truncated,
+        total,
+        total_at_least: at_least,
+    })
 }

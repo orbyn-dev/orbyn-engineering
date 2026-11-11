@@ -21,8 +21,8 @@ describe("where a dragged tab lands", () => {
   });
 
   it("gives the store the index in the whole row, past tabs that are closed or folded away", () => {
-    const order: RightTab[] = ["diff", "browser", "activity", "side", "tools", "files"];
-    // Tools is closed and Files is folded: only diff, browser, activity and side are shown.
+    const order: RightTab[] = ["diff", "browser", "activity", "side", "tools", "file:%5B%22t%22%2C%22a.ts%22%5D"];
+    // Tools is closed and the file is folded: only diff, browser, activity and side are shown.
     const shown: RightTab[] = ["diff", "browser", "activity", "side"];
     expect(moveIndex(order, shown, "side", 0)).toBe(0);
     expect(moveIndex(order, shown, "diff", 3)).toBe(3);

@@ -249,12 +249,27 @@
   border-radius: 50%;
   background: var(--tint);
   box-shadow: 0 0 0 2px var(--color-surface);
-  color: #fff;
+  color: var(--pull-av-ink);
   font-size: 9px;
   font-weight: 500;
 }
+/* Initials are near-black on the light fills (designs v103). The Light fills that are dark keep white, which reads better on them. */
+:root {
+  --pull-av-ink: #0a0a0a;
+}
+:root:not([data-theme="dark"]) .project-color-gray,
+:root:not([data-theme="dark"]) .project-color-red,
+:root:not([data-theme="dark"]) .project-color-blue,
+:root:not([data-theme="dark"]) .project-color-indigo,
+:root:not([data-theme="dark"]) .project-color-violet,
+:root:not([data-theme="dark"]) .project-color-purple,
+:root:not([data-theme="dark"]) .project-color-fuchsia,
+:root:not([data-theme="dark"]) .project-color-pink,
+:root:not([data-theme="dark"]) .project-color-rose {
+  --pull-av-ink: #ffffff;
+}
 .pull-av + .pull-av {
-  margin-left: -6px;
+  margin-left: -2px;
 }
 .pull-av-team {
   border-radius: 5px;
@@ -318,9 +333,10 @@
   border-radius: var(--radius-sm);
   transform: translateY(-50%);
 }
+/* The row paints its own hover colour; the cluster stays clear so no patch shows on it. */
 .pull-rows > li:hover .pull-row-actions,
 .pull-rows > li:focus-within .pull-row-actions {
-  background: var(--color-rowHover);
+  background: transparent;
 }
 .pull-rows > li {
   position: relative;

@@ -488,6 +488,8 @@ impl Core {
             path: guard::clean(path, cfg!(windows))?,
             entries: level.entries,
             truncated: level.truncated,
+            total: level.total,
+            total_at_least: level.total_at_least,
             changes,
             read_only: target.reason().is_some(),
         })

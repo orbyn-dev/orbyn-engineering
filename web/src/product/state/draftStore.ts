@@ -11,6 +11,9 @@ interface DraftStore {
   /** A worktree the next new thread reuses, by its purpose. */
   reuseWorktree: string | null;
   setReuseWorktree(purpose: string | null): void;
+  /** The next new thread works in the project's own checkout, whatever the device default is. Taken once. */
+  currentCheckout: boolean;
+  setCurrentCheckout(on: boolean): void;
   /** Files dropped on a thread's row, on their way to its composer. */
   dropped: Record<string, File[]>;
   drop(threadId: string, files: File[]): void;
@@ -22,6 +25,8 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
   setFiles: (files) => set({ files }),
   reuseWorktree: null,
   setReuseWorktree: (reuseWorktree) => set({ reuseWorktree }),
+  currentCheckout: false,
+  setCurrentCheckout: (currentCheckout) => set({ currentCheckout }),
   dropped: {},
   drop: (threadId, files) =>
     set((state) => ({ dropped: { ...state.dropped, [threadId]: [...(state.dropped[threadId] ?? []), ...files] } })),
