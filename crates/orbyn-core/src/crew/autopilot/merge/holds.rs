@@ -79,12 +79,12 @@ impl Core {
             .map(|k| k.protected_paths)
             .unwrap_or_default();
         let tip = gitops::rev(&target.repo, &target.branch).await?;
-        let mut held = match self.merge_checks(task_id, &target.repo, &tip).await {
-            Ok(checks) => sensitive(paths, &protected, &checks),
-            Err(_) => vec!["the repository's checks could not be read".to_owned()],
-        };
-        if held.is_empty() {
-            held = sensitive(paths, &protected, &[]);
+        // The repository's checks and its files come from the branch's tip, a commit the crew did not write.
+        let checks = self.merge_checks(task_id, &target.repo, &tip).await.ok();
+        let tree = gitops::tree_files(&target.repo, &tip).await?;
+        let mut held = sensitive(paths, &protected, checks.as_deref().unwrap_or(&[]), &tree);
+        if checks.is_none() {
+            held.push("the repository's checks could not be read".to_owned());
         }
         Ok(held)
     }
@@ -130,16 +130,7 @@ impl Core {
             .owed
             .clone()
             .unwrap_or_else(|| owed_lanes(Risk::parse(&entry.risk).unwrap_or(Risk::High)));
-        let ran = |lane: &str| {
-            status["lanes"].as_array().into_iter().flatten().any(|l| {
-                l["lane"] == lane
-                    && l["rounds"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .any(|r| r["state"] == "passed")
-            })
-        };
+        let ran = |lane: &str| lane_ran(&status, lane);
         Ok(owed
             .iter()
             .find(|lane| !ran(lane))
@@ -174,4 +165,21 @@ impl Core {
         let held = self.merge_holds(&entry.task_id, target, &paths).await?;
         Ok((!held.is_empty()).then(|| format!("Held for a person: {}.", held.join("; "))))
     }
+}
+
+/// Whether the latest round of `lane` in a review status passed. An earlier passed round does not count once a later one has not.
+pub fn lane_ran(status: &serde_json::Value, lane: &str) -> bool {
+    status["lanes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|l| l["lane"] == lane)
+        .filter_map(|l| {
+            l["rounds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .max_by_key(|r| r["round"].as_u64().unwrap_or(0))
+        })
+        .any(|latest| latest["state"] == "passed")
 }

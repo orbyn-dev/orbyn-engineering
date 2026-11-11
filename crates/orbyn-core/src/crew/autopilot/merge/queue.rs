@@ -223,6 +223,14 @@ impl Core {
             .merge_entries(&repo, &branch, &["queued", "blocked"])?
         {
             if let Some(why) = self.merge_blocker(&entry, target)? {
+                // A change of reason is news; the same reason on every pass is not.
+                if entry.note.as_deref() != Some(why.as_str()) {
+                    self.merge_event(
+                        &entry.task_id,
+                        "merge_waiting",
+                        &json!({ "why": why, "blocked": true, "risk": entry.risk }),
+                    );
+                }
                 self.store
                     .set_merge_entry_state(&entry.task_id, "blocked", Some(&why))?;
                 outcomes.push(MergeOutcome::Blocked {

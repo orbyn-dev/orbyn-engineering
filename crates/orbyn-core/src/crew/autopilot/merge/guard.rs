@@ -9,8 +9,9 @@ use orbyn_contracts::CrewPathPattern;
 use crate::crew::autopilot::shell::simple_commands;
 use crate::crew::autopilot::tier::is_ci;
 use crate::crew::checks::covers;
+use crate::governance::policy::glob_match;
 
-/// The files and folders the check commands name, as repository-relative words (no `./`, no variable, not absolute).
+/// The words of the check commands that can name a file or folder, as repository-relative words (no `./`, no variable, not absolute).
 pub fn check_words(commands: &[String]) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     for command in commands.iter().flat_map(|c| simple_commands(c)) {
@@ -23,8 +24,6 @@ pub fn check_words(commands: &[String]) -> Vec<String> {
             {
                 continue;
             }
-            // `--file=x` style values are cut at the `=`.
-            let word = word.rsplit('=').next().unwrap_or(&word).to_owned();
             if !words.contains(&word) {
                 words.push(word);
             }
@@ -33,11 +32,96 @@ pub fn check_words(commands: &[String]) -> Vec<String> {
     words
 }
 
-/// Why a diff is held, in words; empty when nothing sensitive is touched.
+/// Config files each runner reads, by the program that runs it. A match is by file name, or by path for one with a folder.
+const RUNNER_CONFIGS: &[(&[&str], &[&str])] = &[
+    (
+        &["npm", "yarn", "pnpm", "npx", "bun"],
+        &["package.json", ".npmrc"],
+    ),
+    (
+        &["make", "gmake"],
+        &["Makefile", "makefile", "GNUmakefile", "*.mk"],
+    ),
+    (
+        &["pytest", "tox"],
+        &[
+            "conftest.py",
+            "pytest.ini",
+            "setup.cfg",
+            "tox.ini",
+            "pyproject.toml",
+        ],
+    ),
+    (
+        &["cargo", "rustc"],
+        &[
+            ".cargo/config.toml",
+            ".cargo/config",
+            "Cargo.toml",
+            "build.rs",
+            "rust-toolchain.toml",
+        ],
+    ),
+    (&["go"], &["go.mod", "go.work"]),
+    (&["jest"], &["jest.config.*", "package.json"]),
+    (
+        &["vitest"],
+        &["vitest.config.*", "vite.config.*", "package.json"],
+    ),
+    (&["just"], &["justfile", "Justfile", ".justfile"]),
+    (&["mvn"], &["pom.xml"]),
+    (
+        &["gradle", "gradlew"],
+        &["build.gradle*", "settings.gradle*"],
+    ),
+];
+
+/// The config patterns of the runners the checks use. `python -m pytest` counts as pytest.
+pub fn runner_configs(commands: &[String]) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
+    for command in commands.iter().flat_map(|c| simple_commands(c)) {
+        let mut names = vec![command.program.clone()];
+        if let Some(at) = command.args.iter().position(|a| a == "-m") {
+            names.extend(command.args.get(at + 1).cloned());
+        }
+        for (programs, configs) in RUNNER_CONFIGS {
+            if names.iter().any(|n| programs.contains(&n.as_str())) {
+                found.extend(configs.iter().copied());
+            }
+        }
+    }
+    found
+}
+
+fn config_matches(path: &str, pattern: &str) -> bool {
+    if pattern.contains('/') {
+        return path == pattern || path.ends_with(&format!("/{pattern}"));
+    }
+    let base = path.rsplit('/').next().unwrap_or(path);
+    glob_match(pattern, base)
+}
+
+/// Whether a word of a check command covers `path`: the same file, a folder it names (with or without a trailing slash), or a glob
+/// expanded against the tree at the trusted commit.
+fn word_covers(word: &str, path: &str, tree: &[String]) -> bool {
+    if word.contains(['*', '?', '[']) {
+        // `*` here matches across folders, so this holds more, never less. `?` and `[..]` are read as `*`.
+        let pattern: String = word
+            .chars()
+            .map(|c| if matches!(c, '?' | '[') { '*' } else { c })
+            .collect();
+        return tree.iter().any(|f| f == path) && glob_match(&pattern, path);
+    }
+    let folder = word.trim_end_matches('/');
+    !folder.is_empty() && (path == folder || path.starts_with(&format!("{folder}/")))
+}
+
+/// Why a diff is held, in words; empty when nothing sensitive is touched. `tree` is every file at the trusted commit.
 pub fn sensitive(
     paths: &[String],
     protected: &[CrewPathPattern],
     checks: &[String],
+    tree: &[String],
 ) -> Vec<String> {
     let mut why: Vec<String> = Vec::new();
     let mut note = |text: &str| {
@@ -46,6 +130,7 @@ pub fn sensitive(
         }
     };
     let named = check_words(checks);
+    let configs = runner_configs(checks);
     for path in paths {
         if path.starts_with(".orbyn/") {
             note("it changes .orbyn/, the crew's own rules");
@@ -56,22 +141,24 @@ pub fn sensitive(
         if is_ci(path) {
             note("it changes CI config");
         }
-        // A file a check names, or any file under a folder it names with a trailing slash.
-        if named
-            .iter()
-            .any(|w| w == path || w.ends_with('/') && path.starts_with(w.as_str()))
-        {
+        if named.iter().any(|w| word_covers(w, path, tree)) {
             note("it changes a file one of the repository's checks runs or reads");
+        }
+        if configs.iter().any(|c| config_matches(path, c)) {
+            note("it changes the config of a runner the repository's checks use");
         }
     }
     why
 }
 
-/// The review lanes a merge is owed: code review for anything that is not low, and security review for high.
+/// The review lanes a merge is owed: the general code review (`CODE_LANE`) for anything that is not low, and `SECURITY_LANE` for high.
 pub fn owed_lanes(risk: super::Risk) -> Vec<String> {
     match risk {
         super::Risk::Low => Vec::new(),
-        super::Risk::Medium => vec!["code".to_owned()],
-        super::Risk::High => vec!["code".to_owned(), "security".to_owned()],
+        super::Risk::Medium => vec![crate::crew::CODE_LANE.to_owned()],
+        super::Risk::High => vec![
+            crate::crew::CODE_LANE.to_owned(),
+            crate::crew::SECURITY_LANE.to_owned(),
+        ],
     }
 }

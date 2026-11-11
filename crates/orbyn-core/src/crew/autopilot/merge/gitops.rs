@@ -237,3 +237,13 @@ pub async fn repo_checks(repo: &Path, commit: &str) -> Result<Vec<String>> {
         .map_err(|e| CoreError::Invalid(format!("{file} is not valid: {e}")))?;
     Ok(rules.checks.into_iter().map(|c| c.run).collect())
 }
+
+/// Every file in the tree at `rev`, repository-relative: what a glob in a check command is expanded against.
+pub async fn tree_files(repo: &Path, rev: &str) -> Result<Vec<String>> {
+    let out = git_hardened(repo, &["ls-tree", "-r", "--name-only", "-z", rev]).await?;
+    Ok(String::from_utf8_lossy(&out)
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_owned)
+        .collect())
+}

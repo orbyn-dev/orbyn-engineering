@@ -38,6 +38,11 @@ pub const REVIEW_TOOLS: [&str; 4] = [REVIEW_TOOL, FINDING_TOOL, CHECK_FINDING_TO
 /// The most findings one review run files, and one independent second run (which only has to find one place).
 pub(super) const MOST_FINDINGS: usize = 100;
 pub(super) const MOST_SECOND_FINDINGS: usize = 10;
+/// The lanes the merge queue is owed by default (`merge::owed_lanes`): the general code review, which the review tool calls "correctness", for
+/// medium and high diffs, and a security review for high ones. They are lane tokens like any other, written by slice 4b when the lead names them.
+pub const CODE_LANE: &str = "correctness";
+pub const SECURITY_LANE: &str = "security";
+
 /// The most fix briefs one reviewed task is sent, and the most rounds one lane runs on it. Past either a person decides.
 pub(super) const MOST_FIXES: usize = 3;
 pub(super) const MOST_ROUNDS: u32 = 5;

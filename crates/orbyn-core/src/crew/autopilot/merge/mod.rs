@@ -10,6 +10,7 @@ mod risk;
 mod watch;
 
 pub use guard::{check_words, owed_lanes, sensitive};
+pub use holds::lane_ran;
 pub use queue::{MergeOutcome, MergeTarget};
 pub use review_queue::{ReviewAnswer, ReviewItem};
 pub use risk::{DiffFacts, Rate, RecentTotals, Risk, Scored, area_of, areas_of, score};

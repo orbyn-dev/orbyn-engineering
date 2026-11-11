@@ -308,6 +308,12 @@ async fn a_required_check_that_fails_on_the_combined_state_stops_the_merge() {
         .crew_queue_merge(&id, &m.target, NOW)
         .await
         .unwrap();
+    // The check names `src`, so this diff is held; a person looks and releases it, and the check still runs on the combined state.
+    assert_eq!(
+        m.w.core.store.merge_entry(&id).unwrap().unwrap().state,
+        "waiting"
+    );
+    m.w.core.crew_release_merge(&id).unwrap();
     let outcomes = m.process(NOW).await;
     assert!(
         matches!(&outcomes[..], [MergeOutcome::Rejected { why, .. }] if why.contains("combined state")),
@@ -484,6 +490,7 @@ async fn ci_config_and_protected_files_are_held_by_the_guard() {
                 "sh scripts/check.sh".to_owned(),
                 "git grep -q x -- docs/".to_owned(),
             ],
+            &[],
         )
     };
     assert!(
@@ -551,7 +558,7 @@ async fn the_lanes_owed_must_have_run_unless_a_person_released_it_and_a_release_
             .await
             .unwrap();
     assert!(
-        matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why.contains("code review has not run")),
+        matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why.contains("correctness review has not run")),
         "{outcomes:?}"
     );
     assert_eq!(
@@ -590,5 +597,125 @@ async fn the_lanes_owed_must_have_run_unless_a_person_released_it_and_a_release_
             .unwrap()
             .review_state,
         "looks_good"
+    );
+}
+
+#[tokio::test]
+async fn a_checks_runner_config_a_bare_folder_and_a_glob_are_held_too() {
+    use crate::crew::sensitive;
+    let held = |checks: &[&str], paths: &[&str], tree: &[&str]| {
+        let checks: Vec<String> = checks.iter().map(|c| (*c).to_owned()).collect();
+        let paths: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
+        let tree: Vec<String> = tree.iter().map(|p| (*p).to_owned()).collect();
+        !sensitive(&paths, &[], &checks, &tree).is_empty()
+    };
+    // The script a runner calls lives in the runner's config.
+    assert!(held(&["npm test"], &["package.json"], &[]));
+    assert!(held(&["npm test"], &["web/package.json"], &[]));
+    assert!(held(&["make check"], &["Makefile"], &[]));
+    assert!(held(&["make check"], &["rules.mk"], &[]));
+    assert!(held(&["pytest"], &["conftest.py"], &[]));
+    assert!(held(&["python3 -m pytest tests"], &["pyproject.toml"], &[]));
+    assert!(held(&["cargo test"], &[".cargo/config.toml"], &[]));
+    assert!(held(&["cargo test"], &["crates/x/build.rs"], &[]));
+    assert!(held(&["go test ./..."], &["go.mod"], &[]));
+    assert!(held(&["just check"], &["justfile"], &[]));
+    assert!(held(&["vitest run"], &["vitest.config.ts"], &[]));
+    // A bare word is a folder, and a glob is expanded against the tree.
+    assert!(held(&["pytest tests"], &["tests/test_a.py"], &[]));
+    assert!(held(
+        &["shellcheck scripts/*.sh"],
+        &["scripts/a.sh"],
+        &["scripts/a.sh", "scripts/b.sh"]
+    ));
+    assert!(held(&["sh ./scripts/check.sh"], &["scripts/check.sh"], &[]));
+    // Unrelated work, and a runner the checks do not use, is not held.
+    assert!(!held(&["npm test"], &["src/a.ts", "README.md"], &[]));
+    assert!(!held(&["cargo test"], &["package.json"], &[]));
+    assert!(!held(&["pytest tests"], &["src/a.py"], &[]));
+    assert!(!held(
+        &["shellcheck scripts/*.sh"],
+        &["docs/a.md"],
+        &["scripts/a.sh"]
+    ));
+}
+
+#[test]
+fn only_the_latest_round_of_a_lane_counts() {
+    use serde_json::json;
+    let status = |rounds: serde_json::Value| json!({ "lanes": [{ "lane": "correctness", "rounds": rounds }] });
+    let pass = |round: u32| json!({ "round": round, "state": "passed" });
+    let fail = |round: u32| json!({ "round": round, "state": "stopped" });
+    assert!(crate::crew::lane_ran(
+        &status(json!([pass(1)])),
+        "correctness"
+    ));
+    assert!(!crate::crew::lane_ran(
+        &status(json!([pass(1), fail(2)])),
+        "correctness"
+    ));
+    assert!(crate::crew::lane_ran(
+        &status(json!([fail(1), pass(2)])),
+        "correctness"
+    ));
+    assert!(!crate::crew::lane_ran(
+        &status(json!([pass(1)])),
+        "security"
+    ));
+}
+
+#[tokio::test]
+async fn a_lane_that_slice_4b_ran_satisfies_the_owed_check_and_a_block_is_one_event() {
+    let cell: Arc<OnceLock<String>> = Arc::new(OnceLock::new());
+    let main_name = cell.clone();
+    let w = super::review_support::crew(super::review_support::arc(move |n, root| {
+        if n > 0 {
+            return super::review_support::reviewed(Vec::new());
+        }
+        run_git(root, &["checkout", "-q", main_name.get().unwrap()]);
+        run_git(root, &["checkout", "-q", "-b", "work-0"]);
+        std::fs::write(root.join("src/feature.txt"), "feature\n").unwrap();
+        commit_all(root, "work 0");
+        Turn::Report(report("done"))
+    }))
+    .await;
+    let main = main_branch(&w.repo).await;
+    cell.set(main.clone()).unwrap();
+    w.core
+        .set_crew_autopilot_mode(&ModeScope::Default, Mode::Full)
+        .unwrap();
+    let id = w.built_work().await;
+    // The default owed lanes: the general code review (a medium diff).
+    let target = MergeTarget {
+        repo: w.repo.clone(),
+        branch: main.clone(),
+        owed: None,
+    };
+    w.core.crew_queue_merge(&id, &target, NOW).await.unwrap();
+    for pass in 1..=2 {
+        let outcomes = w
+            .core
+            .crew_process_merges(&target, NOW + pass)
+            .await
+            .unwrap();
+        assert!(
+            matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why.contains("correctness review has not run")),
+            "{outcomes:?}"
+        );
+    }
+    let blocked = super::autopilot_support::events(&w, &id, "merge_waiting");
+    assert_eq!(
+        blocked.len(),
+        1,
+        "the same block is not repeated on every pass"
+    );
+    assert_eq!(blocked[0].body["blocked"], true);
+    // The lane slice 4b writes, by the token the queue is owed, satisfies it.
+    let lanes = w.review(&id, &[crate::crew::CODE_LANE]).await;
+    w.until_state(&lanes[0], "passed").await;
+    let outcomes = w.core.crew_process_merges(&target, NOW + 3).await.unwrap();
+    assert!(
+        matches!(&outcomes[..], [MergeOutcome::Merged { .. }]),
+        "{outcomes:?}"
     );
 }
