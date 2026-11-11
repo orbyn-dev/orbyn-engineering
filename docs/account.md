@@ -297,13 +297,31 @@ A compromised device must not be able to make another one more permissive or run
 The wiring pull request ships `Off` and `LocalOnly`. `On` is a separate small change that links the Engine owner's
 written review of the threat model.
 
-**Real sign-in stays `Off` until all four hold:**
+**Real sign-in stays `Off` until all eight hold.** `LocalOnly` with throwaway accounts on the loopback stack is allowed
+now and does not wait for them.
 
-1. Items 1 and 2 of the second security review (the allowlist-only apply path and no escalation across devices) are in
-   this note.
-2. orbyn-engine#120 is merged.
-3. The "Confirm it's you" rule is built.
-4. The reviewer approves these documents once more.
+1. orbyn-engine#120 is merged: a recent sign-in is required to remove a device, sign out everywhere, turn two-factor
+   off or change protection.
+2. The Engine crate follow-up that refuses the four keys in both directions is merged and included in tag
+   `engine-v0.1.0`, and the app pins that tag. Until then the crate still lists `default_permission_mode` as a known
+   setting, which is safe only because the app never applies it.
+3. "Confirm it's you" is built and enforced inside `orbynd`, with a route-table guard so no new account-changing route
+   can skip it.
+4. Controls 1 to 7 and 5b of the [threat model](account-threat-model.md) are built and their checks pass:
+   - the allowlist-only apply test for all 42 non-allowlisted keys;
+   - the keybinding test;
+   - the per-adapter options test;
+   - the child-environment scrub tests;
+   - the snapshot tests: older, other-profile and wrong-version files are refused;
+   - the key-wipe check on sign-out, device removal and `Unauthorized`;
+   - the canary tests for logs and diagnostics.
+5. macOS: the keychain API and the Developer ID provisioning are settled and verified on a signed build, and the
+   release check shows hardened runtime without `get-task-allow` or `disable-library-validation`.
+6. Windows: the Account page says any program you run can act as this device, and the Designer's frames for that note
+   and for "Confirm it's you" are merged.
+7. Every engine on the receiving machine runs under that machine's own permission mode, whatever engine the synced
+   `default_engine` picks.
+8. The Engine reviewer approves these documents once more, this time against the built code.
 
 `LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
 the rule:
