@@ -1545,6 +1545,73 @@ in a `sandbox=""` frame (no scripts, no same origin, no forms or top navigation)
 document starts with a `default-src 'none'` CSP, so it cannot reach the app, its token,
 the API or the network.
 
+### Explorer
+
+The left explorer reads a project's worktrees and their files without a thread. It is a
+person's read-only view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
+and `.../worktrees/:worktree/file`, with no write, rename, delete or editor route; edits
+still go through a thread's file routes. `orbynd` only routes; Core
+(`project::explorer`) decides. The project must be trusted like any file route
+(`403 folder_untrusted`).
+
+- **Ids, not paths.** A worktree is named by an opaque id, `wt-` and 16 hex digits of a
+  digest of its real path. The id resolves only against `git worktree list` of that
+  project (a folder outside Git has one worktree, the folder itself), so another project's
+  id, a made-up one or a path in the id field is `404 worktree not found`. A miss reads the
+  list once more, since a worktree may be new. Two projects over the same repository
+  list the same worktrees; the user trusted both.
+- **A path inside a worktree** is a relative `/` path, empty for the root. It is refused
+  (`400 invalid_input`) by spelling when it is absolute, has a `..` part, a backslash or a control
+  character, is over 4,096 bytes, or has a part that names `.git` in any case; on Windows
+  also a drive or stream (`:`), `GIT~1`, trailing dots or spaces and device names. The
+  service decodes the query once, so `%2e%2e` is `..` and refused, and a doubly encoded one
+  is only an odd file name. The path then resolves with links followed and must land inside
+  the worktree's real path, not in Git's folder or file (a linked worktree's `.git` is a file),
+  not in Orbyn's data folder when that sits inside, and, for the library project, not in its
+  `repo/`. A file opens without following a final link and the path its handle names is
+  checked again where the system can say. A folder, device, pipe or socket is never opened, and
+  the last two are not listed.
+- **Only real members.** Git's records can be rewritten by anything that writes inside a `.git`
+  folder, so the list is trusted only where the folders agree with it, and it fails closed. A bare
+  repository, and the Git folder that `git worktree list` names as the main worktree for a
+  `--separate-git-dir` or `.git`-file repository, are no checkouts and are left out (the project's
+  folder stands in when its `.git` file points there). The main checkout's `.git` must be the common
+  directory or a file pointing at it. A linked worktree is read only when its `.git` is a file
+  pointing into the repository's `worktrees/` folder and that entry points back at it. A `prunable`
+  entry, or one whose `gitdir` was redirected, is listed read-only as `missing`, never read and never
+  given a status. With no common directory to check against, or when the project's own folder is not
+  exactly one of the members (a rewritten `commondir` or project `.git` file, or one naming an ancestor repository), nothing is shown (`404`). A Git folder that sets `core.worktree`, as a submodule's does, must name the project's folder. A `--separate-git-dir` repository has no such record to check, so a project whose `.git` file is rewritten to point at another repository's separate Git folder adopts that repository's worktrees: a documented limit whose precondition is a write to the project's `.git` file (tracked in #463).
+- **Known exposure.** Any worktree of the repository is served to a holder of the service token
+  once the project is trusted, including other sessions' worktrees and ones no thread uses. The
+  thread file routes already reach any thread's folder; the new reach is worktrees with no
+  thread. The trust check on the project is the boundary (tracked in #463).
+- **Secrets.** The app's policy hard-denies Git's folder and Orbyn's data (the service token
+  and every thread's records), and the explorer follows it. It adds no name list such as
+  `.env`: the checkout routes show those files to the person who trusted the folder, and the
+  explorer shows no more than they do. Ignored files are listed, marked `ignored`.
+- **A tree level** is one folder: folders first, then names, each case-insensitively, at most
+  1,000 entries, with `truncated` set when more matched (`filter` narrows by name, ignoring
+  case; at most 20,000 directory entries are looked at). A link is listed as a link and never
+  followed in the listing. Each entry carries its change (`modified`, `added`, `deleted`,
+  `renamed`, `untracked`, `conflicted`), `ignored`, and for a folder `has_changes`. A deleted file
+  is listed though it is gone from disk, and a folder of only deleted files is listed from them.
+- **A file** is text up to 4 MiB, `binary` (a NUL byte or bytes that are not UTF-8) with no
+  content, or `too_large` with its size and no content. Text carries a digest as `revision`.
+- **Letters come from one `git status` per worktree**, through the shared hardened Git runner
+  (no repository filter, converter or attribute runs; `--porcelain=v1 -z --untracked-files=normal --ignored=matching`), kept for 5 seconds and
+  shown for at most 30, with the change letters, ignored paths and dirty summary all read from
+  it. A status gives up after 20 seconds, at most two run at once per project, and a snapshot keeps at most 50,000 paths. A folder is opened without following a link and checked again after its entries are read; the entries themselves are still read by path, so a swap and undo between the two checks is narrowed, not closed. A tree read
+  with nothing kept waits 400 ms for Git, then answers with `changes: "pending"` and no letters,
+  and `data_changed` follows when they land. `changes` is `unavailable` outside Git or when Git
+  failed. The worktree list is kept 10 seconds and shown for at most 60; a listing never waits
+  for a status, so a summary not read yet is `null`.
+- **Read-only worktrees** are marked `read_only` with a reason: `missing` (the folder is gone
+  or Git calls it prunable; its tree is `404`), `locked` (`git worktree lock`) or `other_session`
+  (the asking thread, `?thread=`, differs from a thread that has a run going in it). Each
+  worktree lists its live threads by id and title.
+- **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
+  the project's and announces `explorer:<project>`.
+
 ## Renders
 
 An agent's page is stored in app data, never in the checkout:
@@ -1773,7 +1840,7 @@ therefore answer from the last known value and refresh in the background
   window showing that data reads it again. `what` is `pulls`, `pull:<project>:<number>`,
   `pull-people:<project>`, `forges`, `models:<engine>` (`models` after a change to every
   engine), `workspace`, `updates`, `limits:<engine>`, `tools:<thread>`,
-  `engine-tools:<engine>` or `health`. A read time or a measured latency that differs on
+  `engine-tools:<engine>`, `explorer:<project>` or `health`. A read time or a measured latency that differs on
   every read is not a change. The channel holds 256 events for a window that is slow to
   read, and a window skips what it missed, so `data_changed` is a hint: a window also reads
   again when it opens. `GET /api/updates/events` reads the status afresh for each frame,
@@ -1790,6 +1857,7 @@ therefore answer from the last known value and refresh in the background
 | `GET /api/updates` | 20 s | 60 s |
 | `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 2 min | 5 min |
 | `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 5 min |
+| `GET /api/projects/:id/worktrees`, a worktree's tree and file letters (one status per worktree) | 10 s list, 5 s status | 60 s list, 30 s status |
 | `GET /api/health/dependencies` | 60 s | 10 min |
 
 The times are named constants beside each read (`LIST_FRESH`, `PULL_MAX_AGE`, `STATUS_MAX_AGE`
@@ -2779,6 +2847,9 @@ every method, path and which routes need a credential.
 | `GET /api/diagnostics`, `POST /api/diagnostics/processes/:pid/stop` | `Diagnostics`, in memory only; a stop reaches only this service's own descendants |
 | `GET /api/projects`, `POST /api/projects/:id/trust` | Projects and folder trust |
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
+| `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
+| `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters; `400 invalid_input` for a refused path, `404` |
+| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only, no write route exists |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
