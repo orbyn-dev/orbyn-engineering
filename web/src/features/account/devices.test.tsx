@@ -55,7 +55,9 @@ describe("the devices", () => {
     expect(within(rows[1] as HTMLElement).getByRole("button", { name: /^Device menu/ })).toBeVisible();
     expect(within(rows[1] as HTMLElement).getByText("Orbyn Planner")).toBeVisible();
     expect(within(rows[2] as HTMLElement).getByText("Orbyn Engineering")).toBeVisible();
-    expect(within(rows[1] as HTMLElement).getByText(/^Trusted since .* · Seen /)).toBeVisible();
+    // "Trusted since" and nothing about activity: a device has no last-seen time.
+    expect(within(rows[1] as HTMLElement).getByText(/^Trusted since [^·]*· [^·]*$/)).toBeVisible();
+    expect(screen.queryByText(/Seen \d|Last seen|last active/i)).toBeNull();
     expect(screen.getByText(/Every trusted device can open all of your Orbyn data/)).toBeVisible();
     expect(screen.queryByText(/Too new/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Rename/ })).toBeNull();

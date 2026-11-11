@@ -16,6 +16,7 @@ pub mod apply;
 pub mod changes;
 pub mod codes;
 pub mod device_api;
+pub mod digits;
 pub mod flow;
 pub mod merge;
 pub mod policy;
@@ -30,7 +31,7 @@ mod fake;
 #[cfg(test)]
 mod tests;
 
-pub use api::{AccountApi, Backend, Password, SessionInfo, SignInOutcome};
+pub use api::{AccountApi, ApprovalDigits, Backend, Password, SessionInfo, SignInOutcome};
 pub use device_api::{DeviceApi, DeviceError, DeviceStatus, Version, ZoneSnapshot};
 pub use flow::{APPROVAL_LIFETIME, ConfirmFor, Confirmed};
 pub use status::{AccountStatus, PauseReason, SignOutReason, StatusHub, SyncState};

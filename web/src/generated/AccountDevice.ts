@@ -4,4 +4,4 @@ export type AccountDevice = { id: string, name: string, platform: string,
 /**
  * `planner` or `engineering`.
  */
-app: string, trusted_since: string, last_seen: string, current: boolean, };
+app: string, trusted_since: string, current: boolean, };

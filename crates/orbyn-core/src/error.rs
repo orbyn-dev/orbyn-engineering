@@ -180,8 +180,13 @@ impl CoreError {
                 "account_offline" => 503,
                 "rate_limited" => 429,
                 "wrong_password" | "invite_required" => 403,
-                "invalid_code" | "invalid_invite" | "sign_in_closed" => 422,
-                "deletion_scheduled" | "session_ended" | "account_gone" => 409,
+                "invalid_code" | "invalid_invite" | "sign_in_closed" | "weak_password"
+                | "invalid_digits" | "wrong_digits" => 422,
+                "deletion_scheduled"
+                | "session_ended"
+                | "account_gone"
+                | "request_not_allowed"
+                | "digits_locked" => 409,
                 _ => 502,
             },
             Self::SettingsConflict

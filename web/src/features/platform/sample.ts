@@ -25,7 +25,7 @@ export const samplePairing: PairingOffer = {
   code: "418 093",
   cells:
     "0000101100001011001010000001110001011010110111111111111011010110100011100111011100111001000101011010101111111100001011010",
-  devices: [{ name: "Sam's iPhone", lastSeen: "Last seen 2m ago" }],
+  devices: [{ name: "Sam's iPhone", detail: "iOS 18 · Trusted since today" }],
 };
 
 export const samplePhoneThreads: PhoneThread[] = [

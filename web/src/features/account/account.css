@@ -157,3 +157,26 @@
 .ac-facts dt { color: var(--color-muted); }
 .ac-facts dd { margin: 0; color: var(--color-text); }
 .ac-waiting { margin-bottom: 8px; }
+
+/* The six boxes for the digits typed on the new device (acct-device-enter-digits). */
+.ac-boxes { display: flex; gap: 8px; justify-content: center; margin: 2px 0; }
+.ac-box {
+  width: 40px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-background);
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+  color: var(--color-text);
+  font: 500 22px var(--font-mono, ui-monospace, monospace);
+  text-align: center;
+  caret-color: var(--color-text);
+}
+.ac-box:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--color-text); }
+.ac-boxes[data-bad] .ac-box { box-shadow: inset 0 0 0 1px var(--color-danger); }
+.ac-boxes[data-bad] .ac-box:focus-visible { box-shadow: inset 0 0 0 1.5px var(--color-danger); }
+.ac-tries { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0; font-size: 12.5px; line-height: 1.45; text-align: center; }
+.ac-tries .ac-bad { color: var(--color-danger); }
+.ac-tries .ac-left { color: var(--color-muted); }
+.ac-center { justify-content: center; text-align: center; }

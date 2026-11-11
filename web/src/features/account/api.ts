@@ -2,6 +2,7 @@
 // on loopback, and nowhere else; it is never kept here.
 import { request } from "../../api/client";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
+import type { AccountApproved } from "../../generated/AccountApproved";
 import type { AccountApprovalRequest } from "../../generated/AccountApprovalRequest";
 import type { AccountApprovalView } from "../../generated/AccountApprovalView";
 import type { AccountConfirmed } from "../../generated/AccountConfirmed";
@@ -22,11 +23,15 @@ const confirmed = (nonce: string): { headers: Record<string, string> } => ({ hea
 export const accountApi = {
   view: (signal?: AbortSignal) => request<AccountView>("GET", "/api/account", undefined, signal),
   checkInvite: (invite: string) => post("/sign-up/invite", { invite }),
-  /** Can take a few seconds when Orbyn asks this device for a short check first; `signal` cancels it. */
-  startSignUp: (invite: string, email: string, signal?: AbortSignal) => post("/sign-up/start", { invite, email }, signal),
+  /**
+   * The password step: it creates the account and emails the code, and sends the invite and the email with it because
+   * the earlier steps send nothing. It can take a few seconds when Orbyn asks this device for a short check first;
+   * `signal` cancels it.
+   */
+  startSignUp: (invite: string, email: string, password: string, signal?: AbortSignal) => post("/sign-up/start", { invite, email, password }, signal),
   resendCode: () => post("/sign-up/resend"),
+  /** The emailed code is the last step: it signs the new account in. */
   verifyCode: (code: string) => post("/sign-up/code", { code }),
-  register: (password: string) => post("/sign-up/register", { password }),
   signIn: (email: string, password: string) =>
     changed(request<AccountSignInResult>("POST", "/api/account/sign-in", { email, password })),
   cancelSignIn: () => post("/sign-in/cancel"),
@@ -39,10 +44,12 @@ export const accountApi = {
   /** Asks how this computer's own request stands; an allowed one signs in. Null when there is none. */
   pollApproval: (signal?: AbortSignal) => request<AccountApprovalView | null>("POST", "/api/account/sign-in/approval", {}, signal),
   approvals: (signal?: AbortSignal) => request<AccountApprovalRequest[]>("GET", "/api/account/approvals", undefined, signal),
-  /** Needs a confirmation for exactly this request. */
-  approve: (id: string, nonce: string) => changed(request<void>("POST", `/api/account/approvals/${encodeURIComponent(id)}/approve`, {}, undefined, confirmed(nonce))),
-  /** Refusing only closes the request, so it needs no password. */
-  deny: (id: string) => changed(request<void>("POST", `/api/account/approvals/${encodeURIComponent(id)}/deny`, { codes_differ: false })),
+  /** The six digits typed on this computer for its allowed request; only the right ones sign in. Never kept here. */
+  submitDigits: (digits: string) => changed(request<AccountApprovalView | null>("POST", "/api/account/sign-in/digits", { digits })),
+  /** Needs a confirmation for exactly this request. Answers with the six digits to show for the new device. */
+  approve: (id: string, nonce: string) => changed(request<AccountApproved>("POST", `/api/account/approvals/${encodeURIComponent(id)}/approve`, {}, undefined, confirmed(nonce))),
+  /** Refusing, or cancelling an allowed request, only closes it, so it needs no password. */
+  deny: (id: string) => changed(request<void>("POST", `/api/account/approvals/${encodeURIComponent(id)}/deny`, {})),
   /** Combining needs no password; the two choices that overwrite do (`connectUseDevice`, `connectUseAccount`). */
   connect: () => post("/connect"),
   connectUseDevice: (nonce: string) => changed(request<void>("POST", "/api/account/connect/use-device", {}, undefined, confirmed(nonce))),

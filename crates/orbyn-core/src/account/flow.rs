@@ -28,6 +28,11 @@ pub(in crate::account) use confirm::Grant;
 pub const CONFIRM_WINDOW: Duration = Duration::from_secs(10 * 60);
 /// Wrong two-factor codes in a row that close the sign-in.
 pub const SECOND_FACTOR_TRIES: u8 = 5;
+/// Wrong emailed codes in a row after which the core refuses every code until a new one is
+/// sent. The Engine counts too; this keeps the app bounded whatever the server does.
+pub const EMAIL_CODE_TRIES: u8 = 5;
+/// The shortest password a new account takes. Nothing else about it is checked.
+pub const PASSWORD_MIN_CHARS: usize = 12;
 
 /// The action a "Confirm it's you" confirmation is for. One confirmation is for exactly one
 /// action, and for one device when it removes a device.
@@ -69,6 +74,8 @@ pub(super) struct Inner {
     summary_pending: bool,
     /// Wrong codes so far, while a sign-in waits for its second factor.
     second_factor: Option<u8>,
+    /// Wrong emailed codes since the last code was sent, while a sign-up waits for its code.
+    email_code_wrong: u8,
     sync: Option<SyncHandle>,
     paused: bool,
     deletion_scheduled: bool,
@@ -253,7 +260,9 @@ impl AccountCenter {
         }
     }
 
-    // Sign-up
+    // Sign-up: the invite, the email, the password, the emailed code, done. The invite is checked
+    // alone; the email step sends nothing; the password step creates the account and emails the
+    // code; the code signs it in.
 
     pub async fn check_invite(&self, invite: &str) -> Result<()> {
         let backend = self.backend()?;
@@ -266,8 +275,9 @@ impl AccountCenter {
             .map_err(|e| refusal(&e))
     }
 
-    /// `invite` may be empty only while sign-up is open; the server decides.
-    pub async fn start_sign_up(&self, invite: &str, email: &str) -> Result<()> {
+    /// The password step. `invite` may be empty only while sign-up is open; the server decides.
+    /// The password is checked for its length only, passes through once and is never stored.
+    pub async fn start_sign_up(&self, invite: &str, email: &str, password: Password) -> Result<()> {
         let backend = self.backend()?;
         let invite = if invite.trim().is_empty() && !backend.account.invite_required() {
             String::new()
@@ -276,11 +286,19 @@ impl AccountCenter {
                 .ok_or_else(|| invalid("invalid_invite", "That invite code isn't right."))?
         };
         let email = clean_email(email)?;
+        if password.expose().chars().count() < PASSWORD_MIN_CHARS {
+            return Err(invalid(
+                "weak_password",
+                "Use at least 12 characters for the password.",
+            ));
+        }
         backend
             .account
-            .start_sign_up(&invite, &email)
+            .start_sign_up(&invite, &email, &password)
             .await
-            .map_err(|e| refusal(&e))
+            .map_err(|e| refusal(&e))?;
+        self.inner.lock().await.email_code_wrong = 0;
+        Ok(())
     }
 
     pub async fn resend_code(&self) -> Result<()> {
@@ -288,28 +306,36 @@ impl AccountCenter {
             .account
             .resend_code()
             .await
-            .map_err(|e| refusal(&e))
+            .map_err(|e| refusal(&e))?;
+        self.inner.lock().await.email_code_wrong = 0;
+        Ok(())
     }
 
+    /// The emailed code, the last step: it signs the new account in. Every failure of the code
+    /// answers `invalid_code` and never says why. After five wrong codes in a row none is tried
+    /// until a new one is sent.
     pub async fn verify_email_code(&self, code: &str) -> Result<()> {
         let backend = self.backend()?;
         let code = normalize_email_code(code)
             .ok_or_else(|| invalid("invalid_code", "That code isn't right."))?;
-        backend
-            .account
-            .verify_email_code(&code)
-            .await
-            .map_err(|e| refusal(&e))
-    }
-
-    pub async fn register(&self, password: Password) -> Result<()> {
-        let backend = self.backend()?;
-        let session = backend
-            .account
-            .register(&password)
-            .await
-            .map_err(|e| refusal(&e))?;
-        self.established(session, false).await
+        if self.inner.lock().await.email_code_wrong >= EMAIL_CODE_TRIES {
+            return Err(invalid("invalid_code", "That code isn't right."));
+        }
+        match backend.account.verify_email_code(&code).await {
+            Ok(session) => {
+                self.inner.lock().await.email_code_wrong = 0;
+                // A computer that has settings is asked how to join them, as after a sign-in: the done
+                // step leads to "Connect this computer's settings" (acct-signup-done).
+                self.established(session, true).await
+            }
+            Err(error) => {
+                if error == DeviceError::InvalidCode {
+                    let mut inner = self.inner.lock().await;
+                    inner.email_code_wrong = inner.email_code_wrong.saturating_add(1);
+                }
+                Err(refusal(&error))
+            }
+        }
     }
 
     // Sign-in
@@ -331,8 +357,10 @@ impl AccountCenter {
             Ok(SignInOutcome::AwaitingApproval(pending)) => {
                 self.inner.lock().await.approval = Some(Approval {
                     request_id: pending.request_id,
-                    digits: pending.digits,
                     asked: Instant::now(),
+                    allowed: false,
+                    tries_left: None,
+                    spent_tries: 0,
                     answer: None,
                 });
                 Ok(AccountSignInOutcome::AwaitingApproval)
