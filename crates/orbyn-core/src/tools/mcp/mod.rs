@@ -89,12 +89,10 @@ impl McpService {
         }
     }
 
-    /// Connects Orbyn's own tools, and the Crew group's follow of a worker's runs. Until then
-    /// they refuse rather than guess.
+    /// Connects Orbyn's own tools and Crew. Until then they refuse rather than guess.
     pub fn bind_host(&self, core: &Arc<Core>) {
         let _ = self.host.set(Arc::downgrade(core));
         core.runs.bind_crew(core);
-        core.recover_crew_tasks_soon();
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {
@@ -239,6 +237,11 @@ impl McpService {
                 }
             }
             other if other.starts_with("computer_") => {
+                if let Some(why) = (self.host.get().and_then(Weak::upgrade))
+                    .and_then(|core| core.crew_worker_refusal(binding, other, &args))
+                {
+                    return Ok(text_result(&why, true));
+                }
                 let Some(action) = computer_action(other, &args) else {
                     return Err((METHOD_NOT_FOUND, format!("Unknown tool {other}.")));
                 };

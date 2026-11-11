@@ -208,10 +208,23 @@ impl Core {
         };
         // N7, H9 and H11: if the worker changed a file the checks use, nothing is run. The
         // checks would be the worker's own. The reason does not name the file.
-        let before: Option<Snapshot> = run
-            .protected
-            .as_deref()
-            .and_then(|text| serde_json::from_str(text).ok());
+        // A key with protected paths needs the record taken when the task started. Without a
+        // usable one nothing can be compared, so nothing is run.
+        let before: Option<Snapshot> = if key.protected_paths.is_empty() {
+            None
+        } else {
+            Some(
+                run.protected
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .ok_or_else(|| {
+                        CrewError::new(
+                            ErrorCode::InvalidObject,
+                            "the protected files were not recorded when the task started",
+                        )
+                    })?,
+            )
+        };
         if let Some(before) = before {
             let touched = protected_changes(&before, worktree, &key.protected_paths);
             if !touched.is_empty() {

@@ -360,6 +360,11 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
             .store
             .set_crew_worker(&task.id, &thread.id, w.repo.to_str().unwrap(), Some(&base))
             .unwrap();
+        let record = crate::crew::protect::snapshot(&w.repo, &key.protected_paths);
+        w.core
+            .store
+            .set_crew_protected(&task.id, &serde_json::to_string(&record).unwrap())
+            .unwrap();
         for step in ["routed", "running"] {
             w.core.store.move_crew_task(&task.id, step, None).unwrap();
         }
@@ -469,4 +474,107 @@ async fn two_verifications_at_once_are_one() {
     let run = w.core.store.crew_run(&task.id).unwrap().unwrap();
     assert_eq!(run.failures, 1, "one failure, counted once");
     assert_eq!(w.core.store.crew_evidence(&task.id).unwrap().len(), 1);
+}
+
+/// `computer_*` could drive the app window that shows the lead's thread, so a worker gets none
+/// of it. The lead is not affected, and the permission and skill tools are the worker's own.
+#[tokio::test]
+async fn a_worker_cannot_drive_the_computer() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, _) = w.start(brief(json!({})), key()).await;
+    let id = started["task"].as_str().unwrap().to_owned();
+    let token = bind(&w.core, &w.worker(&id), "run-w");
+    for tool in ["computer_screenshot", "computer_click", "computer_type"] {
+        let (text, error) = w.raw(&token, tool, json!({})).await;
+        assert!(
+            error && text.contains("crew worker cannot use"),
+            "{tool}: {text}"
+        );
+        let (text, _) = w.raw(&w.lead_token, tool, json!({})).await;
+        assert!(!text.contains("crew worker cannot use"), "{tool}: {text}");
+    }
+    let (text, _) = w
+        .raw(&token, "skill_search", json!({ "query": "how" }))
+        .await;
+    assert!(!text.contains("crew worker cannot use"), "{text}");
+}
+
+/// A key with protected paths and no usable record of them from the start is not checked at
+/// all: the task waits for a person, and no check runs.
+#[tokio::test]
+async fn protected_paths_without_a_start_record_fail_closed() {
+    use crate::crew::tests::fake::stamper;
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let s = stamper();
+    for (n, record) in [(1, None), (2, Some("not json"))] {
+        let brief = s
+            .brief(&super::harness::brief(
+                json!({ "outcome": format!("Task {n}."), "files": [] }),
+            ))
+            .unwrap();
+        let key = s.answer_key(&super::harness::key(), &brief.id).unwrap();
+        let task = w
+            .core
+            .store
+            .create_crew_task(&brief, &key, &format!("run-closed-{n}"))
+            .unwrap();
+        w.core
+            .store
+            .add_crew_run(&task.id, &w.lead, &format!("worker-closed{n}"))
+            .unwrap();
+        let cwd = w.core.store.thread(&w.lead).unwrap().cwd;
+        w.core
+            .store
+            .set_crew_worker(&task.id, &format!("t{n}"), &cwd, None)
+            .unwrap();
+        if let Some(text) = record {
+            w.core.store.set_crew_protected(&task.id, text).unwrap();
+        }
+        for step in ["routed", "running"] {
+            w.core.store.move_crew_task(&task.id, step, None).unwrap();
+        }
+        w.core
+            .store
+            .begin_crew_verification(&task.id, "run-x", None)
+            .unwrap();
+        w.core.verify_crew_task(&task.id).await;
+        assert_eq!(w.task(&task.id).state, "needs_person");
+        assert!(
+            w.core.store.crew_evidence(&task.id).unwrap().is_empty(),
+            "no check ran"
+        );
+    }
+}
+
+/// Claims left by a process that died are cleared as the core opens, before any run can end.
+#[tokio::test]
+async fn a_dead_claim_is_cleared_when_the_core_opens() {
+    use crate::crew::tests::fake::stamper;
+    let dir = crate::testing::TempDir::new();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let id = {
+        let store = crate::store::Store::open(&data.join("orbyn.sqlite3"), "old").unwrap();
+        let s = stamper();
+        let brief = s
+            .brief(&super::harness::brief(json!({ "files": [] })))
+            .unwrap();
+        let key = s.answer_key(&super::harness::key(), &brief.id).unwrap();
+        let task = store.create_crew_task(&brief, &key, "run-dead").unwrap();
+        store.add_crew_run(&task.id, "lead", "worker-dead").unwrap();
+        for step in ["routed", "running"] {
+            store.move_crew_task(&task.id, step, None).unwrap();
+        }
+        store
+            .begin_crew_verification(&task.id, "run-x", None)
+            .unwrap();
+        assert!(store.claim_crew_verification(&task.id).unwrap());
+        task.id
+    };
+    let core =
+        crate::Core::open(crate::CoreConfig::new(data, "http://127.0.0.1:1".into())).unwrap();
+    assert!(
+        core.store.claim_crew_verification(&id).unwrap(),
+        "the claim was cleared"
+    );
 }

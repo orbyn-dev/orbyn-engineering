@@ -293,6 +293,9 @@ impl Core {
             crew_starts: tokio::sync::Mutex::new(()),
             _lock: lock,
         };
+        // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
+        // here, before any run can end and claim another.
+        core.store.clear_crew_claims()?;
         core.apply_login_preference()?;
         core.wire_changes();
         Ok(core)

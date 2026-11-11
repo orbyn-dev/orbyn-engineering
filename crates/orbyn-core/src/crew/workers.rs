@@ -26,6 +26,19 @@ pub(crate) fn allowed(tool: &str) -> bool {
 }
 
 impl Core {
+    /// Why `tool` is refused to the caller, if it is: for the tools outside `orbyn_*`, such as
+    /// `computer_*`, which could drive the app window that shows the lead's thread.
+    pub(crate) fn crew_worker_refusal(
+        &self,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> Option<String> {
+        self.refuse_for_crew_worker(binding, tool, args)
+            .err()
+            .map(|e| e.public_message())
+    }
+
     /// Refuses `tool` when the caller's thread works a Crew task, whatever the task's state.
     pub(crate) fn refuse_for_crew_worker(
         &self,

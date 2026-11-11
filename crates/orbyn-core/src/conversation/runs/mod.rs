@@ -369,9 +369,11 @@ impl RunManager {
         }
     }
 
-    /// Connects the Crew group, which follows a worker's runs to their end.
+    /// Connects the Crew group, which follows a worker's runs to their end and picks up the
+    /// tasks a restart left.
     pub(crate) fn bind_crew(&self, core: &Arc<crate::app::Core>) {
         let _ = self.crew.set(Arc::downgrade(core));
+        core.recover_crew_tasks_soon();
     }
 
     /// Tells the Crew group that a run ended. It looks the thread up itself and does nothing

@@ -5,7 +5,9 @@
 //! the files and asks git nothing, so nothing the worker can write in the repository
 //! (`.gitignore`, `update-index` flags, `.git/config`, `refs/replace`, loose objects,
 //! `objects/info/alternates`) can hide a change. Bytes are compared exactly: a CR added or
-//! removed is a change. A `.git` entry at any depth, such as a submodule's, is left out.
+//! removed is a change. Only the checkout's own `.git`, and a submodule's marker (a `.git`
+//! file starting `gitdir:`, or a `.git` folder with a `HEAD`), are left out: any other `.git` is a
+//! file like another, since a fixture loader might read it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -53,16 +55,27 @@ fn entry(path: &Path, meta: &std::fs::Metadata) -> Option<Entry> {
     })
 }
 
+/// A submodule's `.git`: a file that points at its git directory, or that directory itself.
+fn submodule_marker(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => path.join("HEAD").is_file(),
+        Ok(meta) if meta.is_file() => {
+            std::fs::read(path).is_ok_and(|bytes| bytes.starts_with(b"gitdir:"))
+        }
+        _ => false,
+    }
+}
+
 fn walk(dir: &Path, rel: &str, out: &mut Snapshot) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for item in entries.flatten() {
         let name = item.file_name().to_string_lossy().into_owned();
-        if name == ".git" {
+        let path = format!("{rel}/{name}");
+        if name == ".git" && submodule_marker(&item.path()) {
             continue;
         }
-        let path = format!("{rel}/{name}");
         // `symlink_metadata`: a link is recorded as a link, and never followed.
         let Ok(meta) = std::fs::symlink_metadata(item.path()) else {
             continue;
@@ -80,6 +93,10 @@ pub fn snapshot(root: &Path, patterns: &[CrewPathPattern]) -> Snapshot {
     let mut found = Snapshot::new();
     for pattern in patterns {
         let (base, tree) = pattern.parts();
+        // The checkout's own `.git` is never a protected file.
+        if base == ".git" || base.starts_with(".git/") {
+            continue;
+        }
         let at = root.join(base);
         let Ok(meta) = std::fs::symlink_metadata(&at) else {
             continue;

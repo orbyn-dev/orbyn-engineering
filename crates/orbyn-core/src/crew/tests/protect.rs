@@ -201,3 +201,39 @@ fn a_submodule_under_a_protected_path_is_unchanged_until_edited() {
     std::fs::write(root.join("tests/sub/lib.txt"), "edited\n").unwrap();
     assert_eq!(changes(&dir, &before), ["tests/sub/lib.txt"]);
 }
+
+/// Only the checkout's own `.git` and a submodule's marker are left out. Any other `.git` is a
+/// file like another, since a fixture loader might read it.
+#[test]
+fn a_git_folder_that_is_not_a_submodule_is_protected_like_any_file() {
+    let (dir, _) = repo();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("tests/.git")).unwrap();
+    std::fs::write(root.join("tests/.git/config"), "[core]\n").unwrap();
+    let before = snapshot(root, &protected());
+    assert!(before.contains_key("tests/.git/config"));
+    std::fs::write(root.join("tests/.git/config"), "[core]\n\tfixture = 1\n").unwrap();
+    std::fs::write(root.join("tests/.git/hidden.txt"), "x\n").unwrap();
+    assert_eq!(
+        changes(&dir, &before),
+        ["tests/.git/config", "tests/.git/hidden.txt"]
+    );
+    // A `.git` file that names a git directory, and a folder with a HEAD, are submodule markers.
+    let (dir, _) = repo();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("tests/m1")).unwrap();
+    std::fs::write(
+        root.join("tests/m1/.git"),
+        "gitdir: ../../.git/modules/m1\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("tests/m2/.git")).unwrap();
+    std::fs::write(root.join("tests/m2/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let before = snapshot(root, &protected());
+    assert!(before.keys().all(|p| !p.contains(".git")), "{before:?}");
+    std::fs::write(root.join("tests/m2/.git/HEAD"), "ref: refs/heads/other\n").unwrap();
+    assert!(changes(&dir, &before).is_empty());
+    // The checkout's own `.git` cannot be named as a protected path at all.
+    let own = [CrewPathPattern::new(".git/**").unwrap()];
+    assert!(snapshot(root, &own).is_empty());
+}

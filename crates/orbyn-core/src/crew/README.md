@@ -66,7 +66,9 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - A worker runs as the same OS user, so its shell can read the Orbyn SQLite store (the answer-key table and the
   lead's thread) or call the `orbyn` CLI. No tool refusal can stop that; it needs a sandbox that blocks reads of
   the app data folder (#441).
-- An attachment tool takes a thread id; a worker may name only its own.
+- An attachment tool takes a thread id; a worker may name only its own. `computer_*` and every `orbyn_*` tool
+  off the allow list are refused to a worker.
+- A key with protected paths and no record of them from the start fails closed (`needs_person`).
 
 ## Follow-ups
 
