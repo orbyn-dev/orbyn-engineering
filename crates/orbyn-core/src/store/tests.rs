@@ -758,6 +758,31 @@ fn newer_database_is_refused_unchanged() {
 }
 
 #[test]
+fn migration_versions_run_from_one_with_no_gap_through_the_account_owner() {
+    let versions: Vec<i64> = migrations::MIGRATIONS
+        .iter()
+        .map(|(version, _)| *version)
+        .collect();
+    assert!(
+        versions.windows(2).all(|pair| pair[1] == pair[0] + 1),
+        "a gap or a repeat"
+    );
+    assert_eq!(versions.first(), Some(&1));
+    // 33 and 34 are the Crew's; 35 adds the account's owning column.
+    for version in [33, 34, 35] {
+        assert!(
+            versions.contains(&version),
+            "migration {version} is missing"
+        );
+    }
+    let (_, owner) = migrations::MIGRATIONS
+        .iter()
+        .find(|(version, _)| *version == 35)
+        .unwrap();
+    assert!(owner.contains("account_sync") && owner.contains("account TEXT"));
+}
+
+#[test]
 fn migrations_apply_once() {
     let f = fixture();
     drop(Store::open(&f.path, "epoch-b").unwrap());

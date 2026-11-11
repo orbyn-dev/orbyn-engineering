@@ -6,8 +6,8 @@
 use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
-    AccountDevice, AccountReason, AccountSessionView, AccountSignInOutcome, AccountSyncKind,
-    AccountSyncView, AccountView,
+    AccountConnectState, AccountConnectSummary, AccountDevice, AccountReason, AccountSessionView,
+    AccountSignInOutcome, AccountSyncKind, AccountSyncView, AccountView,
 };
 
 use super::api::{Backend, Password, SessionInfo, SignInOutcome, refusal};
@@ -15,8 +15,12 @@ use super::codes::{normalize_email_code, normalize_invite};
 use super::device_api::DeviceError;
 use super::status::{PauseReason, SignOutReason, SyncState};
 use super::sync::{SyncHandle, SyncTiming};
-use super::{AccountCenter, AccountGate, settings_record};
+use super::{AccountCenter, AccountGate, FirstSync, settings_record};
+
+mod approval;
 use crate::error::{CoreError, Result};
+pub use approval::APPROVAL_LIFETIME;
+use approval::{Approval, Connect};
 
 /// How long a typed password counts for the sensitive actions.
 pub const CONFIRM_WINDOW: Duration = Duration::from_secs(10 * 60);
@@ -29,6 +33,11 @@ pub const SECOND_FACTOR_TRIES: u8 = 5;
 pub enum ConfirmFor {
     RemoveDevice(String),
     SignOutEverywhere,
+    /// Let the new device with this request id sign in.
+    ApproveDevice(String),
+    /// Join this computer's settings to the account's by this choice (never `Combine`, which
+    /// needs no password).
+    ConnectSettings(FirstSync),
 }
 
 /// Proof that the password was typed again, in the last ten minutes, for this one action.
@@ -49,6 +58,10 @@ pub(super) struct Grant {
 #[derive(Default)]
 pub(super) struct Inner {
     session: Option<SessionInfo>,
+    approval: Option<Approval>,
+    connect: Connect,
+    /// The first sync of a joined computer ended, and its summary has not been closed yet.
+    summary_pending: bool,
     /// Wrong codes so far, while a sign-in waits for its second factor.
     second_factor: Option<u8>,
     sync: Option<SyncHandle>,
@@ -132,6 +145,7 @@ impl AccountCenter {
                 None,
             ),
             SyncState::SigningIn => (AccountSyncKind::SigningIn, None, None, None),
+            SyncState::NotConnected => (AccountSyncKind::NotConnected, None, None, None),
             SyncState::Online => (AccountSyncKind::Online, None, None, None),
             SyncState::Syncing => (AccountSyncKind::Syncing, None, None, None),
             SyncState::Offline { since_unix } => {
@@ -167,6 +181,26 @@ impl AccountCenter {
                 device_name: session.device_name.clone(),
             }),
             needs_second_factor: inner.second_factor.is_some(),
+            approval: inner
+                .approval
+                .as_ref()
+                .map(|approval| self.approval_view(approval)),
+            connect: match inner.connect {
+                Connect::Connected => AccountConnectState::Connected,
+                Connect::Needed => AccountConnectState::Needed,
+                Connect::Declined => AccountConnectState::Declined,
+            },
+            connect_summary: (inner.summary_pending
+                && matches!(status.state, SyncState::Online)
+                && status.waiting == 0)
+                .then(|| AccountConnectSummary {
+                    synced: u32::try_from(
+                        self.store
+                            .account_field_count(settings_record::ZONE)
+                            .unwrap_or(0),
+                    )
+                    .unwrap_or(u32::MAX),
+                }),
             deletion_scheduled: inner.deletion_scheduled
                 || reason == Some(AccountReason::DeletionScheduled),
             sync: AccountSyncView {
@@ -238,7 +272,7 @@ impl AccountCenter {
             .register(&password)
             .await
             .map_err(|e| refusal(&e))?;
-        self.established(session).await
+        self.established(session, false).await
     }
 
     // Sign-in
@@ -250,12 +284,21 @@ impl AccountCenter {
         let outcome = backend.account.sign_in(&email, &password).await;
         match outcome {
             Ok(SignInOutcome::Signed(session)) => {
-                self.established(session).await?;
+                self.established(session, true).await?;
                 Ok(AccountSignInOutcome::Signed)
             }
             Ok(SignInOutcome::SecondFactor) => {
                 self.inner.lock().await.second_factor = Some(0);
                 Ok(AccountSignInOutcome::SecondFactor)
+            }
+            Ok(SignInOutcome::AwaitingApproval(pending)) => {
+                self.inner.lock().await.approval = Some(Approval {
+                    request_id: pending.request_id,
+                    digits: pending.digits,
+                    asked: Instant::now(),
+                    answer: None,
+                });
+                Ok(AccountSignInOutcome::AwaitingApproval)
             }
             Err(error) => {
                 self.status
@@ -273,7 +316,7 @@ impl AccountCenter {
             return Err(invalid("sign_in_closed", "Start signing in again."));
         }
         match backend.account.second_factor(code).await {
-            Ok(session) => self.established(session).await,
+            Ok(session) => self.established(session, true).await,
             Err(DeviceError::InvalidCode) => {
                 let mut inner = self.inner.lock().await;
                 let wrong = inner.second_factor.map_or(1, |n| n + 1);
@@ -299,12 +342,22 @@ impl AccountCenter {
         }
     }
 
-    /// Gives up the sign-in that waits for its code: the person is back at the password.
+    /// Gives up the sign-in that waits for its code or for a trusted device: the person is
+    /// back at the password, or at the Account page.
     pub async fn cancel_second_factor(&self) -> Result<()> {
-        self.backend()?;
+        let backend = self.backend()?.clone();
         let mut inner = self.inner.lock().await;
-        if inner.second_factor.take().is_some() {
+        let asked = inner.approval.take();
+        if inner.second_factor.take().is_some() || asked.is_some() {
             drop(inner);
+            if let Some(Approval {
+                request_id,
+                answer: None,
+                ..
+            }) = asked
+            {
+                let _ = backend.account.cancel_approval(&request_id).await;
+            }
             self.status
                 .update(|s| s.state = SyncState::SignedOut { reason: None });
         }
@@ -313,17 +366,53 @@ impl AccountCenter {
 
     /// Signed in: keep what the session knows and start the settings worker. Signing in is
     /// not a confirmation: each sensitive action asks for the password on its own.
-    async fn established(&self, session: SessionInfo) -> Result<()> {
-        let backend = self.backend()?.clone();
+    ///
+    /// `ask` is true for a sign-in: on a computer that has settings and never joined this account
+    /// before, sync waits until the person says how to join them. A new account has nothing to
+    /// join, and a computer that joined before simply carries on.
+    async fn established(&self, session: SessionInfo, ask: bool) -> Result<()> {
         let mut inner = self.inner.lock().await;
+        self.established_in(&mut inner, session, ask).await
+    }
+
+    async fn established_in(
+        &self,
+        inner: &mut Inner,
+        session: SessionInfo,
+        ask: bool,
+    ) -> Result<()> {
+        let backend = self.backend()?.clone();
+        let zone = settings_record::ZONE;
+        // This data folder joined another account before: that account's record and unsent
+        // changes must not follow the person into this one.
+        // The key is the email, compared without case or edge spaces, until the real client
+        // gives an account id (`SessionInfo` has none yet). A row from before the owner was
+        // recorded belongs to whoever signs in now.
+        if self.store.account_known(zone)? {
+            match self.store.account_owner(zone)? {
+                Some(owner) if owner.trim().eq_ignore_ascii_case(session.email.trim()) => {}
+                Some(_) => self.store.account_reset(zone)?,
+                None => self.store.account_claim(zone, &session.email)?,
+            }
+        }
+        let ask = ask && !self.store.account_known(zone)? && self.has_settings()?;
         if let Some(old) = inner.sync.take() {
             old.stop().await;
         }
+        let email = session.email.clone();
         inner.session = Some(session);
         inner.second_factor = None;
+        inner.approval = None;
         inner.paused = false;
         inner.deletion_scheduled = false;
-        inner.sync = Some(self.start_settings_sync(backend.device, SyncTiming::default())?);
+        if ask {
+            inner.connect = Connect::Needed;
+            self.status.update(|s| s.state = SyncState::NotConnected);
+        } else {
+            inner.connect = Connect::Connected;
+            inner.sync = Some(self.start_settings_sync(backend.device, SyncTiming::default())?);
+            self.store.account_claim(zone, &email)?;
+        }
         Ok(())
     }
 

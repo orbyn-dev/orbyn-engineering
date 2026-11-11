@@ -294,7 +294,7 @@ fn deleting_a_task_removes_its_objects() {
 }
 
 #[test]
-fn a_database_without_crew_tables_gets_them_in_30_to_35() {
+fn a_database_without_crew_tables_gets_them_in_30_to_36() {
     let dir = TempDir::new();
     let path = dir.path().join("at29.db");
     let conn = rusqlite::Connection::open(&path).unwrap();

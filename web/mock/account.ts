@@ -56,6 +56,7 @@ export function createAccountMock() {
     platform: "macos",
     ...(session ? { session: { email: session, device_name: "This computer" } } : {}),
     needs_second_factor: pending !== null,
+    connect: "connected",
     deletion_scheduled: deletionScheduled,
     sync: {
       kind: syncKind ?? (session ? (paused ? "paused" : "online") : "signed_out"),

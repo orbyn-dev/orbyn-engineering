@@ -184,6 +184,7 @@ pub(super) fn capture(
     staged: &[Staged],
     now_ms: i64,
     seed: bool,
+    seed_wins: bool,
 ) -> Result<usize> {
     let Some((device, mut hlc, true)) = clock(tx, zone)? else {
         return Ok(0);
@@ -206,7 +207,13 @@ pub(super) fn capture(
                 }
                 // What the person had before the account was on is older than anything
                 // the account holds, so a first sync never beats a newer account value.
-                let (wall_ms, counter) = if seed { (0, 0) } else { hlc.tick_at(now_ms) };
+                // The one exception is "Use this device's settings": then they are as new as an
+                // edit made now, and win everywhere.
+                let (wall_ms, counter) = if seed && !seed_wins {
+                    (0, 0)
+                } else {
+                    hlc.tick_at(now_ms)
+                };
                 let field = Field {
                     value: value.clone(),
                     stamp: Stamp {
@@ -276,7 +283,12 @@ impl Store {
 
     /// Turns capture on for `zone`. The first time, `seed` stages what the person has
     /// set so far, so a first sync combines it with what the account holds.
-    pub(crate) fn account_enable(&self, zone: &str, seed: &[Staged]) -> Result<()> {
+    pub(crate) fn account_enable(
+        &self,
+        zone: &str,
+        seed: &[Staged],
+        seed_wins: bool,
+    ) -> Result<()> {
         let touched = self.commit(|tx, _| {
             let known = clock(tx, zone)?;
             if known.is_some() {
@@ -290,7 +302,7 @@ impl Store {
                 "INSERT INTO account_sync (zone, capture, device) VALUES (?1, 1, ?2)",
                 params![zone, crate::util::new_id()],
             )?;
-            capture(tx, zone, seed, crate::util::unix_now_ms(), true)
+            capture(tx, zone, seed, crate::util::unix_now_ms(), true, seed_wins)
         })?;
         if touched > 0 {
             self.account_changes.send_modify(|count| *count += 1);
@@ -298,10 +310,74 @@ impl Store {
         Ok(())
     }
 
+    /// Whether this data folder has joined the zone before, so a sign-in does not ask again.
+    pub(crate) fn account_known(&self, zone: &str) -> Result<bool> {
+        Ok(clock(&self.reader(), zone)?.is_some())
+    }
+
+    /// The account the zone's local record belongs to, when one was recorded.
+    pub(crate) fn account_owner(&self, zone: &str) -> Result<Option<String>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT account FROM account_sync WHERE zone = ?1",
+                [zone],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Records which account the zone's local record belongs to.
+    pub(crate) fn account_claim(&self, zone: &str, account: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE account_sync SET account = ?2 WHERE zone = ?1",
+                params![zone, account],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Makes the zone look like one from before the owner was recorded.
+    #[cfg(test)]
+    pub(crate) fn account_forget_owner(&self, zone: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE account_sync SET account = NULL WHERE zone = ?1",
+                [zone],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Forgets the zone's local record, outbox and conflicts, as if it had never joined: the
+    /// settings themselves stay. A different account is signing in; the first one's unsent
+    /// changes must never go to it.
+    pub(crate) fn account_reset(&self, zone: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            for table in [
+                "account_sync",
+                "account_fields",
+                "account_outbox",
+                "account_conflicts",
+                "account_skipped",
+            ] {
+                tx.execute(&format!("DELETE FROM {table} WHERE zone = ?1"), [zone])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// How many settings the zone's local record holds.
+    pub(crate) fn account_field_count(&self, zone: &str) -> Result<usize> {
+        Ok(load_record(&self.reader(), zone)?.len())
+    }
+
     /// Queues fields outside a settings write, such as a keybinding saved to its file.
     pub(crate) fn account_stage(&self, zone: &str, staged: &[Staged]) -> Result<()> {
-        let touched =
-            self.commit(|tx, _| capture(tx, zone, staged, crate::util::unix_now_ms(), false))?;
+        let touched = self
+            .commit(|tx, _| capture(tx, zone, staged, crate::util::unix_now_ms(), false, false))?;
         if touched > 0 {
             self.account_changes.send_modify(|count| *count += 1);
         }

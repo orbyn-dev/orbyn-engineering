@@ -13,6 +13,8 @@ wire_enum! {
 pub enum AccountSyncKind {
     SignedOut,
     SigningIn,
+    /// Signed in; this computer's settings are not joined to the account's.
+    NotConnected,
     Online,
     Syncing,
     Offline,
@@ -83,6 +85,15 @@ pub struct AccountView {
     pub session: Option<AccountSessionView>,
     /// A sign-in waits for its two-factor code.
     pub needs_second_factor: bool,
+    /// This computer's own request to sign in, while a trusted device decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub approval: Option<AccountApprovalView>,
+    pub connect: AccountConnectState,
+    /// Set after the first sync of a joined computer, until the person closes the summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub connect_summary: Option<AccountConnectSummary>,
     pub deletion_scheduled: bool,
     pub sync: AccountSyncView,
 }
@@ -92,6 +103,93 @@ wire_enum! {
 pub enum AccountSignInOutcome {
     Signed,
     SecondFactor,
+    /// A trusted device has to allow this one: `approval` in the view has the code to compare.
+    AwaitingApproval,
+}
+}
+
+wire_enum! {
+/// Where a new device's request to sign in stands.
+pub enum AccountApprovalState {
+    /// Asked; waiting for a trusted device.
+    Waiting,
+    /// Allowed; finishing the sign-in.
+    Approved,
+    /// A trusted device said no.
+    Denied,
+    /// A trusted device said the codes were not the same.
+    CodesDiffer,
+    /// Nobody answered in ten minutes, counted on this computer's clock.
+    TimedOut,
+}
+}
+
+wire! {
+/// This computer's own request to sign in, while a trusted device decides.
+pub struct AccountApprovalView {
+    pub state: AccountApprovalState,
+    /// Six digits, shown in two groups: "418 207". The other device shows the same ones.
+    pub digits: String,
+    /// Seconds left of the ten minutes, while waiting.
+    pub expires_in_secs: u64,
+}
+}
+
+wire! {
+/// A new device asking a trusted one to let it in.
+pub struct AccountApprovalRequest {
+    pub id: String,
+    pub device_name: String,
+    /// `planner` or `engineering`.
+    pub app: String,
+    /// Roughly where, such as "Near Melbourne", when the Engine says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub near: Option<String>,
+    /// RFC 3339.
+    pub asked_at: String,
+    pub digits: String,
+    pub expires_in_secs: u64,
+}
+}
+
+wire! {
+/// "Codes don't match" closes the request with that reason; "Don't allow" without it.
+pub struct AccountDeny {
+    #[serde(default)]
+    pub codes_differ: bool,
+}
+}
+
+wire_enum! {
+/// How to join this computer's settings with the account's, the first time.
+pub enum AccountConnectPolicy {
+    /// One setting at a time; the account's newer value wins, and settings only this computer has go up.
+    Combine,
+    /// This computer's settings win everywhere.
+    UseDevice,
+    /// The account's settings win; this computer's are not uploaded.
+    UseAccount,
+}
+}
+
+wire_enum! {
+/// Whether this computer's settings are joined to the account's.
+pub enum AccountConnectState {
+    /// Nothing to ask: this computer has no settings of its own, or it is already joined.
+    Connected,
+    /// Signed in on a computer with settings: Orbyn asks once how to join them.
+    Needed,
+    /// The person chose Not now: settings stay on this computer until they connect.
+    Declined,
+}
+}
+
+wire! {
+/// What the first sync did.
+pub struct AccountConnectSummary {
+    /// Settings in the joined record.
+    pub synced: u32,
 }
 }
 
@@ -184,15 +282,22 @@ wire_enum! {
 pub enum AccountConfirmAction {
     RemoveDevice,
     SignOutEverywhere,
+    /// Let a new device sign in; `device_id` is the request's id.
+    ApproveDevice,
+    /// Join the settings by `use_device` or `use_account`; `policy` says which.
+    ConnectSettings,
 }
 }
 
 /// "Confirm it's you": the password again, for one sensitive action. `device_id` names the
-/// device for `remove_device`.
+/// device for `remove_device`, and the request for `approve_device`.
 #[derive(Debug, Deserialize)]
 pub struct AccountConfirm {
     pub password: SecretText,
     pub action: AccountConfirmAction,
     #[serde(default)]
     pub device_id: Option<String>,
+    /// For `connect_settings`: the choice this confirmation is for.
+    #[serde(default)]
+    pub policy: Option<AccountConnectPolicy>,
 }
