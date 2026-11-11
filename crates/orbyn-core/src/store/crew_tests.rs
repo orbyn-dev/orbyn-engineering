@@ -294,7 +294,7 @@ fn deleting_a_task_removes_its_objects() {
 }
 
 #[test]
-fn a_database_without_crew_tables_gets_them_in_30_to_32() {
+fn a_database_without_crew_tables_gets_them_in_30_to_34() {
     let dir = TempDir::new();
     let path = dir.path().join("at29.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -342,7 +342,9 @@ fn a_database_without_crew_tables_gets_them_in_30_to_32() {
         [
             "crew_answer_keys",
             "crew_briefs",
+            "crew_deliveries",
             "crew_evidence",
+            "crew_facts",
             "crew_gates",
             "crew_leases",
             "crew_messages",
@@ -489,7 +491,8 @@ fn a_worker_sees_only_messages_to_all_or_to_itself() {
             })
             .collect()
     };
-    assert_eq!(bodies("worker-01"), ["for A", "for everyone"]);
+    // The example's author is worker-01, so its own broadcast is not shown back to it.
+    assert_eq!(bodies("worker-01"), ["for A"]);
     assert_eq!(bodies("worker-02"), ["for B", "for everyone"]);
     assert_eq!(bodies("worker-03"), ["for everyone"]);
 }

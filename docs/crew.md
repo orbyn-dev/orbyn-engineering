@@ -336,6 +336,20 @@ Guards, all enforced in code:
 - No secrets or permissions travel in messages.
 - `crew_*` tools refuse after the run ends.
 
+- **As built (slice 4, differs from the plan):**
+  - The tools are `crew_post`, `crew_ask`, `crew_board_read` and `crew_board_write`, behind the Preview flag. The
+    core stamps author, id and run; a draft that names one is refused. Facts and messages pass the secret scan and
+    the answer-key check in and out. A message to the lead is not checked against the key.
+  - Delivery is recorded per recipient as `live` (the text was handed to the running turn's input, for an engine
+    that takes input mid-turn), `next_turn` (queued), `held` or `failed`. Only fake engines ran, so "live" is not
+    yet tested against real Claude or Codex, which may read it after the tool call it is in. A worker that is
+    being verified or waits for a person is not started by a message: it is `held` and goes out with the next
+    retry prompt. The lead is always queued, never steered.
+  - The hop count is H4 as written: a lead message to a member starts every pair of that member again. The count
+    is read from the stored messages. The lead is told once per distinct refusal by a message from the core.
+  - Sizes: a body up to 4000 characters, a fact value up to 8 KiB, 128 keys per board. A repo rule can lower the
+    exchange and post limits through the bus, but no rule file is read yet.
+
 **Isolation**
 
 - A writing worker gets its own worktree through the existing worktree handoff.

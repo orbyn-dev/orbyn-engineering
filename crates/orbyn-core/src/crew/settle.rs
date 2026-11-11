@@ -176,6 +176,8 @@ impl Core {
         if let Err(error) = self.release_crew_leases(&task.id) {
             tracing::warn!(%error, "could not release a crew task's leases");
         }
+        // A `crew_ask` waiting for this run's member stops waiting (H7).
+        self.crew_bus.wake_all();
         let run = self.store.crew_run(&task.id).ok().flatten();
         if let Some(run) = &run
             && let Some(active) = run
@@ -348,6 +350,7 @@ impl Core {
             .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no run"))?;
         let thread = run
             .worker_thread_id
+            .clone()
             .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no worker"))?;
         let needles = match self.store.crew_answer_key(&task.id).map_err(internal)? {
             Some(key) => key_needles(&key),
@@ -359,8 +362,12 @@ impl Core {
         } else {
             text
         };
+        // Messages from other members that arrived while the worker was not in a turn go with
+        // this prompt, each already checked the way a live one is.
+        let held = self.take_held_messages(task, &run);
+        let text = format!("{text}{held}");
         self.runs
-            .enqueue(&thread, text, &[])
+            .enqueue(&thread, &text, &[])
             .map(|_| ())
             .map_err(internal)
     }
