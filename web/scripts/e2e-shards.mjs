@@ -64,7 +64,8 @@ function update(dir) {
   for (const name of reports) {
     const report = JSON.parse(readFileSync(join(dir, name), "utf8"));
     for (const top of report.suites ?? []) {
-      const file = posix(relative(web, join(report.config.rootDir, top.file)));
+      // A report names each file relative to its testDir, which is e2e/.
+      const file = posix(join("e2e", top.file));
       for (const ms of durations(top)) totals[file] = (totals[file] ?? 0) + ms / 1000;
     }
   }
