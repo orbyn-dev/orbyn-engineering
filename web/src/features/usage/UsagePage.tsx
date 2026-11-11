@@ -106,6 +106,19 @@ export function UsagePage() {
     }
   };
 
+  // Asks one engine and shows what the page now holds; the other engines are not asked.
+  const retry = async (engine: string) => {
+    try {
+      await api.engineLimits(engine, true);
+    } catch {
+      /* the page reads the failure again below */
+    }
+    void limits.reload();
+  };
+  const check = async () => {
+    await Promise.all([useWorkspace.getState().refreshEngines(), refresh()]);
+  };
+
   const providers = usage.data?.engines ?? [];
   const pending = metric === "limits" ? refreshing : usage.pending;
 
@@ -180,7 +193,7 @@ export function UsagePage() {
           limits.status === "error" ? (
             <ErrorState title="Couldn't load limits" failure={limits.error} onRetry={limits.reload} />
           ) : limits.status === "ready" && limits.data ? (
-            <LimitsView data={limits.data} nameOf={nameOf} engines={engines} onCheck={() => void refresh()} />
+            <LimitsView data={limits.data} nameOf={nameOf} engines={engines} onCheck={() => void check()} onRetry={(engine) => void retry(engine)} />
           ) : limitsSlow ? (
             <div className="usage-body">
               <p className="usage-note" role="status">

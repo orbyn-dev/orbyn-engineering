@@ -10,6 +10,7 @@
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
 //               { do: "offline" }                             the device loses its network
+//   width     the window width in px when the screen is drawn narrow (default 1400)
 //   wait      ms to wait after load, for states that show only after a delay (default 1500)
 // Only data and a few verbs: nothing here imports the app. Add a screen by adding an entry, and its id to docs/match-kit.md.
 
@@ -118,15 +119,13 @@ export const FRAMES = {
   "usage-claude-windows": { route: "#/usage", scenario: "limits-claude", steps: [click("tab", "Limits")] },
   "usage-claude-windows-unavailable": { route: "#/usage", scenario: "limits", steps: [click("tab", "Limits")] },
   "usage-claude-windows-loading": { route: "#/usage", scenario: "limits", pre: [{ route: "**/api/limits*", delay: 20000 }], steps: [click("tab", "Limits")], wait: 900 },
+  "usage-claude-windows-narrow": { route: "#/usage", scenario: "limits", width: 640, steps: [click("tab", "Limits")] },
   "usage-claude-windows-near": { route: "#/usage", scenario: "limits-near", steps: [click("tab", "Limits")] },
   "usage-claude-windows-reached": { route: "#/usage", scenario: "limits-reached", steps: [click("tab", "Limits")] },
   "usage-claude-windows-signedout": { route: "#/usage", scenario: "limits-signedout", steps: [click("tab", "Limits")] },
   "usage-providers": { route: "#/usage", scenario: "limits-providers", steps: [click("tab", "Limits")] },
-  "usage-providers-error": {
-    route: "#/usage",
-    scenario: "limits-error",
-    steps: [click("tab", "Limits"), click("button", "Refresh limits")],
-  },
+  "usage-providers-error": { route: "#/usage", scenario: "limits-error", steps: [click("tab", "Limits")] },
+
 
   // Settings: one page for each section.
   "s-general": { route: "#/settings/general" },

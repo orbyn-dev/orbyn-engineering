@@ -1182,7 +1182,7 @@ export function engineTools(engine: string): EngineTools {
 }
 
 /** What GET /api/limits answers on the Limits scenarios: only Codex gives a window (the driver's own Claude windows are never drawn). */
-export function limits(scenario: string, read: number, checkedAt: string): LimitsOverview {
+export function limits(scenario: string, checkedAt: string): LimitsOverview {
   const window = (id: string, label: string, minutes: number, used: number, resetsInSeconds: number) => ({
     id, label, used_percent: used, window_minutes: minutes, resets_at: iso(resetsInSeconds),
   });
@@ -1200,10 +1200,7 @@ export function limits(scenario: string, read: number, checkedAt: string): Limit
     case "limits-signedout":
       return { pooled: [], engines: [claude], unavailable: [{ engine: "codex", reason: "Not signed in." }] };
     case "limits-error":
-      // The first read answers; every read after it fails, as a screen opened and then refreshed does.
-      return read === 1
-        ? { pooled: [], engines: [codex(weekly)], unavailable: [] }
-        : { pooled: [], engines: [], unavailable: [{ engine: "codex", reason: "The engine did not answer." }] };
+      return { pooled: [], engines: [], unavailable: [{ engine: "codex", reason: "The engine did not answer." }] };
     case "limits-claude":
       return { pooled: [], engines: [claude], unavailable: [] };
     case "limits-providers":

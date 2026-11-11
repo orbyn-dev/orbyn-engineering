@@ -323,6 +323,8 @@ export const api = {
   usage: (days: number, signal?: AbortSignal) =>
     request<UsageReport>("GET", `/api/usage?days=${days}`, undefined, signal),
   refreshUsage: (days: number) => request<UsageReport>("POST", `/api/usage/refresh?days=${days}`),
+  engineLimits: (engine: string, force: boolean, signal?: AbortSignal) =>
+    request<EngineLimits>("GET", `/api/engines/${q(engine)}/limits${force ? "?force=true" : ""}`, undefined, signal),
   limits: (force: boolean, signal?: AbortSignal) =>
     request<LimitsOverview>("GET", `/api/limits${force ? "?force=true" : ""}`, undefined, signal),
   /** `refresh` reads now, whatever the service has kept, for a check the person asked for. */

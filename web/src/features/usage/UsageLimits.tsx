@@ -35,20 +35,13 @@ export function resetText(iso: string | null, now = Date.now()): { sub: string; 
   return { sub: `Resets in ${left}`, at: `Resets ${two(at.getHours())}:${two(at.getMinutes())}` };
 }
 
-/** What Codex last gave, kept so a failed read can show it dimmed with its time (usage-providers-error). */
-const lastRead = new Map<string, { percent: number; at: number }>();
+/** The tile letter: the first letter, except where the design disambiguates. */
+const TILE: Record<string, string> = { codex: "X", "cursor-agent": "Cu" };
 
-/** Forgets what was last read. For tests. */
-export function forgetLastLimits() {
-  lastRead.clear();
-}
-
-const clock = (at: number) => `${two(new Date(at).getHours())}:${two(new Date(at).getMinutes())}`;
-
-function Tile({ name }: { name: string }) {
+function Tile({ id, name }: { id: string; name: string }) {
   return (
     <span className="limit-tile" aria-hidden>
-      {name.slice(0, 1).toUpperCase()}
+      {TILE[id] ?? name.slice(0, 1).toUpperCase()}
     </span>
   );
 }
@@ -107,10 +100,10 @@ function WindowRow({ name, used, resets }: { name: string; used: number; resets:
   );
 }
 
-function ProviderRow({ name, note, tone, children }: { name: string; note: string; tone?: "failed"; children: ReactNode }) {
+function ProviderRow({ id, name, note, tone, children }: { id: string; name: string; note: string; tone?: "failed"; children: ReactNode }) {
   return (
     <div className="limit-prow">
-      <Tile name={name} />
+      <Tile id={id} name={name} />
       <span>
         <b>{name}</b>
         <small data-tone={tone}>{note}</small>
@@ -125,12 +118,14 @@ interface LimitsViewProps {
   nameOf(engine: string): string;
   /** The installed engines, so an engine with no answer still gets its row. */
   engines?: readonly EngineStatus[] | null;
-  /** Asks the engines again. */
+  /** Reads the engine statuses and the limits again. */
   onCheck?(): void;
+  /** Asks one engine again. */
+  onRetry?(engine: string): void;
 }
 
 /** The Limits tab: a group per engine that reports one, and a row for each provider that does not (usage-claude-windows*, usage-providers*). */
-export function LimitsView({ data, nameOf, engines, onCheck }: LimitsViewProps) {
+export function LimitsView({ data, nameOf, engines, onCheck, onRetry }: LimitsViewProps) {
   const known = new Map((engines ?? []).map((engine) => [engine.id, engine]));
   const reported = new Map<string, EngineLimits>(data.engines.map((entry) => [entry.engine, entry]));
   const failed = new Set(data.unavailable.map((entry) => entry.engine));
@@ -139,12 +134,14 @@ export function LimitsView({ data, nameOf, engines, onCheck }: LimitsViewProps) 
   const claude = present("claude");
   const codex = present(WINDOW_ENGINE);
   const codexWindows = reported.get(WINDOW_ENGINE)?.windows ?? [];
-  // A window the engine just gave proves it is signed in, whatever its status last said.
-  const signedOut = codex && codexWindows.length === 0 && known.get(WINDOW_ENGINE)?.auth === "logged_out";
+  // Signed out wins over any window in the answer: the service keeps a read per engine, so it can outlive a sign-out.
+  const signedOut = codex && known.get(WINDOW_ENGINE)?.auth === "logged_out";
   const codexFailed = codex && !signedOut && failed.has(WINDOW_ENGINE);
-  if (codexWindows.length > 0 && !codexFailed) {
-    lastRead.set(WINDOW_ENGINE, { percent: Math.max(...codexWindows.map((entry) => entry.used_percent)), at: Date.now() });
-  }
+  // Claude Code beside a calm Codex gets the short line; alone, or beside a window at its cap, the full one.
+  const nearCap = codexWindows.some((entry) => entry.used_percent >= 90);
+  const claudeNote = codex && !codexFailed && !nearCap
+    ? `${nameOf("claude")} doesn\u2019t report one.`
+    : `${nameOf("claude")} doesn\u2019t report one. Usage and cost are on the Usage tab.`;
   const others = [
     ...new Set([
       ...(engines ?? []).filter((engine) => engine.installed).map((engine) => engine.id),
@@ -163,7 +160,7 @@ export function LimitsView({ data, nameOf, engines, onCheck }: LimitsViewProps) 
       {claude ? (
         <section className="limit-group" aria-label={title("claude")}>
           <h2>{title("claude")}</h2>
-          <NotReportedRow label="Subscription window" note={`${nameOf("claude")} doesn’t report one. Usage and cost are on the Usage tab.`} />
+          <NotReportedRow label="Subscription window" note={claudeNote} />
         </section>
       ) : null}
       {codex && !codexFailed ? (
@@ -203,25 +200,16 @@ export function LimitsView({ data, nameOf, engines, onCheck }: LimitsViewProps) 
             provider{"’"}s quota endpoint itself, so a provider with no such route says so.
           </p>
           {codexFailed ? (
-            <ProviderRow
-              name={nameOf(WINDOW_ENGINE)}
-              tone="failed"
-              note={`Couldn’t read the limit.${lastRead.has(WINDOW_ENGINE) ? ` Last read ${clock(lastRead.get(WINDOW_ENGINE)!.at)}.` : ""}`}
-            >
-              {lastRead.has(WINDOW_ENGINE) ? (
-                <span className="limit-bar" data-dim aria-hidden>
-                  <i style={{ width: `${Math.min(100, Math.round(lastRead.get(WINDOW_ENGINE)!.percent))}%` }} />
-                </span>
-              ) : null}
-              {onCheck ? (
-                <Button small onClick={onCheck}>
+            <ProviderRow id={WINDOW_ENGINE} name={nameOf(WINDOW_ENGINE)} tone="failed" note={"Couldn\u2019t read the limit."}>
+              {onRetry ? (
+                <Button small onClick={() => onRetry(WINDOW_ENGINE)}>
                   Try again
                 </Button>
               ) : null}
             </ProviderRow>
           ) : null}
           {others.map((id) => (
-            <ProviderRow key={id} name={nameOf(id)} note="No supported route yet">
+            <ProviderRow key={id} id={id} name={nameOf(id)} note="No supported route yet">
               <Status>Not reported</Status>
             </ProviderRow>
           ))}
