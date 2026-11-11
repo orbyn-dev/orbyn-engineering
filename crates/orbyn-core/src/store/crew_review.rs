@@ -3,11 +3,11 @@
 //! Nothing here decides anything: whether a finding is confirmed is a Gate (`finding_check`),
 //! written by the core under the reviewed task.
 
-use orbyn_contracts::{CrewObject, Finding};
+use orbyn_contracts::{CrewObject, Finding, Gate};
 use rusqlite::{OptionalExtension, Row, params};
 
 use super::Store;
-use super::crew::{belongs_to, checked, find_task, read_object};
+use super::crew::{belongs_to, checked, find_task, insert_object, read_object};
 use crate::crew::lifecycle::is_final;
 use crate::error::{CoreError, Result};
 use crate::util::now;
@@ -317,5 +317,50 @@ impl Store {
             .fixes_where("fix_task_id = ?1", fix_task_id)?
             .into_iter()
             .next())
+    }
+
+    /// Stores a core Gate for a finding, only if the finding has no `finding_check` Gate yet, in one transaction, so two checks
+    /// racing cannot write a Confirmed and an Unconfirmed one. `Ok(false)` when it already has one.
+    pub fn add_finding_gate_once(&self, task_id: &str, gate: &Gate) -> Result<bool> {
+        let object = CrewObject::Gate(gate.clone());
+        let body = checked(&object)?;
+        self.commit(|tx, _| {
+            let taken: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM crew_gates WHERE task_id = ?1 AND stage = 'finding_check'
+                 AND json_extract(body, '$.subject') = ?2",
+                params![task_id, gate.subject.as_str()],
+                |row| row.get(0),
+            )?;
+            if taken > 0 {
+                return Ok(false);
+            }
+            insert_object(tx, task_id, &object, &body)?;
+            Ok(true)
+        })
+    }
+
+    /// Takes a fix back when its task never started, so a refused fix does not use up the finding's one.
+    pub fn remove_crew_fix(&self, finding_id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute("DELETE FROM crew_fixes WHERE finding_id = ?1", [finding_id])?;
+            Ok(())
+        })
+    }
+
+    /// The repros kept for the findings of the crew's task `subject_id`.
+    pub fn crew_repros_of(&self, subject_id: &str) -> Result<Vec<FindingRepro>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT finding_id, subject_id, repro FROM crew_finding_repros WHERE subject_id = ?1 ORDER BY rowid",
+        )?;
+        Ok(statement
+            .query_map([subject_id], |row| {
+                Ok(FindingRepro {
+                    finding_id: row.get(0)?,
+                    subject_id: row.get(1)?,
+                    repro: row.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
     }
 }

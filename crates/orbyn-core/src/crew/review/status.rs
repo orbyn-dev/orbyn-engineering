@@ -82,7 +82,19 @@ impl Core {
     /// The review of finished work, as the lead reads it.
     pub fn review_status(&self, subject: &str) -> Result<Value, CrewError> {
         let reviews = self.store.crew_reviews_of(subject).map_err(internal)?;
-        let findings = self.store.crew_findings_of(subject).map_err(internal)?;
+        // What an independent second review filed is evidence for a check, not a finding of the lane.
+        let second_runs: Vec<&str> = reviews
+            .iter()
+            .filter(|r| r.role == "finding_check")
+            .map(|r| r.task_id.as_str())
+            .collect();
+        let findings: Vec<_> = self
+            .store
+            .crew_findings_of(subject)
+            .map_err(internal)?
+            .into_iter()
+            .filter(|f| !second_runs.contains(&f.task_id.as_str()))
+            .collect();
         let fixes = self.store.crew_fixes_of(subject).map_err(internal)?;
         let gates = self.store.crew_gates(subject).map_err(internal)?;
 
@@ -132,16 +144,53 @@ impl Core {
                 s["finding"] == finding && matches!(s["state"].as_str(), Some(state) if !crate::crew::lifecycle::is_final(state))
             })
         };
+        let state_of = |task: &str| {
+            self.store
+                .crew_task(task)
+                .ok()
+                .flatten()
+                .map_or_else(String::new, |t| t.state)
+        };
+        // A place is a lane and a file: a reworded claim is the same place. It blocks once a finding there is confirmed,
+        // and stops blocking only when a fix that names it, and whose key proves the file changed, has passed and no later
+        // finished round reports the place again. A model's silence clears nothing.
+        let place =
+            |f: &crate::store::StoredFinding| (f.lane.clone(), f.finding.path.as_str().to_owned());
         let mut shown = Vec::new();
         let mut blocked = false;
         for stored in &findings {
-            let own = decision(stored.finding.id.as_str());
-            // The same finding of another round that was confirmed stands for this one.
-            let carried = findings
+            let here = place(stored);
+            let cluster: Vec<&crate::store::StoredFinding> =
+                findings.iter().filter(|o| place(o) == here).collect();
+            let confirmed = cluster
                 .iter()
-                .filter(|o| o.lane == stored.lane && o.fingerprint == stored.fingerprint)
                 .any(|o| decision(o.finding.id.as_str()) == Some(GateDecision::Confirmed));
-            let check = match (own, carried) {
+            let place_fixes: Vec<&crate::store::CrewFix> = fixes
+                .iter()
+                .filter(|f| {
+                    cluster
+                        .iter()
+                        .any(|o| o.finding.id.as_str() == f.finding_id)
+                })
+                .collect();
+            let fix_round = place_fixes
+                .iter()
+                .filter(|f| state_of(&f.fix_task_id) == "passed")
+                .filter_map(|f| {
+                    cluster
+                        .iter()
+                        .find(|o| o.finding.id.as_str() == f.finding_id)
+                })
+                .map(|o| o.round)
+                .max();
+            let reappeared = fix_round.is_some_and(|round| {
+                cluster
+                    .iter()
+                    .any(|o| o.round > round && state_of(&o.task_id) == "passed")
+            });
+            let blocks_place = confirmed && (fix_round.is_none() || reappeared);
+            let own = decision(stored.finding.id.as_str());
+            let check = match (own, confirmed) {
                 (Some(GateDecision::Confirmed), _) | (None, true) => "confirmed",
                 (Some(_), _) => "unconfirmed",
                 (None, false) if waiting(stored.finding.id.as_str()) => "pending",
@@ -152,10 +201,19 @@ impl Core {
                 stored.round,
                 &stored.fingerprint,
             );
-            let blocks = check == "confirmed"
-                && matches!(status, FindingStatus::Open | FindingStatus::Regressed);
+            let latest = cluster
+                .last()
+                .is_some_and(|o| o.finding.id == stored.finding.id);
+            let cleared = fix_round.is_some_and(|r| stored.round <= r) && !reappeared;
+            let status_name = match status {
+                _ if cleared => "fixed",
+                // Absent from a later round with no fix that proves it: unreported, still what it was.
+                FindingStatus::Fixed => "unreported",
+                other => other.name(),
+            };
+            let blocks = blocks_place && latest && check == "confirmed";
             blocked |= blocks;
-            let fix = fixes.iter().find(|f| f.fingerprint == stored.fingerprint);
+            let fix = place_fixes.first();
             let loop_stopped =
                 blocks && fix.is_some_and(|f| f.finding_id != stored.finding.id.as_str());
             shown.push(json!({
@@ -167,7 +225,7 @@ impl Core {
                 "line": stored.finding.line,
                 "claim": stored.finding.claim,
                 "check": check,
-                "status": status.name(),
+                "status": status_name,
                 "blocks": blocks,
                 "fix_task": fix.map(|f| &f.fix_task_id),
                 "loop_stopped": loop_stopped,

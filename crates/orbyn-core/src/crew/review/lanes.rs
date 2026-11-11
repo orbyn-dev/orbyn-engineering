@@ -13,7 +13,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::rules::{RuleLane, read_rules};
+use super::rules::{RuleLane, read_rules_at};
 use crate::app::Core;
 use crate::crew::checks::{Site, changed};
 use crate::crew::guard::{refuse_leak, refuse_secret};
@@ -25,8 +25,8 @@ use crate::store::{CrewReview, CrewRun, CrewTask};
 use crate::tools::mcp::McpBinding;
 
 const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
-/// The most exact paths a review's key lists before it lists their top-level folders instead.
-const MOST_PATHS: usize = 200;
+/// The most changed files a review can hold read-only: the key protects each by its bytes, and a key lists at most 256.
+const MOST_PATHS: usize = 256;
 
 /// What a review run is for.
 pub(super) enum Run<'a> {
@@ -34,31 +34,6 @@ pub(super) enum Run<'a> {
     Lane,
     /// The independent second run that checks a finding, which it is never shown.
     Second { finding: &'a str },
-}
-
-/// The paths already changed when a review begins, as the key's scope: it fails only on a file that was
-/// unchanged. A long list is replaced by its top-level folders so the key stays small.
-fn scope_of(paths: &[String]) -> Vec<CrewPathPattern> {
-    let exact: Vec<String> = if paths.len() <= MOST_PATHS {
-        paths.to_vec()
-    } else {
-        let mut roots: Vec<String> = paths
-            .iter()
-            .map(|p| {
-                p.split_once('/')
-                    .map_or_else(|| p.clone(), |(top, _)| format!("{top}/**"))
-            })
-            .collect();
-        roots.sort();
-        roots.dedup();
-        roots
-    };
-    let mut scope: Vec<CrewPathPattern> = exact
-        .into_iter()
-        .filter_map(|p| CrewPathPattern::new(p).ok())
-        .collect();
-    scope.push(CrewPathPattern::new(".orbyn/review/**").expect("a fixed pattern"));
-    scope
 }
 
 impl Core {
@@ -69,9 +44,7 @@ impl Core {
         cwd: &Path,
     ) -> Result<String, CrewError> {
         let at = self
-            .store
-            .crew_evidence(&task.id)
-            .map_err(internal)?
+            .verification_evidence(task)?
             .last()
             .map(|e| e.commit.as_str().to_owned())
             .filter(|c| c != ZERO_COMMIT);
@@ -82,6 +55,29 @@ impl Core {
             .await
             .map_err(|e| invalid(e.public_message()))?;
         Ok(crate::source_control::git::text(&out))
+    }
+
+    /// The task's own verification Evidence: what the finding checks the core added later are left out, so they change
+    /// neither the count a reviewer is told nor the commit a later lane reads.
+    pub(super) fn verification_evidence(
+        &self,
+        task: &CrewTask,
+    ) -> Result<Vec<orbyn_contracts::Evidence>, CrewError> {
+        let cited: std::collections::BTreeSet<String> = self
+            .store
+            .crew_gates(&task.id)
+            .map_err(internal)?
+            .iter()
+            .filter(|g| g.stage == orbyn_contracts::GateStage::FindingCheck)
+            .flat_map(|g| g.evidence.iter().map(|e| e.as_str().to_owned()))
+            .collect();
+        Ok(self
+            .store
+            .crew_evidence(&task.id)
+            .map_err(internal)?
+            .into_iter()
+            .filter(|e| !cited.contains(e.id.as_str()))
+            .collect())
     }
 
     /// The paths the work changed since it started (committed or not), or `None` when that cannot be known.
@@ -139,7 +135,11 @@ impl Core {
         let cwd = std::path::PathBuf::from(&thread.cwd);
         let commit = self.review_commit(&task, &cwd).await?;
         let touched = self.review_changed(&run, &cwd).await;
-        let rules: Vec<RuleLane> = read_rules(&cwd).map_err(invalid)?;
+        // The rules are read at the commit the work started from: a worker can edit the file in the checkout.
+        let base = run.base_commit.as_deref().ok_or_else(|| {
+            invalid("task: it has no base commit recorded, so the repo rules cannot be read")
+        })?;
+        let rules: Vec<RuleLane> = read_rules_at(&cwd, base).await.map_err(invalid)?;
         let from_rules: Vec<&RuleLane> = rules
             .iter()
             .filter(|rule| rule.applies(touched.as_deref()))
@@ -194,13 +194,19 @@ impl Core {
             .map(|r| r.round)
             .max()
             .unwrap_or(0);
+        if round > super::MOST_ROUNDS {
+            return Err(invalid(format!(
+                "lanes: the {lane} lane has run {} rounds on this work; a person decides what more it needs",
+                super::MOST_ROUNDS
+            )));
+        }
         let purpose = self
             .store
             .crew_brief(&subject.id)
             .map_err(internal)?
             .map(|b| b.outcome)
             .unwrap_or_default();
-        let evidence = self.store.crew_evidence(&subject.id).map_err(internal)?;
+        let evidence = self.verification_evidence(subject)?;
         let passed = evidence
             .iter()
             .filter(|e| e.outcome == orbyn_contracts::CheckOutcome::Pass)
@@ -244,17 +250,39 @@ impl Core {
             "refs": [subject.id],
         });
         let brief = stamper.brief(&draft)?;
+        // Read-only is checked by bytes: every file already changed when the review begins (the work under review, in the
+        // usual case) is protected, so the snapshot of the core compares it, and any other change fails the scope check.
+        if dirty.len() > MOST_PATHS {
+            return Err(invalid(format!(
+                "task: {} files are changed in the checkout, more than a review can hold read-only ({MOST_PATHS}); commit the work first",
+                dirty.len()
+            )));
+        }
+        let held: Vec<CrewPathPattern> = dirty
+            .iter()
+            .map(|p| {
+                CrewPathPattern::new(p.clone()).map_err(|why| {
+                    invalid(format!(
+                        "task: a changed file cannot be held read-only ({why})"
+                    ))
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let scope = if held.is_empty() {
+            json!({
+                "id": "chk-read-only", "kind": "diff_size", "params": { "max_files": 0 },
+                "proves": "The review changed no file.",
+                "does_not_prove": "Anything about the findings.",
+            })
+        } else {
+            json!({
+                "id": "chk-read-only", "kind": "file_scope", "params": { "only": held },
+                "proves": "The review changed no file other than the work under review, and left that unchanged.",
+                "does_not_prove": "Anything about the findings.",
+            })
+        };
         let key = stamper.answer_key(
-            &json!({
-                "checks": [{
-                    "id": "chk-read-only",
-                    "kind": "file_scope",
-                    "params": { "only": scope_of(&dirty) },
-                    "proves": "The review changed no file that was unchanged when it began.",
-                    "does_not_prove": "An edit to a file that was already changed when the review began.",
-                }],
-                "protected_paths": [],
-            }),
+            &json!({ "checks": [scope], "protected_paths": held }),
             &brief.id,
         )?;
         let member = member_of("reviewer", &brief)?;

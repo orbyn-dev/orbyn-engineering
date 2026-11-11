@@ -35,8 +35,12 @@ pub const STATUS_TOOL: &str = "crew_review_status";
 /// The review tools. The lead calls all but `crew_finding`, which only a reviewer calls.
 pub const REVIEW_TOOLS: [&str; 4] = [REVIEW_TOOL, FINDING_TOOL, CHECK_FINDING_TOOL, STATUS_TOOL];
 
-/// The most findings one review run files.
+/// The most findings one review run files, and one independent second run (which only has to find one place).
 pub(super) const MOST_FINDINGS: usize = 100;
+pub(super) const MOST_SECOND_FINDINGS: usize = 10;
+/// The most fix briefs one reviewed task is sent, and the most rounds one lane runs on it. Past either a person decides.
+pub(super) const MOST_FIXES: usize = 3;
+pub(super) const MOST_ROUNDS: u32 = 5;
 
 /// The tools as `tools/list` shows them.
 pub fn specs() -> Vec<Value> {

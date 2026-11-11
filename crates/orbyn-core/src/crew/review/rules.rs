@@ -77,6 +77,34 @@ pub fn read_rules(root: &Path) -> Result<Vec<RuleLane>, String> {
     parse(&text)
 }
 
+/// The lanes the rules name at `base`, the commit the work started from. A worker can change the file in the checkout, so
+/// the checkout's copy is never the rule. No such file at `base` is no rules; a file that cannot be read or parsed is an error.
+pub async fn read_rules_at(root: &Path, base: &str) -> Result<Vec<RuleLane>, String> {
+    use crate::source_control::git::{git, text};
+    let spec = format!("{base}:{RULES_FILE}");
+    let listed = git(root, &["ls-tree", base, "--", RULES_FILE])
+        .await
+        .map_err(|e| {
+            format!(
+                "{RULES_FILE} at the base commit cannot be read: {}",
+                e.public_message()
+            )
+        })?;
+    if listed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let shown = git(root, &["show", &spec]).await.map_err(|e| {
+        format!(
+            "{RULES_FILE} at the base commit cannot be read: {}",
+            e.public_message()
+        )
+    })?;
+    if shown.len() as u64 > LARGEST {
+        return Err(format!("{RULES_FILE} is over 64 KiB"));
+    }
+    parse(&text(&shown))
+}
+
 pub(super) fn parse(text: &str) -> Result<Vec<RuleLane>, String> {
     let file: File = serde_json::from_str(text)
         .map_err(|error| format!("{RULES_FILE} is not valid: {error}"))?;

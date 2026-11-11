@@ -84,6 +84,13 @@ impl Core {
             if let Some(key) = self.store.crew_answer_key(&task.id).map_err(internal)? {
                 needles.extend(key_needles(&key));
             }
+            // A repro the lead used to decide a finding is stored apart from any key, and is as secret as one.
+            for repro in self.store.crew_repros_of(&task.id).map_err(internal)? {
+                if let Ok(check) = serde_json::from_str::<orbyn_contracts::CrewCheck>(&repro.repro)
+                {
+                    needles.extend(crate::crew::guard::check_needles(&[check]));
+                }
+            }
         }
         Ok(needles)
     }

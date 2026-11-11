@@ -30,20 +30,47 @@ pub fn built(root: &std::path::Path) -> Turn {
     Turn::Report(report("done"))
 }
 
-/// A fix's turn: the file the repro looks for, added to the index so `git ls-files` sees it.
+/// A fix's turn: it changes the finding's file, so the repro below passes.
 pub fn fixed(root: &std::path::Path) -> Turn {
-    std::fs::write(root.join("src/fixed.txt"), "fixed\n").unwrap();
-    crate::testing::run_git(root, &["add", "src/fixed.txt"]);
+    fixed_file(root, "src/lib.txt")
+}
+
+pub fn fixed_file(root: &std::path::Path, path: &str) -> Turn {
+    let mut text = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+    text.push_str("FIXED\n");
+    std::fs::write(root.join(path), text).unwrap();
     Turn::Report(report("fixed"))
 }
 
-/// A repro that fails until `src/fixed.txt` is in the index, so it confirms a finding the fix answers.
+/// A repro that fails until `src/lib.txt` says FIXED, so it confirms a finding the fix answers.
 pub fn repro(id: &str) -> Value {
+    repro_for(id, "src/lib.txt")
+}
+
+pub fn repro_for(id: &str, path: &str) -> Value {
     json!({
         "id": id, "kind": "command",
-        "params": { "run": "git ls-files --error-unmatch src/fixed.txt" },
+        "params": { "run": format!("git grep --no-index -q FIXED -- {path}") },
         "proves": "The fix is in place.",
     })
+}
+
+/// Commits everything in the project's checkout, so it is part of the base the next task starts from.
+pub fn commit_all(root: &std::path::Path, message: &str) {
+    crate::testing::run_git(root, &["add", "-A"]);
+    crate::testing::run_git(
+        root,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.test",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ],
+    );
 }
 
 pub async fn crew(script: super::harness::Script) -> World {
@@ -51,12 +78,16 @@ pub async fn crew(script: super::harness::Script) -> World {
 }
 
 impl World {
-    /// Starts the builder on `claude` and waits until it has passed.
+    /// Starts the builder on `alpha` and waits until it has passed.
     pub async fn built_work(&self) -> String {
+        self.built_with(super::harness::key()).await
+    }
+
+    pub async fn built_with(&self, key: Value) -> String {
         let (answer, error) = self
             .start(
                 brief(json!({ "engine": { "id": "alpha", "assigned_by": "person" } })),
-                super::harness::key(),
+                key,
             )
             .await;
         assert!(!error, "{answer}");

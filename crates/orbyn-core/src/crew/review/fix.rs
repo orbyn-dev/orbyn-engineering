@@ -1,26 +1,70 @@
 //! The fix loop: a confirmed finding sends a fix brief to a builder. The brief is written by the core and goes through
 //! the same checks as `crew_start` (shape, secrets, protected paths, the key's text, a reviewer never writes), by the
-//! same function. Its key is the reviewed task's own checks, plus the lead's repro check when that is what confirmed the
-//! finding, so the fix must make the repro pass; the key is never sent. The builder may write the finding's file and
-//! nothing else. When the fix passes, the lanes run again (see `ended`). The same finding after a fix stops the loop: one
-//! fix brief per finding, and a later round that reports it again is still open and is not fixed a second time.
+//! same function. Its key is the reviewed task's own checks plus checks of the fix itself, and is never sent:
+//!
+//! - the lead's repro, when that is what confirmed the finding;
+//! - a check that the finding's file now differs from the copy the core kept when the fix began, so a fix that changes
+//!   nothing fails (a finding clears only when a fix that proves it touched the file has passed);
+//! - a scope check: no file changed other than the files already changed when the fix began and the finding's file.
+//!
+//! A lease is declared, not enforced, so the scope check is what keeps the builder to the finding's file. The core refuses
+//! a fix for a file the reviewed task could not write, a protected path, a test file or CI config, and a file that does not exist.
+//! One fix brief per lane and file (a reworded claim is the same finding), at most [`MOST_FIXES`] per reviewed task; past
+//! either the loop stops and a person decides.
 
 use std::sync::Arc;
 
 use orbyn_contracts::{CrewCheck, CrewError, CrewObject, Thread};
 use serde_json::{Value, json};
 
+use super::{MOST_FIXES, RULES_FILE};
 use crate::app::Core;
+use crate::crew::checks::{Site, changed, covers};
 use crate::crew::guard::{key_needles, refuse_leak};
 use crate::crew::leases::internal;
-use crate::crew::review::RULES_FILE;
 use crate::crew::stamp::Stamper;
 use crate::crew::start::{Launch, Links};
 use crate::crew::tool::invalid;
 use crate::store::{CrewFix, CrewTask, StoredFinding};
 
+/// The most files a fix's scope check lists.
+const MOST_PATHS: usize = 255;
+
+/// A file the reviewed task did not protect but a fix still must not write: tests, CI and the crew's own rules.
+fn sensitive(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    let name = lower.rsplit('/').next().unwrap_or(&lower);
+    lower.starts_with(".github/")
+        || lower.starts_with(".orbyn/")
+        || lower.starts_with(".circleci/")
+        || lower.starts_with(".gitlab")
+        || name == "jenkinsfile"
+        || lower
+            .split('/')
+            .any(|s| matches!(s, "tests" | "test" | "__tests__" | "spec" | "specs" | "e2e"))
+        || name.starts_with("test_")
+        || [".test.", ".spec.", "_test.", "_spec."]
+            .iter()
+            .any(|m| name.contains(m))
+}
+
+/// Characters a path may have in a check command (it is quoted for both shells).
+fn quotable(path: &str) -> bool {
+    path.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ' '))
+}
+
 impl Core {
-    /// Sends a fix brief for a confirmed finding, or stops the loop when this finding already had one.
+    /// Tells the lead why no fix brief was sent, and returns the same as the tool's answer.
+    fn no_fix(&self, subject: &CrewTask, stopped: &str, why: &str) -> Value {
+        self.tell_lead_text(
+            &subject.id,
+            &format!("No fix brief was sent: {why} A person decides."),
+        );
+        json!({ "started": false, "stopped": stopped, "why": why })
+    }
+
+    /// Sends a fix brief for a confirmed finding, or stops the loop.
     pub(super) async fn start_fix(
         self: &Arc<Self>,
         thread: &Thread,
@@ -29,18 +73,32 @@ impl Core {
         subject: &CrewTask,
         repro: Option<CrewCheck>,
     ) -> Result<Value, CrewError> {
+        let finding = &found.finding;
+        let path = finding.path.as_str();
+        // The guard is keyed on the lane and the file, so rewording a claim is no way to a second fix.
         let earlier = self.store.crew_fixes_of(&subject.id).map_err(internal)?;
-        if earlier.iter().any(|f| f.fingerprint == found.fingerprint) {
-            self.tell_lead_text(
-                &subject.id,
-                &format!(
-                    "The same finding came back after a fix ({} at {}:{}), so the loop stops. A person decides.",
-                    crate::crew::wire_name(&found.finding.severity),
-                    found.finding.path,
-                    found.finding.line
-                ),
-            );
-            return Ok(json!({ "started": false, "stopped": "repeated_finding" }));
+        let mut same_place = false;
+        for fix in &earlier {
+            if let Some(old) = self.store.crew_finding(&fix.finding_id).map_err(internal)?
+                && old.lane == found.lane
+                && old.finding.path == finding.path
+            {
+                same_place = true;
+            }
+        }
+        if same_place {
+            return Ok(self.no_fix(
+                subject,
+                "repeated_finding",
+                &format!("The {} lane reported {path} again after a fix.", found.lane),
+            ));
+        }
+        if earlier.len() >= MOST_FIXES {
+            return Ok(self.no_fix(
+                subject,
+                "fix_limit",
+                &format!("This work has been sent {MOST_FIXES} fix briefs already."),
+            ));
         }
         let subject_brief = self
             .store
@@ -52,15 +110,58 @@ impl Core {
             .crew_answer_key(&subject.id)
             .map_err(internal)?
             .ok_or_else(|| invalid("the task has no key"))?;
-        let finding = &found.finding;
+        // Which file may a fix write? Only one the reviewed task could.
+        let writable = subject_brief.write_paths().any(|p| covers(p, path));
+        if !writable || sensitive(path) || !quotable(path) {
+            return Ok(self.no_fix(
+                subject,
+                "refused_path",
+                &format!("{path} is not a file a fix may write: it is outside what the task could write, or a test, CI or rule file, or its name needs care."),
+            ));
+        }
+        let cwd = std::path::PathBuf::from(&thread.cwd);
+        if !cwd.join(path).is_file() {
+            return Ok(self.no_fix(
+                subject,
+                "refused_path",
+                &format!("{path} is not a file in the checkout."),
+            ));
+        }
+        // What the file holds now, kept outside the checkout, so a fix that leaves it as it is can be told.
+        let kept = self.config.data_dir.join("crew-fix");
+        std::fs::create_dir_all(&kept).map_err(|e| invalid(e.to_string()))?;
+        let copy = kept.join(format!("{}.orig", &finding.id.as_str()[7..23]));
+        std::fs::copy(cwd.join(path), &copy).map_err(|e| invalid(e.to_string()))?;
+        let copy = copy.to_string_lossy().into_owned();
+        if !quotable(&copy.replace('\\', "/").replace(':', "")) {
+            return Ok(self.no_fix(
+                subject,
+                "refused_path",
+                "The place the core keeps its copies has a name a check cannot quote.",
+            ));
+        }
+        let dirty = changed(&Site {
+            worktree: &cwd,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(120),
+            base: None,
+        })
+        .await
+        .map_err(|e| invalid(e.public_message()))?;
+        if dirty.len() > MOST_PATHS {
+            return Ok(self.no_fix(subject, "refused_path", "Too many files are changed in the checkout to hold a fix to one file; commit the work first."));
+        }
+        let mut only: Vec<String> = dirty;
+        only.push(path.to_owned());
+        only.sort();
+        only.dedup();
+
         let claim: String = finding.claim.as_str().chars().take(1000).collect();
         let outcome = format!(
-            "Fix a {} finding from the {} review at {}:{}: {claim} Change only {} and keep all other behaviour.",
+            "Fix a {} finding from the {} review at {}:{}: {claim} Change only {path} and keep all other behaviour.",
             crate::crew::wire_name(&finding.severity),
             found.lane,
             finding.path,
             finding.line,
-            finding.path
         );
         let mut checks: Vec<Value> = subject_key
             .checks
@@ -74,6 +175,16 @@ impl Core {
             }
             checks.push(serde_json::to_value(&repro).map_err(|e| invalid(e.to_string()))?);
         }
+        checks.push(json!({
+            "id": "chk-fix-touched", "kind": "command",
+            "params": { "run": format!("git diff --no-index --quiet \"{copy}\" \"{path}\""), "expect_exit": 1 },
+            "proves": "The finding's file now differs from what it held when the fix began.",
+            "does_not_prove": "That the difference fixes the finding.",
+        }));
+        checks.push(json!({
+            "id": "chk-fix-scope", "kind": "file_scope", "params": { "only": only },
+            "proves": "No file changed other than the files already changed and the finding's file.",
+        }));
         let mut protected: Vec<Value> = subject_key
             .protected_paths
             .iter()
@@ -93,20 +204,15 @@ impl Core {
             })
         };
         let crew_needles = self.crew_key_needles(&subject.crew_id)?;
+        let key_draft = json!({ "checks": checks, "protected_paths": protected });
         // What the reviewer quoted may hold a check's text. Such evidence is left out of the brief, not the brief refused.
         let mut brief = stamper.brief(&draft(true))?;
-        let mut key = stamper.answer_key(
-            &json!({ "checks": checks, "protected_paths": protected }),
-            &brief.id,
-        )?;
+        let mut key = stamper.answer_key(&key_draft, &brief.id)?;
         let mut needles = crew_needles.clone();
         needles.extend(key_needles(&key));
         if refuse_leak(&CrewObject::Brief(brief.clone()).to_value(), &needles).is_err() {
             brief = stamper.brief(&draft(false))?;
-            key = stamper.answer_key(
-                &json!({ "checks": checks, "protected_paths": protected }),
-                &brief.id,
-            )?;
+            key = stamper.answer_key(&key_draft, &brief.id)?;
             needles = crew_needles;
             needles.extend(key_needles(&key));
         }

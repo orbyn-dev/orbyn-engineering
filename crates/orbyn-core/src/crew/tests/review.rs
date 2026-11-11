@@ -6,7 +6,7 @@ use orbyn_contracts::{GateDecider, GateDecision, GateStage, RouteRole, RouteTier
 use serde_json::json;
 
 use super::harness::{KEY_MARKER, Turn, bind};
-use super::review_support::{arc, built, crew, finding, fixed, repro, reviewed};
+use super::review_support::{arc, built, commit_all, crew, finding, fixed, repro, reviewed};
 
 fn passing_repro() -> serde_json::Value {
     json!({ "id": "repro-ok", "kind": "command", "params": { "run": "exit 0" }, "proves": "The claim does not hold." })
@@ -84,6 +84,20 @@ async fn an_unconfirmed_finding_does_not_block() {
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
     assert_eq!(w.core.store.crew_tasks_in_crew(&w.lead).unwrap().len(), 2);
 
+    // The finding check's Evidence is not the work's: a later lane is told the same count and reads the same commit.
+    let later = w.review(&subject, &["security"]).await;
+    w.until_state(&later[0], "passed").await;
+    let prompts = w.sent_to(&w.worker(&later[0])).join("\n");
+    assert!(
+        prompts.contains("2 of 3 checks passed"),
+        "the count changed"
+    );
+    let review = w.core.store.crew_review(&later[0]).unwrap().unwrap();
+    assert_eq!(
+        review.commit,
+        w.core.store.crew_review(&lanes[0]).unwrap().unwrap().commit
+    );
+
     // The reviewer was never shown the key, and its run is over (H7), so it can file nothing more.
     let thread = w.worker(&lanes[0]);
     for prompt in w.sent_to(&thread) {
@@ -124,7 +138,7 @@ async fn a_confirmed_finding_sends_a_fix_brief_and_the_re_review_shows_it_fixed(
     assert_eq!(w.status(&subject)["blocked"], true);
 
     // The fix brief answers the finding, may write its file only, and is checked like crew_start's. Its key holds the
-    // reviewed task's checks and the repro; the builder is told neither.
+    // reviewed task's checks, the repro, a check that the file changed and a scope check; the builder is told none.
     let brief = w.core.store.crew_brief(&fix).unwrap().unwrap();
     assert_eq!(brief.refs.as_deref().map(<[_]>::len), Some(1));
     assert_eq!(brief.refs.unwrap()[0].as_str(), id);
@@ -138,12 +152,12 @@ async fn a_confirmed_finding_sends_a_fix_brief_and_the_re_review_shows_it_fixed(
             .unwrap()
             .checks
             .len(),
-        4
+        6
     );
     w.until_state(&fix, "passed").await;
     for prompt in w.sent_to(&w.worker(&fix)) {
         assert!(
-            !prompt.contains(KEY_MARKER) && !prompt.contains("ls-files"),
+            !prompt.contains(KEY_MARKER) && !prompt.contains("git grep"),
             "the key reached the builder"
         );
     }
@@ -161,14 +175,20 @@ async fn a_confirmed_finding_sends_a_fix_brief_and_the_re_review_shows_it_fixed(
     assert_eq!(status["blocked"], false);
 }
 
-/// The same finding twice stops the loop: after a fix, a round that reports it again is open, and it is not sent
-/// to a builder a second time.
+/// The same lane and file twice stops the loop, however the claim is worded: after a fix, a round that reports the place
+/// again is open, and it is not sent to a builder a second time.
 #[tokio::test]
-async fn the_same_finding_twice_stops_the_loop() {
+async fn the_same_place_twice_stops_the_loop() {
     let w = crew(arc(|n, root| match n {
         0 => built(root),
         2 => fixed(root),
-        _ => reviewed(vec![finding("src/lib.txt", 1, "The fix file is missing.")]),
+        1 => reviewed(vec![finding("src/lib.txt", 1, "The fix file is missing.")]),
+        // The same place, worded another way.
+        _ => reviewed(vec![finding(
+            "src/lib.txt",
+            1,
+            "Nothing about this is right yet.",
+        )]),
     }))
     .await;
     let subject = w.built_work().await;
@@ -196,7 +216,10 @@ async fn the_same_finding_twice_stops_the_loop() {
     );
     assert_eq!(again["blocks"], true);
     assert_eq!(again["loop_stopped"], true);
-    assert_eq!(status["findings"][0]["status"], "superseded");
+    assert_eq!(
+        status["findings"][0]["status"], "unreported",
+        "a reworded claim is not a fix"
+    );
 
     // Confirming the new one sends no second fix brief.
     let (done, error) = w
@@ -204,7 +227,7 @@ async fn the_same_finding_twice_stops_the_loop() {
             "crew_check_finding",
             json!({ "finding": again["id"], "repro": json!({
                 "id": "repro-two", "kind": "command",
-                "params": { "run": "git ls-files --error-unmatch src/never.txt" }, "proves": "x" }) }),
+                "params": { "run": "git grep --no-index -q NEVERHERE -- src/lib.txt" }, "proves": "x" }) }),
         )
         .await;
     assert!(!error, "{done}");
@@ -255,7 +278,14 @@ async fn a_lane_added_after_a_pass_runs() {
     assert_eq!(review.round, 2);
 }
 
-/// Repo rules add lanes, and only add: a lane the change's paths ask for runs without being named.
+fn commit_rules(w: &super::harness::World, text: &str) {
+    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
+    std::fs::write(w.repo.join(".orbyn/crew.json"), text).unwrap();
+    commit_all(&w.repo, "rules");
+}
+
+/// Repo rules add lanes, and only add: a lane the change's paths ask for runs without being named. The rules are the
+/// ones at the commit the work started from.
 #[tokio::test]
 async fn repo_rules_add_lanes() {
     let w = crew(arc(|n, root| match n {
@@ -263,18 +293,16 @@ async fn repo_rules_add_lanes() {
         _ => reviewed(vec![]),
     }))
     .await;
-    let subject = w.built_work().await;
-    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
-    std::fs::write(
-        w.repo.join(".orbyn/crew.json"),
-        json!({ "required": ["checks"], "lanes": [
+    commit_rules(
+        &w,
+        &json!({ "required": ["checks"], "lanes": [
             { "lane": "security", "when": { "paths": ["src/**"] }, "locked": true },
             { "lane": "docs", "when": { "paths": ["docs/**"] } },
             { "lane": "licence" },
         ] })
         .to_string(),
-    )
-    .unwrap();
+    );
+    let subject = w.built_work().await;
     let (answer, error) = w
         .lead(
             "crew_review",
@@ -303,8 +331,18 @@ async fn repo_rules_add_lanes() {
         ],
         "docs is not asked for by a change under src/"
     );
-    // A broken rule file is an error, never an empty rule set.
-    std::fs::write(w.repo.join(".orbyn/crew.json"), "{ not json").unwrap();
+}
+
+/// A broken rule file at the base commit is an error, never an empty rule set.
+#[tokio::test]
+async fn a_broken_rule_file_fails_closed() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(&w, "{ not json");
+    let subject = w.built_work().await;
     let (broken, error) = w
         .lead(
             "crew_review",
@@ -312,6 +350,46 @@ async fn repo_rules_add_lanes() {
         )
         .await;
     assert!(error && broken["code"] == "invalid_object", "{broken}");
+}
+
+/// The builder can edit the rule file in the checkout; the rule is the file at the commit the work started from.
+#[tokio::test]
+async fn a_worker_cannot_remove_a_rule_lane() {
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            std::fs::write(root.join(".orbyn/crew.json"), r#"{"lanes":[]}"#).unwrap();
+            built(root)
+        }
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(&w, r#"{"lanes":[{"lane":"security","locked":true}]}"#);
+    // A key with no scope check, so the edit itself does not fail the task.
+    let key = json!({ "checks": [{ "id": "chk-run", "kind": "command",
+        "params": { "run": "echo fine" }, "proves": "It runs." }], "protected_paths": [] });
+    let subject = w.built_with(key).await;
+    assert_eq!(
+        std::fs::read_to_string(w.repo.join(".orbyn/crew.json")).unwrap(),
+        r#"{"lanes":[]}"#
+    );
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["correctness"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let lanes: Vec<&str> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["lane"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        lanes,
+        ["correctness", "security"],
+        "the lane the worker removed still runs"
+    );
 }
 
 async fn second_review(line: u32) -> (super::harness::World, String, String) {
@@ -351,6 +429,13 @@ async fn a_second_review_that_agrees_confirms_a_finding() {
     let gate = w.core.store.crew_gates(&subject).unwrap().pop().unwrap();
     assert_eq!(gate.decision, GateDecision::Confirmed);
     assert_eq!(gate.decided_by, GateDecider::Code);
+    assert!(
+        gate.reason
+            .as_str()
+            .contains("first reviewer on beta, second on alpha"),
+        "{}",
+        gate.reason
+    );
     let evidence = w.core.store.crew_evidence(&subject).unwrap();
     assert!(
         evidence

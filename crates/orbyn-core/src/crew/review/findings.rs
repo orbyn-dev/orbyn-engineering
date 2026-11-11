@@ -6,7 +6,7 @@
 use orbyn_contracts::{CrewError, CrewId, CrewMember, CrewObject, CrewToken, ErrorCode};
 use serde_json::{Value, json};
 
-use super::{MOST_FINDINGS, fingerprint};
+use super::{MOST_FINDINGS, MOST_SECOND_FINDINGS, fingerprint};
 use crate::app::Core;
 use crate::crew::guard::refuse_secret;
 use crate::crew::lifecycle::is_final;
@@ -58,7 +58,16 @@ impl Core {
         let print = fingerprint(&review.lane, finding.path.as_str(), finding.claim.as_str());
         let stored = self
             .store
-            .add_crew_finding(&task.id, &finding, &print, MOST_FINDINGS)
+            .add_crew_finding(
+                &task.id,
+                &finding,
+                &print,
+                if review.role == "finding_check" {
+                    MOST_SECOND_FINDINGS
+                } else {
+                    MOST_FINDINGS
+                },
+            )
             .map_err(|error| match error {
                 CoreError::RunClosed => CrewError::new(ErrorCode::RunEnded, "this run has ended"),
                 other => invalid(other.public_message()),

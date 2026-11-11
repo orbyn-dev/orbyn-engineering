@@ -188,9 +188,6 @@ impl Core {
         if let Some(review) = &links.review {
             self.store.add_crew_review(review).map_err(internal)?;
         }
-        if let Some(fix) = &links.fix {
-            self.store.add_crew_fix(fix).map_err(internal)?;
-        }
         // What the protected files hold now, before the worker exists. The verifier compares.
         if !key.protected_paths.is_empty() {
             let (root, paths) = (
@@ -256,6 +253,10 @@ impl Core {
                 .add_crew_object(&task.id, &CrewObject::Lease(lease))
                 .map_err(internal)?;
         }
+        // A fix uses up its finding's one only once the start is accepted (routed, and its files granted).
+        if let Some(fix) = &links.fix {
+            self.store.add_crew_fix(fix).map_err(internal)?;
+        }
         match self
             .start_crew_worker(thread, &brief, &decision, &member, prompt)
             .await
@@ -277,6 +278,9 @@ impl Core {
                 }))
             }
             Err(error) => {
+                if let Some(fix) = &links.fix {
+                    let _ = self.store.remove_crew_fix(&fix.finding_id);
+                }
                 let _ = self.release_crew_leases(&task.id);
                 self.crew_needs_person(&task.id, &error.message, false);
                 Err(error)

@@ -49,9 +49,16 @@ impl Core {
         let Ok(fixes) = self.store.crew_fixes_of(&review.subject_id) else {
             return;
         };
+        let fixed_places: Vec<(String, String)> = fixes
+            .iter()
+            .filter_map(|x| self.store.crew_finding(&x.finding_id).ok().flatten())
+            .map(|f| (f.lane, f.finding.path.as_str().to_owned()))
+            .collect();
         let again = filed
             .iter()
-            .filter(|f| fixes.iter().any(|x| x.fingerprint == f.fingerprint))
+            .filter(|f| {
+                fixed_places.contains(&(f.lane.clone(), f.finding.path.as_str().to_owned()))
+            })
             .count();
         let mut text = format!(
             "Review lane {} (round {}) finished with {} findings. Call crew_review_status for where they stand.",

@@ -17,6 +17,7 @@ mod lifecycle;
 mod overrides;
 mod protect;
 mod review;
+mod review_fix;
 mod review_rules;
 mod review_support;
 mod runs;
