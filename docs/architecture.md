@@ -1581,6 +1581,13 @@ still go through a thread's file routes. `orbynd` only routes; Core
   entry, or one whose `gitdir` was redirected, is listed read-only as `missing`, never read and never
   given a status. With no common directory to check against, or when the project's own folder is not
   exactly one of the members (a rewritten `commondir` or project `.git` file, or one naming an ancestor repository), nothing is shown (`404`). A Git folder that sets `core.worktree`, as a submodule's does, must name the project's folder. A `--separate-git-dir` repository has no such record to check, so a project whose `.git` file is rewritten to point at another repository's separate Git folder adopts that repository's worktrees: a documented limit whose precondition is a write to the project's `.git` file (tracked in #463).
+- **A project that is a subfolder of a repository** (its own folder has no `.git`, and a member
+  checkout holds it) is rooted at that folder: one row, `is_subfolder`, not the main checkout, with
+  the holding checkout's branch and head and no change letters (`changes: "unavailable"`, since a
+  status names paths from the repository's root). Tree and file reads stay inside the folder; a
+  `..`, absolute or encoded escape, or a link leaving it, is refused as everywhere else, and the
+  repository's other worktrees are not listed. A `.git` file that names an ancestor repository is
+  still refused whole.
 - **Known exposure.** Any worktree of the repository is served to a holder of the service token
   once the project is trusted, including other sessions' worktrees and ones no thread uses. The
   thread file routes already reach any thread's folder; the new reach is worktrees with no
