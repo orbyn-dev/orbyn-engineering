@@ -97,6 +97,9 @@ pub enum CoreError {
     Io(#[from] std::io::Error),
     #[error("encoding error: {0}")]
     Json(#[from] serde_json::Error),
+    /// The sign-in gate is `Off`: no account route works and no request goes to any Engine.
+    #[error("Accounts are not available yet.")]
+    AccountDisabled,
     #[error("{0}")]
     Internal(String),
 }
@@ -138,6 +141,7 @@ impl CoreError {
             Self::DatabaseTooNew { .. } => "database_too_new",
             Self::DataDirLocked => "data_dir_locked",
             Self::PackTampered(_) => "pack_tampered",
+            Self::AccountDisabled => "account_disabled",
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
@@ -152,7 +156,10 @@ impl CoreError {
             Self::Updating => 503,
             Self::Invalid(_) => 400,
             Self::FileTooLarge { .. } => 413,
-            Self::FolderUntrusted | Self::PolicyDenied(_) | Self::WorkspaceRefused(_) => 403,
+            Self::FolderUntrusted
+            | Self::PolicyDenied(_)
+            | Self::WorkspaceRefused(_)
+            | Self::AccountDisabled => 403,
             Self::SettingsConflict
             | Self::SettingsScopeUnavailable
             | Self::ThreadBusy
@@ -236,6 +243,7 @@ impl CoreError {
                 supported: *supported,
             },
             Self::DataDirLocked => Self::DataDirLocked,
+            Self::AccountDisabled => Self::AccountDisabled,
             Self::PackTampered(s) => Self::PackTampered(s.clone()),
             Self::Computer(s) => Self::Computer(s.clone()),
             Self::Git(s) => Self::Git(s.clone()),
