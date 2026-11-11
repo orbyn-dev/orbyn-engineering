@@ -64,7 +64,10 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
 
   let title = "Up to date";
   let detail = "Your settings are the same on every signed-in computer.";
-  if (refused) {
+  if (sync.kind === "not_connected") {
+    title = "Not connected";
+    detail = "This computer’s settings stay here until you connect them to your account.";
+  } else if (refused) {
     title = "Couldn’t sync";
     detail = `The server didn’t accept ${changes(Math.max(1, sync.waiting))}. Nothing was lost; it is kept here.`;
   } else if (offline) {
@@ -98,7 +101,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
           ) : pause.action.kind === "retry" ? (
             <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => void act(() => accountApi.syncNow())}>Try again</button>
           ) : null
-        ) : (
+        ) : sync.kind === "not_connected" ? null : (
           <>
             <button type="button" className="btn btn-secondary btn-small" disabled={busy || offline} onClick={() => void act(() => accountApi.syncNow())}>
               {refused ? "Try again" : "Sync now"}

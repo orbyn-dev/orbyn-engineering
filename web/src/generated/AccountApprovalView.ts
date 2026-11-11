@@ -12,4 +12,4 @@ digits: string,
 /**
  * Seconds left of the ten minutes, while waiting.
  */
-expires_in_secs: bigint, };
+expires_in_secs: number, };

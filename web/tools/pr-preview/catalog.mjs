@@ -230,4 +230,37 @@ export const FRAMES = {
       click("button", "Sign out everywhere…"),
     ],
   },
+  "acct-device-waiting": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "late@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "devices-waiting-approval": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+    ],
+  },
+  "acct-device-approve-prompt": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+      click("button", "Compare codes"),
+    ],
+  },
 };

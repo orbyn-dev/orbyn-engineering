@@ -1046,6 +1046,10 @@ export function createMockApi(options: MockOptions = {}) {
       if (knobs.sync) accountMock.setSync(knobs.sync[0], knobs.sync[1] ?? null);
       if (knobs.down !== undefined) accountMock.setViewDown(knobs.down);
     },
+    /** A trusted device's answer to the new device's request, and a computer that has settings to join. */
+    setApproval(knobs: Parameters<typeof accountMock.setApproval>[0]) {
+      accountMock.setApproval(knobs);
+    },
     events(threadId: string, after: number): WireThreadEvent[] {
       return (logs[threadId] ?? []).filter((event) => event.seq > after);
     },

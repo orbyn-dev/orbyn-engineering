@@ -15,4 +15,4 @@ near?: string,
 /**
  * RFC 3339.
  */
-asked_at: string, digits: string, expires_in_secs: bigint, };
+asked_at: string, digits: string, expires_in_secs: number, };

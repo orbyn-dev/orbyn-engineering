@@ -8,6 +8,8 @@
  * Sign-up with hard@ fails its device check; busy@ takes a moment in the service (set `/__mock/delay/<ms>` to see it here).
  */
 import type { AccountDevice } from "../src/generated/AccountDevice.ts";
+import type { AccountApprovalRequest } from "../src/generated/AccountApprovalRequest.ts";
+import type { AccountApprovalView } from "../src/generated/AccountApprovalView.ts";
 import type { AccountView } from "../src/generated/AccountView.ts";
 import type { MockResponse } from "./api.ts";
 
@@ -15,7 +17,9 @@ const INVITE = "K7QM2XWH9QXA3C2D";
 const EMAIL_CODE = "ABCDEFGH";
 const PASSWORD = "correct horse battery";
 const SECOND_FACTOR = ["123456", "ABCDEFGH23"];
-const ACCOUNTS = ["dev@example.com", "two@example.com", "slow@example.com", "down@example.com"];
+const ACCOUNTS = ["dev@example.com", "two@example.com", "slow@example.com", "down@example.com", "approve@example.com", "deny@example.com", "mismatch@example.com", "late@example.com"];
+/** What a trusted device answers a new device, by the account that signs in; `late@` is never answered. */
+const CANNED: Record<string, AccountApprovalView["state"] | null> = { "approve@example.com": "approved", "deny@example.com": "denied", "mismatch@example.com": "codes_differ", "late@example.com": null };
 
 const fail = (status: number, code: string, message: string, detail?: unknown): MockResponse => ({
   status,
@@ -49,6 +53,18 @@ export function createAccountMock() {
   let deviceList = freshDevices();
   /** One confirmation for one action (and device), used up by the action. */
   let grant: { action: string; device: string | null } | null = null;
+  // This computer's own request to sign in, and what a trusted device answered.
+  let approval: { answer: AccountApprovalView["state"]; askedAt: number; autoAt: number | null; autoAnswer: AccountApprovalView["state"] | null; email: string } | null = null;
+  const APPROVAL_LIFE_SECS = 600;
+  // Requests from other devices, waiting for this one to answer.
+  const freshIncoming = (): AccountApprovalRequest[] => [
+    { id: "req-ipad", device_name: "iPad", app: "planner", near: "Near Melbourne", asked_at: new Date().toISOString(), digits: "418 207", expires_in_secs: 540 },
+  ];
+  let incoming = freshIncoming();
+  // Joining this computer's settings: asked once after a sign-in on a computer that has settings.
+  let connectNeeded = false;
+  let connect: AccountView["connect"] = "connected";
+  let summaryPending = false;
 
   const view = () => ({
     available: on,
@@ -56,10 +72,12 @@ export function createAccountMock() {
     platform: "macos",
     ...(session ? { session: { email: session, device_name: "This computer" } } : {}),
     needs_second_factor: pending !== null,
-    connect: "connected",
+    ...(approval && !session ? { approval: approvalView() } : {}),
+    connect,
+    ...(summaryPending && connect === "connected" && !syncKind ? { connect_summary: { synced: 24 } } : {}),
     deletion_scheduled: deletionScheduled,
     sync: {
-      kind: syncKind ?? (session ? (paused ? "paused" : "online") : "signed_out"),
+      kind: syncKind ?? (session ? (connect !== "connected" ? "not_connected" : paused ? "paused" : "online") : "signed_out"),
       ...(syncReason ? { reason: syncReason } : paused ? { reason: "by_person" } : {}),
       waiting,
       not_synced: 0,
@@ -68,17 +86,30 @@ export function createAccountMock() {
     },
   }) satisfies AccountView;
 
+  function approvalView(): AccountApprovalView {
+    if (!approval) return { state: "waiting", digits: "418 207", expires_in_secs: 0 };
+    const left = Math.max(0, APPROVAL_LIFE_SECS - Math.floor((Date.now() - approval.askedAt) / 1000));
+    if (approval.answer === "waiting" && left === 0) approval.answer = "timed_out";
+    return { state: approval.answer, digits: "418 207", expires_in_secs: approval.answer === "waiting" ? left : 0 };
+  }
+
   function signedOut() {
     session = null;
     pending = null;
     paused = false;
     grant = null;
+    approval = null;
+    connect = "connected";
+    summaryPending = false;
   }
 
   function signedIn(email: string) {
     session = email;
     pending = null;
+    approval = null;
     paused = false;
+    // A computer with settings asks once how to join them, when the spec says it has some.
+    connect = connectNeeded ? "needed" : "connected";
     lastSynced = Math.floor(Date.now() / 1000);
   }
 
@@ -102,6 +133,11 @@ export function createAccountMock() {
       devicesDown = false;
       deviceList = freshDevices();
       grant = null;
+      approval = null;
+      incoming = freshIncoming();
+      connectNeeded = false;
+      connect = "connected";
+      summaryPending = false;
     },
     /** Changes waiting to upload, for a spec that wants the offline or paused wording. */
     setWaiting(count: number) {
@@ -122,6 +158,11 @@ export function createAccountMock() {
       if (knobs.deletionScheduled !== undefined) deletionScheduled = knobs.deletionScheduled;
       if (knobs.down !== undefined) devicesDown = knobs.down;
       if (knobs.onlyThis) deviceList = deviceList.filter((device) => device.current);
+    },
+    /** The trusted device\'s answer to this computer\'s request, a computer with settings to join. */
+    setApproval(knobs: { answer?: AccountApprovalView["state"]; connectNeeded?: boolean }) {
+      if (knobs.answer && approval) approval.answer = knobs.answer;
+      if (knobs.connectNeeded !== undefined) connectNeeded = knobs.connectNeeded;
     },
     /** Makes reading the account fail, for the "couldn't load" page. */
     setViewDown(down: boolean) {
@@ -163,8 +204,50 @@ export function createAccountMock() {
             pending = { email, wrong: 0 };
             return { status: 200, body: { outcome: "second_factor" } };
           }
+          if (email in CANNED) {
+            const canned = CANNED[email] ?? null;
+            approval = { answer: "waiting", askedAt: Date.now(), autoAt: canned ? Date.now() + 1500 : null, autoAnswer: canned, email };
+            return { status: 200, body: { outcome: "awaiting_approval" } };
+          }
           signedIn(email);
           return { status: 200, body: { outcome: "signed" } };
+        }
+        case "POST /api/account/sign-in/approval": {
+          if (!approval) return { status: 200, body: null };
+          if (approval.answer === "waiting" && approval.autoAt !== null && Date.now() >= approval.autoAt) approval.answer = approval.autoAnswer ?? "waiting";
+          const shown = approvalView();
+          if (shown.state === "approved") {
+            const email = approval.email;
+            signedIn(email);
+          }
+          return { status: 200, body: shown };
+        }
+        case "GET /api/account/approvals":
+          if (!session) return fail(403, "reauth_required", "Sign in first.");
+          return { status: 200, body: incoming };
+        case "POST /api/account/connect":
+          if (session && connect !== "connected") {
+            connect = "connected";
+            summaryPending = true;
+          }
+          return { status: 204 };
+        case "POST /api/account/connect/later":
+          if (session && connect === "needed") connect = "declined";
+          return { status: 204 };
+        case "POST /api/account/connect/seen":
+          summaryPending = false;
+          return { status: 204 };
+        case "POST /api/account/connect/use-device":
+        case "POST /api/account/connect/use-account": {
+          const policy = route.endsWith("use-device") ? "use_device" : "use_account";
+          const allowed = grant?.action === "connect_settings" && grant.device === policy;
+          grant = null;
+          if (!session || !allowed) return fail(403, "reauth_required", "Confirm it's you to do this.");
+          if (connect !== "connected") {
+            connect = "connected";
+            summaryPending = true;
+          }
+          return { status: 204 };
         }
         case "POST /api/account/sign-in/second-factor": {
           if (!pending) return fail(422, "sign_in_closed", "Start signing in again.");
@@ -181,6 +264,7 @@ export function createAccountMock() {
         }
         case "POST /api/account/sign-in/cancel":
           pending = null;
+          approval = null;
           return { status: 204 };
         case "POST /api/account/confirm":
           if (!session) return fail(403, "reauth_required", "Confirm it's you to do this.");
@@ -190,9 +274,10 @@ export function createAccountMock() {
             return fail(403, "wrong_password", "Wrong email or password.");
           }
           wrongConfirms = 0;
-          if (data.action !== "remove_device" && data.action !== "sign_out_everywhere") return fail(400, "invalid", "Say what to confirm.");
-          if (data.action === "remove_device" && !data.device_id) return fail(400, "invalid", "Say which device.");
-          grant = { action: String(data.action), device: data.action === "remove_device" ? String(data.device_id) : null };
+          if (!["remove_device", "sign_out_everywhere", "approve_device", "connect_settings"].includes(String(data.action))) return fail(400, "invalid", "Say what to confirm.");
+          if ((data.action === "remove_device" || data.action === "approve_device") && !data.device_id) return fail(400, "invalid", "Say which one.");
+          if (data.action === "connect_settings" && data.policy !== "use_device" && data.policy !== "use_account") return fail(400, "invalid", "Say which choice.");
+          grant = { action: String(data.action), device: data.action === "sign_out_everywhere" ? null : String(data.action === "connect_settings" ? data.policy : data.device_id) };
           return { status: 204 };
         case "GET /api/account/devices":
           if (!session) return fail(403, "reauth_required", "Sign in first.");
@@ -222,6 +307,18 @@ export function createAccountMock() {
           paused = false;
           return { status: 204 };
         default: {
+          const answer = /^POST \/api\/account\/approvals\/([^/]+)\/(approve|deny)$/.exec(route);
+          if (answer) {
+            const id = decodeURIComponent(answer[1] ?? "");
+            if (answer[2] === "approve") {
+              const allowed = grant?.action === "approve_device" && grant.device === id;
+              grant = null;
+              if (!session || !allowed) return fail(403, "reauth_required", "Confirm it's you to do this.");
+            }
+            if (!incoming.some((request) => request.id === id)) return fail(404, "request_gone", "That request has ended.");
+            incoming = incoming.filter((request) => request.id !== id);
+            return { status: 204 };
+          }
           const removal = /^DELETE \/api\/account\/devices\/([^/]+)$/.exec(route);
           if (removal) {
             const id = decodeURIComponent(removal[1] ?? "");

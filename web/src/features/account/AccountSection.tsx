@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/controls";
+import { Dialog } from "../../ui/Dialog";
 import { BackLink, Failure } from "./Card";
+import { ApprovalCard, MismatchCard } from "./ApprovalCard";
 import { SignedInSection } from "./SignedInSection";
 import { SignedOutHome } from "./SignedOutPage";
 import { SignInCard } from "./SignInCard";
@@ -22,6 +24,10 @@ export function AccountSection() {
   const [codeStep, setCodeStep] = useState(false);
   const asking = view?.needs_second_factor === true;
   useEffect(() => { if (asking) setCodeStep(true); }, [asking]);
+  // The person saw the codes differ on this screen: the one closed state they make themselves.
+  const [mismatch, setMismatch] = useState(false);
+  // The service ended this computer's session and the person did not: said once, neutrally.
+  const [endedSeen, setEndedSeen] = useState(false);
   const waiting = account.status === "loading";
   const skeleton = useAfter(waiting);
   // The last status is kept while a re-read fails: shown dimmed, with the sync row saying it could not check.
@@ -40,6 +46,10 @@ export function AccountSection() {
         </div>
       )
       : skeleton ? <Loading /> : null;
+  } else if (mismatch && !view.session) {
+    body = <MismatchCard onBack={(to) => { setMismatch(false); setMode(to); reload(); }} />;
+  } else if (view.approval && !view.session) {
+    body = <ApprovalCard approval={view.approval} onChanged={reload} onBack={(to) => { setMode(to); reload(); }} onMismatch={() => { setMismatch(true); reload(); }} />;
   } else if (asking || codeStep) {
     body = <TwoFactorCard onDone={() => { setCodeStep(false); reload(); }} onCancel={(to) => { setCodeStep(false); setMode(to); reload(); }} />;
   } else if (view.session && mode !== "sign-up") {
@@ -69,10 +79,26 @@ export function AccountSection() {
   } else {
     body = <SignedOutHome notice={notice} inviteRequired={view.invite_required} onSignIn={() => { setNotice(null); setMode("sign-in"); }} onCreate={() => { setNotice(null); setMode("sign-up"); }} />;
   }
+  const ended = view?.sync.kind === "signed_out" && view.sync.reason === "session_ended" && !view.session && !notice && !endedSeen;
   return (
     <div className="account-page" aria-busy={waiting || undefined}>
+      {ended ? (
+        <Dialog
+          title="You were signed out"
+          onClose={() => setEndedSeen(true)}
+          footer={
+            <>
+              <Button onClick={() => setEndedSeen(true)}>Not now</Button>
+              <Button tone="primary" onClick={() => { setEndedSeen(true); setMode("sign-in"); }}>Sign in again</Button>
+            </>
+          }
+        >
+          <p>This device may have been removed, or your sessions ended.</p>
+          <p className="ac-sub">Your threads, projects and settings are still on this computer. Orbyn keeps working without an account. Sign in again to sync your settings.</p>
+        </Dialog>
+      ) : null}
       <h1 className="sr-only" tabIndex={-1} data-page-title>Account</h1>
-      {view && !view.session && (mode === "sign-in" || mode === "sign-up") && !asking && !codeStep ? (
+      {view && !view.session && (mode === "sign-in" || mode === "sign-up") && !asking && !codeStep && !view.approval ? (
         <BackLink onClick={() => setMode("home")} />
       ) : null}
       {body}
