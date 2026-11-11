@@ -13,6 +13,10 @@ import type { MockResponse } from "./api.ts";
 
 const err = (status: number, code: string, message: string): MockResponse => ({ status, body: { code, message } });
 
+const CAPPED_DIR = "src/renders";
+const CAPPED_SHOWN = 1000;
+const CAPPED_TOTAL = 3482;
+
 /** Files of the app project: a path and the change Git reports for it. A path ending in `/` is a folder with nothing in it. */
 const APP_FILES: [string, ExplorerChange | null][] = [
   ["README.md", "modified"],
@@ -29,6 +33,8 @@ const APP_FILES: [string, ExplorerChange | null][] = [
   ["src/auth/legacy.ts", "deleted"],
   ["scratch.md", "untracked"],
   ...Array.from({ length: 260 }, (_, at): [string, ExplorerChange | null] => [`src/generated/file-${String(at).padStart(3, "0")}.ts`, null]),
+  // A folder the service cuts at 1,000 of 3,482 entries.
+  ...Array.from({ length: CAPPED_SHOWN }, (_, at): [string, ExplorerChange | null] => [`${CAPPED_DIR}/frame-${String(at + 1).padStart(4, "0")}.png`, null]),
 ];
 const SITE_FILES: [string, ExplorerChange | null][] = [["index.html", null], ["styles/site.css", "added"]];
 
@@ -49,6 +55,12 @@ function level(files: [string, ExplorerChange | null][], path: string): Explorer
     else if (dir && change !== null) held.has_changes = true;
   }
   return sorted([...seen.values()].filter((entry) => entry.name !== ""));
+}
+
+/** What the service says of a folder's size: the whole, or the cut and the true total for the one big folder. */
+function count(projectId: string, path: string, listed: number): Pick<ExplorerTree, "truncated" | "total" | "total_at_least"> {
+  const capped = projectId === "p-app" && path === CAPPED_DIR;
+  return { truncated: capped, total: capped ? CAPPED_TOTAL : listed, total_at_least: false };
 }
 
 export function createExplorerMock(getProjects: () => Project[], getThreads: () => Thread[]) {
@@ -87,7 +99,8 @@ export function createExplorerMock(getProjects: () => Project[], getThreads: () 
     if (worktree.read_only_reason === "missing") return err(404, "not_found", "That worktree's folder is gone.");
     const path = query.get("path") ?? "";
     if (seg[5] === "tree") {
-      const body: ExplorerTree = { worktree_id: worktree.id, path, entries: level(filesOf(project.id), path), truncated: false, changes: "ready", read_only: worktree.read_only };
+      const entries = level(filesOf(project.id), path);
+      const body: ExplorerTree = { worktree_id: worktree.id, path, entries, ...count(project.id, path, entries.length), changes: "ready", read_only: worktree.read_only };
       return { status: 200, body };
     }
     if (seg[5] === "file") {

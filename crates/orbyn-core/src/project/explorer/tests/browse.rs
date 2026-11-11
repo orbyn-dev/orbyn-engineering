@@ -177,6 +177,8 @@ async fn a_huge_folder_is_cut_at_the_cap_and_says_so() {
         .unwrap();
     assert_eq!(level.entries.len(), tree::TREE_LIMIT);
     assert!(level.truncated);
+    assert_eq!(level.total as usize, tree::TREE_LIMIT + 50);
+    assert!(!level.total_at_least);
     assert_eq!(level.entries[0].name, "f00000.txt");
     let narrowed = core
         .explorer_tree(&project.id, &id, "many", "f0100", false)
@@ -184,11 +186,69 @@ async fn a_huge_folder_is_cut_at_the_cap_and_says_so() {
         .unwrap();
     assert!(!narrowed.truncated);
     assert_eq!(narrowed.entries.len(), 10);
+    assert_eq!(narrowed.total, 10);
     let small = core
         .explorer_tree(&project.id, &id, "src", "", false)
         .await
         .unwrap();
     assert!(!small.truncated);
+    assert_eq!(small.total as usize, small.entries.len());
+    assert!(!small.total_at_least);
+}
+
+#[tokio::test]
+async fn a_folder_with_exactly_the_cap_is_not_cut_and_has_an_exact_total() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    for n in 0..tree::TREE_LIMIT {
+        write(&root.join("exact").join(format!("f{n:05}.txt")), "");
+    }
+    let level = core
+        .explorer_tree(&project.id, &id, "exact", "", true)
+        .await
+        .unwrap();
+    assert_eq!(level.entries.len(), tree::TREE_LIMIT);
+    assert!(!level.truncated);
+    assert_eq!(level.total as usize, tree::TREE_LIMIT);
+    assert!(!level.total_at_least);
+    write(&root.join("exact").join("one-more.txt"), "");
+    let level = core
+        .explorer_tree(&project.id, &id, "exact", "", true)
+        .await
+        .unwrap();
+    assert!(level.truncated);
+    assert_eq!(level.total as usize, tree::TREE_LIMIT + 1);
+}
+
+#[tokio::test]
+async fn a_folder_past_the_scan_limit_gives_a_floor_not_the_whole() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    let many = root.join("vast");
+    std::fs::create_dir_all(&many).unwrap();
+    for n in 0..tree::SCAN_LIMIT {
+        std::fs::write(many.join(format!("f{n:05}.txt")), "").unwrap();
+    }
+    // Exactly the scan limit is still counted whole.
+    let level = core
+        .explorer_tree(&project.id, &id, "vast", "", true)
+        .await
+        .unwrap();
+    assert_eq!(level.total as usize, tree::SCAN_LIMIT);
+    assert!(!level.total_at_least);
+    std::fs::write(many.join("zzz-extra.txt"), "").unwrap();
+    let level = core
+        .explorer_tree(&project.id, &id, "vast", "", true)
+        .await
+        .unwrap();
+    assert!(level.truncated);
+    assert!(level.total_at_least);
+    assert_eq!(level.total as usize, tree::SCAN_LIMIT);
+    assert_eq!(level.entries.len(), tree::TREE_LIMIT);
 }
 
 #[tokio::test]
