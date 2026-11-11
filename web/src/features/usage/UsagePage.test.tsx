@@ -316,22 +316,15 @@ it("says a Codex read failed with no last figure, and Try again asks that engine
   expect(all).not.toHaveBeenCalledWith(true);
 });
 
-it("keeps the full Claude Code line whatever the Codex percentage, and the short one only when Codex has no window", async () => {
-  const claude = { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] };
-  const codexAt = (used: number) => ({ engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: used })] });
-  const full = /claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./;
-  const spy = vi.spyOn(api, "limits").mockResolvedValue(limitsOf([claude, codexAt(62)]));
-  const first = render(<UsagePage />);
-  await screen.findByRole("row", { name: /local-model/ });
-  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
-  expect(await screen.findByText(full)).toBeVisible();
-  first.unmount();
-  spy.mockResolvedValue(limitsOf([claude, codexAt(100)]));
-  render(<UsagePage />);
-  await screen.findByRole("row", { name: /local-model/ });
-  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
-  expect(await screen.findByText(full)).toBeVisible();
-});
+for (const used of [62, 100]) {
+  it(`keeps the full Claude Code line with Codex at ${used}%`, async () => {
+    const claude = { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] };
+    const codex = { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: used })] };
+    vi.spyOn(api, "limits").mockResolvedValue(limitsOf([claude, codex]));
+    await openLimits();
+    expect(await screen.findByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+  });
+}
 
 it("uses the short Claude Code line when Codex is signed out", async () => {
   vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] }]));
