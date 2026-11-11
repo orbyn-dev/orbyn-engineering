@@ -13,6 +13,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/account/approvals/{id}/approve"),
     ("POST", "/api/account/approvals/{id}/deny"),
     ("POST", "/api/account/confirm"),
+    ("POST", "/api/account/confirm/cancel"),
     ("POST", "/api/account/connect"),
     ("POST", "/api/account/connect/later"),
     ("POST", "/api/account/connect/seen"),
