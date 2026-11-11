@@ -48,6 +48,7 @@ test("the thread find and diff find inputs keep their fill and padding", async (
   await filled(page.locator(".thread-find input").first());
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Show side panel" }).click();
-  await page.getByRole("tab", { name: "Diff" }).first().click();
+  await page.getByRole("button", { name: "Open a tab" }).click();
+  await page.getByRole("menuitem", { name: "Changes" }).click();
   await filled(page.locator(".diff-find input").first());
 });

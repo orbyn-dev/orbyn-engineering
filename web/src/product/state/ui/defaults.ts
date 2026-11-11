@@ -1,5 +1,5 @@
 import { MOTION } from "../../../lib/motion";
-import { CLOSED_AT_FIRST, DEFAULT_SIDEBAR_WIDTH, DRAFT_LAYOUT, RIGHT_TAB_IDS, type Prefs, type ThreadLayout } from "./types";
+import { DEFAULT_SIDEBAR_WIDTH, DRAFT_LAYOUT, RIGHT_TAB_IDS, type Prefs, type ThreadLayout } from "./types";
 
 export const MAX_LAYOUTS = 200;
 export const PREFS_KEY = "orbyn.prefs.v1";
@@ -9,7 +9,7 @@ export const defaults: Prefs = {
   panelOpen: false,
   panelTab: null,
   panelTabOrder: [...RIGHT_TAB_IDS],
-  panelTabsClosed: [...CLOSED_AT_FIRST],
+  panelTabsClosed: [...RIGHT_TAB_IDS],
   panelAnimationMs: MOTION.slow,
   detailsOpen: true,
   terminalOpen: false,
