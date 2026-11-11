@@ -21,6 +21,9 @@ use crate::host::process::ManagedChild;
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
+/// A capture is normally a few milliseconds. One sent as the page swaps documents can go
+/// unanswered, and the session is held for the whole wait, so it gets a short limit.
+const FRAME_TIMEOUT: Duration = Duration::from_secs(3);
 /// A step in history is usually instant, and a same-page entry fires no load at all.
 const HISTORY_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -451,12 +454,16 @@ impl BrowserSession {
     }
 
     async fn browser_call(&mut self, method: &str, params: Value) -> Result<Value> {
-        self.send(method, params, None, false).await
+        self.send(method, params, None, false, CALL_TIMEOUT).await
     }
 
     async fn call(&mut self, method: &str, params: Value) -> Result<Value> {
+        self.call_within(method, params, CALL_TIMEOUT).await
+    }
+
+    async fn call_within(&mut self, method: &str, params: Value, limit: Duration) -> Result<Value> {
         let session = self.session_id.clone();
-        self.send(method, params, Some(session), false).await
+        self.send(method, params, Some(session), false, limit).await
     }
 
     /// Gives up as soon as the page opens a dialog, which would hold the reply.
@@ -465,7 +472,8 @@ impl BrowserSession {
             return Err(failed("a dialog is open"));
         }
         let session = self.session_id.clone();
-        self.send(method, params, Some(session), true).await
+        self.send(method, params, Some(session), true, CALL_TIMEOUT)
+            .await
     }
 
     async fn send(
@@ -474,6 +482,7 @@ impl BrowserSession {
         params: Value,
         session: Option<String>,
         unless_dialog: bool,
+        limit: Duration,
     ) -> Result<Value> {
         self.next_id += 1;
         let id = self.next_id;
@@ -485,7 +494,7 @@ impl BrowserSession {
             .send(Message::text(message.to_string()))
             .await
             .map_err(failed)?;
-        tokio::time::timeout(CALL_TIMEOUT, async {
+        tokio::time::timeout(limit, async {
             loop {
                 let frame = self
                     .socket
@@ -650,10 +659,15 @@ impl BrowserSession {
 
     /// One frame for a preview, as base64 JPEG.
     pub async fn frame(&mut self, quality: u32) -> Result<String> {
+        self.frame_within(quality, FRAME_TIMEOUT).await
+    }
+
+    async fn frame_within(&mut self, quality: u32, limit: Duration) -> Result<String> {
         let reply = self
-            .call(
+            .call_within(
                 "Page.captureScreenshot",
                 json!({ "format": "jpeg", "quality": quality }),
+                limit,
             )
             .await?;
         reply
@@ -1352,6 +1366,58 @@ mod tests {
         assert_eq!(session.frame(60).await.unwrap(), "frame");
         observed.lock().unwrap().push("frame");
         assert_eq!(*observed.lock().unwrap(), ["clear", "clear", "frame"]);
+        drop(session);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_capture_the_browser_never_answers_gives_the_session_back() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut captures = 0;
+            while let Some(Ok(frame)) = socket.next().await {
+                let Ok(text) = frame.to_text() else { continue };
+                let request: Value = serde_json::from_str(text).unwrap();
+                let result = match request["method"].as_str().unwrap() {
+                    "Target.getTargets" => {
+                        json!({ "targetInfos": [{ "type": "page", "targetId": "target" }] })
+                    }
+                    "Target.attachToTarget" => json!({ "sessionId": "session" }),
+                    "Page.getFrameTree" => json!({ "frameTree": { "frame": { "id": "main" } } }),
+                    "Runtime.evaluate" => json!({ "result": { "value": "load 2" } }),
+                    // A capture sent as the document swaps: the browser drops it.
+                    "Page.captureScreenshot" if captures == 0 => {
+                        captures += 1;
+                        continue;
+                    }
+                    "Page.captureScreenshot" => json!({ "data": "frame" }),
+                    _ => json!({}),
+                };
+                socket
+                    .send(Message::text(
+                        json!({ "id": request["id"], "result": result }).to_string(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut session = BrowserSession::connect(&format!("ws://{address}"), None)
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+        let error = session
+            .frame_within(60, Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("did not answer"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(FRAME_TIMEOUT < CALL_TIMEOUT);
+        // The session reads the new document's title and captures again.
+        assert_eq!(session.title().await.unwrap(), "load 2");
+        assert_eq!(session.frame(60).await.unwrap(), "frame");
         drop(session);
         server.await.unwrap();
     }
