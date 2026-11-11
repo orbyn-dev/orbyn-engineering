@@ -10,6 +10,7 @@ mod catalog;
 mod changes;
 mod checkpoints;
 mod crew;
+mod crew_autopilot;
 mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
@@ -34,6 +35,7 @@ mod threads;
 
 pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
+pub use crew_autopilot::AutopilotEvent;
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub use crew_runs::CrewRun;

@@ -156,6 +156,8 @@ pub struct Core {
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
     /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
     pub(crate) crew_bus: crate::crew::Bus,
+    /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
+    pub(crate) crew_autopilot: crate::crew::Autopilot,
     _lock: File,
 }
 
@@ -298,6 +300,7 @@ impl Core {
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
+            crew_autopilot: crate::crew::Autopilot::default(),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared

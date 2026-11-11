@@ -294,7 +294,7 @@ fn deleting_a_task_removes_its_objects() {
 }
 
 #[test]
-fn a_database_without_crew_tables_gets_them_in_30_to_37() {
+fn a_database_without_crew_tables_gets_them_in_30_to_38() {
     let dir = TempDir::new();
     let path = dir.path().join("at29.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -341,6 +341,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_37() {
         tables(&store.reader()),
         [
             "crew_answer_keys",
+            "crew_autopilot_events",
+            "crew_autopilot_modes",
             "crew_briefs",
             "crew_bus_events",
             "crew_deliveries",

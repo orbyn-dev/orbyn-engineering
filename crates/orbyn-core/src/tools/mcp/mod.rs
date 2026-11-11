@@ -93,6 +93,10 @@ impl McpService {
     pub fn bind_host(&self, core: &Arc<Core>) {
         let _ = self.host.set(Arc::downgrade(core));
         core.runs.bind_crew(core);
+        if core.config.crew_preview {
+            core.gate
+                .bind_review(Arc::new(crate::crew::GateReview(Arc::downgrade(core))));
+        }
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {

@@ -268,3 +268,29 @@ BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 CREATE TRIGGER crew_fixes_immutable BEFORE UPDATE ON crew_fixes
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 38: Autopilot (docs/crew.md, "Autopilot"). `crew_autopilot_modes` holds the person's choice, `off`, `on` or `full`, per
+// scope: `default`, `repo:<project id>` or `crew:<crew id>`; a crew's choice beats its repository's, which beats the default, and
+// with none the mode is `full`. `crew_autopilot_events` is the approval ledger: one row per approval, denial, asked person,
+// disagreement or trip wire, appended by the core only and never changed. A row names the action by kind, target and paths,
+// who decided, the rule or the reasons and the tier. It holds no secret and no answer-key text: the core redacts, withholds and
+// scans each row before it is stored. Counters (denials in a row, denials in a run) are read from these rows, never kept apart.
+pub(super) const CREW_AUTOPILOT: &str = r#"
+CREATE TABLE crew_autopilot_modes (
+    scope TEXT PRIMARY KEY,
+    mode TEXT NOT NULL CHECK(mode IN ('off', 'on', 'full')),
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE crew_autopilot_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    crew_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    body TEXT NOT NULL CHECK(json_valid(body)),
+    at TEXT NOT NULL
+);
+CREATE INDEX crew_autopilot_events_by_task ON crew_autopilot_events(task_id, id);
+CREATE INDEX crew_autopilot_events_by_crew ON crew_autopilot_events(crew_id, id);
+CREATE TRIGGER crew_autopilot_events_immutable BEFORE UPDATE ON crew_autopilot_events
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;

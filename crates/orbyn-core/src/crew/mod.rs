@@ -2,6 +2,7 @@
 //! This group holds the router, the task lifecycle, the verifier, the bus and the tools; the protocol's objects are in
 //! `orbyn-contracts` and their tables in `store`.
 
+mod autopilot;
 mod bus;
 mod checks;
 mod filters;
@@ -29,6 +30,11 @@ mod workers;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use autopilot::GateReview;
+pub use autopilot::{
+    Answer, Approver, Approvers, Autopilot, Grants, IN_A_ROW, IN_A_RUN, Mode, ModeScope, Need,
+    Outcome, RULES, Refusal, Scene, Summary, injection_in, refuse, tier_of,
+};
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};

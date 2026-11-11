@@ -2276,6 +2276,15 @@ A confirmed finding sends the core's own fix brief to a builder, checked like `c
 finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
 ([review group](../crates/orbyn-core/src/crew/review/README.md)).
 
+Autopilot (slice 4f, behind the same flag) puts every request of a Crew worker through the gate's `ActionReview` before any
+rule or person: the always-denied list of the protocol (N1 to N10) first, which no lead, second key, mode or saved allow rule
+can undo, then the lead's approval with a reason, and a second approver on another vendor for network, installs, generated
+scripts and CI files. Keys that disagree give a denial. Three denials in a row or twenty in a run stop the task
+(`too_many_denials`), as does text that reads as injected instructions (`injection_suspected`). Every decision is a row of
+an append-only ledger with no secret and no answer-key text. The mode is `full` by default, `on` or `off` by the person per
+crew or repository. N1 also applies to threads outside Crew: an agent's command or request that names a state-changing account
+route is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
+
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
 sets is the project's, never a global one. The owner authorized a narrow exception
