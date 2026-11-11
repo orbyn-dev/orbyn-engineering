@@ -1,0 +1,20 @@
+{
+  "type": "gate",
+  "v": 0,
+  "id": "sha256:17531d622770465fb1bd361a480357d0263b07ece4b60b544c79649347638fe6",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-02",
+  "stage": "finding_check",
+  "subject": "sha256:ccbf38640db64ca46e0eb0e9f84912a3cc63dba433c1a05d13e2c9a2c1aa1910",
+  "decision": "confirmed",
+  "decided_by": "code",
+  "evidence": [
+    "sha256:cc8a785a649bac070b0093ba346a1f66683c25048b44ce4e9742012bdb8e1973"
+  ],
+  "reason": "The repro panics on the reviewed commit."
+}

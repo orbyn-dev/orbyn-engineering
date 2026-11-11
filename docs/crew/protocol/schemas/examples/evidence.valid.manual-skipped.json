@@ -1,0 +1,22 @@
+{
+  "type": "evidence",
+  "v": 0,
+  "id": "sha256:ba4af8f4ceffae8ba77dd9b012941a33eb88027053e6f45158128b793b1546ce",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "check": "chk-manual",
+  "command": "Manual check: read the new guide page.",
+  "outcome": "skipped",
+  "duration_ms": 0,
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "log_hash": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "excerpt": "",
+  "artifacts": [],
+  "proves": "Nothing yet.",
+  "does_not_prove": "Everything the page says."
+}

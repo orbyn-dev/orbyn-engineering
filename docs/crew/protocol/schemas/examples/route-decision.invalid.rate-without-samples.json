@@ -1,0 +1,41 @@
+{
+  "type": "route_decision",
+  "v": 0,
+  "id": "sha256:019df486a60e4c5874d8abc3fad7afb5a15515783aa66e381144a4122947ec68",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-03",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "engine": "claude",
+  "model": "sonnet",
+  "effort": "medium",
+  "tier": "worker",
+  "role": "builder",
+  "assigned_by": "router",
+  "reasons": [
+    {
+      "code": "highest_score",
+      "text": "Highest pass rate for implement briefs."
+    }
+  ],
+  "rejected": [],
+  "scores": [
+    {
+      "engine": "claude",
+      "score": 820,
+      "used_defaults": false,
+      "pass_rate": {
+        "permille": 800
+      }
+    },
+    {
+      "engine": "codex",
+      "score": 700,
+      "used_defaults": true
+    }
+  ]
+}

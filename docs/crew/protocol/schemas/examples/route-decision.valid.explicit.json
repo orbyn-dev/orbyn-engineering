@@ -1,0 +1,42 @@
+{
+  "type": "route_decision",
+  "v": 0,
+  "id": "sha256:4bd2c9ef1b4930e08f13b7cebda831b23bb2b570f27cb8a447b93cd79f8a6598",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "engine": "codex",
+  "model": "terra",
+  "effort": "medium",
+  "tier": "worker",
+  "role": "builder",
+  "assigned_by": "person",
+  "requested": {
+    "engine": "codex"
+  },
+  "reasons": [
+    {
+      "code": "assigned_by_person",
+      "text": "Assigned by you (@codex)."
+    }
+  ],
+  "rejected": [
+    {
+      "engine": "opencode",
+      "why": "not_signed_in",
+      "text": "OpenCode isn't signed in."
+    }
+  ],
+  "scores": [
+    {
+      "engine": "codex",
+      "score": 500,
+      "used_defaults": true
+    }
+  ]
+}

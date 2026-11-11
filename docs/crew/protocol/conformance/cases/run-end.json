@@ -1,0 +1,587 @@
+{
+  "suite": "No messages after a run ends",
+  "cases": [
+    {
+      "id": "end-post-refused",
+      "title": "A post after the run ends is refused",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-every-member-tool-refused",
+      "title": "Every member tool refuses after the run ends",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.ask",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "question",
+            "body": "Q?"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.release",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ]
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.read",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.a"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.a",
+            "class": "observation",
+            "value": "x",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.claim",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "statement": "Done."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.finding",
+          "caller": {
+            "$use": "reviewer"
+          },
+          "args": {
+            "lane": "correctness",
+            "severity": "low",
+            "path": "docs/a.md",
+            "line": 1,
+            "claim": "x",
+            "evidence": "y",
+            "commit": "0123456789abcdef0123456789abcdef01234567"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.report",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "summary": "Done.",
+            "claims": [],
+            "not_verified": []
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.brief.read",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {},
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-core-writes-evidence-after-end",
+      "title": "The core can still add Evidence to an ended run: a check can run again",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "evidence": 1,
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-core-writes-gate-after-end",
+      "title": "The core can add a Gate after a pass: a lane added later still runs",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.verify",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {},
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "end-person-gate-after-end",
+      "title": "A person can still decide after the run ended",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "person"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "merge",
+              "decided_by": "person",
+              "evidence": [],
+              "reason": "Reviewed the diff."
+            }
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "end-member-cannot-write-core-tools",
+      "title": "A member still cannot call a core tool after the run ended",
+      "rules": [
+        "H7",
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.verify",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {},
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-by-cancel",
+      "title": "Cancelling the task ends the run",
+      "rules": [
+        "H7",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "cancelled",
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-by-stop",
+      "title": "Stopping the task ends the run",
+      "rules": [
+        "H7",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "stopped",
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-by-pass",
+      "title": "Passing the task ends the run",
+      "rules": [
+        "H7",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "evidence": 1,
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-unknown-tool-first",
+      "title": "An unknown tool is still unknown after the run ends",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.merge",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {},
+          "expect": {
+            "error": "unknown_tool"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-paused-run-still-accepts",
+      "title": "A task that needs a person has not ended, so tools still work",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "needs_person",
+          "expect": {
+            "run_ended": false
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "blocker",
+            "body": "Waiting for you."
+          },
+          "expect": {}
+        }
+      ]
+    }
+  ]
+}

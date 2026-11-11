@@ -56,10 +56,14 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then all "not a pull request"; exit 0; fi
           if ! files=$(git diff --no-renames --name-only "$BASE"...HEAD); then all "could not compare with the base"; exit 0; fi
           docs='^(docs/|[^/]+\.md$|\.github/ISSUE_TEMPLATE/|\.github/pull_request_template\.md$|\.github/(CODEOWNERS|labeler\.yml|labels\.json|dependabot\.yml)$)'
-          rust='^(crates/|Cargo\.(toml|lock)$|desktop/src-tauri/|scripts/|web/src/generated/|\.github/workflows/)'
+          rust='^(crates/|Cargo\.(toml|lock)$|desktop/src-tauri/|scripts/|web/src/generated/|\.github/workflows/|docs/crew/protocol/)'
+          # The Crew Protocol's schemas, examples and cases are documentation, but a Rust test
+          # (crates/orbyn-contracts/tests/crew_protocol/main.rs) validates them, so they count as code.
+          protocol='^docs/crew/protocol/'
           web='^(web/|\.github/workflows/)'
           desktop='^(desktop/|scripts/)'
           code=$(printf '%s\n' "$files" | grep -Ev "$docs" | grep -v '^$' || true)
+          code=$(printf '%s\n%s\n' "$code" "$(printf '%s\n' "$files" | grep -E "$protocol" || true)" | grep -v '^$' || true)
           unknown=$(printf '%s\n' "$code" | grep -Ev "$rust|$web|$desktop" | grep -v '^$' || true)
           if [ -n "$unknown" ]; then all "unrecognised paths: $(echo $unknown)"; exit 0; fi
           has() { printf '%s\n' "$code" | grep -Eq "$1" && echo true || echo false; }
@@ -73,7 +77,7 @@ jobs:
           x=$(has '^(desktop/|scripts/|\.github/workflows/|Cargo\.(toml|lock)$)')
           # The Windows Rust tests also cover Rust source and the Rust toolchain files, which
           # the desktop build above does not need Windows for.
-          y=$x; [ "$x" = true ] || y=$(has '^(crates/|\.cargo/|rust-toolchain|.*\.rs$|(.*/)?Cargo\.(toml|lock)$)')
+          y=$x; [ "$x" = true ] || y=$(has '^(crates/|\.cargo/|rust-toolchain|.*\.rs$|(.*/)?Cargo\.(toml|lock)$|docs/crew/protocol/)')
           printf 'rust=%s\nweb=%s\ne2e=%s\ndesktop=%s\nwindows=%s\nwindows_rust=%s\n' "$r" "$w" "$e" "$k" "$x" "$y" >> "$GITHUB_OUTPUT"
           echo "rust=$r web=$w e2e=$e desktop=$k windows=$x windows_rust=$y"
           printf '%s\n' "$files"

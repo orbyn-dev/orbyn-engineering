@@ -1,0 +1,690 @@
+{
+  "suite": "The task lifecycle and the loop guard",
+  "cases": [
+    {
+      "id": "life-happy-path",
+      "title": "Briefed, routed, running, verifying, passed",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {
+            "task_state": "verifying"
+          }
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "evidence": 2,
+          "expect": {
+            "task_state": "passed",
+            "run_ended": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-must-be-routed",
+      "title": "A task cannot run before it is routed",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-passed-needs-evidence",
+      "title": "A task cannot pass without evidence or a person",
+      "rules": [
+        "H8",
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "expect": {
+            "error": "gate_needs_evidence"
+          }
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "person": true,
+          "expect": {
+            "task_state": "passed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-terminal-is-final",
+      "title": "A passed task cannot move again",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "evidence": 1,
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-cancelled-is-final",
+      "title": "A cancelled task cannot be revived",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "cancelled",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-failed-only-by-verifier",
+      "title": "A task enters failed only through a failed verification",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "failed",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-verify-failed-needs-verifying",
+      "title": "A failed verification needs a task that is verifying",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-needs-person-resumes",
+      "title": "A task that needs a person can resume",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "needs_person",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "task_state": "running"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-unknown-state",
+      "title": "A state that does not exist is refused",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "done",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-different-failures-retry",
+      "title": "A different failure each time keeps retrying",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "result_has": {
+              "next": "running"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "b",
+          "expect": {
+            "result_has": {
+              "next": "running"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "c",
+          "expect": {
+            "result_has": {
+              "next": "running"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-same-failure-twice-changes-approach",
+      "title": "The same failure twice means one change of approach, then the run stops",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "result_has": {
+              "next": "running"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "result_has": {
+              "next": "changed_approach"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "changed_approach",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "result_has": {
+              "next": "stopped"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "stopped",
+          "expect": {
+            "run_ended": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-loop-guard-cannot-be-skipped",
+      "title": "After the guard says change approach, a plain retry is refused",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "result_has": {
+              "next": "changed_approach"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        },
+        {
+          "op": "transition",
+          "to": "changed_approach",
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "life-loop-guard-cannot-continue-after-stop",
+      "title": "After the guard says stop, the task cannot run again",
+      "rules": [
+        "H13"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "changed_approach",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "verify_failed",
+          "fingerprint": "a",
+          "expect": {
+            "result_has": {
+              "next": "stopped"
+            }
+          }
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    }
+  ]
+}

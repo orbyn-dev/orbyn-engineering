@@ -1,0 +1,20 @@
+{
+  "type": "finding",
+  "v": 0,
+  "id": "sha256:e3ea52de46eb392c0cb6d79ecb25aed244c55783d055481e14e1564739c33b1d",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "reviewer",
+    "engine": "codex",
+    "member": "reviewer-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-02",
+  "lane": "correctness",
+  "severity": "high",
+  "path": "crates/crew-demo/src/lib.rs",
+  "line": 42,
+  "claim": "parse_duration panics on input 99999999999h.",
+  "evidence": "The multiplication at line 42 is unchecked.",
+  "repro": "cargo run -p crew-demo -- 99999999999h"
+}
