@@ -38,6 +38,11 @@ pub const REVIEW_TOOLS: [&str; 4] = [REVIEW_TOOL, FINDING_TOOL, CHECK_FINDING_TO
 /// The most findings one review run files, and one independent second run (which only has to find one place).
 pub(super) const MOST_FINDINGS: usize = 100;
 pub(super) const MOST_SECOND_FINDINGS: usize = 10;
+/// The lanes the merge queue is owed by default (`merge::owed_lanes`): the general code review, which the review tool calls "correctness", for
+/// medium and high diffs, and a security review for high ones. They are lane tokens like any other, written by slice 4b when the lead names them.
+pub const CODE_LANE: &str = "correctness";
+pub const SECURITY_LANE: &str = "security";
+
 /// The most fix briefs one reviewed task is sent, and the most rounds one lane runs on it. Past either a person decides.
 pub(super) const MOST_FIXES: usize = 3;
 pub(super) const MOST_ROUNDS: u32 = 5;
@@ -49,7 +54,8 @@ pub fn specs() -> Vec<Value> {
             "name": REVIEW_TOOL,
             "description": "Preview: review finished work. `task` is a task that has passed; `lanes` names the \
                 reviewer lanes to run (lowercase words such as correctness, security, performance, accessibility, design, \
-                licence, docs, or one you name). There is no limit on lanes, and a lane can be added after a pass. Lanes \
+                licence, docs, or one you name). The merge queue waits for a lane named `correctness` (and `security` for a high-risk diff) \
+        before it merges a task, so name them for work you mean to merge. There is no limit on lanes, and a lane can be added after a pass. Lanes \
                 the repo's rules (`.orbyn/crew.json`) ask for run as well. Every lane is a separate read-only run, \
                 routed to another vendor than the builder where one is configured. A lane named again runs again, as the \
                 next round.",

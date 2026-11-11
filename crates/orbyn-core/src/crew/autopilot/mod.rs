@@ -6,6 +6,7 @@ mod hard;
 mod hard_tools;
 mod hosts;
 mod ledger;
+mod merge;
 mod review;
 mod shell;
 mod tier;
@@ -14,6 +15,11 @@ mod tripwire;
 pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
 pub use hosts::read_allowed_hosts;
+pub use merge::{
+    DiffFacts, MergeOutcome, MergeTarget, Rate, RecentTotals, ReviewAnswer, ReviewItem, Risk,
+    Scored, WatchOutcome, area_of, areas_of, check_words, lane_ran, owed_lanes, review_window,
+    score, sensitive,
+};
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};
 pub use tier::{Grants, Need, tier_of};

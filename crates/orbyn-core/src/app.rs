@@ -158,6 +158,8 @@ pub struct Core {
     pub(crate) crew_bus: crate::crew::Bus,
     /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
     pub(crate) crew_autopilot: crate::crew::Autopilot,
+    /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
+    pub(crate) crew_merges: tokio::sync::Mutex<()>,
     _lock: File,
 }
 
@@ -301,6 +303,7 @@ impl Core {
             crew_starts: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
+            crew_merges: tokio::sync::Mutex::new(()),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared

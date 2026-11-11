@@ -97,6 +97,16 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     }
 }
 
+/// Runs one command line in `worktree`, as the answer key's command checks run: it passes on exit 0.
+pub(crate) async fn run_line(run: &str, worktree: &Path, deadline: Instant) -> Ran {
+    let site = Site {
+        worktree,
+        deadline,
+        base: None,
+    };
+    run_command(run, 0, &site, Instant::now()).await
+}
+
 async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) -> Ran {
     let cwd = site.worktree;
     let allowed = TIMEOUT.min(site.deadline.saturating_duration_since(Instant::now()));

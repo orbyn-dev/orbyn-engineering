@@ -32,8 +32,10 @@ mod tests;
 
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
-    Answer, Approver, Approvers, Autopilot, Grants, IN_A_ROW, IN_A_RUN, Mode, ModeScope, Need,
-    Outcome, RULES, Refusal, Scene, Summary, injection_in, refuse, tier_of,
+    Answer, Approver, Approvers, Autopilot, DiffFacts, Grants, IN_A_ROW, IN_A_RUN, MergeOutcome,
+    MergeTarget, Mode, ModeScope, Need, Outcome, RULES, Rate, RecentTotals, Refusal, ReviewAnswer,
+    ReviewItem, Risk, Scene, Scored, Summary, WatchOutcome, area_of, areas_of, check_words,
+    injection_in, lane_ran, owed_lanes, refuse, review_window, score, sensitive, tier_of,
 };
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use gather::{LeftOut, Machine};
@@ -41,8 +43,8 @@ pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, wi
 pub use leases::refuse_protected;
 pub use protect::protected_changes;
 pub use review::{
-    CHECK_FINDING_TOOL, FINDING_TOOL, FindingStatus, REVIEW_TOOL, REVIEW_TOOLS, RULES_FILE,
-    RuleLane, STATUS_TOOL, agrees, fingerprint, read_rules, status_of,
+    CHECK_FINDING_TOOL, CODE_LANE, FINDING_TOOL, FindingStatus, REVIEW_TOOL, REVIEW_TOOLS,
+    RULES_FILE, RuleLane, SECURITY_LANE, STATUS_TOOL, agrees, fingerprint, read_rules, status_of,
 };
 pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};

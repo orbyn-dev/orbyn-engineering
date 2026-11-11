@@ -54,7 +54,7 @@ const CI_FILES: [&str; 9] = [
     ".drone.yml",
 ];
 
-fn is_ci(path: &str) -> bool {
+pub(super) fn is_ci(path: &str) -> bool {
     let lower = path.to_lowercase();
     CI_FILES
         .iter()
