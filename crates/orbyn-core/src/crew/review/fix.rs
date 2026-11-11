@@ -5,7 +5,11 @@
 //! - the lead's repro, when that is what confirmed the finding;
 //! - a check that the finding's file now differs from the copy the core kept when the fix began, so a fix that changes
 //!   nothing fails (a finding clears only when a fix that proves it touched the file has passed);
-//! - a scope check: no file changed other than the files already changed when the fix began and the finding's file.
+//! - a scope check: no file changed other than the files already changed when the fix began and the finding's file, and the
+//!   files already changed (the work under review) other than the finding's file are held by their bytes, as a reviewer's are.
+//!
+//! A finding the check confirmed with a repro is cleared by a fix whose key held that repro. A finding confirmed by agreement
+//! has no repro, so no fix clears it alone: the lead supplies one that passes after the fix, or a person clears it.
 //!
 //! A lease is declared, not enforced, so the scope check is what keeps the builder to the finding's file. The core refuses
 //! a fix for a file the reviewed task could not write, a protected path, a test file or CI config, and a file that does not exist.
@@ -39,6 +43,11 @@ fn sensitive(path: &str) -> bool {
         || lower.starts_with(".circleci/")
         || lower.starts_with(".gitlab")
         || name == "jenkinsfile"
+        // Manifests that define the commands a check runs.
+        || matches!(
+            name,
+            "package.json" | "makefile" | "justfile" | "taskfile.yml" | "tox.ini" | "noxfile.py" | "pyproject.toml" | "build.rs"
+        )
         || lower
             .split('/')
             .any(|s| matches!(s, "tests" | "test" | "__tests__" | "spec" | "specs" | "e2e"))
@@ -150,7 +159,9 @@ impl Core {
         if dirty.len() > MOST_PATHS {
             return Ok(self.no_fix(subject, "refused_path", "Too many files are changed in the checkout to hold a fix to one file; commit the work first."));
         }
-        let mut only: Vec<String> = dirty;
+        // The work already changed in the checkout, bar the finding's file, is held by its bytes: the builder may not touch it.
+        let held: Vec<&String> = dirty.iter().filter(|p| p.as_str() != path).collect();
+        let mut only: Vec<String> = dirty.clone();
         only.push(path.to_owned());
         only.sort();
         only.dedup();
@@ -191,6 +202,10 @@ impl Core {
             .map(|p| json!(p))
             .collect();
         protected.push(json!(RULES_FILE));
+        protected.extend(held.iter().map(|p| json!(p)));
+        if protected.len() > 256 {
+            return Ok(self.no_fix(subject, "refused_path", "Too many files would have to be held unchanged for the fix; commit the work first."));
+        }
         let draft = |with_inputs: bool| {
             json!({
                 "kind": "implement",
@@ -247,5 +262,31 @@ impl Core {
             }
             Err(error) => json!({ "started": false, "error": error }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sensitive;
+
+    #[test]
+    fn tests_ci_and_the_files_that_define_check_commands_are_sensitive() {
+        for path in [
+            ".github/workflows/ci.yml",
+            "tests/a.rs",
+            "src/tests/a.txt",
+            "web/app.test.ts",
+            "web/package.json",
+            "Makefile",
+            "justfile",
+            ".orbyn/crew.json",
+            "Jenkinsfile",
+            "tox.ini",
+        ] {
+            assert!(sensitive(path), "{path}");
+        }
+        for path in ["src/lib.rs", "docs/readme.md", "crates/x/src/main.rs"] {
+            assert!(!sensitive(path), "{path}");
+        }
     }
 }

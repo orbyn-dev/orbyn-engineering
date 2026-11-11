@@ -91,6 +91,26 @@ impl Core {
         let Ok(Some(fix)) = self.store.crew_task(fix_task) else {
             return;
         };
+        // Lanes read the shared checkout: while another fix of this work is still running its writes would fail their
+        // read-only checks. The last fix to pass runs them.
+        if let Ok(fixes) = self.store.crew_fixes_of(subject_id) {
+            for other in fixes.iter().filter(|f| f.fix_task_id != fix_task) {
+                let running = self
+                    .store
+                    .crew_task(&other.fix_task_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|t| {
+                        !matches!(
+                            t.state.as_str(),
+                            "passed" | "stopped" | "cancelled" | "needs_person"
+                        )
+                    });
+                if running {
+                    return;
+                }
+            }
+        }
         let Ok(commit) = self
             .review_commit(&fix, std::path::Path::new(&thread.cwd))
             .await

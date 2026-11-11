@@ -5,8 +5,10 @@
 use orbyn_contracts::GateStage;
 use serde_json::json;
 
-use super::harness::{Turn, bind, world_tiered};
-use super::review_support::{arc, built, commit_all, crew, finding, fixed, reviewed};
+use super::harness::{Turn, world_tiered};
+use super::review_support::{
+    arc, built, commit_all, crew, finding, fixed, fixed_file, repro_for, reviewed,
+};
 
 fn failing(id: &str, path: &str) -> serde_json::Value {
     json!({ "id": id, "kind": "command",
@@ -310,5 +312,186 @@ async fn two_checks_at_once_write_one_gate() {
         1
     );
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().len() <= 1);
-    let _ = (bind, fixed);
+    // The check that lost wrote no Evidence: the task's three checks and the winner's one.
+    assert_eq!(w.core.store.crew_evidence(&subject).unwrap().len(), 4);
+}
+
+/// The work already changed in the checkout, bar the finding's file, is held by its bytes during a fix.
+#[tokio::test]
+async fn a_fix_cannot_edit_the_rest_of_the_work() {
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            std::fs::write(root.join("src/other.txt"), "other\n").unwrap();
+            built(root)
+        }
+        1 => reviewed(vec![finding("src/lib.txt", 1, "It is wrong.")]),
+        _ => {
+            let _ = fixed_file(root, "src/other.txt");
+            fixed(root)
+        }
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+    let id = w.first_finding(&subject);
+    let (done, _) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": id, "repro": repro_for("r-fix", "src/lib.txt") }),
+        )
+        .await;
+    let fix = done["fix"]["task"].as_str().unwrap().to_owned();
+    w.until_state(&fix, "stopped").await;
+    assert_eq!(w.status(&subject)["blocked"], true);
+}
+
+fn hide(root: &std::path::Path, flag: &str) {
+    crate::testing::run_git(root, &["update-index", flag, "src/base.txt"]);
+    std::fs::write(root.join("src/base.txt"), "edited in secret\n").unwrap();
+}
+
+/// An index flag that hides an edit from git does not hide it from the core.
+#[tokio::test]
+async fn an_index_flag_does_not_hide_a_reviewers_edit() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let w = crew(arc(move |n, root| match n {
+            0 => built(root),
+            _ => {
+                hide(root, flag);
+                reviewed(vec![])
+            }
+        }))
+        .await;
+        let subject = w.built_work().await;
+        let lanes = w.review(&subject, &["correctness"]).await;
+        w.until_state(&lanes[0], "stopped").await;
+    }
+}
+
+/// A flag the checkout already had (a sparse checkout's, say) is not the reviewer's doing.
+#[tokio::test]
+async fn a_flag_that_was_there_at_the_start_is_not_a_failure() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    crate::testing::run_git(
+        &w.repo,
+        &["update-index", "--skip-worktree", "src/base.txt"],
+    );
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+}
+
+/// A finding confirmed by agreement has no repro. A cosmetic edit and a silent re-review do not clear it; the lead's repro
+/// that passes after the fix does, and one that fails does not.
+#[tokio::test]
+async fn an_agreement_confirmed_finding_needs_a_repro_to_clear() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        1 => reviewed(vec![finding("src/lib.txt", 5, "Overflow.")]),
+        2 => reviewed(vec![finding("src/lib.txt", 6, "A second reading.")]),
+        3 => fixed(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+    let id = w.first_finding(&subject);
+    // A repro cannot clear what no fix has answered.
+    let (done, _) = w.lead("crew_check_finding", json!({ "finding": id })).await;
+    w.until_state(done["second_review"]["task"].as_str().unwrap(), "passed")
+        .await;
+    w.until("a fix is started", |w| {
+        !w.core.store.crew_fixes_of(&subject).unwrap().is_empty()
+    })
+    .await;
+    let fix = w.core.store.crew_fixes_of(&subject).unwrap()[0]
+        .fix_task_id
+        .clone();
+    w.until_state(&fix, "passed").await;
+    w.until("the lanes run again", |w| {
+        w.status(&subject)["lanes"][0]["rounds"]
+            .as_array()
+            .is_some_and(|r| r.len() == 2 && r[1]["state"] == "passed")
+    })
+    .await;
+    // The fix passed, the file changed and the re-review is silent: the finding still blocks.
+    let status = w.status(&subject);
+    assert_eq!(status["blocked"], true, "{status}");
+    assert_eq!(status["findings"][0]["status"], "unreported");
+    // A repro that still fails changes nothing.
+    let (still, error) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": id, "repro": failing("r-fail", "src/lib.txt") }),
+        )
+        .await;
+    assert!(!error && still["decision"] == "still_failing", "{still}");
+    assert_eq!(w.status(&subject)["blocked"], true);
+    // One that passes after the fix clears it.
+    let (cleared, error) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": id, "repro": repro_for("r-pass", "src/lib.txt") }),
+        )
+        .await;
+    assert!(!error && cleared["decision"] == "cleared", "{cleared}");
+    let status = w.status(&subject);
+    assert_eq!(status["blocked"], false, "{status}");
+    assert_eq!(status["findings"][0]["status"], "fixed");
+}
+
+/// The lanes run again after the last running fix, not while another is still writing in the shared checkout.
+#[tokio::test]
+async fn the_lanes_wait_for_the_last_running_fix() {
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            std::fs::write(root.join("src/b.txt"), "b\n").unwrap();
+            built(root)
+        }
+        1 => reviewed(vec![
+            finding("src/lib.txt", 1, "A."),
+            finding("src/b.txt", 1, "B."),
+        ]),
+        // The fix for b starts first and keeps running; the one for lib.txt passes.
+        2 => Turn::Hang,
+        3 => fixed(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+    let ids: Vec<String> = w.status(&subject)["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["id"].as_str().unwrap().to_owned())
+        .collect();
+    let (b, _) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": ids[1], "repro": failing("r-b", "src/b.txt") }),
+        )
+        .await;
+    assert_eq!(b["fix"]["started"], true, "{b}");
+    let (a, _) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": ids[0], "repro": repro_for("r-a", "src/lib.txt") }),
+        )
+        .await;
+    let fix_a = a["fix"]["task"].as_str().unwrap().to_owned();
+    w.until_state(&fix_a, "passed").await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert_eq!(
+        w.core.store.crew_reviews_of(&subject).unwrap().len(),
+        1,
+        "no lane ran while a fix was running"
+    );
 }

@@ -216,6 +216,9 @@ BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 // reviewed task. A repro row keeps the lead's repro check that confirmed or cleared a finding (core only: it is part of the key
 // for the fix, and never shown to a worker). A fix row ties a confirmed finding to the builder task that answers it. All rows are immutable.
 pub(super) const CREW_REVIEW: &str = r#"
+-- The index entries that hid a change from git when the task started (`git ls-files -v` showing `h` or `S`), as a JSON list.
+-- A check fails if the worker adds one: an edit to such a file does not show in any git diff.
+ALTER TABLE crew_runs ADD COLUMN index_flags TEXT;
 CREATE TABLE crew_reviews (
     task_id TEXT PRIMARY KEY REFERENCES crew_tasks(id) ON DELETE CASCADE,
     subject_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,

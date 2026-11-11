@@ -7,6 +7,7 @@ mod checks;
 mod filters;
 mod gather;
 mod guard;
+mod index_flags;
 mod leases;
 pub(crate) mod lifecycle;
 mod persist;

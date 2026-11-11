@@ -240,6 +240,29 @@ impl Core {
                 return Ok(verdict);
             }
         }
+        // A flag that hides a file from git blinds every git-based check, so one added since the start fails the attempt.
+        if let Some(before) = run
+            .index_flags
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Vec<String>>(text).ok())
+        {
+            let now = super::index_flags::flagged(worktree)
+                .await
+                .unwrap_or_default();
+            let hidden = super::index_flags::added(&before, &now);
+            if !hidden.is_empty() {
+                verdict.failures.push(Failed {
+                    id: "index_flags".to_owned(),
+                    outcome: CheckOutcome::Fail,
+                    exit_code: None,
+                    names: hidden,
+                    reason: "Your changes hide files from git (assume-unchanged or skip-worktree). Undo that, \
+                             and change only the paths you were given."
+                        .to_owned(),
+                });
+                return Ok(verdict);
+            }
+        }
         for check in &key.checks {
             if live
                 && self

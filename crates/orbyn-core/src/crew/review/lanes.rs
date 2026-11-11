@@ -68,7 +68,16 @@ impl Core {
             .crew_gates(&task.id)
             .map_err(internal)?
             .iter()
-            .filter(|g| g.stage == orbyn_contracts::GateStage::FindingCheck)
+            // A Gate about a finding (its check, or a repro that cleared it), as opposed to one about the task.
+            .filter(|g| {
+                g.stage == orbyn_contracts::GateStage::FindingCheck
+                    || self
+                        .store
+                        .crew_finding(g.subject.as_str())
+                        .ok()
+                        .flatten()
+                        .is_some()
+            })
             .flat_map(|g| g.evidence.iter().map(|e| e.as_str().to_owned()))
             .collect();
         Ok(self

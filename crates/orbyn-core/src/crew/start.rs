@@ -204,6 +204,14 @@ impl Core {
                 .map_err(internal)?;
         }
 
+        // Which entries already hid a change from git, so one the worker adds can be told.
+        if let Some(flags) = super::index_flags::flagged(std::path::Path::new(&thread.cwd)).await {
+            let text = serde_json::to_string(&flags).map_err(|e| invalid(e.to_string()))?;
+            self.store
+                .set_crew_index_flags(&task.id, &text)
+                .map_err(internal)?;
+        }
+
         let machine = self
             .crew_machine(Some(&thread.project_id))
             .await

@@ -149,6 +149,159 @@ impl Core {
             .unwrap_or_else(|| "no engine".to_owned())
     }
 
+    /// Parses a repro and runs it in the checkout. The check must be a kind this version runs.
+    async fn run_repro(
+        &self,
+        thread: &orbyn_contracts::Thread,
+        subject_run: &crate::store::CrewRun,
+        draft: &Value,
+    ) -> Result<(CrewCheck, crate::crew::checks::Ran, String), CrewError> {
+        let check: CrewCheck =
+            serde_json::from_value(draft.clone()).map_err(|e| invalid(format!("repro: {e}")))?;
+        check.validate()?;
+        if !matches!(
+            check.kind,
+            CheckKind::Command
+                | CheckKind::Test
+                | CheckKind::Lint
+                | CheckKind::Typecheck
+                | CheckKind::CustomScript
+                | CheckKind::FileScope
+                | CheckKind::DiffSize
+        ) {
+            return Err(invalid(
+                "repro: this version runs command, test, lint, typecheck, custom_script, file_scope and diff_size checks",
+            ));
+        }
+        let worktree = subject_run
+            .worktree
+            .clone()
+            .unwrap_or_else(|| thread.cwd.clone());
+        let site = Site {
+            worktree: std::path::Path::new(&worktree),
+            deadline: std::time::Instant::now() + REPRO_TIME,
+            base: subject_run.base_commit.as_deref(),
+        };
+        let ran = run_check(&check, &site).await;
+        Ok((check, ran, worktree))
+    }
+
+    fn confirmed_without_repro(
+        &self,
+        subject: &CrewTask,
+        finding: &Finding,
+    ) -> Result<bool, CrewError> {
+        let confirmed = self
+            .store
+            .crew_gates(&subject.id)
+            .map_err(internal)?
+            .iter()
+            .any(|g| {
+                g.stage == GateStage::FindingCheck
+                    && g.subject == finding.id
+                    && g.decision == GateDecision::Confirmed
+            });
+        Ok(confirmed
+            && self
+                .store
+                .crew_finding_repro(finding.id.as_str())
+                .map_err(internal)?
+                .is_none())
+    }
+
+    /// The lead's repro for a finding the core confirmed by agreement: it clears the finding only if a fix of that place has
+    /// passed and the repro passes now. The Evidence and a `checks` Gate on the finding are the record.
+    async fn clear_by_repro(
+        &self,
+        thread: &orbyn_contracts::Thread,
+        subject: &CrewTask,
+        subject_run: &crate::store::CrewRun,
+        found: &StoredFinding,
+        draft: &Value,
+    ) -> Result<Value, CrewError> {
+        let mut fixed = false;
+        for fix in self.store.crew_fixes_of(&subject.id).map_err(internal)? {
+            let same_place = self
+                .store
+                .crew_finding(&fix.finding_id)
+                .map_err(internal)?
+                .is_some_and(|f| f.lane == found.lane && f.finding.path == found.finding.path);
+            let passed = self
+                .store
+                .crew_task(&fix.fix_task_id)
+                .map_err(internal)?
+                .is_some_and(|t| t.state == "passed");
+            fixed |= same_place && passed;
+        }
+        if !fixed {
+            return Err(invalid(
+                "finding: it is confirmed and waits for a fix that has passed; then a repro that passes clears it",
+            ));
+        }
+        let (check, ran, worktree) = self.run_repro(thread, subject_run, draft).await?;
+        match ran.outcome {
+            CheckOutcome::Pass => {}
+            CheckOutcome::Fail => {
+                return Ok(json!({
+                    "finding": found.finding.id,
+                    "decision": "still_failing",
+                    "note": "The repro still fails after the fix, so the finding stays.",
+                }));
+            }
+            CheckOutcome::Error | CheckOutcome::Skipped => {
+                return Err(invalid("repro: it could not run, so it decides nothing"));
+            }
+        }
+        let repro = serde_json::to_string(&check).map_err(|e| invalid(e.to_string()))?;
+        self.store
+            .add_finding_repro(&FindingRepro {
+                finding_id: found.finding.id.as_str().to_owned(),
+                subject_id: subject.id.clone(),
+                repro,
+            })
+            .map_err(|e| invalid(e.public_message()))?;
+        let commit = head(std::path::Path::new(&worktree))
+            .await
+            .unwrap_or(found.finding.commit.clone());
+        let evidence = self.write_core_evidence(
+            subject,
+            &Said {
+                check: check.id.as_str(),
+                command: &ran.command,
+                outcome: ran.outcome,
+                exit_code: ran.exit_code,
+                duration_ms: ran.duration_ms,
+                commit,
+                log: &ran.log,
+                proves: check.proves.as_str(),
+                does_not_prove: "Anything the repro does not exercise.",
+            },
+        )?;
+        let mut gate = Gate {
+            v: 0,
+            id: zero()?,
+            crew_id: CrewId::new(subject.crew_id.clone()).map_err(invalid)?,
+            author: core_author(),
+            created_at: timestamp(crate::util::unix_now())?,
+            run_id: CrewId::new(subject.run_id.clone()).map_err(invalid)?,
+            stage: GateStage::Checks,
+            subject: found.finding.id.clone(),
+            decision: GateDecision::Pass,
+            decided_by: GateDecider::Code,
+            evidence: vec![evidence.clone()],
+            reason: short("The lead's repro passes after a fix of the place.")?,
+            lane: None,
+        };
+        gate.validate()?;
+        gate.id = CrewObject::Gate(gate.clone()).computed_id()?;
+        self.store
+            .add_crew_object(&subject.id, &CrewObject::Gate(gate.clone()))
+            .map_err(internal)?;
+        Ok(
+            json!({ "finding": found.finding.id, "decision": "cleared", "gate": gate.id, "evidence": evidence }),
+        )
+    }
+
     /// Whether the finding already has a decision, or a second run that has not ended.
     fn finding_is_taken(&self, subject: &CrewTask, finding: &Finding) -> Result<bool, CrewError> {
         let decided = self
@@ -211,6 +364,15 @@ impl Core {
                 "finding: its review run did not pass its read-only check, so it cannot be confirmed",
             ));
         }
+        // A finding confirmed by agreement has no repro, so a fix alone never clears it. After a fix, a repro the lead supplies
+        // that passes does; one that fails changes nothing.
+        if let Some(draft) = fields.get("repro").filter(|v| !v.is_null())
+            && self.confirmed_without_repro(&subject, &found.finding)?
+        {
+            return self
+                .clear_by_repro(&thread, &subject, &subject_run, &found, draft)
+                .await;
+        }
         if self.finding_is_taken(&subject, &found.finding)? {
             return Err(invalid(
                 "finding: it has already been checked, or a second review of it is running",
@@ -234,33 +396,7 @@ impl Core {
                 "second_review": started,
             }));
         };
-        let check: CrewCheck =
-            serde_json::from_value(draft.clone()).map_err(|e| invalid(format!("repro: {e}")))?;
-        check.validate()?;
-        if !matches!(
-            check.kind,
-            CheckKind::Command
-                | CheckKind::Test
-                | CheckKind::Lint
-                | CheckKind::Typecheck
-                | CheckKind::CustomScript
-                | CheckKind::FileScope
-                | CheckKind::DiffSize
-        ) {
-            return Err(invalid(
-                "repro: this version runs command, test, lint, typecheck, custom_script, file_scope and diff_size checks",
-            ));
-        }
-        let worktree = subject_run
-            .worktree
-            .clone()
-            .unwrap_or_else(|| thread.cwd.clone());
-        let site = Site {
-            worktree: std::path::Path::new(&worktree),
-            deadline: std::time::Instant::now() + REPRO_TIME,
-            base: subject_run.base_commit.as_deref(),
-        };
-        let ran = run_check(&check, &site).await;
+        let (check, ran, worktree) = self.run_repro(&thread, &subject_run, draft).await?;
         let (decision, reason) = match ran.outcome {
             CheckOutcome::Fail => (
                 GateDecision::Confirmed,
@@ -277,6 +413,14 @@ impl Core {
                 )));
             }
         };
+        let repro = serde_json::to_string(&check).map_err(|e| invalid(e.to_string()))?;
+        self.store
+            .add_finding_repro(&FindingRepro {
+                finding_id: id.to_owned(),
+                subject_id: subject.id.clone(),
+                repro,
+            })
+            .map_err(|e| invalid(e.public_message()))?;
         let commit = head(std::path::Path::new(&worktree))
             .await
             .unwrap_or(found.finding.commit.clone());
@@ -294,14 +438,6 @@ impl Core {
                 does_not_prove: "Anything the repro does not exercise.",
             },
         )?;
-        let repro = serde_json::to_string(&check).map_err(|e| invalid(e.to_string()))?;
-        self.store
-            .add_finding_repro(&FindingRepro {
-                finding_id: id.to_owned(),
-                subject_id: subject.id.clone(),
-                repro,
-            })
-            .map_err(|e| invalid(e.public_message()))?;
         let gate = self.write_finding_gate(
             &subject,
             &found.finding,

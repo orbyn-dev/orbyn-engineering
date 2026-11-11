@@ -24,6 +24,10 @@ its own. Code, not a model, decides whether a finding is true.
   is a protected path of the reviewer's key, so the core's snapshot compares it, and a scope check fails any other changed file
   (a `diff_size` of 0 when nothing was changed). More than 256 changed files is refused: commit the work first. A run that fails the check
   stops, and its findings cannot be confirmed. A lane runs at most 5 rounds on one piece of work.
+- **Git cannot be told to look away.** `git update-index --assume-unchanged` or `--skip-worktree` hides an edit from every git-based check. The core
+  records the flagged entries (`git ls-files -v`: lowercase tag or `S`) when any task starts and fails the verification if one was added. The cost is one
+  `git ls-files` at the start and one per verification, with no file reads; the alternative, a byte snapshot of every tracked file, would cost a read of the whole
+  repository per task. Flags that were there at the start (a sparse checkout's) are not a failure.
 - **Findings** are the protocol's object. A finding has no state: it blocks nothing until a Gate at `finding_check` confirms it.
   `crew_finding` is a member tool, so it refuses once the reviewer's run has ended (H7); the Gate is a core write and does not.
 - **The check.** With a `repro` (a check the lead states as the *correct* behaviour, run for at most 2 minutes), the core runs it: failing confirms
@@ -34,17 +38,22 @@ its own. Code, not a model, decides whether a finding is true.
   out of the task's own verification Evidence. One Gate per finding, written in one transaction. A model's review is never a pass or fail gate.
 - **The fix loop.** A confirmed finding sends a fix brief to a builder, written by the core and started through the same function as
   `crew_start`. It is refused for a file the reviewed task could not write, a test or CI file, a protected path or a file that is not there.
-  Its key is the reviewed task's checks, the repro, a check that the file now differs from the copy the core kept, and a scope check (the files
-  changed when the fix began, and the finding's file). A fix that changes nothing fails and stops. The lanes run again when a fix passes.
-- **When a finding stops blocking.** A confirmed place (lane and file) blocks until a fix that names it has passed, and blocks again if a later finished
-  round reports the place again. A reviewer that goes quiet, or rewords its claim, clears nothing (`unreported`). Nothing else clears it yet:
-  that is a person's act (see #450).
+  Its key is the reviewed task's checks, the repro, a check that the file now differs from the copy the core kept (a cheap guard that it was touched), and a scope
+  check (the files changed when the fix began, and the finding's file). The files already changed (the work under review), bar the finding's file, are held by
+  their bytes, as a reviewer's are. A fix that changes nothing fails and stops. The lanes run again when a fix passes, after the last fix still running.
+- **When a finding stops blocking.** A place (lane and file) with a confirmed finding blocks until a fix that names it has passed **and** a repro has proved it:
+  the lead's repro, which was in the fix's key, or one the lead supplies after the fix (`crew_check_finding` with a `repro` on a finding the core confirmed by
+  agreement), which must pass now and is then recorded as Evidence and a `checks` Gate on the finding. A finding confirmed by agreement has no repro, so a fix
+  alone never clears it: a cosmetic edit, a changed copy or a silent re-review change nothing. It blocks again if a later finished round reports the place.
+  Nothing else clears it yet: that is a person's act (see #450). A reviewer that goes quiet, or rewords its claim, clears nothing (`unreported`).
 - **The loop guard.** The fix task has slice 3's guard. A lane and file gets one fix brief, so a reworded claim is the same place, and one reviewed
   task gets at most 3 fix briefs. Past either the loop stops, the lead is told, and a person decides.
 
 ## Limits of Preview
 
 - A fingerprint (lane, file, claim) only labels a finding across rounds; the guard and the blocking keep to the lane and file.
+- A path hidden by `.gitignore` or `.git/info/exclude` hides a new file from the git-based checks, and a write outside the checkout is seen by none of them (#451).
+- A fix key cannot hold a manifest that defines check commands (`package.json`, `Makefile`, `justfile`, ...): such a file is refused for a fix.
 - A repro runs in the checkout as it is now, not at the finding's commit (its Evidence records the commit it ran on).
 - Reviewers share the lead's checkout. The lease rule, the protected-file comparison and the scope check keep them read-only; no sandbox does (#436).
 - A rule's `when.paths` are file or `dir/**` patterns, like a lease; `required` and `checks` in the rule file are not read yet. Removing a locked lane

@@ -141,7 +141,9 @@ impl Core {
         };
         let waiting = |finding: &str| {
             seconds.iter().any(|s| {
-                s["finding"] == finding && matches!(s["state"].as_str(), Some(state) if !crate::crew::lifecycle::is_final(state))
+                // A second review that could not be routed (`needs_person`) is not running, and does not hold the check.
+                s["finding"] == finding
+                    && matches!(s["state"].as_str(), Some(state) if !crate::crew::lifecycle::is_final(state) && state != "needs_person")
             })
         };
         let state_of = |task: &str| {
@@ -188,7 +190,18 @@ impl Core {
                     .iter()
                     .any(|o| o.round > round && state_of(&o.task_id) == "passed")
             });
-            let blocks_place = confirmed && (fix_round.is_none() || reappeared);
+            // A fix clears a place only if a confirmed finding there has a repro: the lead's repro was in the fix's key, or the
+            // lead supplied one that passed after it. A finding confirmed by agreement alone has none, so it keeps blocking.
+            let proven = cluster.iter().any(|o| {
+                decision(o.finding.id.as_str()) == Some(GateDecision::Confirmed)
+                    && self
+                        .store
+                        .crew_finding_repro(o.finding.id.as_str())
+                        .ok()
+                        .flatten()
+                        .is_some()
+            });
+            let blocks_place = confirmed && (fix_round.is_none() || !proven || reappeared);
             let own = decision(stored.finding.id.as_str());
             let check = match (own, confirmed) {
                 (Some(GateDecision::Confirmed), _) | (None, true) => "confirmed",
@@ -204,7 +217,7 @@ impl Core {
             let latest = cluster
                 .last()
                 .is_some_and(|o| o.finding.id == stored.finding.id);
-            let cleared = fix_round.is_some_and(|r| stored.round <= r) && !reappeared;
+            let cleared = fix_round.is_some_and(|r| stored.round <= r) && proven && !reappeared;
             let status_name = match status {
                 _ if cleared => "fixed",
                 // Absent from a later round with no fix that proves it: unreported, still what it was.
