@@ -3,7 +3,9 @@
 //!
 //! **The re-entry guard.** Removing a device and signing out everywhere each need the
 //! password typed again, in the last ten minutes, for that one action (and that one
-//! device): a confirmation is used up by the action it was for. Two things keep a new
+//! device): a confirmation is used up by the action it was for, and the action must send back the
+//! nonce that `/confirm` answered with (`x-orbyn-confirm`), which only the window that typed the
+//! password has. Two things keep a new
 //! account route from skipping that: the confirmed routes sit in [`confirmed_routes`],
 //! whose layers refuse with `reauth_required` before the handler runs, and the core's own
 //! action takes a `Confirmed` token that only `require_confirmed` makes, for that action.
@@ -19,7 +21,7 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Request, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::Response;
 use axum::routing::{delete, get, post};
@@ -63,6 +65,10 @@ pub const OPEN: &[(&str, &str)] = &[
         "gives up a sign-in that is not finished",
     ),
     ("POST /api/account/confirm", "is the confirmation itself"),
+    (
+        "POST /api/account/confirm/cancel",
+        "only drops a confirmation, and only the nonce that made it can",
+    ),
     ("POST /api/account/sync/now", "only wakes the worker"),
     (
         "POST /api/account/sync/pause",
@@ -134,6 +140,7 @@ fn open_routes() -> Router<AppState> {
         .route("/api/account/sign-in/second-factor", post(second_factor))
         .route("/api/account/sign-in/cancel", post(cancel_sign_in))
         .route("/api/account/confirm", post(confirm))
+        .route("/api/account/confirm/cancel", post(cancel_confirm))
         .route("/api/account/sync/now", post(sync_now))
         .route("/api/account/sync/pause", post(pause_sync))
         .route("/api/account/sync/resume", post(resume_sync))
@@ -187,6 +194,17 @@ async fn local_only(
 }
 
 /// Looks for a confirmation for this device without using it up; the handler uses it.
+/// The header a confirmed action sends back: what "Confirm it's you" answered with. Only the window
+/// that typed the password has it, so a caller holding only the service token cannot send it.
+const CONFIRM_HEADER: &str = "x-orbyn-confirm";
+
+fn nonce_of(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(CONFIRM_HEADER)
+        .and_then(|value| value.to_str().ok())
+}
+
+/// Looks for a confirmation for this device without using it up; the handler uses it.
 async fn confirmed_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -199,7 +217,7 @@ async fn confirmed_device(
     if !state
         .core
         .account
-        .confirmed_for(&ConfirmFor::RemoveDevice(id))
+        .confirmed_for(&ConfirmFor::RemoveDevice(id), nonce_of(request.headers()))
     {
         return Err(CoreError::ReauthRequired.into());
     }
@@ -218,7 +236,7 @@ async fn confirmed_approval(
     if !state
         .core
         .account
-        .confirmed_for(&ConfirmFor::ApproveDevice(id))
+        .confirmed_for(&ConfirmFor::ApproveDevice(id), nonce_of(request.headers()))
     {
         return Err(CoreError::ReauthRequired.into());
     }
@@ -233,11 +251,10 @@ async fn confirmed_connect(
     if !state.core.account.available() {
         return Err(CoreError::AccountDisabled.into());
     }
-    if !state
-        .core
-        .account
-        .confirmed_for(&ConfirmFor::ConnectSettings(first))
-    {
+    if !state.core.account.confirmed_for(
+        &ConfirmFor::ConnectSettings(first),
+        nonce_of(request.headers()),
+    ) {
         return Err(CoreError::ReauthRequired.into());
     }
     Ok(next.run(request).await)
@@ -254,7 +271,7 @@ async fn confirmed_sign_out(
     if !state
         .core
         .account
-        .confirmed_for(&ConfirmFor::SignOutEverywhere)
+        .confirmed_for(&ConfirmFor::SignOutEverywhere, nonce_of(request.headers()))
     {
         return Err(CoreError::ReauthRequired.into());
     }
@@ -345,7 +362,7 @@ async fn cancel_sign_in(State(state): State<AppState>) -> ApiResult<StatusCode> 
 async fn confirm(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::AccountConfirm>,
-) -> ApiResult<StatusCode> {
+) -> ApiResult<Json<wire::AccountConfirmed>> {
     let action = match (body.action, body.device_id) {
         (wire::AccountConfirmAction::RemoveDevice, Some(id)) if !id.is_empty() => {
             ConfirmFor::RemoveDevice(id)
@@ -375,11 +392,23 @@ async fn confirm(
         },
         (wire::AccountConfirmAction::SignOutEverywhere, _) => ConfirmFor::SignOutEverywhere,
     };
-    state
+    let nonce = state
         .core
         .account
         .confirm(action, Password::new(body.password.expose().to_owned()))
         .await?;
+    Ok(Json(wire::AccountConfirmed { nonce }))
+}
+
+/// The dialog was cancelled: the confirmation it made is dropped. Only its own nonce can.
+async fn cancel_confirm(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::AccountConfirmCancel>,
+) -> ApiResult<StatusCode> {
+    if !state.core.account.available() {
+        return Err(CoreError::AccountDisabled.into());
+    }
+    state.core.account.cancel_confirmation(body.nonce.expose());
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -418,11 +447,15 @@ async fn sign_in_approval(
     Ok(Json(state.core.account.poll_approval().await?))
 }
 
-async fn approve(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<StatusCode> {
+async fn approve(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
     let confirmed = state
         .core
         .account
-        .require_confirmed(ConfirmFor::ApproveDevice(id.clone()))
+        .require_confirmed(ConfirmFor::ApproveDevice(id.clone()), nonce_of(&headers))
         .await?;
     state.core.account.approve(confirmed, &id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -443,24 +476,34 @@ async fn connect(State(state): State<AppState>) -> ApiResult<StatusCode> {
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn connect_with(state: &AppState, first: FirstSync) -> ApiResult<StatusCode> {
+async fn connect_with(
+    state: &AppState,
+    headers: &HeaderMap,
+    first: FirstSync,
+) -> ApiResult<StatusCode> {
     let confirmed = state
         .core
         .account
-        .require_confirmed(ConfirmFor::ConnectSettings(first))
+        .require_confirmed(ConfirmFor::ConnectSettings(first), nonce_of(headers))
         .await?;
     state.core.account.connect(first, Some(confirmed)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// This computer's settings win on every device: needs the password for this choice.
-async fn connect_use_device(State(state): State<AppState>) -> ApiResult<StatusCode> {
-    connect_with(&state, FirstSync::UseDevice).await
+async fn connect_use_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    connect_with(&state, &headers, FirstSync::UseDevice).await
 }
 
 /// The account's settings replace this computer's: needs the password for this choice.
-async fn connect_use_account(State(state): State<AppState>) -> ApiResult<StatusCode> {
-    connect_with(&state, FirstSync::UseAccount).await
+async fn connect_use_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    connect_with(&state, &headers, FirstSync::UseAccount).await
 }
 
 async fn connect_later(State(state): State<AppState>) -> ApiResult<StatusCode> {
@@ -480,22 +523,26 @@ async fn connect_seen(State(state): State<AppState>) -> ApiResult<StatusCode> {
 
 async fn remove_device(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let confirmed = state
         .core
         .account
-        .require_confirmed(ConfirmFor::RemoveDevice(id.clone()))
+        .require_confirmed(ConfirmFor::RemoveDevice(id.clone()), nonce_of(&headers))
         .await?;
     state.core.account.remove_device(confirmed, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn sign_out_everywhere(State(state): State<AppState>) -> ApiResult<StatusCode> {
+async fn sign_out_everywhere(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
     let confirmed = state
         .core
         .account
-        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .require_confirmed(ConfirmFor::SignOutEverywhere, nonce_of(&headers))
         .await?;
     state.core.account.sign_out_everywhere(confirmed).await?;
     Ok(StatusCode::NO_CONTENT)

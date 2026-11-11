@@ -33,7 +33,7 @@ async fn confirmed(
     a.confirm(ConfirmFor::ConnectSettings(first), pw(PASSWORD))
         .await
         .unwrap();
-    a.require_confirmed(ConfirmFor::ConnectSettings(first))
+    a.require_confirmed_last(ConfirmFor::ConnectSettings(first))
         .await
         .unwrap()
 }
@@ -166,25 +166,25 @@ async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation
     // Signing in is not a confirmation; neither is one for another action or request.
     let ask = || ConfirmFor::ApproveDevice("req-ipad".into());
     assert_eq!(
-        code(a.require_confirmed(ask()).await.unwrap_err()),
+        code(a.require_confirmed_last(ask()).await.unwrap_err()),
         "reauth_required"
     );
     a.confirm(ConfirmFor::ApproveDevice("req-other".into()), pw(PASSWORD))
         .await
         .unwrap();
     assert_eq!(
-        code(a.require_confirmed(ask()).await.unwrap_err()),
+        code(a.require_confirmed_last(ask()).await.unwrap_err()),
         "reauth_required"
     );
     a.confirm(ask(), pw(PASSWORD)).await.unwrap();
-    let token = a.require_confirmed(ask()).await.unwrap();
+    let token = a.require_confirmed_last(ask()).await.unwrap();
     // A token for one request cannot let in another.
     assert_eq!(
         code(a.approve(token, "req-other").await.unwrap_err()),
         "reauth_required"
     );
     a.confirm(ask(), pw(PASSWORD)).await.unwrap();
-    let token = a.require_confirmed(ask()).await.unwrap();
+    let token = a.require_confirmed_last(ask()).await.unwrap();
     a.approve(token, "req-ipad").await.unwrap();
     assert!(a.approval_requests().await.unwrap().is_empty());
     assert_eq!(
@@ -193,7 +193,7 @@ async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation
     );
     // Used up on first use.
     assert_eq!(
-        code(a.require_confirmed(ask()).await.unwrap_err()),
+        code(a.require_confirmed_last(ask()).await.unwrap_err()),
         "reauth_required"
     );
 }
@@ -226,7 +226,7 @@ async fn signing_out_clears_a_confirmation_for_letting_a_device_in() {
         .await
         .unwrap();
     a.sign_out(false).await.unwrap();
-    assert!(!a.confirmed_for(&ConfirmFor::ApproveDevice("req-ipad".into())));
+    assert!(!a.confirmed_for_last(&ConfirmFor::ApproveDevice("req-ipad".into())));
 }
 
 // Joining this computer's settings to the account's
@@ -501,7 +501,7 @@ async fn a_request_that_expired_was_answered_or_was_given_up_cannot_be_answered(
     let ask = || ConfirmFor::ApproveDevice("req-ipad".into());
     let token = || async {
         a.confirm(ask(), pw(PASSWORD)).await.unwrap();
-        a.require_confirmed(ask()).await.unwrap()
+        a.require_confirmed_last(ask()).await.unwrap()
     };
     // Answered once, it is gone.
     a.deny("req-ipad", false).await.unwrap();
@@ -529,7 +529,7 @@ async fn a_request_that_expired_was_answered_or_was_given_up_cannot_be_answered(
     tokio::time::sleep(Duration::from_millis(40)).await;
     assert!(a.approval_requests().await.unwrap().is_empty());
     a.confirm(ask(), pw(PASSWORD)).await.unwrap();
-    let late = a.require_confirmed(ask()).await.unwrap();
+    let late = a.require_confirmed_last(ask()).await.unwrap();
     assert_eq!(
         code(a.approve(late, "req-ipad").await.unwrap_err()),
         "request_gone"
@@ -645,7 +645,7 @@ async fn an_ended_session_is_told_once_and_not_after_the_persons_own_sign_out_ev
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .require_confirmed_last(ConfirmFor::SignOutEverywhere)
         .await
         .unwrap();
     a.sign_out_everywhere(token).await.unwrap();

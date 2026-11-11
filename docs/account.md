@@ -384,11 +384,16 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
     requests with the time they have left. `deny(id)` carries no reason in the agreed trait, so "Codes don't match"
     cannot reach the new device and a real mismatch will show there as "This sign-in wasn't allowed" until the Engine
     adds one.
-13. Bind the "Confirm it's you" confirmation to the caller (issue #435). Today a confirmation is tied to the action
-    and the device but not to who typed the password, so after the person confirms, any holder of the service token can
-    run that exact action first, and an abandoned prompt leaves the confirmation live for ten minutes because there is no
-    cancel route. The fix is a one-time nonce that `/confirm` returns and the action request sends back, plus a cancel
-    route.
+13. **Done.** The "Confirm it's you" confirmation is bound to the caller (issue #435). `/confirm` answers with a
+    one-time nonce (16 random bytes, in memory only), and the action request sends it back in the `x-orbyn-confirm`
+    header: only the window that typed the password has it, so a caller holding only the service token cannot use a
+    confirmation it did not obtain. A nonce is for one action and one device, request or choice, is used up by its
+    first use, is replaced by a later confirmation, and is cleared by sign-out and a restart. `POST
+    /api/account/confirm/cancel` drops a confirmation, and only its own nonce can, so Cancel and Escape in the dialog
+    leave no live confirmation behind. It covers every guarded route: remove device, sign out everywhere, letting a
+    device in, and the two first-sync choices that overwrite. The desktop page calls the loopback service
+    across origins, so the header is allowed in the service's CORS preflight (`x-orbyn-confirm`); allowing it grants
+    nothing alone. A dialog the page takes away also gives its confirmation up.
 14. Key "this computer already joined this account" by the account id when the real client provides one. `SessionInfo`
     has none yet, so it is the email compared without case or edge spaces: a change of email on the Engine would
     count as another account and start the settings from nothing.

@@ -116,6 +116,9 @@ pub struct AccountCenter {
     /// Whether the person has been told the service ended their session, and whether they ended
     /// it themselves everywhere. In memory only, and reset by the next sign-in.
     ended: Mutex<flow::Ended>,
+    /// The nonce the last confirmation answered with, so a test can play the window that typed it.
+    #[cfg(test)]
+    last_nonce: Mutex<String>,
     /// The development stand-in itself, so a test can play the trusted device.
     #[cfg(test)]
     stand_in: Option<Arc<dev::DevAccount>>,
@@ -158,6 +161,8 @@ impl AccountCenter {
             confirmed: Mutex::new(None),
             approval_life: Mutex::new(flow::APPROVAL_LIFETIME),
             ended: Mutex::new(flow::Ended::default()),
+            #[cfg(test)]
+            last_nonce: Mutex::new(String::new()),
         }
     }
 

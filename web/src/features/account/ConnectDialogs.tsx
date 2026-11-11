@@ -27,8 +27,8 @@ export function ConnectChoice({ onClose, onConnected }: { onClose(): void; onCon
         action="connect_settings"
         policy={confirming}
         subject={confirming === "use_device" ? "To use this device’s settings everywhere" : "To use the account’s settings on this device"}
-        onConfirmed={async () => {
-          await (confirming === "use_device" ? accountApi.connectUseDevice() : accountApi.connectUseAccount());
+        onConfirmed={async (nonce) => {
+          await (confirming === "use_device" ? accountApi.connectUseDevice(nonce) : accountApi.connectUseAccount(nonce));
           onConnected();
         }}
         onClose={() => setConfirming(null)}

@@ -72,8 +72,8 @@ export function DevicesPage({ view }: { view: AccountView }) {
           action="remove_device"
           deviceId={confirming.id}
           subject={`To remove ${confirming.name}`}
-          onConfirmed={async () => {
-            await accountApi.removeDevice(confirming.id);
+          onConfirmed={async (nonce) => {
+            await accountApi.removeDevice(confirming.id, nonce);
             setRemoved(confirming.name);
             devices.reload();
           }}

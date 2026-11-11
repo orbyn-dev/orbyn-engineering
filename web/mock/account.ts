@@ -52,7 +52,8 @@ export function createAccountMock() {
   ];
   let deviceList = freshDevices();
   /** One confirmation for one action (and device), used up by the action. */
-  let grant: { action: string; device: string | null } | null = null;
+  let grant: { action: string; device: string | null; nonce: string } | null = null;
+  let nonces = 0;
   // This computer's own request to sign in, and what a trusted device answered.
   let approval: { answer: AccountApprovalView["state"]; askedAt: number; autoAt: number | null; autoAnswer: AccountApprovalView["state"] | null; email: string } | null = null;
   const APPROVAL_LIFE_SECS = 600;
@@ -297,7 +298,11 @@ export function createAccountMock() {
           if (!["remove_device", "sign_out_everywhere", "approve_device", "connect_settings"].includes(String(data.action))) return fail(400, "invalid", "Say what to confirm.");
           if ((data.action === "remove_device" || data.action === "approve_device") && !data.device_id) return fail(400, "invalid", "Say which one.");
           if (data.action === "connect_settings" && data.policy !== "use_device" && data.policy !== "use_account") return fail(400, "invalid", "Say which choice.");
-          grant = { action: String(data.action), device: data.action === "sign_out_everywhere" ? null : String(data.action === "connect_settings" ? data.policy : data.device_id) };
+          nonces += 1;
+          grant = { action: String(data.action), device: data.action === "sign_out_everywhere" ? null : String(data.action === "connect_settings" ? data.policy : data.device_id), nonce: `nonce-${nonces}` };
+          return { status: 200, body: { nonce: grant.nonce } };
+        case "POST /api/account/confirm/cancel":
+          if (grant?.nonce === data.nonce) grant = null;
           return { status: 204 };
         case "GET /api/account/devices":
           if (!session) return fail(403, "reauth_required", "Sign in first.");

@@ -203,8 +203,8 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
       <ConfirmItsYou
         action="sign_out_everywhere"
         subject="To sign out every device"
-        onConfirmed={async () => {
-          await accountApi.signOutEverywhere();
+        onConfirmed={async (nonce) => {
+          await accountApi.signOutEverywhere(nonce);
           onDone();
         }}
         onClose={onClose}
