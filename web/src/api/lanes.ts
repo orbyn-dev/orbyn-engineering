@@ -130,7 +130,16 @@ export async function inLane<T>(
   }
 }
 
+/**
+ * An identical read is joined only while the first is this young. Reads made together, such as
+ * two components mounting in one render, share one request. A read made later, after a key
+ * press or an event the client cannot see as a write, may need newer server state than a
+ * request that has been in flight since, so it goes out on its own.
+ */
+export const SHARE_WINDOW_MS = 100;
+
 interface Flight {
+  startedAt: number;
   promise: Promise<unknown>;
   controller: AbortController;
   callers: number;
@@ -147,9 +156,10 @@ const flights = new Map<string, Flight>();
 export function shareRead<T>(key: string, signal: AbortSignal | undefined, start: (signal: AbortSignal) => Promise<T>): Promise<T> {
   if (signal?.aborted) return Promise.reject(abortError());
   let flight = flights.get(key);
+  if (flight && Date.now() - flight.startedAt > SHARE_WINDOW_MS) flight = undefined;
   if (!flight) {
     const controller = new AbortController();
-    const made: Flight = { promise: Promise.resolve(), controller, callers: 0, handedOut: false };
+    const made: Flight = { startedAt: Date.now(), promise: Promise.resolve(), controller, callers: 0, handedOut: false };
     made.promise = start(controller.signal).finally(() => {
       if (flights.get(key) === made) flights.delete(key);
     });

@@ -159,6 +159,8 @@ async function send<T>(
 /** `foreground`: the visible screen's own read, which never waits in the slow lane. */
 export interface RequestOptions {
   priority?: "foreground";
+  /** Never joins a read already in flight: the answer decides something, so it must be read now. */
+  fresh?: boolean;
 }
 
 const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
@@ -182,9 +184,8 @@ export function request<T>(
     sent = send<T>(method, path, body, signal).finally(forgetFlights);
   } else {
     const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-    sent = shareRead(`${method} ${path}`, signal, (shared) =>
-      inLane(lane, shared, (laned) => send<T>(method, path, body, laned), unreachable),
-    );
+    const start = (own: AbortSignal | undefined) => inLane(lane, own, (laned) => send<T>(method, path, body, laned), unreachable);
+    sent = options.fresh ? start(signal) : shareRead(`${method} ${path}`, signal, start);
   }
   return sent.finally(() => clearTimeout(slow));
 }

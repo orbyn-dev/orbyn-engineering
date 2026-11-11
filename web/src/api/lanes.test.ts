@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NETWORK_ERROR, request } from "./client";
-import { LANE_TIMEOUT_MS, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
+import { LANE_TIMEOUT_MS, SHARE_WINDOW_MS, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
 
 interface Pending {
   path: string;
@@ -197,6 +197,29 @@ describe("shared reads", () => {
     expect(pending[0]?.signal?.aborted).toBe(false);
     await finishAll(pending);
     await Promise.all([before, write, after]);
+  });
+
+  it("sends a read made after the share window on its own, so it can see newer server state", async () => {
+    vi.useFakeTimers();
+    const { pending, fetchMock } = holdFetch();
+    const first = request("GET", "/api/threads/t1/scripts");
+    const together = request("GET", "/api/threads/t1/scripts");
+    await vi.advanceTimersByTimeAsync(SHARE_WINDOW_MS + 1);
+    const later = request("GET", "/api/threads/t1/scripts");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const entry of pending) entry.answer([]);
+    await Promise.all([first, together, later]);
+  });
+
+  it("never joins a read in flight when asked for a fresh one", async () => {
+    const { pending, fetchMock } = holdFetch();
+    const held = request("GET", "/api/threads/t1/scripts");
+    const fresh = request("GET", "/api/threads/t1/scripts", undefined, undefined, { fresh: true });
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const entry of pending) entry.answer([]);
+    await Promise.all([held, fresh]);
   });
 
   it("removes a shared read after it fails, so the next read goes out again", async () => {

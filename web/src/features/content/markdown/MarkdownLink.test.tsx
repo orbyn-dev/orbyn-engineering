@@ -96,7 +96,7 @@ describe("pull link preview", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
-    expect(mock).toHaveBeenCalledWith("GET", "/api/projects/p-app/pulls/42", undefined, expect.anything(), undefined);
+    expect(mock).toHaveBeenCalledWith("GET", "/api/projects/p-app/pulls/42", undefined, expect.anything(), { priority: "foreground" });
     const card = screen.getByRole("tooltip");
     expect(card).toHaveTextContent("Fix the hover card");
     expect(card).toHaveTextContent("acme/orbyn#42 · Open");
@@ -109,7 +109,7 @@ describe("pull link preview", () => {
     respond();
     render(<Markdown text={`See [the fix](${href}).`} />);
     await hover(screen.getByRole("link", { name: "the fix" }));
-    expect(mock).toHaveBeenCalledWith("GET", "/api/projects/p-app/pulls/42", undefined, expect.anything(), undefined);
+    expect(mock).toHaveBeenCalledWith("GET", "/api/projects/p-app/pulls/42", undefined, expect.anything(), { priority: "foreground" });
     expect(screen.getByRole("tooltip")).toHaveTextContent("Fix the hover card");
   });
 

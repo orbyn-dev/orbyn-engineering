@@ -1,6 +1,6 @@
 // The one door this feature uses to reach the API client. Named operations and
 // hooks live here; no file in the feature calls the transport directly.
-import { request } from "../../api/client";
+import { request, type RequestOptions } from "../../api/client";
 import type { LocalServer, ProjectFileView, QuestionRequest, ScheduledTask, TerminalInfo } from "../../api/types";
 
 const q = encodeURIComponent;
@@ -37,8 +37,8 @@ export function listThreadServers(threadId: string, signal?: AbortSignal) {
   return request<LocalServer[]>("GET", `/api/threads/${q(threadId)}/servers`, undefined, signal);
 }
 
-export function listThreadScripts(threadId: string, signal?: AbortSignal) {
-  return request<ProjectFileView>("GET", `/api/threads/${q(threadId)}/scripts`, undefined, signal);
+export function listThreadScripts(threadId: string, signal?: AbortSignal, options?: RequestOptions) {
+  return request<ProjectFileView>("GET", `/api/threads/${q(threadId)}/scripts`, undefined, signal, options);
 }
 
 export function listTerminals(threadId: string, signal?: AbortSignal) {

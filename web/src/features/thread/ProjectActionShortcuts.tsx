@@ -28,7 +28,8 @@ function useActionRunner(threadId: string) {
     if (!active()) return false;
     if (pending.current.has(requestKey)) return true;
     pending.current.add(requestKey);
-    void listThreadScripts(threadId).then(async (view) => {
+    // A press picks the script to run, so it reads the catalog itself instead of joining a read that may be stale.
+    void listThreadScripts(threadId, undefined, { fresh: true }).then(async (view) => {
       const script = view.scripts.find((entry) => entry.id === id);
       if (script && active()) await runProjectAction(threadId, script);
     }).catch((failure: unknown) => useUi.getState().pushToast(`Couldn't run that action. ${toFailure(failure).message}`))
