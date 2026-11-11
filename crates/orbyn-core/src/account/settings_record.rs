@@ -12,24 +12,20 @@ use sha2::{Digest, Sha256};
 
 pub const ZONE: &str = "engineering.settings";
 
-/// The 20 allowlisted catalog keys. Keybindings are the twenty-first group of fields.
-pub const SYNCED_KEYS: [&str; 20] = [
+/// The 13 allowlisted catalog keys. Keybindings are one more group of fields. A key that
+/// can raise cost or widen what an agent may do is not here, by the rule in
+/// docs/account.md (What never syncs): the engine, model and effort defaults, the model
+/// options and the thread environment mode among them.
+pub const SYNCED_KEYS: [&str; 13] = [
     "default_theme",
     "response_streaming_mode",
     "preview_appearance",
     "preview_zoom",
     "open_web_links_in_app",
     "quit_confirmation",
-    "default_engine",
-    "default_model",
-    "default_effort",
-    "default_model_options",
-    "fallback_model",
-    "text_generation_model",
     "favorite_models",
     "hidden_models",
     "model_order",
-    "default_thread_env_mode",
     "auto_thread_titles",
     "branch_naming_mode",
     "branch_name_prefix",
@@ -246,9 +242,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn there_are_twenty_unique_synced_keys_all_in_the_catalog() {
+    fn there_are_thirteen_unique_synced_keys_all_in_the_catalog() {
         let unique: BTreeSet<_> = SYNCED_KEYS.iter().collect();
-        assert_eq!(unique.len(), 20);
+        assert_eq!(unique.len(), 13);
         let catalog: BTreeSet<_> = crate::settings::preferences::catalog_keys().collect();
         assert_eq!(catalog.len(), 62);
         assert!(SYNCED_KEYS.iter().all(|key| catalog.contains(key)));
@@ -259,6 +255,15 @@ mod tests {
             "enable_agent_browser_access",
             "enable_agent_device_access",
             "default_theme_set_at",
+            // Cost and reach: another device could pick a costlier engine, model or
+            // effort, or widen where agents work.
+            "default_engine",
+            "default_model_options",
+            "default_model",
+            "fallback_model",
+            "text_generation_model",
+            "default_effort",
+            "default_thread_env_mode",
         ] {
             assert!(
                 stage_preference(never, None, Some(&json!("x"))).is_empty(),
@@ -343,16 +348,16 @@ mod tests {
     #[test]
     fn a_plain_key_stages_its_value_and_null_when_reset() {
         assert_eq!(
-            stage_preference("default_effort", None, Some(&json!("high"))),
+            stage_preference("preview_appearance", None, Some(&json!("dark"))),
             vec![Staged::Field {
-                name: "default_effort".into(),
-                value: json!("high")
+                name: "preview_appearance".into(),
+                value: json!("dark")
             }]
         );
         assert_eq!(
-            stage_preference("default_effort", Some(&json!("high")), None),
+            stage_preference("preview_appearance", Some(&json!("dark")), None),
             vec![Staged::Field {
-                name: "default_effort".into(),
+                name: "preview_appearance".into(),
                 value: Value::Null
             }]
         );

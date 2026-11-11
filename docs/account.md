@@ -19,7 +19,7 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 | D2 | Confirmed | Staging by default, invite-only. The built-in address is the staging one; production is not compiled in until sign-up opens (Engine issue #42, then recovery). Staging is not deployed yet, so no real sign-in can succeed before the owner deploys it |
 | D3 | Corrected | The device is **one data folder of `orbynd`**, not one machine. The D11 test runs two data folders on one computer, and `ORBYN_DATA_DIR` already lets a person run several, so each data folder registers as its own device with its own keychain items (see [The device and its keys](#the-device-and-its-keys)). Clarified: the password does leave the web page once, as a field in a request to `orbynd` on loopback (behind the per-launch service token); it never reaches the Engine (OPAQUE) and `orbynd` never stores it. The web UI holds no account key, token or zone key at any time |
 | D4 | Corrected | "Project defaults" means the **person-level value** of a key a project may override. Per-project overrides are not synced: project ids and paths are local to a computer. The project file's own layer is never read for sync. Execution profiles, workflows and the rest stay "Next", as planned |
-| D5 | Confirmed, extended | The never-sync list also holds what is machine-specific or names a program, path or endpoint, and 26 more keys are held back from v1. See [Never synced](#never-synced) and [Not in v1](#not-in-v1-may-sync-later) |
+| D5 | Confirmed, extended | The never-sync list also holds what is machine-specific or names a program, path or endpoint, and 23 more keys are held back from v1. See [Never synced](#never-synced) and [Not in v1](#not-in-v1-may-sync-later) |
 | D6 | Clarified | Two crates are called `orbyn-contracts`: the Engine's (wire for the Engine's HTTP API) and this repository's (wire between the web UI and `orbynd`). The app never names the Engine's. Engineering's record fields live in the Engine's `orbyn-engineering` crate, and the app depends on that crate directly, next to `orbyn-device-client`, both pinned to the same tag (agreed with Engineering 1). The device client re-exports only `orbyn-sync`'s merge. Nothing about a record is copied into this repository's contracts |
 | D7 | Confirmed | Connected apps stay after the beta. The L52 to L55 screens stay `preview-only`, behind `__ORBYN_PREVIEWS__` ([design.md](design.md#planned-with-the-orbyn-platform)) |
 | D8 | Confirmed | Crew proof signing uses a local keychain key until after the beta. That key is another asset for the threat model when it lands; it is not part of Phase 1 |
@@ -108,9 +108,9 @@ per-field hybrid logical clock, the larger stamp wins, ties break by canonical J
 `preferences.rs` accepts all 62 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
 through as unknown. So a peer could send `default_project_scripts`, which would run commands on the person's other
 computers, and a compromised device could use that. The rule: the sync apply path (a private path that does not queue
-fields again) applies **only the 20 allowlisted keys plus keybindings**, each through `check` and the per-key rules
+fields again) applies **only the 13 allowlisted keys plus keybindings**, each through `check` and the per-key rules
 under [No escalation across devices](#no-escalation-across-devices). Every other incoming field is kept and passed
-on unchanged, never applied locally. *Required test:* each of the 42 catalog keys that is not allowlisted, arriving from
+on unchanged, never applied locally. *Required test:* each of the 49 catalog keys that is not allowlisted, arriving from
 a peer, is not applied (the local value and the outbox are unchanged), and is still kept for the next upload.
 
 **Status over the shell event stream.** The worker publishes status on the existing `GET /api/shell/events` stream
@@ -199,22 +199,19 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (20 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
-Engineering 1. Only the person-level value of a key syncs.
+**Synced keys** (13 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+Engineering 1, narrowed by the [rule below](#what-never-syncs). Only the person-level value of a key syncs.
 
 | Group | Keys |
 | --- | --- |
 | Appearance and reading | `default_theme`, `response_streaming_mode`, `preview_appearance`, `preview_zoom`, `open_web_links_in_app`, `quit_confirmation` |
-| Engine and model defaults | `default_engine`, `default_model`, `default_effort`, `default_model_options`, `fallback_model`, `text_generation_model` |
 | Model lists | `favorite_models` and `hidden_models` (sets), `model_order` (one field) |
-| Thread and branch defaults | `default_thread_env_mode`, `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
+| Thread and branch defaults | `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
 | Keybindings | One field per (key, `when`) pair |
 
-`default_engine` and the model keys only resolve to engines and models configured on the receiving computer; a name it
-does not have follows the existing fallback and the value is kept as set. `default_thread_env_mode` set to `local`
-changes the blast radius (agents work in the main checkout), not permissions. `branch_name_instructions` is free text
-that feeds a model prompt on every device; the risk is low and the choice is recorded here. The other synced keys are
-harmless.
+`branch_name_instructions` is free text that feeds a model prompt on every device; the risk is low and the choice is recorded
+here. `auto_thread_titles` and `branch_naming_mode` (`semantic`) make a model call, so they are the nearest cases to the
+rule; they stay, and are reported to Products Research as unclear. The other synced keys are harmless.
 
 The Engine crate change that refuses `default_permission_mode`, `default_project_scripts`,
 `enable_agent_browser_access` and `enable_agent_device_access` in both directions comes in a small follow-up Engine
@@ -223,7 +220,7 @@ path above ignores them.
 
 ### Never synced
 
-Nineteen keys, by decision:
+Twenty-six keys, by decision:
 
 | Why | Keys |
 | --- | --- |
@@ -232,11 +229,12 @@ Nineteen keys, by decision:
 | Per-computer update and polling | `app_update_mode`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
 | Login and engine availability | `prefer_saved_login`, `disabled_engines` |
 | Escalation: what agents may do or run | `default_permission_mode`, `default_project_scripts`, `enable_agent_browser_access`, `enable_agent_device_access`: a loosened permission, a command or an access grant must not cross devices |
+| Cost or reach: another device could pick a costlier engine, model or effort, or widen where agents work ([rule](#what-never-syncs)) | `default_engine` (which vendor and price tier a task starts under), `default_model`, `fallback_model`, `text_generation_model`, `default_effort`, `default_model_options` (inert in v1, and every option raises cost or reach), `default_thread_env_mode` (`local` widens where agents work) |
 | Service-owned stamp | `default_theme_set_at` |
 
 ### Not in v1, may sync later
 
-The other 23 keys are not synced in v1, so 20 + 19 + 23 = 62:
+The other 23 keys are not synced in v1, so 13 + 26 + 23 = 62:
 
 | Key | Reason |
 | --- | --- |
@@ -284,10 +282,10 @@ A compromised device must not be able to make another one more permissive or run
   never bind a command that approves or denies an agent action, changes permissions, or confirms or runs something.
   It can never override the default keys of the approval dialog or of the "Confirm it's you" dialog. A rule that breaks
   this is kept and passed on, never applied.
-- **(c) `default_model_options`.** On apply, no option is kept for any engine adapter, so the key never changes what
-  this device does; clearing the options (an empty object) is the only change it can apply. See
-  [What never syncs](#what-never-syncs). *Test:* for each adapter (Claude, Codex, an ACP agent), options arriving from a
-  peer are kept in the record and none is applied.
+- **(c) `default_model_options`** is never synced ([What never syncs](#what-never-syncs)), so a field that arrives from a
+  peer is kept and never applied. As defence in depth the option filter keeps no option for any engine adapter. *Tests:*
+  for each adapter (Claude, Codex, an ACP agent), options arriving from a peer are kept in the record and none is
+  applied, and the filter alone drops every option.
 - **`branch_name_prefix`** is validated as a git ref part and passed as an argument, never through a shell.
 
 ## What never syncs
@@ -306,10 +304,13 @@ Dropped from the allowlist under this rule, and why:
 | any sandbox, approval or skip-permissions option | Claude, Codex | Widens what an agent may do |
 | `mode` and every `config:*` option | ACP agents | ACP agents name their own options, and `mode` is a permission mode; none can be shown to lower cost or reach |
 
-So the per-adapter option allowlist is empty. The key `default_model_options` stays in the record so that clearing it
-syncs. Still open for the Products Research decision: `default_model`, `fallback_model`, `text_generation_model` and
-`default_effort` can pick a costlier model or more reasoning on another device, and `default_thread_env_mode` set to
-`local` widens where agents work. They stay in the agreed 20 until that decision.
+So the per-adapter option allowlist is empty, and `default_model_options` itself is never synced. The option filter in
+`account::policy` is not reached today; it stays, with its tests, as defence in depth so that a change that put the key back
+would still drop every option.
+
+The rule also moved `default_engine`, `default_model`, `fallback_model`, `text_generation_model`, `default_effort` and
+`default_thread_env_mode` to [Never synced](#never-synced). Reported as unclear and left synced: `auto_thread_titles` and
+`branch_naming_mode` (each makes a model call).
 
 ## Record rules the apply path enforces
 
@@ -345,7 +346,7 @@ now and does not wait for them.
 3. "Confirm it's you" is built and enforced inside `orbynd`, with a route-table guard so no new account-changing route
    can skip it.
 4. Controls 1 to 7 and 5b of the [threat model](account-threat-model.md) are built and their checks pass:
-   - the allowlist-only apply test for all 42 non-allowlisted keys;
+   - the allowlist-only apply test for all 49 non-allowlisted keys;
    - the keybinding test;
    - the per-adapter options test;
    - the child-environment scrub tests;

@@ -9,7 +9,7 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
     let core = on(&dir, "a");
     let api = Arc::new(FakeDeviceApi::new());
     let foreign = not_allowlisted();
-    assert_eq!(foreign.len(), 42);
+    assert_eq!(foreign.len(), 49);
     let mut sent = Vec::new();
     let mut valid = 0;
     for key in &foreign {
@@ -21,23 +21,23 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
         valid >= 30,
         "the test should send values that would pass the value check ({valid})"
     );
-    sent.push(("default_effort".into(), json!("high")));
+    sent.push(("preview_appearance".into(), json!("dark")));
     sent.push(("a_key_from_a_newer_app".into(), json!({"kept": true})));
     peer(&api, future(), sent.clone());
     let before = globals(&core);
     let _worker = start(&core, &api);
     until(&core, |core| {
-        stored(core, "default_effort") == json!("high") && online(core)
+        stored(core, "preview_appearance") == json!("dark") && online(core)
     })
     .await;
     // Only the allowlisted key changed, and nothing was queued by applying.
     let mut expected = before;
-    expected.insert("pref:default_effort".into(), "\"high\"".into());
+    expected.insert("pref:preview_appearance".into(), "\"dark\"".into());
     assert_eq!(globals(&core), expected);
     assert_eq!(waiting(&core), 0);
     // Every other field is kept in the record, byte for byte.
     let kept = core.store.account_record(ZONE).unwrap();
-    for (key, value) in sent.iter().filter(|(key, _)| key != "default_effort") {
+    for (key, value) in sent.iter().filter(|(key, _)| key != "preview_appearance") {
         assert_eq!(kept[key].value, *value, "{key}");
     }
     // The four that would escalate arrive, are kept and are not applied, each by name.
@@ -46,6 +46,14 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
         "default_project_scripts",
         "enable_agent_browser_access",
         "enable_agent_device_access",
+        // Cost and reach: kept out by the rule in docs/account.md, each by name.
+        "default_engine",
+        "default_model_options",
+        "default_model",
+        "fallback_model",
+        "text_generation_model",
+        "default_effort",
+        "default_thread_env_mode",
     ] {
         let sent_value = &sent.iter().find(|(key, _)| key == name).unwrap().1;
         assert_eq!(kept[name].value, *sent_value, "{name}");
@@ -56,10 +64,10 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
         );
     }
     // And it is passed on with the next upload.
-    set(&core, "default_model", json!("m"));
+    set(&core, "branch_name_prefix", json!("m"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
     let uploaded = &api.pushes()[0].1;
-    for (key, value) in sent.iter().filter(|(key, _)| key != "default_effort") {
+    for (key, value) in sent.iter().filter(|(key, _)| key != "preview_appearance") {
         assert_eq!(uploaded[key].value, *value, "{key}");
     }
 }
@@ -83,7 +91,7 @@ async fn a_local_write_of_a_key_outside_the_allowlist_is_never_queued() {
     assert_eq!(waiting(&core), 0);
     assert!(core.store.account_record(ZONE).unwrap().is_empty());
     // An allowlisted key is queued, as the control.
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     assert_eq!(waiting(&core), 1);
 }
 
@@ -147,19 +155,22 @@ async fn a_default_model_option_that_costs_more_or_widens_reach_arrives_and_is_n
         let dir = TempDir::new();
         let core = on(&dir, "a");
         let api = Arc::new(FakeDeviceApi::new());
+        set(&core, "default_engine", json!(engine));
         peer(
             &api,
             future(),
             vec![
-                ("default_engine".into(), json!(engine)),
+                ("default_engine".into(), json!("another-engine")),
                 ("default_model_options".into(), sent.clone()),
+                ("preview_appearance".into(), json!("dark")),
             ],
         );
         let _worker = start(&core, &api);
         until(&core, |core| {
-            stored(core, "default_engine") == json!(engine) && online(core)
+            stored(core, "preview_appearance") == json!("dark") && online(core)
         })
         .await;
+        assert_eq!(stored(&core, "default_engine"), json!(engine));
         // The options arrived and are kept, but nothing of them is applied.
         assert_eq!(
             stored(&core, "default_model_options"),
@@ -182,12 +193,12 @@ async fn a_branch_prefix_that_is_not_a_git_ref_part_is_not_applied() {
         future(),
         vec![
             ("branch_name_prefix".into(), json!("--upload-pack=x")),
-            ("default_effort".into(), json!("low")),
+            ("preview_appearance".into(), json!("light")),
         ],
     );
     let _worker = start(&core, &api);
     until(&core, |core| {
-        stored(core, "default_effort") == json!("low") && online(core)
+        stored(core, "preview_appearance") == json!("light") && online(core)
     })
     .await;
     assert_eq!(stored(&core, "branch_name_prefix"), json!("feat"));

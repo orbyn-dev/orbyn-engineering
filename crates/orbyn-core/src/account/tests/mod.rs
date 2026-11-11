@@ -143,8 +143,8 @@ async fn under_the_off_gate_nothing_starts_queues_or_reaches_the_network() {
         .err()
         .unwrap();
     assert_eq!(error.code(), "account_disabled");
-    set(&core, "default_effort", json!("high"));
-    assert_eq!(stored(&core, "default_effort"), json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
+    assert_eq!(stored(&core, "preview_appearance"), json!("dark"));
     assert_eq!(waiting(&core), 0);
     assert!(core.store.account_record(ZONE).unwrap().is_empty());
     assert_eq!(api.pulls(), 0);
@@ -159,12 +159,12 @@ async fn a_setting_follows_the_person_to_another_device_and_back() {
     let dir = TempDir::new();
     let (a, b) = (on(&dir, "a"), on(&dir, "b"));
     let api = Arc::new(FakeDeviceApi::new());
-    set(&a, "default_effort", json!("high"));
+    set(&a, "preview_appearance", json!("dark"));
     set(&a, "favorite_models", json!(["m1"]));
     a.save_keybinding(&rule("mod+y", "sidebar.toggle")).unwrap();
     let (_wa, _wb) = (start(&a, &api), start(&b, &api));
     until(&b, |b| {
-        stored(b, "default_effort") == json!("high")
+        stored(b, "preview_appearance") == json!("dark")
             && stored(b, "favorite_models") == json!(["m1"])
             && b.keybindings()
                 .rules
@@ -193,7 +193,7 @@ async fn a_network_cut_mid_sync_leaves_the_app_working_and_the_queue_drains_late
     let _worker = start(&core, &api);
     until(&core, online).await;
     api.cut_on_next_push();
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     let mut status = core.account.subscribe();
     let down = status.wait_for(|s| matches!(s.state, SyncState::Offline { .. }) && s.waiting == 1);
     tokio::time::timeout(Duration::from_secs(10), down)
@@ -201,9 +201,9 @@ async fn a_network_cut_mid_sync_leaves_the_app_working_and_the_queue_drains_late
         .unwrap()
         .unwrap();
     // Settings still write and read, and nothing waits for the network.
-    set(&core, "default_model", json!("m"));
-    assert_eq!(stored(&core, "default_effort"), json!("high"));
-    assert_eq!(stored(&core, "default_model"), json!("m"));
+    set(&core, "branch_name_prefix", json!("m"));
+    assert_eq!(stored(&core, "preview_appearance"), json!("dark"));
+    assert_eq!(stored(&core, "branch_name_prefix"), json!("m"));
     assert_eq!(waiting(&core), 2);
     assert_eq!(api.commits(), 0);
     // The network comes back: the queue drains in one upload, with no duplicate.
@@ -211,8 +211,8 @@ async fn a_network_cut_mid_sync_leaves_the_app_working_and_the_queue_drains_late
     until(&core, online).await;
     assert_eq!(api.commits(), 1);
     let server = api.zone(ZONE).unwrap().record;
-    assert_eq!(server["default_effort"].value, json!("high"));
-    assert_eq!(server["default_model"].value, json!("m"));
+    assert_eq!(server["preview_appearance"].value, json!("dark"));
+    assert_eq!(server["branch_name_prefix"].value, json!("m"));
     // The windows were told, over the existing event stream, that the account changed.
     let mut said = Vec::new();
     while let Ok(event) = windows.events.try_recv() {
@@ -231,7 +231,7 @@ async fn a_lost_answer_after_the_server_committed_does_not_upload_twice() {
     let _worker = start(&core, &api);
     until(&core, online).await;
     api.lose_next_answer();
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
     assert_eq!(api.commits(), 1);
     assert_eq!(api.pushes().len(), 1);
@@ -243,24 +243,24 @@ async fn two_offline_edits_to_one_setting_converge_on_the_newer_and_surface_the_
     let (a, b) = (on(&dir, "a"), on(&dir, "b"));
     let mut seen_by_b = b.shell.watch();
     let api = Arc::new(FakeDeviceApi::new());
-    set(&a, "default_effort", json!("medium"));
+    set(&a, "preview_appearance", json!("system"));
     let (_wa, _wb) = (start(&a, &api), start(&b, &api));
     until(&b, |b| {
-        stored(b, "default_effort") == json!("medium") && online(b)
+        stored(b, "preview_appearance") == json!("system") && online(b)
     })
     .await;
     until(&a, online).await;
     api.set_online(false);
-    set(&a, "default_effort", json!("low"));
+    set(&a, "preview_appearance", json!("light"));
     std::thread::sleep(Duration::from_millis(5));
-    set(&b, "default_effort", json!("high"));
+    set(&b, "preview_appearance", json!("dark"));
     api.set_online(true);
     until(&a, |a| {
-        stored(a, "default_effort") == json!("high") && online(a)
+        stored(a, "preview_appearance") == json!("dark") && online(a)
     })
     .await;
     until(&b, |b| {
-        stored(b, "default_effort") == json!("high") && online(b)
+        stored(b, "preview_appearance") == json!("dark") && online(b)
     })
     .await;
     // The device that met the other's edit while its own was still queued surfaces it.
@@ -274,7 +274,7 @@ async fn two_offline_edits_to_one_setting_converge_on_the_newer_and_surface_the_
     assert_eq!(lost.len(), 1, "{lost:?}");
     assert_eq!(
         (lost[0].kept.clone(), lost[0].lost.clone()),
-        (json!("high"), json!("low"))
+        (json!("dark"), json!("light"))
     );
     let mut said = Vec::new();
     while let Ok(event) = seen_by_b.events.try_recv() {
@@ -286,9 +286,9 @@ async fn two_offline_edits_to_one_setting_converge_on_the_newer_and_surface_the_
     let in_a = a.account.conflicts().unwrap().len() == 1;
     assert!(in_a || said.contains(&conflict_event));
     // An edit made after seeing the other's value is not a conflict.
-    set(&a, "default_effort", json!("medium"));
+    set(&a, "preview_appearance", json!("system"));
     until(&b, |b| {
-        stored(b, "default_effort") == json!("medium") && online(b)
+        stored(b, "preview_appearance") == json!("system") && online(b)
     })
     .await;
     let total = a.account.conflicts().unwrap().len() + b.account.conflicts().unwrap().len();
@@ -334,7 +334,7 @@ async fn a_setting_over_a_limit_stays_local_and_the_status_counts_it() {
         "branch_name_instructions",
         json!("x".repeat(record::MAX_VALUE_BYTES + 1)),
     );
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
     assert!(
         !api.zone(ZONE)
@@ -364,7 +364,7 @@ async fn an_invalid_keyboard_file_pauses_with_a_reason_and_still_uploads() {
         vec![rule_field(&rule("mod+e", "sidebar.toggle"))],
     );
     let _worker = start(&core, &api);
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     let mut status = core.account.subscribe();
     let paused = status.wait_for(|s| {
         s.state
@@ -378,7 +378,7 @@ async fn an_invalid_keyboard_file_pauses_with_a_reason_and_still_uploads() {
         .unwrap();
     until(&core, |_| {
         api.zone(ZONE)
-            .is_some_and(|zone| zone.record.contains_key("default_effort"))
+            .is_some_and(|zone| zone.record.contains_key("preview_appearance"))
     })
     .await;
     assert_eq!(waiting(&core), 0);
@@ -404,7 +404,7 @@ async fn each_client_error_becomes_the_status_and_behaviour_in_the_table() {
         let dir = TempDir::new();
         let core = on(&dir, "a");
         let api = Arc::new(FakeDeviceApi::new());
-        set(&core, "default_effort", json!("high"));
+        set(&core, "preview_appearance", json!("dark"));
         api.fail_every_call(Some(error.clone()));
         let timing = SyncTiming {
             backoff_base: Duration::from_millis(300),
@@ -444,8 +444,12 @@ async fn each_client_error_becomes_the_status_and_behaviour_in_the_table() {
             .unwrap_or_else(|_| panic!("{error:?}"))
             .unwrap();
         // Whatever happened, the person's setting and the queue are intact and writable.
-        assert_eq!(stored(&core, "default_effort"), json!("high"), "{error:?}");
-        set(&core, "default_model", json!("m"));
+        assert_eq!(
+            stored(&core, "preview_appearance"),
+            json!("dark"),
+            "{error:?}"
+        );
+        set(&core, "branch_name_prefix", json!("m"));
         assert_eq!(waiting(&core), 2, "{error:?}");
         assert_eq!(api.commits(), 0, "{error:?}");
     }
@@ -459,7 +463,7 @@ async fn stopping_the_worker_keeps_queuing_local_changes() {
     let worker = start(&core, &api);
     until(&core, online).await;
     worker.stop().await;
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     assert_eq!(waiting(&core), 1);
     assert_eq!(api.commits(), 0);
 }

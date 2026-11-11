@@ -6,7 +6,7 @@ use crate::account::settings_record::{MAX_LIST, MAX_RECORD_BYTES, TOMBSTONE_HORI
 
 async fn nudge(core: &Core, api: &FakeDeviceApi, n: usize) {
     // A local change to an unrelated key wakes the worker for one more cycle.
-    set(core, "default_model", json!(format!("m{n}")));
+    set(core, "branch_name_prefix", json!(format!("m{n}")));
     until(core, |core| online(core) && api.commits() >= n).await;
 }
 
@@ -30,10 +30,10 @@ async fn a_setting_that_went_over_its_limit_after_it_synced_is_not_put_back() {
     peer(
         &api,
         future(),
-        vec![("default_effort".into(), json!("low"))],
+        vec![("preview_appearance".into(), json!("light"))],
     );
     until(&core, |core| {
-        stored(core, "default_effort") == json!("low") && online(core)
+        stored(core, "preview_appearance") == json!("light") && online(core)
     })
     .await;
     assert_eq!(stored(&core, "branch_name_instructions"), json!(big));
@@ -45,18 +45,22 @@ async fn a_change_that_never_reached_the_queue_is_not_put_back() {
     let core = on(&dir, "a");
     let api = Arc::new(FakeDeviceApi::new());
     let _worker = start(&core, &api);
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
     // The write is made as a synced one is, which queues nothing: as if the queue failed.
     core.store
         .change_settings_synced(|_| {
             let mut writes = Vec::new();
-            preferences::prepare_synced_write(&mut writes, "default_effort", Some(&json!("low")));
+            preferences::prepare_synced_write(
+                &mut writes,
+                "preview_appearance",
+                Some(&json!("light")),
+            );
             Ok(((), writes))
         })
         .unwrap();
     nudge(&core, &api, 2).await;
-    assert_eq!(stored(&core, "default_effort"), json!("low"));
+    assert_eq!(stored(&core, "preview_appearance"), json!("light"));
     assert_eq!(waiting(&core), 0);
 }
 
@@ -81,10 +85,10 @@ async fn a_hand_edited_keybindings_file_is_not_put_back() {
     peer(
         &api,
         future() + 1,
-        vec![("default_effort".into(), json!("low"))],
+        vec![("preview_appearance".into(), json!("light"))],
     );
     until(&core, |core| {
-        stored(core, "default_effort") == json!("low") && online(core)
+        stored(core, "preview_appearance") == json!("light") && online(core)
     })
     .await;
     let rules = core.keybindings().rules;
@@ -100,17 +104,17 @@ async fn a_stamp_from_the_future_is_kept_and_passed_on_but_never_applied() {
     peer(
         &api,
         i64::MAX,
-        vec![("default_effort".into(), json!("high"))],
+        vec![("preview_appearance".into(), json!("dark"))],
     );
     let _worker = start(&core, &api);
-    set(&core, "default_model", json!("m"));
+    set(&core, "branch_name_prefix", json!("m"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
-    assert_ne!(stored(&core, "default_effort"), json!("high"));
+    assert_ne!(stored(&core, "preview_appearance"), json!("dark"));
     assert_eq!(core.account.status().held_back, 1);
     let kept = core.store.account_record(ZONE).unwrap();
-    assert_eq!(kept["default_effort"].stamp.wall_ms, i64::MAX);
+    assert_eq!(kept["preview_appearance"].stamp.wall_ms, i64::MAX);
     assert_eq!(
-        api.zone(ZONE).unwrap().record["default_effort"]
+        api.zone(ZONE).unwrap().record["preview_appearance"]
             .stamp
             .wall_ms,
         i64::MAX
@@ -127,23 +131,23 @@ async fn a_first_sync_never_beats_a_newer_account_value() {
     let core = on(&dir, "a");
     let api = Arc::new(FakeDeviceApi::new());
     // This device set both before the account was on; the account has a newer value of one.
-    set(&core, "default_effort", json!("low"));
-    set(&core, "default_model", json!("mine"));
+    set(&core, "preview_appearance", json!("light"));
+    set(&core, "branch_name_prefix", json!("mine"));
     peer(
         &api,
         crate::util::unix_now_ms() - 1,
-        vec![("default_effort".into(), json!("high"))],
+        vec![("preview_appearance".into(), json!("dark"))],
     );
     let _worker = start(&core, &api);
     until(&core, |core| {
-        stored(core, "default_effort") == json!("high") && online(core)
+        stored(core, "preview_appearance") == json!("dark") && online(core)
     })
     .await;
-    assert_eq!(stored(&core, "default_model"), json!("mine"));
+    assert_eq!(stored(&core, "branch_name_prefix"), json!("mine"));
     // What the account lacked is uploaded, and what it had is not overwritten.
     let server = api.zone(ZONE).unwrap().record;
-    assert_eq!(server["default_effort"].value, json!("high"));
-    assert_eq!(server["default_model"].value, json!("mine"));
+    assert_eq!(server["preview_appearance"].value, json!("dark"));
+    assert_eq!(server["branch_name_prefix"].value, json!("mine"));
     assert!(core.account.conflicts().unwrap().is_empty());
 }
 
@@ -162,11 +166,11 @@ async fn a_full_record_keeps_only_the_new_setting_local_and_does_not_pause_the_z
     let _worker = start(&core, &api);
     until(&core, online).await;
     set(&core, "branch_name_instructions", json!("y".repeat(6_000)));
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
     let server = api.zone(ZONE).unwrap().record;
     assert!(!server.contains_key("branch_name_instructions"));
-    assert_eq!(server["default_effort"].value, json!("high"));
+    assert_eq!(server["preview_appearance"].value, json!("dark"));
     assert_eq!(core.account.status().not_synced, 1);
     assert_eq!(
         stored(&core, "branch_name_instructions")
@@ -184,14 +188,14 @@ async fn a_record_that_grew_past_the_limit_by_merging_drops_only_the_queued_sett
     let api = Arc::new(FakeDeviceApi::new());
     // Queued while the account held little; another device then filled the record.
     set(&core, "branch_name_instructions", json!("y".repeat(7_000)));
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     peer(&api, future(), filler(8, 7_900));
     let _worker = start(&core, &api);
     until(&core, |core| api.commits() == 1 && online(core)).await;
     let server = api.zone(ZONE).unwrap().record;
     assert!(crate::account::settings_record::record_bytes(&server) <= MAX_RECORD_BYTES);
     assert!(!server.contains_key("branch_name_instructions"));
-    assert_eq!(server["default_effort"].value, json!("high"));
+    assert_eq!(server["preview_appearance"].value, json!("dark"));
     assert_eq!(
         server
             .keys()
@@ -223,7 +227,7 @@ async fn old_removal_markers_are_compacted_when_uploading_and_recent_ones_stay()
     );
     api.peer_write(ZONE, "peer", now - 1000, vec![recent.clone()]);
     let _worker = start(&core, &api);
-    set(&core, "default_effort", json!("high"));
+    set(&core, "preview_appearance", json!("dark"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
     let server = api.zone(ZONE).unwrap().record;
     assert!(!server.contains_key(&old.0));

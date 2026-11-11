@@ -1,4 +1,4 @@
-//! Allowlist-only apply: what a merged record changes on this device. Only the 20
+//! Allowlist-only apply: what a merged record changes on this device. Only the 13
 //! allowlisted keys and keybindings are applied, each through the same value check a
 //! local write gets and the per-key rules in [`super::policy`]. Every other field is
 //! left in the record, which keeps it for the next upload; this module never reads it.
@@ -35,7 +35,7 @@ pub struct ApplyPlan {
 /// `local_engine` is the engine default here.
 pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
     let mut plan = ApplyPlan::default();
-    let engine = applied_engine(record, local_engine);
+    let engine = local_engine;
     for (name, field) in record {
         let value = &field.value;
         if names::is_keybinding_name(name) {
@@ -57,7 +57,7 @@ pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
                 None => plan.refused += 1,
             }
         } else if names::is_synced_key(name) && !names::is_set_key(name) {
-            match accepted(name, value, engine.as_deref()) {
+            match accepted(name, value, engine) {
                 Some(kept) => {
                     plan.values.insert(name.clone(), kept);
                 }
@@ -67,19 +67,6 @@ pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
         // Anything else is not ours to apply: kept in the record, passed on unchanged.
     }
     plan
-}
-
-/// The engine default as it will be here once this record is applied: the record's
-/// value only when it passes the same check, otherwise the one already here.
-fn applied_engine(record: &Record, local_engine: Option<&str>) -> Option<String> {
-    match record
-        .get("default_engine")
-        .and_then(|field| accepted("default_engine", &field.value, None))
-    {
-        Some(Some(value)) => value.as_str().map(str::to_owned),
-        Some(None) => None,
-        None => local_engine.map(str::to_owned),
-    }
 }
 
 /// The value to store for a plain key: `Some(None)` is a reset, `None` a refusal.
@@ -155,14 +142,14 @@ mod tests {
     fn an_allowlisted_value_is_planned_and_a_bad_one_is_refused() {
         let plan = plan(
             &record(vec![
-                ("default_effort".into(), json!("high")),
+                ("preview_appearance".into(), json!("dark")),
                 ("response_streaming_mode".into(), json!("nonsense")),
                 ("preview_zoom".into(), json!(1.5)),
                 ("default_theme".into(), Value::Null),
             ]),
             None,
         );
-        assert_eq!(plan.values["default_effort"], Some(json!("high")));
+        assert_eq!(plan.values["preview_appearance"], Some(json!("dark")));
         assert_eq!(plan.values["preview_zoom"], Some(json!(1.5)));
         assert_eq!(plan.values["default_theme"], None);
         assert!(!plan.values.contains_key("response_streaming_mode"));
@@ -186,44 +173,34 @@ mod tests {
     }
 
     #[test]
-    fn model_options_that_cost_or_widen_reach_are_not_applied_for_any_engine() {
-        let options = json!({"service_tier": "priority", "sandbox": "off", "fast_mode": "on"});
-        for engine in ["claude", "codex", "an-acp-agent"] {
-            let plan = plan(
-                &record(vec![
-                    ("default_engine".into(), json!(engine)),
-                    ("default_model_options".into(), options.clone()),
-                ]),
-                None,
-            );
-            assert!(
-                !plan.values.contains_key("default_model_options"),
-                "{engine}"
-            );
-            assert_eq!(plan.refused, 1);
-        }
-        // Clearing the options is not an escalation and applies.
-        let cleared = plan(
-            &record(vec![("default_model_options".into(), json!({}))]),
-            None,
+    fn default_model_options_is_not_synced_so_the_plan_ignores_it() {
+        let options = json!({"service_tier": "priority", "fast_mode": "on"});
+        let plan = plan(
+            &record(vec![("default_model_options".into(), options)]),
+            Some("codex"),
         );
-        assert_eq!(cleared.values["default_model_options"], Some(json!({})));
+        assert_eq!(plan, ApplyPlan::default());
     }
 
+    // `default_model_options` is not in the allowlist (cost and reach never sync), so the
+    // option filter below is not reached today. It stays as defence in depth: a later
+    // change that put the key back would still drop every option, and these tests keep it
+    // honest until then.
     #[test]
-    fn the_engine_used_to_filter_is_the_one_that_is_applied() {
-        let engine = |fields: Vec<(String, Value)>| applied_engine(&record(fields), Some("local"));
-        assert_eq!(engine(vec![]).as_deref(), Some("local"));
+    fn the_option_filter_would_still_drop_every_option_for_each_engine() {
+        let options = json!({"service_tier": "priority", "sandbox": "off", "fast_mode": "on"});
+        for engine in ["claude", "codex", "an-acp-agent"] {
+            assert_eq!(
+                accepted("default_model_options", &options, Some(engine)),
+                None,
+                "{engine}"
+            );
+        }
+        // Clearing the options is not an escalation.
         assert_eq!(
-            engine(vec![("default_engine".into(), json!("codex"))]).as_deref(),
-            Some("codex")
+            accepted("default_model_options", &json!({}), None),
+            Some(Some(json!({})))
         );
-        // A value that fails the check is not applied, so it is not the engine.
-        assert_eq!(
-            engine(vec![("default_engine".into(), json!(5))]).as_deref(),
-            Some("local")
-        );
-        assert_eq!(engine(vec![("default_engine".into(), Value::Null)]), None);
     }
 
     #[test]
@@ -313,7 +290,7 @@ mod tests {
                 fields.push((key.to_owned(), json!("anything")));
             }
         }
-        assert_eq!(fields.len(), 42);
+        assert_eq!(fields.len(), 49);
         fields.push(("a_future_key".into(), json!(1)));
         let plan = plan(&record(fields), None);
         assert_eq!(plan, ApplyPlan::default());
