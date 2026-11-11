@@ -64,11 +64,12 @@ TypeScript into `web/src/generated`.
   validates what the types write against the schemas. A field added to a type without the
   schema (or the reverse) fails it.
 - **Store tables** (`crew_tasks`, `crew_briefs`, `crew_answer_keys`, `crew_messages`,
-  `crew_leases`, `crew_evidence`, `crew_gates`, `crew_results`, migration 30) keep each object as
+  `crew_leases`, `crew_evidence`, `crew_gates`, `crew_results`, migration 30; `crew_route_decisions`,
+  migration 31) keep each object as
   canonical JSON keyed by its `id`, which is the content address, and verify it on the way in.
   The answer key has its own table and reader, so the brief a worker reads cannot hold it (H1).
-  A task is keyed by its brief's id. Facts, claims, reports, findings, disagreements and route
-  decisions have no table yet; they arrive with the router and the bus.
+  A task is keyed by its brief's id. Facts, claims, reports, findings and disagreements have
+  no table yet; they arrive with the bus.
 
 When the real router and bus exist (slices 2 to 4), they run the same
 [conformance cases](conformance/README.md) through a second adapter. The reference model

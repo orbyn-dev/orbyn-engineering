@@ -5,7 +5,7 @@
 
 use orbyn_contracts::{
     AnswerKey, Brief, CrewError, CrewMessage, CrewObject, CrewResult, Evidence, Gate, Lease,
-    WorkerObject, canonical_json,
+    RouteDecision, WorkerObject, canonical_json,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
@@ -73,7 +73,11 @@ fn belongs_to(task: &CrewTask, object: &CrewObject) -> Result<()> {
     let wrong_run = object
         .run_id()
         .is_some_and(|run| run.as_str() != task.run_id);
-    let wrong_brief = matches!(object, CrewObject::Result(r) if r.brief.as_str() != task.id);
+    let wrong_brief = match object {
+        CrewObject::Result(r) => r.brief.as_str() != task.id,
+        CrewObject::RouteDecision(d) => d.brief.as_str() != task.id,
+        _ => false,
+    };
     if object.crew_id().as_str() != task.crew_id || wrong_run || wrong_brief {
         return Err(CoreError::Invalid(format!(
             "crew object {} is not part of task {}",
@@ -250,6 +254,17 @@ impl Store {
                      VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
                     params![id, task_id, super::wire_name(o.state)?, o.r#final, body],
                 )?,
+                CrewObject::RouteDecision(o) => tx.execute(
+                    "INSERT INTO crew_route_decisions (id, task_id, engine, assigned_by, body)
+                     VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
+                    params![
+                        id,
+                        task_id,
+                        o.engine.as_str(),
+                        super::wire_name(o.assigned_by)?,
+                        body
+                    ],
+                )?,
                 other => {
                     return Err(CoreError::Invalid(format!(
                         "a {} has no crew table yet",
@@ -348,6 +363,21 @@ impl Store {
             .filter_map(|o| {
                 if let CrewObject::Gate(g) = o {
                     Some(g)
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+
+    /// The router's decisions for a task, oldest first.
+    pub fn crew_route_decisions(&self, task_id: &str) -> Result<Vec<RouteDecision>> {
+        Ok(self
+            .crew_objects("crew_route_decisions", task_id)?
+            .into_iter()
+            .filter_map(|o| {
+                if let CrewObject::RouteDecision(d) = o {
+                    Some(d)
                 } else {
                     None
                 }

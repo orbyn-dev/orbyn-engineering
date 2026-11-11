@@ -300,6 +300,17 @@ impl<V: Clone + PartialEq + Send + Sync + 'static> Swr<V> {
         }
     }
 
+    /// The kept answer for `key` within its maximum age, or `None`. It never reads, starts a
+    /// refresh or changes the cache.
+    pub fn peek(&self, key: &str) -> Option<V> {
+        let guard = lock(&self.state);
+        guard
+            .entries
+            .get(key)
+            .filter(|entry| entry.at.elapsed() < self.max_age)
+            .and_then(|entry| entry.value.clone())
+    }
+
     /// Keeps `value` as the answer for `key`, for a write that already knows it.
     pub fn put(&self, key: &str, value: V) {
         let now = Instant::now();

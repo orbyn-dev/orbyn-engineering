@@ -266,6 +266,11 @@ raise a tier. Only the person can change a lead tier.
    writes. The brief's `needs` (for example `image`, `mcp`) must match capabilities.
 2. Score: pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from
    `usage`, then the person's default engine to break ties.
+   - **As built (slice 2, differs from the plan):** a full quota window is also a hard filter (`quota_exhausted`), not
+     only a score input. The score is a weighted sum, 70% pass rate and 30% headroom, in integer permille, rather than
+     a strict order of pass rate, then headroom. The default engine only breaks a tie. The seeded pass rate is a flat
+     500 for every engine until Eval history exists. Limits are read from the usage cache only, so an engine with no
+     cached report counts as not reported (neutral headroom, no quota filter).
 3. A person's or lead's explicit `engine` wins but is still checked against the filters.
    - **Tagging a harness in the lead thread assigns it by hand.**
      - `@claude`, `@codex`, `@opencode`, or any installed engine's id (`@cursor`, `@kimi` and so on): the router picks
