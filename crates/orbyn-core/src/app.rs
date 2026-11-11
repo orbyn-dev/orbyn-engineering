@@ -84,6 +84,9 @@ pub struct CoreConfig {
     pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
+    /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
+    /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
+    pub crew_tiers: Option<crate::crew::RouterConfig>,
 }
 
 impl CoreConfig {
@@ -104,6 +107,7 @@ impl CoreConfig {
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
+            crew_tiers: None,
         }
     }
 }

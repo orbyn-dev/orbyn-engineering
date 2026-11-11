@@ -36,6 +36,8 @@ pub enum Turn {
     Crash,
     /// Never ends, so the task stays `running` and keeps its lease.
     Hang,
+    /// Calls these tools in order, such as `crew_finding` a few times and then `crew_report`.
+    Steps(Vec<(&'static str, Value)>),
     /// Reports, then keeps its turn open until told, as a worker that goes on working would.
     Linger(Value, Arc<tokio::sync::Notify>),
 }
@@ -48,6 +50,8 @@ pub struct Fake {
     id: String,
     /// Takes input while a turn runs, as Claude and Codex do; false is an engine that does not.
     steerable: bool,
+    /// Lists a lead-tier model as well, so a review role can be routed to it.
+    tiered: bool,
     /// What was handed to a running turn's input: `(thread, text)`.
     steered: Arc<Mutex<Vec<(String, String)>>>,
     core: Arc<OnceLock<Weak<Core>>>,
@@ -80,7 +84,11 @@ impl EngineDriver for Fake {
     }
 
     async fn models(&self) -> Result<Option<ModelCatalog>> {
-        let models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
+        let mut models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
+        if self.tiered {
+            // The review tests map each fake's `-lead` model to the lead tier (see `world_tiered`).
+            models.push(model(&format!("{}-lead", self.id), &self.id, false));
+        }
         Ok(Some(ModelCatalog::engine(models)))
     }
 
@@ -119,6 +127,12 @@ impl EngineDriver for Fake {
                         send_report(&core, &spec, args, &answers).await;
                         EngineOutcome::Completed
                     }
+                    Turn::Steps(steps) => {
+                        for (tool, args) in steps {
+                            send_tool(&core, &spec, tool, args, &answers).await;
+                        }
+                        EngineOutcome::Completed
+                    }
                     Turn::Linger(args, release) => {
                         send_report(&core, &spec, args, &answers).await;
                         release.notified().await;
@@ -148,9 +162,19 @@ impl EngineDriver for Fake {
 }
 
 async fn send_report(core: &Core, spec: &RunSpec, args: Value, answers: &Mutex<Vec<String>>) {
+    send_tool(core, spec, "crew_report", args, answers).await;
+}
+
+async fn send_tool(
+    core: &Core,
+    spec: &RunSpec,
+    tool: &str,
+    args: Value,
+    answers: &Mutex<Vec<String>>,
+) {
     let token = spec.mcp_url.as_deref().and_then(|u| u.rsplit('/').next());
     let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": { "name": "crew_report", "arguments": args } });
+        "params": { "name": tool, "arguments": args } });
     let sent = core.mcp.handle(token.expect("an mcp url"), &message).await;
     assert!(sent.is_ok(), "the worker's token is valid");
     answers.lock().unwrap().push(format!("{sent:?}"));
@@ -179,6 +203,17 @@ pub async fn world(preview: bool, script: Script) -> World {
 /// `world`, with these fake engines: each is an id and whether it takes input mid-turn. The
 /// lead runs on the first.
 pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)]) -> World {
+    world_tiered(preview, script, engines, false).await
+}
+
+/// `world_with`, and with `tiered` every fake also lists a lead-tier model and the router maps it: `-lead` is the
+/// lead tier and `-model` the worker tier, so a review role (lead tier) can be routed to any of them.
+pub async fn world_tiered(
+    preview: bool,
+    script: Script,
+    engines: &[(&str, bool)],
+    tiered: bool,
+) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -187,6 +222,19 @@ pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)])
     config.engines.codex_program = "orbyn-test-no-such-codex".into();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    if tiered {
+        let words = crate::crew::TierWords {
+            lead: Some("lead".into()),
+            worker: Some("model".into()),
+            scout: Some("scout".into()),
+        };
+        config.crew_tiers = Some(crate::crew::RouterConfig {
+            tiers: engines
+                .iter()
+                .map(|(id, _)| ((*id).to_owned(), words.clone()))
+                .collect(),
+        });
+    }
     let core = Arc::new(Core::open(config).unwrap());
     core.mcp.bind_host(&core);
     let cell = Arc::new(OnceLock::new());
@@ -198,6 +246,7 @@ pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)])
         core.engines.register(Arc::new(Fake {
             id: (*id).to_owned(),
             steerable: *steerable,
+            tiered,
             steered: steered.clone(),
             core: cell.clone(),
             script: script.clone(),

@@ -90,7 +90,7 @@ pub(super) fn budget_left(created_at: &str, minutes: u64, now: i64) -> std::time
     std::time::Duration::from_secs(u64::try_from(end - now).unwrap_or(0))
 }
 
-fn short(text: &str) -> Result<CrewShortText, CrewError> {
+pub(super) fn short(text: &str) -> Result<CrewShortText, CrewError> {
     let cut: String = text.chars().take(1000).collect();
     let cut = if cut.trim().is_empty() {
         "(empty)".to_owned()
@@ -100,7 +100,7 @@ fn short(text: &str) -> Result<CrewShortText, CrewError> {
     CrewShortText::new(cut).map_err(|why| CrewError::new(ErrorCode::InvalidObject, why))
 }
 
-async fn head(worktree: &Path) -> Option<CrewCommit> {
+pub(super) async fn head(worktree: &Path) -> Option<CrewCommit> {
     let out = crate::source_control::git::git(worktree, &["rev-parse", "HEAD"])
         .await
         .ok()?;

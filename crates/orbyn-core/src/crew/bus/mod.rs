@@ -202,6 +202,7 @@ impl Core {
         tool: &str,
         args: &Value,
     ) -> Result<Value, CrewError> {
+        self.refuse_reviewer_on_bus(binding, tool, args)?;
         let mut answer = match tool {
             POST_TOOL => self.crew_post_tool(binding, args).await?,
             ASK_TOOL => self.crew_ask_tool(binding, args).await?,
@@ -235,6 +236,36 @@ impl Core {
             }
         }
         Ok(answer)
+    }
+
+    /// A reviewer reads and reports: it may read the board and tell the lead something, and it writes no fact
+    /// and talks to no other member. The run's end (H7) is reported first, as everywhere else.
+    fn refuse_reviewer_on_bus(
+        &self,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> Result<(), CrewError> {
+        let who = self.bus_sender(binding, tool)?;
+        let Some(task) = &who.task else {
+            return Ok(());
+        };
+        let reviewer = self
+            .store
+            .crew_brief(task)
+            .ok()
+            .flatten()
+            .is_some_and(|brief| super::leases::is_reviewer(&brief));
+        let to_lead = args.get("to").and_then(Value::as_str) == Some("lead");
+        if reviewer
+            && (tool == BOARD_WRITE_TOOL || (!to_lead && [POST_TOOL, ASK_TOOL].contains(&tool)))
+        {
+            return Err(CrewError::new(
+                ErrorCode::NotAuthorized,
+                "a reviewer reads and reports: it posts only to the lead and writes no board fact",
+            ));
+        }
+        Ok(())
     }
 
     /// The limits a crew runs on.

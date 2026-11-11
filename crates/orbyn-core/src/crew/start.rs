@@ -16,10 +16,36 @@ use super::leases::{Grant, internal, is_reviewer, refuse_protected};
 use super::router::{RouteFailure, RouteInput, route};
 use super::score::EvalHistory;
 use super::stamp::Stamper;
-use super::tiers::RouterConfig;
 use super::tool::{LEAD_MEMBER, invalid, stamp_now};
 use crate::app::Core;
 use crate::tools::mcp::McpBinding;
+
+/// What a launch adds to a plain start: the rows that make the task a review run or a fix.
+#[derive(Default)]
+pub(super) struct Links {
+    pub review: Option<crate::store::CrewReview>,
+    pub fix: Option<crate::store::CrewFix>,
+}
+
+/// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
+/// without it the worker is sent the brief.
+pub(super) struct Launch<'a> {
+    pub lead: &'a orbyn_contracts::Thread,
+    pub now: orbyn_contracts::CrewTimestamp,
+    pub brief: Brief,
+    pub key: orbyn_contracts::AnswerKey,
+    pub role: Option<orbyn_contracts::RouteRole>,
+    pub lane: Option<CrewToken>,
+    pub author_engine: Option<CrewToken>,
+    pub prefix: &'static str,
+    pub prompt: Option<String>,
+    pub links: Links,
+}
+
+/// The member id a task's worker has: its prefix and the start of the brief's hash.
+pub(super) fn member_of(prefix: &str, brief: &Brief) -> Result<CrewMember, CrewError> {
+    CrewMember::new(format!("{prefix}-{}", &brief.id.as_str()[7..15])).map_err(invalid)
+}
 
 /// Who is calling a Crew tool.
 pub(super) enum Caller {
@@ -95,6 +121,43 @@ impl Core {
         let key = stamper.answer_key(key_draft, &brief.id)?;
         // H2, after the shape: nothing the lead sent holds a secret.
         refuse_secret(args)?;
+        self.launch_crew_task(Launch {
+            lead: &thread,
+            now: stamper.now.clone(),
+            brief,
+            key,
+            role: None,
+            lane: None,
+            author_engine: None,
+            prefix: "worker",
+            prompt: None,
+            links: Links::default(),
+        })
+        .await
+    }
+
+    /// Starts a task: the checks every start passes (H1, H2, H10, H11), the stored task, the route, the
+    /// leases and the worker's run through `delegate`. `crew_start` and the review lanes and fixes of
+    /// [`super::review`] all come through here, so a brief the core writes is validated like the lead's.
+    pub(super) async fn launch_crew_task(
+        self: &Arc<Self>,
+        launch: Launch<'_>,
+    ) -> Result<Value, CrewError> {
+        let Launch {
+            lead: thread,
+            now: created_at,
+            brief,
+            key,
+            role,
+            lane,
+            author_engine,
+            prefix,
+            prompt,
+            links,
+        } = launch;
+        // H2 on what the core wrote as well as what the lead sent.
+        refuse_secret(&CrewObject::Brief(brief.clone()).to_value())?;
+        refuse_secret(&CrewObject::AnswerKey(key.clone()).to_value())?;
         // H11: nothing the worker may write is a file the checks use.
         let writes: Vec<_> = brief.write_paths().collect();
         refuse_protected(&writes, &key.protected_paths)?;
@@ -109,8 +172,7 @@ impl Core {
                 "a review brief asks for no write files; a reviewer is never given a write lease",
             ));
         }
-        let member =
-            CrewMember::new(format!("worker-{}", &brief.id.as_str()[7..15])).map_err(invalid)?;
+        let member = member_of(prefix, &brief)?;
         let run_id = CrewId::new(crate::util::new_id()).map_err(invalid)?;
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
@@ -123,6 +185,12 @@ impl Core {
         self.store
             .add_crew_run(&task.id, &thread.id, member.as_str())
             .map_err(internal)?;
+        if let Some(review) = &links.review {
+            self.store.add_crew_review(review).map_err(internal)?;
+        }
+        if let Some(fix) = &links.fix {
+            self.store.add_crew_fix(fix).map_err(internal)?;
+        }
         // What the protected files hold now, before the worker exists. The verifier compares.
         if !key.protected_paths.is_empty() {
             let (root, paths) = (
@@ -146,16 +214,16 @@ impl Core {
         let input = RouteInput {
             brief: &brief,
             run_id: run_id.clone(),
-            created_at: stamper.now.clone(),
-            role: None,
-            lane: None,
-            author_engine: None,
+            created_at,
+            role,
+            lane,
+            author_engine,
             default_engine: machine.default_engine.clone(),
         };
         let decision = match route(
             &input,
             &machine.views,
-            &RouterConfig::default(),
+            &self.crew_router_config(),
             &EvalHistory::default(),
         ) {
             Ok(decision) => decision,
@@ -189,7 +257,7 @@ impl Core {
                 .map_err(internal)?;
         }
         match self
-            .start_crew_worker(&thread, &brief, &decision, &member)
+            .start_crew_worker(thread, &brief, &decision, &member, prompt)
             .await
         {
             Ok(worker) => {
@@ -251,8 +319,12 @@ impl Core {
         brief: &Brief,
         decision: &RouteDecision,
         member: &CrewMember,
+        prompt: Option<String>,
     ) -> Result<Value, CrewError> {
-        let prompt = self.worker_prompt(brief, member)?;
+        let prompt = match prompt {
+            Some(text) => text,
+            None => self.worker_prompt(brief, member)?,
+        };
         let base = crate::source_control::git::git(
             std::path::Path::new(&lead.cwd),
             &["rev-parse", "HEAD"],
@@ -297,7 +369,11 @@ impl Core {
 
     /// What the worker is told: the objects `WorkerObject` allows, as data, with the leak and
     /// secret checks every object that reaches a worker passes (H1, H2).
-    fn worker_prompt(&self, brief: &Brief, member: &CrewMember) -> Result<String, CrewError> {
+    pub(super) fn worker_prompt(
+        &self,
+        brief: &Brief,
+        member: &CrewMember,
+    ) -> Result<String, CrewError> {
         let mut objects: Vec<WorkerObject> = self
             .store
             .crew_worker_objects(brief.id.as_str(), member.as_str())

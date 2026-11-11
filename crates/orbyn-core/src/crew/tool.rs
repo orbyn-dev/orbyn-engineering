@@ -23,7 +23,9 @@ pub const REPORT_TOOL: &str = "crew_report";
 
 /// Whether `name` is a Crew tool.
 pub fn is_tool(name: &str) -> bool {
-    [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name) || super::BUS_TOOLS.contains(&name)
+    [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name)
+        || super::BUS_TOOLS.contains(&name)
+        || super::REVIEW_TOOLS.contains(&name)
 }
 
 /// The member id the lead thread has in a crew (the conformance fixtures call it `lead-01`).
@@ -65,6 +67,7 @@ pub fn tool_specs() -> Vec<Value> {
         }),
     ];
     tools.extend(super::bus::specs());
+    tools.extend(super::review::specs());
     tools
 }
 
@@ -130,12 +133,20 @@ impl Core {
             START_TOOL => self.crew_start_tool(binding, args).await,
             REPORT_TOOL => self.crew_report_tool(binding, args).await,
             bus if super::BUS_TOOLS.contains(&bus) => self.crew_bus_tool(binding, bus, args).await,
+            review if super::REVIEW_TOOLS.contains(&review) => {
+                self.crew_review_tool(binding, review, args).await
+            }
             _ => self.crew_route_tool(binding, args).await,
         };
         match answer {
             Ok(answer) => (answer.to_string(), false),
             Err(error) => (json!(error).to_string(), true),
         }
+    }
+
+    /// The tier map the router uses.
+    pub(super) fn crew_router_config(&self) -> RouterConfig {
+        self.config.crew_tiers.clone().unwrap_or_default()
     }
 
     /// Whether the Crew tools are on. Off, `crew_route` does not exist for any caller.
@@ -212,7 +223,7 @@ impl Core {
         let answer = match route(
             &input,
             &machine.views,
-            &RouterConfig::default(),
+            &self.crew_router_config(),
             &EvalHistory::default(),
         ) {
             Ok(decision) => {

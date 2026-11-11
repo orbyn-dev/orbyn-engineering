@@ -247,6 +247,9 @@ impl Core {
             if let Ok(task) = self.store.pass_crew_task(task_id, &ids) {
                 let summary = format!("{} checks passed.", judged.passes);
                 self.end_crew_task(&task, ResultState::Passed, None, &summary, Some(judged));
+                // A review lane, a second review or a fix that passed has more to do (see `review`).
+                let (core, id) = (self.clone(), task_id.to_owned());
+                tokio::spawn(async move { core.review_task_passed(&id).await });
             }
         } else if judged.undecided() {
             self.crew_needs_person(

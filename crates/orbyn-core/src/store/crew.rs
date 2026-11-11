@@ -69,7 +69,7 @@ pub(super) fn find_task(tx: &Transaction<'_>, id: &str) -> Result<CrewTask> {
 }
 
 /// An object belongs to its task's crew and run, and a result answers its brief.
-fn belongs_to(task: &CrewTask, object: &CrewObject) -> Result<()> {
+pub(super) fn belongs_to(task: &CrewTask, object: &CrewObject) -> Result<()> {
     let wrong_run = object
         .run_id()
         .is_some_and(|run| run.as_str() != task.run_id);

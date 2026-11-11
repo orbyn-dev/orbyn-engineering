@@ -2,7 +2,7 @@
 //! and is recorded in `schema_migrations`. Published entries never change.
 
 use super::crew_schema::{
-    CREW_BUS, CREW_BUS_EVENTS, CREW_PROTECTED, CREW_ROUTES, CREW_RUNS, CREW_TABLES,
+    CREW_BUS, CREW_BUS_EVENTS, CREW_PROTECTED, CREW_REVIEW, CREW_ROUTES, CREW_RUNS, CREW_TABLES,
 };
 
 pub const MIGRATIONS: &[(i64, &str)] = &[
@@ -41,6 +41,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (33, CREW_PROTECTED),
     (34, CREW_BUS),
     (35, CREW_BUS_EVENTS),
+    (36, CREW_REVIEW),
 ];
 
 // The account's settings sync, per zone: the cursor and the capture switch, the local copy

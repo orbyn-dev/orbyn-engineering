@@ -13,6 +13,7 @@ mod persist;
 mod protect;
 mod recover;
 mod report;
+mod review;
 mod router;
 mod score;
 mod settle;
@@ -32,6 +33,10 @@ pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
 pub use leases::refuse_protected;
 pub use protect::protected_changes;
+pub use review::{
+    CHECK_FINDING_TOOL, FINDING_TOOL, FindingStatus, REVIEW_TOOL, REVIEW_TOOLS, RULES_FILE,
+    RuleLane, STATUS_TOOL, agrees, fingerprint, read_rules, status_of,
+};
 pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};
 pub use stamp::Stamper;
