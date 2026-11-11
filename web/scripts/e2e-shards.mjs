@@ -84,6 +84,11 @@ if (first === "update") {
   const map = existsSync(mapPath) ? JSON.parse(readFileSync(mapPath, "utf8")) : {};
   const mine = assign(specs(), map, total)[shard - 1];
   console.error(`shard ${shard}/${total}: ${mine.files.length} files, about ${Math.round(mine.load)} s of test time`);
+  // An empty list would make Playwright run the whole suite.
+  if (mine.files.length === 0) {
+    console.error("no spec files for this shard");
+    process.exit(1);
+  }
   // Playwright reads each argument as a regular expression on the file path.
   for (const file of mine.files.sort()) console.log(`/${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
 } else {

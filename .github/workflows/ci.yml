@@ -206,7 +206,7 @@ jobs:
         working-directory: web
 
   # The browser suite's service, built once. Every shard downloads these two binaries
-  # instead of compiling them again (about a minute each, eight times over).
+  # instead of compiling them again (about a minute each, twelve times over).
   e2e-build:
     name: E2E service build
     needs: [changes, lint]
@@ -249,7 +249,7 @@ jobs:
             target/debug/orbyn-fake-engine
           compression-level: 1
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   # The browser suite, split by file across twelve runners. web/scripts/e2e-shards.mjs
   # gives each shard the files that balance the measured durations in
@@ -312,6 +312,8 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ github.workspace }}/e2e-timing/shard-${{ matrix.shard }}.json
         run: |
           files=$(node scripts/e2e-shards.mjs ${{ matrix.shard }} 12)
+          # An empty list would run the whole suite.
+          [ -n "$files" ] || { echo "no spec files for this shard"; exit 1; }
           echo "$files"
           # shellcheck disable=SC2086
           npm run test:e2e -- --reporter=dot,json $files
