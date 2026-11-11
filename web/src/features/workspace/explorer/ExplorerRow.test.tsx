@@ -19,3 +19,16 @@ it("shows nothing for a read that finishes within 400 ms, then quiet placeholder
   act(() => void vi.advanceTimersByTime(1));
   expect(container.querySelectorAll(".x2sk")).toHaveLength(2);
 });
+
+const file = (change: Row["change"]): Row => ({ key: "f", kind: "file", depth: 3, projectId: "p", label: "a.ts", path: "a.ts", change });
+
+it("draws M A D R U at the right of a file and no letter for a conflict", () => {
+  for (const [change, letter] of [["modified", "M"], ["added", "A"], ["deleted", "D"], ["renamed", "R"], ["untracked", "U"]] as const) {
+    const { unmount } = render(<ExplorerRow row={file(change)} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
+    expect(screen.getByText(letter)).toBeInTheDocument();
+    unmount();
+  }
+  render(<ExplorerRow row={file("conflicted")} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
+  expect(screen.queryByText(/^[A-Z!]$/)).toBeNull();
+  expect(screen.getByRole("treeitem")).toHaveAccessibleName("a.ts");
+});

@@ -8,7 +8,7 @@ import { parseFileTab, useUi, type FileTabId, type FileTarget } from "../../../p
 import { useWorkspace } from "../../../product/state/workspace";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
-import { canStartThreadIn, readExplorerFile, readOnlyWhy, startThreadIn, threadPathOf, useExplorer, useFileTabNames } from "../../workspace";
+import { canStartThreadIn, readExplorerFile, startThreadIn, threadPathOf, useExplorer, useFileTabNames } from "../../workspace";
 import { Viewer } from "./FileViewer";
 import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
 
@@ -57,19 +57,20 @@ function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target
     readExplorerFile(target.projectId, target.worktreeId, target.path, signal),
   );
   const file = read.status === "ready" ? read.data : null;
-  const why = worktree ? readOnlyWhy(worktree, threadId) : file?.read_only ? "other_session" : null;
+  // Only the drawn banner: this is not the worktree the thread runs in.
+  const notMine = !!worktree && !worktree.threads.some((one) => one.id === threadId);
   const names = useFileTabNames(target.projectId, target.worktreeId, threadId);
   const threads = useWorkspace((state) => state.threads);
   const folders = target.path.split("/").slice(0, -1);
   const name = target.path.split("/").at(-1) ?? target.path;
   return (
-    <div className="explorer-file" data-read-only={why ? "true" : undefined}>
-      {why ? (
+    <div className="explorer-file" data-read-only={notMine ? "true" : undefined}>
+      {notMine ? (
         <div className="x2banner" role="status">
           <Lock size={14} aria-hidden />
-          <span>{why === "not_this_thread" ? "Read-only · not this thread’s worktree" : "Read-only"}</span>
+          <span>Read-only · not this thread’s worktree</span>
           <span className="sp" />
-          {why === "not_this_thread" && worktree && canStartThreadIn(worktree, Object.values(threads)) ? (
+          {worktree && canStartThreadIn(worktree, Object.values(threads)) ? (
             <Button small tone="quiet" onClick={() => startThreadIn(target.projectId, worktree)}>
               Start a thread here
             </Button>

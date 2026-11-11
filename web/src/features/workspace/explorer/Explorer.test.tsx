@@ -140,8 +140,8 @@ it("reads a locked worktree and marks it Read-only", async () => {
   await waitFor(() => expect(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ })).toHaveLength(2));
   await user.click(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ }).at(-1)!);
   expect(await screen.findByText("// feat/locked")).toBeInTheDocument();
-  // A locked worktree is not another thread's: the banner says Read-only and offers no thread there.
-  expect(within(screen.getByRole("tabpanel")).getByText("Read-only")).toBeInTheDocument();
+  // It is not this thread's worktree, so the drawn banner; no thread to start in one Orbyn did not make.
+  expect(screen.getByText("Read-only · not this thread’s worktree")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Start a thread here" })).toBeNull();
 });
 
@@ -282,7 +282,14 @@ async function inSubfolder() {
   await userEvent.setup().click(await findRow("src"));
   await screen.findByText("main.rs");
   setSubfolder();
+  // The service's refresh puts the thread back at the project's folder; keep it where this test needs it.
+  const stop = useWorkspace.subscribe((state) => {
+    if (state.threads["t-done"] && !state.threads["t-done"].cwd.endsWith("/src")) setSubfolder();
+  });
+  stops.push(stop);
 }
+const stops: (() => void)[] = [];
+afterEach(() => stops.splice(0).forEach((stop) => stop()));
 
 it("names a file as a thread in a subfolder does, and only offers the thread's actions for what is inside its folder", async () => {
   const user = userEvent.setup();

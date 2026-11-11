@@ -110,7 +110,7 @@ export const ExplorerRow = memo(function ExplorerRow({
       aria-expanded={expandable ? row.open : undefined}
       aria-selected={selected}
       // A name split for the narrow bar is read whole, with its change.
-      aria-label={row.kind === "file" ? `${row.label}${row.change ? `, ${CHANGE[row.change].label}` : ""}` : undefined}
+      aria-label={row.kind === "file" ? `${row.label}${row.change && CHANGE[row.change] ? `, ${CHANGE[row.change]!.label}` : ""}` : undefined}
       title={title}
       aria-posinset={place?.pos}
       aria-setsize={place?.size}
@@ -150,9 +150,9 @@ export const ExplorerRow = memo(function ExplorerRow({
           <MoreHorizontal size={14} aria-hidden />
         </button>
       ) : null}
-      {row.kind === "file" && row.change ? (
-        <span className={`xm ${row.change === "modified" ? "m" : row.change === "added" ? "a" : row.change === "renamed" ? "r" : row.change === "untracked" ? "u" : ""}`} title={CHANGE[row.change].label} aria-label={CHANGE[row.change].label}>
-          {CHANGE[row.change].letter}
+      {row.kind === "file" && row.change && CHANGE[row.change] ? (
+        <span className={`xm ${row.change === "modified" ? "m" : row.change === "added" ? "a" : row.change === "renamed" ? "r" : row.change === "untracked" ? "u" : ""}`} title={CHANGE[row.change]!.label} aria-label={CHANGE[row.change]!.label}>
+          {CHANGE[row.change]!.letter}
         </span>
       ) : null}
     </div>

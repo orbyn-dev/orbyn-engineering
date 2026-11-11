@@ -196,14 +196,13 @@ export function buildRows(input: ExplorerInput): Row[] {
   return rows;
 }
 
-/** The letter a change is drawn as, and what it says. */
-export const CHANGE: Record<ExplorerChange, { letter: string; label: string }> = {
+/** The letter a change is drawn as, and what it says. A conflict has no letter drawn, so it shows none. */
+export const CHANGE: Partial<Record<ExplorerChange, { letter: string; label: string }>> = {
   modified: { letter: "M", label: "Modified" },
   added: { letter: "A", label: "Added" },
   deleted: { letter: "D", label: "Deleted" },
   renamed: { letter: "R", label: "Renamed" },
   untracked: { letter: "U", label: "Untracked" },
-  conflicted: { letter: "!", label: "Conflict" },
 };
 
 /** A folder path as it is compared: one separator, no trailing one, macOS's /private prefix of /var, /tmp and /etc dropped, and no case on a drive. */
