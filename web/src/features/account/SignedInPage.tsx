@@ -38,13 +38,13 @@ export function SignedInPage({ view, onChanged, onError }: { view: AccountView; 
           <b>Settings sync</b>
           <small>{syncRowText(sync)}</small>
         </div>
-        {offline ? (
+        {paused ? null : offline ? (
           <Button small disabled>Waiting for a connection</Button>
         ) : (
           <Button small disabled={busy} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>
         )}
         <Button small disabled={busy} onClick={() => void act(() => (paused ? accountApi.resumeSync() : accountApi.pauseSync()))}>
-          {paused ? "Resume" : "Pause"}
+          {paused ? "Resume sync" : "Pause"}
         </Button>
       </div>
       <div className="ac-row">

@@ -41,7 +41,7 @@ test("creates an account with an invite and an emailed code, then pauses and res
   await expect(popover).toContainText("Up to date");
   await popover.getByRole("button", { name: "Pause sync" }).click();
   await expect(page.getByRole("button", { name: "Account and sync: Paused" })).toBeVisible();
-  await page.getByRole("button", { name: "Resume sync" }).click();
+  await popover.getByRole("button", { name: "Resume sync" }).click();
   await expect(page.getByRole("button", { name: "Account and sync: Synced" })).toBeVisible();
 });
 

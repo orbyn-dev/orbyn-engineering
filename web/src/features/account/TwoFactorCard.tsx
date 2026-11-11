@@ -66,7 +66,7 @@ export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel()
       title={recovery ? "Enter a recovery code" : "Enter your two-factor code"}
       lead={
         recovery
-          ? "Use one of the ten recovery codes you saved when you set up two-factor on orbyn.dev. Each code works once."
+          ? "Use one of the ten recovery codes you saved when you set up two-factor. Each code works once."
           : "Open your authenticator app and enter the 6-digit code for Orbyn."
       }
       label="Sign in · two-factor"

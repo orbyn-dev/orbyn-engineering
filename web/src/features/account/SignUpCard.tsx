@@ -175,7 +175,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
       <Card title="Check your inbox" lead={`Enter the 8-character code we emailed to ${email.trim()}. It works for 30 minutes.`} label="Create account">
         {heading("Check your email")}
         <form className="ac-form" onSubmit={verify}>
-          <Field label="8-character code" error={wrong ? "That code isn’t right. Use the code in the newest email." : null}>
+          <Field label="8-character code" error={wrong ? "That code didn’t work. Check it, or ask for a new one." : null}>
             {(props) => (
               <input {...props} className="ac-code" autoCapitalize="characters" autoComplete="one-time-code" spellCheck={false} placeholder="ABCD-EFGH" value={code} disabled={busy}
                 onChange={(event) => { setSent(false); setCode(emailCodeInput(event.target.value)); }} />

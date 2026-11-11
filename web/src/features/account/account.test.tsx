@@ -182,7 +182,7 @@ describe("create an account", () => {
     await toEmailCode(user);
     await user.type(screen.getByLabelText("8-character code"), "ZZZZZZZZ");
     await user.click(screen.getByRole("button", { name: "Verify" }));
-    expect(await screen.findByText("That code isn’t right. Use the code in the newest email.")).toBeVisible();
+    expect(await screen.findByText("That code didn’t work. Check it, or ask for a new one.")).toBeVisible();
     expect(screen.getByLabelText("8-character code")).toHaveValue("ZZZZ-ZZZZ");
     await user.click(screen.getByRole("button", { name: "Change email" }));
     expect(screen.getByLabelText("Email")).toHaveValue("new@example.com");
@@ -223,6 +223,7 @@ describe("Confirm it’s you", () => {
     await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalled();
+    expect(screen.getByText("This confirms removing this device.")).toBeVisible();
     // The confirmation names its action and device, and carries the password nowhere else.
     const sent = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/account/confirm");
     expect(sent).toHaveLength(1);

@@ -62,6 +62,7 @@ export function ConfirmItsYou({ action, deviceId, onConfirmed, onClose }: { acti
     >
       <form id="confirm-its-you" className="ac-form" onSubmit={(event) => void submit(event)}>
         <p>Enter your password to continue.</p>
+        <p>{action === "remove_device" ? "This confirms removing this device." : "This confirms one action."}</p>
         {throttled ? <Failure>Too many attempts. Try again {retryText(left)}.</Failure> : null}
         {network ? <Failure>{NETWORK_TEXT}</Failure> : null}
         {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
