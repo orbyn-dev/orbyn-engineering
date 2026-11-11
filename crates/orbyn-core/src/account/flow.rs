@@ -129,7 +129,17 @@ impl AccountCenter {
     /// The person was told, or dismissed it: it is not said again for this ended session.
     pub async fn ended_seen(&self) -> Result<()> {
         self.backend()?;
-        self.ended_lock().seen = true;
+        // Only an ended session can be dismissed: a call while signed in, from a stale tab or an
+        // engine, must not hide the next real notice.
+        let ended = matches!(
+            self.status.current().state,
+            SyncState::SignedOut {
+                reason: Some(SignOutReason::SessionEnded)
+            }
+        );
+        if ended {
+            self.ended_lock().seen = true;
+        }
         Ok(())
     }
 

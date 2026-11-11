@@ -300,7 +300,8 @@ describe("the waiting screen over time", () => {
       vi.spyOn(accountApi, "pollApproval").mockRejectedValue(new Error("down"));
       render(<ApprovalCard approval={{ state: "waiting", digits: "418 207", expires_in_secs: 600 }} onChanged={() => undefined} onBack={() => undefined} onMismatch={() => undefined} />);
       await act(async () => { vi.advanceTimersByTime(6500); });
-      expect(await screen.findByText("Couldn’t check this request.")).toBeVisible();
+      expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t check this request");
+      expect(screen.getByRole("heading", { name: "Couldn’t check this request" })).not.toHaveFocus();
       expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
     } finally {
       vi.useRealTimers();

@@ -25,6 +25,11 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
   const [failures, setFailures] = useState(0);
   const [busy, setBusy] = useState(false);
   const spinning = useAfter(shown.state === "waiting" || shown.state === "approved");
+  // The waiting card takes the focus once; when looks fail and then succeed it must not take it back.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (shown.state === "waiting") focused.current = true;
+  }, [shown.state]);
   const changed = useRef(onChanged);
   changed.current = onChanged;
 
@@ -94,7 +99,7 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
   if (failures >= LOOK_FAILURES) {
     // Looking has failed several times in a row: the request may be lost, so say so instead of waiting for the clock.
     return (
-      <Card focus title="Couldn’t check this request." lead="Orbyn couldn’t ask whether a trusted device answered. If one already did, cancel and sign in again." label="Sign in · approve this device">
+      <Card alert title="Couldn’t check this request" lead="Orbyn couldn’t ask whether a trusted device answered. If one already did, cancel and sign in again." label="Sign in · approve this device">
         <div className="ac-acts">
           <Button disabled={busy} onClick={() => void leave("sign-in")}>Cancel</Button>
         </div>
@@ -102,7 +107,7 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
     );
   }
   return (
-    <Card focus title="Approve this sign-in on another device" lead="We asked your other devices to approve this one. Open Orbyn on a device you trust, compare the codes and allow it." label="Sign in · approve this device">
+    <Card focus={!focused.current} title="Approve this sign-in on another device" lead="We asked your other devices to approve this one. Open Orbyn on a device you trust, compare the codes and allow it." label="Sign in · approve this device">
       <div className="ac-digits">
         <small>Check that this code matches</small>
         <b aria-label={spoken(shown.digits)}>{shown.digits}</b>

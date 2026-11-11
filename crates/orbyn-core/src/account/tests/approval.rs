@@ -651,3 +651,21 @@ async fn an_ended_session_is_told_once_and_not_after_the_persons_own_sign_out_ev
     a.sign_out_everywhere(token).await.unwrap();
     assert!(!a.view("macos").await.ended_notice);
 }
+
+#[tokio::test]
+async fn dismissing_while_signed_in_does_not_hide_the_next_real_notice() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "early-dismiss");
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    // A stale tab or an engine calls it early, while nothing has ended.
+    a.ended_seen().await.unwrap();
+    a.stand_in().sign_out_elsewhere();
+    assert_eq!(code(a.devices().await.unwrap_err()), "session_ended");
+    assert!(
+        a.view("macos").await.ended_notice,
+        "the real notice is still told"
+    );
+    a.ended_seen().await.unwrap();
+    assert!(!a.view("macos").await.ended_notice);
+}
