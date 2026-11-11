@@ -2514,6 +2514,12 @@ uploaded, the zone cursor and the conflicts to show. They stay empty while the s
 is `Off`. A preference write queues its fields in its own transaction, so a crash loses
 neither; no key, token or password is stored in them ([account design](account.md)).
 
+Crew objects (the [Crew Protocol](crew/protocol/SPEC.md), migration 30) are stored as canonical
+JSON keyed by their content address and verified on the way in: valid, hashing to their own
+`id`, and part of the task's crew and run. They are immutable; only a task's state moves. The
+answer key has its own table and reader, so the brief a worker reads comes from a table that
+cannot hold it (H1).
+
 Secret files are created with mode `0600` on Unix. Windows has no mode bits: they
 inherit the ACL of the per-user `%LOCALAPPDATA%` directory, which excludes other
 non-administrator users. Orbyn does not set its own ACL.

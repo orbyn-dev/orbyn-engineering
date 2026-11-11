@@ -8,7 +8,8 @@ behaviour. Timestamps are RFC 3339 UTC strings and ids are opaque strings.
 Every public type, one file per domain under `src/` (projects, threads, runs,
 checkpoints, files, git, pulls, engines, tools, acp, history, usage, settings,
 updates, workspace, terminal, preview, shell, automations, governance,
-operations). `lib.rs` only re-exports them, so paths stay `orbyn_contracts::Type`.
+operations), and the Crew Protocol v0 objects in `src/crew/`, which
+[docs/crew/protocol](../../docs/crew/protocol/README.md) specifies and its test checks. `lib.rs` only re-exports them, so paths stay `orbyn_contracts::Type`.
 `npm run generate` in `web` (which runs
 `cargo test -p orbyn-contracts`) writes their TypeScript into `web/src/generated`.
 
