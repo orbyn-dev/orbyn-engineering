@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 import type { AccountConnectPolicy } from "../../generated/AccountConnectPolicy";
 import { Button } from "../../ui/controls";
@@ -9,7 +9,7 @@ import { ConfirmItsYou } from "./ConfirmItsYou";
 import { NETWORK_TEXT, problemOf } from "./problem";
 
 const CHOICES: { policy: AccountConnectPolicy; title: string; body: string }[] = [
-  { policy: "combine", title: "Combine them", body: "Settings on both sides are merged one setting at a time. If the same setting differs, the newer change wins." },
+  { policy: "combine", title: "Combine them", body: "Settings on both sides are merged one setting at a time. If the same setting differs, the newer change wins and you can review it." },
   { policy: "use_device", title: "Use this device’s settings", body: "Replace the account’s settings with the ones on this device." },
   { policy: "use_account", title: "Use the account’s settings", body: "Replace the settings on this device with the account’s." },
 ];
@@ -104,11 +104,17 @@ export function ConnectProgress({ onDismiss }: { onDismiss(): void }) {
   );
 }
 
-/** The first sync ended. */
+/**
+ * The first sync ended. The design also says how many settings differed and offers Review changes; the service reports
+ * only how many settings were joined, so those two are left out until it can say more.
+ */
 export function ConnectDone({ synced, onDone }: { synced: number; onDone(): void }) {
   return (
     <Dialog title="Settings connected" onClose={onDone} footer={<Button tone="primary" onClick={onDone}>Done</Button>}>
-      <p>{synced} {synced === 1 ? "setting" : "settings"} synced.</p>
+      <div className="ac-note">
+        <Check size={14} aria-hidden />
+        <div><b>{synced} {synced === 1 ? "setting" : "settings"} synced.</b></div>
+      </div>
     </Dialog>
   );
 }

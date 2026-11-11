@@ -61,7 +61,7 @@ describe("which frames are drawn", () => {
 
 describe("the catalog", () => {
   it("only names routes the app has, and steps the shooter can run", () => {
-    const verbs = ["click", "fill", "press", "route", "offline"];
+    const verbs = ["click", "fill", "press", "route", "offline", "wait"];
     for (const [id, frame] of Object.entries(catalog)) {
       expect(frame.route, id).toMatch(/^#\/(pulls|threads|settings|new)?/);
       for (const step of frame.steps ?? []) expect(verbs, id).toContain(step.do);

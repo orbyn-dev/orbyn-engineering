@@ -71,13 +71,14 @@ describe("a new device waiting for a trusted one", () => {
     expect(await screen.findByLabelText("Password")).toBeVisible();
   });
 
-  it("the person's own tap on They don't match is the one state that says the codes differed", async () => {
+  it("the person's own tap on They don't match closes it like any other request: the same neutral words", async () => {
     const user = await openSignIn();
     await signIn(user, "late@example.com");
     await screen.findByText("Approve this sign-in on another device");
     const cancel = vi.spyOn(accountApi, "cancelSignIn");
     await user.click(screen.getByRole("button", { name: "They don’t match" }));
-    expect(await screen.findByText("The codes didn’t match")).toBeVisible();
+    expect(await screen.findByText("Denied or cancelled.")).toBeVisible();
+    expect(screen.queryByText("The codes didn’t match")).toBeNull();
     expect(cancel).toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Back to Account" }));
     expect(await screen.findByText("Use an account to sync your settings")).toBeVisible();
@@ -129,11 +130,12 @@ describe("a trusted device answering", () => {
     await waitFor(() => expect(screen.queryByRole("listitem", { name: "iPad asks to sign in" })).toBeNull());
   });
 
-  it("Codes don't match refuses it", async () => {
+  it("Don't allow in the prompt refuses it", async () => {
     const user = await devicesPage();
     await user.click(await screen.findByRole("button", { name: "Compare codes" }));
     const prompt = await screen.findByRole("dialog", { name: "New sign-in" });
-    await user.click(within(prompt).getByRole("button", { name: "Codes don’t match" }));
+    expect(within(prompt).queryByRole("button", { name: "Codes don’t match" })).toBeNull();
+    await user.click(within(prompt).getByRole("button", { name: "Don’t allow" }));
     await waitFor(() => expect(screen.queryByRole("listitem", { name: "iPad asks to sign in" })).toBeNull());
   });
 
@@ -157,9 +159,11 @@ describe("joining this computer's settings", () => {
     const user = await openSignIn(() => mock.setAccount({ connectNeeded: true }));
     const dialog = await signedIn(user);
     expect(within(dialog).getByLabelText(/Combine them/)).toBeChecked();
+    expect(within(dialog).getByText("Settings on both sides are merged one setting at a time. If the same setting differs, the newer change wins and you can review it.")).toBeVisible();
+    expect(dialog).not.toHaveTextContent(/backup/i);
     expect(within(dialog).getByText("Will sync")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Connect" }));
-    expect(await screen.findByRole("dialog", { name: "Settings connected" })).toHaveTextContent("24 settings synced.");
+    expect(await screen.findByRole("dialog", { name: "Settings connected" })).toHaveTextContent(/^Settings connected24 settings synced\.Done$/);
     expect(screen.queryByRole("dialog", { name: "Confirm it’s you" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Settings connected" })).toBeNull());
@@ -294,15 +298,17 @@ describe("the waiting screen over time", () => {
     }
   });
 
-  it("after three failed looks in a row says so quietly, with Cancel", async () => {
+  it("after three failed looks in a row says so neutrally, with Cancel only, and keeps looking", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       vi.spyOn(accountApi, "pollApproval").mockRejectedValue(new Error("down"));
       render(<ApprovalCard approval={{ state: "waiting", digits: "418 207", expires_in_secs: 600 }} onChanged={() => undefined} onBack={() => undefined} onMismatch={() => undefined} />);
       await act(async () => { vi.advanceTimersByTime(6500); });
-      expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t check this request");
-      expect(screen.getByRole("heading", { name: "Couldn’t check this request" })).not.toHaveFocus();
-      expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+      expect(await screen.findByRole("heading", { name: "Couldn’t check this request." })).toBeVisible();
+      expect(screen.getByText("This isn’t final: the request may still be waiting on your other device.")).toBeVisible();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByText("Denied or cancelled.")).toBeNull();
+      expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Cancel"]);
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();

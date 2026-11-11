@@ -339,6 +339,14 @@ describe("the signed-in page when it cannot be fully read", () => {
     expect(screen.getByText(/You’re offline\./)).toBeVisible();
   });
 
+  it("syncing: the row says Syncing… with no count, offers Pause and no Sync now", async () => {
+    await signedInPage(() => mock.setAccount({ sync: ["syncing"] }));
+    expect(screen.getByText("Syncing…")).toBeVisible();
+    expect(screen.getByText("Syncing…").textContent).not.toMatch(/\d/);
+    expect(screen.queryByRole("button", { name: "Sync now" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeVisible();
+  });
+
   it("error: keeps the last page dimmed, says it could not check and offers Try again", async () => {
     await signedInPage();
     mock.setAccount({ down: true });
