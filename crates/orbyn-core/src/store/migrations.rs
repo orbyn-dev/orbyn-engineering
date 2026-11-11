@@ -32,8 +32,63 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (26, PROJECT_REMOVAL_KEEPS_THREADS),
     (27, TASK_RUNS),
     (28, TASK_RUN_LINKS),
-    (29, CREW_TABLES),
+    (29, ACCOUNT_SYNC),
+    (30, CREW_TABLES),
 ];
+
+// The account's settings sync, per zone: the cursor and the capture switch, the local copy
+// of the zone's record with each field's stamp (and whether this device applied it: only a field
+// that came from the account is ever applied, and once), the outbox of fields not yet uploaded (one row
+// per changed field, with the time the person made the edit and the stamp it replaced, so a
+// concurrent edit on another device can be told from an older one), the offline edits that lost,
+// and the settings kept local because they are over a limit. Non-secret: no key, token or
+// password is stored here, and nothing is written until the person's account is on.
+const ACCOUNT_SYNC: &str = r#"
+CREATE TABLE account_sync (
+    zone TEXT PRIMARY KEY,
+    capture INTEGER NOT NULL DEFAULT 0,
+    device TEXT NOT NULL,
+    hlc_wall INTEGER NOT NULL DEFAULT 0,
+    hlc_counter INTEGER NOT NULL DEFAULT 0,
+    version INTEGER
+);
+CREATE TABLE account_fields (
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    wall INTEGER NOT NULL,
+    counter INTEGER NOT NULL,
+    device TEXT NOT NULL,
+    applied INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (zone, field)
+);
+CREATE TABLE account_outbox (
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    wall INTEGER NOT NULL,
+    counter INTEGER NOT NULL,
+    device TEXT NOT NULL,
+    edited_at INTEGER NOT NULL,
+    base_wall INTEGER,
+    base_counter INTEGER,
+    base_device TEXT,
+    PRIMARY KEY (zone, field)
+);
+CREATE TABLE account_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    kept TEXT NOT NULL,
+    lost TEXT NOT NULL,
+    at_ms INTEGER NOT NULL
+);
+CREATE TABLE account_skipped (
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    PRIMARY KEY (zone, field)
+);
+"#;
 
 // One row per firing of a task, kept to the last 50. How the run ended is read from
 // the run when listed, so nothing here goes stale. The link to the run is in 28.

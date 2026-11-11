@@ -77,6 +77,8 @@ pub struct CoreConfig {
     pub browser_headless: bool,
     /// Forces `--in-process-gpu`, which the headless shell gets by itself.
     pub browser_in_process_gpu: bool,
+    /// Whether the account may do anything. Ships `Off`.
+    pub account_gate: crate::account::AccountGate,
 }
 
 impl CoreConfig {
@@ -94,6 +96,7 @@ impl CoreConfig {
             acp_registry_url: crate::agents::acp_registry::REGISTRY_URL.to_owned(),
             browser_headless: false,
             browser_in_process_gpu: false,
+            account_gate: crate::account::AccountGate::default(),
         }
     }
 }
@@ -120,7 +123,9 @@ pub struct Core {
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
-    pub(crate) keybinding_writer: Mutex<()>,
+    pub(crate) keybinding_writer: Arc<Mutex<()>>,
+    /// Settings that follow the person across computers; inactive under the `Off` gate.
+    pub account: Arc<crate::account::AccountCenter>,
     /// Pull request details asked of GitHub, reused while a pull request is unchanged.
     pub(crate) pull_details: Mutex<crate::source_control::forge::cache::DetailCache>,
     /// Pull request and forge reads answered from the last known value, refreshed in the
@@ -220,6 +225,13 @@ impl Core {
             http.clone(),
             config.update_manifest.clone(),
         ));
+        let keybinding_writer = Arc::new(Mutex::new(()));
+        let account = Arc::new(crate::account::AccountCenter::new(
+            config.account_gate,
+            store.clone(),
+            config.data_dir.join("keybindings.json"),
+            keybinding_writer.clone(),
+        ));
         let core = Self {
             config,
             timings,
@@ -241,7 +253,8 @@ impl Core {
             previews: PreviewManager::default(),
             http,
             recovery,
-            keybinding_writer: Mutex::new(()),
+            keybinding_writer,
+            account,
             pull_details: Mutex::new(Default::default()),
             scm_reads,
             health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
@@ -283,6 +296,7 @@ impl Core {
         self.workspace.set_notify(&notify);
         self.updates.set_notify(&notify);
         self.usage.set_notify(&notify);
+        self.account.set_notify(&notify);
         self.tool_reads.set_notify(notify.clone());
         self.health_reads.set_notify(notify.clone());
     }

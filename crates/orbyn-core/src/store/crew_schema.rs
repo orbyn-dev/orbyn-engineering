@@ -1,4 +1,4 @@
-//! Schema 29: the Crew Protocol tables. Kept apart from `migrations.rs`, which lists it.
+//! Schema 30: the Crew Protocol tables. Kept apart from `migrations.rs`, which lists it.
 
 // Crew Protocol v0 objects (docs/crew/protocol). Every object is canonical JSON in `body`,
 // keyed by its content address, so a row can be verified by hashing it again. A task is

@@ -28,6 +28,7 @@ group; a new group adds its own `README.md` and a row here.
 | [source_control](src/source_control/README.md) | Git, Jujutsu, forge CLIs, commit text and review guides |
 | [browser](src/browser/README.md) | Preview tabs, their bridge, recordings and remote images |
 | [tools](src/tools/README.md) | The per-run MCP server, Orbyn's agent tools, MCP Apps and skills |
+| [account](src/account/README.md) | The optional account's settings sync core: record, merge, allowlist-only apply, outbox and one worker per zone; inactive while the sign-in gate is `Off` |
 | [settings](src/settings/README.md) | Preferences, keybindings and the environment's published identity |
 | [operations](src/operations/README.md) | Diagnostics, local traces, telemetry export, maintenance and updates |
 | [host](src/host/README.md) | Child processes, inherited environment, terminals and the desktop shell bridge |

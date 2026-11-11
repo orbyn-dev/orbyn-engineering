@@ -254,9 +254,9 @@ fn deleting_a_task_removes_its_objects() {
 }
 
 #[test]
-fn a_database_without_crew_tables_gets_them_in_29() {
+fn a_database_without_crew_tables_gets_them_in_30() {
     let dir = TempDir::new();
-    let path = dir.path().join("at28.db");
+    let path = dir.path().join("at29.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
         "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
@@ -264,7 +264,7 @@ fn a_database_without_crew_tables_gets_them_in_29() {
     .unwrap();
     for (version, sql) in super::migrations::MIGRATIONS
         .iter()
-        .filter(|(version, _)| *version <= 28)
+        .filter(|(version, _)| *version <= 29)
     {
         conn.execute_batch(sql).unwrap();
         conn.execute(
@@ -293,7 +293,7 @@ fn a_database_without_crew_tables_gets_them_in_29() {
     assert_eq!(
         store.upgrade(),
         Some(orbyn_contracts::DatabaseUpgrade {
-            from: 28,
+            from: 29,
             to: super::migrations::MIGRATIONS.last().unwrap().0,
         })
     );
@@ -329,16 +329,16 @@ fn a_database_without_crew_tables_gets_them_in_29() {
 }
 
 #[test]
-fn migration_29_is_the_crew_migration_and_numbering_has_no_gap() {
+fn migration_30_is_the_crew_migration_and_numbering_has_no_gap() {
     let versions: Vec<i64> = super::migrations::MIGRATIONS
         .iter()
         .map(|(v, _)| *v)
         .collect();
     assert!(versions.windows(2).all(|w| w[1] == w[0] + 1));
-    assert!(versions.contains(&29));
+    assert!(versions.contains(&30));
     let sql = super::migrations::MIGRATIONS
         .iter()
-        .find(|(v, _)| *v == 29)
+        .find(|(v, _)| *v == 30)
         .unwrap()
         .1;
     assert!(sql.contains("CREATE TABLE crew_answer_keys"));
