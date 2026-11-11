@@ -162,6 +162,7 @@ impl ZoneWorker {
             not_synced,
             conflicts,
             held_back,
+            last_synced: None,
         });
     }
 
@@ -254,7 +255,8 @@ impl ZoneWorker {
                 | DeviceError::Conflict(_)
                 | DeviceError::InviteRequired
                 | DeviceError::WrongPassword
-                | DeviceError::InvalidCode,
+                | DeviceError::InvalidCode
+                | DeviceError::ProofFailed,
             ) => pause(PauseReason::ZoneFailed),
             Failure::Local(error) => {
                 tracing::warn!(

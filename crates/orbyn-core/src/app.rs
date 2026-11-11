@@ -79,6 +79,9 @@ pub struct CoreConfig {
     pub browser_in_process_gpu: bool,
     /// Whether the account may do anything. Ships `Off`.
     pub account_gate: crate::account::AccountGate,
+    /// What the account talks to. Ships `None`; the development stand-in exists in
+    /// debug builds only.
+    pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
 }
@@ -99,6 +102,7 @@ impl CoreConfig {
             browser_headless: false,
             browser_in_process_gpu: false,
             account_gate: crate::account::AccountGate::default(),
+            account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
         }
     }
@@ -231,6 +235,7 @@ impl Core {
         let keybinding_writer = Arc::new(Mutex::new(()));
         let account = Arc::new(crate::account::AccountCenter::new(
             config.account_gate,
+            config.account_backend,
             store.clone(),
             config.data_dir.join("keybindings.json"),
             keybinding_writer.clone(),

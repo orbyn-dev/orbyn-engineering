@@ -100,6 +100,19 @@ pub enum CoreError {
     /// The sign-in gate is `Off`: no account route works and no request goes to any Engine.
     #[error("Accounts are not available yet.")]
     AccountDisabled,
+    /// An account action that needs the password typed again in the last 10 minutes.
+    #[error("Confirm it's you to do this.")]
+    ReauthRequired,
+    /// The Engine, or the development stand-in for it, refused. `code` is one of the
+    /// device client's error names; `retry_after_secs` says how long a rate limit lasts.
+    #[error("{message}")]
+    Account {
+        code: &'static str,
+        message: String,
+        retry_after_secs: Option<u64>,
+        /// Wrong two-factor codes left before the sign-in closes.
+        tries_left: Option<u8>,
+    },
     #[error("{0}")]
     Internal(String),
 }
@@ -142,6 +155,8 @@ impl CoreError {
             Self::DataDirLocked => "data_dir_locked",
             Self::PackTampered(_) => "pack_tampered",
             Self::AccountDisabled => "account_disabled",
+            Self::ReauthRequired => "reauth_required",
+            Self::Account { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
@@ -159,7 +174,16 @@ impl CoreError {
             Self::FolderUntrusted
             | Self::PolicyDenied(_)
             | Self::WorkspaceRefused(_)
-            | Self::AccountDisabled => 403,
+            | Self::AccountDisabled
+            | Self::ReauthRequired => 403,
+            Self::Account { code, .. } => match *code {
+                "account_offline" => 503,
+                "rate_limited" => 429,
+                "wrong_password" | "invite_required" => 403,
+                "invalid_code" | "invalid_invite" | "sign_in_closed" => 422,
+                "deletion_scheduled" | "session_ended" | "account_gone" => 409,
+                _ => 502,
+            },
             Self::SettingsConflict
             | Self::SettingsScopeUnavailable
             | Self::ThreadBusy
@@ -244,6 +268,18 @@ impl CoreError {
             },
             Self::DataDirLocked => Self::DataDirLocked,
             Self::AccountDisabled => Self::AccountDisabled,
+            Self::ReauthRequired => Self::ReauthRequired,
+            Self::Account {
+                code,
+                message,
+                retry_after_secs,
+                tries_left,
+            } => Self::Account {
+                code,
+                message: message.clone(),
+                retry_after_secs: *retry_after_secs,
+                tries_left: *tries_left,
+            },
             Self::PackTampered(s) => Self::PackTampered(s.clone()),
             Self::Computer(s) => Self::Computer(s.clone()),
             Self::Git(s) => Self::Git(s.clone()),

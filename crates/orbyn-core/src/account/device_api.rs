@@ -52,6 +52,9 @@ pub enum DeviceError {
     ProtectionAdvanced,
     #[error("account gone")]
     AccountGone,
+    /// The server asked for proof of work (a 428) and the client could not finish it.
+    #[error("proof of work failed")]
+    ProofFailed,
 }
 
 /// What the client reports about itself.
