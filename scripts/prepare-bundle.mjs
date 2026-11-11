@@ -15,6 +15,8 @@ const host = /host: (\S+)/.exec(
   execFileSync("rustc", ["-vV"], { encoding: "utf8" }),
 )[1];
 const target = process.env.ORBYN_TARGET ?? host;
+// Pull request checks build a faster profile (see `[profile.ci-release]` in Cargo.toml); anything else is `release`.
+const profile = process.env.ORBYN_CARGO_PROFILE || "release";
 
 run("npm", ["run", "build"], join(root, "web"));
 // A static C runtime, so the installer needs no redistributable.
@@ -23,7 +25,7 @@ const flags = target.includes("windows-msvc")
   : {};
 run(
   "cargo",
-  ["build", "--release", "-p", "orbynd", "--bin", "orbynd", "--bin", "orbyn", "--target", target],
+  ["build", ...(profile === "release" ? ["--release"] : ["--profile", profile]), "-p", "orbynd", "--bin", "orbynd", "--bin", "orbyn", "--target", target],
   root,
   { ...process.env, ...flags },
 );
@@ -52,7 +54,7 @@ rmSync(fetched, { recursive: true, force: true });
 const suffix = target.includes("windows") ? ".exe" : "";
 for (const program of ["orbynd", "orbyn"]) {
   cpSync(
-    join(root, "target", target, "release", `${program}${suffix}`),
+    join(root, "target", target, profile, `${program}${suffix}`),
     join(root, "desktop/src-tauri/binaries", `${program}-${target}${suffix}`),
   );
 }

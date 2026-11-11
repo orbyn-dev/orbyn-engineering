@@ -36,3 +36,11 @@ lto = "thin"
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Pull request desktop checks only (ORBYN_CARGO_PROFILE=ci-release in ci.yml): the release
+# profile minus the link-time work that makes the bundle build slow. Main, nightly and
+# release builds keep `release`.
+[profile.ci-release]
+inherits = "release"
+codegen-units = 16
+lto = "off"
