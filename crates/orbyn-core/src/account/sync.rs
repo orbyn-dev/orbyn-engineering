@@ -255,7 +255,8 @@ impl ZoneWorker {
                 | DeviceError::Conflict(_)
                 | DeviceError::InviteRequired
                 | DeviceError::WrongPassword
-                | DeviceError::InvalidCode,
+                | DeviceError::InvalidCode
+                | DeviceError::ProofFailed,
             ) => pause(PauseReason::ZoneFailed),
             Failure::Local(error) => {
                 tracing::warn!(

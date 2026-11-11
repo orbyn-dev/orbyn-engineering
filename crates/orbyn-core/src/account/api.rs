@@ -93,6 +93,11 @@ pub fn refusal(error: &DeviceError) -> CoreError {
         DeviceError::DeletionScheduled => ("deletion_scheduled", "Deletion is scheduled.", None),
         DeviceError::ProtectionAdvanced => ("protection_advanced", "Protection is on.", None),
         DeviceError::AccountGone => ("account_gone", "The account is gone.", None),
+        DeviceError::ProofFailed => (
+            "check_failed",
+            "Couldn't finish checking this device.",
+            None,
+        ),
         DeviceError::Conflict(_)
         | DeviceError::TooLarge
         | DeviceError::InvalidKey
