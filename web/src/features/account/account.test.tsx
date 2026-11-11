@@ -327,7 +327,13 @@ describe("the signed-in page when it cannot be fully read", () => {
     expect(await screen.findByText("Couldn’t load your account.")).toBeVisible();
     expect(screen.getByText(/^Couldn’t check/)).toBeVisible();
     expect(screen.getByText("dev@example.com")).toBeVisible();
-    expect(document.querySelector(".ac-last")).toHaveAttribute("data-stale");
+    const last = document.querySelector(".ac-last") as HTMLElement;
+    expect(last).toHaveAttribute("data-stale");
+    // Dimmed and not clickable, but still readable by assistive technology.
+    expect(last).not.toHaveAttribute("inert");
+    expect(last).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
     mock.setAccount({ down: false });
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.queryByText("Couldn’t load your account.")).toBeNull());
@@ -432,7 +438,8 @@ describe("the device check before a code is sent", () => {
     });
     await user.click(screen.getByRole("button", { name: "Continue with a password" }));
     expect(await screen.findByText("Checking this device")).toBeVisible();
-    expect(screen.getByRole("progressbar", { name: "Checking this device" })).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Checking this device…");
+    expect(screen.queryByRole("progressbar")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(signal?.aborted).toBe(true);
     expect(await screen.findByLabelText("Email")).toHaveValue("busy@example.com");

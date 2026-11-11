@@ -145,10 +145,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
     return (
       <Card title="Checking this device" lead="Orbyn does a short check on this device before it sends your code. This takes a moment, sometimes a few seconds." label="Create account">
         {heading("Email and password")}
-        <div className="ac-prog">
-          <div className="ac-bar" role="progressbar" aria-label="Checking this device" />
-          <small><Loader2 size={12} className="spin" aria-hidden />Checking this device…</small>
-        </div>
+        <p className="ac-wait" role="status"><Loader2 size={12} className="spin" aria-hidden />Checking this device…</p>
         <div className="ac-acts">
           <Button onClick={() => checking.current?.abort()}>Cancel</Button>
         </div>

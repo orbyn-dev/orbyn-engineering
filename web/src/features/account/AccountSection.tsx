@@ -60,7 +60,7 @@ export function AccountSection() {
           </div>
         ) : null}
         {problem ? <Failure>{problem}</Failure> : null}
-        <div className="ac-last" data-stale={stale || undefined} inert={stale || undefined}>
+        <div className="ac-last" data-stale={stale || undefined}>
           <SignedInPage view={view} stale={stale} onChanged={reload} onError={setProblem} />
         </div>
       </>

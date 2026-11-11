@@ -41,10 +41,10 @@ export function SignedInPage({ view, stale = false, onChanged, onError }: { view
         {paused ? null : offline ? (
           <Button small disabled>Waiting for a connection</Button>
         ) : (
-          <Button small disabled={busy} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>
+          <Button small disabled={busy || stale} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>
         )}
         {offline ? null : (
-          <Button small disabled={busy} onClick={() => void act(() => (paused ? accountApi.resumeSync() : accountApi.pauseSync()))}>
+          <Button small disabled={busy || stale} onClick={() => void act(() => (paused ? accountApi.resumeSync() : accountApi.pauseSync()))}>
             {paused ? "Resume sync" : "Pause"}
           </Button>
         )}
