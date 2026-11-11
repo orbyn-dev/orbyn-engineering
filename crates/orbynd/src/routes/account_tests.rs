@@ -1,8 +1,9 @@
-//! The account routes: the gate, the remote refusal, and the re-entry guard. The guard
-//! test reads the real route table, so a new state-changing account route that is
-//! neither listed in `account::OPEN` with its reason nor refused without the password
-//! fails here.
+//! The account routes: the gate, the remote refusal and the re-entry guard. The guard test
+//! walks the whole route table, so a new route that changes account state, under any method
+//! or prefix, fails here unless it is listed with its reason or refused without the
+//! confirmation. Failures name a route by its place in the sorted list, never by its text.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use orbyn_core::account::{AccountBackendKind, AccountGate};
@@ -10,18 +11,17 @@ use orbyn_core::{Core, CoreConfig};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use super::account::OPEN;
+use super::account::{OPEN, READS};
 use super::router;
 use super::tests::registered;
 use crate::http::AppState;
 use crate::http::access::Access;
 
-const PASSWORD: &str = "correct horse battery";
+const SECRET: &str = "correct horse battery";
 
 struct Served {
     port: u16,
-    core: Arc<Core>,
-    routes: std::collections::BTreeSet<(String, String)>,
+    routes: BTreeSet<(String, String)>,
     _dir: std::path::PathBuf,
 }
 
@@ -33,7 +33,7 @@ async fn serve(name: &str, gate: AccountGate, remote: bool) -> Served {
     config.account_backend = AccountBackendKind::Development;
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
-        core: core.clone(),
+        core,
         access: Arc::new(Access::new("token", vec![], None)),
         remote,
         ui_dir: None,
@@ -45,7 +45,6 @@ async fn serve(name: &str, gate: AccountGate, remote: bool) -> Served {
     tokio::spawn(async move { axum::serve(listener, app).await });
     Served {
         port,
-        core,
         routes,
         _dir: dir,
     }
@@ -66,12 +65,33 @@ impl Served {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    /// Every route under `/api/account`, in sorted order.
     fn account_routes(&self) -> Vec<(String, String)> {
         self.routes
             .iter()
             .filter(|(_, path)| path.starts_with("/api/account"))
             .cloned()
             .collect()
+    }
+
+    async fn sign_in(&self) {
+        let (status, _) = self
+            .call(
+                "POST",
+                "/api/account/sign-in",
+                json!({ "email": "dev@example.com", "password": SECRET }),
+            )
+            .await;
+        assert_eq!(status, 200);
+    }
+
+    async fn confirm(&self, action: &str, device: Option<&str>) -> (u16, Value) {
+        self.call(
+            "POST",
+            "/api/account/confirm",
+            json!({ "password": SECRET, "action": action, "device_id": device }),
+        )
+        .await
     }
 }
 
@@ -83,6 +103,7 @@ fn any_body() -> Value {
         "email": "dev@example.com",
         "code": "ABCD-EFGH",
         "password": "x",
+        "action": "sign_out_everywhere",
         "discard_unsynced": false,
     })
 }
@@ -91,13 +112,18 @@ fn concrete(path: &str) -> String {
     path.replace("{id}", "dev-mini")
 }
 
+fn key(method: &str, path: &str) -> String {
+    format!("{method} {path}")
+}
+
 #[tokio::test]
 async fn the_off_gate_answers_account_disabled_on_every_account_route() {
     let served = serve("off", AccountGate::Off, false).await;
-    assert!(served.account_routes().len() >= 14);
-    for (method, path) in served.account_routes() {
-        let (status, body) = served.call(&method, &concrete(&path), any_body()).await;
-        if (method.as_str(), path.as_str()) == ("GET", "/api/account") {
+    let routes = served.account_routes();
+    assert!(routes.len() >= 14);
+    for (index, (method, path)) in routes.iter().enumerate() {
+        let (status, body) = served.call(method, &concrete(path), any_body()).await;
+        if key(method, path) == "GET /api/account" {
             assert_eq!(status, 200);
             assert_eq!(body["available"], false, "nothing of the account shows");
             continue;
@@ -105,7 +131,7 @@ async fn the_off_gate_answers_account_disabled_on_every_account_route() {
         assert_eq!(
             (status, body["code"].as_str()),
             (403, Some("account_disabled")),
-            "{method} {path}"
+            "account route {index}"
         );
     }
 }
@@ -113,92 +139,162 @@ async fn the_off_gate_answers_account_disabled_on_every_account_route() {
 #[tokio::test]
 async fn a_remote_viewer_cannot_reach_any_account_route() {
     let served = serve("remote", AccountGate::LocalOnly, true).await;
-    for (method, path) in served.account_routes() {
-        let (status, body) = served.call(&method, &concrete(&path), any_body()).await;
+    for (index, (method, path)) in served.account_routes().iter().enumerate() {
+        let (status, body) = served.call(method, &concrete(path), any_body()).await;
         assert_eq!(
             (status, body["code"].as_str()),
             (403, Some("local_only")),
-            "{method} {path}"
+            "account route {index}"
         );
     }
 }
 
 #[tokio::test]
-async fn every_state_changing_account_route_needs_the_password_again_or_is_open_for_a_reason() {
+async fn no_route_outside_the_account_prefix_names_an_account_sign_in_sign_out_or_device() {
+    let served = serve("prefix", AccountGate::Off, false).await;
+    let strays = served
+        .routes
+        .iter()
+        .filter(|(_, path)| !path.starts_with("/api/account"))
+        .filter(|(_, path)| {
+            [
+                "account", "sign-in", "sign-out", "signin", "signout", "device", "password",
+                "confirm",
+            ]
+            .iter()
+            .any(|word| path.contains(word))
+        })
+        .count();
+    assert_eq!(
+        strays, 0,
+        "a route that changes account state must live under /api/account, where the guard test reaches it"
+    );
+}
+
+#[tokio::test]
+async fn every_account_route_is_a_read_open_for_a_reason_or_needs_a_confirmation() {
     let served = serve("reauth", AccountGate::LocalOnly, false).await;
-    let (status, _) = served
-        .call(
-            "POST",
-            "/api/account/sign-in",
-            json!({ "email": "dev@example.com", "password": PASSWORD }),
-        )
-        .await;
-    assert_eq!(status, 200);
-    let open: Vec<&str> = OPEN.iter().map(|(route, _)| *route).collect();
-    assert!(OPEN.iter().all(|(_, why)| !why.is_empty()));
-    let mut guarded = Vec::new();
-    let mut seen_open = Vec::new();
-    for (method, path) in served.account_routes() {
-        if method == "GET" {
+    served.sign_in().await;
+    assert!(OPEN.iter().chain(READS).all(|(_, why)| !why.is_empty()));
+    let (mut reads, mut open, mut guarded) = (Vec::new(), Vec::new(), 0);
+    for (index, (method, path)) in served.account_routes().iter().enumerate() {
+        let route = key(method, path);
+        if READS.iter().any(|(listed, _)| *listed == route) {
+            reads.push(route);
             continue;
         }
-        let route = format!("{method} {path}");
-        if open.contains(&route.as_str()) {
-            seen_open.push(route);
+        assert_ne!(
+            method, "GET",
+            "account route {index} is a GET that is not listed in READS: a GET must change nothing, and the list says which are reads"
+        );
+        if OPEN.iter().any(|(listed, _)| *listed == route) {
+            open.push(route);
             continue;
         }
-        // Signing in just confirmed the password; end that window as ten minutes would.
-        served.core.account.forget_confirmation();
-        let (status, body) = served.call(&method, &concrete(&path), any_body()).await;
+        // Signed in, with no confirmation: anything else must be refused.
+        let (status, body) = served.call(method, &concrete(path), any_body()).await;
         assert_eq!(
             (status, body["code"].as_str()),
             (403, Some("reauth_required")),
-            "{route} changes the account and must need the password again, or be listed in OPEN with a reason"
+            "account route {index} changes the account and must need a confirmation, or be listed in OPEN with a reason"
         );
-        guarded.push(route);
+        guarded += 1;
     }
-    assert!(!guarded.is_empty());
-    // The list holds no route that no longer exists.
-    for route in &open {
+    assert_eq!(guarded, 2, "removing a device and signing out everywhere");
+    // The lists hold no route that no longer exists.
+    for (listed, _) in OPEN {
         assert!(
-            seen_open.iter().any(|seen| seen == route),
-            "{route} is not a route"
+            open.iter().any(|seen| seen == listed),
+            "an OPEN entry is not a route"
         );
     }
-    // After "Confirm it's you" the guarded actions run.
+    for (listed, _) in READS {
+        assert!(
+            reads.iter().any(|seen| seen == listed),
+            "a READS entry is not a route"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_confirmation_is_for_one_action_one_device_and_one_use() {
+    let served = serve("one-use", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    let delete = |id: &'static str| format!("/api/account/devices/{id}");
+    // Signing in did not confirm anything.
+    let (status, body) = served.call("DELETE", &delete("dev-mini"), json!({})).await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (403, Some("reauth_required"))
+    );
+    // A wrong password confirms nothing and is not echoed.
     let (status, body) = served
         .call(
             "POST",
             "/api/account/confirm",
-            json!({ "password": "wrong" }),
+            json!({ "password": "wrong-one", "action": "remove_device", "device_id": "dev-mini" }),
         )
         .await;
     assert_eq!(
         (status, body["code"].as_str()),
         (403, Some("wrong_password"))
     );
-    assert!(
-        !body.to_string().contains("wrong\""),
-        "the password is never echoed"
+    assert!(!body.to_string().contains("wrong-one"));
+    // A device needs its id.
+    let (status, _) = served.confirm("remove_device", None).await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        served.confirm("remove_device", Some("dev-mini")).await.0,
+        204
     );
-    let (status, _) = served
-        .call(
-            "POST",
-            "/api/account/confirm",
-            json!({ "password": PASSWORD }),
-        )
-        .await;
-    assert_eq!(status, 204);
-    let (status, _) = served
-        .call("DELETE", "/api/account/devices/dev-mini", json!({}))
-        .await;
-    assert_eq!(status, 204);
+    // Not for another device, and not for the other action.
+    let (status, body) = served.call("DELETE", &delete("dev-phone"), json!({})).await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (403, Some("reauth_required"))
+    );
     let (status, _) = served
         .call("POST", "/api/account/sign-out-everywhere", json!({}))
         .await;
-    assert_eq!(status, 204);
+    assert_eq!(status, 403);
+    // The device it was for goes, and the confirmation goes with it.
+    assert_eq!(
+        served
+            .call("DELETE", &delete("dev-mini"), json!({}))
+            .await
+            .0,
+        204
+    );
+    let (status, body) = served.call("DELETE", &delete("dev-mini"), json!({})).await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (403, Some("reauth_required"))
+    );
+    // Signing out everywhere has its own, and ends the session and any other confirmation.
+    assert_eq!(
+        served.confirm("remove_device", Some("dev-phone")).await.0,
+        204
+    );
+    assert_eq!(served.confirm("sign_out_everywhere", None).await.0, 204);
+    assert_eq!(
+        served
+            .call("POST", "/api/account/sign-out-everywhere", json!({}))
+            .await
+            .0,
+        204
+    );
     let (_, view) = served.call("GET", "/api/account", json!({})).await;
     assert!(view["session"].is_null());
+    assert!(
+        view.get("confirmed").is_none(),
+        "the view carries no confirmation state"
+    );
+    served.sign_in().await;
+    let (status, _) = served.call("DELETE", &delete("dev-phone"), json!({})).await;
+    assert_eq!(
+        status, 403,
+        "a confirmation does not outlive the session it was for"
+    );
 }
 
 #[tokio::test]
@@ -220,4 +316,32 @@ async fn the_view_names_the_platform_and_never_a_secret() {
         (403, Some("wrong_password"))
     );
     assert!(!body.to_string().contains("wrong-one"));
+}
+
+/// The development switch is compiled only into debug builds: its one use in `main.rs` sits
+/// under `cfg(debug_assertions)`, and the release arm of that function does nothing.
+#[test]
+fn the_development_account_switch_is_debug_only() {
+    let source = include_str!("../main.rs");
+    let uses: Vec<usize> = source
+        .match_indices("ORBYN_ACCOUNT_DEV")
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(uses.len(), 1, "one place reads the switch");
+    let before = &source[..uses[0]];
+    let function = before
+        .rfind("fn development_account")
+        .expect("the function");
+    assert!(
+        before[..function]
+            .trim_end()
+            .ends_with("#[cfg(debug_assertions)]"),
+        "the function that reads the switch must be debug-only"
+    );
+    assert!(source.contains(
+        "#[cfg(not(debug_assertions))]\nfn development_account(_config: &mut CoreConfig) {}"
+    ));
+    assert!(
+        !source.contains("AccountGate::LocalOnly") || before.contains("#[cfg(debug_assertions)]")
+    );
 }

@@ -31,7 +31,7 @@ mod tests;
 
 pub use api::{AccountApi, Backend, Password, SessionInfo, SignInOutcome};
 pub use device_api::{DeviceApi, DeviceError, DeviceStatus, Version, ZoneSnapshot};
-pub use flow::Confirmed;
+pub use flow::{ConfirmFor, Confirmed};
 pub use status::{AccountStatus, PauseReason, SignOutReason, StatusHub, SyncState};
 pub use sync::{SyncHandle, SyncTiming};
 
@@ -63,6 +63,25 @@ pub enum AccountBackendKind {
     Development,
 }
 
+// A release build has one gate value and one backend. Adding a variant outside the debug
+// cfg makes these matches non-exhaustive and breaks the release build, so `LocalOnly`, the
+// development stand-in and `ORBYN_ACCOUNT_DEV` cannot be selected in a release.
+#[cfg(not(any(test, debug_assertions)))]
+const _: () = {
+    #[allow(dead_code)]
+    fn only_off(gate: AccountGate) {
+        match gate {
+            AccountGate::Off => {}
+        }
+    }
+    #[allow(dead_code)]
+    fn only_none(kind: AccountBackendKind) {
+        match kind {
+            AccountBackendKind::None => {}
+        }
+    }
+};
+
 /// Where the person's keybindings file is and the lock every writer of it takes.
 #[derive(Clone)]
 pub(crate) struct KeybindingFile {
@@ -78,7 +97,7 @@ pub struct AccountCenter {
     keybindings: KeybindingFile,
     status: Arc<StatusHub>,
     inner: tokio::sync::Mutex<flow::Inner>,
-    confirmed: Mutex<Option<std::time::Instant>>,
+    confirmed: Mutex<Option<flow::Grant>>,
 }
 
 impl AccountCenter {

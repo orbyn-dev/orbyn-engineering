@@ -364,6 +364,14 @@ now and does not wait for them.
    `default_engine` picks.
 8. The Engine reviewer approves these documents once more, this time against the built code.
 
+Follow-ups before the gate can be turned on (tracked, not built in the wiring pull requests):
+
+9. When the real client lands: a test that only a loopback address is accepted under `LocalOnly`, and a test that
+   the client follows no redirect.
+10. A test that request-body logging stays off the account routes, so no password reaches a log.
+11. A runtime "changes account state" marker on these routes, so Autopilot's always-denied rule (Crew slice 4f) can
+    refuse them by policy. Today governance sees only a generic command or network action.
+
 `LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
 the rule:
 
@@ -383,7 +391,13 @@ use a real password with the local stack**.
 
 Decision D12 (the Engine side is orbyn-engine#120): removing a device, signing out every session, turning two-factor
 off and changing protection need the password typed again within the last 10 minutes, as account deletion already does.
-The app asks with a "Confirm it's you" password prompt on every platform, enforced in `orbynd`. Approving a device
+The app asks with a "Confirm it's you" password prompt on every platform, enforced in `orbynd`. In the app a
+confirmation is **for one action** (and one device when it removes a device), is **used up by its first use**, lasts at most
+10 minutes, is kept in memory only and is cleared by sign-out, sign out everywhere and a restart. **Signing in is not a
+confirmation**, so the prompt appears even right after signing in. This combines with the Engine's recent-sign-in rule
+by asking for more, never less: the app's check is the re-login the Engine counts, and the Engine still refuses an
+action without one of its own. A service token held by an engine cannot reuse a confirmation the person gave for
+something else. Approving a device
 keeps its two-sided digits plus the password. Signing out only this device stays open. The Account page also says that
 on Windows any program you run can act as this device. The Designer is drawing the prompt and that note, so **the UI
 for both waits on their frames**.

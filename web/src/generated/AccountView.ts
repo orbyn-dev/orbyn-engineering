@@ -19,8 +19,4 @@ platform: string, session?: AccountSessionView,
 /**
  * A sign-in waits for its two-factor code.
  */
-needs_second_factor: boolean, 
-/**
- * The password was confirmed in the last 10 minutes.
- */
-confirmed: boolean, deletion_scheduled: boolean, sync: AccountSyncView, };
+needs_second_factor: boolean, deletion_scheduled: boolean, sync: AccountSyncView, };
