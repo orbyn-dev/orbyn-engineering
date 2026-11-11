@@ -285,15 +285,19 @@ impl ZoneWorker {
     /// One pull, merge, apply and upload. `Ok(false)` means everything synced but the
     /// keybindings file could not be written, which the status says.
     async fn sync_once(&self) -> Result<bool, Failure> {
+        // What the account held at the last pull or conflict, so a setting left out of an
+        // upload can keep the value the account has.
+        let mut remote = Record::new();
         if let Some(snapshot) = self.api.pull(self.zone).await? {
             self.merge(&snapshot)?;
+            remote = snapshot.record;
         }
         let mut keyboard = self.apply()?;
         for _ in 0..MAX_ROUNDS {
             if self.store.account_outbox_len(self.zone)? == 0 {
                 return Ok(keyboard);
             }
-            let record = self.uploadable()?;
+            let record = self.uploadable(&remote)?;
             let base = self.store.account_version(self.zone)?;
             match self.api.push(self.zone, base, &record).await {
                 Ok(version) => {
@@ -301,6 +305,7 @@ impl ZoneWorker {
                 }
                 Err(DeviceError::Conflict(current)) => {
                     self.merge(&current)?;
+                    remote = current.record;
                     keyboard &= self.apply()?;
                 }
                 Err(error) => return Err(error.into()),
@@ -313,11 +318,14 @@ impl ZoneWorker {
         }
     }
 
-    /// The record to upload: old removal markers compacted away, and, if it is still over
-    /// the limit, the largest settings waiting to upload left out. Only those stay local,
-    /// with the status counting them; what other devices wrote is never dropped, so a
-    /// record that is too large without them pauses the zone.
-    fn uploadable(&self) -> Result<Record, Failure> {
+    /// The record to upload. The Engine contract uploads the whole record, so this is the
+    /// merged record, not only this device's changes, and another device's value is never
+    /// left out of it, with two deliberate exceptions: a set-element removal marker older
+    /// than the horizon is compacted away, and a record still over the limit loses the
+    /// largest settings waiting to upload (they stay local, the status counts them, and the
+    /// account keeps the older value it holds, which is passed on but never applied here). A record
+    /// that is too large without this device's changes pauses the zone.
+    fn uploadable(&self, remote: &Record) -> Result<Record, Failure> {
         self.store
             .account_compact(self.zone, crate::util::unix_now_ms())?;
         let mut record = self.store.account_record(self.zone)?;
@@ -333,7 +341,11 @@ impl ZoneWorker {
                 return Err(DeviceError::TooLarge.into());
             };
             self.store.account_keep_local(self.zone, &biggest)?;
-            record.remove(&biggest);
+            // The account keeps the value it has; only this device's newer one stays here.
+            match remote.get(&biggest) {
+                Some(held) => record.insert(biggest, held.clone()),
+                None => record.remove(&biggest),
+            };
         }
         Ok(record)
     }
@@ -361,8 +373,7 @@ impl ZoneWorker {
                     .get(&format!("pref:{key}"))
                     .and_then(|text| serde_json::from_str::<Value>(text).ok())
             };
-            let engine = stored("default_engine");
-            let plan = apply::plan(&snapshot.account, engine.as_ref().and_then(Value::as_str));
+            let plan = apply::plan(&snapshot.account);
             let mut writes = Vec::new();
             for (key, value) in &plan.values {
                 if stored(key) != *value {

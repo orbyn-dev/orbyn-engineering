@@ -12,11 +12,12 @@ use sha2::{Digest, Sha256};
 
 pub const ZONE: &str = "engineering.settings";
 
-/// The 13 allowlisted catalog keys. Keybindings are one more group of fields. A key that
+/// The 11 allowlisted catalog keys. Keybindings are one more group of fields. A key that
 /// can raise cost or widen what an agent may do is not here, by the rule in
 /// docs/account.md (What never syncs): the engine, model and effort defaults, the model
-/// options and the thread environment mode among them.
-pub const SYNCED_KEYS: [&str; 13] = [
+/// options, the thread environment mode and the settings that switch model calls on
+/// among them.
+pub const SYNCED_KEYS: [&str; 11] = [
     "default_theme",
     "response_streaming_mode",
     "preview_appearance",
@@ -26,8 +27,6 @@ pub const SYNCED_KEYS: [&str; 13] = [
     "favorite_models",
     "hidden_models",
     "model_order",
-    "auto_thread_titles",
-    "branch_naming_mode",
     "branch_name_prefix",
     "branch_name_instructions",
 ];
@@ -242,9 +241,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn there_are_thirteen_unique_synced_keys_all_in_the_catalog() {
+    fn there_are_eleven_unique_synced_keys_all_in_the_catalog() {
         let unique: BTreeSet<_> = SYNCED_KEYS.iter().collect();
-        assert_eq!(unique.len(), 13);
+        assert_eq!(unique.len(), 11);
         let catalog: BTreeSet<_> = crate::settings::preferences::catalog_keys().collect();
         assert_eq!(catalog.len(), 62);
         assert!(SYNCED_KEYS.iter().all(|key| catalog.contains(key)));
@@ -264,6 +263,9 @@ mod tests {
             "text_generation_model",
             "default_effort",
             "default_thread_env_mode",
+            // A peer could turn model calls back on.
+            "auto_thread_titles",
+            "branch_naming_mode",
         ] {
             assert!(
                 stage_preference(never, None, Some(&json!("x"))).is_empty(),

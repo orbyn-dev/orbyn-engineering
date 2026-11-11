@@ -9,7 +9,7 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
     let core = on(&dir, "a");
     let api = Arc::new(FakeDeviceApi::new());
     let foreign = not_allowlisted();
-    assert_eq!(foreign.len(), 49);
+    assert_eq!(foreign.len(), 51);
     let mut sent = Vec::new();
     let mut valid = 0;
     for key in &foreign {
@@ -54,8 +54,16 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
         "text_generation_model",
         "default_effort",
         "default_thread_env_mode",
+        // A peer could turn model calls back on.
+        "auto_thread_titles",
+        "branch_naming_mode",
     ] {
         let sent_value = &sent.iter().find(|(key, _)| key == name).unwrap().1;
+        // The value is valid, so it is the allowlist that keeps the key out.
+        assert!(
+            preferences::check_synced(name, sent_value).is_ok(),
+            "{name}"
+        );
         assert_eq!(kept[name].value, *sent_value, "{name}");
         assert_ne!(stored(&core, name), *sent_value, "{name}");
         assert!(
@@ -135,55 +143,6 @@ async fn a_peers_keybinding_to_an_approval_command_or_a_dialog_key_is_kept_never
 }
 
 #[tokio::test]
-async fn a_default_model_option_that_costs_more_or_widens_reach_arrives_and_is_not_applied_for_each_adapter()
- {
-    let cases = [
-        (
-            "claude",
-            json!({"fast_mode": "on", "dangerously_skip_permissions": "true", "permission_mode": "bypassPermissions"}),
-        ),
-        (
-            "codex",
-            json!({"service_tier": "priority", "sandbox": "danger-full-access", "approval_policy": "never"}),
-        ),
-        (
-            "an-acp-agent",
-            json!({"mode": "bypass", "config:approval": "never", "fast_mode": "on"}),
-        ),
-    ];
-    for (engine, sent) in cases {
-        let dir = TempDir::new();
-        let core = on(&dir, "a");
-        let api = Arc::new(FakeDeviceApi::new());
-        set(&core, "default_engine", json!(engine));
-        peer(
-            &api,
-            future(),
-            vec![
-                ("default_engine".into(), json!("another-engine")),
-                ("default_model_options".into(), sent.clone()),
-                ("preview_appearance".into(), json!("dark")),
-            ],
-        );
-        let _worker = start(&core, &api);
-        until(&core, |core| {
-            stored(core, "preview_appearance") == json!("dark") && online(core)
-        })
-        .await;
-        assert_eq!(stored(&core, "default_engine"), json!(engine));
-        // The options arrived and are kept, but nothing of them is applied.
-        assert_eq!(
-            stored(&core, "default_model_options"),
-            json!({}),
-            "{engine}"
-        );
-        let kept = core.store.account_record(ZONE).unwrap();
-        assert_eq!(kept["default_model_options"].value, sent, "{engine}");
-        assert_eq!(waiting(&core), 0);
-    }
-}
-
-#[tokio::test]
 async fn a_branch_prefix_that_is_not_a_git_ref_part_is_not_applied() {
     let dir = TempDir::new();
     let core = on(&dir, "a");
@@ -211,4 +170,34 @@ async fn a_branch_prefix_that_is_not_a_git_ref_part_is_not_applied() {
         stored(core, "branch_name_prefix") == json!("team/feat")
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_synced_keybinding_replaces_the_same_chord_in_any_spelling() {
+    let dir = TempDir::new();
+    let core = on(&dir, "a");
+    let api = Arc::new(FakeDeviceApi::new());
+    core.save_keybinding(&rule("mod+y", "sidebar.toggle"))
+        .unwrap();
+    peer(
+        &api,
+        future(),
+        vec![rule_field(&rule("Mod+Y", "diff.toggle"))],
+    );
+    let _worker = start(&core, &api);
+    until(&core, |core| {
+        core.keybindings()
+            .rules
+            .iter()
+            .any(|r| r.command == "diff.toggle" && r.key == "Mod+Y")
+    })
+    .await;
+    let same_chord = |core: &Core| {
+        core.keybindings()
+            .rules
+            .iter()
+            .filter(|r| r.key.eq_ignore_ascii_case("mod+y"))
+            .count()
+    };
+    assert_eq!(same_chord(&core), 1);
 }

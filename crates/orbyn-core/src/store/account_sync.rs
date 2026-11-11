@@ -157,6 +157,21 @@ pub(super) fn mark_applied(tx: &Connection, zone: &str, max_wall: i64) -> Result
     Ok(())
 }
 
+/// A removal marker of a set element older than the horizon.
+fn is_old_tombstone(name: &str, field: &Field, now_ms: i64) -> bool {
+    crate::account::settings_record::set_key_of(name).is_some()
+        && field.value.get("removed") == Some(&Value::Bool(true))
+        && field.stamp.wall_ms < now_ms - crate::account::settings_record::TOMBSTONE_HORIZON_MS
+}
+
+fn skipped_names(conn: &Connection, zone: &str) -> Result<std::collections::BTreeSet<String>> {
+    let names = conn
+        .prepare("SELECT field FROM account_skipped WHERE zone = ?1")?
+        .query_map([zone], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(names)
+}
+
 fn field_size(name: &str, field: &Field) -> usize {
     name.len() + field.value.to_string().len()
 }
@@ -333,16 +348,12 @@ impl Store {
     /// Drops removal markers of set elements older than the horizon, which are not
     /// waiting to upload, so a record does not grow for ever.
     pub(crate) fn account_compact(&self, zone: &str, now_ms: i64) -> Result<usize> {
-        use crate::account::settings_record::{TOMBSTONE_HORIZON_MS, set_key_of};
         self.commit(|tx, _| {
             let queued = pending_edits(tx, zone)?;
             let old: Vec<String> = load_record(tx, zone)?
                 .into_iter()
                 .filter(|(name, field)| {
-                    set_key_of(name).is_some()
-                        && field.value.get("removed") == Some(&Value::Bool(true))
-                        && field.stamp.wall_ms < now_ms - TOMBSTONE_HORIZON_MS
-                        && !queued.contains_key(name)
+                    is_old_tombstone(name, field, now_ms) && !queued.contains_key(name)
                 })
                 .map(|(name, _)| name)
                 .collect();
@@ -397,13 +408,23 @@ impl Store {
             let (device, mut hlc, _) = clock(tx, zone)?.ok_or_else(|| CoreError::Internal("account sync is not set up".into()))?;
             let now_ms = crate::util::unix_now_ms();
             let local = load_record(tx, zone)?;
-            let merged = merge_records(&local, remote);
             let pending = pending_edits(tx, zone)?;
+            // A stamp far ahead of this clock never beats an edit waiting here, or that
+            // edit would be thrown away at every merge: the edit uploads instead.
+            let cutoff = now_ms + crate::account::merge::MAX_DRIFT_MS;
+            let mut remote = remote.clone();
+            remote.retain(|name, field| !(field.stamp.wall_ms > cutoff && pending.contains_key(name)));
+            let remote = &remote;
+            let merged = merge_records(&local, remote);
+            let skipped = skipped_names(tx, zone)?;
             for field in remote.values() {
                 hlc.observe(field.stamp.wall_ms, field.stamp.counter, now_ms);
             }
             for name in &merged.remote_won {
-                put_field(tx, zone, name, &merged.record[name], false)?;
+                // A setting kept local (its upload would not fit) is never overwritten by
+                // the older value the account still holds: that value is kept to pass on,
+                // not applied.
+                put_field(tx, zone, name, &merged.record[name], skipped.contains(name))?;
             }
             let mut conflicts = 0;
             for (name, (queued, base)) in &pending {
@@ -429,7 +450,14 @@ impl Store {
                 tx.execute("DELETE FROM account_outbox WHERE zone = ?1 AND field = ?2", params![zone, name])?;
             }
             for name in merged.local_ahead.iter().filter(|name| !pending.contains_key(*name)) {
-                queue_field(tx, zone, name, &merged.record[name], now_ms, None)?;
+                let field = &merged.record[name];
+                if is_old_tombstone(name, field, now_ms) {
+                    // Another device compacted this marker away; dropping it here is how
+                    // the horizon holds across devices, rather than uploading it again.
+                    tx.execute("DELETE FROM account_fields WHERE zone = ?1 AND field = ?2", params![zone, name])?;
+                } else if !skipped.contains(name) {
+                    queue_field(tx, zone, name, field, now_ms, None)?;
+                }
             }
             save_clock(tx, zone, hlc)?;
             tx.execute(

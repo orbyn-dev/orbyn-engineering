@@ -32,10 +32,8 @@ pub struct ApplyPlan {
 
 /// What `record` asks this device to apply. `record` holds only fields from the account
 /// that were not applied yet, so what the person changed here since is never undone.
-/// `local_engine` is the engine default here.
-pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
+pub fn plan(record: &Record) -> ApplyPlan {
     let mut plan = ApplyPlan::default();
-    let engine = local_engine;
     for (name, field) in record {
         let value = &field.value;
         if names::is_keybinding_name(name) {
@@ -57,7 +55,7 @@ pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
                 None => plan.refused += 1,
             }
         } else if names::is_synced_key(name) && !names::is_set_key(name) {
-            match accepted(name, value, engine) {
+            match accepted(name, value) {
                 Some(kept) => {
                     plan.values.insert(name.clone(), kept);
                 }
@@ -70,22 +68,12 @@ pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
 }
 
 /// The value to store for a plain key: `Some(None)` is a reset, `None` a refusal.
-fn accepted(key: &str, value: &Value, engine: Option<&str>) -> Option<Option<Value>> {
+fn accepted(key: &str, value: &Value) -> Option<Option<Value>> {
     if value.is_null() {
         return Some(None);
     }
     crate::settings::preferences::check_synced(key, value).ok()?;
     let kept = match key {
-        "default_model_options" => {
-            let sent = value.as_object()?;
-            let kept = policy::filter_model_options(sent, engine);
-            // Options that were all dropped are not applied at all, so a peer cannot
-            // replace what is set here with nothing.
-            if kept.is_empty() && !sent.is_empty() {
-                return None;
-            }
-            Value::Object(kept)
-        }
         "branch_name_prefix" => {
             policy::branch_prefix_is_ref_part(value.as_str()?).then(|| value.clone())?
         }
@@ -140,15 +128,12 @@ mod tests {
 
     #[test]
     fn an_allowlisted_value_is_planned_and_a_bad_one_is_refused() {
-        let plan = plan(
-            &record(vec![
-                ("preview_appearance".into(), json!("dark")),
-                ("response_streaming_mode".into(), json!("nonsense")),
-                ("preview_zoom".into(), json!(1.5)),
-                ("default_theme".into(), Value::Null),
-            ]),
-            None,
-        );
+        let plan = plan(&record(vec![
+            ("preview_appearance".into(), json!("dark")),
+            ("response_streaming_mode".into(), json!("nonsense")),
+            ("preview_zoom".into(), json!(1.5)),
+            ("default_theme".into(), Value::Null),
+        ]));
         assert_eq!(plan.values["preview_appearance"], Some(json!("dark")));
         assert_eq!(plan.values["preview_zoom"], Some(json!(1.5)));
         assert_eq!(plan.values["default_theme"], None);
@@ -159,48 +144,14 @@ mod tests {
     #[test]
     fn a_branch_prefix_that_is_not_a_ref_part_is_refused() {
         for bad in ["--upload-pack=x", "a b", "a..b"] {
-            let plan = plan(
-                &record(vec![("branch_name_prefix".into(), json!(bad))]),
-                None,
-            );
+            let plan = plan(&record(vec![("branch_name_prefix".into(), json!(bad))]));
             assert!(plan.values.is_empty(), "{bad}");
         }
-        let plan = plan(
-            &record(vec![("branch_name_prefix".into(), json!("team/feat"))]),
-            None,
-        );
+        let plan = plan(&record(vec![(
+            "branch_name_prefix".into(),
+            json!("team/feat"),
+        )]));
         assert_eq!(plan.values["branch_name_prefix"], Some(json!("team/feat")));
-    }
-
-    #[test]
-    fn default_model_options_is_not_synced_so_the_plan_ignores_it() {
-        let options = json!({"service_tier": "priority", "fast_mode": "on"});
-        let plan = plan(
-            &record(vec![("default_model_options".into(), options)]),
-            Some("codex"),
-        );
-        assert_eq!(plan, ApplyPlan::default());
-    }
-
-    // `default_model_options` is not in the allowlist (cost and reach never sync), so the
-    // option filter below is not reached today. It stays as defence in depth: a later
-    // change that put the key back would still drop every option, and these tests keep it
-    // honest until then.
-    #[test]
-    fn the_option_filter_would_still_drop_every_option_for_each_engine() {
-        let options = json!({"service_tier": "priority", "sandbox": "off", "fast_mode": "on"});
-        for engine in ["claude", "codex", "an-acp-agent"] {
-            assert_eq!(
-                accepted("default_model_options", &options, Some(engine)),
-                None,
-                "{engine}"
-            );
-        }
-        // Clearing the options is not an escalation.
-        assert_eq!(
-            accepted("default_model_options", &json!({}), None),
-            Some(Some(json!({})))
-        );
     }
 
     #[test]
@@ -229,7 +180,7 @@ mod tests {
             panic!()
         };
         fields.push((name, value));
-        let plan = plan(&record(fields), None);
+        let plan = plan(&record(fields));
         assert_eq!(
             plan.sets["favorite_models"].add,
             BTreeSet::from(["a".to_owned()])
@@ -277,7 +228,7 @@ mod tests {
             };
             fields.push((name, value));
         }
-        let plan = plan(&record(fields), None);
+        let plan = plan(&record(fields));
         assert!(plan.keybindings.is_empty());
         assert_eq!(plan.refused, 5);
     }
@@ -290,9 +241,9 @@ mod tests {
                 fields.push((key.to_owned(), json!("anything")));
             }
         }
-        assert_eq!(fields.len(), 49);
+        assert_eq!(fields.len(), 51);
         fields.push(("a_future_key".into(), json!(1)));
-        let plan = plan(&record(fields), None);
+        let plan = plan(&record(fields));
         assert_eq!(plan, ApplyPlan::default());
     }
 }

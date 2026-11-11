@@ -108,9 +108,9 @@ per-field hybrid logical clock, the larger stamp wins, ties break by canonical J
 `preferences.rs` accepts all 62 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
 through as unknown. So a peer could send `default_project_scripts`, which would run commands on the person's other
 computers, and a compromised device could use that. The rule: the sync apply path (a private path that does not queue
-fields again) applies **only the 13 allowlisted keys plus keybindings**, each through `check` and the per-key rules
+fields again) applies **only the 11 allowlisted keys plus keybindings**, each through `check` and the per-key rules
 under [No escalation across devices](#no-escalation-across-devices). Every other incoming field is kept and passed
-on unchanged, never applied locally. *Required test:* each of the 49 catalog keys that is not allowlisted, arriving from
+on unchanged, never applied locally. *Required test:* each of the 51 catalog keys that is not allowlisted, arriving from
 a peer, is not applied (the local value and the outbox are unchanged), and is still kept for the next upload.
 
 **Status over the shell event stream.** The worker publishes status on the existing `GET /api/shell/events` stream
@@ -199,19 +199,18 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (13 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+**Synced keys** (11 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
 Engineering 1, narrowed by the [rule below](#what-never-syncs). Only the person-level value of a key syncs.
 
 | Group | Keys |
 | --- | --- |
 | Appearance and reading | `default_theme`, `response_streaming_mode`, `preview_appearance`, `preview_zoom`, `open_web_links_in_app`, `quit_confirmation` |
 | Model lists | `favorite_models` and `hidden_models` (sets), `model_order` (one field) |
-| Thread and branch defaults | `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
+| Branch defaults | `branch_name_prefix`, `branch_name_instructions` |
 | Keybindings | One field per (key, `when`) pair |
 
 `branch_name_instructions` is free text that feeds a model prompt on every device; the risk is low and the choice is recorded
-here. `auto_thread_titles` and `branch_naming_mode` (`semantic`) make a model call, so they are the nearest cases to the
-rule; they stay, and are reported to Products Research as unclear. The other synced keys are harmless.
+here. The other synced keys are harmless.
 
 The Engine crate change that refuses `default_permission_mode`, `default_project_scripts`,
 `enable_agent_browser_access` and `enable_agent_device_access` in both directions comes in a small follow-up Engine
@@ -220,7 +219,7 @@ path above ignores them.
 
 ### Never synced
 
-Twenty-six keys, by decision:
+Twenty-eight keys, by decision:
 
 | Why | Keys |
 | --- | --- |
@@ -229,12 +228,12 @@ Twenty-six keys, by decision:
 | Per-computer update and polling | `app_update_mode`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
 | Login and engine availability | `prefer_saved_login`, `disabled_engines` |
 | Escalation: what agents may do or run | `default_permission_mode`, `default_project_scripts`, `enable_agent_browser_access`, `enable_agent_device_access`: a loosened permission, a command or an access grant must not cross devices |
-| Cost or reach: another device could pick a costlier engine, model or effort, or widen where agents work ([rule](#what-never-syncs)) | `default_engine` (which vendor and price tier a task starts under), `default_model`, `fallback_model`, `text_generation_model`, `default_effort`, `default_model_options` (inert in v1, and every option raises cost or reach), `default_thread_env_mode` (`local` widens where agents work) |
+| Cost or reach: another device could pick a costlier engine, model or effort, or widen where agents work ([rule](#what-never-syncs)) | `default_engine` (which vendor and price tier a task starts under), `default_model`, `fallback_model`, `text_generation_model`, `default_effort`, `default_model_options` (inert in v1, and every option raises cost or reach), `default_thread_env_mode` (`local` widens where agents work), `auto_thread_titles` and `branch_naming_mode` (a peer could turn model calls back on) |
 | Service-owned stamp | `default_theme_set_at` |
 
 ### Not in v1, may sync later
 
-The other 23 keys are not synced in v1, so 13 + 26 + 23 = 62:
+The other 23 keys are not synced in v1, so 11 + 28 + 23 = 62:
 
 | Key | Reason |
 | --- | --- |
@@ -283,9 +282,7 @@ A compromised device must not be able to make another one more permissive or run
   It can never override the default keys of the approval dialog or of the "Confirm it's you" dialog. A rule that breaks
   this is kept and passed on, never applied.
 - **(c) `default_model_options`** is never synced ([What never syncs](#what-never-syncs)), so a field that arrives from a
-  peer is kept and never applied. As defence in depth the option filter keeps no option for any engine adapter. *Tests:*
-  for each adapter (Claude, Codex, an ACP agent), options arriving from a peer are kept in the record and none is
-  applied, and the filter alone drops every option.
+  peer is kept and never applied. *Test:* it is one of the keys asserted by name in the allowlist test.
 - **`branch_name_prefix`** is validated as a git ref part and passed as an argument, never through a shell.
 
 ## What never syncs
@@ -304,13 +301,12 @@ Dropped from the allowlist under this rule, and why:
 | any sandbox, approval or skip-permissions option | Claude, Codex | Widens what an agent may do |
 | `mode` and every `config:*` option | ACP agents | ACP agents name their own options, and `mode` is a permission mode; none can be shown to lower cost or reach |
 
-So the per-adapter option allowlist is empty, and `default_model_options` itself is never synced. The option filter in
-`account::policy` is not reached today; it stays, with its tests, as defence in depth so that a change that put the key back
-would still drop every option.
+`default_model_options` is never synced, and there is no option filter: the allowlist is the only control, so nothing is
+kept in code for it. The tests that cover it are the by-name tests in the allowlist suite: each moved and escalating key
+arrives from a peer with a value that passes the value check, is kept in the record, and is not applied.
 
-The rule also moved `default_engine`, `default_model`, `fallback_model`, `text_generation_model`, `default_effort` and
-`default_thread_env_mode` to [Never synced](#never-synced). Reported as unclear and left synced: `auto_thread_titles` and
-`branch_naming_mode` (each makes a model call).
+The rule also moved `default_engine`, `default_model`, `fallback_model`, `text_generation_model`, `default_effort`,
+`default_thread_env_mode`, `auto_thread_titles` and `branch_naming_mode` to [Never synced](#never-synced).
 
 ## Record rules the apply path enforces
 
@@ -320,11 +316,18 @@ The rule also moved `default_engine`, `default_model`, `fallback_model`, `text_g
   applied, and the status counts it. The local clock also never moves more than that far on a remote stamp.
 - **First sync.** What a person set before the account was on is stamped older than anything the account holds, so the
   account's newer value wins and a value the account lacks is uploaded. A first sync raises no conflict.
+- **Edits beat a stamp from the future.** A local edit waiting to upload wins over a remote field stamped more than 24
+  hours ahead, whether the field was merged before the edit or after, and uploads. Without an edit there is nothing to
+  lose, and the status counts the held-back field until a later account value replaces it.
 - **Record size.** A setting that would take the record over 64 KiB stays local and the status counts it. When merging
   with another device's fields makes the record too large, the largest settings waiting to upload are left out, not the
-  other devices' fields. Only a record that is too large without any of this device's changes pauses the zone.
+  other devices' fields. The account keeps the value it already holds for such a setting; it is kept to pass on and never applied here, until a
+  later local edit fits. Only a record that is too large without any of this device's changes pauses the zone.
 - **Removal markers** of set elements (`favorite_models`, `hidden_models`) older than **90 days** are dropped when the record
-  is uploaded. A device that was offline for longer than that and still lists a removed element can bring it back.
+  is uploaded. A device that was offline for longer than that and still lists a removed element can bring it back. A marker another
+  device compacted away is dropped on the next merge, not uploaded again. The upload carries the whole merged record
+  (the Engine contract), so apart from these markers and the settings that did not fit, no other device's value is
+  left out.
 - **Lists** a peer adds to stop at 500 elements and must pass the same value check as a local list.
 - **Keybinding fields** are named from the key as compared (trimmed, lowercase), so `Mod+Y` and `mod+y` are one field.
 
@@ -346,7 +349,7 @@ now and does not wait for them.
 3. "Confirm it's you" is built and enforced inside `orbynd`, with a route-table guard so no new account-changing route
    can skip it.
 4. Controls 1 to 7 and 5b of the [threat model](account-threat-model.md) are built and their checks pass:
-   - the allowlist-only apply test for all 49 non-allowlisted keys;
+   - the allowlist-only apply test for all 51 non-allowlisted keys;
    - the keybinding test;
    - the per-adapter options test;
    - the child-environment scrub tests;

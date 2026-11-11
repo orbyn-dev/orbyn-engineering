@@ -4,7 +4,6 @@
 //! narrows: a value that fails is kept and passed on, never applied.
 
 use orbyn_contracts::KeybindingRule;
-use serde_json::{Map, Value};
 
 /// The commands a synced keybinding may bind: navigation and view commands only. A
 /// command that approves or denies an agent action, changes permissions, or confirms,
@@ -75,63 +74,6 @@ pub fn keybinding_allowed(rule: &KeybindingRule) -> bool {
         && !DIALOG_KEYS.contains(&super::settings_record::normalize_key(&rule.key).as_str())
 }
 
-/// The option ids each engine adapter may be given by a synced `default_model_options`.
-///
-/// **None.** The rule ([docs/account.md](../../../../docs/account.md#what-never-syncs)):
-/// a setting that raises cost or widens what an agent may do never syncs. Every option an
-/// adapter offers does one of those. Claude's `fast_mode` and Codex's `service_tier`
-/// (`priority` and the like) buy faster, costlier processing; anything that becomes a
-/// sandbox, approval or skip-permissions flag widens reach; ACP agents name their own
-/// options and their `mode` is a permission mode. The lists stay so that a later change
-/// has one place to add an id that provably lowers cost or changes neither.
-const CLAUDE_OPTIONS: &[&str] = &[];
-const CODEX_OPTIONS: &[&str] = &[];
-
-/// Which adapter an engine id runs on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Adapter {
-    Claude,
-    Codex,
-    /// Every other engine, run over ACP.
-    Acp,
-}
-
-impl Adapter {
-    pub fn of(engine: &str) -> Self {
-        match engine {
-            "claude" => Self::Claude,
-            "codex" => Self::Codex,
-            _ => Self::Acp,
-        }
-    }
-
-    fn allowed(self) -> &'static [&'static str] {
-        match self {
-            Self::Claude => CLAUDE_OPTIONS,
-            Self::Codex => CODEX_OPTIONS,
-            Self::Acp => &[],
-        }
-    }
-}
-
-/// The options a synced `default_model_options` keeps for the engine. With no engine
-/// named the default may be for either built-in adapter, so both lists apply. An ACP
-/// engine keeps nothing.
-pub fn filter_model_options(
-    options: &Map<String, Value>,
-    engine: Option<&str>,
-) -> Map<String, Value> {
-    let keep = |id: &str| match engine.filter(|engine| !engine.is_empty()) {
-        Some(engine) => Adapter::of(engine).allowed().contains(&id),
-        None => CLAUDE_OPTIONS.contains(&id) || CODEX_OPTIONS.contains(&id),
-    };
-    options
-        .iter()
-        .filter(|(id, _)| keep(id))
-        .map(|(id, value)| (id.clone(), value.clone()))
-        .collect()
-}
-
 /// Whether `prefix` is safe as a git ref part: it is passed to git as an argument, and
 /// it must not start a flag, hold a character git refuses or escape its folder. It is
 /// stricter than `git check-ref-format`: ASCII letters, digits and `. _ - /` only.
@@ -156,8 +98,6 @@ pub fn branch_prefix_is_ref_part(prefix: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     fn rule(key: &str, command: &str) -> KeybindingRule {
@@ -241,67 +181,6 @@ mod tests {
             ] {
                 assert!(!command.starts_with(acting), "{command}");
             }
-        }
-    }
-
-    fn options(pairs: &[(&str, &str)]) -> Map<String, Value> {
-        pairs
-            .iter()
-            .map(|(id, value)| ((*id).to_owned(), json!(value)))
-            .collect()
-    }
-
-    const ADAPTERS: [(&str, &[(&str, &str)]); 4] = [
-        (
-            "claude",
-            &[
-                ("fast_mode", "on"),
-                ("dangerously_skip_permissions", "true"),
-                ("skip_permissions", "on"),
-                ("permission_mode", "bypassPermissions"),
-            ],
-        ),
-        (
-            "codex",
-            &[
-                ("service_tier", "priority"),
-                ("sandbox", "danger-full-access"),
-                ("sandbox_mode", "danger-full-access"),
-                ("approval_policy", "never"),
-            ],
-        ),
-        (
-            "an-acp-agent",
-            &[
-                ("mode", "bypass"),
-                ("config:approval", "never"),
-                ("config:sandbox", "off"),
-                ("config:thought_level", "high"),
-            ],
-        ),
-        (
-            "",
-            &[
-                ("fast_mode", "on"),
-                ("service_tier", "priority"),
-                ("mode", "bypass"),
-            ],
-        ),
-    ];
-
-    #[test]
-    fn no_adapter_keeps_any_option_cost_and_reach_never_sync() {
-        for (engine, pairs) in ADAPTERS {
-            let sent = options(pairs);
-            let kept = filter_model_options(&sent, Some(engine));
-            assert!(kept.is_empty(), "{engine}: {kept:?}");
-        }
-        let everything: Vec<(&str, &str)> = ADAPTERS
-            .iter()
-            .flat_map(|(_, p)| p.iter().copied())
-            .collect();
-        for engine in [None, Some("claude"), Some("codex"), Some("x")] {
-            assert!(filter_model_options(&options(&everything), engine).is_empty());
         }
     }
 

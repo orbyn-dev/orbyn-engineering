@@ -262,3 +262,107 @@ async fn a_peer_cannot_grow_a_list_past_the_limit() {
         MAX_LIST
     );
 }
+
+#[tokio::test]
+async fn a_marker_one_device_compacted_is_dropped_by_the_other_not_uploaded_again() {
+    let dir = TempDir::new();
+    let (a, b) = (on(&dir, "a"), on(&dir, "b"));
+    let api = Arc::new(FakeDeviceApi::new());
+    let old = (
+        record::element_name("favorite_models", "gone"),
+        json!({"id": "gone", "removed": true}),
+    );
+    api.peer_write(
+        ZONE,
+        "peer",
+        crate::util::unix_now_ms() - TOMBSTONE_HORIZON_MS - 1,
+        vec![old.clone()],
+    );
+    let (_wa, _wb) = (start(&a, &api), start(&b, &api));
+    let holds = |core: &Core| {
+        core.store
+            .account_record(ZONE)
+            .unwrap()
+            .contains_key(&old.0)
+    };
+    until(&a, |a| holds(a) && online(a)).await;
+    until(&b, |b| holds(b) && online(b)).await;
+    // A uploads something, and compacts the marker away on the way.
+    set(&a, "branch_name_prefix", json!("m1"));
+    until(&b, |b| {
+        stored(b, "branch_name_prefix") == json!("m1") && online(b)
+    })
+    .await;
+    assert!(!api.zone(ZONE).unwrap().record.contains_key(&old.0));
+    // B dropped its copy, and did not upload it back.
+    assert!(!holds(&b));
+    assert_eq!(waiting(&b), 0);
+    assert_eq!(api.commits(), 1);
+}
+
+#[tokio::test]
+async fn a_setting_kept_local_because_it_did_not_fit_is_not_overwritten_by_the_older_value() {
+    let dir = TempDir::new();
+    let (a, b) = (on(&dir, "a"), on(&dir, "b"));
+    let api = Arc::new(FakeDeviceApi::new());
+    set(&a, "branch_name_instructions", json!("short"));
+    let (_wa, _wb) = (start(&a, &api), start(&b, &api));
+    until(&a, |a| api.commits() == 1 && online(a)).await;
+    until(&b, |b| {
+        stored(b, "branch_name_instructions") == json!("short") && online(b)
+    })
+    .await;
+    // A changes it while offline, and meanwhile another device fills the record.
+    api.set_online(false);
+    let big = json!("y".repeat(7_000));
+    set(&a, "branch_name_instructions", big.clone());
+    peer(&api, future(), filler(8, 7_900));
+    api.set_online(true);
+    until(&a, |a| api.commits() == 2 && online(a)).await;
+    assert_eq!(
+        api.zone(ZONE).unwrap().record["branch_name_instructions"].value,
+        json!("short")
+    );
+    assert_eq!(a.account.status().not_synced, 1);
+    // More cycles: the person's value on A stays, and B still follows the account.
+    nudge(&a, &api, 3).await;
+    assert_eq!(stored(&a, "branch_name_instructions"), big);
+    assert_eq!(stored(&b, "branch_name_instructions"), json!("short"));
+}
+
+#[tokio::test]
+async fn a_local_edit_beats_a_remote_stamp_too_far_ahead_instead_of_being_discarded() {
+    // The edit is made after the future field was merged, and before it is.
+    for edit_first in [false, true] {
+        let dir = TempDir::new();
+        let core = on(&dir, "a");
+        let api = Arc::new(FakeDeviceApi::new());
+        let ahead = crate::util::unix_now_ms() + 10 * 24 * 60 * 60 * 1000;
+        peer(
+            &api,
+            ahead,
+            vec![("preview_appearance".into(), json!("dark"))],
+        );
+        if edit_first {
+            set(&core, "preview_appearance", json!("light"));
+        }
+        let _worker = start(&core, &api);
+        if !edit_first {
+            until(&core, |core| {
+                core.account.status().held_back == 1 && online(core)
+            })
+            .await;
+            assert_ne!(stored(&core, "preview_appearance"), json!("dark"));
+            set(&core, "preview_appearance", json!("light"));
+        }
+        until(&core, |core| api.commits() == 1 && online(core)).await;
+        let server = api.zone(ZONE).unwrap().record;
+        assert_eq!(
+            server["preview_appearance"].value,
+            json!("light"),
+            "{edit_first}"
+        );
+        assert_eq!(stored(&core, "preview_appearance"), json!("light"));
+        assert_eq!(core.account.status().held_back, 0);
+    }
+}

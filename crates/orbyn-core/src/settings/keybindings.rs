@@ -346,11 +346,19 @@ pub(crate) fn write_synced_rules(
     }
     let before = own.len();
     let mut changed = false;
+    // The same chord however it is spelled: `Mod+Y` and `mod+y` are one rule.
+    let same_chord = |a: &KeybindingRule, b: &KeybindingRule| {
+        crate::account::settings_record::normalize_key(&a.key)
+            == crate::account::settings_record::normalize_key(&b.key)
+            && a.when == b.when
+    };
     for rule in rules.iter().filter(|rule| valid(rule)) {
-        if own.contains(rule) {
+        if own.iter().any(|known| {
+            same_chord(known, rule) && known.command == rule.command && known.remove == rule.remove
+        }) {
             continue;
         }
-        own.retain(|known| !(known.key == rule.key && known.when == rule.when));
+        own.retain(|known| !same_chord(known, rule));
         own.push(rule.clone());
         changed = true;
     }
