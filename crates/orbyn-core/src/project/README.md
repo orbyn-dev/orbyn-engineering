@@ -36,7 +36,7 @@ The crate's [group table](../../README.md#groups) lists every group.
   then resolved with links followed and kept inside the worktree. Git's folder, Orbyn's data
   folder and the library's `repo/` are out of reach. A final link is never followed, and
   devices, pipes and sockets are neither listed nor opened.
-- A folder read returns at most 1,000 entries and says `truncated`; a file read returns text
+- A folder read returns at most 1,000 entries and says `truncated`, with a `total` of the matching entries (a floor, flagged `total_at_least`, past a 20,000-entry scan); a file read returns text
   up to 4 MiB, or a `binary` or `too_large` marker.
 - Change letters, ignored paths and the dirty summary come from one `git status` per
   worktree through `source_control::git`, kept as the architecture's

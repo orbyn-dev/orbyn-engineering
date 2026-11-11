@@ -70,7 +70,7 @@ export const ExplorerRow = memo(function ExplorerRow({
   const common = { "data-key": row.key, style, tabIndex: focusable ? 0 : -1, onFocus: () => handlers.onFocus(row) } as const;
 
   if (row.kind === "loading") return <LoadingRow label={row.label} common={common} />;
-  if (row.kind === "empty") {
+  if (row.kind === "empty" || row.kind === "capped") {
     return (
       <div {...common} className="x2r x2note" role="treeitem" aria-disabled="true" aria-level={row.depth + 1} tabIndex={-1}>
         <span className="nm">{row.label}</span>

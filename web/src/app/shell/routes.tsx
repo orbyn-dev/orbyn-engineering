@@ -1,4 +1,5 @@
 import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from "../../features/onboarding";
+import { WithFilePanel } from "../../features/panels";
 import { PullsPage } from "../../features/pulls";
 import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills";
@@ -23,7 +24,11 @@ function Home({ needsProject }: { needsProject: boolean }) {
 export function RouteView({ route, needsProject }: { route: PageRoute; needsProject: boolean }) {
   switch (route.name) {
     case "home":
-      return <Home needsProject={needsProject} />;
+      return (
+        <WithFilePanel>
+          <Home needsProject={needsProject} />
+        </WithFilePanel>
+      );
     case "pulls":
       return <PullsPage />;
     case "usage":
@@ -35,9 +40,17 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
     case "thread":
       return <ThreadView key={route.id} id={route.id} />;
     case "new":
-      return <DraftView key={route.projectId ?? "draft"} projectId={route.projectId} />;
+      return (
+        <WithFilePanel>
+          <DraftView key={route.projectId ?? "draft"} projectId={route.projectId} />
+        </WithFilePanel>
+      );
     case "project":
-      return <EmptyProject key={route.projectId} projectId={route.projectId} />;
+      return (
+        <WithFilePanel>
+          <EmptyProject key={route.projectId} projectId={route.projectId} />
+        </WithFilePanel>
+      );
     case "trust":
       return <TrustFolder projectId={route.projectId} threadId={route.threadId} />;
   }
