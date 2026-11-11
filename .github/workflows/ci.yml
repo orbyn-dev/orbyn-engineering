@@ -352,8 +352,11 @@ jobs:
           echo "changes=$CHANGES lint=$LINT build=$BUILD shards=$SHARDS"
           [ "$CHANGES" = success ] && [ "$LINT" = success ] && [ "$BUILD" = success ] && [ "$SHARDS" = success ]
 
-  desktop:
-    name: Unsigned desktop build (${{ matrix.os }})
+  # Builds the bundle and nothing else, so the checks that need it start the moment it
+  # exists: the required "Unsigned desktop build" job below and the packaged-app job run
+  # side by side instead of one after the other.
+  desktop-bundle:
+    name: Desktop bundle (${{ matrix.os }})
     needs: [changes, lint]
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
@@ -389,6 +392,7 @@ jobs:
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          shared-key: desktop-bundle
           workspaces: |
             .
             desktop/src-tauri
@@ -396,36 +400,21 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - if: env.RUN == 'true'
-        run: npm ci
-        working-directory: web
-      - if: env.RUN == 'true'
-        run: npm ci
-        working-directory: desktop
+      # The two installs do not depend on each other.
+      - name: Install web and desktop packages
+        if: env.RUN == 'true'
+        shell: bash
+        run: |
+          npm ci --prefix web & web=$!
+          npm ci --prefix desktop & desktop=$!
+          wait $web && wait $desktop
       - if: env.RUN == 'true'
         run: npm run prepare-bundle
         working-directory: desktop
       - if: env.RUN == 'true'
         run: npx tauri build --bundles ${{ matrix.bundles }}
         working-directory: desktop
-      - name: Release script tests
-        if: env.RUN == 'true'
-        shell: bash
-        run: node --test scripts/release-evidence.test.mjs scripts/smoke-service.test.mjs scripts/smoke-app-diagnostics.test.mjs scripts/smoke-app-environment.test.mjs scripts/smoke-app-providers.test.mjs scripts/smoke-app-usage.test.mjs scripts/verify-macos-release.test.mjs scripts/install.test.mjs scripts/check-desktop-assets.test.mjs
-      - name: Load the packaged service
-        if: env.RUN == 'true'
-        shell: bash
-        run: node scripts/smoke-package.mjs
-      - name: Shell tests
-        if: env.RUN == 'true'
-        shell: bash
-        working-directory: desktop/src-tauri
-        run: cargo test
-      - name: Install and start the app
-        if: env.RUN == 'true'
-        shell: bash
-        run: node scripts/smoke-app.mjs
-      - name: Keep the bundle for packaged qualification
+      - name: Pack the bundle
         if: env.RUN == 'true'
         shell: bash
         # Relative paths: Windows tar reads a drive letter as a remote host.
@@ -436,13 +425,104 @@ jobs:
         with:
           name: bundle-${{ matrix.os }}
           path: bundle.tar
-          retention-days: 1
+          compression-level: 1
+          retention-days: 7
+      # What prepare-bundle staged, for the shell tests and the packaged-service check.
+      - if: env.RUN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staged-${{ matrix.os }}
+          path: |
+            build
+            desktop/src-tauri/binaries
+          compression-level: 1
+          retention-days: 7
+
+  desktop:
+    name: Unsigned desktop build (${{ matrix.os }})
+    needs: [changes, lint, desktop-bundle]
+    if: ${{ !cancelled() }}
+    runs-on: ${{ matrix.os }}
+    env:
+      RUN: ${{ needs.changes.outputs.desktop == 'true' && (matrix.os != 'windows-2022' || needs.changes.outputs.windows == 'true') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            bundles: app
+          - os: windows-2022
+            bundles: nsis
+    steps:
+      - name: Earlier jobs passed
+        shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+          BUNDLE: ${{ needs.desktop-bundle.result }}
+        run: |
+          if [ "$CHANGES" != success ] || [ "$LINT" != success ] || [ "$BUNDLE" != success ]; then
+            echo "changes=$CHANGES lint=$LINT bundle=$BUNDLE"
+            exit 1
+          fi
+      - if: env.RUN != 'true'
+        run: echo "No change the desktop build covers on this lane."
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      # The shell's test build, kept apart from the release build's cache.
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: desktop-check
+          workspaces: desktop/src-tauri
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - if: env.RUN == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: staged-${{ matrix.os }}
+          path: ${{ github.workspace }}
+      - if: env.RUN == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle-${{ matrix.os }}
+          path: ${{ runner.temp }}
+      - name: Unpack the bundle
+        if: env.RUN == 'true'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: mkdir -p release && tar -xf bundle.tar -C release
+      - name: Release script tests
+        if: env.RUN == 'true'
+        shell: bash
+        run: node --test scripts/release-evidence.test.mjs scripts/smoke-service.test.mjs scripts/smoke-app-diagnostics.test.mjs scripts/smoke-app-environment.test.mjs scripts/smoke-app-providers.test.mjs scripts/smoke-app-usage.test.mjs scripts/verify-macos-release.test.mjs scripts/install.test.mjs scripts/check-desktop-assets.test.mjs
+      - name: Load the packaged service
+        if: env.RUN == 'true'
+        shell: bash
+        run: |
+          chmod +x desktop/src-tauri/binaries/* 2>/dev/null || true
+          node scripts/smoke-package.mjs
+      - name: Shell tests
+        if: env.RUN == 'true'
+        shell: bash
+        working-directory: desktop/src-tauri
+        run: cargo test
+      - name: Install and start the app
+        if: env.RUN == 'true'
+        shell: bash
+        run: node scripts/smoke-app.mjs "$RUNNER_TEMP/release/bundle"
 
   # Not required: it depends on a published Codex release. The installed app runs
   # against that real Codex, signed out, under the same private profile.
   packaged:
     name: Packaged app with signed-out Codex (${{ matrix.os }})
-    needs: [changes, desktop]
+    needs: [changes, desktop-bundle]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
