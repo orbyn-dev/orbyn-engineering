@@ -16,7 +16,7 @@ const host = /host: (\S+)/.exec(
 )[1];
 const target = process.env.ORBYN_TARGET ?? host;
 // Pull request checks build a faster profile (see `[profile.ci-release]` in Cargo.toml); anything else is `release`.
-const profile = process.env.ORBYN_CARGO_PROFILE ?? "release";
+const profile = process.env.ORBYN_CARGO_PROFILE || "release";
 
 run("npm", ["run", "build"], join(root, "web"));
 // A static C runtime, so the installer needs no redistributable.

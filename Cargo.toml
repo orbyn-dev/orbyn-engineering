@@ -52,4 +52,4 @@ strip = true
 [profile.ci-release]
 inherits = "release"
 codegen-units = 16
-lto = false
+lto = "off"

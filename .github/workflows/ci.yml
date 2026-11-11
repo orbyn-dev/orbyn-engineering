@@ -392,7 +392,8 @@ jobs:
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          key: ${{ env.ORBYN_CARGO_PROFILE }}
+          # The ci-release cache is shared with desktop-cache-warm; the release job keeps its own.
+          shared-key: ${{ env.ORBYN_CARGO_PROFILE == 'ci-release' && 'desktop-ci-release' || '' }}
           workspaces: |
             .
             desktop/src-tauri
@@ -448,6 +449,49 @@ jobs:
           name: bundle-${{ matrix.os }}
           path: bundle.tar
           retention-days: 1
+
+  # Pull requests restore this cache (a cache saved on the default branch is readable from
+  # every branch), so their first desktop build is warm. Pushes to main only; not required, and
+  # it publishes nothing.
+  desktop-cache-warm:
+    name: Desktop cache warm (${{ matrix.os }})
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    env:
+      ORBYN_CARGO_PROFILE: ci-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            bundles: app
+          - os: windows-2022
+            bundles: nsis
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: desktop-ci-release
+          workspaces: |
+            .
+            desktop/src-tauri
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: web
+      - run: npm ci
+        working-directory: desktop
+      - run: npm run prepare-bundle
+        working-directory: desktop
+      - run: npx tauri build --bundles ${{ matrix.bundles }} -- --profile ci-release
+        working-directory: desktop
+      # The shell tests' debug build is in the same cache.
+      - run: cargo test --no-run
+        working-directory: desktop/src-tauri
 
   # Not required: it depends on a published Codex release. The installed app runs
   # against that real Codex, signed out, under the same private profile.
