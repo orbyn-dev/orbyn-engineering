@@ -160,6 +160,8 @@ struct Target {
     /// redirected `gitdir` file, a bare repository or a prunable entry is not one, and
     /// is never read.
     member: bool,
+    /// The project's folder is inside a checkout and is the only root shown.
+    subfolder: bool,
 }
 
 impl Target {
@@ -171,6 +173,7 @@ impl Target {
             is_main: entry.is_main,
             missing: !path.is_dir(),
             member: entry.member && !entry.record.prunable && !entry.record.bare,
+            subfolder: entry.subfolder,
             path,
             record: entry.record,
         }
@@ -244,6 +247,7 @@ impl Core {
             return Ok(vec![member::Entry {
                 is_main: true,
                 member: true,
+                subfolder: false,
                 record: WorktreeRecord {
                     path,
                     branch: None,
@@ -268,7 +272,13 @@ impl Core {
                 },
             )
             .await?;
-        member::resolve(records, &plain(&path))
+        // The saved path is already resolved, so one that now resolves elsewhere (a folder
+        // swapped for a link into another repository) is refused rather than followed.
+        if crate::util::canonicalize(&path).is_ok_and(|now| now != path) {
+            return Err(CoreError::NotFound("worktree".into()));
+        }
+        let entries = member::resolve(records, &plain(&path))?;
+        Ok(entries)
     }
 
     /// The worktree `worktree_id` of `project_id`, or not found. A name outside the
@@ -330,7 +340,8 @@ impl Core {
         refresh: bool,
         wait: Duration,
     ) -> (Option<Arc<Snapshot>>, ExplorerChanges) {
-        if !target.project.is_git || target.missing || !target.member {
+        // A status names paths from the repository's root, not from a subfolder project's.
+        if !target.project.is_git || target.missing || !target.member || target.subfolder {
             return (None, ExplorerChanges::Unavailable);
         }
         let (root, gate) = (target.path.clone(), self.explorer.gate(&target.project.id));
@@ -425,6 +436,7 @@ impl Core {
                 detached: target.record.detached,
                 head: target.record.revision.chars().take(7).collect(),
                 is_main: target.is_main,
+                is_subfolder: target.subfolder,
                 read_only: reason.is_some(),
                 read_only_reason: reason,
                 threads: here

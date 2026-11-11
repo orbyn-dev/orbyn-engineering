@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AccountView } from "../../generated/AccountView";
 import { accountApi } from "./api";
 import { BackLink, Failure } from "./Card";
+import { onConnectRequest, takeConnectRequest } from "./changes";
 import { ConnectChoice, ConnectDone, ConnectProgress } from "./ConnectDialogs";
 import { DevicesPage } from "./DevicesPage";
 import { SignedInPage } from "./SignedInPage";
@@ -18,6 +19,12 @@ export function SignedInSection({ view, stale, reload, onSignedOut }: { view: Ac
   // Opened by hand after "Not now"; the first time the service asks by itself.
   const [choosing, setChoosing] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  // "Connect settings" in the sync popover opens this same dialog.
+  useEffect(() => {
+    const open = () => { if (takeConnectRequest()) setChoosing(true); };
+    open();
+    return onConnectRequest(open);
+  }, []);
   // The choice was made: keep its dialog closed until the account says so too, instead of flashing it back.
   const [joined, setJoined] = useState(false);
   useEffect(() => { if (view.connect === "connected") setJoined(false); }, [view.connect]);

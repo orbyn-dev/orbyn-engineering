@@ -13,3 +13,32 @@ export function onAccountChange(listener: () => void): () => void {
   bus.addEventListener("changed", listener);
   return () => bus.removeEventListener("changed", listener);
 }
+
+/**
+ * "Connect settings" in the sync popover opens the same dialog as the Account page's. The popover sits in the sidebar,
+ * so the Account page may not be open yet: the ask is kept until a page that can show the dialog takes it.
+ */
+let connectAsked = false;
+const connectBus = new EventTarget();
+
+export function requestConnect(): void {
+  connectAsked = true;
+  connectBus.dispatchEvent(new Event("ask"));
+}
+
+/** Drops an ask nobody took: it must not open the dialog much later, after a sign-out or on a page with no account. */
+export function clearConnectRequest(): void {
+  connectAsked = false;
+}
+
+/** True once for each ask, to whichever page takes it first. */
+export function takeConnectRequest(): boolean {
+  const asked = connectAsked;
+  connectAsked = false;
+  return asked;
+}
+
+export function onConnectRequest(listener: () => void): () => void {
+  connectBus.addEventListener("ask", listener);
+  return () => connectBus.removeEventListener("ask", listener);
+}

@@ -73,6 +73,9 @@ async function run(page, step) {
       await page.keyboard.press(step.key);
       await page.waitForTimeout(300);
       return;
+    case "wait":
+      await page.waitForTimeout(step.ms);
+      return;
     case "route":
       await route(page, step);
       return;

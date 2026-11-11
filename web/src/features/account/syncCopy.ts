@@ -31,6 +31,12 @@ export function syncLine(sync: AccountSyncView): SyncLine {
   }
 }
 
+/** Whether a sync is running now: the row says "Syncing…" with no count (the service does not report one), and only Pause is offered. */
+export function isSyncing(sync: AccountSyncView): boolean {
+  if (refused(sync)) return false;
+  return sync.kind === "syncing" || sync.kind === "signing_in" || sync.kind === "throttled" || (sync.kind === "online" && sync.waiting > 0);
+}
+
 export function lastSynced(sync: AccountSyncView): string | null {
   if (sync.last_synced === undefined || sync.last_synced === null) return null;
   return new Date(sync.last_synced * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

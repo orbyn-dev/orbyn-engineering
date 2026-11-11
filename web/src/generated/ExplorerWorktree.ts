@@ -29,6 +29,11 @@ head: string,
  */
 is_main: boolean, 
 /**
+ * The project's folder is a subfolder of a Git checkout: the only row, rooted at
+ * that folder. Nothing above it is shown, and it has no change letters.
+ */
+is_subfolder: boolean, 
+/**
  * Orbyn must not write here; `read_only_reason` says why.
  */
 read_only: boolean, read_only_reason: ExplorerReadOnlyReason | null, 
