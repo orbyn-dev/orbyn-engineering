@@ -210,3 +210,55 @@ fn the_gate_map_does_not_grow_without_bound() {
     assert!(locked(&reads.gates).contains_key("busy"));
     drop(held);
 }
+
+#[tokio::test]
+async fn a_project_whose_git_file_names_an_ancestor_repository_is_refused() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let ancestor = other(&dir);
+    let inner = repo(&ancestor.join("inner"));
+    let project = trusted(&core, &inner).await;
+    assert!(
+        core.explorer_worktrees(&project.id, None, false)
+            .await
+            .is_ok()
+    );
+    std::fs::remove_dir_all(inner.join(".git")).unwrap();
+    std::fs::write(
+        inner.join(".git"),
+        format!("gitdir: {}\n", ancestor.join(".git").display()),
+    )
+    .unwrap();
+    core.explorer.changed(&project.id);
+    denied(core.explorer_worktrees(&project.id, None, true).await);
+    cannot_reach(&core, &project, &ancestor, "marker-label.txt").await;
+}
+
+#[tokio::test]
+async fn a_git_folder_that_names_its_working_tree_is_shown_only_for_that_tree() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let src = repo(&dir.path().join("work/sub"));
+    let moved = dir.path().join("mods/sub.git");
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(src.join(".git"), &moved).unwrap();
+    std::fs::write(src.join(".git"), "gitdir: ../../mods/sub.git\n").unwrap();
+    // What a submodule's Git folder carries.
+    run_git(&moved, &["config", "core.worktree", &src.to_string_lossy()]);
+    let legit = trusted(&core, &src).await;
+    let listed = core
+        .explorer_worktrees(&legit.id, None, false)
+        .await
+        .unwrap();
+    assert!(listed.worktrees.iter().any(|w| w.is_main));
+    // Another project whose `.git` file was pointed at that Git folder is not its checkout.
+    let evil = dir.path().join("work/evil");
+    write(&evil.join("a.txt"), "x\n");
+    run_git(&evil, &["init", "-q", "-b", "main"]);
+    let evil_project = trusted(&core, &evil).await;
+    std::fs::remove_dir_all(evil.join(".git")).unwrap();
+    std::fs::write(evil.join(".git"), format!("gitdir: {}\n", moved.display())).unwrap();
+    core.explorer.changed(&evil_project.id);
+    denied(core.explorer_worktrees(&evil_project.id, None, true).await);
+    cannot_reach(&core, &evil_project, &src, "a.txt").await;
+}

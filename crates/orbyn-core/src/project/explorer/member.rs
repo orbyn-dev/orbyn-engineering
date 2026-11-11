@@ -44,6 +44,36 @@ fn gitdir_of(dot: &Path) -> Option<PathBuf> {
     canon(&target)
 }
 
+/// The `core.worktree` a Git directory's own config names, canonicalized: `None` when it
+/// names none, `Some(None)` when it names a folder that cannot be resolved. Only the
+/// repository's own `config` file is read; nothing it includes is.
+fn configured_worktree(git_dir: &Path) -> Option<Option<PathBuf>> {
+    let mut text = String::new();
+    std::fs::File::open(git_dir.join("config"))
+        .ok()?
+        .take(64 * 1024)
+        .read_to_string(&mut text)
+        .ok()?;
+    let mut in_core = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_core = line.to_ascii_lowercase().starts_with("[core]");
+        } else if in_core
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim().eq_ignore_ascii_case("worktree")
+        {
+            let value = Path::new(value.trim().trim_matches('"'));
+            let value = if value.is_absolute() {
+                value.to_path_buf()
+            } else {
+                git_dir.join(value)
+            };
+            return Some(canon(&value));
+        }
+    }
+    None
+}
+
 /// A folder that is a Git directory rather than a checkout.
 fn is_git_dir(path: &Path) -> bool {
     path.join("HEAD").is_file() && path.join("objects").is_dir()
@@ -94,6 +124,11 @@ pub(super) fn resolve(records: Vec<WorktreeRecord>, project: &Path) -> Result<Ve
     } else if is_git_dir(&first_path) {
         let main = gitdir_of(&project.join(".git"))
             .filter(|dir| *dir == first_path && project != first_path)
+            // A Git folder that names its working tree (a submodule's does) must name this one.
+            .filter(|dir| match configured_worktree(dir) {
+                None => true,
+                Some(worktree) => worktree.is_some_and(|worktree| worktree == project),
+            })
             .map(|_| WorktreeRecord {
                 path: project.to_path_buf(),
                 ..first.clone()
@@ -129,9 +164,11 @@ pub(super) fn resolve(records: Vec<WorktreeRecord>, project: &Path) -> Result<Ve
             record,
         });
     }
-    let holds_project = entries.iter().any(|entry| {
-        entry.member && canon(&entry.record.path).is_some_and(|path| project.starts_with(path))
-    });
+    // A project is a checkout root, so only its own folder will do: a member folder above it
+    // (a rewritten `.git` file naming an ancestor repository) is not the project.
+    let holds_project = entries
+        .iter()
+        .any(|entry| entry.member && canon(&entry.record.path).is_some_and(|path| path == project));
     if holds_project {
         Ok(entries)
     } else {
