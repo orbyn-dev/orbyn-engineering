@@ -27,7 +27,7 @@ request goes anywhere. `LocalOnly` exists only in test and debug builds. The des
 | `fake` | A fake `DeviceApi` (debug and test builds only) |
 
 The local copy of each record, the outbox, the cursor and the conflicts are durable state, so they
-live with the rest in [`store::account_sync`](../store/account_sync.rs) (migration 29). A preference
+live with the rest in [`store::account_sync`](../store/account_sync.rs) (migration 29; migration 35 adds the owning account). A preference
 write queues its fields in the same transaction as the write (`Store::change_settings`); values that
 arrive from the account go through `change_settings_synced`, which queues nothing and applies only
 fields not applied before.

@@ -101,9 +101,29 @@ pub(super) fn insert_object(
     let id = object.id().as_str();
     match object {
         CrewObject::Message(o) => tx.execute(
-            "INSERT INTO crew_messages (id, task_id, recipient, kind, body)
-             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
-            params![id, task_id, o.to.as_str(), super::wire_name(o.kind)?, body],
+            "INSERT INTO crew_messages (id, task_id, recipient, kind, body, sender)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                task_id,
+                o.to.as_str(),
+                super::wire_name(o.kind)?,
+                body,
+                o.author.member.as_ref().map_or("", |m| m.as_str())
+            ],
+        )?,
+        CrewObject::Fact(o) => tx.execute(
+            "INSERT INTO crew_facts (id, task_id, crew_id, key, rev, author, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                task_id,
+                o.crew_id.as_str(),
+                o.key.as_str(),
+                i64::try_from(o.rev).unwrap_or(i64::MAX),
+                o.author.member.as_ref().map_or("", |m| m.as_str()),
+                body
+            ],
         )?,
         CrewObject::Lease(o) => tx.execute(
             "INSERT INTO crew_leases (id, task_id, holder, state, expires_at, body)
@@ -305,30 +325,41 @@ impl Store {
         bodies.iter().map(|text| read_object(text)).collect()
     }
 
-    /// What the worker `reader` may be shown about a task: the brief, and the messages
-    /// addressed to `all` or to `reader`. A message to the lead or to another member is
-    /// left out, and so are the reader's own sent messages (the spec does not give a worker
-    /// a view of them). Evidence, gates and results are left out too, since they carry the
-    /// answer key's check ids and commands. The H1 leak check must still run on each object
-    /// before it reaches a worker: a message can quote a check.
+    /// What the member `reader` may be shown: the task's brief, the messages in its crew
+    /// addressed to `reader` or to `all` (not its own), and the board's facts. A message to
+    /// the lead or to another member is left out, and so is the reader's own `all`. Evidence,
+    /// gates and results are left out too, since they carry the answer key's check ids and
+    /// commands. The H1 leak check must still run on each object before it reaches a worker:
+    /// a message or a fact can quote a check.
     pub fn crew_worker_objects(&self, task_id: &str, reader: &str) -> Result<Vec<WorkerObject>> {
         let mut shown: Vec<WorkerObject> = self
             .crew_brief(task_id)?
             .into_iter()
             .map(WorkerObject::Brief)
             .collect();
+        let Some(task) = self.crew_task(task_id)? else {
+            return Ok(shown);
+        };
         let bodies = {
             let conn = self.reader();
             let mut statement = conn.prepare(
-                "SELECT body FROM crew_messages WHERE task_id = ?1 AND (recipient = 'all' OR recipient = ?2) ORDER BY rowid",
+                "SELECT m.body FROM crew_messages m JOIN crew_tasks t ON t.id = m.task_id
+                 WHERE t.crew_id = ?1
+                   AND (m.recipient = ?2 OR (m.recipient = 'all' AND m.sender != ?2))
+                 ORDER BY m.rowid",
             )?;
             statement
-                .query_map(params![task_id, reader], |row| row.get::<_, String>(0))?
+                .query_map(params![task.crew_id, reader], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
         for body in bodies {
             shown.push(WorkerObject::try_from(read_object(&body)?).map_err(refuse)?);
         }
+        shown.extend(
+            self.crew_facts(&task.crew_id)?
+                .into_iter()
+                .map(WorkerObject::Fact),
+        );
         Ok(shown)
     }
 

@@ -3,8 +3,8 @@
 //! carries any envelope field is refused, so a member cannot forge an author, an id or a run.
 
 use orbyn_contracts::{
-    AnswerKey, Brief, CrewAuthor, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewRole,
-    CrewTimestamp, CrewToken, ErrorCode, Report, reject_floats,
+    AnswerKey, Brief, CrewAuthor, CrewError, CrewHash, CrewId, CrewMember, CrewMessage, CrewObject,
+    CrewRole, CrewTimestamp, CrewToken, ErrorCode, Fact, Report, reject_floats,
 };
 use serde_json::{Value, json};
 
@@ -117,5 +117,44 @@ impl Stamper {
         report.validate()?;
         report.id = CrewObject::Report(report.clone()).computed_id()?;
         Ok(report)
+    }
+
+    /// A member's message in `run`. The sender's role and member id come from the caller, so a
+    /// draft that names an author, an id or a run is refused.
+    pub fn message(
+        &self,
+        draft: &Value,
+        run: &CrewId,
+        role: CrewRole,
+    ) -> Result<CrewMessage, CrewError> {
+        let own = [("run_id", json!(run))];
+        let full = self.envelope("message", draft, role, &own)?;
+        let mut message: CrewMessage = Self::read(full)?;
+        message.validate()?;
+        message.id = CrewObject::Message(message.clone()).computed_id()?;
+        Ok(message)
+    }
+
+    /// A member's board write in `run`. The core sets `rev` to one past the revision the
+    /// writer read (`base_rev`), so a draft that names `rev` is refused. An absent `evidence`
+    /// is empty.
+    pub fn fact(&self, draft: &Value, run: &CrewId, role: CrewRole) -> Result<Fact, CrewError> {
+        let base = draft
+            .get("base_rev")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| invalid("base_rev: the revision you read, or 0 for a new key".into()))?;
+        let own = [
+            ("run_id", json!(run)),
+            ("rev", json!(base.saturating_add(1))),
+        ];
+        let mut full = self.envelope("fact", draft, role, &own)?;
+        full.as_object_mut()
+            .expect("an object")
+            .entry("evidence")
+            .or_insert_with(|| json!([]));
+        let mut fact: Fact = Self::read(full)?;
+        fact.validate()?;
+        fact.id = CrewObject::Fact(fact.clone()).computed_id()?;
+        Ok(fact)
     }
 }

@@ -150,6 +150,8 @@ pub struct Core {
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
     /// Crew Preview: one `crew_start` at a time, so two briefs cannot both be granted a path.
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
+    /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
+    pub(crate) crew_bus: crate::crew::Bus,
     _lock: File,
 }
 
@@ -291,6 +293,7 @@ impl Core {
             tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
+            crew_bus: crate::crew::Bus::default(),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared

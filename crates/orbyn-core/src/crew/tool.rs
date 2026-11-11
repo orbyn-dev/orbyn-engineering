@@ -23,7 +23,7 @@ pub const REPORT_TOOL: &str = "crew_report";
 
 /// Whether `name` is a Crew tool.
 pub fn is_tool(name: &str) -> bool {
-    [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name)
+    [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name) || super::BUS_TOOLS.contains(&name)
 }
 
 /// The member id the lead thread has in a crew (the conformance fixtures call it `lead-01`).
@@ -31,7 +31,7 @@ pub(super) const LEAD_MEMBER: &str = "lead-01";
 
 /// The tool as `tools/list` shows it.
 pub fn tool_specs() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         route_spec(),
         json!({
             "name": START_TOOL,
@@ -63,7 +63,9 @@ pub fn tool_specs() -> Vec<Value> {
                 "required": ["summary"],
             },
         }),
-    ]
+    ];
+    tools.extend(super::bus::specs());
+    tools
 }
 
 fn route_spec() -> Value {
@@ -127,6 +129,7 @@ impl Core {
         let answer = match tool {
             START_TOOL => self.crew_start_tool(binding, args).await,
             REPORT_TOOL => self.crew_report_tool(binding, args).await,
+            bus if super::BUS_TOOLS.contains(&bus) => self.crew_bus_tool(binding, bus, args).await,
             _ => self.crew_route_tool(binding, args).await,
         };
         match answer {

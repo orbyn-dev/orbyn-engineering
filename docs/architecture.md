@@ -2542,7 +2542,7 @@ reports nothing. Orbyn has no older thread database to import (A54), so this for
 upgrade is the only migration event.
 
 The optional account's settings sync keeps its non-secret state here too (`account_*`
-tables, migration 29): the local copy of each zone's record, the outbox of fields not yet
+tables, migration 29; migration 35 records which account the local record belongs to): the local copy of each zone's record, the outbox of fields not yet
 uploaded, the zone cursor and the conflicts to show. They stay empty while the sign-in gate
 is `Off`. A preference write queues its fields in its own transaction, so a crash loses
 neither; no key, token or password is stored in them ([account design](account.md)).

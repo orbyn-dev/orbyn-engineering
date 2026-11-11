@@ -45,6 +45,11 @@ pub enum Turn {
 pub type Script = Arc<dyn Fn(usize, &std::path::Path) -> Turn + Send + Sync>;
 
 pub struct Fake {
+    id: String,
+    /// Takes input while a turn runs, as Claude and Codex do; false is an engine that does not.
+    steerable: bool,
+    /// What was handed to a running turn's input: `(thread, text)`.
+    steered: Arc<Mutex<Vec<(String, String)>>>,
     core: Arc<OnceLock<Weak<Core>>>,
     script: Script,
     turns: Arc<AtomicUsize>,
@@ -58,8 +63,8 @@ pub struct Fake {
 impl EngineDriver for Fake {
     fn descriptor(&self) -> EngineDescriptor {
         EngineDescriptor {
-            id: "alpha".into(),
-            name: "alpha".into(),
+            id: self.id.clone(),
+            name: self.id.clone(),
             tier: EngineTier::Acp,
             capabilities: caps(),
         }
@@ -75,7 +80,7 @@ impl EngineDriver for Fake {
     }
 
     async fn models(&self) -> Result<Option<ModelCatalog>> {
-        let models: Vec<ModelInfo> = vec![model("alpha-model", "alpha", true)];
+        let models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
         Ok(Some(ModelCatalog::engine(models)))
     }
 
@@ -89,6 +94,7 @@ impl EngineDriver for Fake {
             .unwrap()
             .push((spec.thread_id.clone(), spec.prompt.clone()));
         let core = self.core.get().and_then(Weak::upgrade).expect("a core");
+        let spec_thread = spec.thread_id.clone();
         let worker = core
             .store
             .crew_task_for_worker(&spec.thread_id)
@@ -122,10 +128,20 @@ impl EngineDriver for Fake {
             };
             let _ = events.send(EngineEvent::Finished(outcome)).await;
         });
+        let input = self.steerable.then(|| {
+            let (send, mut receive) = mpsc::unbounded_channel::<String>();
+            let (steered, thread) = (self.steered.clone(), spec_thread);
+            tokio::spawn(async move {
+                while let Some(text) = receive.recv().await {
+                    steered.lock().unwrap().push((thread.clone(), text));
+                }
+            });
+            send
+        });
         Ok(RunHandle {
             cancel,
             task,
-            input: None,
+            input,
             control: None,
         })
     }
@@ -150,11 +166,19 @@ pub struct World {
     /// Read only by the Unix-only leak test, so it is dead code on Windows.
     #[cfg_attr(not(unix), allow(dead_code))]
     pub answers: Arc<Mutex<Vec<String>>>,
+    /// What running turns were handed mid-turn: `(thread, text)`.
+    pub steered: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 /// A core with the Crew Preview flag as asked, one git project with a first commit, a lead
 /// thread and a fake engine `alpha` that plays `script`.
 pub async fn world(preview: bool, script: Script) -> World {
+    world_with(preview, script, &[("alpha", false)]).await
+}
+
+/// `world`, with these fake engines: each is an id and whether it takes input mid-turn. The
+/// lead runs on the first.
+pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)]) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -168,13 +192,20 @@ pub async fn world(preview: bool, script: Script) -> World {
     let cell = Arc::new(OnceLock::new());
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let answers = Arc::new(Mutex::new(Vec::new()));
-    core.engines.register(Arc::new(Fake {
-        core: cell.clone(),
-        script,
-        turns: Arc::default(),
-        prompts: prompts.clone(),
-        answers: answers.clone(),
-    }));
+    let steered = Arc::new(Mutex::new(Vec::new()));
+    let turns: Arc<AtomicUsize> = Arc::default();
+    for (id, steerable) in engines {
+        core.engines.register(Arc::new(Fake {
+            id: (*id).to_owned(),
+            steerable: *steerable,
+            steered: steered.clone(),
+            core: cell.clone(),
+            script: script.clone(),
+            turns: turns.clone(),
+            prompts: prompts.clone(),
+            answers: answers.clone(),
+        }));
+    }
     cell.set(Arc::downgrade(&core)).unwrap();
     core.workspace
         .setup(WorkspaceSetup {
@@ -205,7 +236,7 @@ pub async fn world(preview: bool, script: Script) -> World {
     let lead = core
         .create_thread(CreateThread {
             project_id: Some(project.id.clone()),
-            engine: "alpha".into(),
+            engine: engines[0].0.into(),
             model: None,
             title: Some("lead".into()),
             worktree: None,
@@ -225,6 +256,7 @@ pub async fn world(preview: bool, script: Script) -> World {
         lead_token,
         prompts,
         answers,
+        steered,
     }
 }
 

@@ -1,7 +1,8 @@
 //! Crew (Preview): the engine-agnostic crew of agents, behind `CoreConfig::crew_preview`.
-//! This group holds the router, the task lifecycle, the verifier and the tools; the protocol's objects are in
+//! This group holds the router, the task lifecycle, the verifier, the bus and the tools; the protocol's objects are in
 //! `orbyn-contracts` and their tables in `store`.
 
+mod bus;
 mod checks;
 mod filters;
 mod gather;
@@ -26,6 +27,7 @@ mod workers;
 #[cfg(test)]
 mod tests;
 
+pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
 pub use leases::refuse_protected;
