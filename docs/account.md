@@ -465,12 +465,21 @@ invite, the device check, the emailed code), the signed-in page with Sync now, P
 line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
 adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
 popovers, and the code-age hint. **New-device approval and "Connect this computer's settings"** are built behind the account module against the
-stand-in (`AwaitingApproval`, `approve`, `deny`, the first-sync policy), with the screens in the pull request after
-it, and wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
-(`signout-other-device-removed`), because the Engine answers a removed device and an ended session with the same 401;
+stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); they wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); a removed-device notice that names a removal (the Engine answers a removed device and an ended session with the same
+401, so `signout-other-device-removed` says neutrally "This device may have been removed, or your sessions ended", once, and
+not after the person's own sign out everywhere: the service keeps that in memory, `ended_notice` and `POST /api/account/ended/seen`);
 the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
 The designs decided that with the gate `Off` Settings > Account is hidden, the palette has no Account entry, and the
 sidebar footer shows no sync status. The sections below are the plan as written before that work.
+
+**Sign-in approval, what a real sign-in can show.** The Engine\'s `deny(id)` and a cancel look the same and carry no
+reason, so on the new device the closed states a real sign-in can reach are: waiting (with the digits and the time
+left), allowed (a spinner and "Signing you in…"), "Denied or cancelled." (any close from the other side), and "No one
+approved this sign-in in time" (ten minutes, counted on this computer\'s clock). "The codes didn\'t match" shows only
+when the person taps "They don\'t match" on this computer\'s own screen, which gives the request up. The core\'s
+`codes_differ` answer belongs to the development stand-in and is not reachable from the real client; no screen depends
+on it (it reads as "Denied or cancelled."). On the trusted device a request that is gone reads "Denied or cancelled."
+too.
 
 **Planned is design-time only.** In the beta a Planned row or label is communication in the frames and nothing
 the product shows, unless the owner says otherwise: no Security group (password, two-factor, passkeys), no "Forgot

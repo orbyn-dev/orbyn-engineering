@@ -145,6 +145,7 @@
     ["POST","/api/account/connect/seen"],
     ["POST","/api/account/connect/use-account"],
     ["POST","/api/account/connect/use-device"],
+    ["POST","/api/account/ended/seen"],
     ["POST","/api/account/sign-in"],
     ["POST","/api/account/sign-in/approval"],
     ["POST","/api/account/sign-in/cancel"],

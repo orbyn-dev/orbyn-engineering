@@ -184,6 +184,12 @@ impl DevAccount {
         self.lock().incoming.retain(|(request, _)| request.id != id);
     }
 
+    /// The Engine ends this device's session without the person doing it.
+    #[cfg(test)]
+    pub fn sign_out_elsewhere(&self) {
+        self.lock().session = None;
+    }
+
     /// Whether the stand-in still holds a session for this device.
     #[cfg(test)]
     pub fn signed_in(&self) -> bool {

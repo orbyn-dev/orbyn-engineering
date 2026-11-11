@@ -16,6 +16,7 @@ export function SignedInPage({
   onChanged,
   onError,
   onOpenDevices,
+  onConnect,
   onSignOut,
   onSignOutEverywhere,
 }: {
@@ -25,6 +26,7 @@ export function SignedInPage({
   onChanged(): void;
   onError(message: string): void;
   onOpenDevices(): void;
+  onConnect(): void;
   onSignOut(): void;
   onSignOutEverywhere(): void;
 }) {
@@ -62,12 +64,14 @@ export function SignedInPage({
           <small>{stale ? syncRowText(sync, true) : syncRowText(sync)}</small>
           {pause?.off && !stale ? <small>{pause.off}</small> : null}
         </div>
-        {pausedAny ? null : offline ? (
+        {view.connect !== "connected" ? (
+          <Button small disabled={stale} onClick={onConnect}>Connect settings</Button>
+        ) : pausedAny ? null : offline ? (
           <Button small disabled>Waiting for a connection</Button>
         ) : (
           <Button small disabled={busy || stale} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>
         )}
-        {pause ? (
+        {view.connect !== "connected" ? null : pause ? (
           pause.action.kind === "resume" ? (
             <Button small disabled={busy || stale || !pause.action.enabled} onClick={() => void act(() => accountApi.resumeSync())}>Resume sync</Button>
           ) : pause.action.kind === "keybindings" ? (

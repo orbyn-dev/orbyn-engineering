@@ -5,6 +5,7 @@ import { Button } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { accountApi } from "./api";
 import { Failure } from "./Card";
+import { ApprovalRequests } from "./ApprovalRequests";
 import { ConfirmItsYou } from "./ConfirmItsYou";
 import { DeviceRows, DevicesNote } from "./DeviceRows";
 import { useAfter } from "./useCountdown";
@@ -35,6 +36,7 @@ export function DevicesPage({ view }: { view: AccountView }) {
         </div>
       ) : null}
       {removed ? <p className="ac-done" role="status" tabIndex={-1} ref={notice}><b>{removed} was removed.</b> It was signed out and stopped syncing.</p> : null}
+      <ApprovalRequests />
       <p className="ac-sub">Devices signed in to your account. Each one shows the Orbyn app it signs in to.</p>
       {list ? (
         <div className="ac-last" data-stale={failed || undefined}>

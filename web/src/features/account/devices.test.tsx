@@ -29,6 +29,9 @@ async function signedInPage(knobs: () => void = () => undefined) {
   return user;
 }
 
+/** The devices signed in, not the requests from new ones waiting to be let in. */
+const deviceRows = () => screen.getAllByRole("listitem").filter((row) => !/asks to sign in/.test(row.getAttribute("aria-label") ?? ""));
+
 async function removeFrom(user: ReturnType<typeof userEvent.setup>, name: string) {
   const row = screen.getByRole("listitem", { name });
   await user.click(within(row).getByRole("button", { name: /^Device menu/ }));
@@ -45,7 +48,7 @@ describe("the devices", () => {
     const user = await signedInPage();
     expect(await screen.findByRole("heading", { name: "Devices · 3" })).toBeVisible();
     await openDevices(user);
-    const rows = screen.getAllByRole("listitem");
+    const rows = deviceRows();
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["This computer", "iPhone", "Mac mini"]);
     expect(within(rows[0] as HTMLElement).getByText("This device")).toBeVisible();
     expect(within(rows[0] as HTMLElement).queryByRole("button", { name: /^Device menu/ })).toBeNull();
@@ -91,7 +94,7 @@ describe("the devices", () => {
     const user = await signedInPage(() => mock.setAccount({ devices: { onlyThis: true } }));
     await openDevices(user);
     expect(await screen.findByText("This is the only device signed in.")).toBeVisible();
-    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(deviceRows()).toHaveLength(1);
   });
 
   it("when the list cannot be read says so, keeps the last list dimmed and Try again reads it again", async () => {

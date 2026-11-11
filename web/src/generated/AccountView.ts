@@ -28,6 +28,11 @@ needs_second_factor: boolean,
  */
 approval?: AccountApprovalView, connect: AccountConnectState, 
 /**
+ * The service ended this computer's session (not the person: a removal or an ended session)
+ * and the person has not been told yet.
+ */
+ended_notice: boolean, 
+/**
  * Set after the first sync of a joined computer, until the person closes the summary.
  */
 connect_summary?: AccountConnectSummary, deletion_scheduled: boolean, sync: AccountSyncView, };

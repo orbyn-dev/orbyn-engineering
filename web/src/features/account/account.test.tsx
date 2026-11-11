@@ -397,7 +397,7 @@ describe("Confirm it’s you", () => {
     // The confirmation names its action and device, and carries the password nowhere else.
     const sent = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/account/confirm");
     expect(sent).toHaveLength(1);
-    expect(JSON.parse(String(sent[0]?.[1]?.body))).toEqual({ password: PASSWORD, action: "remove_device", device_id: "dev-mini" });
+    expect(JSON.parse(String(sent[0]?.[1]?.body))).toEqual({ password: PASSWORD, action: "remove_device", device_id: "dev-mini", policy: null });
   });
 
   it("a wrong password is said under the field, cleared, and the action is not done", async () => {

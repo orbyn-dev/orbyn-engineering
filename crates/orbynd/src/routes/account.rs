@@ -93,6 +93,7 @@ pub const OPEN: &[(&str, &str)] = &[
         "leaves this computer's settings where they are",
     ),
     ("POST /api/account/connect/seen", "closes a summary"),
+    ("POST /api/account/ended/seen", "dismisses a notice"),
 ];
 
 /// Reads under `/api/account`: they change nothing.
@@ -123,6 +124,7 @@ fn open_routes() -> Router<AppState> {
         .route("/api/account/connect", post(connect))
         .route("/api/account/connect/later", post(connect_later))
         .route("/api/account/connect/seen", post(connect_seen))
+        .route("/api/account/ended/seen", post(ended_seen))
         .route("/api/account/sign-up/invite", post(check_invite))
         .route("/api/account/sign-up/start", post(start_sign_up))
         .route("/api/account/sign-up/resend", post(resend_code))
@@ -463,6 +465,11 @@ async fn connect_use_account(State(state): State<AppState>) -> ApiResult<StatusC
 
 async fn connect_later(State(state): State<AppState>) -> ApiResult<StatusCode> {
     state.core.account.connect_later().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn ended_seen(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    state.core.account.ended_seen().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
