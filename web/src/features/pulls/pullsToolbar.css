@@ -158,7 +158,7 @@
   box-shadow: none;
 }
 .pulls-fld .pulls-inp input::placeholder {
-  color: var(--color-faint);
+  color: var(--color-muted);
 }
 .pulls-inp kbd {
   margin-left: auto;

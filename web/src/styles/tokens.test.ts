@@ -67,22 +67,41 @@ describe("design tokens", () => {
     }
   });
 
-  it("keeps the faint step off text: only placeholders, disabled controls, icons and dividers use it for color", () => {
-    // Selectors where the faint step is allowed: placeholder-like search fields, dimmed or disabled controls, icons and dividers.
-    const exempt = /::placeholder|:disabled|\[data-dim\]|\.icon-btn|> svg|\.crumb-slash|\.search-trigger|\.search-field|^\.set-find$|^\.settings-search$/;
-    const all = (folder: string): string[] => readdirSync(folder, { withFileTypes: true }).flatMap((entry) =>
-      entry.isDirectory() ? all(join(folder, entry.name)) : entry.name.endsWith(".css") ? [join(folder, entry.name)] : []);
+  it("keeps the faint step off text: it colours icons, separators and disabled controls only", () => {
+    // --color-faint is under 4.5:1 as text in Light and Dark, so a rule may set `color` to it only when the rule
+    // paints an icon (a direct svg or an icon button), a "/" separator, a dimmed icon button or a disabled control
+    // (WCAG exempts inactive components). Text, placeholders and the text inside a search field use --color-muted.
+    const allowed = /^(?:.*> svg|.*\.icon-btn|\.crumb-slash|\.tbi\[data-dim\]|.*:disabled)$/;
     const offenders: string[] = [];
-    for (const file of all(join(process.cwd(), "src"))) {
-      if (file.endsWith("tokens.css")) continue;
-      const text = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const [name, raw] of Object.entries(allCss)) {
+      if (name.endsWith("tokens.css")) continue;
+      const text = raw.replace(/\/\*[\s\S]*?\*\//g, "");
       for (const [, selector = "", body = ""] of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         if (!/(?<![-\w])color:\s*[^;]*--color-faint/.test(body)) continue;
-        if (selector.split(",").every((part) => exempt.test(part.trim()))) continue;
-        offenders.push(`${file.replace(`${process.cwd()}/`, "")}: ${selector.trim().replace(/\s+/g, " ")}`);
+        if (selector.split(",").every((part) => allowed.test(part.trim()))) continue;
+        offenders.push(`${name}: ${selector.trim().replace(/\s+/g, " ")}`);
       }
     }
-    expect(offenders).toEqual([]);
+    expect(offenders, "text must use var(--color-muted); --color-faint is for icons, separators and disabled controls (it is under 4.5:1 as text). Fix the rule, or allow it here only if it paints an icon").toEqual([]);
+  });
+
+  it("keeps the faint step out of inline text styles", () => {
+    // Chart series fills are not text. Any other TSX file naming the token needs the same review as a stylesheet rule.
+    const fills = new Set(["features/usage/UsageView.tsx"]);
+    const tsx = (folder: string): string[] => readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(folder, entry.name);
+      return entry.isDirectory() ? tsx(path) : /\.tsx$/.test(entry.name) ? [path] : [];
+    });
+    const offenders = tsx(srcDir)
+      .map((path) => relative(srcDir, path).replaceAll("\\", "/"))
+      .filter((name) => !fills.has(name) && readFileSync(join(srcDir, name), "utf8").includes("--color-faint"));
+    expect(offenders, "inline text must use var(--color-muted), not var(--color-faint)").toEqual([]);
+  });
+
+  it("flags a text rule that uses the faint step", () => {
+    const bad = ".note { color: color-mix(in srgb, var(--color-faint) 80%, transparent); }";
+    expect(/(?<![-\w])color:\s*[^;]*--color-faint/.test(bad)).toBe(true);
+    expect(/(?<![-\w])color:\s*[^;]*--color-faint/.test(".x { border-color: var(--color-faint); }")).toBe(false);
   });
 
   it("keeps font sizes on the type scale", () => {

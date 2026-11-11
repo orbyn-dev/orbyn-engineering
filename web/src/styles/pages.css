@@ -27,6 +27,9 @@
   padding: 0 10px;
   border-radius: var(--radius-md);
   background: var(--color-sunken);
+  color: var(--color-muted);
+}
+.settings-search > svg {
   color: var(--color-faint);
 }
 .settings-search input {
