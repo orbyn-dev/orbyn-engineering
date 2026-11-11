@@ -29,6 +29,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `protect` | Records the key's protected files (type, executable bit, SHA-256 of the exact bytes, links not followed) before the worker exists, and compares at verify time. Git is not asked, so nothing the worker can write in `.git` hides a change |
 | `recover` | After a restart: clears dead verification claims, verifies a task left `verifying`, stops one whose worker is gone, sets the budget timers again |
 | [`bus`](bus/README.md) | The Crew bus: `crew_post`, `crew_ask`, the board, steering delivery and the guards for hops, posts, sizes and the end of a run |
+| [`review`](review/README.md) | Review stages: reviewer lanes, typed findings, the finding check, the fix loop and repo rules that add lanes |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
 ## Rules to keep
@@ -100,7 +101,7 @@ with a fake worker that writes files in a git checkout and calls `crew_report` o
 takes a task from its first turn to the end (fail, retry with the reason, the same failure twice,
 one change of approach, stop; pass; no report; engine error), `starts.rs` covers what a start
 refuses and the lease rules, `lifecycle.rs` checks the table against the spec's own, and
-`verify.rs` the reason a worker may read and the check runners. `bus.rs` and `bus_guards.rs` run two fake engines (one
+`verify.rs` the reason a worker may read and the check runners. `review.rs` runs the review stages (see the [review README](review/README.md)). `bus.rs` and `bus_guards.rs` run two fake engines (one
 takes input mid-turn, one does not) through the [bus](bus/README.md).
 
 The crate's [group table](../../README.md#groups) lists every group.

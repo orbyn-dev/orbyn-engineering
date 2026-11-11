@@ -29,6 +29,8 @@ pub struct CrewRun {
     pub protected: Option<String>,
     /// Set while one verification has claimed the task.
     pub verifying_since: Option<String>,
+    /// The index entries hiding a change from git when the task started, as JSON.
+    pub index_flags: Option<String>,
 }
 
 fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
@@ -49,6 +51,7 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
         last_report_run: row.get("last_report_run")?,
         protected: row.get("protected")?,
         verifying_since: row.get("verifying_since")?,
+        index_flags: row.get("index_flags")?,
     })
 }
 
@@ -131,6 +134,18 @@ impl Store {
             tx.execute(
                 "UPDATE crew_runs SET protected = ?2 WHERE task_id = ?1",
                 params![task_id, snapshot],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Records which index entries hid a change from git when the task started.
+    pub fn set_crew_index_flags(&self, task_id: &str, flags: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            find_run(tx, task_id)?;
+            tx.execute(
+                "UPDATE crew_runs SET index_flags = ?2 WHERE task_id = ?1",
+                params![task_id, flags],
             )?;
             Ok(())
         })

@@ -207,3 +207,64 @@ CREATE INDEX crew_bus_events_by_crew ON crew_bus_events(crew_id, id);
 CREATE TRIGGER crew_bus_events_immutable BEFORE UPDATE ON crew_bus_events
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 37: review lanes, findings and the fix loop (docs/crew.md, "Review stages"). A review run is a task of its own; its
+// row names the work it reviews (`subject_id`), its lane, its round (a re-review of a lane is the next round) and the commit
+// it read. `check_of` is set when the run is the independent second run of a finding check. A finding is the protocol's
+// object, kept beside the lane, round and a fingerprint of (lane, path, claim) so a later round can tell the same
+// finding from another. A finding has no state of its own: its confirmation is a Gate at stage `finding_check` stored with the
+// reviewed task. A repro row keeps the lead's repro check that confirmed or cleared a finding (core only: it is part of the key
+// for the fix, and never shown to a worker). A fix row ties a confirmed finding to the builder task that answers it. All rows are immutable.
+pub(super) const CREW_REVIEW: &str = r#"
+-- The index entries that hid a change from git when the task started (`git ls-files -v` showing `h` or `S`), as a JSON list.
+-- A check fails if the worker adds one: an edit to such a file does not show in any git diff.
+ALTER TABLE crew_runs ADD COLUMN index_flags TEXT;
+CREATE TABLE crew_reviews (
+    task_id TEXT PRIMARY KEY REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    subject_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    lane TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('review', 'finding_check')),
+    round INTEGER NOT NULL CHECK(round >= 1),
+    commit_id TEXT NOT NULL,
+    check_of TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX crew_reviews_by_subject ON crew_reviews(subject_id, lane, round);
+
+CREATE TABLE crew_findings (
+    id TEXT PRIMARY KEY CHECK(id GLOB 'sha256:*'),
+    task_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    subject_id TEXT NOT NULL,
+    lane TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    body TEXT NOT NULL CHECK(json_valid(body))
+);
+CREATE INDEX crew_findings_by_subject ON crew_findings(subject_id, lane, round);
+CREATE INDEX crew_findings_by_task ON crew_findings(task_id);
+
+CREATE TABLE crew_finding_repros (
+    finding_id TEXT PRIMARY KEY REFERENCES crew_findings(id) ON DELETE CASCADE,
+    subject_id TEXT NOT NULL,
+    repro TEXT NOT NULL CHECK(json_valid(repro)),
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE crew_fixes (
+    finding_id TEXT PRIMARY KEY REFERENCES crew_findings(id) ON DELETE CASCADE,
+    subject_id TEXT NOT NULL,
+    fix_task_id TEXT NOT NULL UNIQUE REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX crew_fixes_by_subject ON crew_fixes(subject_id, fingerprint);
+
+CREATE TRIGGER crew_reviews_immutable BEFORE UPDATE ON crew_reviews
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+CREATE TRIGGER crew_findings_immutable BEFORE UPDATE ON crew_findings
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+CREATE TRIGGER crew_finding_repros_immutable BEFORE UPDATE ON crew_finding_repros
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+CREATE TRIGGER crew_fixes_immutable BEFORE UPDATE ON crew_fixes
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;
