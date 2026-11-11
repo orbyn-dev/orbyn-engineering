@@ -102,7 +102,7 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
   if (view.deletion_scheduled) {
     return (
       <Dialog
-        title="Deletion is scheduled"
+        title="Deletion is scheduled."
         onClose={onClose}
         footer={
           <>
@@ -111,8 +111,7 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
           </>
         }
       >
-        <p>Orbyn can’t sign out every session right now.</p>
-        <p className="ac-sub">Sign out everywhere is off while your account is waiting to be deleted. Signing out of this computer only still works.</p>
+        <p>Orbyn can’t sign out every session right now. Sign out everywhere is off while your account is waiting to be deleted. Signing out of this computer only still works.</p>
       </Dialog>
     );
   }

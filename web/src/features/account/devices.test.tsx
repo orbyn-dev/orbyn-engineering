@@ -167,8 +167,8 @@ describe("sign out", () => {
     const user = await signedInPage(() => mock.setAccount({ devices: { deletionScheduled: true } }));
     expect(screen.getByText("Off while your account is waiting to be deleted.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Sign out everywhere…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Deletion is scheduled" });
-    expect(dialog).toHaveTextContent("Orbyn can’t sign out every session right now.");
+    const dialog = await screen.findByRole("dialog", { name: "Deletion is scheduled." });
+    expect(dialog).toHaveTextContent("Orbyn can’t sign out every session right now. Sign out everywhere is off while your account is waiting to be deleted. Signing out of this computer only still works.");
     expect(screen.queryByRole("dialog", { name: "Confirm it’s you" })).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Sign out of this computer" }));
     expect(await screen.findByRole("dialog", { name: "Sign out of this computer?" })).toBeVisible();
