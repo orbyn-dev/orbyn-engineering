@@ -2,6 +2,7 @@
 // on loopback, and nowhere else; it is never kept here.
 import { request } from "../../api/client";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
+import type { AccountDevice } from "../../generated/AccountDevice";
 import type { AccountSignInResult } from "../../generated/AccountSignInResult";
 import type { AccountView } from "../../generated/AccountView";
 import { announceAccountChange } from "./changes";
@@ -26,6 +27,12 @@ export const accountApi = {
   /** One confirmation is for one action, and one device when it removes a device. */
   confirm: (password: string, action: AccountConfirmAction, deviceId?: string) =>
     post("/confirm", { password, action, device_id: deviceId ?? null }),
+  devices: (signal?: AbortSignal) => request<AccountDevice[]>("GET", "/api/account/devices", undefined, signal),
+  /** Needs a confirmation for exactly this device; the service refuses without one. */
+  removeDevice: (id: string) => changed(request<void>("DELETE", `/api/account/devices/${encodeURIComponent(id)}`)),
+  signOut: (discardUnsynced: boolean) => post("/sign-out", { discard_unsynced: discardUnsynced }),
+  /** Needs a confirmation for this action; the service refuses without one. */
+  signOutEverywhere: () => post("/sign-out-everywhere"),
   syncNow: () => post("/sync/now"),
   pauseSync: () => post("/sync/pause"),
   resumeSync: () => post("/sync/resume"),

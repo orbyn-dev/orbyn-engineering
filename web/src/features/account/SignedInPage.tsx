@@ -1,16 +1,39 @@
 import { useState } from "react";
 import { Button } from "../../ui/controls";
 import type { AccountView } from "../../generated/AccountView";
+import { navigate } from "../../product/state/route";
+import type { AccountDevice } from "../../generated/AccountDevice";
 import { accountApi } from "./api";
+import { DeviceRows, DevicesNote } from "./DeviceRows";
+import { pauseInfo } from "./pauseCopy";
 import { syncRowText } from "./syncCopy";
 
 /** The person's account, and the one sync zone that exists. */
-export function SignedInPage({ view, stale = false, onChanged, onError }: { view: AccountView; stale?: boolean; onChanged(): void; onError(message: string): void }) {
+export function SignedInPage({
+  view,
+  stale = false,
+  devices,
+  onChanged,
+  onError,
+  onOpenDevices,
+  onSignOut,
+  onSignOutEverywhere,
+}: {
+  view: AccountView;
+  stale?: boolean;
+  devices: AccountDevice[] | null;
+  onChanged(): void;
+  onError(message: string): void;
+  onOpenDevices(): void;
+  onSignOut(): void;
+  onSignOutEverywhere(): void;
+}) {
   const session = view.session;
   const [busy, setBusy] = useState(false);
   if (!session) return null;
   const sync = view.sync;
-  const paused = sync.kind === "paused" && sync.reason === "by_person";
+  const pausedAny = sync.kind === "paused" && sync.reason !== "zone_failed" && sync.reason !== "too_large";
+  const pause = pausedAny ? pauseInfo(sync, view.deletion_scheduled) : null;
   const offline = sync.kind === "offline";
   const act = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -37,16 +60,23 @@ export function SignedInPage({ view, stale = false, onChanged, onError }: { view
         <div>
           <b>Settings sync</b>
           <small>{stale ? syncRowText(sync, true) : syncRowText(sync)}</small>
+          {pause?.off && !stale ? <small>{pause.off}</small> : null}
         </div>
-        {paused ? null : offline ? (
+        {pausedAny ? null : offline ? (
           <Button small disabled>Waiting for a connection</Button>
         ) : (
           <Button small disabled={busy || stale} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>
         )}
-        {offline ? null : (
-          <Button small disabled={busy || stale} onClick={() => void act(() => (paused ? accountApi.resumeSync() : accountApi.pauseSync()))}>
-            {paused ? "Resume sync" : "Pause"}
-          </Button>
+        {pause ? (
+          pause.action.kind === "resume" ? (
+            <Button small disabled={busy || stale || !pause.action.enabled} onClick={() => void act(() => accountApi.resumeSync())}>Resume sync</Button>
+          ) : pause.action.kind === "keybindings" ? (
+            <Button small disabled={stale} onClick={() => navigate({ name: "settings", section: "keybindings" })}>Open keybindings</Button>
+          ) : pause.action.kind === "retry" ? (
+            <Button small disabled={busy || stale} onClick={() => void act(() => accountApi.syncNow())}>Try again</Button>
+          ) : null
+        ) : offline ? null : (
+          <Button small disabled={busy || stale} onClick={() => void act(() => accountApi.pauseSync())}>Pause</Button>
         )}
       </div>
       <div className="ac-row">
@@ -62,6 +92,25 @@ export function SignedInPage({ view, stale = false, onChanged, onError }: { view
           <small>Stay on each device: a profile sets a permission mode, tier and Autopilot mode, so another device never applies one automatically.</small>
         </div>
         <span className="ac-aside">This device only</span>
+      </div>
+      <h2 className="ac-grp">Devices{devices ? ` · ${devices.length}` : ""}</h2>
+      {devices ? <DeviceRows devices={devices} syncedAt={view.sync.last_synced ? view.sync.last_synced * 1000 : null} /> : null}
+      <button type="button" className="ac-lnk ac-manage" onClick={onOpenDevices} disabled={stale}>Manage devices</button>
+      <DevicesNote platform={view.platform} />
+      <h2 className="ac-grp">Account</h2>
+      <div className="ac-row">
+        <div>
+          <b>Sign out</b>
+          <small>Signs out on this computer only.</small>
+        </div>
+        <Button small onClick={onSignOut} disabled={stale}>Sign out</Button>
+      </div>
+      <div className="ac-row">
+        <div>
+          <b>Sign out everywhere</b>
+          <small>{view.deletion_scheduled ? "Off while your account is waiting to be deleted." : "Ends every session of your account, this one too. Asks for your password."}</small>
+        </div>
+        <Button small onClick={onSignOutEverywhere} disabled={stale}>Sign out everywhere…</Button>
       </div>
     </>
   );

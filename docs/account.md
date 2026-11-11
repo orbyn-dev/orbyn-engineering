@@ -354,7 +354,9 @@ now and does not wait for them.
    - the per-adapter options test;
    - the child-environment scrub tests;
    - the snapshot tests: older, other-profile and wrong-version files are refused;
-   - the key-wipe check on sign-out, device removal and `Unauthorized`;
+   - the key-wipe check on sign-out, device removal and `Unauthorized`. The sign-out and removal dialogs already say
+     "This device's keys, removed from the Keychain", so that copy and the wipe must land together: the gate does not
+     turn on until the wipe exists;
    - the canary tests for logs and diagnostics.
 5. macOS: the keychain API and the Developer ID provisioning are settled and verified on a signed build, and the
    release check shows hardened runtime without `get-task-allow` or `disable-library-validation`.
@@ -371,6 +373,11 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
 10. A test that request-body logging stays off the account routes, so no password reaches a log.
 11. A runtime "changes account state" marker on these routes, so Autopilot's always-denied rule (Crew slice 4f) can
     refuse them by policy. Today governance sees only a generic command or network action.
+12. Bind the "Confirm it's you" confirmation to the caller (issue #435). Today a confirmation is tied to the action
+    and the device but not to who typed the password, so after the person confirms, any holder of the service token can
+    run that exact action first, and an abandoned prompt leaves the confirmation live for ten minutes because there is no
+    cancel route. The fix is a one-time nonce that `/confirm` returns and the action request sends back, plus a cancel
+    route.
 
 `LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
 the rule:
@@ -442,11 +449,15 @@ The app records them here so the backend carries what the screens will need.
 (`account::flow`, `routes/account.rs`, pull request 428). The first screens are built from designs v91
 (pull request 429): Settings > Account signed out, sign in with two-factor, sign up (with or without an
 invite, the device check, the emailed code), the signed-in page with Sync now, Pause and Resume sync, the sync
-line and popover with the title-bar icon, and the "Confirm it's you" dialog (wired to no action yet). The
-second pull request adds devices, sign-out, the connect step, the paused-reason popovers, the code-age
-hint and the "Remove this device" name line. The designs decided that with the gate `Off` Settings > Account is hidden, the
-palette has no Account entry, and the sidebar footer shows no sync status. The sections below are the plan as
-written before that work.
+line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
+adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
+popovers, and the code-age hint. **Not in it:** new-device approval and "Connect this computer's settings", which
+need `AwaitingApproval`, `approve` and `deny` and a first-sync policy in the account module and follow in a later
+pull request; renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
+(`signout-other-device-removed`), because the Engine answers a removed device and an ended session with the same 401;
+the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
+The designs decided that with the gate `Off` Settings > Account is hidden, the palette has no Account entry, and the
+sidebar footer shows no sync status. The sections below are the plan as written before that work.
 
 **Planned is design-time only.** In the beta a Planned row or label is communication in the frames and nothing
 the product shows, unless the owner says otherwise: no Security group (password, two-factor, passkeys), no "Forgot

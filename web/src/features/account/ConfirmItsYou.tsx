@@ -3,6 +3,7 @@ import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
 import { accountApi } from "./api";
+import { announceAccountChange } from "./changes";
 import { Failure } from "./Card";
 import { retryText } from "./codes";
 import { NETWORK_TEXT, problemOf, type Problem } from "./problem";
@@ -14,7 +15,7 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
  * by it; the service refuses an action without one with `reauth_required`, whatever this dialog did.
  * `onConfirmed` runs the action.
  */
-export function ConfirmItsYou({ action, deviceId, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; onConfirmed(): void | Promise<void>; onClose(): void }) {
+export function ConfirmItsYou({ action, deviceId, subject, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; subject?: string; onConfirmed(): void | Promise<void>; onClose(): void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -37,6 +38,8 @@ export function ConfirmItsYou({ action, deviceId, onConfirmed, onClose }: { acti
     } catch (error) {
       const found = problemOf(error);
       setProblem(found);
+      // The action may have reached the Engine before it failed: read the account and its devices again.
+      if (found.kind !== "wrong" && found.kind !== "throttled") announceAccountChange();
       // A wrong or refused password is cleared; the network failure keeps it typed.
       if (found.kind !== "network") setPassword("");
       if (found.kind === "throttled") setWait({ seconds: found.seconds, at: Date.now() });
@@ -62,6 +65,7 @@ export function ConfirmItsYou({ action, deviceId, onConfirmed, onClose }: { acti
     >
       <form id="confirm-its-you" className="ac-form" onSubmit={(event) => void submit(event)}>
         <p>Enter your password to continue.</p>
+        {subject ? <p className="ac-sub">{subject}</p> : null}
         {throttled ? <Failure>Too many attempts. Try again {retryText(left)}.</Failure> : null}
         {network ? <Failure>{NETWORK_TEXT}</Failure> : null}
         {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}

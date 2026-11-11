@@ -285,6 +285,25 @@ describe("create an account without an invite step", () => {
     }
   });
 
+  it("after 30 minutes a refused code gets a quiet line and Send a new code becomes the main action", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await toDetails(user);
+      await user.type(screen.getByLabelText("8-character code"), "ZZZZZZZZ");
+      await user.click(screen.getByRole("button", { name: "Verify" }));
+      expect(await screen.findByText("That code didn’t work. Check it, or ask for a new one.")).toBeVisible();
+      expect(screen.queryByText("Codes last 30 minutes. Ask for a new one.")).toBeNull();
+      expect(screen.getByRole("button", { name: /^Verify$/ })).toHaveClass("btn-primary");
+      act(() => { vi.advanceTimersByTime(30 * 60_000 + 1000); });
+      expect(await screen.findByText("Codes last 30 minutes. Ask for a new one.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Send a new code" })).toHaveClass("btn-primary");
+      expect(screen.getByRole("button", { name: "Verify" })).toHaveClass("btn-secondary");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not send the code again when only the last step failed", async () => {
     const user = userEvent.setup();
     await toDetails(user);

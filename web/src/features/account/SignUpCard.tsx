@@ -10,6 +10,8 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
 type Step = "invite" | "details" | "code" | "done";
 
 const RESEND_SECONDS = 60;
+/** A code works for 30 minutes. The server does not say a code is old, so the app counts it on its own clock. */
+const CODE_LIFE_SECONDS = 30 * 60;
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
 /**
@@ -35,6 +37,9 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
   const [resendAt, setResendAt] = useState<Wait | null>(null);
   const resendLeft = useCountdown(resendAt);
   const resendWaiting = resendLeft !== null && resendLeft > 0;
+  const [askedAt, setAskedAt] = useState<Wait | null>(null);
+  const age = useCountdown(askedAt);
+  const oldCode = age === 0;
   const throttled = left !== null && left > 0;
   const total = 4;
   // Without the invite step the later steps move up by one and there is one fewer.
@@ -75,6 +80,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
         setCode("");
         verified.current = null;
         setResendAt({ seconds: RESEND_SECONDS, at: Date.now() });
+        setAskedAt({ seconds: CODE_LIFE_SECONDS, at: Date.now() });
         setStep("code");
       } catch (error) {
         // Cancel returns to the form with everything still typed and nothing sent.
@@ -107,6 +113,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
       setCode("");
       verified.current = null;
       setResendAt({ seconds: RESEND_SECONDS, at: Date.now() });
+      setAskedAt({ seconds: CODE_LIFE_SECONDS, at: Date.now() });
       setSent(true);
     });
 
@@ -185,6 +192,16 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
 
   if (step === "code") {
     const wrong = problem?.kind === "code";
+    // Once the code is old and refused, asking for a new one is the main action and comes first.
+    const old = wrong && oldCode;
+    const verifyButton = (
+      <Button key="verify" type="submit" tone={old ? "secondary" : "primary"} busy={busy && spinning} disabled={busy || !isEmailCodeComplete(code)}>Verify</Button>
+    );
+    const resendButton = (
+      <Button key="resend" tone={old ? "primary" : "secondary"} onClick={resend} disabled={busy || resendWaiting}>
+        {resendWaiting ? `Send a new code in ${clock(resendLeft)}` : "Send a new code"}
+      </Button>
+    );
     return (
       <Card title="Check your inbox" lead={`Enter the 8-character code we emailed to ${email.trim()}. It works for 30 minutes.`} label="Create account">
         {heading("Check your email")}
@@ -195,11 +212,11 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
                 onChange={(event) => { setSent(false); setCode(emailCodeInput(event.target.value)); }} />
             )}
           </Field>
+          {wrong && oldCode ? <p className="ac-sub">Codes last 30 minutes. Ask for a new one.</p> : null}
           {network}
           {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
           <div className="ac-acts">
-            <Button type="submit" tone="primary" busy={busy && spinning} disabled={busy || !isEmailCodeComplete(code)}>Verify</Button>
-            <Button onClick={resend} disabled={busy || resendWaiting}>{resendWaiting ? `Send a new code in ${clock(resendLeft)}` : "Send a new code"}</Button>
+            {wrong && oldCode ? [resendButton, verifyButton] : [verifyButton, resendButton]}
           </div>
           {sent ? <p role="status" className="ac-sub">We sent a new code.</p> : null}
         </form>

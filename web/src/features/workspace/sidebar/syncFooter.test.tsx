@@ -105,4 +105,34 @@ describe("signed in", () => {
     expect(popover).toHaveTextContent("The server didn’t accept 1 change. Nothing was lost; it is kept here.");
     expect(within(popover).getByRole("button", { name: "Try again" })).toBeEnabled();
   });
+
+  it.each([
+    ["deletion_scheduled", "Deletion is scheduled. Sync is paused."],
+    ["protection_advanced", "Sync is paused while protection changes."],
+    ["invalid_keyboard_file", "Sync is paused until the keybindings file is fixed."],
+    ["session_ended", "Sync is paused."],
+  ] as const)("a pause for %s keeps the title Paused and says why", async (reason, words) => {
+    await signedIn();
+    mock.setAccountWaiting(2);
+    mock.setAccount({ sync: ["paused", reason] });
+    const user = userEvent.setup();
+    render(<SidebarFoot route={{ name: "home" }} ledger={false} />);
+    await user.click(await screen.findByRole("button", { name: "Account and sync: Paused" }));
+    const popover = await screen.findByRole("dialog", { name: "Sync" });
+    expect(within(popover).getByText("Paused")).toBeVisible();
+    expect(popover).toHaveTextContent(words);
+    const buttons = within(popover).queryAllByRole("button").map((button) => button.textContent);
+    expect(buttons).toEqual(
+      {
+        deletion_scheduled: ["Resume sync", "Account settings"],
+        protection_advanced: ["Account settings"],
+        invalid_keyboard_file: ["Open keybindings", "Account settings"],
+        session_ended: ["Try again", "Account settings"],
+      }[reason],
+    );
+    if (reason === "deletion_scheduled") {
+      expect(within(popover).getByRole("button", { name: "Resume sync" })).toBeDisabled();
+      expect(popover).toHaveTextContent("Resume sync is not available while deletion is scheduled.");
+    }
+  });
 });
