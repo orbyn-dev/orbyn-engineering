@@ -235,6 +235,12 @@ test("the side panel slides in over 300 ms ease-out and out over 210 ms ease-in-
   await page.getByRole("button", { name: "Show side panel" }).click();
   await expect(panel).toBeVisible();
   expect(await contextMotion(page)).toEqual({ property: "translate", duration: 300, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+  // Closing while the slide-in still runs reverses it, and the browser then shortens the reversed
+  // transition (204 ms instead of 210 ms on a slow runner). Let the opening settle first.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a instanceof CSSTransition && (a.effect as KeyframeEffect).target?.matches(".context"))
+    .map((a) => a.finished)));
+  expect(await contextMotion(page)).toBeNull();
   await page.getByRole("button", { name: "Close side panel" }).click();
   expect(await contextMotion(page)).toEqual({ property: "translate", duration: 210, easing: "cubic-bezier(0.4, 0, 0.2, 1)" });
   await expect(panel).toBeHidden();
