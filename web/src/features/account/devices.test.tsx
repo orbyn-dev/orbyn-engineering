@@ -279,6 +279,8 @@ describe("when something goes wrong", () => {
     await user.click(within(dialog).getByRole("button", { name: "Sign out" }));
     expect(await within(dialog).findByText("Couldn’t finish signing out. Check this computer’s account page.")).toBeVisible();
     expect(screen.queryByText(/Nothing was changed/)).toBeNull();
+    // One button, OK, and it closes the dialog.
+    expect(within(dialog).getAllByRole("button").map((button) => button.textContent)).toEqual(["OK"]);
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
     vi.restoreAllMocks();
   });
@@ -296,7 +298,7 @@ describe("sync now, then sign out", () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ discard_unsynced: false });
   });
 
-  it("when nothing goes out in 15 seconds says so and signs out only on Sign out and keep", async () => {
+  it("when nothing goes out in 15 seconds says so and signs out only on Sign out, keep changes", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -310,7 +312,7 @@ describe("sync now, then sign out", () => {
       expect(screen.queryByText(/^Signed out\./)).toBeNull();
       act(() => { vi.advanceTimersByTime(SYNC_WAIT_MS + 500); });
       expect(await screen.findByText("Couldn’t finish syncing. Your changes are kept on this computer and sync the next time you sign in.")).toBeVisible();
-      await user.click(screen.getByRole("button", { name: "Sign out and keep" }));
+      await user.click(screen.getByRole("button", { name: "Sign out, keep changes" }));
       expect(await screen.findByText(/^Signed out\./)).toBeVisible();
       const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url) === "/api/account/sign-out");
       expect(JSON.parse(String(call?.[1]?.body))).toEqual({ discard_unsynced: false });

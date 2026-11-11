@@ -32,7 +32,7 @@ function Lists({ stops }: { stops: string[] }) {
 /** How long "Sync now, then sign out" waits for the upload before it says it could not finish. */
 export const SYNC_WAIT_MS = 15_000;
 
-type Phase = "ask" | "syncing" | "stuck";
+type Phase = "ask" | "syncing" | "stuck" | "failed";
 
 /** Sign out of this computer. Needs no connection; unsynced settings changes are kept or discarded by choice. */
 export function SignOutDialog({ view, reload, onClose, onDone }: { view: AccountView; reload(): void; onClose(): void; onDone(): void }) {
@@ -49,6 +49,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
     const found = problemOf(error);
     setProblem(found.kind === "network" ? NETWORK_TEXT : "Couldn’t finish signing out. Check this computer’s account page.");
     setBusy(false);
+    setPhase("failed");
     // The session may be gone even though the request failed: read the account again.
     reload();
   };
@@ -79,7 +80,6 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
       setPhase("syncing");
     } catch (error) {
       fail(error);
-      setPhase("stuck");
     }
   };
 
@@ -121,6 +121,13 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
     title = `Sign out with ${waiting} ${waiting === 1 ? "change" : "changes"} not synced?`;
     lead = `${changes(waiting)} ${waiting === 1 ? "hasn’t" : "haven’t"} reached your other devices yet. Choose what happens to them. Signing out also removes this device’s keys from the Keychain.`;
   }
+  if (phase === "failed") {
+    return (
+      <Dialog title={title} onClose={onClose} footer={<Button tone="primary" onClick={onClose}>OK</Button>}>
+        <Failure>{problem}</Failure>
+      </Dialog>
+    );
+  }
   if (phase !== "ask") {
     const stuck = phase === "stuck";
     return (
@@ -131,7 +138,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
         footer={
           <>
             <Button onClick={onClose} disabled={busy && !stuck}>Cancel</Button>
-            {stuck ? <Button tone="danger" onClick={() => void finish(false)} disabled={busy}>Sign out and keep</Button> : null}
+            {stuck ? <Button tone="danger" onClick={() => void finish(false)} disabled={busy}>Sign out, keep changes</Button> : null}
           </>
         }
       >
