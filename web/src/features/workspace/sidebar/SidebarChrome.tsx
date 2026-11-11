@@ -1,3 +1,5 @@
+import { SyncFooter, useSignedInAccount } from "../../account";
+import { useLayoutWidth } from "../../../lib/useLayout";
 import { ChartColumn, Clock, GitPullRequest, Settings, SquarePen } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { routeHref, type Route } from "../../../product/state/route";
@@ -128,17 +130,22 @@ export function SidebarNav({ route, ledger }: { route: Route; ledger: boolean })
 }
 
 export function SidebarFoot({ route, ledger }: { route: Route; ledger: boolean }) {
+  const account = useSignedInAccount();
+  const layout = useLayoutWidth();
+  // Signed in, the footer shows the avatar, the sync status and the gear. In a narrow window the status
+  // is one icon in the title bar and the footer keeps its plain Settings row.
+  const synced = account !== null && layout !== "small" && layout !== "phone";
+  const current = route.name === "settings" && route.section !== "tasks";
   return (
     <div className="sidebar-foot">
       <UndoNotice />
       <UpdatePill />
       {ledger ? <SidebarNav route={route} ledger /> : null}
-      <NavRow
-        label="Settings"
-        icon={<Settings size={15} aria-hidden />}
-        route={{ name: "settings", section: null }}
-        current={route.name === "settings" && route.section !== "tasks"}
-      />
+      {synced ? (
+        <SyncFooter view={account.view} reload={account.reload} settingsCurrent={current} />
+      ) : (
+        <NavRow label="Settings" icon={<Settings size={15} aria-hidden />} route={{ name: "settings", section: null }} current={current} />
+      )}
     </div>
   );
 }

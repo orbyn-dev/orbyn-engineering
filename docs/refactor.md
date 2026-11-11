@@ -59,7 +59,8 @@ Notes:
 - Features form one acyclic order. A feature imports only the `index.ts` of one lower
   down: `settings` > `onboarding` > `thread` > `panels` > `workspace` > `skills`, with
   `pulls` and `tools` below `thread` and `panels`, and `content` at the bottom.
-  `usage` and `platform` import no feature. A piece two
+  `usage`, `platform` and `account` import no feature (`settings` and `workspace` import
+  `account`). A piece two
   features need moves to the lowest layer that fits: `features/content` (markdown and
   code rendering), `product` (for example `product/timeline`, the thread projection, or
   `product/state/threadLogs`), `ui` or `lib`, not a re-export from the old place.
