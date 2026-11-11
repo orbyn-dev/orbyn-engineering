@@ -17,6 +17,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `review` | `Core`'s side: the mode, the approvers, and `ActionReview` for the gate |
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
+| `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
 | `merge/review_queue` | The after-merge Review queue and the person's answers |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
@@ -69,13 +70,23 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
 - **Risk.** `merge::score` reads paths (CI, migrations, dependency files, and auth, keys or crypto as whole words in a path),
   size (over 20 files or 400 lines is large) and the 60-day revert rate of each area and of the engine, which counts from 10
   merges and at 20 percent. High if any applies; low only for small docs or tests; medium otherwise. Test coverage is not
-  measured, and every score says so. An area is the first two folders of a path.
+  measured, and every score says so. Words in a path match plurals and camelCase (`tokens`, `authService`, `authn`). The size adds the
+  last 5 merges within a day, so splitting a change does not help (60 files or 1200 lines in all is large). Every score carries the
+  sample sizes it read. An area is the first two folders of a path.
+- **Held for a person, whatever the mode.** A diff that touches `.orbyn/`, a file the answer key protects, CI config, or a file one of
+  the repository's checks names (or a folder it names with a trailing slash) waits, at the queue and again when it merges. This is
+  the backstop the always-denied list cannot be: a patch applied by `git apply` or `patch` gets past N7, and a merge that
+  rewrote `.orbyn/crew.json` (the allowed hosts, the checks) or the script a check calls would stay green. A check's text is read
+  from a trusted commit, but the file it runs comes from the merged tree. If the repository's checks cannot be read, the diff is held.
 - **Mode.** `off`: every merge waits for a person. `on`: a high-risk diff waits. `full`: everything merges, and a high-risk
-  one goes to the top of the Review queue. A person's release counts as the review.
+  one goes to the top of the Review queue. A person's release counts as the review and lasts for the entry: it skips the holds below, and a later block or retry keeps it.
+  The mode is read again when the merge happens, so entries queued before the person switched to `off` (or to `on`, for a high-risk
+  one) wait.
 - **Queue.** `crew_queue_merge` takes a passed task (its commit is the passed result's), `crew_process_merges` merges the
   queued entries one at a time in the order queued: a `--no-ff` merge in a scratch checkout, then the task's own command
   checks and the repository's `checks` (in `.orbyn/crew.json` at the branch's tip) run again on that combined state, and only
-  then does the branch move. A conflict or a failing check rejects the entry; a branch that moved is retried; a confirmed
+  then does the branch move. The lanes owed must have run and passed unless a person released it: by default `code` for medium and high, and `security` too for high
+  (`MergeTarget::owed` overrides it); a lane that never ran blocks the entry. A conflict or a failing check rejects the entry; a branch that moved is retried; a confirmed
   finding or a running review lane blocks it until it clears. A merge commit makes a revert one `git revert -m 1`.
 - **Review queue.** Every merge is one item: the diff size, the proof (checks, reviewers by engine, findings), what was not
   verified and the cost the result recorded. Ranked: a break that needs a decision, then high, medium, low, then oldest.
@@ -85,7 +96,7 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
   merge began), so a merge cannot remove its own check. If they fail it bisects the first-parent commits to the first that fails.
   It reverts only when the culprit is a merge the crew made, the checks fail with it twice and pass without it, and they pass
   after the revert (so no later merge needs it). Otherwise it records the break, flags the item to the top of the Review queue
-  and tells the person (a `person_told` row). Under `off` it only asks. A repository with no checks is reported `NoChecks`,
+  and tells the person (a `person_told` row). Under `off` it only asks. A revert in a repository that defines no checks runs none and is recorded `verified: false`. A repository with no checks is reported `NoChecks`,
   never healthy. Nothing schedules the watch yet: a caller runs it after merges.
 
 ## The always-denied list: what it reads, and what it cannot

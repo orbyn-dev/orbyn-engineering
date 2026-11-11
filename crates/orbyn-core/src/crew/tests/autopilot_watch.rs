@@ -119,6 +119,7 @@ async fn history_with(rules: &str, edits: [&[(&'static str, &'static str)]; 4]) 
     let target = MergeTarget {
         repo: w.repo.clone(),
         branch: main.clone(),
+        owed: Some(Vec::new()),
     };
     Watched {
         w,

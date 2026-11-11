@@ -20,11 +20,15 @@ pub struct MergeEntry {
     pub risk: String,
     pub reasons: Value,
     pub areas: Vec<String>,
+    /// The sample sizes the risk score read, in words.
+    pub samples: Vec<String>,
     pub engine: String,
     pub files: u32,
     pub lines: u32,
     pub mode: String,
     pub note: Option<String>,
+    /// A person let it go: it is reviewed by that act and skips the holds.
+    pub released: bool,
     pub queued_unix: i64,
 }
 
@@ -85,11 +89,13 @@ fn entry_row(row: &Row<'_>) -> rusqlite::Result<MergeEntry> {
         risk: row.get("risk")?,
         reasons: json(row.get("reasons")?)?,
         areas: strings(&json(row.get("areas")?)?),
+        samples: strings(&json(row.get("samples")?)?),
         engine: row.get("engine")?,
         files: row.get("files")?,
         lines: row.get("lines")?,
         mode: row.get("mode")?,
         note: row.get("note")?,
+        released: row.get::<_, i64>("released")? == 1,
         queued_unix: row.get("queued_unix")?,
     })
 }
@@ -129,6 +135,7 @@ impl Store {
     pub fn add_merge_entry(&self, entry: &MergeEntry) -> Result<()> {
         let reasons = serde_json::to_string(&entry.reasons)?;
         let areas = serde_json::to_string(&entry.areas)?;
+        let samples = serde_json::to_string(&entry.samples)?;
         self.commit(|tx, _| {
             let existing: Option<String> = tx
                 .query_row("SELECT state FROM crew_merge_queue WHERE task_id = ?1", [&entry.task_id], |r| r.get(0))
@@ -137,11 +144,11 @@ impl Store {
                 return Err(CoreError::Invalid("this task is already merged or merging".into()));
             }
             tx.execute(
-                "INSERT INTO crew_merge_queue (task_id, crew_id, repo, branch, candidate, state, risk, reasons, areas, engine, files, lines, mode, note, queued_unix, updated_unix)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
+                "INSERT INTO crew_merge_queue (task_id, crew_id, repo, branch, candidate, state, risk, reasons, areas, samples, engine, files, lines, mode, note, queued_unix, updated_unix)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)
                  ON CONFLICT(task_id) DO UPDATE SET repo = ?3, branch = ?4, candidate = ?5, state = ?6, risk = ?7, reasons = ?8,
-                     areas = ?9, engine = ?10, files = ?11, lines = ?12, mode = ?13, note = ?14, updated_unix = ?15",
-                params![entry.task_id, entry.crew_id, entry.repo, entry.branch, entry.candidate, entry.state, entry.risk, reasons, areas, entry.engine, entry.files, entry.lines, entry.mode, entry.note, entry.queued_unix],
+                     areas = ?9, samples = ?10, engine = ?11, files = ?12, lines = ?13, mode = ?14, note = ?15, updated_unix = ?16",
+                params![entry.task_id, entry.crew_id, entry.repo, entry.branch, entry.candidate, entry.state, entry.risk, reasons, areas, samples, entry.engine, entry.files, entry.lines, entry.mode, entry.note, entry.queued_unix],
             )?;
             Ok(())
         })
@@ -174,6 +181,21 @@ impl Store {
             .into_iter()
             .filter(|e| states.contains(&e.state.as_str()))
             .collect())
+    }
+
+    /// A person releases a waiting entry: it is queued again, and every later move keeps the release.
+    pub fn release_merge_entry(&self, task_id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            let changed = tx.execute(
+                "UPDATE crew_merge_queue SET released = 1, state = 'queued', note = 'released by a person', updated_unix = ?2
+                 WHERE task_id = ?1 AND state = 'waiting'",
+                params![task_id, unix_now()],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::Invalid("only a waiting merge can be released".into()));
+            }
+            Ok(())
+        })
     }
 
     /// Moves an entry to a state, with a note. `merged` has its own writer; this refuses it.

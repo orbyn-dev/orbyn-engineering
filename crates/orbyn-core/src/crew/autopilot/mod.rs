@@ -16,8 +16,9 @@ pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
 pub use hosts::read_allowed_hosts;
 pub use merge::{
-    DiffFacts, MergeOutcome, MergeTarget, Rate, ReviewAnswer, ReviewItem, Risk, Scored,
-    WatchOutcome, area_of, areas_of, review_window, score,
+    DiffFacts, MergeOutcome, MergeTarget, Rate, RecentTotals, ReviewAnswer, ReviewItem, Risk,
+    Scored, WatchOutcome, area_of, areas_of, check_words, owed_lanes, review_window, score,
+    sensitive,
 };
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};

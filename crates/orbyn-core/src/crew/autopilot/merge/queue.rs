@@ -12,11 +12,10 @@ use serde_json::{Value, json};
 
 use super::gitops::{self, Refused, Scratch};
 use super::review_window;
-use super::risk::{DiffFacts, Rate, Risk, WINDOW_DAYS, areas_of, score};
+use super::risk::{DiffFacts, Risk, areas_of, score};
 use crate::app::Core;
 use crate::crew::autopilot::Mode;
 use crate::crew::checks::run_line;
-use crate::crew::lifecycle::is_final;
 use crate::error::{CoreError, Result};
 use crate::store::{MergeEntry, MergeRecord};
 
@@ -25,6 +24,9 @@ use crate::store::{MergeEntry, MergeRecord};
 pub struct MergeTarget {
     pub repo: PathBuf,
     pub branch: String,
+    /// The review lanes owed before a merge. `None` is the default by risk (`guard::owed_lanes`: code review for medium and high,
+    /// security review as well for high); a person's release stands in for them.
+    pub owed: Option<Vec<String>>,
 }
 
 /// What came of one entry when the queue was processed.
@@ -80,37 +82,6 @@ impl Core {
         Ok(self.crew_autopilot_mode(&project, &task.crew_id))
     }
 
-    /// The revert rate of each area and of an engine over the last 60 days, from the merges the queue made.
-    fn merge_rates(
-        &self,
-        areas: &[String],
-        engine: &str,
-        now: i64,
-    ) -> Result<(Vec<(String, Rate)>, Rate)> {
-        let since = now - WINDOW_DAYS * 86_400;
-        let recent: Vec<MergeRecord> = self
-            .store
-            .crew_all_merges()?
-            .into_iter()
-            .filter(|m| m.merged_unix >= since)
-            .collect();
-        let rate_of = |keep: &dyn Fn(&MergeRecord) -> bool| {
-            let mine: Vec<&MergeRecord> = recent.iter().filter(|m| keep(m)).collect();
-            Rate {
-                merges: u32::try_from(mine.len()).unwrap_or(u32::MAX),
-                reverts: u32::try_from(
-                    mine.iter().filter(|m| m.review_state == "reverted").count(),
-                )
-                .unwrap_or(u32::MAX),
-            }
-        };
-        let by_area = areas
-            .iter()
-            .map(|a| (a.clone(), rate_of(&|m| m.areas.contains(a))))
-            .collect();
-        Ok((by_area, rate_of(&|m| m.engine == engine)))
-    }
-
     /// Scores a passed task's diff and queues it. Under `off`, or a high-risk diff under `on`, it waits for a person.
     pub async fn crew_queue_merge(
         self: &Arc<Self>,
@@ -150,23 +121,30 @@ impl Core {
             .unwrap_or_default();
         let areas = areas_of(&paths);
         let (by_area, by_engine) = self.merge_rates(&areas, &engine, now)?;
+        let recent = self.merge_recent(target, now)?;
         let facts = DiffFacts {
             files: u32::try_from(paths.len()).unwrap_or(u32::MAX),
             lines,
             paths,
             areas: by_area,
             engine: Some((engine.clone(), by_engine)),
+            recent,
         };
         let scored = score(&facts);
         let mode = self.merge_mode(task_id)?;
+        let held = self.merge_holds(task_id, target, &facts.paths).await?;
         let (state, note) = match (mode, scored.risk) {
+            _ if !held.is_empty() => (
+                "waiting",
+                Some(format!("Held for a person: {}.", held.join("; "))),
+            ),
             (Mode::Off, _) => (
                 "waiting",
-                Some("Autopilot is off, so a person releases every merge."),
+                Some("Autopilot is off, so a person releases every merge.".to_owned()),
             ),
             (Mode::On, Risk::High) => (
                 "waiting",
-                Some("A high-risk diff waits for a person under On."),
+                Some("A high-risk diff waits for a person under On.".to_owned()),
             ),
             _ => ("queued", None),
         };
@@ -180,21 +158,23 @@ impl Core {
             risk: scored.risk.name().to_owned(),
             reasons: json!(scored.reasons),
             areas,
+            samples: scored.samples.clone(),
             engine,
             files: facts.files,
             lines: facts.lines,
             mode: mode.name().to_owned(),
-            note: note.map(str::to_owned),
+            note,
+            released: false,
             queued_unix: now,
         };
         self.store.add_merge_entry(&entry)?;
-        let body = json!({ "risk": entry.risk, "reasons": entry.reasons, "mode": entry.mode, "files": facts.files, "lines": facts.lines, "state": state, "not_measured": scored.not_measured });
+        let body = json!({ "risk": entry.risk, "reasons": entry.reasons, "mode": entry.mode, "files": facts.files, "lines": facts.lines, "state": state, "not_measured": scored.not_measured, "samples": scored.samples });
         self.merge_event(task_id, "merge_queued", &body);
         if state == "waiting" {
             self.merge_event(
                 task_id,
                 "merge_waiting",
-                &json!({ "why": note, "risk": entry.risk }),
+                &json!({ "why": entry.note, "risk": entry.risk, "held": held }),
             );
         }
         Ok(entry)
@@ -202,17 +182,7 @@ impl Core {
 
     /// A person lets a waiting merge go. It is reviewed by that act, and its review is closed when it lands.
     pub fn crew_release_merge(&self, task_id: &str) -> Result<()> {
-        let entry = self
-            .store
-            .merge_entry(task_id)?
-            .ok_or_else(|| CoreError::NotFound(format!("queued merge {task_id}")))?;
-        if entry.state != "waiting" {
-            return Err(CoreError::Invalid(
-                "only a waiting merge can be released".into(),
-            ));
-        }
-        self.store
-            .set_merge_entry_state(task_id, "queued", Some("released"))
+        self.store.release_merge_entry(task_id)
     }
 
     /// A person turns a waiting merge down.
@@ -236,34 +206,6 @@ impl Core {
         Ok(())
     }
 
-    /// Why a queued task is not ready: its stages must be green. `None` when it is.
-    fn merge_blocker(&self, task_id: &str) -> Result<Option<String>> {
-        let task = self
-            .store
-            .crew_task(task_id)?
-            .ok_or_else(|| CoreError::NotFound(format!("crew task {task_id}")))?;
-        if task.state != "passed" {
-            return Ok(Some("the task is no longer passed".to_owned()));
-        }
-        let status = self
-            .review_status(task_id)
-            .map_err(|e| CoreError::Internal(e.message))?;
-        if status["blocked"] == json!(true) {
-            return Ok(Some("a confirmed finding blocks it".to_owned()));
-        }
-        let running = status["lanes"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|l| l["rounds"].as_array().into_iter().flatten())
-            .any(|r| {
-                r["state"]
-                    .as_str()
-                    .is_some_and(|s| !is_final(s) && s != "needs_person")
-            });
-        Ok(running.then(|| "a review lane is still running".to_owned()))
-    }
-
     /// Merges what is ready, one at a time and in the order queued.
     pub async fn crew_process_merges(
         self: &Arc<Self>,
@@ -280,7 +222,7 @@ impl Core {
             .store
             .merge_entries(&repo, &branch, &["queued", "blocked"])?
         {
-            if let Some(why) = self.merge_blocker(&entry.task_id)? {
+            if let Some(why) = self.merge_blocker(&entry, target)? {
                 self.store
                     .set_merge_entry_state(&entry.task_id, "blocked", Some(&why))?;
                 outcomes.push(MergeOutcome::Blocked {
@@ -318,7 +260,7 @@ impl Core {
     }
 
     /// The commands the merge runs again on the combined state: the task's own command checks, and the repository's.
-    async fn merge_checks(
+    pub(super) async fn merge_checks(
         &self,
         task_id: &str,
         repo: &std::path::Path,
@@ -345,6 +287,16 @@ impl Core {
         now: i64,
     ) -> Result<MergeOutcome> {
         let task_id = entry.task_id.clone();
+        if let Some(why) = self.merge_hold_now(entry, target).await? {
+            self.store
+                .set_merge_entry_state(&task_id, "waiting", Some(&why))?;
+            self.merge_event(
+                &task_id,
+                "merge_waiting",
+                &json!({ "why": why, "risk": entry.risk }),
+            );
+            return Ok(MergeOutcome::NeedsPerson { task_id, why });
+        }
         let reject = |why: &str, retry: bool| -> Result<MergeOutcome> {
             self.store.set_merge_entry_state(
                 &task_id,
@@ -486,6 +438,7 @@ impl Core {
             "reviewers": reviewers,
             "findings": { "confirmed": findings("confirmed"), "unconfirmed": findings("unconfirmed"), "fixed": fixed },
             "cost": passed.map(|r| &r.usage),
+            "risk_samples": entry.samples,
         });
         let mut not_verified: Vec<String> = passed
             .map(|r| {
@@ -527,7 +480,7 @@ impl Core {
         };
         self.store.add_crew_merge(&record)?;
         // A merge a person released was reviewed by that act.
-        if entry.note.as_deref() == Some("released") {
+        if entry.released {
             self.store.set_merge_review(task_id, "looks_good", None)?;
         }
         self.merge_event(task_id, "merged", &json!({ "merge": merge_commit, "before": before, "risk": entry.risk, "mode": entry.mode, "due": record.due_unix }));

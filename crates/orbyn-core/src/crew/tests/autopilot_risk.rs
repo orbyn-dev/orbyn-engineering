@@ -1,6 +1,6 @@
 //! The risk tier of a diff: paths, size and the revert rate of the area and the engine, each with its reason.
 
-use crate::crew::{DiffFacts, Rate, Risk, area_of, areas_of, score};
+use crate::crew::{DiffFacts, Rate, RecentTotals, Risk, area_of, areas_of, score};
 
 fn facts(paths: &[&str], files: u32, lines: u32) -> DiffFacts {
     DiffFacts {
@@ -110,5 +110,123 @@ fn an_area_is_the_first_two_folders() {
     assert_eq!(
         areas_of(&["a/b/c".into(), "a/b/d".into(), "x".into()]),
         ["a/b", "x"]
+    );
+}
+
+#[test]
+fn plurals_camel_case_and_the_longer_names_do_not_dodge_the_words() {
+    for path in [
+        "src/passwords.rs",
+        "src/secrets/store.rs",
+        "src/tokens.ts",
+        "src/sessions.ts",
+        "src/permissions.rs",
+        "src/credentials.rs",
+        "web/authService.ts",
+        "web/AuthService.ts",
+        "src/authn/mod.rs",
+        "src/authentication.rs",
+        "src/signingKeys.rs",
+        "src/apiKey.ts",
+        "src/keys.rs",
+    ] {
+        assert_eq!(risk(&[path]), Risk::High, "{path}");
+    }
+    for path in [
+        "src/author.rs",
+        "src/authors.rs",
+        "src/keyboard.rs",
+        "src/monkey.rs",
+        "src/tokenizer.rs",
+        "src/session_view_model.rs",
+    ] {
+        let high = risk(&[path]) == Risk::High;
+        // `session_view_model` is `session` as a whole word, which is meant to count; the others are different words.
+        assert_eq!(high, path.contains("session"), "{path}");
+    }
+}
+
+#[test]
+fn the_other_dependency_and_build_files_count() {
+    for path in [
+        "requirements.txt",
+        "requirements-dev.txt",
+        "Pipfile",
+        "setup.py",
+        "pom.xml",
+        "build.gradle",
+        "app/App.csproj",
+        "Package.swift",
+        "crates/x/build.rs",
+        ".orbyn/crew.json",
+    ] {
+        assert_eq!(risk(&[path]), Risk::High, "{path}");
+    }
+}
+
+#[test]
+fn a_change_split_into_small_merges_adds_up() {
+    let mut f = facts(&["src/a.rs"], 5, 100);
+    f.recent = RecentTotals {
+        merges: 5,
+        files: 40,
+        lines: 800,
+    };
+    assert_eq!(
+        score(&f).risk,
+        Risk::Medium,
+        "45 files and 900 lines are under the rolling line"
+    );
+    f.recent = RecentTotals {
+        merges: 5,
+        files: 58,
+        lines: 500,
+    };
+    let scored = score(&f);
+    assert_eq!(scored.risk, Risk::High);
+    assert!(
+        scored.reasons[0].contains("last 5 merges add up"),
+        "{:?}",
+        scored.reasons
+    );
+    f.recent = RecentTotals {
+        merges: 5,
+        files: 10,
+        lines: 1150,
+    };
+    assert_eq!(score(&f).risk, Risk::High);
+}
+
+#[test]
+fn every_score_shows_the_sample_sizes_it_read() {
+    let mut f = facts(&["src/a.rs"], 1, 10);
+    f.areas = vec![(
+        "src/a.rs".into(),
+        Rate {
+            merges: 3,
+            reverts: 1,
+        },
+    )];
+    f.engine = Some((
+        "alpha".into(),
+        Rate {
+            merges: 4,
+            reverts: 0,
+        },
+    ));
+    f.recent = RecentTotals {
+        merges: 2,
+        files: 3,
+        lines: 40,
+    };
+    let scored = score(&f);
+    assert_eq!(scored.risk, Risk::Medium, "too few merges to count");
+    assert_eq!(
+        scored.samples,
+        [
+            "src/a.rs: 1 reverted in 3 merges over 60 days",
+            "alpha: 0 reverted in 4 merges over 60 days",
+            "recent merges: 2 in the last day, 3 files, 40 lines",
+        ]
     );
 }

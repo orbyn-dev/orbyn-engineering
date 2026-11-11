@@ -58,7 +58,22 @@ pub struct DiffFacts {
     /// The revert rate of each area the diff touches.
     pub areas: Vec<(String, Rate)>,
     pub engine: Option<(String, Rate)>,
+    /// The files and lines of the last few merges on the branch, so a change split into small merges still adds up.
+    pub recent: RecentTotals,
 }
+
+/// What the last [`RECENT_MERGES`] merges within a day changed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RecentTotals {
+    pub merges: u32,
+    pub files: u32,
+    pub lines: u32,
+}
+
+/// The merges the rolling size looks back over, and the largest total of them and this diff that is not large.
+pub const RECENT_MERGES: usize = 5;
+pub const ROLLING_FILES: u32 = 60;
+pub const ROLLING_LINES: u32 = 1200;
 
 /// A tier and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +82,8 @@ pub struct Scored {
     pub reasons: Vec<String>,
     /// What the score did not use, so a tier never implies more than it read.
     pub not_measured: Vec<&'static str>,
+    /// The sample sizes it read, whatever the tier: each area's and the engine's merges and reverts, and the recent merges.
+    pub samples: Vec<String>,
 }
 
 /// The area of a path: its first two folders, or the first one, or the file itself at the root.
@@ -89,25 +106,40 @@ pub fn areas_of(paths: &[String]) -> Vec<String> {
         .collect()
 }
 
-const SENSITIVE_WORDS: [&str; 16] = [
+/// Singular forms: a plural (`tokens`) and a camelCase part (`authService`) are matched too.
+const SENSITIVE_WORDS: [&str; 30] = [
     "auth",
+    "authn",
+    "authz",
+    "authentication",
+    "authorization",
+    "authorisation",
     "login",
     "oauth",
+    "sso",
+    "saml",
+    "oidc",
     "session",
     "password",
+    "passwd",
     "credential",
     "secret",
     "keychain",
     "crypto",
+    "cryptography",
     "cipher",
     "tls",
+    "ssl",
     "jwt",
     "token",
     "permission",
     "keystore",
     "signing",
+    "signature",
+    "key",
+    "apikey",
 ];
-const DEPENDENCY_FILES: [&str; 16] = [
+const DEPENDENCY_FILES: [&str; 28] = [
     "cargo.toml",
     "cargo.lock",
     "package.json",
@@ -115,23 +147,62 @@ const DEPENDENCY_FILES: [&str; 16] = [
     "pnpm-lock.yaml",
     "yarn.lock",
     "bun.lock",
+    "bun.lockb",
     "go.mod",
     "go.sum",
     "pyproject.toml",
     "poetry.lock",
     "uv.lock",
+    "pipfile",
+    "pipfile.lock",
+    "setup.py",
+    "setup.cfg",
     "gemfile",
     "gemfile.lock",
     "composer.json",
     "composer.lock",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "package.swift",
+    "build.rs",
+    "mix.exs",
+    "pubspec.yaml",
+];
+const DEPENDENCY_SUFFIXES: [&str; 6] = [
+    ".csproj", ".fsproj", ".vbproj", ".gemspec", ".podspec", ".sln",
 ];
 
+/// The words of a path: split at anything that is not a letter or digit and at camelCase, lowercase.
 fn words(path: &str) -> Vec<String> {
-    path.to_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
+    let mut spaced = String::with_capacity(path.len() + 8);
+    let mut previous: Option<char> = None;
+    for c in path.chars() {
+        if c.is_uppercase() && previous.is_some_and(char::is_lowercase) {
+            spaced.push(' ');
+        }
+        spaced.push(c);
+        previous = Some(c);
+    }
+    spaced
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+fn sensitive_word(word: &str) -> bool {
+    SENSITIVE_WORDS.contains(&word)
+        || word
+            .strip_suffix('s')
+            .is_some_and(|one| SENSITIVE_WORDS.contains(&one))
+}
+
+fn is_dependency(base: &str) -> bool {
+    DEPENDENCY_FILES.contains(&base)
+        || DEPENDENCY_SUFFIXES.iter().any(|s| base.ends_with(s))
+        || base.starts_with("requirements") && base.ends_with(".txt")
 }
 
 fn is_migration(path: &str) -> bool {
@@ -176,16 +247,14 @@ pub fn score(facts: &DiffFacts) -> Scored {
         if is_migration(path) {
             note("it changes a migration".to_owned());
         }
-        if DEPENDENCY_FILES.contains(&base.as_str()) || lower.ends_with(".cargo/config.toml") {
+        if lower.starts_with(".orbyn/") {
+            note("it changes .orbyn/, the crew's own rules".to_owned());
+        }
+        if is_dependency(&base) || lower.ends_with(".cargo/config.toml") {
             note("it changes dependencies".to_owned());
         }
         // Words of the path, not letters: `author` is not `auth`.
-        if !is_docs(path)
-            && !is_test(path)
-            && words(path)
-                .iter()
-                .any(|w| SENSITIVE_WORDS.contains(&w.as_str()))
-        {
+        if !is_docs(path) && !is_test(path) && words(path).iter().any(|w| sensitive_word(w)) {
             note("it touches auth, keys or crypto".to_owned());
         }
     }
@@ -193,6 +262,16 @@ pub fn score(facts: &DiffFacts) -> Scored {
         note(format!(
             "the diff is large ({} files, {} lines)",
             facts.files, facts.lines
+        ));
+    }
+    let (files, lines) = (
+        facts.recent.files.saturating_add(facts.files),
+        facts.recent.lines.saturating_add(facts.lines),
+    );
+    if facts.recent.merges > 0 && (files > ROLLING_FILES || lines > ROLLING_LINES) {
+        note(format!(
+            "this change and the last {} merges add up to {files} files and {lines} lines",
+            facts.recent.merges
         ));
     }
     let hot = |rate: &Rate| {
@@ -215,11 +294,32 @@ pub fn score(facts: &DiffFacts) -> Scored {
         ));
     }
     let not_measured = vec!["test coverage of the touched code"];
+    let mut samples: Vec<String> = facts
+        .areas
+        .iter()
+        .map(|(area, r)| {
+            format!(
+                "{area}: {} reverted in {} merges over 60 days",
+                r.reverts, r.merges
+            )
+        })
+        .collect();
+    if let Some((engine, r)) = &facts.engine {
+        samples.push(format!(
+            "{engine}: {} reverted in {} merges over 60 days",
+            r.reverts, r.merges
+        ));
+    }
+    samples.push(format!(
+        "recent merges: {} in the last day, {} files, {} lines",
+        facts.recent.merges, facts.recent.files, facts.recent.lines
+    ));
     if !high.is_empty() {
         return Scored {
             risk: Risk::High,
             reasons: high,
             not_measured,
+            samples,
         };
     }
     let all_low = !facts.paths.is_empty() && facts.paths.iter().all(|p| is_docs(p) || is_test(p));
@@ -228,11 +328,13 @@ pub fn score(facts: &DiffFacts) -> Scored {
             risk: Risk::Low,
             reasons: vec!["only docs or tests, and small".to_owned()],
             not_measured,
+            samples,
         };
     }
     Scored {
         risk: Risk::Medium,
         reasons: vec!["ordinary feature work".to_owned()],
         not_measured,
+        samples,
     }
 }

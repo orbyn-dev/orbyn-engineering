@@ -86,6 +86,7 @@ async fn merging(
     let target = MergeTarget {
         repo: w.repo.clone(),
         branch: main.clone(),
+        owed: Some(Vec::new()),
     };
     Merging { w, main, target }
 }
@@ -238,6 +239,9 @@ async fn under_full_a_high_risk_diff_merges_and_goes_to_the_top_of_the_review_qu
             .review_state,
         "reverted"
     );
+    // This repository defines no checks, so the revert ran none and says so.
+    let reverted = super::autopilot_support::events(&m.w, &high, "reverted");
+    assert_eq!(reverted[0].body["verified"], false);
     assert_eq!(
         m.w.core
             .store
@@ -293,7 +297,7 @@ async fn a_required_check_that_fails_on_the_combined_state_stops_the_merge() {
     std::fs::create_dir_all(m.w.repo.join(".orbyn")).unwrap();
     std::fs::write(
         m.w.repo.join(".orbyn/crew.json"),
-        r#"{"checks":[{"run":"git grep --no-index -q GOOD -- src/state.txt"}]}"#,
+        r#"{"checks":[{"run":"git grep --no-index -q GOOD -- src"}]}"#,
     )
     .unwrap();
     std::fs::write(m.w.repo.join("src/state.txt"), "GOOD\n").unwrap();
@@ -395,4 +399,196 @@ async fn only_a_passed_task_can_be_queued() {
             .await
             .unwrap_err();
     assert!(error.to_string().contains("only a task that passed"));
+}
+
+async fn with_rules(m: &Merging, rules: &str, state: &str) {
+    std::fs::create_dir_all(m.w.repo.join(".orbyn")).unwrap();
+    std::fs::write(m.w.repo.join(".orbyn/crew.json"), rules).unwrap();
+    std::fs::write(m.w.repo.join("src/state.txt"), state).unwrap();
+    commit_all(&m.w.repo, "rules");
+}
+
+#[tokio::test]
+async fn a_diff_that_touches_the_crews_rules_is_held_for_a_person_in_every_mode() {
+    let m = merging(Mode::Full, |_| {
+        vec![(
+            ".orbyn/crew.json",
+            "{\"allowed_hosts\":[\"evil.example\"]}\n",
+        )]
+    })
+    .await;
+    let id = passed(&m.w, &[".orbyn/**"], "Widen the hosts.").await;
+    let before = m.tip().await;
+    let entry =
+        m.w.core
+            .crew_queue_merge(&id, &m.target, NOW)
+            .await
+            .unwrap();
+    assert_eq!(
+        (entry.state.as_str(), entry.risk.as_str()),
+        ("waiting", "high")
+    );
+    assert!(
+        entry.note.as_deref().is_some_and(|n| n.contains(".orbyn/")),
+        "{:?}",
+        entry.note
+    );
+    assert!(m.process(NOW).await.is_empty());
+    assert_eq!(m.tip().await, before);
+    // A person looks and lets it go.
+    m.w.core.crew_release_merge(&id).unwrap();
+    assert!(matches!(
+        &m.process(NOW + 1).await[..],
+        [MergeOutcome::Merged { .. }]
+    ));
+}
+
+#[tokio::test]
+async fn a_diff_that_touches_a_file_a_check_runs_is_held_even_when_the_check_still_passes() {
+    // The script a check calls could be turned into `exit 0` and stay green: the check text is read from a trusted commit,
+    // the file it runs is not.
+    let m = merging(Mode::Full, |_| vec![("src/state.txt", "GOOD and more\n")]).await;
+    with_rules(
+        &m,
+        r#"{"checks":[{"run":"git grep --no-index -q GOOD -- src/state.txt"}]}"#,
+        "GOOD\n",
+    )
+    .await;
+    let id = passed(&m.w, &["src/**"], "Edit the state.").await;
+    let entry =
+        m.w.core
+            .crew_queue_merge(&id, &m.target, NOW)
+            .await
+            .unwrap();
+    assert_eq!(entry.state, "waiting");
+    assert!(
+        entry
+            .note
+            .as_deref()
+            .is_some_and(|n| n.contains("checks runs or reads")),
+        "{:?}",
+        entry.note
+    );
+}
+
+#[tokio::test]
+async fn ci_config_and_protected_files_are_held_by_the_guard() {
+    use crate::crew::{check_words, sensitive};
+    let protected = [orbyn_contracts::CrewPathPattern::new("tests/**").unwrap()];
+    let held = |paths: &[&str]| {
+        let paths: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
+        sensitive(
+            &paths,
+            &protected,
+            &[
+                "sh scripts/check.sh".to_owned(),
+                "git grep -q x -- docs/".to_owned(),
+            ],
+        )
+    };
+    assert!(
+        held(&[".github/workflows/ci.yml"])
+            .iter()
+            .any(|w| w.contains("CI"))
+    );
+    assert!(held(&["tests/a.rs"]).iter().any(|w| w.contains("protects")));
+    assert!(
+        held(&[".orbyn/crew.json"])
+            .iter()
+            .any(|w| w.contains(".orbyn/"))
+    );
+    assert!(
+        held(&["scripts/check.sh"])
+            .iter()
+            .any(|w| w.contains("checks"))
+    );
+    assert!(
+        held(&["docs/a.md"]).iter().any(|w| w.contains("checks")),
+        "a folder a check names with a slash"
+    );
+    assert!(held(&["src/lib.rs", "scripts/other.sh"]).is_empty());
+    assert_eq!(
+        check_words(&["./scripts/a.sh --x=y/z".to_owned()]),
+        vec!["scripts/a.sh".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn the_mode_is_read_again_when_the_merge_happens() {
+    let m = merging(Mode::Full, |_| vec![("src/feature.txt", "feature\n")]).await;
+    let id = passed(&m.w, &["src/**"], "Add a feature.").await;
+    assert_eq!(
+        m.w.core
+            .crew_queue_merge(&id, &m.target, NOW)
+            .await
+            .unwrap()
+            .state,
+        "queued"
+    );
+    // The person switches Autopilot off before the queue runs.
+    m.w.core
+        .set_crew_autopilot_mode(&ModeScope::Default, Mode::Off)
+        .unwrap();
+    let before = m.tip().await;
+    let outcomes = m.process(NOW + 1).await;
+    assert!(
+        matches!(&outcomes[..], [MergeOutcome::NeedsPerson { why, .. }] if why.contains("off")),
+        "{outcomes:?}"
+    );
+    assert_eq!(m.tip().await, before);
+}
+
+#[tokio::test]
+async fn the_lanes_owed_must_have_run_unless_a_person_released_it_and_a_release_sticks() {
+    let m = merging(Mode::Full, |_| vec![("src/feature.txt", "feature\n")]).await;
+    let id = passed(&m.w, &["src/**"], "Add a feature.").await;
+    let mut target = m.target.clone();
+    target.owed = None;
+    m.w.core.crew_queue_merge(&id, &target, NOW).await.unwrap();
+    let outcomes =
+        m.w.core
+            .crew_process_merges(&target, NOW + 1)
+            .await
+            .unwrap();
+    assert!(
+        matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why.contains("code review has not run")),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        m.w.core.store.merge_entry(&id).unwrap().unwrap().state,
+        "blocked"
+    );
+    // Releasing a blocked entry is refused: only a waiting one is released.
+    assert!(m.w.core.crew_release_merge(&id).is_err());
+    // A held entry that is released keeps the release through a block, and merges as reviewed.
+    run_git(&m.w.repo, &["checkout", "-q", &m.main]);
+    m.w.core
+        .store
+        .set_merge_entry_state(&id, "waiting", Some("held"))
+        .unwrap();
+    m.w.core.crew_release_merge(&id).unwrap();
+    m.w.core
+        .store
+        .set_merge_entry_state(&id, "blocked", Some("a lane"))
+        .unwrap();
+    assert!(m.w.core.store.merge_entry(&id).unwrap().unwrap().released);
+    run_git(&m.w.repo, &["checkout", "-q", "-b", "parking"]);
+    let outcomes =
+        m.w.core
+            .crew_process_merges(&target, NOW + 2)
+            .await
+            .unwrap();
+    assert!(
+        matches!(&outcomes[..], [MergeOutcome::Merged { .. }]),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        m.w.core
+            .store
+            .crew_merge(&id)
+            .unwrap()
+            .unwrap()
+            .review_state,
+        "looks_good"
+    );
 }

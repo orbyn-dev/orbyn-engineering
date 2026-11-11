@@ -58,7 +58,8 @@ async fn passes_at(scratch: &Scratch, rev: &str, commands: &[String]) -> Result<
     Ok(passes(scratch, commands).await)
 }
 
-/// Reverts `record` on the branch, checking the result first. The inner error is why it was not done.
+/// Reverts `record` on the branch, checking the result first with the repository's checks. A repository that defines none has nothing
+/// to run: the revert is made and recorded with `verified: false`, so it never reads as checked. The inner error is why it was not done.
 pub(super) async fn revert_merge(
     core: &Arc<Core>,
     record: &MergeRecord,
@@ -110,7 +111,7 @@ pub(super) async fn revert_merge(
     core.merge_event(
         &record.task_id,
         "reverted",
-        &json!({ "revert": commit, "merge": record.merge_commit, "by": "request" }),
+        &json!({ "revert": commit, "merge": record.merge_commit, "by": "request", "verified": !commands.is_empty() }),
     );
     Ok(Ok(commit))
 }
