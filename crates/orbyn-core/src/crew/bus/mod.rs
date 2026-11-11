@@ -4,6 +4,7 @@
 
 mod board;
 pub(super) mod deliver;
+mod ledger;
 mod notify;
 mod post;
 pub(super) mod rules;

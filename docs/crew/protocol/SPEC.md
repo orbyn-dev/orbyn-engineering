@@ -406,6 +406,10 @@ These are named so nobody assumes them. They arrive in later versions of this pr
   operating-system user as the core can read the core's own store or call its CLI. An implementation
   that needs H1 to hold against such a member runs it in a sandbox that blocks those reads, and a
   process a member leaves running can outlive its turn.
+- A routine lead message to one member restarts the exchange count of every pair that member is in
+  (H4), so it can re-arm a looping pair the lead never looked at (option A). The core records every
+  such reset in its ledger, with the pairs and their counts before, so real runs show whether it
+  happens; a notice id that the lead must name to re-arm (option B) is revisited then.
 - Evidence is meant to be checked: it names the command, the commit and a log hash, so a
   reader can re-run it and see what it does and does not prove.
 

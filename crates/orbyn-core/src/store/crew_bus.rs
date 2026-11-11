@@ -25,6 +25,14 @@ pub struct CrewDelivery {
     pub at: String,
 }
 
+/// One row of the bus ledger.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CrewBusEvent {
+    pub kind: String,
+    pub body: serde_json::Value,
+    pub at: String,
+}
+
 /// What a board write came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FactWrite {
@@ -269,6 +277,50 @@ impl Store {
                     "crew_messages holds a {}",
                     other.type_name()
                 ))),
+            })
+            .collect()
+    }
+
+    /// Appends one event to the bus ledger. Core writes only; a row is never changed.
+    pub fn add_crew_bus_event(
+        &self,
+        task_id: &str,
+        crew_id: &str,
+        kind: &str,
+        body: &serde_json::Value,
+    ) -> Result<()> {
+        let text = serde_json::to_string(body)?;
+        self.commit(|tx, _| {
+            tx.execute(
+                "INSERT INTO crew_bus_events (crew_id, task_id, kind, body, at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![crew_id, task_id, kind, text, now()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The bus ledger of a crew, oldest first.
+    pub fn crew_bus_events(&self, crew_id: &str) -> Result<Vec<CrewBusEvent>> {
+        let conn = self.reader();
+        let mut statement = conn
+            .prepare("SELECT kind, body, at FROM crew_bus_events WHERE crew_id = ?1 ORDER BY id")?;
+        let rows = statement
+            .query_map([crew_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(kind, body, at)| {
+                Ok(CrewBusEvent {
+                    kind,
+                    body: serde_json::from_str(&body)?,
+                    at,
+                })
             })
             .collect()
     }

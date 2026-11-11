@@ -281,6 +281,16 @@ impl Core {
             waiting.insert(message.id.as_str().to_owned());
         }
         let needles = self.crew_key_needles(crew)?;
+        // H4: a lead message to one member restarts the count of every pair that member is in. The
+        // ledger records each pair with its count before, so real runs show whether a routine message
+        // re-armed a looping pair.
+        if who.role == CrewRole::Lead
+            && let Some(member) = &route.pair
+        {
+            let others: Vec<String> = members.iter().map(|(_, run)| run.member.clone()).collect();
+            let pairs = super::ledger::rearmed(log.iter().map(|(_, m)| m), member, &others);
+            self.record_hop_reset(&route.task, &message, member, &pairs, &needles);
+        }
         drop(guard);
         self.crew_bus.wake.notify_waiters();
 
