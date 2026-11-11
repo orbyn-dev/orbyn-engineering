@@ -260,3 +260,44 @@ describe("Confirm it’s you", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   });
 });
+
+describe("the device check before a code is sent", () => {
+  async function toDetails(user: ReturnType<typeof userEvent.setup>, email: string) {
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.type(screen.getByLabelText("Invite code"), "K7QM2XWH9QXA3C2D");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(await screen.findByLabelText("Email"), email);
+    await user.type(screen.getByLabelText("Password"), "a fresh throwaway phrase");
+  }
+
+  it("shows a visible wait with Cancel after 400 ms, and Cancel returns to the form with nothing sent", async () => {
+    const user = await signedOut();
+    await toDetails(user, "busy@example.com");
+    const api = (await import("./api")).accountApi;
+    let signal: AbortSignal | undefined;
+    const spy = vi.spyOn(api, "startSignUp").mockImplementation((_invite, _email, given) => {
+      signal = given;
+      return new Promise((_resolve, reject) => given?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))));
+    });
+    await user.click(screen.getByRole("button", { name: "Continue with a password" }));
+    expect(await screen.findByText("Checking this device")).toBeVisible();
+    expect(screen.getByRole("progressbar", { name: "Checking this device" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(signal?.aborted).toBe(true);
+    expect(await screen.findByLabelText("Email")).toHaveValue("busy@example.com");
+    expect(screen.getByLabelText("Password")).toHaveValue("a fresh throwaway phrase");
+    spy.mockRestore();
+  });
+
+  it("says plainly when the check could not finish and keeps the form filled in", async () => {
+    const user = await signedOut();
+    await toDetails(user, "hard@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue with a password" }));
+    expect(await screen.findByText("We couldn’t finish checking this device")).toBeVisible();
+    expect(screen.getByText("The check could not complete. Nothing was sent, and what you typed is kept.")).toBeVisible();
+    expect(screen.getByLabelText("Email")).toHaveValue("hard@example.com");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Continue with a password" })).toBeVisible();
+  });
+});

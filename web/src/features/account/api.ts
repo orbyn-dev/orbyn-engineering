@@ -7,12 +7,14 @@ import { announceAccountChange } from "./changes";
 
 const changed = <T>(call: Promise<T>) => call.finally(announceAccountChange);
 
-const post = (path: string, body?: unknown) => changed(request<void>("POST", `/api/account${path}`, body ?? {}));
+const post = (path: string, body?: unknown, signal?: AbortSignal) =>
+  changed(request<void>("POST", `/api/account${path}`, body ?? {}, signal));
 
 export const accountApi = {
   view: (signal?: AbortSignal) => request<AccountView>("GET", "/api/account", undefined, signal),
   checkInvite: (invite: string) => post("/sign-up/invite", { invite }),
-  startSignUp: (invite: string, email: string) => post("/sign-up/start", { invite, email }),
+  /** Can take a few seconds when Orbyn asks this device for a short check first; `signal` cancels it. */
+  startSignUp: (invite: string, email: string, signal?: AbortSignal) => post("/sign-up/start", { invite, email }, signal),
   resendCode: () => post("/sign-up/resend"),
   verifyCode: (code: string) => post("/sign-up/code", { code }),
   register: (password: string) => post("/sign-up/register", { password }),

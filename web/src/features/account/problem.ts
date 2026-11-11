@@ -9,6 +9,8 @@ export type Problem =
   | { kind: "code"; triesLeft: number | null }
   | { kind: "closed" }
   | { kind: "invite" }
+  /** The short check this device does before a code is sent could not finish. */
+  | { kind: "check" }
   | { kind: "other"; message: string };
 
 export const NETWORK_TEXT = "Couldn’t reach Orbyn. Check your connection and try again. Nothing was changed.";
@@ -29,6 +31,8 @@ export function problemOf(error: unknown): Problem {
       return { kind: "code", triesLeft: detail.tries_left ?? null };
     case "sign_in_closed":
       return { kind: "closed" };
+    case "check_failed":
+      return { kind: "check" };
     case "invite_required":
     case "invalid_invite":
       return { kind: "invite" };

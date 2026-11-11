@@ -5,6 +5,7 @@
  *
  * Known values: invite K7QM-2XWH-9QXA-3C2D, emailed code ABCD-EFGH, password "correct horse battery"
  * for dev@, two@ (asks for 123456 or the recovery code ABCDE-FGH23), slow@ (rate limited), down@ (offline).
+ * Sign-up with hard@ fails its device check; busy@ takes a moment in the service (set `/__mock/delay/<ms>` to see it here).
  */
 import type { MockResponse } from "./api.ts";
 
@@ -85,6 +86,7 @@ export function createAccountMock() {
           return clean(data.invite) === INVITE ? { status: 204 } : fail(403, "invite_required", "An invite is needed.");
         case "POST /api/account/sign-up/start":
           if (clean(data.invite) !== INVITE) return fail(403, "invite_required", "An invite is needed.");
+          if (data.email === "hard@example.com") return fail(502, "check_failed", "Couldn't finish checking this device.");
           signup = { email: String(data.email ?? ""), verified: false };
           return { status: 204 };
         case "POST /api/account/sign-up/resend":

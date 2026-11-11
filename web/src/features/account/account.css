@@ -126,3 +126,7 @@
 .ac-zone b { font-weight: 500; color: var(--color-text); }
 .ac-zone span { font-size: 12px; color: var(--color-muted); }
 .ac-zone small { grid-column: 1 / -1; font-size: 12px; line-height: 1.4; color: var(--color-muted); }
+
+.ac-prog { display: flex; flex-direction: column; gap: 6px; }
+.ac-bar { height: 6px; border-radius: 4px; background: var(--color-selected); overflow: hidden; }
+.ac-prog small { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-muted); }

@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { Loader2 } from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button, Field } from "../../ui/controls";
 import { accountApi } from "./api";
 import { Card, Failure, TextLink } from "./Card";
@@ -24,6 +25,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
   const [wait, setWait] = useState<Wait | null>(null);
   const [sent, setSent] = useState(false);
   const spinning = useAfter(busy);
+  const checking = useRef<AbortController | null>(null);
   const left = useCountdown(wait);
   const throttled = left !== null && left > 0;
   const total = 4;
@@ -56,10 +58,20 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
   const sendEmail = (event: FormEvent) => {
     event.preventDefault();
     if (busy || throttled || !email.trim() || !password) return;
+    const controller = new AbortController();
+    checking.current = controller;
     void run(async () => {
-      await accountApi.startSignUp(invite, email.trim());
-      setCode("");
-      setStep("code");
+      try {
+        await accountApi.startSignUp(invite, email.trim(), controller.signal);
+        setCode("");
+        setStep("code");
+      } catch (error) {
+        // Cancel returns to the form with everything still typed and nothing sent.
+        if (controller.signal.aborted) return;
+        throw error;
+      } finally {
+        checking.current = null;
+      }
     });
   };
 
@@ -112,9 +124,25 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
     );
   }
 
-  if (step === "details") {
+  if (step === "details" && busy && spinning) {
     return (
-      <Card title={throttled ? "Too many attempts" : "Create your account"} label="Create account">
+      <Card title="Checking this device" lead="Orbyn does a short check on this device before it sends your code. This takes a moment, sometimes a few seconds." label="Create account">
+        {heading("Email and password")}
+        <div className="ac-prog">
+          <div className="ac-bar" role="progressbar" aria-label="Checking this device" />
+          <small><Loader2 size={12} className="spin" aria-hidden />Checking this device…</small>
+        </div>
+        <div className="ac-acts">
+          <Button onClick={() => checking.current?.abort()}>Cancel</Button>
+        </div>
+      </Card>
+    );
+  }
+
+  if (step === "details") {
+    const failedCheck = problem?.kind === "check";
+    return (
+      <Card title={throttled ? "Too many attempts" : failedCheck ? "We couldn’t finish checking this device" : "Create your account"} lead={failedCheck ? "The check could not complete. Nothing was sent, and what you typed is kept." : undefined} label="Create account">
         {heading("Email and password")}
         {inviteRequired ? <p>Invite accepted</p> : null}
         <form className="ac-form" onSubmit={sendEmail}>
@@ -132,8 +160,9 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
           {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
           <div className="ac-acts">
             <Button type="submit" tone="primary" busy={busy && spinning} disabled={busy || throttled || !email.trim() || !password}>
-              {throttled ? "Try again" : "Continue with a password"}
+              {throttled || failedCheck ? "Try again" : "Continue with a password"}
             </Button>
+            {failedCheck ? <Button onClick={() => setProblem(null)}>Cancel</Button> : null}
           </div>
         </form>
       </Card>
