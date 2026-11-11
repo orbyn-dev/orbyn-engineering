@@ -477,7 +477,7 @@ const slots = (page: import("@playwright/test").Page) =>
 async function openTabs(page: import("@playwright/test").Page, names: string[]) {
   for (const name of names) {
     await page.getByRole("button", { name: "Open a tab" }).click();
-    await page.getByRole("menuitem", { name, exact: true }).click();
+    await page.getByRole("menuitem", { name }).click();
     await expect(page.getByRole("tab", { name, exact: true })).toHaveAttribute("aria-selected", "true");
   }
 }
@@ -489,7 +489,7 @@ test("the side panel starts with no tab, offers three choices, and the + opens a
   await expect(page.getByText("Nothing open")).toBeVisible();
   await expect(page.getByRole("button", { name: "Tab menu" })).toHaveCount(0);
   await page.getByRole("button", { name: "Open a tab" }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["Changes", "Browser", "Activity", "Side chat", "Tools", "Files"]);
+  await expect(page.getByRole("menuitem")).toHaveText([/^Changes/, /^Browser/, "Activity", "Side chat", "Tools", "Files"]);
   await page.getByRole("menuitem", { name: "Browser" }).click();
   await expect(page.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".ctx-title b")).toHaveText("Browser");

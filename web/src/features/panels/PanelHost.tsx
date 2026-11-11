@@ -11,6 +11,9 @@ import { BrowserPanel } from "./browser/BrowserPanel";
 import { DiffPanel } from "./diff/DiffPanel";
 import { FilesPanel } from "./files/FilesPanel";
 import { ToolsTab } from "../tools";
+import { api } from "../../api/client";
+import { useAsync } from "../../lib/useAsync";
+import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
@@ -19,6 +22,8 @@ import { useConnectionKind } from "../../product/state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 
+/** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
+const LAUNCHER_COMMANDS: Partial<Record<RightTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
 const STRIP_PAD = 16;
 const MORE_MENU_WIDTH = 190;
@@ -208,6 +213,7 @@ export function PanelHost({
   const list = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLElement>(null);
   const kind = useConnectionKind();
+  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal));
   // Every tab is a fixed slot. When they don't fit, the last ones fold into "..."; the open tab always shows.
   const [slots, setSlots] = useState(Number.POSITIVE_INFINITY);
   const [promoted, setPromoted] = useState<RightTab | null>(null);
@@ -267,7 +273,10 @@ export function PanelHost({
   });
   // The "+" lists everything that can be opened; choosing one already open shows it. Reset tab order shows once the order has changed.
   const launcher: MenuItem[] = [
-    ...RIGHT_TABS.map(({ id, label, icon: Icon }) => ({ label, icon: <Icon size={14} aria-hidden />, onSelect: () => reopenTab(id) })),
+    ...RIGHT_TABS.map(({ id, label, icon: Icon }) => {
+      const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
+      return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, onSelect: () => reopenTab(id) };
+    }),
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
   const plusButton = useRef<HTMLButtonElement>(null);

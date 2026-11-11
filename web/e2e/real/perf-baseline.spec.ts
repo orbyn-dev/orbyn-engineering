@@ -183,7 +183,7 @@ test("long thread: memory, scroll, typing, thread and tab switch", async () => {
       for (const label of ["Changes", "Browser", "Activity", "Side chat"]) {
         if ((await tablist.getByRole("tab", { name: label, exact: true }).count()) > 0) continue;
         await page.getByRole("button", { name: "Open a tab", exact: true }).click();
-        await page.getByRole("menuitem", { name: label, exact: true }).click();
+        await page.getByRole("menuitem", { name: label }).click();
       }
     }
     const tabTimes: Record<string, number[]> = {};

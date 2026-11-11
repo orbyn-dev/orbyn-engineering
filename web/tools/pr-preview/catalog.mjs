@@ -24,7 +24,7 @@ const filterNeedsMyReview = [
 /** Opens the side panel, then each named tab from the + launcher, the way a person does. */
 const openTabs = (names) => [
   click("button", "Show side panel"),
-  ...names.flatMap((name) => [click("button", "Open a tab"), click("menuitem", name, { exact: true })]),
+  ...names.flatMap((name) => [click("button", "Open a tab"), click("menuitem", name, { prefix: true })]),
 ];
 
 export const FRAMES = {

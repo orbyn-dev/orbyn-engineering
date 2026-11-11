@@ -22,6 +22,13 @@ async function closeOpenTab(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   vi.spyOn(api, "diff").mockResolvedValue([]);
+  vi.spyOn(api, "keybindings").mockResolvedValue({
+    rules: [
+      { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+      { key: "mod+shift+j", command: "preview.toggle", when: "" },
+    ],
+    issues: [],
+  } as never);
   useConnection.setState({ offline: false, serviceDown: false });
   useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"] });
 });
@@ -151,7 +158,8 @@ describe("surface tabs", () => {
     const user = userEvent.setup();
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "Files"]);
+    // Only the entries whose command already has a key show one: Changes and Browser.
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Files"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
     expect(useUi.getState().panelTab).toBe("tools");
     expect(useUi.getState().panelTabsClosed).toEqual([]);
@@ -164,7 +172,7 @@ describe("surface tabs", () => {
     useUi.setState({ panelTab: "files" });
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    await user.click(screen.getByRole("menuitem", { name: "Browser" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Browser/ }));
     expect(useUi.getState().panelTab).toBe("browser");
     expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
   });

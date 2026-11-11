@@ -212,7 +212,7 @@ close buttons; the empty panel offers Changes, Browser and Tools. Tabs are brows
 the strip closes the tab, the others or all of them, a drag reorders (a line shows where it lands, the other
 slots slide aside over `--m-fast`, Escape cancels) and "Reset tab order" shows only once the order has
 changed. Which tabs are open, their order and the active one are remembered per thread, and closing the
-panel does not forget them. Options whose screens do not exist yet (Review and comments, Crew views,
+panel does not forget them. An entry shows the key its command already has (Changes ⌘D, Browser ⌘⇧J, Ctrl on Windows) and the rest show none. Options whose screens do not exist yet (Review and comments, Crew views,
 Open file) stay hidden until they do. Files is the one old destination kept in the launcher while the
 left-bar explorer (shell PR 1b) is built; the explorer removes it, so the two never ship together for long.
 

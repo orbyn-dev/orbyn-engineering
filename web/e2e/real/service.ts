@@ -372,7 +372,7 @@ export async function openPanelTab(page: Page, name?: string) {
   const tab = panel.getByRole("tab", { name: label, exact: true });
   if ((await tab.count()) === 0) {
     await panel.getByRole("button", { name: "Open a tab", exact: true }).click();
-    await page.getByRole("menuitem", { name: label, exact: true }).click();
+    await page.getByRole("menuitem", { name: label }).click();
   }
   await expect(tab).toBeVisible();
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
