@@ -2,7 +2,6 @@
 export { applyTheme, resolveTheme } from "./theme";
 export { useUi } from "./store";
 export {
-  CLOSED_AT_FIRST,
   DEFAULT_SIDEBAR_WIDTH,
   DRAFT_LAYOUT,
   LAYOUT_CHOICES,

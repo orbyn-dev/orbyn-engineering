@@ -51,7 +51,8 @@ describe("layouts by window width", () => {
     render(<App />);
     const button = await showPanel();
     await user.click(button);
-    await user.click(screen.getByRole("tab", { name: "Files" }));
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    await user.click(screen.getByRole("menuitem", { name: "Files" }));
     expect(panel()).toBeInTheDocument();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(useUi.getState().panelOpen).toBe(false));

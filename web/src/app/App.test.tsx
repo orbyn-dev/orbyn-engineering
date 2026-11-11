@@ -55,7 +55,9 @@ describe("App against the mock API", () => {
     await user.click(side);
     expect(useUi.getState().panelOpen).toBe(true);
     expect(side).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByRole("tablist", { name: "Panel tabs" })).queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
+    const context = within(screen.getByRole("complementary", { name: "Thread context" }));
+    expect(context.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
+    expect(context.queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
   });
 
   it("creates the thread on first send from the draft", async () => {
@@ -690,11 +692,14 @@ describe("App against the mock API", () => {
 
   it("keeps the panel open from one thread to the next once it was opened, at any width", async () => {
     setViewportWidth(1700);
-    useUi.setState({ panelOpen: true, panelTab: "diff" });
+    useUi.setState({
+      panelOpen: true,
+      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"], detailsOpen: false, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
+    });
     go("#/threads/t-done");
     render(<App />);
     const row = await screen.findByRole("tablist", { name: "Panel tabs" });
-    expect(within(row).getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
+    expect(within(row).getByRole("tab", { name: "Changes" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
   });
 
