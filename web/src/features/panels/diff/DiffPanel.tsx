@@ -327,7 +327,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       {files.length === 0 ? (
         <Empty title="No changes yet">
           <p className="t3">Files the agent edits show up here, with a diff for each one.</p>
-          <Button small tone="quiet" onClick={() => useUi.getState().togglePanel("files")}>
+          <Button small tone="quiet" onClick={() => useUi.getState().setPrefs({ leftBarView: "files", sidebarCollapsed: false })}>
             Open Files
           </Button>
         </Empty>

@@ -355,8 +355,22 @@ export async function openDetails(page: Page) {
 }
 
 /**
- * Opens the thread's side panel if it is closed and, when a tab is named ("Diff" for Changes, "Files", "Browser", "Activity",
- * "Pull requests", "Side chat"), selects it. Returns the panel. The panel is closed on a narrower window until the
+ * Switches the left bar to Files, the explorer, and returns its tree. Files of the checkout open from it as tabs in the side
+ * panel; there is no Files tab in the panel itself.
+ */
+export async function openExplorer(page: Page) {
+  const switcher = page.getByRole("tablist", { name: "Left bar view" });
+  await expect(switcher).toBeVisible({ timeout: 30_000 });
+  const files = switcher.getByRole("tab", { name: "Files", exact: true });
+  if ((await files.getAttribute("aria-selected")) !== "true") await files.click();
+  const tree = page.getByRole("tree", { name: "Projects, worktrees and files" });
+  await expect(tree).toBeVisible();
+  return tree;
+}
+
+/**
+ * Opens the thread's side panel if it is closed and, when a tab is named ("Diff" for Changes, "Browser", "Activity",
+ * "Side chat", "Tools"), selects it. Returns the panel. The panel is closed on a narrower window until the
  * title bar's Show side panel button turns it on.
  */
 export async function openPanelTab(page: Page, name?: string) {

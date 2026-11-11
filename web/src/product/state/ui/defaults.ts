@@ -21,6 +21,8 @@ export const defaults: Prefs = {
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   groups: {},
+  leftBarView: "threads",
+  explorerOpen: {},
   projectFilter: [],
   projectFolders: true,
   projectGrouping: "separate",

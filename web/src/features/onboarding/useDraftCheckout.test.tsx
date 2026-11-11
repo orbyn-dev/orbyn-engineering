@@ -19,6 +19,13 @@ it("waits for the effective file-backed default and lets an explicit pick win", 
   expect(result.current.worktree).toBeNull(); expect(result.current.loading).toBe(false);
 });
 
+it("starts in the project's own checkout when asked, whatever the device default is", async () => {
+  mocked.mockResolvedValue(views("worktree") as never);
+  const { result } = renderHook(() => useDraftCheckout(a, null, true));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.worktree).toBeNull();
+});
+
 it("uses a worktree default without requiring a manual checkout pick", async () => {
   mocked.mockResolvedValue(views("worktree") as never);
   const { result } = renderHook(() => useDraftCheckout(a, null));

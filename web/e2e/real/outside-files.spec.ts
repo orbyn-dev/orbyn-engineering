@@ -34,15 +34,21 @@ test("a file outside the checkout opens read-only and its HTML stays isolated", 
   await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
   const title = await page.title();
 
-  // Reach the Files panel through a checkout file, then name the outside one by its full path.
-  await page.keyboard.press("ControlOrMeta+p");
-  const palette = page.getByRole("dialog", { name: "Command palette" });
-  await palette.getByRole("combobox", { name: "Search" }).fill("inside.txt");
-  await palette.getByRole("button", { name: /inside\.txt/ }).first().click();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
-  const search = page.getByRole("textbox", { name: "Search files" });
-  await search.fill(page_);
-  await search.press("Enter");
+  // A message link to a full path opens a file tab for it. The tab's id is its target, so the thread's saved layout
+  // can name one: the same tab a click on the link makes.
+  const openFullPath = async (path: string) => {
+    const id = `file:${encodeURIComponent(JSON.stringify(["t", path]))}`;
+    await page.evaluate(([thread, tab]) => {
+      const prefs = JSON.parse(localStorage.getItem("orbyn.prefs.v1") ?? "{}");
+      const builtin = ["diff", "browser", "activity", "side", "tools"];
+      const layout = { panelTab: tab, panelTabOrder: [...builtin, tab], panelTabsClosed: builtin, detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null };
+      // The open thread's layout is the top-level fields; the others wait under `layouts`.
+      Object.assign(prefs, layout, { panelOpen: true, layouts: { ...prefs.layouts, [thread!]: layout } });
+      localStorage.setItem("orbyn.prefs.v1", JSON.stringify(prefs));
+    }, [thread.id, id]);
+    await page.reload();
+  };
+  await openFullPath(page_);
 
   const viewer = page.locator(".files-viewer.outside-file");
   await expect(viewer.getByText(/Outside checkout · Read-only/)).toBeVisible();
@@ -64,16 +70,13 @@ test("a file outside the checkout opens read-only and its HTML stays isolated", 
   await expect(viewer.locator("pre.file-source")).toContainText("parent.document.title");
   expect(readFileSync(page_, "utf8")).toBe(html);
 
-  // A path inside the checkout or into Orbyn's data is refused by the service.
-  await viewer.getByRole("button", { name: "Files", exact: true }).click();
+  // A path into Orbyn's data is refused by the service.
   const data = realpathSync(service.dataDir);
   const held = readdirSync(data).map((name) => join(data, name)).find((path) => statSync(path).isFile());
   expect(held).toBeTruthy();
-  await search.fill(held!);
-  await search.press("Enter");
+  await openFullPath(held!);
   await expect(page.getByText(/own data isn't shown here/)).toBeVisible();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
-  await search.fill(join(realpathSync(service.repo), "inside.txt"));
-  await search.press("Enter");
-  await expect(page.getByText(/in this checkout\. Open it from Files/)).toBeVisible();
+  // A full path inside the checkout is not an outside file: it opens as the checkout's own, with Edit and Save.
+  await openFullPath(join(realpathSync(service.repo), "inside.txt"));
+  await expect(page.locator(".files-viewer:not(.outside-file)").getByRole("radio", { name: "Edit" })).toBeVisible();
 });
