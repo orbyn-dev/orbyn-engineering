@@ -1734,43 +1734,62 @@ therefore answer from the last known value and refresh in the background
 - **A kept value answers at once.** Past its fresh time the same call starts one refresh
   that every other caller shares; a refresh already running is not started again. A value
   older than its maximum age is not shown: that call waits for a read, which concurrent
-  callers share.
+  callers share. The maximum ages are short because the web does not yet re-read on
+  `data_changed`.
 - **A key holds every input of the read**: project, pull request number, engine, thread,
-  state, query and folder. A value is never served for another key. Keys are capped and the
-  least recently used one goes first.
+  state, query and folder. The update status and the dependency check also key on what they
+  are read from (engine updates and engine set changes, library changes, whether a run is
+  active), so a change to any of them is a new key and shows at once. A value is never served
+  for another key. Keys are capped and the least recently used one goes first. Trust is
+  checked on every call, before the kept value is looked at.
 - **A failure never clobbers.** A failed refresh keeps the last good value and is not
   retried for 5 seconds. With nothing kept, the call gets the read's own error, as before,
-  and nothing is stored. An answer a source marks as a failure or stand-in (an engine's
-  model list with `error` set) is returned to its callers but not kept.
-- **`?refresh=1` (or `true`; models keep `refresh=true`, limits `force=true` and forges `rescan=true`) reads
-  now** and waits for the read, whatever is kept. A forced read that fails reports its error
-  and keeps the last good value.
+  and nothing is stored. An engine's model list with `error` set and no stand-in is returned
+  to its callers but not kept; a stand-in list is kept, as before.
+- **`?refresh=1` (or `true`; models keep `refresh=true`, limits `force=true` and forges
+  `rescan=true`) reads now** and waits for the read, whatever is kept. Forced reads that
+  overlap share one read per key. A forced read that fails reports its error and keeps the
+  last good value. A forges rescan also drops every pull request read, since the account may
+  have changed.
 - **A write that changes the data drops it.** Comments, reviews, reviewers, labels, edits,
   merges, closes and actions drop that pull request's detail, checks, conversation,
-  timeline, files, revisions and stack, and every list; opening a pull request drops the
-  lists; a library change drops the workspace status; an engine install or update and an
-  engine set change drop the model lists; any update state change drops the update status.
-  A read that began before the write is not kept, so it cannot put old data back.
+  timeline, files, revisions and stack, and every list. A push from a git action, a workflow
+  approval, a run that ends, a thread's pull request refresh and a watch that found news drop
+  every pull request read of the project. Opening a pull request drops the lists. A library
+  change (setup, fetch, update, rollback) drops the workspace status; so does any write to a
+  project, thread, task, queue, clone, run, approval, history or storage route, silently,
+  because the window that wrote reads again. An engine install, update, add, removal or ACP
+  install or removal drops the model lists, and a removed engine is refused before any kept
+  list is looked at. Any update state change drops the update status, and each step of
+  "update all" does. A read that began before the write is not kept, so it cannot put old
+  data back.
 - **A window hears what changed.** A refresh that changed the answer, and a write that
   dropped it, send `ShellEvent::DataChanged { what }` on `GET /api/shell/events`, so a
   window showing that data reads it again. `what` is `pulls`, `pull:<project>:<number>`,
   `pull-people:<project>`, `forges`, `models:<engine>` (`models` after a change to every
   engine), `workspace`, `updates`, `limits:<engine>`, `tools:<thread>`,
   `engine-tools:<engine>` or `health`. A read time or a measured latency that differs on
-  every read is not a change.
+  every read is not a change. The channel holds 256 events for a window that is slow to
+  read, and a window skips what it missed, so `data_changed` is a hint: a window also reads
+  again when it opens. `GET /api/updates/events` reads the status afresh for each frame,
+  including the first, and wakes on engine and library changes as well as its own.
 
 | Read | Fresh for | Shown for at most |
 | --- | --- | --- |
-| `GET /api/pulls`, `GET /api/projects/:id/pulls` | 20 s | 15 min |
-| A pull request's detail, checks, comments, timeline, files, revisions and stack | 10 s | 15 min |
-| Reviewer and label candidates | 2 min | 15 min |
+| `GET /api/pulls`, `GET /api/projects/:id/pulls` | 20 s | 60 s |
+| A pull request's detail, checks, comments, timeline, files, revisions and stack | 10 s | 60 s |
+| Reviewer and label candidates | 2 min | 5 min |
 | `GET /api/forges` | 60 s | 15 min |
 | `GET /api/engines/:id/models` | 30 s, then the engine's catalog key is compared at most once a minute | 30 min |
-| `GET /api/workspace` | 15 s | 10 min |
-| `GET /api/updates` | 20 s | 10 min |
-| `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 5 min | 1 hour |
-| `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 30 min |
+| `GET /api/workspace` | 15 s | 60 s |
+| `GET /api/updates` | 20 s | 60 s |
+| `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 2 min | 5 min |
+| `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 5 min |
 | `GET /api/health/dependencies` | 60 s | 10 min |
+
+The times are named constants beside each read (`LIST_FRESH`, `PULL_MAX_AGE`, `STATUS_MAX_AGE`
+and so on). Once the web re-reads on `data_changed` and sends `refresh`, the maximum ages can
+grow.
 
 `GET /api/threads/:id/commands` waits on the model list only, so it is instant once that is
 kept. Viewed marks on a pull request's files are this service's own and are read on every

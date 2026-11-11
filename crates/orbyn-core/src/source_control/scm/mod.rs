@@ -154,6 +154,10 @@ impl Core {
             let outcome = git_user(cwd, &["push", "-u", "origin", &branch], PUSH_TIMEOUT)
                 .await
                 .map(|_| None);
+            // A push to a branch that has a pull request moves its commits, files and checks.
+            if let Ok(thread) = self.store.thread(id) {
+                self.scm_reads.project_all_changed(&thread.project_id);
+            }
             if !self.record_phase(id, &mut phases, phase("push", outcome))? {
                 return Ok(GitActionResult {
                     phases,

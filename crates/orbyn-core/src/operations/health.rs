@@ -99,7 +99,12 @@ impl Core {
         let (http, engines) = (self.http.clone(), self.engines.clone());
         self.health_reads
             .get(
-                &crate::util::swr::key(&["health", if online { "online" } else { "offline" }]),
+                // Engine installs, updates and changes to the engine set are inputs of the check.
+                &crate::util::swr::key(&[
+                    "health",
+                    if online { "online" } else { "offline" },
+                    &self.engines.change_epoch().to_string(),
+                ]),
                 "health",
                 refresh,
                 move || async move {
@@ -203,8 +208,9 @@ mod tests {
         assert!(!first.github.checked, "offline mode sends nothing");
         let mut kept = first.clone();
         kept.checked_at = "kept".into();
+        let epoch = core.engines.change_epoch().to_string();
         core.health_reads
-            .put(&crate::util::swr::key(&["health", "offline"]), kept);
+            .put(&crate::util::swr::key(&["health", "offline", &epoch]), kept);
         let started = std::time::Instant::now();
         for _ in 0..100 {
             assert_eq!(

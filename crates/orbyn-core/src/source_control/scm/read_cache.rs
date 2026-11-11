@@ -26,9 +26,13 @@ pub(super) const PULL_FRESH: Duration = Duration::from_secs(10);
 pub(super) const CANDIDATES_FRESH: Duration = Duration::from_secs(120);
 /// Which forge CLIs are installed and signed in.
 pub(super) const FORGES_FRESH: Duration = Duration::from_secs(60);
-/// A value older than this is read again before it is shown, so a screen opened after
-/// a long time never starts from hours-old data.
-pub(super) const MAX_AGE: Duration = Duration::from_secs(15 * 60);
+/// Pull request lists and every part of one are shown for at most this long: the web does
+/// not yet re-read on `data_changed`, so what a screen shows must never be much older.
+pub(super) const PULL_MAX_AGE: Duration = Duration::from_secs(60);
+/// Reviewer and label candidates change rarely.
+pub(super) const CANDIDATES_MAX_AGE: Duration = Duration::from_secs(5 * 60);
+/// Which forge CLIs exist changes only on an install or a sign-in, which rescans.
+pub(super) const FORGES_MAX_AGE: Duration = Duration::from_secs(15 * 60);
 const KEYS: usize = 128;
 
 /// What each pull request read keeps. Keys lead with the project id and the pull request
@@ -51,14 +55,14 @@ pub struct ScmReads {
 impl Default for ScmReads {
     fn default() -> Self {
         fn pull<V: Clone + PartialEq + Send + Sync + 'static>() -> Swr<V> {
-            Swr::new(PULL_FRESH, MAX_AGE, KEYS)
+            Swr::new(PULL_FRESH, PULL_MAX_AGE, KEYS)
         }
         fn candidates<V: Clone + PartialEq + Send + Sync + 'static>() -> Swr<V> {
-            Swr::new(CANDIDATES_FRESH, MAX_AGE, KEYS)
+            Swr::new(CANDIDATES_FRESH, CANDIDATES_MAX_AGE, KEYS)
         }
         Self {
-            list: Swr::new(LIST_FRESH, MAX_AGE, KEYS),
-            project_list: Swr::new(LIST_FRESH, MAX_AGE, KEYS),
+            list: Swr::new(LIST_FRESH, PULL_MAX_AGE, KEYS),
+            project_list: Swr::new(LIST_FRESH, PULL_MAX_AGE, KEYS),
             detail: pull(),
             checks: pull(),
             conversation: pull(),
@@ -68,7 +72,7 @@ impl Default for ScmReads {
             stack: pull(),
             reviewers: candidates(),
             labels: candidates(),
-            forges: Swr::new(FORGES_FRESH, MAX_AGE, 1),
+            forges: Swr::new(FORGES_FRESH, FORGES_MAX_AGE, 1),
         }
     }
 }
@@ -104,6 +108,42 @@ impl ScmReads {
         self.revisions.invalidate(&pull);
         self.project_changed(project_id);
         self.list.announce(&pull_topic(project_id, number));
+    }
+
+    /// Something outside this service may have changed any pull request of a project: a
+    /// push to a branch with one, a workflow approval, a run that pushed, a watch that
+    /// read them again.
+    pub(crate) fn project_all_changed(&self, project_id: &str) {
+        self.project_dropped(project_id);
+        self.list.announce("pulls");
+    }
+
+    /// The same, without telling the windows: for a pass that read the pull requests again
+    /// on its own, which a window already polls.
+    pub(crate) fn project_dropped(&self, project_id: &str) {
+        let project = key(&[project_id]);
+        self.detail.invalidate(&project);
+        self.checks.invalidate(&project);
+        self.conversation.invalidate(&project);
+        self.timeline.invalidate(&project);
+        self.files.invalidate(&project);
+        self.revisions.invalidate(&project);
+        self.project_list.invalidate(&project);
+        self.stack.invalidate(&project);
+        self.list.invalidate_all();
+    }
+
+    /// The forge account may have changed, so nothing read through it still holds.
+    pub(crate) fn everything_changed(&self) {
+        self.detail.invalidate_all();
+        self.checks.invalidate_all();
+        self.conversation.invalidate_all();
+        self.timeline.invalidate_all();
+        self.files.invalidate_all();
+        self.revisions.invalidate_all();
+        self.reviewers.invalidate_all();
+        self.labels.invalidate_all();
+        self.lists_changed();
     }
 
     /// Pull requests were opened, closed or merged in a project.

@@ -125,7 +125,7 @@ pub struct Core {
     pub(crate) pull_details: Mutex<crate::source_control::forge::cache::DetailCache>,
     /// Pull request and forge reads answered from the last known value, refreshed in the
     /// background: asking a forge costs a process and a round trip.
-    pub(crate) scm_reads: crate::source_control::scm::read_cache::ScmReads,
+    pub(crate) scm_reads: Arc<crate::source_control::scm::read_cache::ScmReads>,
     /// The last lists of tools and connectors each engine reported.
     /// What each engine's tools check last said, served at once while it is asked again.
     pub(crate) health_reads: crate::util::swr::Swr<orbyn_contracts::DependencyHealth>,
@@ -195,6 +195,7 @@ impl Core {
             skills.clone(),
             computer.clone(),
         ));
+        let scm_reads: Arc<crate::source_control::scm::read_cache::ScmReads> = Arc::default();
         let runs = Arc::new(RunManager::new(RunServices {
             store: store.clone(),
             gate: gate.clone(),
@@ -204,6 +205,7 @@ impl Core {
             workspace: workspace.clone(),
             mcp: mcp.clone(),
             base_url: config.base_url.clone(),
+            scm_reads: scm_reads.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -241,7 +243,7 @@ impl Core {
             recovery,
             keybinding_writer: Mutex::new(()),
             pull_details: Mutex::new(Default::default()),
-            scm_reads: Default::default(),
+            scm_reads,
             health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
                 crate::operations::health::HEALTH_FRESH,
                 crate::operations::health::HEALTH_MAX_AGE,

@@ -34,9 +34,10 @@ const dataListeners = new Set<(what: string) => void>();
 
 /**
  * Calls back when the service answered from its last known value and a fresher one has landed,
- * with what changed: `pulls`, `pull:<project>:<number>`, `models:<engine>`, `workspace`,
- * `updates`, `limits:<engine>`, `tools:<thread>`, `health`. A listener ignores names it does not
- * show. Returns a stop function.
+ * with what changed: `pulls`, `pull:<project>:<number>`, `pull-people:<project>`, `forges`,
+ * `models:<engine>` (or `models` for every engine), `workspace`, `updates`, `limits:<engine>`,
+ * `tools:<thread>`, `engine-tools:<engine>` and `health`. A listener ignores names it does not
+ * show, and reads again when it opens: a slow window can miss an event. Returns a stop function.
  */
 export function onDataChanged(listener: (what: string) => void): () => void {
   dataListeners.add(listener);

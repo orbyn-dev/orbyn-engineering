@@ -103,3 +103,40 @@ async fn forges_answer_from_memory_without_asking_the_clis() {
     }
     assert!(started.elapsed() < Duration::from_millis(500));
 }
+
+#[tokio::test]
+async fn an_untrusted_project_is_refused_even_when_its_pull_request_is_kept() {
+    let dir = crate::testing::TempDir::new();
+    let mut config =
+        crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    let core = Core::open(config).unwrap();
+    let folder = dir.path().join("app");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.to_string_lossy().into_owned();
+    let project = core
+        .store
+        .add_project(crate::store::NewProject {
+            path: &path,
+            name: "app",
+            is_git: true,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    assert!(!project.trusted);
+    let key = crate::util::swr::key(&[&project.id, "12", &path]);
+    let kept: orbyn_contracts::PullRequestDetail = serde_json::from_value(serde_json::json!({
+        "pull": serde_json::to_value(pull(12, "feature", "main")).unwrap(),
+        "body": "", "checks": null, "comments": null, "mergeable": null,
+        "reviewers": [], "head_sha": null, "base_sha": null,
+        "additions": null, "deletions": null, "changed_files": null,
+    }))
+    .unwrap();
+    core.scm_reads.detail.put(&key, kept);
+    let error = core.project_pull(&project.id, 12, false).await.unwrap_err();
+    assert_eq!(error.code(), "folder_untrusted");
+    // Trusted, the same kept answer is served without asking a forge.
+    core.store.trust_project(&project.id, "t").unwrap();
+    assert!(core.project_pull(&project.id, 12, false).await.is_ok());
+}

@@ -718,3 +718,27 @@ async fn a_changed_engine_set_drops_the_kept_lists() {
     slow.engines.models("slow", false).await.unwrap();
     assert_eq!(slow.reads(), 2);
 }
+
+#[tokio::test]
+async fn an_unknown_engine_is_not_answered_from_a_kept_list() {
+    let slow = slow_manager();
+    slow.engines.models("slow", false).await.unwrap();
+    assert!(matches!(
+        slow.engines.models("gone", false).await,
+        Err(CoreError::NotFound(_))
+    ));
+    // An engine set change (an add, a removal, an update) drops every kept list.
+    slow.engines.invalidate().await;
+    // The route's own kept list is gone: the answer now comes through the engine's
+    // catalog check (its key is unchanged, so no process is started).
+    assert_eq!(
+        slow.engines
+            .models("slow", false)
+            .await
+            .unwrap()
+            .models
+            .len(),
+        1
+    );
+    assert_eq!(*slow.heard.lock().unwrap(), ["models"]);
+}

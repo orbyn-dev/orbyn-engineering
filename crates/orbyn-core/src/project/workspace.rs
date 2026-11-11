@@ -43,8 +43,9 @@ const CLONE_SYMLINKS: &str = "core.symlinks=true";
 /// worktrees costs seconds to read, so a request never waits for that read when an
 /// earlier answer exists.
 const STATUS_FRESH: Duration = Duration::from_secs(15);
-/// Past this, an earlier status is no longer shown without waiting for a new one.
-const STATUS_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+/// Past this, an earlier status is no longer shown without waiting for a new one. The web
+/// does not yet re-read on `data_changed`, so it stays short.
+const STATUS_MAX_AGE: Duration = Duration::from_secs(60);
 /// Checkouts and worktrees read at the same time.
 const STATUS_PARALLEL: usize = 6;
 /// Git processes a status read has running at once, across all its checkouts and
@@ -105,6 +106,9 @@ pub struct Workspace {
     /// position changes. An invalidation also keeps a slow read that began before it
     /// from storing.
     status_reads: crate::util::swr::Swr<WorkspaceStatus>,
+    /// Counts the changes to the library itself (setup, a fetch, an update, a rollback),
+    /// for what shows its state, such as the update status.
+    library_changes: tokio::sync::watch::Sender<u64>,
 }
 
 fn refused(message: impl Into<String>) -> CoreError {
@@ -368,6 +372,7 @@ impl Workspace {
             moving: Mutex::new(false),
             installing: AtomicBool::new(false),
             status_reads: crate::util::swr::Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 8),
+            library_changes: tokio::sync::watch::channel(0).0,
         })
     }
 
@@ -386,9 +391,27 @@ impl Workspace {
 
     /// Forgets the cached status so the next read looks at Git again. Callers that
     /// change a checkout (setup, update, rollback, a project's own Git actions) use it.
+    /// The drop is silent: every write request calls it, and a window that sent the write
+    /// reads again by itself. A change to the library itself uses `library_changed`.
     pub fn invalidate_status(&self) {
         self.status_reads.invalidate_all();
+    }
+
+    /// The library changed (setup, a fetch, an update, a rollback): drops the status,
+    /// tells the windows and wakes what follows library changes.
+    fn library_changed(&self) {
+        self.invalidate_status();
+        self.library_changes.send_modify(|count| *count += 1);
         self.status_reads.announce("workspace");
+    }
+
+    /// The number of library changes so far.
+    pub fn library_epoch(&self) -> u64 {
+        *self.library_changes.borrow()
+    }
+
+    pub fn subscribe_library(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.library_changes.subscribe()
     }
 
     pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
@@ -396,7 +419,7 @@ impl Workspace {
     }
 
     fn save(&self, state: WorkspaceState) -> Result<()> {
-        self.invalidate_status();
+        self.library_changed();
         self.store
             .set_setting(STATE_KEY, &serde_json::to_string(&state)?)?;
         *self
@@ -631,7 +654,7 @@ impl Workspace {
         let _reader = self.library_access.read().await;
         let root = self.root()?;
         let pending = self.fetch_unlocked().await?;
-        self.invalidate_status();
+        self.library_changed();
         let state = self.current().ok_or(CoreError::WorkspaceRequired)?;
         let revision = revision_of(&state).await?;
         if !apply || pending.is_empty() {

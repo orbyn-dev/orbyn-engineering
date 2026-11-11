@@ -50,6 +50,10 @@ impl RunManager {
         {
             Ok((run, expired)) => {
                 self.gate.settle(&expired);
+                // A run may have pushed to a branch that has a pull request.
+                if let Ok(thread) = self.store.thread(&run.thread_id) {
+                    self.scm_reads.project_all_changed(&thread.project_id);
+                }
                 Some(run)
             }
             Err(CoreError::RunClosed) => None,

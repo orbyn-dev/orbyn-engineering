@@ -41,6 +41,8 @@ impl Core {
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         self.link_branch_pull(id, forge, cwd).await;
+        // What is read below is newer than anything kept for this project.
+        self.scm_reads.project_dropped(&thread.project_id);
         let mut merged = false;
         for pull in self.store.linked_pulls(id)? {
             if pull.state != "open" {
@@ -314,7 +316,10 @@ impl Core {
     pub async fn approve_workflow(&self, project_id: &str, run: u64, actor: &str) -> Result<()> {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.workflow_approve", &run.to_string(), None)?;
-        forge::approve_workflow(forge, Path::new(&project.path), run).await
+        let outcome = forge::approve_workflow(forge, Path::new(&project.path), run).await;
+        // A workflow run belongs to a pull request's checks, whichever one it is.
+        self.scm_reads.project_all_changed(project_id);
+        outcome
     }
 
     pub async fn pull_conversation(

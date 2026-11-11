@@ -521,3 +521,28 @@ async fn the_polled_status_is_kept_until_something_changes_and_then_announced() 
     let after = f.core.updates.cached_status(false).await;
     assert_eq!(after.app.latest.as_deref(), Some("100.0.0"));
 }
+
+#[tokio::test]
+async fn an_engine_update_shows_in_the_polled_status_without_waiting_for_the_fresh_time() {
+    let f = fixture("exit 0").await;
+    let before = f.core.updates.cached_status(false).await;
+    let current = |status: &orbyn_contracts::UpdateStatus| {
+        status
+            .engines
+            .iter()
+            .find(|engine| engine.id == "fake")
+            .unwrap()
+            .current
+            .clone()
+    };
+    f.core.engines.update("fake", "t").await.unwrap();
+    // The first status is younger than its fresh time, yet the update is already in it.
+    let after = f.core.updates.cached_status(false).await;
+    assert_ne!(current(&before), current(&after));
+    // So is a change to the library or to whether a run is active: other keys.
+    assert_ne!(f.core.updates.status_key(), {
+        f.core.workspace.invalidate_status();
+        f.core.engines.invalidate().await;
+        f.core.updates.status_key()
+    });
+}

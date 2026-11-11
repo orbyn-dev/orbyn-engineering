@@ -50,6 +50,7 @@ struct Fixture {
     dir: TempDir,
     service: Service,
     project: String,
+    thread: String,
     log: PathBuf,
 }
 
@@ -93,6 +94,7 @@ async fn fixture() -> Fixture {
         dir,
         service,
         project,
+        thread,
         log,
     }
 }
@@ -370,4 +372,71 @@ async fn a_failing_forge_keeps_the_last_good_answer_and_reports_a_forced_read_as
     // Nothing was stored for it, so the next call asks again and gets the answer.
     std::fs::remove_file(f.dir.path().join("gh-fail")).unwrap();
     assert_eq!(f.timed(&list).await.1.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_push_and_a_workflow_approval_drop_what_was_kept_for_the_project() {
+    let f = fixture().await;
+    let base = format!("/api/projects/{}/pulls/12", f.project);
+    let checks = format!("{base}/checks");
+    // A real remote to push to; unknown hosts are GitHub, so `gh` still answers the reads.
+    let checkout = f.dir.path().join("library/repo/project");
+    let remote = f.dir.path().join("remote.git");
+    run_git(
+        f.dir.path(),
+        &["init", "-q", "--bare", remote.to_str().unwrap()],
+    );
+    run_git(
+        &checkout,
+        &["remote", "set-url", "origin", remote.to_str().unwrap()],
+    );
+    std::fs::write(checkout.join("work.txt"), "work\n").unwrap();
+    run_git(&checkout, &["add", "."]);
+    run_git(&checkout, &["commit", "-q", "-m", "work"]);
+
+    f.timed(&base).await;
+    f.timed(&checks).await;
+    f.timed("/api/pulls").await;
+    f.set("gh-title", "after the push");
+    let (views, listed, checked) = (f.asked("pr view"), f.asked("pr list"), f.asked("pr checks"));
+    f.timed(&base).await;
+    assert_eq!(f.asked("pr view"), views, "kept before the push");
+
+    let (code, body) = f
+        .service
+        .send(
+            &format!("/api/threads/{}/git/action", f.thread),
+            json!({ "push": true }),
+        )
+        .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["phases"][0]["ok"], true, "{body}");
+    // No `refresh`: the push dropped the pull request's parts and the lists.
+    let detail = f.timed(&base).await.1;
+    assert!(
+        detail["pull"]["title"]
+            .as_str()
+            .unwrap()
+            .ends_with("after the push")
+    );
+    f.timed(&checks).await;
+    f.timed("/api/pulls").await;
+    assert_eq!(f.asked("pr view"), views + 1);
+    assert!(f.asked("pr checks") > checked);
+    assert_eq!(f.asked("pr list"), listed + 1);
+
+    // A workflow approval changes checks, whichever pull request they belong to.
+    let checked = f.asked("pr checks");
+    f.timed(&checks).await;
+    assert_eq!(f.asked("pr checks"), checked, "kept before the approval");
+    let (code, body) = f
+        .service
+        .send(
+            &format!("/api/projects/{}/workflows/5/approve", f.project),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    f.timed(&checks).await;
+    assert_eq!(f.asked("pr checks"), checked + 1);
 }

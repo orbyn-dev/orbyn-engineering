@@ -100,6 +100,9 @@ pub struct EngineManager {
     /// What `models` answers from while a fresher list is read in the background, so a
     /// screen or a turn never waits on an engine's process.
     model_reads: crate::util::swr::Swr<EngineModels>,
+    /// Counts what changes an engine's status: an update starting or ending, a changed
+    /// engine set. What shows engine status (the update status) follows it.
+    changes: tokio::sync::watch::Sender<u64>,
     /// The last good list of each engine, for checks that cannot wait for an engine.
     known_models: Mutex<HashMap<String, EngineModels>>,
     /// The same lists on disk, so a restart keeps what the engine last said.
@@ -170,6 +173,7 @@ impl EngineManager {
                 *old == new
             }),
             known_models: Mutex::new(HashMap::new()),
+            changes: tokio::sync::watch::channel(0).0,
         }
     }
 
@@ -465,6 +469,19 @@ impl EngineManager {
     /// Drops the cached list so the next read sees a changed engine set.
     pub async fn invalidate(&self) {
         *self.statuses.lock().await = None;
+        // An engine added, removed or updated: its old model list no longer holds.
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
+        self.changes.send_modify(|count| *count += 1);
+    }
+
+    /// The number of changes to engine status so far.
+    pub fn change_epoch(&self) -> u64 {
+        *self.changes.borrow()
+    }
+
+    pub fn subscribe_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
     }
 
     /// An instance id can now launch another driver, whose old models cannot apply.
@@ -493,6 +510,8 @@ impl EngineManager {
     /// The last list answers at once and is checked again in the background after
     /// 30 seconds, announcing `models:<engine>` when it changed. `refresh` reads now.
     pub async fn models(self: &Arc<Self>, id: &str, refresh: bool) -> Result<EngineModels> {
+        // A removed engine must not answer with the list it had.
+        self.driver(id)?;
         let manager = self.clone();
         let engine = id.to_owned();
         self.model_reads
@@ -905,8 +924,10 @@ impl EngineManager {
         // Instances can share the binary, and Windows cannot replace a running one.
         let warm = std::mem::take(&mut *lock(&self.warm));
         drop(warm);
+        self.changes.send_modify(|count| *count += 1);
         Ok(UpdateMarker {
             set: &self.updating,
+            changes: &self.changes,
             id: id.to_owned(),
         })
     }
@@ -1125,12 +1146,14 @@ impl Drop for Finish<'_> {
 
 struct UpdateMarker<'a> {
     set: &'a Mutex<HashSet<String>>,
+    changes: &'a tokio::sync::watch::Sender<u64>,
     id: String,
 }
 
 impl Drop for UpdateMarker<'_> {
     fn drop(&mut self) {
         lock(self.set).remove(&self.id);
+        self.changes.send_modify(|count| *count += 1);
     }
 }
 

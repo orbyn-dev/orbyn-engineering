@@ -312,3 +312,27 @@ async fn put_keeps_a_value_a_write_already_knows() {
         3
     );
 }
+
+#[tokio::test]
+async fn forced_reads_that_overlap_share_one_read() {
+    let swr = Arc::new(Swr::new(LONG, LONG, 8));
+    let (reads, _) = counting(&swr);
+    swr.get("k", "t", false, || read(reads.clone(), 0))
+        .await
+        .unwrap();
+    let calls = (0..10).map(|_| {
+        let (swr, reads) = (swr.clone(), reads.clone());
+        tokio::spawn(async move { swr.get("k", "t", true, || read(reads, 100)).await })
+    });
+    for call in futures_util::future::join_all(calls).await {
+        assert_eq!(call.unwrap().unwrap(), 2);
+    }
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    // A forced read after the first one landed is a new read.
+    assert_eq!(
+        swr.get("k", "t", true, || read(reads.clone(), 0))
+            .await
+            .unwrap(),
+        3
+    );
+}

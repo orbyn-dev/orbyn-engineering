@@ -21,9 +21,9 @@ use crate::util::{new_id, now, parse_time, write_private};
 
 /// An engine's limits are served without a refresh for this long. A read may start the
 /// engine's app-server, so the polled read after it only ever hears the last answer.
-const LIMITS_FRESH: Duration = Duration::from_secs(5 * 60);
+const LIMITS_FRESH: Duration = Duration::from_secs(2 * 60);
 /// Past this, the last limits are no longer shown without waiting for a new read.
-const LIMITS_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+const LIMITS_MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tokens {

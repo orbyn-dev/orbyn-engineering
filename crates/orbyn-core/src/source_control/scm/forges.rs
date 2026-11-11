@@ -49,6 +49,11 @@ impl Core {
     /// outside this service, so `rescan` asks the CLIs again and waits; that also finds
     /// one installed a moment ago.
     pub async fn forges(&self, rescan: bool) -> Vec<ForgeStatus> {
+        if rescan {
+            // A rescan is how a switch of forge account is picked up, and nothing read
+            // through the old one still holds.
+            self.scm_reads.everything_changed();
+        }
         let read = || async {
             let reads: Vec<_> = ALL_FORGES.into_iter().map(forge::forge_status).collect();
             Ok(futures_util::future::join_all(reads).await)

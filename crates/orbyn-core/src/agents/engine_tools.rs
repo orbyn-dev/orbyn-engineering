@@ -14,7 +14,7 @@ use crate::error::{CoreError, Result};
 /// their own engine-wide answer.
 pub(crate) const TOOLS_FRESH: std::time::Duration = std::time::Duration::from_secs(30);
 /// Past this, the last list is no longer shown without waiting for the engine.
-pub(crate) const TOOLS_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+pub(crate) const TOOLS_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// The last good list per engine and thread, kept so a failed check can still show it.
 #[derive(Default)]

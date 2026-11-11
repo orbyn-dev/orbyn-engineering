@@ -114,16 +114,16 @@ pub async fn thread_events(
 pub async fn update_events(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let changes = state.core.updates.subscribe();
+    let changes = state.core.updates.watch();
     let updates = state.core.updates.clone();
     let frames = stream::unfold(
         (updates, changes, true),
         |(updates, mut changes, first)| async move {
-            if !first {
-                changes.changed().await.ok()?;
+            if !first && !changes.changed().await {
+                return None;
             }
-            // A change dropped the kept status; reading it here keeps the next poll instant.
-            let status = updates.cached_status(!first).await;
+            // Read now, and keep the answer, so the next poll is instant and current.
+            let status = updates.cached_status(true).await;
             let frame = Event::default().json_data(&status).ok()?;
             Some((Ok(frame), (updates, changes, false)))
         },

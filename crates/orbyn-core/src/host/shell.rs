@@ -68,7 +68,7 @@ impl Default for ShellBridge {
             web_links,
             waiting_web_links: Mutex::new(Some(waiting)),
             lines: Mutex::new(None),
-            events: broadcast::channel(32).0,
+            events: broadcast::channel(256).0,
             held: Mutex::new(VecDeque::new()),
             windows: Arc::default(),
             facts: Mutex::default(),

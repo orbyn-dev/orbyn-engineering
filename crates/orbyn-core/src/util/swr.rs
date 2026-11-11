@@ -51,7 +51,7 @@ struct Entry<V> {
     touched: Instant,
     retry_after: Option<Instant>,
     /// The read running for this key, by id.
-    flight: Option<(u64, Flight<V>)>,
+    flight: Option<(u64, Flight<V>, bool)>,
     /// A read may store its answer only when its id is at least this. Starting a newer
     /// read, storing an answer or dropping the value raises it, so an older read that
     /// finishes late cannot put old data back.
@@ -93,7 +93,7 @@ struct FlightGuard<V> {
 impl<V> Drop for FlightGuard<V> {
     fn drop(&mut self) {
         if let Some(entry) = lock(&self.state).entries.get_mut(&self.key)
-            && entry.flight.as_ref().is_some_and(|(id, _)| *id == self.id)
+            && entry.flight.as_ref().is_some_and(|(id, ..)| *id == self.id)
         {
             entry.flight = None;
         }
@@ -204,19 +204,30 @@ impl<V: Clone + PartialEq + Send + Sync + 'static> Swr<V> {
             let value = value.clone();
             let quiet = entry.flight.is_none() && entry.retry_after.is_none_or(|at| now >= at);
             if age >= self.fresh && quiet {
-                self.start(state, key, topic, read());
+                self.start(state, key, topic, false, read());
             }
             return Begun::Answer(value);
         }
-        if !refresh && let Some((_, flight)) = &entry.flight {
+        // A forced read already running was started after the caller's last write (a
+        // write drops it), so callers that force a read share it as well.
+        if let Some((_, flight, forced)) = &entry.flight
+            && (!refresh || *forced)
+        {
             return Begun::Wait(flight.clone());
         }
-        Begun::Wait(self.start(state, key, topic, read()))
+        Begun::Wait(self.start(state, key, topic, refresh, read()))
     }
 
     /// Runs `read` on its own task, so a caller that gives up (a closed request) cannot
     /// leave the key stuck, and records its answer unless something newer has landed.
-    fn start<Fut>(&self, state: &mut State<V>, key: &str, topic: &str, read: Fut) -> Flight<V>
+    fn start<Fut>(
+        &self,
+        state: &mut State<V>,
+        key: &str,
+        topic: &str,
+        forced: bool,
+        read: Fut,
+    ) -> Flight<V>
     where
         Fut: Future<Output = Result<V>> + Send + 'static,
     {
@@ -224,7 +235,7 @@ impl<V: Clone + PartialEq + Send + Sync + 'static> Swr<V> {
         state.next += 1;
         let (sender, receiver) = watch::channel(None);
         if let Some(entry) = state.entries.get_mut(key) {
-            entry.flight = Some((id, receiver.clone()));
+            entry.flight = Some((id, receiver.clone(), forced));
             // Whatever an older read still running finds, this one is newer.
             entry.floor = entry.floor.max(id);
         }
