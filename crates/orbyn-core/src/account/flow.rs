@@ -23,11 +23,28 @@ pub const CONFIRM_WINDOW: Duration = Duration::from_secs(10 * 60);
 /// Wrong two-factor codes in a row that close the sign-in.
 pub const SECOND_FACTOR_TRIES: u8 = 5;
 
-/// Proof that the password was typed again in the last ten minutes. Only
-/// [`AccountCenter::require_confirmed`] makes one, and every account action that
-/// removes a device or ends other sessions asks for one, so no route can skip it.
+/// The action a "Confirm it's you" confirmation is for. One confirmation is for exactly one
+/// action, and for one device when it removes a device.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConfirmFor {
+    RemoveDevice(String),
+    SignOutEverywhere,
+}
+
+/// Proof that the password was typed again, in the last ten minutes, for this one action.
+/// Only [`AccountCenter::require_confirmed`] makes one, and it uses the confirmation up. Every
+/// account action that removes a device or ends other sessions takes one, so no route can
+/// skip it.
 #[derive(Debug)]
-pub struct Confirmed(());
+pub struct Confirmed {
+    action: ConfirmFor,
+}
+
+/// A confirmation waiting to be used. In memory only, never stored.
+pub(super) struct Grant {
+    action: ConfirmFor,
+    at: Instant,
+}
 
 #[derive(Default)]
 pub(super) struct Inner {
@@ -97,10 +114,7 @@ impl AccountCenter {
             handle.stop().await;
         }
         *inner = Inner::default();
-        *self
-            .confirmed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.forget_confirmation();
     }
 
     pub async fn view(&self, platform: &str) -> AccountView {
@@ -153,7 +167,6 @@ impl AccountCenter {
                 device_name: session.device_name.clone(),
             }),
             needs_second_factor: inner.second_factor.is_some(),
-            confirmed: self.confirmed_recently(),
             deletion_scheduled: inner.deletion_scheduled
                 || reason == Some(AccountReason::DeletionScheduled),
             sync: AccountSyncView {
@@ -298,8 +311,8 @@ impl AccountCenter {
         Ok(())
     }
 
-    /// Signed in: keep what the session knows, count the typed password as a
-    /// confirmation, and start the settings worker.
+    /// Signed in: keep what the session knows and start the settings worker. Signing in is
+    /// not a confirmation: each sensitive action asks for the password on its own.
     async fn established(&self, session: SessionInfo) -> Result<()> {
         let backend = self.backend()?.clone();
         let mut inner = self.inner.lock().await;
@@ -311,55 +324,65 @@ impl AccountCenter {
         inner.paused = false;
         inner.deletion_scheduled = false;
         inner.sync = Some(self.start_settings_sync(backend.device, SyncTiming::default())?);
-        self.mark_confirmed();
         Ok(())
     }
 
     // Confirm it's you
 
-    fn mark_confirmed(&self) {
-        *self
-            .confirmed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
-    }
-
-    pub fn confirmed_recently(&self) -> bool {
+    fn grant(&self) -> std::sync::MutexGuard<'_, Option<Grant>> {
         self.confirmed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() < CONFIRM_WINDOW)
     }
 
-    /// The only way to get a [`Confirmed`]. Needs a signed-in account.
-    pub async fn require_confirmed(&self) -> Result<Confirmed> {
+    /// Whether a fresh confirmation for exactly this action is waiting. It does not use it up:
+    /// the route layer asks this before the handler runs, and the handler uses it.
+    pub fn confirmed_for(&self, action: &ConfirmFor) -> bool {
+        self.grant()
+            .as_ref()
+            .is_some_and(|grant| grant.action == *action && grant.at.elapsed() < CONFIRM_WINDOW)
+    }
+
+    /// The only way to get a [`Confirmed`]. Needs a signed-in account and a fresh confirmation
+    /// for this action, which it uses up: the next action asks again, even if this one fails.
+    pub async fn require_confirmed(&self, action: ConfirmFor) -> Result<Confirmed> {
         self.backend()?;
-        if self.inner.lock().await.session.is_some() && self.confirmed_recently() {
-            Ok(Confirmed(()))
+        if self.inner.lock().await.session.is_none() {
+            return Err(CoreError::ReauthRequired);
+        }
+        let mut waiting = self.grant();
+        let fresh = waiting
+            .as_ref()
+            .is_some_and(|grant| grant.action == action && grant.at.elapsed() < CONFIRM_WINDOW);
+        if fresh {
+            *waiting = None;
+            Ok(Confirmed { action })
         } else {
             Err(CoreError::ReauthRequired)
         }
     }
 
-    /// Checks the password with the Engine and, when it is right, opens the ten-minute
-    /// window.
-    pub async fn confirm(&self, password: Password) -> Result<()> {
+    /// Checks the password with the Engine and, when it is right, keeps one confirmation for
+    /// `action` for ten minutes. A later confirmation replaces it. The Engine applies its own
+    /// recent-password rule to the action too (orbyn-engine#120); this check is the re-login it
+    /// counts.
+    pub async fn confirm(&self, action: ConfirmFor, password: Password) -> Result<()> {
         let backend = self.backend()?;
         if self.inner.lock().await.session.is_none() {
             return Err(CoreError::ReauthRequired);
         }
         let checked = backend.account.verify_password(&password).await;
         self.guard(checked).await?;
-        self.mark_confirmed();
+        *self.grant() = Some(Grant {
+            action,
+            at: Instant::now(),
+        });
         Ok(())
     }
 
-    /// Ends the window, as a restart or a sign-out does.
+    /// Drops any waiting confirmation, as a restart, a sign-out and a sign-out everywhere do.
     pub fn forget_confirmation(&self) {
-        *self
-            .confirmed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        *self.grant() = None;
     }
 
     // Devices
@@ -373,14 +396,20 @@ impl AccountCenter {
         self.guard(list).await
     }
 
-    pub async fn remove_device(&self, _confirmed: &Confirmed, id: &str) -> Result<()> {
+    pub async fn remove_device(&self, confirmed: Confirmed, id: &str) -> Result<()> {
+        if confirmed.action != ConfirmFor::RemoveDevice(id.to_owned()) {
+            return Err(CoreError::ReauthRequired);
+        }
         let result = self.backend()?.account.remove_device(id).await;
         self.guard(result).await
     }
 
     /// Ends every session of the account, this one too. The Engine refuses while
     /// deletion is scheduled.
-    pub async fn sign_out_everywhere(&self, _confirmed: &Confirmed) -> Result<()> {
+    pub async fn sign_out_everywhere(&self, confirmed: Confirmed) -> Result<()> {
+        if confirmed.action != ConfirmFor::SignOutEverywhere {
+            return Err(CoreError::ReauthRequired);
+        }
         let result = self.backend()?.account.sign_out_everywhere().await;
         self.guard(result).await?;
         self.end_session(SignOutReason::SessionEnded).await;

@@ -13,7 +13,8 @@ use orbyn_contracts::AccountDevice;
 use super::device_api::{DeviceApi, DeviceError};
 use crate::error::CoreError;
 
-/// A password on its way to the Engine. It is never stored, logged or formatted.
+/// A password on its way to the Engine. It is never stored, logged or formatted, and it is
+/// cleared from memory when dropped.
 pub struct Password(String);
 
 impl Password {
@@ -23,6 +24,12 @@ impl Password {
 
     pub fn expose(&self) -> &str {
         &self.0
+    }
+}
+
+impl Drop for Password {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
     }
 }
 

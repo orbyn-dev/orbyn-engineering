@@ -6,7 +6,7 @@ use orbyn_contracts::{AccountSignInOutcome, AccountSyncKind};
 use super::{core_at, dev, until};
 use crate::CoreError;
 use crate::account::dev::{EMAIL_CODE, INVITE, PASSWORD};
-use crate::account::{AccountGate, Password};
+use crate::account::{AccountGate, ConfirmFor, Password};
 use crate::testing::TempDir;
 
 fn pw(text: &str) -> Password {
@@ -41,11 +41,19 @@ async fn the_off_gate_keeps_every_action_shut() {
         "account_disabled"
     );
     assert_eq!(
-        code(a.confirm(pw(PASSWORD)).await.unwrap_err()),
+        code(
+            a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+                .await
+                .unwrap_err()
+        ),
         "account_disabled"
     );
     assert_eq!(
-        code(a.require_confirmed().await.unwrap_err()),
+        code(
+            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+                .await
+                .unwrap_err()
+        ),
         "account_disabled"
     );
     assert_eq!(code(a.devices().await.unwrap_err()), "account_disabled");
@@ -87,7 +95,6 @@ async fn sign_up_runs_invite_email_code_and_password_then_signs_in() {
     a.register(pw("a fresh throwaway phrase")).await.unwrap();
     let view = a.view("macos").await;
     assert_eq!(view.session.unwrap().email, "new@example.com");
-    assert!(view.confirmed, "the password just typed counts");
 }
 
 #[tokio::test]
@@ -175,31 +182,170 @@ async fn a_recovery_code_works_with_any_case_and_a_hyphen() {
 }
 
 #[tokio::test]
-async fn sensitive_actions_need_the_password_in_the_last_ten_minutes() {
+async fn signing_in_is_not_a_confirmation() {
     let dir = TempDir::new();
-    let core = dev(&dir, "confirm");
+    let core = dev(&dir, "signin-is-not");
     let a = &core.account;
-    assert_eq!(
-        code(a.require_confirmed().await.unwrap_err()),
-        "reauth_required"
-    );
     signed_in(&core, "dev@example.com").await;
-    // Signing in just now counts.
-    let token = a.require_confirmed().await.unwrap();
-    a.remove_device(&token, "dev-mini").await.unwrap();
-    // After the window, or a restart, it does not.
-    a.forget_confirmation();
     assert_eq!(
-        code(a.require_confirmed().await.unwrap_err()),
+        code(
+            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+                .await
+                .unwrap_err()
+        ),
         "reauth_required"
     );
     assert_eq!(
-        code(a.confirm(pw("wrong")).await.unwrap_err()),
+        code(
+            a.require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+                .await
+                .unwrap_err()
+        ),
+        "reauth_required"
+    );
+}
+
+#[tokio::test]
+async fn a_confirmation_is_for_one_action_and_one_device_and_is_used_up() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "one-shot");
+    let a = &core.account;
+    signed_in(&core, "dev@example.com").await;
+    assert_eq!(
+        code(
+            a.confirm(ConfirmFor::RemoveDevice("dev-mini".into()), pw("wrong"))
+                .await
+                .unwrap_err()
+        ),
         "wrong_password"
     );
-    assert!(!a.confirmed_recently());
-    a.confirm(pw(PASSWORD)).await.unwrap();
-    a.require_confirmed().await.unwrap();
+    a.confirm(ConfirmFor::RemoveDevice("dev-mini".into()), pw(PASSWORD))
+        .await
+        .unwrap();
+    // Not for the other device, and not for the other action; asking does not use it up.
+    assert_eq!(
+        code(
+            a.require_confirmed(ConfirmFor::RemoveDevice("dev-phone".into()))
+                .await
+                .unwrap_err()
+        ),
+        "reauth_required"
+    );
+    assert_eq!(
+        code(
+            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+                .await
+                .unwrap_err()
+        ),
+        "reauth_required"
+    );
+    let token = a
+        .require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+        .await
+        .unwrap();
+    // A token for one device cannot remove another.
+    assert_eq!(
+        code(a.remove_device(token, "dev-phone").await.unwrap_err()),
+        "reauth_required"
+    );
+    // Used up on first use: the same confirmation does not work twice, even for the same device.
+    assert_eq!(
+        code(
+            a.require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+                .await
+                .unwrap_err()
+        ),
+        "reauth_required"
+    );
+    a.confirm(ConfirmFor::RemoveDevice("dev-mini".into()), pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+        .await
+        .unwrap();
+    a.remove_device(token, "dev-mini").await.unwrap();
+    assert_eq!(a.devices().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_confirmation_ends_after_ten_minutes_and_is_peeked_without_being_used() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "peek");
+    let a = &core.account;
+    signed_in(&core, "dev@example.com").await;
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    assert!(a.confirmed_for(&ConfirmFor::SignOutEverywhere));
+    assert!(
+        a.confirmed_for(&ConfirmFor::SignOutEverywhere),
+        "peeking does not use it up"
+    );
+    assert!(!a.confirmed_for(&ConfirmFor::RemoveDevice("dev-mini".into())));
+    a.forget_confirmation();
+    assert!(!a.confirmed_for(&ConfirmFor::SignOutEverywhere));
+}
+
+#[tokio::test]
+async fn a_confirmation_is_cleared_by_sign_out_and_does_not_survive_a_restart() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "cleared");
+    let a = &core.account;
+    signed_in(&core, "dev@example.com").await;
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    a.sign_out(false).await.unwrap();
+    assert!(!a.confirmed_for(&ConfirmFor::SignOutEverywhere));
+    signed_in(&core, "dev@example.com").await;
+    assert_eq!(
+        code(
+            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+                .await
+                .unwrap_err()
+        ),
+        "reauth_required"
+    );
+    // A restart is a new core on the same data folder: memory only, so nothing is waiting.
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    drop(core);
+    let again = dev(&dir, "cleared");
+    signed_in(&again, "dev@example.com").await;
+    assert!(!again.account.confirmed_for(&ConfirmFor::SignOutEverywhere));
+}
+
+#[tokio::test]
+async fn a_confirmation_is_cleared_by_signing_out_everywhere() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "cleared-everywhere");
+    let a = &core.account;
+    signed_in(&core, "dev@example.com").await;
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    a.confirm(ConfirmFor::RemoveDevice("dev-mini".into()), pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+        .await
+        .unwrap();
+    a.remove_device(token, "dev-mini").await.unwrap();
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .await
+        .unwrap();
+    a.confirm(ConfirmFor::RemoveDevice("dev-phone".into()), pw(PASSWORD))
+        .await
+        .unwrap();
+    a.sign_out_everywhere(token).await.unwrap();
+    assert!(!a.confirmed_for(&ConfirmFor::RemoveDevice("dev-phone".into())));
 }
 
 #[tokio::test]
@@ -208,14 +354,20 @@ async fn too_many_wrong_confirmations_are_rate_limited_and_the_action_is_not_don
     let core = dev(&dir, "limit");
     let a = &core.account;
     signed_in(&core, "dev@example.com").await;
-    a.forget_confirmation();
     for _ in 0..5 {
         assert_eq!(
-            code(a.confirm(pw("wrong")).await.unwrap_err()),
+            code(
+                a.confirm(ConfirmFor::SignOutEverywhere, pw("wrong"))
+                    .await
+                    .unwrap_err()
+            ),
             "wrong_password"
         );
     }
-    let error = a.confirm(pw(PASSWORD)).await.unwrap_err();
+    let error = a
+        .confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap_err();
     assert!(matches!(
         error,
         CoreError::Account {
@@ -225,7 +377,11 @@ async fn too_many_wrong_confirmations_are_rate_limited_and_the_action_is_not_don
         }
     ));
     assert_eq!(
-        code(a.require_confirmed().await.unwrap_err()),
+        code(
+            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+                .await
+                .unwrap_err()
+        ),
         "reauth_required"
     );
 }
@@ -238,8 +394,14 @@ async fn devices_list_and_removal_hide_the_removed_device() {
     assert_eq!(code(a.devices().await.unwrap_err()), "reauth_required");
     signed_in(&core, "dev@example.com").await;
     assert_eq!(a.devices().await.unwrap().len(), 3);
-    let token = a.require_confirmed().await.unwrap();
-    a.remove_device(&token, "dev-phone").await.unwrap();
+    a.confirm(ConfirmFor::RemoveDevice("dev-phone".into()), pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::RemoveDevice("dev-phone".into()))
+        .await
+        .unwrap();
+    a.remove_device(token, "dev-phone").await.unwrap();
     let left = a.devices().await.unwrap();
     assert_eq!(left.len(), 2);
     assert!(left.iter().any(|d| d.current));
@@ -251,9 +413,15 @@ async fn sign_out_everywhere_is_blocked_while_deletion_is_scheduled() {
     let core = dev(&dir, "delete");
     let a = &core.account;
     signed_in(&core, "delete@example.com").await;
-    let token = a.require_confirmed().await.unwrap();
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .await
+        .unwrap();
     assert_eq!(
-        code(a.sign_out_everywhere(&token).await.unwrap_err()),
+        code(a.sign_out_everywhere(token).await.unwrap_err()),
         "deletion_scheduled"
     );
     let view = a.view("macos").await;
@@ -264,15 +432,21 @@ async fn sign_out_everywhere_is_blocked_while_deletion_is_scheduled() {
 }
 
 #[tokio::test]
-async fn sign_out_everywhere_lands_signed_out_and_ends_the_window() {
+async fn sign_out_everywhere_lands_signed_out() {
     let dir = TempDir::new();
     let core = dev(&dir, "everywhere");
     let a = &core.account;
     signed_in(&core, "dev@example.com").await;
-    let token = a.require_confirmed().await.unwrap();
-    a.sign_out_everywhere(&token).await.unwrap();
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .await
+        .unwrap();
+    a.sign_out_everywhere(token).await.unwrap();
     let view = a.view("macos").await;
-    assert!(view.session.is_none() && !view.confirmed);
+    assert!(view.session.is_none());
     assert_eq!(view.sync.kind, AccountSyncKind::SignedOut);
 }
 
@@ -317,10 +491,13 @@ async fn pause_and_resume_move_the_sync_line_and_resume_restarts_the_worker() {
 async fn no_password_shows_in_any_debug_or_error_text() {
     let secret = "super-secret-phrase-123";
     assert!(!format!("{:?}", pw(secret)).contains(secret));
-    let body = orbyn_contracts::AccountSignIn {
-        email: "a@b.co".into(),
-        password: secret.into(),
-    };
+    let body: orbyn_contracts::AccountSignIn =
+        serde_json::from_str(&format!(r#"{{"email":"a@b.co","password":"{secret}"}}"#)).unwrap();
+    let confirm: orbyn_contracts::AccountConfirm = serde_json::from_str(&format!(
+        r#"{{"password":"{secret}","action":"remove_device","device_id":"x"}}"#
+    ))
+    .unwrap();
+    assert!(!format!("{confirm:?}").contains(secret));
     assert!(!format!("{body:?}").contains(secret));
     let dir = TempDir::new();
     let core = dev(&dir, "leak");

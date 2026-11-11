@@ -16,6 +16,7 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 async-trait = "0.1"
+zeroize = "1"
 boon = "0.6"
 axum = { version = "0.8", features = ["ws"] }
 clap = { version = "4", features = ["derive", "env"] }

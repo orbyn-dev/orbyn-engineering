@@ -6,6 +6,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use zeroize::Zeroize;
 
 wire_enum! {
 /// What the sync line shows.
@@ -82,8 +83,6 @@ pub struct AccountView {
     pub session: Option<AccountSessionView>,
     /// A sign-in waits for its two-factor code.
     pub needs_second_factor: bool,
-    /// The password was confirmed in the last 10 minutes.
-    pub confirmed: bool,
     pub deletion_scheduled: bool,
     pub sync: AccountSyncView,
 }
@@ -142,38 +141,58 @@ pub struct AccountSignOut {
 }
 }
 
-macro_rules! secret_request {
-    ($(#[$meta:meta])* pub struct $name:ident { $(pub $field:ident: $ty:ty,)* }) => {
-        $(#[$meta])*
-        #[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
-        #[ts(export, export_to = "../../../web/src/generated/")]
-        pub struct $name { $(pub $field: $ty,)* }
-        impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(concat!(stringify!($name), " { [redacted] }"))
-            }
-        }
-    };
+/// A password in a request body. It prints as `[redacted]`, is cleared from memory when
+/// dropped and is never serialised. The web UI builds the three request bodies below by hand,
+/// so none of them is exported to TypeScript.
+#[derive(Deserialize)]
+#[serde(transparent)]
+pub struct SecretText(String);
+
+impl SecretText {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
 }
 
-secret_request! {
+impl Drop for SecretText {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl fmt::Debug for SecretText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
+
 /// Sign in. The password goes to the service once, on loopback.
+#[derive(Debug, Deserialize)]
 pub struct AccountSignIn {
     pub email: String,
-    pub password: String,
-}
+    pub password: SecretText,
 }
 
-secret_request! {
 /// The last step of sign-up: the password for the new account.
+#[derive(Debug, Deserialize)]
 pub struct AccountRegister {
-    pub password: String,
+    pub password: SecretText,
+}
+
+wire_enum! {
+/// What a "Confirm it's you" confirmation is for. One confirmation is for one action.
+pub enum AccountConfirmAction {
+    RemoveDevice,
+    SignOutEverywhere,
 }
 }
 
-secret_request! {
-/// "Confirm it's you": the password again, for the sensitive actions.
+/// "Confirm it's you": the password again, for one sensitive action. `device_id` names the
+/// device for `remove_device`.
+#[derive(Debug, Deserialize)]
 pub struct AccountConfirm {
-    pub password: String,
-}
+    pub password: SecretText,
+    pub action: AccountConfirmAction,
+    #[serde(default)]
+    pub device_id: Option<String>,
 }

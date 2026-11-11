@@ -1,13 +1,16 @@
 //! The optional account: status, sign-up, sign-in, "Confirm it's you", devices, sync
 //! control and sign-out. Transport only; `orbyn_core::account` owns every rule.
 //!
-//! **The re-entry guard.** Removing a device and signing out everywhere need the
-//! password typed again in the last ten minutes. Two things keep a new account route
-//! from skipping that: the confirmed routes sit in [`confirmed_routes`], whose layer
-//! refuses with `reauth_required` before the handler runs, and the core's own action
-//! takes a `Confirmed` token that only `require_confirmed` makes. The route table test
-//! in `routes/tests.rs` lists every state-changing account route and fails when one is
-//! neither in [`OPEN`] (with its reason) nor refused without the confirmation.
+//! **The re-entry guard.** Removing a device and signing out everywhere each need the
+//! password typed again, in the last ten minutes, for that one action (and that one
+//! device): a confirmation is used up by the action it was for. Two things keep a new
+//! account route from skipping that: the confirmed routes sit in [`confirmed_routes`],
+//! whose layers refuse with `reauth_required` before the handler runs, and the core's own
+//! action takes a `Confirmed` token that only `require_confirmed` makes, for that action.
+//! `routes/account_tests.rs` walks the whole route table: every route under
+//! `/api/account` must be a read in [`READS`], open in [`OPEN`] (each with its reason) or
+//! refused without the confirmation, and no route elsewhere may name an account, a sign-in,
+//! a sign-out or a device.
 //!
 //! The password reaches this service once, in the body of a request on loopback, and
 //! goes straight to the core's `Password`. It is never stored, logged or echoed, and a
@@ -21,12 +24,13 @@ use axum::middleware::{Next, from_fn_with_state};
 use axum::response::Response;
 use axum::routing::{delete, get, post};
 use orbyn_contracts as wire;
-use orbyn_core::account::Password;
+use orbyn_core::CoreError;
+use orbyn_core::account::{ConfirmFor, Password};
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState};
 
 /// State-changing account routes that do not need the password again, each with why.
-/// Anything else that changes state must be confirmed (see `routes/tests.rs`).
+/// Anything else under `/api/account` that changes state must be confirmed.
 #[cfg(test)]
 pub const OPEN: &[(&str, &str)] = &[
     (
@@ -74,6 +78,13 @@ pub const OPEN: &[(&str, &str)] = &[
     ),
 ];
 
+/// Reads under `/api/account`: they change nothing.
+#[cfg(test)]
+pub const READS: &[(&str, &str)] = &[
+    ("GET /api/account", "the status"),
+    ("GET /api/account/devices", "the device list"),
+];
+
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(open_routes())
@@ -100,15 +111,18 @@ fn open_routes() -> Router<AppState> {
         .route("/api/account/sign-out", post(sign_out))
 }
 
-/// Every route here needs the password typed again in the last ten minutes.
+/// Every route here needs the password typed again, in the last ten minutes, for that one
+/// action (and device), and uses the confirmation up.
 fn confirmed_routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/api/account/devices/{id}", delete(remove_device))
+        .route(
+            "/api/account/devices/{id}",
+            delete(remove_device).route_layer(from_fn_with_state(state.clone(), confirmed_device)),
+        )
         .route(
             "/api/account/sign-out-everywhere",
-            post(sign_out_everywhere),
+            post(sign_out_everywhere).route_layer(from_fn_with_state(state, confirmed_sign_out)),
         )
-        .route_layer(from_fn_with_state(state, require_confirmed))
 }
 
 async fn local_only(
@@ -125,12 +139,41 @@ async fn local_only(
     Ok(next.run(request).await)
 }
 
-async fn require_confirmed(
+/// Looks for a confirmation for this device without using it up; the handler uses it.
+async fn confirmed_device(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiFailure> {
+    if !state.core.account.available() {
+        return Err(CoreError::AccountDisabled.into());
+    }
+    if !state
+        .core
+        .account
+        .confirmed_for(&ConfirmFor::RemoveDevice(id))
+    {
+        return Err(CoreError::ReauthRequired.into());
+    }
+    Ok(next.run(request).await)
+}
+
+async fn confirmed_sign_out(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Result<Response, ApiFailure> {
-    state.core.account.require_confirmed().await?;
+    if !state.core.account.available() {
+        return Err(CoreError::AccountDisabled.into());
+    }
+    if !state
+        .core
+        .account
+        .confirmed_for(&ConfirmFor::SignOutEverywhere)
+    {
+        return Err(CoreError::ReauthRequired.into());
+    }
     Ok(next.run(request).await)
 }
 
@@ -182,7 +225,7 @@ async fn register(
     state
         .core
         .account
-        .register(Password::new(body.password))
+        .register(Password::new(body.password.expose().to_owned()))
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -194,7 +237,10 @@ async fn sign_in(
     let outcome = state
         .core
         .account
-        .sign_in(&body.email, Password::new(body.password))
+        .sign_in(
+            &body.email,
+            Password::new(body.password.expose().to_owned()),
+        )
         .await?;
     Ok(Json(wire::AccountSignInResult { outcome }))
 }
@@ -216,10 +262,19 @@ async fn confirm(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::AccountConfirm>,
 ) -> ApiResult<StatusCode> {
+    let action = match (body.action, body.device_id) {
+        (wire::AccountConfirmAction::RemoveDevice, Some(id)) if !id.is_empty() => {
+            ConfirmFor::RemoveDevice(id)
+        }
+        (wire::AccountConfirmAction::RemoveDevice, _) => {
+            return Err(CoreError::Invalid("Say which device.".into()).into());
+        }
+        (wire::AccountConfirmAction::SignOutEverywhere, _) => ConfirmFor::SignOutEverywhere,
+    };
     state
         .core
         .account
-        .confirm(Password::new(body.password))
+        .confirm(action, Password::new(body.password.expose().to_owned()))
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -251,13 +306,21 @@ async fn remove_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let confirmed = state.core.account.require_confirmed().await?;
-    state.core.account.remove_device(&confirmed, &id).await?;
+    let confirmed = state
+        .core
+        .account
+        .require_confirmed(ConfirmFor::RemoveDevice(id.clone()))
+        .await?;
+    state.core.account.remove_device(confirmed, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn sign_out_everywhere(State(state): State<AppState>) -> ApiResult<StatusCode> {
-    let confirmed = state.core.account.require_confirmed().await?;
-    state.core.account.sign_out_everywhere(&confirmed).await?;
+    let confirmed = state
+        .core
+        .account
+        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .await?;
+    state.core.account.sign_out_everywhere(confirmed).await?;
     Ok(StatusCode::NO_CONTENT)
 }
