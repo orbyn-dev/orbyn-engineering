@@ -2285,6 +2285,14 @@ an append-only ledger with no secret and no answer-key text. The mode is `full` 
 crew or repository. N1 also applies to threads outside Crew: an agent's command or request that names a state-changing account
 route is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
 
+A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
+merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,
+the task's and the repository's checks again on that combined state, then a compare-and-swap of the branch. Under `off` every merge
+waits for a person and under `on` a high-risk one does; under `full` it merges and tops the after-merge Review queue. After merges the
+watch runs the repository's own checks and, if they fail, bisects the first-parent commits and reverts the crew's merge it finds only
+when the failure reproduces with it, passes without it and the later merges pass after the revert; otherwise it asks the person.
+Nothing is pushed.
+
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
 sets is the project's, never a global one. The owner authorized a narrow exception

@@ -21,7 +21,20 @@ pub struct AutopilotEvent {
 }
 
 /// The kinds a row may have.
-pub const EVENT_KINDS: [&str; 5] = ["allowed", "denied", "person", "disagreement", "tripwire"];
+pub const EVENT_KINDS: [&str; 12] = [
+    "allowed",
+    "denied",
+    "person",
+    "disagreement",
+    "tripwire",
+    "merge_queued",
+    "merge_waiting",
+    "merged",
+    "merge_rejected",
+    "main_broken",
+    "reverted",
+    "person_told",
+];
 
 impl Store {
     /// Sets the person's mode for a scope (`default`, `repo:<id>` or `crew:<id>`).

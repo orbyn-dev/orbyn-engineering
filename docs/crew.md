@@ -513,6 +513,11 @@ chain with a lead and a second key on another vendor, trip wires, the ledger and
 default), all behind the Preview flag and with no screen. The lead and second key are an `Approver` trait, not yet backed
 by a live engine. See the [Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md).
 
+**As built (slice 4f, part 2):** diff risk tiers, the merge queue (one merge at a time, checks again on the combined state), the
+after-merge Review queue and the watch on main with a bisect revert. Local only: a merge or a revert moves a local branch that
+no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
+a revert is one command and a bisect walks first parents.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with

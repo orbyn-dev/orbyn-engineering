@@ -2,7 +2,7 @@
 
 Slice 4f of [docs/crew.md](../../../../../docs/crew.md#autopilot), behind `CoreConfig::crew_preview`. Backend only: no
 screen is built from it. The lead approves what an agent asks for; code, not the lead, limits what it may approve.
-The merge queue, the after-merge Review queue and the watch on main are the second part of the slice.
+The second half of the slice is the merge queue, the after-merge Review queue and the watch on main, in [`merge/`](merge).
 
 | Module | Owns |
 | --- | --- |
@@ -16,6 +16,11 @@ The merge queue, the after-merge Review queue and the watch on main are the seco
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `review` | `Core`'s side: the mode, the approvers, and `ActionReview` for the gate |
+| `merge/risk` | The risk tier of a diff, with its reasons. Pure |
+| `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
+| `merge/review_queue` | The after-merge Review queue and the person's answers |
+| `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
+| `merge/gitops` | The git behind them: scratch checkouts, merge, revert, compare-and-swap of the branch |
 
 The account marker is [`account::changes`](../../account/changes.rs): the list of account routes that change state,
 which N1 refuses by path. `orbynd`'s route-table test fails when a route under `/api/account` is in neither list.
@@ -43,6 +48,35 @@ Outside a Crew task only N1 (the account) is enforced, so an ordinary thread can
 action, the action is denied (the row says `needs_second_engine`) and the work goes on. `on`: the same, but where
 `full` would deny for want of an approver a person is asked. `off`: no one is approved by code, so every request goes to
 a person as before, and the hard rules, the injection wire and the denial counts still apply.
+
+## Merge queue, Review queue and watch on main
+
+**Local only.** A merge moves a *local* branch in a repository where no worktree has that branch checked out, by a
+compare-and-swap `update-ref`. A branch that is checked out is never moved: the entry waits for a person. Nothing is pushed,
+no pull request is opened or merged, no forge CI is read, and nothing reaches a remote. Every merge, check and revert runs in a
+scratch checkout under the data folder (`crew-merge/`), never in a person's checkout.
+
+- **Risk.** `merge::score` reads paths (CI, migrations, dependency files, and auth, keys or crypto as whole words in a path),
+  size (over 20 files or 400 lines is large) and the 60-day revert rate of each area and of the engine, which counts from 10
+  merges and at 20 percent. High if any applies; low only for small docs or tests; medium otherwise. Test coverage is not
+  measured, and every score says so. An area is the first two folders of a path.
+- **Mode.** `off`: every merge waits for a person. `on`: a high-risk diff waits. `full`: everything merges, and a high-risk
+  one goes to the top of the Review queue. A person's release counts as the review.
+- **Queue.** `crew_queue_merge` takes a passed task (its commit is the passed result's), `crew_process_merges` merges the
+  queued entries one at a time in the order queued: a `--no-ff` merge in a scratch checkout, then the task's own command
+  checks and the repository's `checks` (in `.orbyn/crew.json` at the branch's tip) run again on that combined state, and only
+  then does the branch move. A conflict or a failing check rejects the entry; a branch that moved is retried; a confirmed
+  finding or a running review lane blocks it until it clears. A merge commit makes a revert one `git revert -m 1`.
+- **Review queue.** Every merge is one item: the diff size, the proof (checks, reviewers by engine, findings), what was not
+  verified and the cost the result recorded. Ranked: a break that needs a decision, then high, medium, low, then oldest.
+  Windows: high 4 hours, medium 24, low none. Answers: looks good, comment (kept; the fix brief is not built), revert (made in a
+  scratch checkout, the checks run on the result, then the branch moves, and it is refused if a later merge needs the one reverted).
+- **Watch.** `crew_watch_main` runs the repository's checks, read at the last commit known good (or where the first watched
+  merge began), so a merge cannot remove its own check. If they fail it bisects the first-parent commits to the first that fails.
+  It reverts only when the culprit is a merge the crew made, the checks fail with it twice and pass without it, and they pass
+  after the revert (so no later merge needs it). Otherwise it records the break, flags the item to the top of the Review queue
+  and tells the person (a `person_told` row). Under `off` it only asks. A repository with no checks is reported `NoChecks`,
+  never healthy. Nothing schedules the watch yet: a caller runs it after merges.
 
 ## The always-denied list: what it reads, and what it cannot
 
@@ -75,4 +109,7 @@ ledger of slice 4c; when that lands these rows move into it.
 - No engine-backed approver exists yet: `Approver` is the seam, and tests script it. Until one is wired, a lead that is
   not set means `full` denies and `on` asks a person.
 - The lead's thread is not asked mid-turn; wiring an approver to a live lead thread and a second engine is [#456](https://github.com/orbyn-dev/orbyn-engineering/issues/456).
+- The queue and the watch are called by whoever drives them: no tool exposes them to the lead, and nothing runs them on a
+  schedule or after a merge yet. The merge Gate (stage `merge`) is not written, since it needs Evidence objects.
+  See [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
 - The detector and the list are heuristics (above); real runs will show what they miss ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)).

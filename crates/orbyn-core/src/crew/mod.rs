@@ -32,8 +32,10 @@ mod tests;
 
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
-    Answer, Approver, Approvers, Autopilot, Grants, IN_A_ROW, IN_A_RUN, Mode, ModeScope, Need,
-    Outcome, RULES, Refusal, Scene, Summary, injection_in, refuse, tier_of,
+    Answer, Approver, Approvers, Autopilot, DiffFacts, Grants, IN_A_ROW, IN_A_RUN, MergeOutcome,
+    MergeTarget, Mode, ModeScope, Need, Outcome, RULES, Rate, Refusal, ReviewAnswer, ReviewItem,
+    Risk, Scene, Scored, Summary, WatchOutcome, area_of, areas_of, injection_in, refuse,
+    review_window, score, tier_of,
 };
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use gather::{LeftOut, Machine};

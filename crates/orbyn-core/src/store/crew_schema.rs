@@ -294,3 +294,60 @@ CREATE INDEX crew_autopilot_events_by_crew ON crew_autopilot_events(crew_id, id)
 CREATE TRIGGER crew_autopilot_events_immutable BEFORE UPDATE ON crew_autopilot_events
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 39: the merge queue and the after-merge Review queue (docs/crew.md, "Autopilot"). `crew_merge_queue` holds one row per
+// task asked to merge: its candidate commit, the risk tier with its reasons, and where it stands (`queued`, `blocked` until its
+// stages are green, `waiting` for a person, `merging`, `merged`, `rejected`). `crew_merges` holds one row per merge that
+// reached the target branch, which is one item of the Review queue: the commit before, the merge commit, the proof, what was
+// not verified, the review window and the person's answer, and what the watch on main found. A merge is a `--no-ff` merge commit,
+// so a revert is one `git revert -m 1`. The queue is local: it moves a local branch and nothing is pushed.
+pub(super) const CREW_MERGES: &str = r#"
+CREATE TABLE crew_merge_queue (
+    task_id TEXT PRIMARY KEY REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    crew_id TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    candidate TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('queued', 'blocked', 'waiting', 'merging', 'merged', 'rejected')),
+    risk TEXT NOT NULL CHECK(risk IN ('low', 'medium', 'high')),
+    reasons TEXT NOT NULL CHECK(json_valid(reasons)),
+    areas TEXT NOT NULL CHECK(json_valid(areas)),
+    engine TEXT NOT NULL,
+    files INTEGER NOT NULL,
+    lines INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    note TEXT,
+    queued_unix INTEGER NOT NULL,
+    updated_unix INTEGER NOT NULL
+);
+CREATE INDEX crew_merge_queue_by_target ON crew_merge_queue(repo, branch, queued_unix);
+
+CREATE TABLE crew_merges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL UNIQUE REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    crew_id TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    before_commit TEXT NOT NULL,
+    merge_commit TEXT NOT NULL,
+    candidate TEXT NOT NULL,
+    risk TEXT NOT NULL CHECK(risk IN ('low', 'medium', 'high')),
+    reasons TEXT NOT NULL CHECK(json_valid(reasons)),
+    areas TEXT NOT NULL CHECK(json_valid(areas)),
+    engine TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    files INTEGER NOT NULL,
+    lines INTEGER NOT NULL,
+    proof TEXT NOT NULL CHECK(json_valid(proof)),
+    not_verified TEXT NOT NULL CHECK(json_valid(not_verified)),
+    merged_unix INTEGER NOT NULL,
+    due_unix INTEGER,
+    review_state TEXT NOT NULL DEFAULT 'waiting' CHECK(review_state IN ('waiting', 'looks_good', 'commented', 'reverted')),
+    comment TEXT,
+    reviewed_unix INTEGER,
+    watch TEXT NOT NULL DEFAULT 'unknown' CHECK(watch IN ('unknown', 'green', 'broken')),
+    reverted_commit TEXT,
+    needs_person TEXT
+);
+CREATE INDEX crew_merges_by_target ON crew_merges(repo, branch, id);
+"#;

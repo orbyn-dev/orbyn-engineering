@@ -14,6 +14,7 @@ mod crew_autopilot;
 mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
+mod crew_merges;
 mod crew_review;
 mod crew_runs;
 mod crew_schema;
@@ -37,6 +38,7 @@ pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
 pub use crew_autopilot::AutopilotEvent;
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
+pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub use crew_runs::CrewRun;
 
