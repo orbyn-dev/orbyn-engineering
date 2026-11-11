@@ -2546,6 +2546,12 @@ tables, migration 29): the local copy of each zone's record, the outbox of field
 uploaded, the zone cursor and the conflicts to show. They stay empty while the sign-in gate
 is `Off`. A preference write queues its fields in its own transaction, so a crash loses
 neither; no key, token or password is stored in them ([account design](account.md)).
+The signed-in session, the ten-minute "Confirm it's you" window and the pause are in
+memory only until the real device client and keychain exist; a restart signs out. Every
+account route is refused to a remote viewer (`local_only`), and each answers
+`account_disabled` under the `Off` gate. In debug builds `ORBYN_ACCOUNT_DEV=1` selects
+the `LocalOnly` gate with an in-memory stand-in for the Engine and throwaway accounts;
+no release build has either.
 
 Crew objects (the [Crew Protocol](crew/protocol/SPEC.md), migration 30) are stored as canonical
 JSON keyed by their content address and verified on the way in: valid, hashing to their own
@@ -2906,6 +2912,12 @@ every method, path and which routes need a credential.
 | `GET, POST /api/policy/rules`, `DELETE /api/policy/rules/:id` | Internal: diagnostics only, no client uses these |
 | `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this |
 | `GET /api/computer`, `POST /api/threads/:id/computer` | Status, and a governed action |
+| `GET /api/account` | `AccountView`: `available` (the sign-in gate is on and a backend answers; false means the window shows nothing of the account), the session's email and device name, the sync line, `confirmed` and `deletion_scheduled`. The only account route that answers under the `Off` gate |
+| `POST /api/account/sign-up/{invite,start,resend,code,register}` | The four sign-up steps and the resend. The invite and emailed code normalise case, hyphens and spaces; `register` carries the password once and signs in |
+| `POST /api/account/sign-in`, `/sign-in/second-factor` | `AccountSignIn` to `AccountSignInResult`; a code (authenticator or recovery) closes the sign-in with `422 sign_in_closed` after five wrong ones |
+| `POST /api/account/confirm` | "Confirm it's you": the password again, checked with the Engine, for one action (`remove_device` with a `device_id`, or `sign_out_everywhere`). The confirmation lasts ten minutes, is for that action and device only, is used up by the first use, is kept in memory only and is cleared by sign-out and a restart. Signing in is not a confirmation |
+| `DELETE /api/account/devices/:id`, `POST /api/account/sign-out-everywhere` | Need a confirmation for exactly that action, else `403 reauth_required`; a route layer and the core's `Confirmed` token both enforce it, and `routes/account_tests.rs` walks the whole route table (a GET under `/api/account` must be listed in `READS`, a state-changing route in `OPEN` with a reason, anything else must refuse without the confirmation, and no route outside the prefix may name an account, sign-in, sign-out or device). Sign out everywhere answers `409 deletion_scheduled` while deletion is scheduled |
+| `GET /api/account/devices`, `POST /api/account/sign-out`, `/sync/{now,pause,resume}` | `AccountDevice[]`; sign out of this computer (keeps unsynced changes unless `discard_unsynced`); wake, pause or resume the settings worker |
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |

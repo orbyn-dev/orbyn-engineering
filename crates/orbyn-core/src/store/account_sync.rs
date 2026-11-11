@@ -256,6 +256,19 @@ pub(super) fn capture(
 }
 
 impl Store {
+    /// Wakes the zone's worker, as a queued change does.
+    pub(crate) fn account_poke(&self) {
+        self.account_changes.send_modify(|count| *count += 1);
+    }
+
+    /// Deletes the changes that have not synced, when the person signs out and asks for it.
+    pub(crate) fn account_discard_outbox(&self, zone: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute("DELETE FROM account_outbox WHERE zone = ?1", [zone])?;
+            Ok(())
+        })
+    }
+
     /// Wakes on any local change that queued a field.
     pub fn subscribe_account_changes(&self) -> tokio::sync::watch::Receiver<u64> {
         self.account_changes.subscribe()

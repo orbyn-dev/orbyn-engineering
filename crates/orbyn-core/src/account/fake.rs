@@ -31,6 +31,7 @@ pub struct FakeDeviceApi {
     notices: watch::Sender<u64>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl FakeDeviceApi {
     pub fn new() -> Self {
         Self {

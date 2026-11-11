@@ -9,6 +9,7 @@ use orbyn_contracts::{KeybindingRule, ShellEvent};
 use serde_json::{Value, json};
 
 mod allowlist;
+mod flow;
 mod limits;
 
 use super::fake::FakeDeviceApi;
@@ -24,6 +25,15 @@ fn core_at(dir: &TempDir, name: &str, gate: AccountGate) -> Core {
     let mut config = CoreConfig::new(dir.path().join(name), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
     config.account_gate = gate;
+    Core::open(config).unwrap()
+}
+
+/// A core on the `LocalOnly` gate with the development stand-in behind the account.
+fn dev(dir: &TempDir, name: &str) -> Core {
+    let mut config = CoreConfig::new(dir.path().join(name), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    config.account_gate = AccountGate::LocalOnly;
+    config.account_backend = super::AccountBackendKind::Development;
     Core::open(config).unwrap()
 }
 

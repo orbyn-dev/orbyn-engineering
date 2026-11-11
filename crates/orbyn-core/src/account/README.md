@@ -2,7 +2,7 @@
 
 The optional Orbyn account's settings sync core: keeping a person's presentation and
 preference settings the same across their computers. Phase 1 builds only the core. There is no
-network, sign-in, keychain, UI or route here, and the module is inactive: `CoreConfig::account_gate`
+network, keychain or UI here (the sign-in routes are in `orbynd`), and the module is inactive: `CoreConfig::account_gate`
 ships `Off`, under which `start_settings_sync` answers `account_disabled`, nothing is queued and no
 request goes anywhere. `LocalOnly` exists only in test and debug builds. The design is
 [docs/account.md](../../../../docs/account.md) and its
@@ -19,7 +19,11 @@ request goes anywhere. `LocalOnly` exists only in test and debug builds. The des
 | `apply` | The allowlist-only apply plan. Every other field is kept and passed on, never applied |
 | `sync` | One worker per zone: pull, merge, apply, upload, backoff and the error table |
 | `status` | Status values and their `DataChanged` events (`account`, `account:conflicts`) |
-| `fake` | A fake `DeviceApi` for tests (test builds only) |
+| `api` | `AccountApi` (sign-up, sign-in, devices, sign-out), the redacting `Password`, and the client-error to wire-code table |
+| `codes` | The invite and emailed-code alphabet (30 symbols, no `0 O 1 I L U`) and input normalisation |
+| `flow` | `AccountCenter`'s actions, the session, the ten-minute "Confirm it's you" window and its `Confirmed` token |
+| `dev` | An in-memory stand-in for the Engine with throwaway accounts (debug and test builds only) |
+| `fake` | A fake `DeviceApi` (debug and test builds only) |
 
 The local copy of each record, the outbox, the cursor and the conflicts are durable state, so they
 live with the rest in [`store::account_sync`](../store/account_sync.rs) (migration 29). A preference

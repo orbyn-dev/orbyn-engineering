@@ -138,10 +138,27 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     }
     config.browser_headless = env_flag("ORBYN_BROWSER_HEADLESS");
     config.browser_in_process_gpu = env_flag("ORBYN_BROWSER_IN_PROCESS_GPU");
+    development_account(&mut config);
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
     Ok(config)
 }
+
+/// Turns on the account's development stand-in, for debug builds only: the gate
+/// `LocalOnly` and an in-memory backend with throwaway accounts (see
+/// `orbyn_core::account::dev`). A release build has neither the stand-in nor this
+/// flag, so the account stays `Off` there. Real sign-in is `Off` until every condition
+/// in docs/account.md, "Sign-in gate", holds.
+#[cfg(debug_assertions)]
+fn development_account(config: &mut CoreConfig) {
+    if env_flag("ORBYN_ACCOUNT_DEV") {
+        config.account_gate = orbyn_core::account::AccountGate::LocalOnly;
+        config.account_backend = orbyn_core::account::AccountBackendKind::Development;
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn development_account(_config: &mut CoreConfig) {}
 
 /// Returns the stored key digest, creating a key on first remote start. The key
 /// itself is shown once and never stored.

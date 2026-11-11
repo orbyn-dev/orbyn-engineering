@@ -11,20 +11,27 @@ use std::sync::{Arc, Mutex};
 use crate::error::{CoreError, Result};
 use crate::store::{Store, SyncConflict};
 
+pub mod api;
 pub mod apply;
+pub mod codes;
 pub mod device_api;
+pub mod flow;
 pub mod merge;
 pub mod policy;
 pub mod settings_record;
 pub mod status;
 pub mod sync;
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
+mod dev;
+#[cfg(any(test, debug_assertions))]
 mod fake;
 #[cfg(test)]
 mod tests;
 
+pub use api::{AccountApi, Backend, Password, SessionInfo, SignInOutcome};
 pub use device_api::{DeviceApi, DeviceError, DeviceStatus, Version, ZoneSnapshot};
+pub use flow::{ConfirmFor, Confirmed};
 pub use status::{AccountStatus, PauseReason, SignOutReason, StatusHub, SyncState};
 pub use sync::{SyncHandle, SyncTiming};
 
@@ -45,6 +52,36 @@ pub enum AccountGate {
     LocalOnly,
 }
 
+/// Which backend the account talks to. `Development` is an in-memory stand-in for the
+/// Engine, for debug builds and tests only; it is compiled out of release builds, so a
+/// release has none, and the real device client is not part of this build yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AccountBackendKind {
+    #[default]
+    None,
+    #[cfg(any(test, debug_assertions))]
+    Development,
+}
+
+// A release build has one gate value and one backend. Adding a variant outside the debug
+// cfg makes these matches non-exhaustive and breaks the release build, so `LocalOnly`, the
+// development stand-in and `ORBYN_ACCOUNT_DEV` cannot be selected in a release.
+#[cfg(not(any(test, debug_assertions)))]
+const _: () = {
+    #[allow(dead_code)]
+    fn only_off(gate: AccountGate) {
+        match gate {
+            AccountGate::Off => {}
+        }
+    }
+    #[allow(dead_code)]
+    fn only_none(kind: AccountBackendKind) {
+        match kind {
+            AccountBackendKind::None => {}
+        }
+    }
+};
+
 /// Where the person's keybindings file is and the lock every writer of it takes.
 #[derive(Clone)]
 pub(crate) struct KeybindingFile {
@@ -55,26 +92,38 @@ pub(crate) struct KeybindingFile {
 /// The one handle `Core` holds for the account.
 pub struct AccountCenter {
     gate: AccountGate,
+    backend: Option<Backend>,
     store: Arc<Store>,
     keybindings: KeybindingFile,
     status: Arc<StatusHub>,
+    inner: tokio::sync::Mutex<flow::Inner>,
+    confirmed: Mutex<Option<flow::Grant>>,
 }
 
 impl AccountCenter {
     pub(crate) fn new(
         gate: AccountGate,
+        kind: AccountBackendKind,
         store: Arc<Store>,
         keybindings_path: PathBuf,
         keybinding_writer: Arc<Mutex<()>>,
     ) -> Self {
+        let backend = match (gate, kind) {
+            #[cfg(any(test, debug_assertions))]
+            (AccountGate::LocalOnly, AccountBackendKind::Development) => Some(dev::backend()),
+            _ => None,
+        };
         Self {
             gate,
+            backend,
             store,
             keybindings: KeybindingFile {
                 path: keybindings_path,
                 writer: keybinding_writer,
             },
             status: Arc::new(StatusHub::default()),
+            inner: tokio::sync::Mutex::default(),
+            confirmed: Mutex::new(None),
         }
     }
 

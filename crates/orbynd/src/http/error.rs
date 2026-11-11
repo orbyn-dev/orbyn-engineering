@@ -50,6 +50,14 @@ impl From<CoreError> for ApiFailure {
             CoreError::ProjectExists(existing) => serde_json::to_value(existing).ok(),
             CoreError::ProjectHasWork { detail, .. } => Some(detail.clone()),
             CoreError::FileConflict { revision } => Some(json!({ "revision": revision })),
+            CoreError::Account {
+                retry_after_secs: Some(secs),
+                ..
+            } => Some(json!({ "retry_after_secs": secs })),
+            CoreError::Account {
+                tries_left: Some(left),
+                ..
+            } => Some(json!({ "tries_left": left })),
             _ => None,
         };
         Self {

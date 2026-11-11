@@ -1244,6 +1244,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "ts-rs",
+ "zeroize",
 ]
 
 [[package]]
@@ -1279,6 +1280,7 @@ dependencies = [
  "ulid",
  "unicode-segmentation",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
