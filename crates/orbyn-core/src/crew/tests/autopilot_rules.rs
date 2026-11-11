@@ -747,3 +747,55 @@ fn python_dash_m_is_generated_code_unless_the_module_is_well_known() {
         assert_eq!(need(ActionKind::Command, text, &[]), Need::Lead, "{text}");
     }
 }
+
+#[test]
+fn gh_api_flags_with_the_value_stuck_on_are_still_writes() {
+    for text in [
+        "gh api repos/o/r/git/refs/heads/main -XPATCH -fsha=abc",
+        "gh api repos/o/r/contents/x -XPUT -Fmessage=m",
+        "gh api repos/o/r/merges --field=base=main --field=head=x",
+        "gh api repos/o/r/merges --raw-field=base=main",
+        "gh api repos/o/r/git/refs --input=body.json",
+        "gh api --method=POST repos/o/r/merges",
+    ] {
+        assert_eq!(command(text), Some("N5"), "{text}");
+    }
+    assert_eq!(command("gh api repos/o/r/git/refs/heads/main -XGET"), None);
+    assert_eq!(command("gh api repos/o/r/contents/README.md"), None);
+}
+
+#[test]
+fn gh_graphql_mutations_aliases_and_extensions_are_refused() {
+    for text in [
+        "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+        "gh api graphql -fquery=MUTATION{updateRef(input:{}){clientMutationId}}",
+        "gh api graphql -f query='mutation{createCommitOnBranch(input:{}){commit{oid}}}'",
+        "gh api graphql --input query.json",
+        "gh api graphql --input=query.json",
+    ] {
+        assert_eq!(command(text), Some("N5"), "{text}");
+    }
+    assert_eq!(
+        command(
+            "gh api graphql -f query='mutation{updateBranchProtectionRule(input:{}){clientMutationId}}'"
+        ),
+        Some("N5")
+    );
+    for text in [
+        "gh alias set m 'pr merge'",
+        "gh alias set --shell x 'git push origin main'",
+        "gh alias import aliases.yml",
+        "gh extension install owner/gh-thing",
+        "gh extension upgrade --all",
+        "gh extension exec thing",
+        "gh ext install owner/gh-thing",
+    ] {
+        assert_eq!(command(text), Some("N6"), "{text}");
+    }
+    assert_eq!(
+        command("gh api graphql -f query='query { viewer { login } }'"),
+        None
+    );
+    assert_eq!(command("gh alias list"), None);
+    assert_eq!(command("gh extension list"), None);
+}

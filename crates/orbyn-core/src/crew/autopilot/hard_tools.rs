@@ -59,14 +59,30 @@ fn is_git(command: &Simple) -> bool {
 
 /// Whether a `gh api` or `glab api` call changes something: a non-GET method, a field or an input body.
 fn api_writes(args: &[&str]) -> bool {
-    args.iter()
-        .any(|w| matches!(*w, "-f" | "-F" | "--field" | "--raw-field" | "--input"))
-        || args
-            .windows(2)
-            .any(|w| matches!(w[0], "-X" | "--method") && !w[1].eq_ignore_ascii_case("get"))
-        || args
-            .iter()
-            .any(|w| w.starts_with("--method=") && !w.eq_ignore_ascii_case("--method=get"))
+    // gh reads a value stuck to its flag too: `-XPATCH`, `-fsha=x`, `-Fforce=true`, `--field=x`, `--raw-field=x`, `--input=f`.
+    args.iter().any(|w| {
+        matches!(*w, "-f" | "-F" | "--field" | "--raw-field" | "--input")
+            || (w.starts_with("-f") || w.starts_with("-F")) && !w.starts_with("--")
+            || w.starts_with("--field=")
+            || w.starts_with("--raw-field=")
+            || w.starts_with("--input=")
+    }) || args
+        .windows(2)
+        .any(|w| matches!(w[0], "-X" | "--method") && !w[1].eq_ignore_ascii_case("get"))
+        || args.iter().any(|w| {
+            (w.starts_with("--method=") && !w.eq_ignore_ascii_case("--method=get"))
+                || (w.starts_with("-X") && w.len() > 2 && !w[2..].eq_ignore_ascii_case("get"))
+        })
+}
+
+/// A GraphQL call that mutates, or whose query comes from a file that cannot be read here: a mutation can merge, move a ref or commit
+/// to a branch without naming a REST path.
+fn graphql_mutates(args: &[&str]) -> bool {
+    args.contains(&"graphql")
+        && (args.iter().any(|w| w.to_lowercase().contains("mutation"))
+            || args
+                .iter()
+                .any(|w| *w == "--input" || w.starts_with("--input=")))
 }
 
 /// The forge's own ways of moving or committing to the main line, past the merge queue.
@@ -118,6 +134,9 @@ pub(super) fn n5(ctx: &Ctx<'_>) -> bool {
             // A merge on the forge, or a write to its refs, contents, merges or branches, is a push to main by another road.
             "gh" if words.first() == Some(&"pr") && words.get(1) == Some(&"merge") => return true,
             "glab" if words.first() == Some(&"mr") && words.get(1) == Some(&"merge") => {
+                return true;
+            }
+            "gh" | "glab" if words.first() == Some(&"api") && graphql_mutates(&args) => {
                 return true;
             }
             "gh" | "glab" if words.first() == Some(&"api") && api_writes(&args) => {
@@ -302,6 +321,11 @@ pub(super) fn n6(ctx: &Ctx<'_>) -> bool {
                         matches!(verb, Some("set" | "delete" | "remove"))
                     }
                     Some("ruleset") => true,
+                    // An alias hides `pr merge`; an extension is third-party code.
+                    Some("alias") => matches!(verb, Some("set" | "import")),
+                    Some("extension" | "ext") => {
+                        matches!(verb, Some("install" | "upgrade" | "exec"))
+                    }
                     Some("auth") => matches!(
                         verb,
                         Some("login" | "logout" | "refresh" | "setup-git" | "switch")
