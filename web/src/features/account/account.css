@@ -144,3 +144,9 @@
 .ac-choice label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
 .ac-choice span { display: flex; flex-direction: column; }
 .ac-choice small { font-size: 12px; color: var(--color-muted); }
+.ac-dev { align-items: center !important; gap: 10px; }
+.ac-di { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--color-sunken); color: var(--color-textSoft); }
+.ac-dev .ac-tags { margin-top: 0; justify-content: flex-end; flex: none; }
+.ac-nomenu { flex: none; width: 28px; }
+.ac-manage { align-self: flex-start; padding: 8px 0; font-size: 12.5px; }
+.ac-back { display: inline-flex; align-items: center; gap: 2px; }

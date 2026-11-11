@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/controls";
-import { Failure } from "./Card";
+import { BackLink, Failure } from "./Card";
 import { SignedInSection } from "./SignedInSection";
 import { SignedOutHome } from "./SignedOutPage";
 import { SignInCard } from "./SignInCard";
@@ -73,7 +73,7 @@ export function AccountSection() {
     <div className="account-page" aria-busy={waiting || undefined}>
       <h1 className="sr-only" tabIndex={-1} data-page-title>Account</h1>
       {view && !view.session && (mode === "sign-in" || mode === "sign-up") && !asking && !codeStep ? (
-        <button type="button" className="ac-back" onClick={() => setMode("home")}>‹ Account</button>
+        <BackLink onClick={() => setMode("home")} />
       ) : null}
       {body}
     </div>

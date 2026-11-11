@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AccountDevice } from "../../generated/AccountDevice";
 import type { AccountView } from "../../generated/AccountView";
 import { Button } from "../../ui/controls";
@@ -16,6 +16,9 @@ export function DevicesPage({ view }: { view: AccountView }) {
   const [asking, setAsking] = useState<AccountDevice | null>(null);
   const [confirming, setConfirming] = useState<AccountDevice | null>(null);
   const [removed, setRemoved] = useState<string | null>(null);
+  const notice = useRef<HTMLParagraphElement>(null);
+  // The row that was removed took the focus with it: the message that says so gets it.
+  useEffect(() => { if (removed) notice.current?.focus(); }, [removed]);
   const skeleton = useAfter(devices.status === "loading");
   const failed = devices.status === "error";
   const list = devices.data;
@@ -31,7 +34,7 @@ export function DevicesPage({ view }: { view: AccountView }) {
           <Button small onClick={devices.reload}>Try again</Button>
         </div>
       ) : null}
-      {removed ? <p className="ac-done" role="status"><b>{removed} removed.</b> It was signed out and stopped syncing.</p> : null}
+      {removed ? <p className="ac-done" role="status" tabIndex={-1} ref={notice}><b>{removed} was removed.</b> It was signed out and stopped syncing.</p> : null}
       <p className="ac-sub">Devices signed in to your account. Each one shows the Orbyn app it signs in to.</p>
       {list ? (
         <div className="ac-last" data-stale={failed || undefined}>

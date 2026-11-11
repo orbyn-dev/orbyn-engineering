@@ -1,4 +1,4 @@
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
 /** The card every account step sits in. */
@@ -27,6 +27,16 @@ export function TextLink({ onClick, children, disabled }: { onClick(): void; chi
   return (
     <button type="button" className="ac-lnk" onClick={onClick} disabled={disabled}>
       {children}
+    </button>
+  );
+}
+
+/** "‹ Account": back to the Account page. Its name is just "Account"; the chevron is only a picture. */
+export function BackLink({ onClick }: { onClick(): void }) {
+  return (
+    <button type="button" className="ac-back" onClick={onClick}>
+      <ChevronLeft size={14} aria-hidden />
+      Account
     </button>
   );
 }

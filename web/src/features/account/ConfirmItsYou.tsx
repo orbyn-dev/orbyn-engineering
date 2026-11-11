@@ -3,6 +3,7 @@ import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
 import { accountApi } from "./api";
+import { announceAccountChange } from "./changes";
 import { Failure } from "./Card";
 import { retryText } from "./codes";
 import { NETWORK_TEXT, problemOf, type Problem } from "./problem";
@@ -37,6 +38,8 @@ export function ConfirmItsYou({ action, deviceId, subject, onConfirmed, onClose 
     } catch (error) {
       const found = problemOf(error);
       setProblem(found);
+      // The action may have reached the Engine before it failed: read the account and its devices again.
+      if (found.kind !== "wrong" && found.kind !== "throttled") announceAccountChange();
       // A wrong or refused password is cleared; the network failure keeps it typed.
       if (found.kind !== "network") setPassword("");
       if (found.kind === "throttled") setWait({ seconds: found.seconds, at: Date.now() });

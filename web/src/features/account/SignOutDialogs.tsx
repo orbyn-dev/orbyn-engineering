@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { AccountView } from "../../generated/AccountView";
 import { Button } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
@@ -28,27 +29,73 @@ function Lists({ stops }: { stops: string[] }) {
   );
 }
 
+/** How long "Sync now, then sign out" waits for the upload before it says it could not finish. */
+export const SYNC_WAIT_MS = 15_000;
+
+type Phase = "ask" | "syncing" | "stuck";
+
 /** Sign out of this computer. Needs no connection; unsynced settings changes are kept or discarded by choice. */
-export function SignOutDialog({ view, onClose, onDone }: { view: AccountView; onClose(): void; onDone(): void }) {
+export function SignOutDialog({ view, reload, onClose, onDone }: { view: AccountView; reload(): void; onClose(): void; onDone(): void }) {
   const waiting = view.sync.waiting;
   const offline = view.sync.kind === "offline";
   const [discard, setDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>("ask");
+  const startedWith = useRef<number | null>(null);
+  const signing = useRef(false);
 
-  const run = async (syncFirst: boolean) => {
+  const fail = (error: unknown) => {
+    const found = problemOf(error);
+    setProblem(found.kind === "network" ? NETWORK_TEXT : "Couldn’t finish signing out. Check this computer’s account page.");
+    setBusy(false);
+    // The session may be gone even though the request failed: read the account again.
+    reload();
+  };
+
+  const finish = async (discardChanges: boolean) => {
+    if (signing.current) return;
+    signing.current = true;
     setBusy(true);
     setProblem(null);
     try {
-      if (syncFirst) await accountApi.syncNow();
-      await accountApi.signOut(syncFirst ? false : discard);
+      await accountApi.signOut(discardChanges);
       onDone();
     } catch (error) {
-      const found = problemOf(error);
-      setProblem(found.kind === "network" ? NETWORK_TEXT : "Couldn’t sign out. Nothing was changed.");
-      setBusy(false);
+      signing.current = false;
+      fail(error);
     }
   };
+
+  // Only a visible choice is sent: if the changes went out while the dialog was open, nothing is discarded.
+  const run = () => void finish(waiting > 0 && discard);
+
+  const syncFirst = async () => {
+    setBusy(true);
+    setProblem(null);
+    startedWith.current = view.sync.last_synced ?? 0;
+    try {
+      await accountApi.syncNow();
+      setPhase("syncing");
+    } catch (error) {
+      fail(error);
+      setPhase("stuck");
+    }
+  };
+
+  // Sync now only wakes the worker. Wait until nothing is waiting, or a newer sync shows, then sign out.
+  useEffect(() => {
+    if (phase !== "syncing") return;
+    const uploaded = view.sync.waiting === 0 || (view.sync.last_synced ?? 0) > (startedWith.current ?? 0);
+    if (uploaded) {
+      void finish(false);
+      return;
+    }
+    const again = setInterval(reload, 1000);
+    const giveUp = setTimeout(() => { setPhase("stuck"); setBusy(false); }, SYNC_WAIT_MS);
+    return () => { clearInterval(again); clearTimeout(giveUp); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, view.sync.waiting, view.sync.last_synced]);
 
   const stops = ["Settings sync", "Access to your account on this computer", `This device’s keys, removed from the ${view.platform === "windows" ? "Windows credential store" : view.platform === "macos" ? "macOS Keychain" : "system keychain"}`];
   const choice = (
@@ -74,6 +121,29 @@ export function SignOutDialog({ view, onClose, onDone }: { view: AccountView; on
     title = `Sign out with ${waiting} ${waiting === 1 ? "change" : "changes"} not synced?`;
     lead = `${changes(waiting)} ${waiting === 1 ? "hasn’t" : "haven’t"} reached your other devices yet. Choose what happens to them. Signing out also removes this device’s keys from the Keychain.`;
   }
+  if (phase !== "ask") {
+    const stuck = phase === "stuck";
+    return (
+      <Dialog
+        title={title}
+        onClose={onClose}
+        busy={busy && !stuck}
+        footer={
+          <>
+            <Button onClick={onClose} disabled={busy && !stuck}>Cancel</Button>
+            {stuck ? <Button tone="danger" onClick={() => void finish(false)} disabled={busy}>Sign out and keep</Button> : null}
+          </>
+        }
+      >
+        {stuck ? (
+          <p>Couldn’t finish syncing. Your changes are kept on this computer and sync the next time you sign in.</p>
+        ) : (
+          <p className="ac-wait" role="status"><Loader2 size={12} className="spin" aria-hidden />Syncing your changes before signing out…</p>
+        )}
+        {problem ? <Failure>{problem}</Failure> : null}
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       title={title}
@@ -82,8 +152,8 @@ export function SignOutDialog({ view, onClose, onDone }: { view: AccountView; on
       footer={
         <>
           <Button onClick={onClose} disabled={busy}>Cancel</Button>
-          {waiting > 0 && !offline ? <Button onClick={() => void run(true)} disabled={busy}>Sync now, then sign out</Button> : null}
-          <Button tone="danger" onClick={() => void run(false)} disabled={busy}>Sign out</Button>
+          {waiting > 0 && !offline ? <Button onClick={() => void syncFirst()} disabled={busy}>Sync now, then sign out</Button> : null}
+          <Button tone="danger" onClick={run} disabled={busy}>Sign out</Button>
         </>
       }
     >
@@ -106,8 +176,8 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
         onClose={onClose}
         footer={
           <>
-            <Button onClick={onClose}>Close</Button>
-            <Button onClick={onThisComputer}>Sign out of this computer</Button>
+            <Button onClick={onThisComputer}>Sign out of this computer only</Button>
+            <Button tone="primary" onClick={onClose}>OK</Button>
           </>
         }
       >
@@ -119,6 +189,7 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
     return (
       <ConfirmItsYou
         action="sign_out_everywhere"
+        subject="To sign out every device"
         onConfirmed={async () => {
           await accountApi.signOutEverywhere();
           onDone();

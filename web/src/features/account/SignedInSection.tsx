@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AccountView } from "../../generated/AccountView";
-import { Failure } from "./Card";
+import { BackLink, Failure } from "./Card";
 import { DevicesPage } from "./DevicesPage";
 import { SignedInPage } from "./SignedInPage";
 import { SignOutDialog, SignOutEverywhere } from "./SignOutDialogs";
@@ -18,7 +18,7 @@ export function SignedInSection({ view, stale, reload, onSignedOut }: { view: Ac
   if (page === "devices") {
     return (
       <>
-        <button type="button" className="ac-back" onClick={() => setPage("account")}>‹ Account</button>
+        <BackLink onClick={() => setPage("account")} />
         <DevicesPage view={view} />
       </>
     );
@@ -41,6 +41,7 @@ export function SignedInSection({ view, stale, reload, onSignedOut }: { view: Ac
       {dialog === "sign-out" ? (
         <SignOutDialog
           view={view}
+          reload={reload}
           onClose={() => setDialog(null)}
           onDone={() => onSignedOut("Signed out. Your threads, projects and settings are still on this computer.")}
         />

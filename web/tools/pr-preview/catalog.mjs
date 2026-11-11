@@ -204,7 +204,8 @@ export const FRAMES = {
       { do: "fill", label: "Password", value: "correct horse battery" },
       click("button", "Sign in"),
       click("button", "Manage devices"),
-      click("button", "Remove Mac mini"),
+      click("button", "Device menu", { first: true }),
+      click("menuitem", "Remove"),
     ],
   },
   "signout-confirm": {

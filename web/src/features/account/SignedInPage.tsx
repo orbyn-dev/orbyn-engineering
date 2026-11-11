@@ -33,7 +33,7 @@ export function SignedInPage({
   if (!session) return null;
   const sync = view.sync;
   const pausedAny = sync.kind === "paused" && sync.reason !== "zone_failed" && sync.reason !== "too_large";
-  const pause = pausedAny ? pauseInfo(sync) : null;
+  const pause = pausedAny ? pauseInfo(sync, view.deletion_scheduled) : null;
   const offline = sync.kind === "offline";
   const act = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -95,12 +95,7 @@ export function SignedInPage({
       </div>
       <h2 className="ac-grp">Devices{devices ? ` · ${devices.length}` : ""}</h2>
       {devices ? <DeviceRows devices={devices} syncedAt={view.sync.last_synced ? view.sync.last_synced * 1000 : null} /> : null}
-      <div className="ac-row">
-        <div>
-          <b>Manage devices</b>
-        </div>
-        <Button small onClick={onOpenDevices} disabled={stale}>Manage devices</Button>
-      </div>
+      <button type="button" className="ac-lnk ac-manage" onClick={onOpenDevices} disabled={stale}>Manage devices</button>
       <DevicesNote platform={view.platform} />
       <h2 className="ac-grp">Account</h2>
       <div className="ac-row">

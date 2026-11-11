@@ -15,8 +15,9 @@ export interface PauseInfo {
 }
 
 /** Sync is paused, and why in plain words. A pause that is not the person's choice keeps the title "Paused". */
-export function pauseInfo(sync: AccountSyncView): PauseInfo {
-  switch (sync.reason) {
+/** A scheduled deletion wins over any other cause: even a pause the person chose cannot be resumed then. */
+export function pauseInfo(sync: AccountSyncView, deletionScheduled = false): PauseInfo {
+  switch (deletionScheduled ? "deletion_scheduled" : sync.reason) {
     case "by_person":
       return { detail: "You paused sync. Changes are kept on this computer and don’t send or arrive until you resume.", action: { kind: "resume", enabled: true } };
     case "deletion_scheduled":

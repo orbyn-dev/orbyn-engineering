@@ -1040,7 +1040,7 @@ export function createMockApi(options: MockOptions = {}) {
       accountMock.setWaiting(count);
     },
     /** Account knobs for the states a spec cannot reach by clicking: no invite step, a forced sync state, a failed read. */
-    setAccount(knobs: { devices?: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean }; inviteRequired?: boolean; sync?: [Parameters<typeof accountMock.setSync>[0], Parameters<typeof accountMock.setSync>[1]?]; down?: boolean }) {
+    setAccount(knobs: { devices?: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean }; inviteRequired?: boolean; sync?: [Parameters<typeof accountMock.setSync>[0], Parameters<typeof accountMock.setSync>[1]?]; down?: boolean }) {
       if (knobs.devices) accountMock.setDevices(knobs.devices);
       if (knobs.inviteRequired !== undefined) accountMock.setInviteRequired(knobs.inviteRequired);
       if (knobs.sync) accountMock.setSync(knobs.sync[0], knobs.sync[1] ?? null);

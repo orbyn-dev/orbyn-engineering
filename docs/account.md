@@ -354,7 +354,9 @@ now and does not wait for them.
    - the per-adapter options test;
    - the child-environment scrub tests;
    - the snapshot tests: older, other-profile and wrong-version files are refused;
-   - the key-wipe check on sign-out, device removal and `Unauthorized`;
+   - the key-wipe check on sign-out, device removal and `Unauthorized`. The sign-out and removal dialogs already say
+     "This device's keys, removed from the Keychain", so that copy and the wipe must land together: the gate does not
+     turn on until the wipe exists;
    - the canary tests for logs and diagnostics.
 5. macOS: the keychain API and the Developer ID provisioning are settled and verified on a signed build, and the
    release check shows hardened runtime without `get-task-allow` or `disable-library-validation`.

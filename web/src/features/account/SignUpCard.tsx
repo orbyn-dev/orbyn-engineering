@@ -192,6 +192,16 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
 
   if (step === "code") {
     const wrong = problem?.kind === "code";
+    // Once the code is old and refused, asking for a new one is the main action and comes first.
+    const old = wrong && oldCode;
+    const verifyButton = (
+      <Button key="verify" type="submit" tone={old ? "secondary" : "primary"} busy={busy && spinning} disabled={busy || !isEmailCodeComplete(code)}>Verify</Button>
+    );
+    const resendButton = (
+      <Button key="resend" tone={old ? "primary" : "secondary"} onClick={resend} disabled={busy || resendWaiting}>
+        {resendWaiting ? `Send a new code in ${clock(resendLeft)}` : "Send a new code"}
+      </Button>
+    );
     return (
       <Card title="Check your inbox" lead={`Enter the 8-character code we emailed to ${email.trim()}. It works for 30 minutes.`} label="Create account">
         {heading("Check your email")}
@@ -206,8 +216,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
           {network}
           {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
           <div className="ac-acts">
-            <Button type="submit" tone={wrong && oldCode ? "secondary" : "primary"} busy={busy && spinning} disabled={busy || !isEmailCodeComplete(code)}>Verify</Button>
-            <Button tone={wrong && oldCode ? "primary" : "secondary"} onClick={resend} disabled={busy || resendWaiting}>{resendWaiting ? `Send a new code in ${clock(resendLeft)}` : "Send a new code"}</Button>
+            {wrong && oldCode ? [resendButton, verifyButton] : [verifyButton, resendButton]}
           </div>
           {sent ? <p role="status" className="ac-sub">We sent a new code.</p> : null}
         </form>

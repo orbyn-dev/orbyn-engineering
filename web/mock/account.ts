@@ -38,6 +38,7 @@ export function createAccountMock() {
   let syncReason: AccountView["sync"]["reason"] | null = null;
   let viewDown = false;
   let deletionScheduled = false;
+  let syncStuck = false;
   let devicesDown = false;
   // The throwaway account's devices, the same three the service stand-in lists.
   const freshDevices = (): AccountDevice[] => [
@@ -96,6 +97,7 @@ export function createAccountMock() {
       syncReason = null;
       viewDown = false;
       deletionScheduled = false;
+      syncStuck = false;
       devicesDown = false;
       deviceList = freshDevices();
       grant = null;
@@ -114,7 +116,8 @@ export function createAccountMock() {
       syncReason = reason;
     },
     /** Deletion scheduled, devices that cannot be read, or only this device. */
-    setDevices(knobs: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean }) {
+    setDevices(knobs: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean }) {
+      if (knobs.syncStuck !== undefined) syncStuck = knobs.syncStuck;
       if (knobs.deletionScheduled !== undefined) deletionScheduled = knobs.deletionScheduled;
       if (knobs.down !== undefined) devicesDown = knobs.down;
       if (knobs.onlyThis) deviceList = deviceList.filter((device) => device.current);
@@ -206,6 +209,8 @@ export function createAccountMock() {
         }
         case "POST /api/account/sync/now":
           lastSynced = Math.floor(Date.now() / 1000);
+          // The worker uploads what waits, unless a spec says it cannot.
+          if (!syncStuck) waiting = 0;
           return { status: 202 };
         case "POST /api/account/sync/pause":
           paused = true;

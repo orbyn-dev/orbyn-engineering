@@ -47,7 +47,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
       : { right: Math.max(8, window.innerWidth - rect.right), top: rect.bottom + 8 };
   const refused = sync.kind === "paused" && (sync.reason === "zone_failed" || sync.reason === "too_large");
   const paused = sync.kind === "paused" && !refused;
-  const pause = paused ? pauseInfo(sync) : null;
+  const pause = paused ? pauseInfo(sync, view.deletion_scheduled) : null;
   const offline = sync.kind === "offline";
   const last = lastSynced(sync);
   const act = async (work: () => Promise<void>) => {
