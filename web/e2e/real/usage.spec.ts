@@ -50,9 +50,11 @@ test("a model takes a price, follows another model and refreshes; keys move the 
   await expect(usage.getByRole("radio", { name: "Tokens" })).toBeChecked();
   await page.keyboard.press("l");
   await expect(usage.getByRole("tab", { name: "Limits" })).toHaveAttribute("aria-selected", "true");
-  await expect(usage.getByRole("heading", { name: "Pooled" })).toBeVisible();
-  await expect(usage.locator(".limit-reset").first()).toBeVisible();
-  await expect(usage.locator(".usage-plan").first()).toBeVisible();
+  // Only Codex reports a window; Claude Code reads Not reported, with no bar of its own.
+  await expect(usage.getByRole("heading", { name: /^Codex/ })).toBeVisible();
+  await expect(usage.getByRole("meter").first()).toBeVisible();
+  await expect(usage.locator(".limit-pct").first()).toContainText("% used");
+  await expect(usage.getByText("Not reported").first()).toBeVisible();
 });
 
 test("thread details show what's left, and checks stay five minutes apart", async ({ page }) => {

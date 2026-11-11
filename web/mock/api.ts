@@ -51,7 +51,15 @@ export type Scenario =
   | "pulls-rate-limited"
   | "pulls-signed-out"
   | "pulls-none"
-  | "pulls-unreachable";
+  | "pulls-unreachable"
+  /** The Usage page's Limits tab: Claude Code reads Not reported, Codex reports its windows, and the other providers have no route. */
+  | "limits"
+  | "limits-claude"
+  | "limits-near"
+  | "limits-reached"
+  | "limits-signedout"
+  | "limits-error"
+  | "limits-providers";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -94,6 +102,7 @@ export function createMockApi(options: MockOptions = {}) {
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
+  let limitReads = 0;
   let delayMs = 0;
   let idCounter = 0;
   let preferenceValues: Record<string, JsonValue> = {};
@@ -120,6 +129,7 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    limitReads = 0;
     delayMs = 0;
     const blank = next === "empty" || next === "first-run" || next === "no-skills";
     projects = blank ? [] : structuredClone(fixtures.projects);
@@ -141,6 +151,11 @@ export function createMockApi(options: MockOptions = {}) {
     failStep = null;
     if (next === "no-skills") managed = fixtures.workspaceStatus([], false);
     engines = structuredClone([...fixtures.engines, ...instanceEngines(fixtures.engines)]);
+    if (next.startsWith("limits")) {
+      const keep = next === "limits-providers" ? ["gemini-acp", "aider"] : next === "limits-claude" ? ["claude"] : ["claude", "codex"];
+      engines = engines.filter((engine) => keep.includes(engine.id));
+      for (const engine of engines) if (engine.id === "codex" && next !== "limits-signedout") engine.auth = "logged_in";
+    }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
@@ -728,8 +743,11 @@ export function createMockApi(options: MockOptions = {}) {
           status: 200,
           body: { host_id: "mock", scanned_at: now(), engines: fixtures.usageEngines() },
         };
-      case "GET /api/limits":
-        return { status: 200, body: { pooled: [], engines: [], unavailable: [] } };
+      case "GET /api/limits": {
+        limitReads += 1;
+        if (!scenario.startsWith("limits")) return { status: 200, body: { pooled: [], engines: [], unavailable: [] } };
+        return { status: 200, body: fixtures.limits(scenario, limitReads, now()) };
+      }
       case "PATCH /api/threads": {
         const thread = threads.find((t) => t.id === seg[2]);
         if (!thread) return err(404, "not_found", "Thread not found.");

@@ -21,6 +21,7 @@ import type {
   UpdateStatus,
   WebhookDelivery,
   WorkspaceStatus,
+  LimitsOverview,
 } from "../src/api/types.ts";
 
 /** Fixed under test. In the dev server, "now" at startup, so ages read realistically. */
@@ -1178,4 +1179,36 @@ export function engineTools(engine: string): EngineTools {
       { id: "skills", count: 39, items: [] },
     ],
   };
+}
+
+/** What GET /api/limits answers on the Limits scenarios: only Codex gives a window (the driver's own Claude windows are never drawn). */
+export function limits(scenario: string, read: number, checkedAt: string): LimitsOverview {
+  const window = (id: string, label: string, minutes: number, used: number, resetsInSeconds: number) => ({
+    id, label, used_percent: used, window_minutes: minutes, resets_at: iso(resetsInSeconds),
+  });
+  const claude = {
+    engine: "claude", checked_at: checkedAt, limits: {}, plan: "Personal",
+    windows: [window("five_hour", "5 hours", 300, 41, 4800)],
+  };
+  const codex = (...windows: ReturnType<typeof window>[]) => ({ engine: "codex", checked_at: checkedAt, limits: {}, plan: null, windows });
+  const weekly = window("secondary", "7 days", 10080, 62, 3 * 86_400);
+  switch (scenario) {
+    case "limits-near":
+      return { pooled: [], engines: [claude, codex(window("primary", "5 hours", 300, 93, 38 * 60), weekly)], unavailable: [] };
+    case "limits-reached":
+      return { pooled: [], engines: [claude, codex(window("primary", "5 hours", 300, 100, 62 * 60), { ...weekly, used_percent: 71 })], unavailable: [] };
+    case "limits-signedout":
+      return { pooled: [], engines: [claude], unavailable: [{ engine: "codex", reason: "Not signed in." }] };
+    case "limits-error":
+      // The first read answers; every read after it fails, as a screen opened and then refreshed does.
+      return read === 1
+        ? { pooled: [], engines: [codex(weekly)], unavailable: [] }
+        : { pooled: [], engines: [], unavailable: [{ engine: "codex", reason: "The engine did not answer." }] };
+    case "limits-claude":
+      return { pooled: [], engines: [claude], unavailable: [] };
+    case "limits-providers":
+      return { pooled: [], engines: [], unavailable: [] };
+    default:
+      return { pooled: [], engines: [claude, codex(weekly)], unavailable: [] };
+  }
 }

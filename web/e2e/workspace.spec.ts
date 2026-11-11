@@ -316,7 +316,10 @@ test("usage opens from the sidebar as a page", async ({ page }) => {
   await usage.getByRole("tab", { name: "Usage" }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(usage.getByRole("tab", { name: "Limits" })).toHaveAttribute("aria-selected", "true");
-  await expect(usage.getByText("No engine reports limits.")).toBeVisible();
+  // Claude Code reads Not reported and a signed-out Codex says so: no bar, no figure.
+  await expect(usage.getByText("Subscription window")).toBeVisible();
+  await expect(usage.getByText("Codex is signed out. Sign in with the CLI, then check again.")).toBeVisible();
+  await expect(usage.getByRole("meter")).toHaveCount(0);
   await page.keyboard.press("t");
   await expect(page).toHaveURL(/#\/usage/);
 });

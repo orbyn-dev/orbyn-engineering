@@ -114,6 +114,20 @@ export const FRAMES = {
   "panel-activity": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity"]) },
   "panel-side": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity", "Side chat"]) },
 
+  // Usage, the Limits tab (mock scenarios "limits*"): only Codex reports a window; Claude Code and the others read Not reported.
+  "usage-claude-windows": { route: "#/usage", scenario: "limits-claude", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-unavailable": { route: "#/usage", scenario: "limits", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-loading": { route: "#/usage", scenario: "limits", pre: [{ route: "**/api/limits*", delay: 20000 }], steps: [click("tab", "Limits")], wait: 900 },
+  "usage-claude-windows-near": { route: "#/usage", scenario: "limits-near", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-reached": { route: "#/usage", scenario: "limits-reached", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-signedout": { route: "#/usage", scenario: "limits-signedout", steps: [click("tab", "Limits")] },
+  "usage-providers": { route: "#/usage", scenario: "limits-providers", steps: [click("tab", "Limits")] },
+  "usage-providers-error": {
+    route: "#/usage",
+    scenario: "limits-error",
+    steps: [click("tab", "Limits"), click("button", "Refresh limits")],
+  },
+
   // Settings: one page for each section.
   "s-general": { route: "#/settings/general" },
   "s-appearance": { route: "#/settings/appearance" },
