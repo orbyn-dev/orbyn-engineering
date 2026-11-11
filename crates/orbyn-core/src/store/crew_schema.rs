@@ -149,3 +149,43 @@ pub(super) const CREW_PROTECTED: &str = r#"
 ALTER TABLE crew_runs ADD COLUMN protected TEXT;
 ALTER TABLE crew_runs ADD COLUMN verifying_since TEXT;
 "#;
+
+// Schema 34: the bus. A message records who sent it (empty for the core), so a pair's exchanges
+// and a worker's posts are counted from the table. A fact is one revision of a board key; the
+// newest revision of a key in a crew is the one that stands, and (crew, key, rev) is unique, so
+// two writes on the same revision cannot both land (H12). A delivery row says how a message
+// reached one recipient: `live` (handed to a running turn's input), `next_turn` (queued, or
+// sent with the next prompt), `tool_result` (returned in the recipient's next bus tool result),
+// `held` (no running turn took it, so nothing is sent until a prompt or a tool call) or `failed`. Rows are only added; the newest row for a message and recipient says
+// where it stands. The mode lives here, not in the message, so a message's id does not depend on it.
+pub(super) const CREW_BUS: &str = r#"
+ALTER TABLE crew_messages ADD COLUMN sender TEXT NOT NULL DEFAULT '';
+CREATE INDEX crew_messages_by_sender ON crew_messages(task_id, sender);
+
+CREATE TABLE crew_facts (
+    id TEXT PRIMARY KEY CHECK(id GLOB 'sha256:*'),
+    task_id TEXT NOT NULL REFERENCES crew_tasks(id) ON DELETE CASCADE,
+    crew_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    rev INTEGER NOT NULL CHECK(rev >= 1),
+    author TEXT NOT NULL,
+    body TEXT NOT NULL CHECK(json_valid(body)),
+    UNIQUE(crew_id, key, rev)
+);
+CREATE INDEX crew_facts_by_crew ON crew_facts(crew_id, key);
+CREATE TRIGGER crew_facts_immutable BEFORE UPDATE ON crew_facts
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+
+CREATE TABLE crew_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL REFERENCES crew_messages(id) ON DELETE CASCADE,
+    recipient TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('held', 'live', 'next_turn', 'tool_result', 'failed')),
+    note TEXT,
+    at TEXT NOT NULL
+);
+CREATE INDEX crew_deliveries_by_message ON crew_deliveries(message_id, recipient);
+CREATE TRIGGER crew_deliveries_immutable BEFORE UPDATE ON crew_deliveries
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;

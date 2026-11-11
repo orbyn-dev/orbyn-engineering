@@ -28,6 +28,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
 | `protect` | Records the key's protected files (type, executable bit, SHA-256 of the exact bytes, links not followed) before the worker exists, and compares at verify time. Git is not asked, so nothing the worker can write in `.git` hides a change |
 | `recover` | After a restart: clears dead verification claims, verifies a task left `verifying`, stops one whose worker is gone, sets the budget timers again |
+| [`bus`](bus/README.md) | The Crew bus: `crew_post`, `crew_ask`, the board, steering delivery and the guards for hops, posts, sizes and the end of a run |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
 ## Rules to keep
@@ -55,6 +56,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - The guard compares fingerprints: the failing checks, how each ended and the names of what
   failed (tests, or files outside the lease), never the output, which changes between runs. The same failure twice gives one change of approach; the same
   failure after that stops the run (`repeated_failure`).
+- Messages and facts pass the secret scan and the answer-key check on the way in and out; a worker never sees the lead's
+  thread or messages to others (see the [bus](bus/README.md)).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
 
@@ -97,6 +100,7 @@ with a fake worker that writes files in a git checkout and calls `crew_report` o
 takes a task from its first turn to the end (fail, retry with the reason, the same failure twice,
 one change of approach, stop; pass; no report; engine error), `starts.rs` covers what a start
 refuses and the lease rules, `lifecycle.rs` checks the table against the spec's own, and
-`verify.rs` the reason a worker may read and the check runners.
+`verify.rs` the reason a worker may read and the check runners. `bus.rs` and `bus_guards.rs` run two fake engines (one
+takes input mid-turn, one does not) through the [bus](bus/README.md).
 
 The crate's [group table](../../README.md#groups) lists every group.

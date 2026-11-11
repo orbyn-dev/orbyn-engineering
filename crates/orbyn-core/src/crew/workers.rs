@@ -21,8 +21,13 @@ pub(crate) const ALLOWED: [&str; 7] = [
     "orbyn_preview_status",
 ];
 
+/// A worker also talks to its crew through the bus tools (`crew_post`, `crew_ask`,
+/// `crew_board_read`, `crew_board_write`) and reports through `crew_report`. It never calls
+/// `crew_start` (H3) or `crew_route`, so those are not here.
 pub(crate) fn allowed(tool: &str) -> bool {
-    ALLOWED.contains(&tool) || tool.starts_with("orbyn_preview_")
+    ALLOWED.contains(&tool)
+        || tool.starts_with("orbyn_preview_")
+        || super::BUS_TOOLS.contains(&tool)
 }
 
 impl Core {

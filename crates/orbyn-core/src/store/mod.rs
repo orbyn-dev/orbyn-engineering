@@ -10,6 +10,9 @@ mod catalog;
 mod changes;
 mod checkpoints;
 mod crew;
+mod crew_bus;
+#[cfg(test)]
+mod crew_bus_tests;
 mod crew_runs;
 mod crew_schema;
 #[cfg(test)]
@@ -30,6 +33,7 @@ mod threads;
 
 pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
+pub use crew_bus::{CrewDelivery, FactWrite};
 pub use crew_runs::CrewRun;
 
 use std::path::Path;
