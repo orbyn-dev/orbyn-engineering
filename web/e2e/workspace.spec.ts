@@ -532,6 +532,46 @@ test("a tab dragged along the strip lands where the line shows, and Reset tab or
   expect(await order()).toEqual(["Changes", "Browser", "Tools"]);
 });
 
+test("the tab menu closes the others or all of them, announces it, and Close all returns to the empty panel", async ({ page }) => {
+  await openPanel(page);
+  await openTabs(page, ["Changes", "Browser", "Tools"]);
+  await page.getByRole("tab", { name: "Browser" }).click();
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]);
+  await page.getByRole("menuitem", { name: "Close other tabs" }).click();
+  await expect(page.getByRole("tab")).toHaveCount(1);
+  await expect(page.getByRole("tab", { name: "Browser" })).toBeFocused();
+  await expect(page.locator(".context [role=status]").last()).toHaveText("Other tabs closed");
+  // One tab left: the menu has Maximise panel only.
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Maximise panel"]);
+  await page.keyboard.press("Escape");
+  await openTabs(page, ["Tools"]);
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await page.getByRole("menuitem", { name: "Close all tabs" }).click();
+  await expect(page.getByText("Nothing open")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open a tab" })).toBeFocused();
+  await expect(page.locator(".context [role=status]").last()).toHaveText("All tabs closed. Nothing is open.");
+});
+
+test("each thread remembers its own tabs, and closing the panel does not forget them", async ({ page }) => {
+  await openPanel(page);
+  await openTabs(page, ["Changes", "Tools"]);
+  await page.getByRole("tab", { name: "Tools" }).click();
+  await page.evaluate(() => { window.location.hash = "#/threads/t-failed"; });
+  await expect(page.getByText("Nothing open")).toBeVisible();
+  await openTabs(page, ["Activity"]);
+  await page.evaluate(() => { window.location.hash = "#/threads/t-done"; });
+  await expect(page.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab")).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
+  // Closing the panel with the × and opening it again brings the tabs back.
+  await page.getByRole("button", { name: "Close side panel" }).click();
+  await expect(page.getByRole("button", { name: "Open a tab" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show side panel" }).click();
+  await expect(page.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Changes" })).toBeVisible();
+});
+
 test("the panel's tabs are icon-only 32px slots that never move when another tab opens, and the arrow keys walk them", async ({ page }) => {
   await openPanel(page);
   await openTabs(page, FIVE);

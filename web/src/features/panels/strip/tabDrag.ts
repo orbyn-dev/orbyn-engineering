@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import type { RightTab } from "../../../product/state/ui";
 import { SLOT_PITCH } from "./tabs";
 
@@ -63,8 +63,29 @@ export function useTabDrag({
   const press = useRef<{ id: RightTab; pointerId: number; x: number; y: number; centers: number[]; from: number; active: boolean } | null>(null);
   // A drag that ends over its own slot is followed by a click, which must not open the tab.
   const justDragged = useRef(false);
+  const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const latest = useRef({ shown, onMove });
   latest.current = { shown, onMove };
+
+  const markDragged = useCallback(() => {
+    justDragged.current = true;
+    clearTimeout(settle.current);
+    settle.current = setTimeout(() => {
+      justDragged.current = false;
+    }, 0);
+  }, []);
+  /** Puts the tab back: a press that never finished, or a drag that cannot be trusted any more. */
+  const abandon = useCallback(() => {
+    const held = press.current;
+    press.current = null;
+    if (held?.active) markDragged();
+    setDrag(null);
+  }, [markDragged]);
+  // The slot centres were measured when the press began: a tab that opens or closes mid-drag voids them.
+  const tabSet = shown.join(",");
+  useEffect(() => {
+    if (press.current) abandon();
+  }, [tabSet, abandon]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -84,10 +105,7 @@ export function useTabDrag({
       if (!held || event.pointerId !== held.pointerId) return;
       press.current = null;
       if (!held.active) return;
-      justDragged.current = true;
-      setTimeout(() => {
-        justDragged.current = false;
-      }, 0);
+      markDragged();
       const dx = event.clientX - held.x;
       const to = landing(held.from, dropGap(held.centers, event.clientX));
       setDrag(null);
@@ -98,30 +116,41 @@ export function useTabDrag({
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || !press.current?.active) return;
       event.stopPropagation();
-      press.current = null;
-      justDragged.current = true;
-      setTimeout(() => {
-        justDragged.current = false;
-      }, 0);
-      setDrag(null);
+      abandon();
     };
+    // Letting go outside the window, or the window losing focus mid-drag, ends the drag where it began.
+    const lost = (event: PointerEvent) => {
+      if (press.current && event.pointerId === press.current.pointerId) abandon();
+    };
+    const blur = () => abandon();
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("keydown", key, true);
+    window.addEventListener("lostpointercapture", lost, true);
+    window.addEventListener("blur", blur);
     return () => {
+      clearTimeout(settle.current);
+      window.removeEventListener("lostpointercapture", lost, true);
+      window.removeEventListener("blur", blur);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("keydown", key, true);
     };
-  }, []);
+  }, [abandon, markDragged]);
 
   const start = (id: RightTab) => (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || press.current) return;
     const slots = [...(list.current?.querySelectorAll<HTMLElement>("[data-tab]") ?? [])];
     const from = latest.current.shown.indexOf(id);
     if (from < 0) return;
+    // Every later move and the release come to the slot, even when the pointer leaves it or the window.
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // A pointer that is already gone cannot be captured; the window listeners still end the drag.
+    }
     press.current = {
       id,
       pointerId: event.pointerId,

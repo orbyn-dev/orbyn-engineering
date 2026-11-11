@@ -179,8 +179,29 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTabsClosed).toEqual(["tools"]);
-    expect(fresh.panelTabOrder).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
     expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools"]);
+  });
+
+  it("moves a row saved in the old default order onto the new one, and keeps an order a person changed", async () => {
+    localStorage.setItem(
+      "orbyn.prefs.v1",
+      JSON.stringify({
+        panelTabOrder: ["diff", "files", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"],
+        layouts: {
+          a: { panelTab: "files", panelTabOrder: ["diff", "files", "browser", "activity", "side"], panelTabsClosed: [] },
+          b: { panelTab: "diff", panelTabOrder: ["files", "diff", "browser", "activity", "side", "tools"], panelTabsClosed: [] },
+        },
+      }),
+    );
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    // Nobody reordered these, so "Reset tab order" must not show for them.
+    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(fresh.panelTabsClosed).toEqual(["tools"]);
+    expect(fresh.layouts["a"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools"]);
+    expect(fresh.layouts["b"]?.panelTabOrder).toEqual(["files", "diff", "browser", "activity", "side", "tools"]);
   });
 
   it("skips a saved layout that is not an object instead of failing to load", async () => {

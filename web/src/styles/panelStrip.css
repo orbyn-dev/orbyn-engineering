@@ -31,6 +31,8 @@
   background: transparent;
   color: var(--color-muted);
   cursor: pointer;
+  /* A touch or pen drag must not become a pan before the 4px threshold. */
+  touch-action: none;
 }
 .ctx-slot:hover:not([data-selected]) {
   background: var(--color-hover);
@@ -133,7 +135,6 @@
   background: var(--color-raised);
   box-shadow: 0 8px 18px var(--color-panelShadow);
   cursor: grabbing;
-  touch-action: none;
 }
 .ctx-slot[data-shifted] {
   transition: transform var(--m-fast) var(--m-io);

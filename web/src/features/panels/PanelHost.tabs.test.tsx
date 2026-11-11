@@ -236,6 +236,8 @@ describe("surface tabs", () => {
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]);
     await user.click(screen.getByRole("menuitem", { name: "Close other tabs" }));
     expect(names()).toEqual(["Browser"]);
+    expect(screen.getByRole("status")).toHaveTextContent("Other tabs closed");
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Browser" })).toHaveFocus());
     expect(useUi.getState().panelTab).toBe("browser");
     useUi.getState().reopenPanelTab("side");
     await screen.findByRole("tab", { name: "Side chat" });
@@ -243,6 +245,7 @@ describe("surface tabs", () => {
     await user.click(screen.getByRole("menuitem", { name: "Close all tabs" }));
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.getByText("Nothing open")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("All tabs closed. Nothing is open.");
     expect(screen.getByRole("button", { name: "Open a tab" })).toHaveFocus();
     expect(useUi.getState().panelOpen).toBe(true);
   });
@@ -356,6 +359,55 @@ describe("reordering by drag", () => {
       expect(useUi.getState().panelTab).toBe("diff");
     } finally {
       rects.mockRestore();
+    }
+  });
+});
+
+describe("a drag that cannot finish", () => {
+  const rects = () =>
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const at = this.dataset.tab ? [...(this.parentElement?.querySelectorAll("[data-tab]") ?? [])].indexOf(this) : 0;
+      return { left: at * 34, right: at * 34 + 32, width: 32, top: 0, bottom: 32, height: 32, x: at * 34, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+  const press = (name: string, x: number) => fireEvent.pointerDown(screen.getByRole("tab", { name }), { button: 0, pointerId: 1, clientX: x, clientY: 16 });
+  const move = (x: number) => fireEvent.pointerMove(window, { pointerId: 1, clientX: x, clientY: 16 });
+  const dragging = () => document.querySelector("[data-dragging]");
+
+  it("puts the tab back when the window loses focus or the pointer capture is lost, and the next move drags nothing", () => {
+    const spy = rects();
+    try {
+      panel();
+      press("Activity", 16 + 2 * 34);
+      move(20);
+      expect(dragging()).not.toBeNull();
+      fireEvent.blur(window);
+      expect(dragging()).toBeNull();
+      move(30);
+      expect(dragging()).toBeNull();
+      press("Activity", 16 + 2 * 34);
+      move(20);
+      fireEvent(window, Object.assign(new Event("lostpointercapture", { bubbles: true }), { pointerId: 1 }));
+      expect(dragging()).toBeNull();
+      expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("cancels the drag when a tab opens or closes while it is held", () => {
+    const spy = rects();
+    try {
+      panel();
+      press("Activity", 16 + 2 * 34);
+      move(20);
+      expect(dragging()).not.toBeNull();
+      act(() => useUi.getState().reopenPanelTab("tools"));
+      expect(dragging()).toBeNull();
+      expect(document.querySelector(".ctx-ins")).toBeNull();
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 16 });
+      expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "Files"]);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

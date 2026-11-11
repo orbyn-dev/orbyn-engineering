@@ -78,9 +78,9 @@ exists: 98, missing: 60, partial: 68, preview-only: 5.
 | 59 | `tc-phone-needs-you` | Tool calls, every state | Phone: needs you | `missing` | missing | P2 | |
 | 60 | `panel-diff` | Side panel and terminal | Diff | `features/panels/diff/DiffPanel.tsx` | exists | P2 | |
 | 61 | `panel-files` | Side panel and terminal | Files | `features/panels/files/FilesPanel.tsx` | exists | P2 | |
-| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2  Engineer Designs v98, shell PR 1a |
-| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2  Engineer Designs v98, shell PR 1a |
-| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | exists | P2  Engineer Designs v98, shell PR 1a |
+| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2 | Engineer Designs v98, shell PR 1a |
+| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | Engineer Designs v98, shell PR 1a |
+| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | exists | P2 | Engineer Designs v98, shell PR 1a |
 | 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | exists | P2 | |
 | 66 | `pulls` | Pages | Pull requests | `features/pulls/list/PullsPage.tsx:42` | exists | P2 | |
 | 67 | `pull-detail` | Pages | Pull request | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
