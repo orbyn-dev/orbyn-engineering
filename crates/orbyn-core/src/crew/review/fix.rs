@@ -74,10 +74,10 @@ fn sensitive(path: &str) -> bool {
             .any(|m| name.contains(m))
 }
 
-/// Characters a path may have in a check command (it is quoted for both shells).
+/// Characters a path may have in a check command written without quotes (`cmd /C` cannot be handed them).
 fn quotable(path: &str) -> bool {
     path.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ' '))
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
 }
 
 impl Core {
@@ -160,19 +160,26 @@ impl Core {
                 &format!("{path} is not a file in the checkout."),
             ));
         }
-        // What the file holds now, kept outside the checkout, so a fix that leaves it as it is can be told.
-        let kept = self.config.data_dir.join("crew-fix");
-        std::fs::create_dir_all(&kept).map_err(|e| invalid(e.to_string()))?;
-        let copy = kept.join(format!("{}.orig", &finding.id.as_str()[7..23]));
-        std::fs::copy(cwd.join(path), &copy).map_err(|e| invalid(e.to_string()))?;
-        let copy = copy.to_string_lossy().into_owned();
-        if !quotable(&copy.replace('\\', "/").replace(':', "")) {
+        // What the file holds now, kept in the repository's own git folder, so a fix that leaves it as it is can be told. The check
+        // runs through `cmd /C` on Windows, which does not take the quotes a path with spaces would need, so both paths are
+        // plain relative names; a place that is not is refused.
+        let git_path = crate::source_control::git::git_hardened(
+            &cwd,
+            &["rev-parse", "--git-path", "orbyn-fix"],
+        )
+        .await
+        .map(|out| crate::source_control::git::text(&out).replace('\\', "/"))
+        .map_err(|e| invalid(e.public_message()))?;
+        let copy = format!("{git_path}/{}.orig", &finding.id.as_str()[7..23]);
+        if !quotable(&copy) || copy.starts_with('/') {
             return Ok(self.no_fix(
                 subject,
                 "refused_path",
-                "The place the core keeps its copies has a name a check cannot quote.",
+                "The repository's git folder is not a plain relative place the core can keep a copy in.",
             ));
         }
+        std::fs::create_dir_all(cwd.join(&git_path)).map_err(|e| invalid(e.to_string()))?;
+        std::fs::copy(cwd.join(path), cwd.join(&copy)).map_err(|e| invalid(e.to_string()))?;
         let dirty = changed(&Site {
             worktree: &cwd,
             deadline: std::time::Instant::now() + std::time::Duration::from_secs(120),
@@ -212,7 +219,7 @@ impl Core {
         }
         checks.push(json!({
             "id": "chk-fix-touched", "kind": "command",
-            "params": { "run": format!("git diff --no-index --quiet \"{copy}\" \"{path}\""), "expect_exit": 1 },
+            "params": { "run": format!("git diff --no-index --quiet {copy} {path}"), "expect_exit": 1 },
             "proves": "The finding's file now differs from what it held when the fix began.",
             "does_not_prove": "That the difference fixes the finding.",
         }));
