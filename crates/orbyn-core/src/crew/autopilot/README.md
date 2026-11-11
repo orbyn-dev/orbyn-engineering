@@ -55,7 +55,9 @@ rules still refuse first.
 
 N1 reads a command as a whole when a connecting program (curl, wget, nc, socat, openssl, gh, glab, an interpreter, ...) is in it,
 so a route that comes through a variable or a pipe is seen. `gh` and `glab` are network, two keys; `gh pr merge`, `glab mr merge`
-and a `gh api` write to git refs, merges, contents or branches are N5 (a person's), and to protection or settings N6.
+and a `gh api` write to git refs, merges, contents or branches are N5 (a person's), and to protection or settings N6. A write is read the way gh
+reads its flags (`-XPATCH`, `-fsha=x`, `--field=x`, `--input=f`). A GraphQL call with a `mutation`, or a query read from a file, is N5. `gh alias set|import`
+(an alias hides `pr merge`) and `gh extension install|upgrade|exec` (third-party code) are N6.
 
 **Pushing to main is a person's.** Any `git push` to main, master or trunk (`HEAD:main`, `+main`, a bare `push` while on it) is
 refused in every mode (N5), the repository's default branch (`origin/HEAD`) included, `--all` and `--mirror`, a bare push through `-C` or after a
