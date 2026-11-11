@@ -104,10 +104,14 @@ within the 4 MiB upload, applies incoming changes, and goes back to sleep until 
 backoff timer wakes it.
 
 **Merge.** The client gives conflicts back as plain records. The app merges them field by field with `orbyn-sync`:
-per-field hybrid logical clock, the larger stamp wins, ties break by canonical JSON. Incoming fields pass the same
-validation as a local write (`check` in `preferences.rs`), through a private apply path that does not queue them again.
-A field that fails validation, for example one written by a newer app, is kept and passed through unchanged and is
-not applied locally.
+per-field hybrid logical clock, the larger stamp wins, ties break by canonical JSON. **The apply path applies only the allowlist.** Today `check` in
+`preferences.rs` accepts all 62 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
+through as unknown. So a peer could send `default_project_scripts`, which would run commands on the person's other
+computers, and a compromised device could use that. The rule: the sync apply path (a private path that does not queue
+fields again) applies **only the 20 allowlisted keys plus keybindings**, each through `check` and the per-key rules
+under [No escalation across devices](#no-escalation-across-devices). Every other incoming field is kept and passed
+on unchanged, never applied locally. *Required test:* each of the 42 catalog keys that is not allowlisted, arriving from
+a peer, is not applied (the local value and the outbox are unchanged), and is still kept for the next upload.
 
 **Status over the shell event stream.** The worker publishes status on the existing `GET /api/shell/events` stream
 ([stream.rs:151](../crates/orbynd/src/routes/stream.rs)) as `ShellEvent::DataChanged { what }` with `what` set to `account`
@@ -206,15 +210,20 @@ Engineering 1. Only the person-level value of a key syncs.
 | Thread and branch defaults | `default_thread_env_mode`, `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
 | Keybindings | One field per (key, `when`) pair |
 
-A synced `default_engine` or `default_model` may name an engine or model this computer does not have. The existing
-fallback behaviour applies; the value is kept as set.
+`default_engine` and the model keys only resolve to engines and models configured on the receiving computer; a name it
+does not have follows the existing fallback and the value is kept as set. `default_thread_env_mode` set to `local`
+changes the blast radius (agents work in the main checkout), not permissions. `branch_name_instructions` is free text
+that feeds a model prompt on every device; the risk is low and the choice is recorded here. The other synced keys are
+harmless.
 
-The Engine crate change that drops `default_permission_mode` from its synced keys comes in a follow-up Engine pull
-request, before tag `engine-v0.1.0`. Until then the app does not stage it.
+The Engine crate change that refuses `default_permission_mode`, `default_project_scripts`,
+`enable_agent_browser_access` and `enable_agent_device_access` in both directions comes in a small follow-up Engine
+pull request after orbyn-engine#120, before tag `engine-v0.1.0`. Until then the app does not stage them, and the apply
+path above ignores them.
 
 ### Never synced
 
-Sixteen keys, by decision:
+Nineteen keys, by decision:
 
 | Why | Keys |
 | --- | --- |
@@ -222,21 +231,19 @@ Sixteen keys, by decision:
 | Programs, paths, endpoints | `provider_instances`, `custom_models`, `observability`, `storage_cleanup`, `worktree_cleanup` |
 | Per-computer update and polling | `app_update_mode`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
 | Login and engine availability | `prefer_saved_login`, `disabled_engines` |
-| Changes what agents may do | `default_permission_mode`: a loosened permission mode must not cross devices (agreed with Engineering 1) |
+| Escalation: what agents may do or run | `default_permission_mode`, `default_project_scripts`, `enable_agent_browser_access`, `enable_agent_device_access`: a loosened permission, a command or an access grant must not cross devices |
 | Service-owned stamp | `default_theme_set_at` |
 
 ### Not in v1, may sync later
 
-The other 26 keys are not synced in v1, so 20 + 16 + 26 = 62:
+The other 23 keys are not synced in v1, so 20 + 19 + 23 = 62:
 
 | Key | Reason |
 | --- | --- |
-| `default_project_scripts` | A synced command would run on another computer |
 | `auto_settle_after_days`, `auto_settle_on_merge`, `auto_settle_keep_pull_requests` | Project lifecycle defaults; held back until project defaults sync |
 | `auto_pull`, `new_worktrees_start_from_origin`, `worktree_submodules` | Change what git does on each computer; held back with project defaults |
 | `remove_agent_credits_on_merge`, `pull_request_merge_method`, `review_guides_enabled`, `review_guide_model` | Project and forge defaults; held back with project defaults |
 | `project_title_instructions`, `review_guide_instructions`, `source_control_writing_style` | Free-text prompts; wait for the prompts record |
-| `enable_agent_browser_access`, `enable_agent_device_access` | Grant agents access to this computer's browser and devices |
 | `enable_provider_update_checks`, `continue_threads_after_update`, `warm_next_turn`, `preview_profiles` | Per-computer behaviour or local browser data |
 | `compact_idle_threads`, `idle_compaction`, `snooze_limited_threads`, `auto_resume_limited_threads`, `task_skip_near_limit`, `poll_pull_requests` | Thread and polling behaviour; not requested for v1 |
 
@@ -267,12 +274,36 @@ provider keys, join tokens and any secret (D5).
 - **Local stack hygiene.** The test leaves no Docker volume or image behind. Nobody runs a global Docker cleanup
   without asking Products Research first.
 
+## No escalation across devices
+
+A compromised device must not be able to make another one more permissive or run something there.
+
+- **(a) Four keys are never synced** and the Engine crate refuses them in both directions: `default_permission_mode`,
+  `default_project_scripts`, `enable_agent_browser_access` and `enable_agent_device_access`.
+- **(b) Keybindings.** A synced rule may bind only commands from an allowlist of navigation and view commands. It can
+  never bind a command that approves or denies an agent action, changes permissions, or confirms or runs something.
+  It can never override the default keys of the approval dialog or of the "Confirm it's you" dialog. A rule that breaks
+  this is kept and passed on, never applied.
+- **(c) `default_model_options`.** On apply, only model-tuning option ids, allowlisted per engine, are kept. An option
+  that an engine adapter turns into a sandbox, approval or skip-permissions flag is never accepted (for example Claude
+  Code's skip-permissions switch, or Codex's sandbox or approval policy). *Test:* such an option arriving from a peer is
+  dropped on apply, for each engine adapter.
+- **`branch_name_prefix`** is validated as a git ref part and passed as an argument, never through a shell.
+
 ## Sign-in gate
 
 `CoreConfig` gets an account gate with three values: `Off` (the default: every sign-in and sign-up route answers
 `account_disabled` and no request goes to any Engine), `LocalOnly` (only a loopback Engine address, for D11) and `On`.
 The wiring pull request ships `Off` and `LocalOnly`. `On` is a separate small change that links the Engine owner's
 written review of the threat model.
+
+**Real sign-in stays `Off` until all four hold:**
+
+1. Items 1 and 2 of the second security review (the allowlist-only apply path and no escalation across devices) are in
+   this note.
+2. orbyn-engine#120 is merged.
+3. The "Confirm it's you" rule is built.
+4. The reviewer approves these documents once more.
 
 `LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
 the rule:

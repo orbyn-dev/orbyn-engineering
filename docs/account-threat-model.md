@@ -198,6 +198,14 @@ Controls (decision D12 and Engineering 1's answer):
 - *Check:* tests that each of the four routes fails without a password in the last 10 minutes and that the route table
   is annotated so a new state-changing route cannot skip the rule.
 
+### 5b. A peer cannot make this device more permissive
+
+Synced data comes from other devices, any of which may be compromised. The apply path applies only the 20 allowlisted
+keys plus keybindings; four keys that escalate are never synced; keybindings and `default_model_options` are
+restricted on apply (design note, [No escalation across devices](account.md#no-escalation-across-devices)). Tests:
+every non-allowlisted catalog key from a peer is not applied; a keybinding to an approval or confirm command is not
+applied; a sandbox or skip-permissions model option is dropped.
+
 ### 6. Orbynd's memory (to build, as a release check)
 
 A same-user process can read the session token and the loaded device and zone keys out of `orbynd`'s memory. On
