@@ -3,14 +3,18 @@ import { isFileTab, type FileTabId } from "./types";
 /** What a file tab shows: a file of the thread's own checkout, or one read through the left-bar explorer. */
 export type FileTarget =
   | { kind: "thread"; path: string }
-  | { kind: "explorer"; projectId: string; worktreeId: string; path: string };
+  | { kind: "explorer"; projectId: string; worktreeId: string; path: string }
+  /** A worktree with nothing to browse (its folder is missing): the tab says so. */
+  | { kind: "worktree"; projectId: string; worktreeId: string };
 
 /** A file tab's id is its identity (the project and worktree ids and the path), never a display name, so a rename changes nothing. */
 export function fileTabId(target: FileTarget): FileTabId {
   const parts =
     target.kind === "thread"
       ? ["t", target.path]
-      : ["x", target.projectId, target.worktreeId, target.path];
+      : target.kind === "worktree"
+        ? ["w", target.projectId, target.worktreeId]
+        : ["x", target.projectId, target.worktreeId, target.path];
   return `file:${encodeURIComponent(JSON.stringify(parts))}`;
 }
 
@@ -21,6 +25,7 @@ export function parseFileTab(id: string): FileTarget | null {
     const parts: unknown = JSON.parse(decodeURIComponent(id.slice(5)));
     if (!Array.isArray(parts) || !parts.every((part) => typeof part === "string")) return null;
     const [kind, ...rest] = parts as string[];
+    if (kind === "w" && rest.length === 2) return { kind: "worktree", projectId: rest[0]!, worktreeId: rest[1]! };
     if (kind === "t" && rest.length === 1) return { kind: "thread", path: rest[0]! };
     // A tab saved before names left the id carries two more parts, which are ignored.
     if (kind === "x" && (rest.length === 3 || rest.length === 5)) {

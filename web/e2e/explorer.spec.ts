@@ -55,13 +55,36 @@ test("another worktree is read-only: its row says so and its file opens with a b
   await expect(page).toHaveURL(/#\/new\/p-app$/);
 });
 
-test("a worktree whose folder is gone is one error row with Try again, and a locked one still reads", async ({ page }) => {
-  await row(page, /^feat\/gone/).click();
-  const alert = tree(page).getByRole("treeitem", { name: "Couldn’t read this folder." });
-  await expect(alert).toContainText("Couldn’t read this folder.");
-  await expect(alert.getByRole("button", { name: "Try again" })).toBeVisible();
+test("a missing worktree is muted and says Missing, and its tab says so; a locked one says Locked and reads with its own banner", async ({ page }) => {
+  const gone = row(page, /^feat\/gone/);
+  await expect(gone).toContainText("Missing");
+  await expect(gone).not.toHaveAttribute("aria-expanded");
+  await gone.click();
+  await expect(page.getByText("This worktree is missing from disk.")).toBeVisible();
+  await expect(page.getByText("Nothing to browse")).toBeVisible();
   await row(page, /^feat\/locked/).click();
-  await expect(row(page, /^feat\/locked/).getByText("Read-only")).toBeVisible();
+  await expect(row(page, /^feat\/locked/)).toContainText("Locked");
+  await tree(page).getByRole("treeitem", { name: /^README\.md/ }).last().click();
+  await expect(page.getByText("This worktree is locked. Files open read-only.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start a thread here" })).toHaveCount(0);
+});
+
+test("change letters: a conflict is a bold neutral ! on a tinted row, a deleted file is struck through, a folder shows no letter", async ({ page }) => {
+  await row(page, /^src/).click();
+  await row(page, /^auth/).click();
+  const bang = row(page, /^token\.ts/).getByText("!");
+  await expect(bang).toBeVisible();
+  expect(await bang.evaluate((node) => getComputedStyle(node).fontWeight)).toBe("700");
+  expect(await row(page, /^legacy\.ts/).locator(".nm").evaluate((node) => getComputedStyle(node).textDecorationLine)).toBe("line-through");
+  await expect(row(page, /^legacy\.ts/)).toContainText("D");
+  await expect(row(page, /^login\.ts/)).toContainText("R");
+  await expect(row(page, /^src/)).not.toContainText(/[MADRU!]$/);
+});
+
+test("a project that is not a Git repository is one folder: its files sit directly under it, with no worktrees", async ({ page }) => {
+  await row(page, /^vendor-sdk/).click();
+  await expect(row(page, /^index\.html/)).toBeVisible();
+  await expect(tree(page).getByRole("treeitem", { name: "Worktrees" })).toHaveCount(1);
 });
 
 test("a large folder shows 200 children and a row for the rest", async ({ page }) => {

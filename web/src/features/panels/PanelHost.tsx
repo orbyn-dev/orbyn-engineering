@@ -11,6 +11,7 @@ import { BrowserPanel } from "./browser/BrowserPanel";
 import { DiffPanel } from "./diff/DiffPanel";
 import { FileTab } from "./files/FileTab";
 import { useFileTabNames } from "../workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ToolsTab } from "../tools";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
@@ -227,7 +228,9 @@ export function PanelHost({
   const count = rowIds.length;
   // The line beside the open file's name: the worktree it is in, and for another project's, which project.
   const target = tab ? parseFileTab(tab) : null;
-  const names = useFileTabNames(target?.kind === "explorer" ? target.projectId : "", target?.kind === "explorer" ? target.worktreeId : "", thread.id);
+  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
+  // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
+  const gitless = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
   const subtitle =
     target === null ? null
     : target.kind === "thread" ? (thread.worktree?.branch ?? null)
@@ -286,7 +289,7 @@ export function PanelHost({
   const launcher: MenuItem[] = [
     ...RIGHT_TABS.map(({ id, label, icon: Icon }) => {
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
-      return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, onSelect: () => reopenTab(id) };
+      return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
     }),
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
@@ -514,7 +517,7 @@ export function PanelHost({
           </p>
         ) : null}
         {tab === null ? (
-          <PanelEmpty onOpen={reopenTab} />
+          <PanelEmpty onOpen={reopenTab} gitless={gitless} />
         ) : kind === "service-down" && tab !== "browser" ? (
           <div className="conn-wait">
             <b>Waiting for the Orbyn service</b>

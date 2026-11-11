@@ -7,7 +7,7 @@ import { tabOf } from "./tabs";
 const CHOICES: readonly BuiltinTab[] = ["diff", "browser", "tools"];
 
 /** A side panel with no tab open: what it is, how to add one, and the three most used choices. */
-export function PanelEmpty({ onOpen }: { onOpen(tab: RightTab): void }) {
+export function PanelEmpty({ onOpen, gitless = false }: { onOpen(tab: RightTab): void; gitless?: boolean }) {
   return (
     <div className="panel-empty">
       <PanelRight size={22} aria-hidden />
@@ -17,12 +17,13 @@ export function PanelEmpty({ onOpen }: { onOpen(tab: RightTab): void }) {
         {CHOICES.map((id) => {
           const { label, icon: Icon } = tabOf(id);
           return (
-            <Button key={id} small icon={<Icon size={14} aria-hidden />} onClick={() => onOpen(id)}>
+            <Button key={id} small icon={<Icon size={14} aria-hidden />} disabled={gitless && id === "diff"} onClick={() => onOpen(id)}>
               {label}
             </Button>
           );
         })}
       </div>
+      {gitless ? <div className="xg-nogit">Not a Git repository.</div> : null}
     </div>
   );
 }

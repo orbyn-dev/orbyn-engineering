@@ -118,30 +118,51 @@ it("reads another worktree's file read-only, with a way to start a thread there"
   expect(window.location.hash).toBe("#/new/p-app");
 });
 
-it("shows a worktree whose folder is gone as one error row with Try again, and keeps the rows above usable", async () => {
+it("shows a worktree whose folder is gone muted and Missing, with nothing to unfold, and its tab says so", async () => {
   const user = userEvent.setup();
   render(<App />);
-  await user.click(await findRow("feat/gone"));
+  const gone = await findRow("feat/gone");
+  expect(gone).toHaveAccessibleName("feat/gone, missing from disk");
+  expect(gone).not.toHaveAttribute("aria-expanded");
+  expect(within(gone).getByText("Missing")).toBeInTheDocument();
+  await user.click(gone);
+  expect(await screen.findByText("This worktree is missing from disk.")).toBeInTheDocument();
+  expect(screen.getByText("Nothing to browse")).toBeInTheDocument();
+  expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+  // No flow removes a worktree yet, so none is offered.
+  expect(screen.queryByRole("button", { name: /Remove worktree/ })).toBeNull();
+  expect(folderReads("")).toHaveLength(1);
+});
+
+it("shows a folder that cannot be read as one error row with Try again, and keeps the rows above usable", async () => {
+  const user = userEvent.setup();
+  const real = fetch;
+  let failing = true;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+    failing && String(url).includes("tree?path=docs") ? new Response(JSON.stringify({ code: "forbidden", message: "Permission denied." }), { status: 403 }) : real(url, init)));
+  render(<App />);
+  await user.click(await findRow("docs"));
   const alert = await screen.findByRole("treeitem", { name: "Couldn’t read this folder." });
   expect(alert).toHaveTextContent("Couldn’t read this folder.");
   expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
   expect(row("main")).toBeInTheDocument();
-  const before = folderReads("").length;
+  failing = false;
   await user.click(within(alert).getByRole("button", { name: "Try again" }));
-  await waitFor(() => expect(folderReads("").length).toBeGreaterThan(before));
+  expect(await screen.findByRole("treeitem", { name: /^guide\.md/ })).toBeInTheDocument();
 });
 
 it("reads a locked worktree and marks it Read-only", async () => {
   const user = userEvent.setup();
   render(<App />);
   await user.click(await findRow("feat/locked"));
-  await waitFor(() => expect(within(row("feat/locked")).getByText("Read-only")).toBeInTheDocument());
+  await waitFor(() => expect(within(row("feat/locked")).getByText("Locked")).toBeInTheDocument());
   // Locked is for writing only: its files read, and a file opens read-only.
   await waitFor(() => expect(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ })).toHaveLength(2));
   await user.click(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ }).at(-1)!);
   expect(await screen.findByText("// feat/locked")).toBeInTheDocument();
-  // It is not this thread's worktree, so the drawn banner; no thread to start in one Orbyn did not make.
-  expect(screen.getByText("Read-only · not this thread’s worktree")).toBeInTheDocument();
+  // Its own banner, and no thread to start there.
+  expect(screen.getByText("This worktree is locked. Files open read-only.")).toBeInTheDocument();
+  expect(screen.queryByText(/not this thread’s worktree/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Start a thread here" })).toBeNull();
 });
 
@@ -316,7 +337,7 @@ it("opens a file below the thread's folder as the thread's own file, by the path
   const thread = { id: "t", project_id: "p", cwd: "/repo/packages/web", worktree: null } as never;
   window.location.hash = "#/threads/t";
   useWorkspace.setState({ threads: { t: thread } });
-  const wt = { id: "w", path: "/repo", name: "repo", branch: "main", detached: false, head: "a", is_main: true, read_only: false, read_only_reason: null, threads: [{ id: "t", title: "", running: false }], dirty: null };
+  const wt = { id: "w", path: "/repo", name: "repo", branch: "main", detached: false, head: "a", is_main: true, read_only: false, read_only_reason: null, threads: [{ id: "t", title: "", running: false }], dirty: null, is_subfolder: false };
   useExplorer.setState({ worktrees: { p: { data: { project_id: "p", git: true, worktrees: [wt] }, loading: false, error: null } } });
   const urls: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -384,8 +405,35 @@ it("gives each row its place among its siblings, and a thread one level below it
   const group = row("Threads");
   expect(group).toHaveAttribute("aria-level", "2");
   expect(row("Upgrade tokio and fix the fallout")).toHaveAttribute("aria-level", "3");
-  // Five entries in the worktree's root, folders first; the list may be long, so the place is stated.
-  expect(row("src")).toHaveAttribute("aria-setsize", "5");
+  // Six entries in the worktree's root, folders first; the list may be long, so the place is stated.
+  expect(row("src")).toHaveAttribute("aria-setsize", "6");
   expect(row("src")).toHaveAttribute("aria-posinset", "3");
   expect(row(/^README\.md/)).toHaveAttribute("aria-posinset", "5");
+});
+
+it("draws every change letter, a conflict in neutral ink and a deleted file struck through", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await findRow("src"));
+  await user.click(await findRow("auth"));
+  const letter = (name: RegExp, text: string) => expect(within(row(name)).getByText(text)).toBeInTheDocument();
+  letter(/^token\.ts/, "!");
+  letter(/^login\.ts/, "R");
+  letter(/^legacy\.ts/, "D");
+  letter(/^scratch\.md/, "U");
+  expect(row(/^token\.ts/)).toHaveClass("xg-c");
+  expect(row(/^legacy\.ts/)).toHaveClass("xg-d");
+  expect(within(row(/^token\.ts/)).getByText("!")).toHaveClass("xg-bang");
+});
+
+it("lists a project that is not a Git repository as one folder with its files, no worktrees", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await findRow("vendor-sdk"));
+  expect(await findRow(/^index\.html/)).toBeInTheDocument();
+  const items = within(treeOf()).getAllByRole("treeitem").map((item) => item.textContent);
+  // After the p-new project row, its files sit directly below it: no Worktrees group, no branch.
+  const at = items.findIndex((text) => text?.startsWith("vendor-sdk"));
+  expect(items.slice(at + 1, at + 3).join()).toMatch(/index\.html/);
+  expect(items.slice(at + 1).some((text) => text === "Worktrees")).toBe(false);
 });

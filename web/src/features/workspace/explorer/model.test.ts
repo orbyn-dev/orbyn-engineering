@@ -11,7 +11,7 @@ const project = { id: "p", name: "app" } as Project;
 const other = { id: "q", name: "other" } as Project;
 const worktree = (over: Partial<ExplorerWorktree>): ExplorerWorktree => ({
   id: "w", path: "/r", name: "r", branch: "main", detached: false, head: "abc", is_main: true,
-  read_only: false, read_only_reason: null, threads: [], dirty: null, ...over,
+  read_only: false, read_only_reason: null, threads: [], dirty: null, is_subfolder: false, ...over,
 });
 const entry = (name: string, over: Partial<ExplorerEntry> = {}): ExplorerEntry => ({
   name, path: name, kind: "file", size: 1, ignored: false, change: null, has_changes: false, ...over,
@@ -78,10 +78,40 @@ describe("explorer rows", () => {
       explorerOpen: { [worktreeKey("p", "x")]: true, [projectKey("q")]: true, [groupKey("q", "worktrees")]: true },
       levels: { [levelKey("p", "x", "")]: level([entry("a.ts")]) },
     }));
-    const labelled = rows.filter((row) => row.readOnly).map((row) => `${row.kind}:${row.label}`);
-    expect(labelled).toEqual(["worktree:feat/x", "project:other"]);
+    const labelled = rows.filter((row) => row.badge).map((row) => `${row.kind}:${row.label}:${row.badge}`);
+    expect(labelled).toEqual(["worktree:feat/x:Read-only", "project:other:Read-only"]);
     // The thread's own worktree is not.
-    expect(rows.find((row) => row.kind === "worktree" && row.label === "main")?.readOnly).toBe(false);
+    expect(rows.find((row) => row.kind === "worktree" && row.label === "main")?.badge).toBeUndefined();
+  });
+
+  it("says Locked on an unfolded locked worktree, and shows a missing one muted with nothing to unfold", () => {
+    const worktrees = { p: kept({ project_id: "p", git: true, worktrees: [
+      worktree({ id: "l", branch: "feat/l", is_main: false, read_only: true, read_only_reason: "locked" }),
+      worktree({ id: "m", branch: "feat/m", is_main: false, read_only: true, read_only_reason: "missing" }),
+    ] }) };
+    const rows = buildRows(base({ worktrees, explorerOpen: { [worktreeKey("p", "l")]: true, [worktreeKey("p", "m")]: true }, levels: { [levelKey("p", "l", "")]: level([entry("a.ts")]) } }));
+    expect(rows.find((row) => row.label === "feat/l")?.badge).toBe("Locked");
+    const missing = rows.find((row) => row.label === "feat/m")!;
+    expect(missing).toMatchObject({ badge: "Missing", missing: true, open: false });
+    // Nothing is read below a missing worktree, whatever was saved as unfolded.
+    expect(rows.filter((row) => row.level?.worktreeId === "m")).toEqual([]);
+  });
+
+  it("lists a folder outside Git, or a project rooted at its own folder, as one folder: files directly under the project", () => {
+    const flat = (over: Partial<ExplorerWorktree>, git: boolean) =>
+      buildRows(base({
+        currentProjectId: "p",
+        worktrees: { p: kept({ project_id: "p", git, worktrees: [worktree({ branch: null, threads: [{ id: "t", title: "", running: false }], ...over })] }) },
+        levels: { [levelKey("p", "w", "")]: level([entry("notes.md")]) },
+      }));
+    for (const rows of [flat({}, false), flat({ is_subfolder: true }, true)]) {
+      expect(keys(rows).slice(0, 2)).toEqual(["project:0:app", "file:1:notes.md"]);
+      expect(rows.some((row) => row.kind === "worktree" || row.label === "Worktrees")).toBe(false);
+    }
+  });
+
+  it("never reads a project's own folder inside a repository as read-only", () => {
+    expect(readOnlyOf(worktree({ is_subfolder: true, read_only: true, read_only_reason: "locked" }), "t")).toBe(false);
   });
 
   it("indents a level 13px and leaves a deep row's place to its depth", () => {

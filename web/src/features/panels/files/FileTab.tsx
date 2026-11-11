@@ -58,13 +58,20 @@ function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target
   );
   const file = read.status === "ready" ? read.data : null;
   // Only the drawn banner: this is not the worktree the thread runs in.
-  const notMine = !!worktree && !worktree.threads.some((one) => one.id === threadId);
+  const locked = worktree?.read_only_reason === "locked";
+  const notMine = !!worktree && !worktree.is_subfolder && !locked && !worktree.threads.some((one) => one.id === threadId);
   const names = useFileTabNames(target.projectId, target.worktreeId, threadId);
   const threads = useWorkspace((state) => state.threads);
   const folders = target.path.split("/").slice(0, -1);
   const name = target.path.split("/").at(-1) ?? target.path;
   return (
-    <div className="explorer-file" data-read-only={notMine ? "true" : undefined}>
+    <div className="explorer-file" data-read-only={notMine || locked ? "true" : undefined}>
+      {locked ? (
+        <div className="x2banner" role="status">
+          <Lock size={14} aria-hidden />
+          <span>This worktree is locked. Files open read-only.</span>
+        </div>
+      ) : null}
       {notMine ? (
         <div className="x2banner" role="status">
           <Lock size={14} aria-hidden />
@@ -120,9 +127,28 @@ function ExplorerFile({ threadId, target }: { threadId: string; target: Explorer
   return <ReadOnlyFile threadId={threadId} target={target} worktree={worktree} />;
 }
 
+/** A worktree whose folder is gone: nothing to browse, and a way to read the list again. */
+function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { kind: "worktree" }>; threadId: string }) {
+  return (
+    <div className="explorer-file">
+      <div className="x2banner" role="status">
+        <Lock size={14} aria-hidden />
+        <span>This worktree is missing from disk.</span>
+      </div>
+      <Empty title="Nothing to browse">
+        <p className="t3">Its folder was moved or deleted. Restore the folder and refresh, or remove the worktree from the list.</p>
+        <Button small tone="quiet" onClick={() => void useExplorer.getState().loadWorktrees(target.projectId, { thread: threadId, refresh: true })}>
+          Refresh
+        </Button>
+      </Empty>
+    </div>
+  );
+}
+
 /** What a file tab shows. */
 export function FileTab({ id, threadId }: { id: FileTabId; threadId: string }) {
   const target = parseFileTab(id);
   if (!target) return null;
+  if (target.kind === "worktree") return <MissingWorktree target={target} threadId={threadId} />;
   return target.kind === "thread" ? <ThreadFile threadId={threadId} path={target.path} /> : <ExplorerFile threadId={threadId} target={target} />;
 }

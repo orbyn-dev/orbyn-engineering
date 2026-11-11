@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
+import { useWorkspace } from "../../product/state/workspace";
 import { useConnection } from "../../product/state/connection";
 import { fileTabId, useUi, type RightTab } from "../../product/state/ui";
 import { PanelHost, type PanelMode } from "./PanelHost";
@@ -208,6 +209,15 @@ describe("surface tabs", () => {
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.queryByRole("menuitem", { name: "notes.md" })).not.toBeInTheDocument();
     expect(useUi.getState().panelTabsClosed).toEqual(["tools"]);
+  });
+
+  it("greys out Changes in the launcher for a folder outside Git", async () => {
+    const user = userEvent.setup();
+    useWorkspace.setState({ projects: { data: [{ id: "p", is_git: false } as never], error: null, loading: false } });
+    render(<PanelHost thread={{ id: "thread-1", project_id: "p" } as Thread} mode="docked" closing={false} moves={false} maximized={false} onToggleMaximize={() => undefined} onReturn={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    expect(screen.getByRole("menuitem", { name: /^Changes/ })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: /^Browser/ })).toBeEnabled();
   });
 
   it("with one tab left, the tab menu has only Maximise panel, Delete keeps the tab, and the × closes the panel without forgetting it", async () => {

@@ -24,6 +24,10 @@ const APP_FILES: [string, ExplorerChange | null][] = [
   ["src/auth/redirect.ts", "modified"],
   ["src/auth/redirect.test.ts", "modified"],
   ["src/auth/session.ts", null],
+  ["src/auth/token.ts", "conflicted"],
+  ["src/auth/login.ts", "renamed"],
+  ["src/auth/legacy.ts", "deleted"],
+  ["scratch.md", "untracked"],
   ...Array.from({ length: 260 }, (_, at): [string, ExplorerChange | null] => [`src/generated/file-${String(at).padStart(3, "0")}.ts`, null]),
 ];
 const SITE_FILES: [string, ExplorerChange | null][] = [["index.html", null], ["styles/site.css", "added"]];
@@ -51,7 +55,7 @@ export function createExplorerMock(getProjects: () => Project[], getThreads: () 
   const worktreesOf = (project: Project): ExplorerWorktrees => {
     const live = (predicate: (thread: Thread) => boolean) =>
       getThreads().filter((thread) => thread.project_id === project.id && predicate(thread)).map((thread) => ({ id: thread.id, title: thread.title, running: thread.active_run !== null }));
-    const base = { detached: false, head: "a1b2c3d", read_only: false, read_only_reason: null, dirty: null } as const;
+    const base = { detached: false, head: "a1b2c3d", read_only: false, read_only_reason: null, dirty: null, is_subfolder: false } as const;
     if (!project.is_git) {
       return { project_id: project.id, git: false, worktrees: [{ ...base, id: `${project.id}-folder`, path: project.path, name: project.name, branch: null, is_main: true, threads: live(() => true) }] };
     }

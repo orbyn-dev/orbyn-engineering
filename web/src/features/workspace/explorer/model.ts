@@ -30,8 +30,10 @@ export interface Row {
   needs?: number;
   /** The worktree this thread runs in. */
   current?: boolean;
-  /** "Read-only", on the row of what is shown read-only. */
-  readOnly?: boolean;
+  /** The word at the right of the row of a worktree or project that reads only: Read-only, Locked or Missing. */
+  badge?: string;
+  /** A worktree whose folder is gone: muted, with nothing to unfold. */
+  missing?: boolean;
   /** Children of a folder not yet shown, on its "Show more" row. */
   remaining?: number;
   /** The level a "Show more", error or empty row belongs to, or the loading row's. */
@@ -68,6 +70,8 @@ export const worktreeLabel = (worktree: ExplorerWorktree) => worktree.branch ?? 
 
 /** Why a worktree is read-only, as far as the person reads it: the service's reason, or that no thread of this one runs there. */
 export function readOnlyOf(worktree: ExplorerWorktree, currentThreadId: string | null): boolean {
+  // A project's own folder, rooted at itself inside a repository, is never marked read-only.
+  if (worktree.is_subfolder) return false;
   if (worktree.read_only) return true;
   return currentThreadId !== null && !worktree.threads.some((thread) => thread.id === currentThreadId);
 }
@@ -148,7 +152,7 @@ export function buildRows(input: ExplorerInput): Row[] {
       label: project.name,
       open,
       needs: input.needs[project.id] ?? 0,
-      readOnly: otherReadOnly,
+      badge: otherReadOnly ? "Read-only" : undefined,
     });
     if (!open) continue;
 
@@ -161,6 +165,13 @@ export function buildRows(input: ExplorerInput): Row[] {
       }
     }
 
+    // A folder outside Git, or a project rooted at its own folder inside a repository, is one folder: its files sit
+    // directly under the project, with no worktree list and no branch.
+    const flat = !!kept?.data && (kept.data.git === false || (list.length === 1 && list[0]!.is_subfolder));
+    if (flat) {
+      levelRows(project.id, list[0]!, "", 1);
+      continue;
+    }
     const worktreesOpen = isOpen(groupKey(project.id, "worktrees"), true);
     rows.push({ key: groupKey(project.id, "worktrees"), kind: "group", depth: 1, projectId: project.id, label: "Worktrees", open: worktreesOpen });
     if (!worktreesOpen) continue;
@@ -175,7 +186,9 @@ export function buildRows(input: ExplorerInput): Row[] {
     const mine = worktreeOfThread(list, currentThreadId);
     for (const worktree of list) {
       const key = worktreeKey(project.id, worktree.id);
-      const wOpen = isOpen(key, mine?.id === worktree.id);
+      const missing = worktree.read_only_reason === "missing";
+      const locked = worktree.read_only_reason === "locked";
+      const wOpen = !missing && isOpen(key, mine?.id === worktree.id);
       const readOnly = readOnlyOf(worktree, currentThreadId);
       rows.push({
         key,
@@ -187,22 +200,24 @@ export function buildRows(input: ExplorerInput): Row[] {
         open: wOpen,
         worktree,
         current: mine?.id === worktree.id,
-        // The label sits on the project row for another project, on the worktree row otherwise; and only on what is unfolded.
-        readOnly: wOpen && readOnly && here,
+        // The word sits on the project row for another project, on the worktree row otherwise; and only on what is unfolded.
+        badge: missing ? "Missing" : wOpen && locked ? "Locked" : wOpen && readOnly && here ? "Read-only" : undefined,
+        missing,
       });
-      if (wOpen) levelRows(project.id, worktree, "", 3);
+      if (wOpen && !missing) levelRows(project.id, worktree, "", 3);
     }
   }
   return rows;
 }
 
-/** The letter a change is drawn as, and what it says. A conflict has no letter drawn, so it shows none. */
+/** The letter a change is drawn as, and what it says. */
 export const CHANGE: Partial<Record<ExplorerChange, { letter: string; label: string }>> = {
   modified: { letter: "M", label: "Modified" },
   added: { letter: "A", label: "Added" },
   deleted: { letter: "D", label: "Deleted" },
   renamed: { letter: "R", label: "Renamed" },
   untracked: { letter: "U", label: "Untracked" },
+  conflicted: { letter: "!", label: "Conflicted" },
 };
 
 /** A folder path as it is compared: one separator, no trailing one, macOS's /private prefix of /var, /tmp and /etc dropped, and no case on a drive. */

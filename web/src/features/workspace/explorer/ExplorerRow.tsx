@@ -95,8 +95,8 @@ export const ExplorerRow = memo(function ExplorerRow({
     );
   }
 
-  const expandable = row.kind === "project" || row.kind === "group" || row.kind === "worktree" || row.kind === "dir";
-  const cls = ["x2r", row.kind === "thread" ? "x2t" : "", row.kind === "group" ? "x2g" : "", selected ? "on" : "", row.current ? "cur" : "", menuOpen ? "mopen" : ""]
+  const expandable = row.kind === "project" || row.kind === "group" || row.kind === "dir" || (row.kind === "worktree" && !row.missing);
+  const cls = ["x2r", row.kind === "thread" ? "x2t" : "", row.kind === "group" ? "x2g" : "", selected ? "on" : "", row.current ? "cur" : "", menuOpen ? "mopen" : "", row.missing ? "xg-miss" : "", row.change === "conflicted" ? "xg-c" : "", row.change === "deleted" ? "xg-d" : ""]
     .filter(Boolean)
     .join(" ");
   const deep = row.depth > MAX_DEPTH;
@@ -110,7 +110,7 @@ export const ExplorerRow = memo(function ExplorerRow({
       aria-expanded={expandable ? row.open : undefined}
       aria-selected={selected}
       // A name split for the narrow bar is read whole, with its change.
-      aria-label={row.kind === "file" ? `${row.label}${row.change && CHANGE[row.change] ? `, ${CHANGE[row.change]!.label}` : ""}` : undefined}
+      aria-label={row.kind === "file" ? `${row.label}${row.change && CHANGE[row.change] ? `, ${CHANGE[row.change]!.label}` : ""}` : row.missing ? `${row.label}, missing from disk` : undefined}
       title={title}
       aria-posinset={place?.pos}
       aria-setsize={place?.size}
@@ -132,9 +132,9 @@ export const ExplorerRow = memo(function ExplorerRow({
       <Name text={row.label} middle={row.kind === "file"} />
       {row.kind === "project" && (row.needs ?? 0) > 0 ? <span className="n amber">{row.needs}</span> : null}
       {row.kind === "worktree" && row.current ? <span className="xdot" role="img" aria-label="Current worktree" title="Current worktree" /> : null}
-      {row.readOnly ? <span className="n x2ro">Read-only</span> : null}
+      {row.badge ? <span className="n x2ro">{row.badge}</span> : null}
       {row.kind === "thread" && row.thread ? <ThreadStatus thread={row.thread} /> : null}
-      {row.kind === "worktree" ? (
+      {row.kind === "worktree" && !row.missing ? (
         <button
           type="button"
           className="x2more-btn"
@@ -151,7 +151,7 @@ export const ExplorerRow = memo(function ExplorerRow({
         </button>
       ) : null}
       {row.kind === "file" && row.change && CHANGE[row.change] ? (
-        <span className={`xm ${row.change === "modified" ? "m" : row.change === "added" ? "a" : row.change === "renamed" ? "r" : row.change === "untracked" ? "u" : ""}`} title={CHANGE[row.change]!.label} aria-label={CHANGE[row.change]!.label}>
+        <span className={`xm ${row.change === "modified" ? "m" : row.change === "added" ? "a" : row.change === "renamed" ? "r" : row.change === "untracked" ? "u" : row.change === "deleted" ? "d" : row.change === "conflicted" ? "xg-bang" : ""}`} title={CHANGE[row.change]!.label} aria-label={CHANGE[row.change]!.label}>
           {CHANGE[row.change]!.letter}
         </span>
       ) : null}

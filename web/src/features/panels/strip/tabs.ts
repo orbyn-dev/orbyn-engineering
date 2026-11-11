@@ -1,4 +1,4 @@
-import { Activity, FileDiff, File as FileIcon, Globe, MessagesSquare, Plug } from "lucide-react";
+import { Activity, FileDiff, File as FileIcon, GitBranch, Globe, MessagesSquare, Plug } from "lucide-react";
 import { defaultOrder, fileName, parseFileTab, type BuiltinTab, type RightTab } from "../../../product/state/ui";
 
 /** The panel's five surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
@@ -12,6 +12,7 @@ export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff 
 
 export function tabOf(id: RightTab): { id: RightTab; label: string; icon: typeof FileDiff } {
   const file = parseFileTab(id);
+  if (file?.kind === "worktree") return { id, label: "Worktree", icon: GitBranch };
   if (file) return { id, label: fileName(file.path), icon: FileIcon };
   return RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
 }

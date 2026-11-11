@@ -291,3 +291,31 @@
   color: var(--color-muted);
   white-space: nowrap;
 }
+/* Change states (explorer-conflict-states): a conflict is neutral ink with a bold !, a deleted file keeps its name muted and struck. */
+.xm.xg-bang {
+  color: var(--color-text);
+  font-weight: 700;
+}
+.x2r.xg-c {
+  background: linear-gradient(var(--color-textSoft), var(--color-textSoft)) left center / 2px 100% no-repeat, var(--color-rowHover);
+}
+.x2r.xg-c .nm {
+  color: var(--color-text);
+}
+.x2r.xg-c.on {
+  background: linear-gradient(var(--color-textSoft), var(--color-textSoft)) left center / 2px 100% no-repeat, var(--color-selected);
+}
+.x2r.xg-d .nm {
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+/* A worktree whose folder is missing: muted, nothing to unfold. */
+.x2r.xg-miss .nm,
+.x2r.xg-miss .ic {
+  color: var(--color-muted);
+}
+.xg-nogit {
+  margin-top: 6px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}

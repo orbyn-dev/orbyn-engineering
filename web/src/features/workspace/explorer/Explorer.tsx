@@ -246,6 +246,9 @@ export function Explorer({ route }: { route: Route }) {
   const activate = (row: Row, event: MouseEvent | KeyboardEvent) => {
     setFocusKey(row.key);
     if (row.kind === "file") return openFile(row);
+    if (row.kind === "worktree" && row.missing && row.worktree) {
+      return useUi.getState().openFileTab({ kind: "worktree", projectId: row.projectId, worktreeId: row.worktree.id });
+    }
     if (row.kind === "thread" && row.thread) return navigate({ name: "thread", id: row.thread.id });
     if (row.kind === "more" && row.level) return useExplorer.getState().showMore(levelKey(row.projectId, row.level.worktreeId, row.level.path));
     if (row.kind === "error") {
@@ -333,6 +336,7 @@ export function Explorer({ route }: { route: Route }) {
   const selectedTab = activeTab;
   const isSelected = (row: Row) => {
     if (row.kind === "thread") return row.thread?.id === currentThreadId;
+    if (row.kind === "worktree" && row.missing && row.worktree) return selectedTab === fileTabId({ kind: "worktree", projectId: row.projectId, worktreeId: row.worktree.id });
     if (row.kind !== "file") return false;
     const target = targetOf(row);
     return target !== null && selectedTab === fileTabId(target);

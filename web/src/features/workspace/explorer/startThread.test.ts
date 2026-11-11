@@ -6,7 +6,7 @@ import { canStartThreadIn, startThreadIn } from "./startThread";
 
 const worktree = (over: Partial<ExplorerWorktree>): ExplorerWorktree => ({
   id: "w", path: "/code/app", name: "app", branch: "main", detached: false, head: "abc", is_main: true,
-  read_only: false, read_only_reason: null, threads: [], dirty: null, ...over,
+  read_only: false, read_only_reason: null, threads: [], dirty: null, is_subfolder: false, ...over,
 });
 const thread = (path: string) => ({ id: "t", worktree: { path, branch: "x", base: "main" } }) as Thread;
 
