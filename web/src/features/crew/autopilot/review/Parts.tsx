@@ -63,8 +63,11 @@ export function Status({ tone, working, children }: { tone: StatusTone; working?
   );
 }
 
+const TAG_CLASS = { hi: "crew-tag crew-tag-hi", lo: "crew-tag crew-tag-lo" } as const;
+const BOX_CLASS = { amber: "crew-box crew-box-amber", red: "crew-box crew-box-red" } as const;
+
 export function Tag({ children, tone }: { children: ReactNode; tone?: "hi" | "lo" }) {
-  return <span className={`crew-tag${tone ? ` crew-tag-${tone}` : ""}`}>{children}</span>;
+  return <span className={tone ? TAG_CLASS[tone] : "crew-tag"}>{children}</span>;
 }
 
 const REASON_ICON: Record<ReasonIcon, ReactNode> = {
@@ -101,7 +104,7 @@ export function Box({
   children?: ReactNode;
 }) {
   return (
-    <div className={`crew-box${tone ? ` crew-box-${tone}` : ""}`}>
+    <div className={tone ? BOX_CLASS[tone] : "crew-box"}>
       {heading ? <h6>{heading}</h6> : null}
       {children}
     </div>

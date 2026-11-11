@@ -325,6 +325,9 @@ button.crew-risk {
   color: var(--color-text);
   font-size: var(--text-nav);
 }
+.crew-bn-plain {
+  background: var(--color-sunken);
+}
 .crew-bn-amber {
   background: var(--color-warnSoft);
   box-shadow: inset 0 0 0 1px var(--color-warnBorder);
@@ -650,6 +653,12 @@ button.crew-risk {
 .crew-apq-rv {
   background: var(--color-sunken);
   box-shadow: none;
+}
+.crew-apq-rt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
 }
 .crew-apq-tt {
   display: flex;
@@ -1027,7 +1036,7 @@ button.crew-risk {
   place-items: center;
   width: 22px;
   height: 22px;
-  border-radius: 11px;
+  border-radius: var(--radius-pill);
   background: var(--color-sunken);
   color: var(--color-textSoft);
   font-size: var(--text-caption);
