@@ -151,20 +151,23 @@ impl Core {
     }
 
     /// Tells the lead, through its queue, that the run ended or needs a person.
-    fn tell_lead(&self, run: &CrewRun, result: &CrewResult) {
+    pub(crate) fn tell_lead(&self, run: &CrewRun, result: &CrewResult) {
         if !result.r#final && result.state != ResultState::NeedsPerson {
             return;
         }
-        if let Err(error) = self.runs.enqueue(
-            &run.lead_thread_id,
-            &format!(
-                "{}{}",
-                lead_message(result),
-                self.take_held_for_lead(run, result.crew_id.as_str())
-            ),
-            &[],
-        ) {
-            tracing::warn!(%error, "could not tell the lead a crew task's result");
+        // Held messages for the lead ride along, capped. They are recorded as sent only once the
+        // prompt is accepted; if it is refused with them, the result goes alone.
+        let held = self.held_for_lead(run, result.crew_id.as_str());
+        let notice = lead_message(result);
+        let full = format!("{notice}{}", held.text());
+        match self.runs.enqueue(&run.lead_thread_id, &full, &[]) {
+            Ok(_) => self.commit_held(&held),
+            Err(first) => {
+                tracing::warn!(error = %first, "could not send the lead a crew result with its held messages");
+                if let Err(error) = self.runs.enqueue(&run.lead_thread_id, &notice, &[]) {
+                    tracing::warn!(%error, "could not tell the lead a crew task's result");
+                }
+            }
         }
     }
 
@@ -347,7 +350,7 @@ impl Core {
 
     /// Queues `text` on the worker's thread. It is checked for the key's text and for secrets
     /// first (H1, H2); a prompt that fails either is replaced by a plain one.
-    fn send_to_worker(&self, task: &CrewTask, text: &str) -> Result<(), CrewError> {
+    pub(crate) fn send_to_worker(&self, task: &CrewTask, text: &str) -> Result<(), CrewError> {
         let run = self
             .store
             .crew_run(&task.id)
@@ -369,12 +372,22 @@ impl Core {
         };
         // Messages from other members that arrived while the worker was not in a turn go with
         // this prompt, each already checked the way a live one is.
-        let held = self.take_held_messages(task, &run);
-        let text = format!("{text}{held}");
-        self.runs
-            .enqueue(&thread, &text, &[])
-            .map(|_| ())
-            .map_err(internal)
+        // They are recorded as sent only once the prompt is accepted; if it is refused with them,
+        // the prompt goes alone (a worker must not lose its retry) and they stay held.
+        let held = self.held_for_worker(task, &run);
+        let full = format!("{text}{}", held.text());
+        match self.runs.enqueue(&thread, &full, &[]) {
+            Ok(_) => {
+                self.commit_held(&held);
+                Ok(())
+            }
+            Err(_) if !held.is_empty() => self
+                .runs
+                .enqueue(&thread, text, &[])
+                .map(|_| ())
+                .map_err(internal),
+            Err(error) => Err(internal(error)),
+        }
     }
 
     /// A worker's run ended. A report made in it is verified now, and not before: the worker

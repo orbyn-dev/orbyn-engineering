@@ -184,7 +184,16 @@ impl Core {
                     ),
                 );
                 if who.role == CrewRole::Worker {
-                    self.tell_lead_of(&who, &error);
+                    // The lead's notice names the key and the writer, not the revisions the writer
+                    // picked, so one conflict is told once however often it is repeated.
+                    let notice = CrewError::new(
+                        ErrorCode::BoardConflict,
+                        format!(
+                            "a write to {} used a stale revision; the first value stands",
+                            fact.key
+                        ),
+                    );
+                    self.tell_lead_of(&who, &notice);
                 }
                 Err(error)
             }

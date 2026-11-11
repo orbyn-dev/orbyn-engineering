@@ -2,10 +2,11 @@
 //! section 4 (H6), and the text passes the secret scan and, for a worker, the answer-key leak
 //! check on its way out (H1, H2).
 //!
-//! The bus never starts a turn and never writes to a thread's queue, which belongs to the person
+//! The bus itself never starts a turn and never writes to a thread's queue, which belongs to the person
 //! (the queue and the steer path show text as the person's own). A message is handed to a turn
 //! that is running and takes input (`live`); otherwise it is `held` and reaches the recipient
-//! with the next prompt the core sends it, or in the result of the recipient's next bus tool
+//! inside a prompt the core already sends (the worker's retry, the lead's result notice: slice 3's
+//! channel, admitted as `user`, capped, and recorded as sent only once accepted), or in the result of the recipient's next bus tool
 //! call. If no turn comes and the recipient calls no bus tool, it is not delivered; the record
 //! says `held`. `live` means the text was handed to the running turn's input. An engine such as
 //! Claude reads that input at its own next opportunity, which can be after the tool call it is in.
@@ -155,63 +156,86 @@ impl Core {
         }
     }
 
-    /// The messages held for `recipient`, as the text to send, each checked again on the way out
-    /// and recorded as sent with `mode`.
-    pub(crate) fn take_held(
+    /// The messages held for `recipient`, each checked again on the way out, as much as one
+    /// prompt or tool result may carry. Nothing is recorded as sent: the caller calls
+    /// [`Core::commit_held`] once the text has really gone, so a refused prompt leaves the
+    /// messages held.
+    pub(crate) fn collect_held(
         &self,
         crew_id: &str,
         recipient: &str,
         thread: &str,
         guard: bool,
-        mode: &str,
+        mode: &'static str,
         note: &str,
-    ) -> Vec<String> {
+    ) -> Held {
+        let mut taken = Held {
+            texts: Vec::new(),
+            more: 0,
+            rows: Vec::new(),
+            recipient: recipient.to_owned(),
+            thread: thread.to_owned(),
+            mode,
+        };
         let held = match self.store.held_crew_messages(crew_id, recipient) {
-            Ok(held) if !held.is_empty() => held,
-            _ => return Vec::new(),
+            Ok(held) => held,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the held crew messages");
+                return taken;
+            }
         };
         let needles = self.crew_key_needles(crew_id).unwrap_or_default();
-        let mut texts = Vec::new();
-        for message in &held {
+        let mut chars = 0;
+        for (index, message) in held.iter().enumerate() {
             let (text, withheld) = self.outbound(message, guard, &needles);
+            if index >= HELD_MESSAGES || chars + text.len() > HELD_CHARS {
+                taken.more = held.len() - index;
+                break;
+            }
+            chars += text.len();
             let note = if withheld {
                 "the text was withheld; a plain notice was sent instead"
             } else {
                 note
             };
+            taken
+                .rows
+                .push((message.id.as_str().to_owned(), note.to_owned()));
+            taken.texts.push(text);
+        }
+        taken
+    }
+
+    /// Records what [`Core::collect_held`] returned as sent.
+    pub(crate) fn commit_held(&self, held: &Held) {
+        for (id, note) in &held.rows {
             if let Err(error) = self.store.record_crew_delivery(
-                message.id.as_str(),
-                recipient,
-                thread,
-                mode,
+                id,
+                &held.recipient,
+                &held.thread,
+                held.mode,
                 Some(note),
             ) {
                 tracing::warn!(%error, "could not record a held crew message's delivery");
             }
-            texts.push(text);
         }
-        texts
     }
 
-    /// The messages held for a worker, as text for its next prompt. Empty when none.
-    pub(crate) fn take_held_messages(&self, task: &CrewTask, run: &CrewRun) -> String {
-        let thread = run.worker_thread_id.clone().unwrap_or_default();
-        self.take_held(
+    /// The messages held for a worker, for its next prompt.
+    pub(crate) fn held_for_worker(&self, task: &CrewTask, run: &CrewRun) -> Held {
+        self.collect_held(
             &task.crew_id,
             &run.member,
-            &thread,
+            run.worker_thread_id.as_deref().unwrap_or_default(),
             true,
             "next_turn",
             "sent with the worker's next prompt",
         )
-        .iter()
-        .map(|text| format!("\n\n{text}"))
-        .collect()
     }
 
-    /// The messages held for the lead, as text for its next prompt. Empty when none.
-    pub(crate) fn take_held_for_lead(&self, run: &CrewRun, crew_id: &str) -> String {
-        self.take_held(
+    /// The messages held for the lead, for its next result notice.
+    pub(crate) fn held_for_lead(&self, run: &CrewRun, crew_id: &str) -> Held {
+        self.collect_held(
             crew_id,
             "lead",
             &run.lead_thread_id,
@@ -219,8 +243,39 @@ impl Core {
             "next_turn",
             "sent with the lead's next result",
         )
-        .iter()
-        .map(|text| format!("\n\n{text}"))
-        .collect()
+    }
+}
+
+/// The most held messages, and characters of them, that one prompt or tool result carries. The
+/// rest stay held and are told of; a prompt over the thread's limit would be refused whole.
+const HELD_MESSAGES: usize = 10;
+const HELD_CHARS: usize = 20_000;
+
+/// Held messages ready to send, not yet recorded as sent.
+pub(crate) struct Held {
+    pub texts: Vec<String>,
+    /// Messages left held because of the cap.
+    pub more: usize,
+    rows: Vec<(String, String)>,
+    recipient: String,
+    thread: String,
+    mode: &'static str,
+}
+
+impl Held {
+    pub fn is_empty(&self) -> bool {
+        self.texts.is_empty()
+    }
+
+    /// The texts, each after a blank line, and a line for what the cap left out.
+    pub fn text(&self) -> String {
+        let mut out: String = self.texts.iter().map(|t| format!("\n\n{t}")).collect();
+        if self.more > 0 {
+            out.push_str(&format!(
+                "\n\n{} more crew messages are held for you. Call a crew bus tool to read them.",
+                self.more
+            ));
+        }
+        out
     }
 }

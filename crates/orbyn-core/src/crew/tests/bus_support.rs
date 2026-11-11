@@ -124,7 +124,9 @@ impl Duo {
             self.w.task(task),
             self.w.core.store.crew_run(task).unwrap().unwrap(),
         );
-        self.w.core.take_held_messages(&task, &run)
+        let held = self.w.core.held_for_worker(&task, &run);
+        self.w.core.commit_held(&held);
+        held.text()
     }
 
     pub fn steered_to(&self, thread: &str) -> Vec<String> {

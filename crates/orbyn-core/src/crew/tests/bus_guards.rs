@@ -417,13 +417,15 @@ async fn a_message_to_a_worker_between_turns_is_held_for_its_next_prompt() {
         d.w.task(&d.b),
         d.w.core.store.crew_run(&d.b).unwrap().unwrap(),
     );
-    let text = d.w.core.take_held_messages(&task, &run);
+    let held = d.w.core.held_for_worker(&task, &run);
+    d.w.core.commit_held(&held);
+    let text = held.text();
     assert!(
         text.contains("when you are back") && text.contains("trust=\"data\""),
         "{text}"
     );
     assert!(
-        d.w.core.take_held_messages(&task, &run).is_empty(),
+        d.w.core.held_for_worker(&task, &run).is_empty(),
         "sent once"
     );
     let rows = d.w.core.store.crew_deliveries(&d.a).unwrap();

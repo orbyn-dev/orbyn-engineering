@@ -15,6 +15,9 @@ use super::Sender;
 use super::deliver::Target;
 use crate::app::Core;
 
+/// The most notices from the core to the lead that one run stores.
+const MAX_NOTICES: usize = 10;
+
 impl Core {
     /// Tells the lead of `error`, which refused `who`. A refusal of the lead itself is not told.
     pub(super) fn tell_lead_of(self: &Arc<Self>, who: &Sender, error: &CrewError) {
@@ -45,10 +48,13 @@ impl Core {
                 CrewError::new(orbyn_contracts::ErrorCode::InvalidObject, "no such task")
             })?;
         let told = self.store.crew_messages(task_id).map_err(internal)?;
-        if told
+        let notices: Vec<_> = told
             .iter()
-            .any(|m| m.author.role == CrewRole::Core && m.body.as_str() == body)
-        {
+            .filter(|m| m.author.role == CrewRole::Core)
+            .collect();
+        // The same notice is told once, and a run tells the lead of at most MAX_NOTICES things:
+        // a worker that varies what it is refused for cannot fill the store or the lead's inbox.
+        if notices.len() >= MAX_NOTICES || notices.iter().any(|m| m.body.as_str() == body) {
             return Ok(());
         }
         let invalid = |why: String| CrewError::new(orbyn_contracts::ErrorCode::InvalidObject, why);

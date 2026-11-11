@@ -213,7 +213,7 @@ impl Core {
             } else {
                 who.member.as_str()
             };
-            let held = self.take_held(
+            let held = self.collect_held(
                 who.crew_id.as_str(),
                 address,
                 &who.thread,
@@ -222,7 +222,15 @@ impl Core {
                 "returned in the recipient's bus tool result",
             );
             if !held.is_empty() {
-                answer["inbox"] = json!(held);
+                let mut inbox = held.texts.clone();
+                if held.more > 0 {
+                    inbox.push(format!(
+                        "{} more crew messages are held for you; call a bus tool again.",
+                        held.more
+                    ));
+                }
+                answer["inbox"] = json!(inbox);
+                self.commit_held(&held);
             }
         }
         Ok(answer)
