@@ -205,6 +205,17 @@ pub(crate) struct WorktreeRecord {
 /// Every worktree of the repository, the primary checkout first.
 pub(crate) async fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>> {
     let listing = git(repo, &["worktree", "list", "--porcelain", "-z"]).await?;
+    Ok(parse_worktrees(&listing))
+}
+
+/// Like [`worktree_records`] for a reader that shows what it finds to a person: through
+/// the hardened runner, so no repository setting can start a program.
+pub(crate) async fn worktree_records_hardened(repo: &Path) -> Result<Vec<WorktreeRecord>> {
+    let listing = git_hardened(repo, &["worktree", "list", "--porcelain", "-z"]).await?;
+    Ok(parse_worktrees(&listing))
+}
+
+fn parse_worktrees(listing: &[u8]) -> Vec<WorktreeRecord> {
     let mut worktrees = Vec::new();
     let mut current: Option<WorktreeRecord> = None;
     for field in listing.split(|byte| *byte == 0) {
@@ -237,7 +248,7 @@ pub(crate) async fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>>
         }
     }
     worktrees.extend(current);
-    Ok(worktrees)
+    worktrees
 }
 
 /// Linked worktrees, without the primary checkout.

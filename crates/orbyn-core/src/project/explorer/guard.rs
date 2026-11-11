@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::resolve_existing;
 use crate::project::files::{names_git, opened_path};
-use crate::source_control::git::WorktreeRecord;
 
 const MAX_PATH_BYTES: usize = 4096;
 
@@ -67,70 +66,6 @@ pub(super) fn clean(raw: &str, windows: bool) -> Result<String> {
         }
     }
     Ok(parts.join("/"))
-}
-
-/// The repository's common Git directory, from its first `git worktree list` entry:
-/// the bare repository itself, or the primary checkout's `.git` (a folder, or a file
-/// pointing at a separate Git directory).
-pub(super) fn common_dir(primary: &WorktreeRecord) -> Option<PathBuf> {
-    if primary.bare {
-        return crate::util::canonicalize(&primary.path).ok();
-    }
-    let dot = primary.path.join(".git");
-    let meta = std::fs::symlink_metadata(&dot).ok()?;
-    if meta.is_dir() {
-        crate::util::canonicalize(&dot).ok()
-    } else {
-        gitdir_of(&dot)
-    }
-}
-
-/// Where a `.git` file points, canonicalized.
-fn gitdir_of(dot: &Path) -> Option<PathBuf> {
-    let mut text = String::new();
-    std::fs::File::open(dot)
-        .ok()?
-        .take(4096)
-        .read_to_string(&mut text)
-        .ok()?;
-    let target = Path::new(text.lines().next()?.strip_prefix("gitdir:")?.trim());
-    let target = if target.is_absolute() {
-        target.to_path_buf()
-    } else {
-        dot.parent()?.join(target)
-    };
-    crate::util::canonicalize(&target).ok()
-}
-
-/// True when `root` really is a linked worktree of the repository whose common Git
-/// directory is `common`: its `.git` is a file pointing into `<common>/worktrees/`, and
-/// that entry points back at this `.git`. A redirected `gitdir` file in Git's own
-/// records cannot make some other folder a member.
-pub(super) fn belongs(root: &Path, common: &Path) -> bool {
-    let dot = root.join(".git");
-    if !std::fs::symlink_metadata(&dot).is_ok_and(|meta| meta.is_file()) {
-        return false;
-    }
-    let (Some(entry), Ok(common)) = (gitdir_of(&dot), crate::util::canonicalize(common)) else {
-        return false;
-    };
-    if !entry.starts_with(common.join("worktrees")) {
-        return false;
-    }
-    let mut back = String::new();
-    let read = std::fs::File::open(entry.join("gitdir"))
-        .and_then(|file| file.take(4096).read_to_string(&mut back));
-    let back = Path::new(back.trim());
-    let back = if back.is_absolute() {
-        back.to_path_buf()
-    } else {
-        entry.join(back)
-    };
-    read.is_ok()
-        && matches!(
-            (crate::util::canonicalize(&back), crate::util::canonicalize(&dot)),
-            (Ok(a), Ok(b)) if a == b
-        )
 }
 
 /// The folders a worktree read never reaches, canonicalized.

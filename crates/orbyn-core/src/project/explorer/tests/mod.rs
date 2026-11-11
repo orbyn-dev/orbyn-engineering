@@ -108,4 +108,5 @@ pub(super) fn refused<T: std::fmt::Debug>(result: Result<T>) {
 mod access;
 mod browse;
 mod hardening;
+mod membership;
 mod worktrees;

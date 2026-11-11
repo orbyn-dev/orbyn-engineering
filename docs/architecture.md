@@ -1571,11 +1571,16 @@ still go through a thread's file routes. `orbynd` only routes; Core
   `repo/`. A file opens without following a final link and the path its handle names is
   checked again where the system can say. A folder, device, pipe or socket is never opened, and
   the last two are not listed.
-- **Only real members.** The list leaves out a bare repository. A linked worktree is read only
-  when Git's records and the folder agree: its `.git` is a file pointing into the repository's
-  `worktrees/` folder, and that entry points back at it. A `prunable` entry, or one whose
-  `gitdir` file was redirected at some other folder, is listed read-only as `missing`, never
-  read and never given a status.
+- **Only real members.** Git's records can be rewritten by anything that writes inside a `.git`
+  folder, so the list is trusted only where the folders agree with it, and it fails closed. A bare
+  repository, and the Git folder that `git worktree list` names as the main worktree for a
+  `--separate-git-dir` or `.git`-file repository, are no checkouts and are left out (the project's
+  folder stands in when its `.git` file points there). The main checkout's `.git` must be the common
+  directory or a file pointing at it. A linked worktree is read only when its `.git` is a file
+  pointing into the repository's `worktrees/` folder and that entry points back at it. A `prunable`
+  entry, or one whose `gitdir` was redirected, is listed read-only as `missing`, never read and never
+  given a status. With no common directory to check against, or when the project's own folder is not
+  among the members (a rewritten `commondir` or project `.git` file), nothing is shown (`404`).
 - **Known exposure.** Any worktree of the repository is served to a holder of the service token
   once the project is trusted, including other sessions' worktrees and ones no thread uses. The
   thread file routes already reach any thread's folder; the new reach is worktrees with no
@@ -1595,7 +1600,7 @@ still go through a thread's file routes. `orbynd` only routes; Core
 - **Letters come from one `git status` per worktree**, through the shared hardened Git runner
   (no repository filter, converter or attribute runs; `--porcelain=v1 -z --untracked-files=normal --ignored=matching`), kept for 5 seconds and
   shown for at most 30, with the change letters, ignored paths and dirty summary all read from
-  it. A status gives up after 20 seconds, at most two run at once per project, and a snapshot keeps at most 50,000 paths. A folder is opened without following a link and checked again after its entries are read. A tree read
+  it. A status gives up after 20 seconds, at most two run at once per project, and a snapshot keeps at most 50,000 paths. A folder is opened without following a link and checked again after its entries are read; the entries themselves are still read by path, so a swap and undo between the two checks is narrowed, not closed. A tree read
   with nothing kept waits 400 ms for Git, then answers with `changes: "pending"` and no letters,
   and `data_changed` follows when they land. `changes` is `unavailable` outside Git or when Git
   failed. The worktree list is kept 10 seconds and shown for at most 60; a listing never waits
