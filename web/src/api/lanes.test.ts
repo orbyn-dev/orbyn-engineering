@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { request } from "./client";
-import { SLOW_LANE_CAP, laneFor } from "./lanes";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NETWORK_ERROR, request } from "./client";
+import { LANE_TIMEOUT_MS, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
 
 interface Pending {
   path: string;
@@ -35,7 +35,11 @@ async function finishAll(pending: Pending[]) {
   }
 }
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(resetLanesForTests);
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("laneFor", () => {
   it("sends the slow reads to the slow lane", () => {
@@ -51,7 +55,6 @@ describe("laneFor", () => {
       "/api/updates",
       "/api/usage?days=30",
       "/api/limits",
-      "/api/forges",
       "/api/projects/p1/pulls/12/checks",
     ]) {
       expect(laneFor("GET", path), path).toBe("slow");
@@ -60,6 +63,7 @@ describe("laneFor", () => {
 
   it("keeps the fast reads and every write interactive", () => {
     expect(laneFor("GET", "/api/projects")).toBe("interactive");
+    expect(laneFor("GET", "/api/forges")).toBe("interactive");
     expect(laneFor("GET", "/api/threads?project_id=p1")).toBe("interactive");
     expect(laneFor("GET", "/api/threads/t1")).toBe("interactive");
     expect(laneFor("POST", "/api/pulls/details")).toBe("interactive");
@@ -180,5 +184,82 @@ describe("shared reads", () => {
     await expect(a).rejects.toMatchObject({ name: "AbortError" });
     pending[0]?.answer(["x"]);
     await expect(b).resolves.toEqual(["x"]);
+  });
+
+  it("starts a fresh read after a write instead of joining one sent before it", async () => {
+    const { pending, fetchMock } = holdFetch();
+    const before = request("GET", "/api/projects/p1/pulls/3");
+    await tick();
+    const write = request("POST", "/api/projects/p1/pulls/3/merge", {});
+    const after = request("GET", "/api/projects/p1/pulls/3");
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(pending[0]?.signal?.aborted).toBe(false);
+    await finishAll(pending);
+    await Promise.all([before, write, after]);
+  });
+
+  it("removes a shared read after it fails, so the next read goes out again", async () => {
+    const fetchMock = vi.fn(async () => new Response("no", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(request("GET", "/api/projects")).rejects.toMatchObject({ code: "http_500" });
+    await expect(request("GET", "/api/projects")).rejects.toMatchObject({ code: "http_500" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("frees the slow slot when a read fails", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      return new Response("no", { status: 500 });
+    }));
+    const reads = ["/api/pulls", "/api/usage?days=7", "/api/limits", "/api/updates"].map((path) =>
+      request("GET", path).catch(() => "failed"),
+    );
+    await expect(Promise.all(reads)).resolves.toEqual(["failed", "failed", "failed", "failed"]);
+    expect(calls).toHaveLength(4);
+  });
+
+  it("lets a foreground read bypass a full slow lane, and still shares it", async () => {
+    const { pending, fetchMock } = holdFetch();
+    const slow = [request("GET", "/api/pulls?state=open&q="), request("GET", "/api/usage?days=7"), request("GET", "/api/limits")];
+    const a = request("GET", "/api/projects/p1/pulls/3", undefined, undefined, { priority: "foreground" });
+    const b = request("GET", "/api/projects/p1/pulls/3", undefined, undefined, { priority: "foreground" });
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(pending.some((entry) => entry.path === "/api/projects/p1/pulls/3")).toBe(true);
+    await finishAll(pending);
+    await Promise.all([...slow, a, b]);
+  });
+
+  it("hands the first caller the answer itself and copies it for the others", async () => {
+    const { pending } = holdFetch();
+    const a = request<{ n: number }>("GET", "/api/projects");
+    const b = request<{ n: number }>("GET", "/api/projects");
+    await tick();
+    pending[0]?.answer({ n: 1 });
+    const [one, two] = await Promise.all([a, b]);
+    expect(one).toEqual(two);
+    expect(one).not.toBe(two);
+  });
+});
+
+describe("the slow lane timeout", () => {
+  it("abandons a hung read as a network failure and frees its slot", async () => {
+    vi.useFakeTimers();
+    const { pending } = holdFetch();
+    const hung = [request("GET", "/api/pulls"), request("GET", "/api/usage?days=7")];
+    const caught = hung.map((call) => call.catch((error: unknown) => error));
+    const waiting = request<string>("GET", "/api/limits");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pending.map((entry) => entry.path)).not.toContain("/api/limits");
+    await vi.advanceTimersByTimeAsync(LANE_TIMEOUT_MS);
+    const errors = await Promise.all(caught);
+    for (const error of errors) expect(error).toMatchObject({ code: NETWORK_ERROR });
+    expect(pending[0]?.signal?.aborted).toBe(true);
+    const next = pending.find((entry) => entry.path === "/api/limits");
+    expect(next).toBeDefined();
+    next?.answer("ok");
+    await expect(waiting).resolves.toBe("ok");
   });
 });

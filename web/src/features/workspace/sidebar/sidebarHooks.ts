@@ -50,7 +50,7 @@ export function useSidebarCatalog(
   const overridesKey = JSON.stringify(groupingOverrides);
   // A renamed, added or re-iconed project changes the catalog's labels and members too.
   const projectsKey = list.map((project) => `${project.id}:${project.name}:${project.metadata_revision ?? ""}`).join("|");
-  const catalogKey = `${CATALOG_KEY}:${projectGrouping}:${overridesKey}:${projectsKey}`;
+  const catalogKey = `${CATALOG_KEY}:${projectFolders}:${projectGrouping}:${overridesKey}:${projectsKey}`;
   // A sidebar that mounts again (a drawer, reading mode) draws what it last read at once.
   const [settings, setSettings] = useState<ServerSettings | null>(() => readKept<ServerSettings>(SETTINGS_KEY) ?? null);
   const [groupingCatalog, setGroupingCatalog] = useState<ProjectScopeCatalog | null>(() => readKept<ProjectScopeCatalog>(catalogKey) ?? null);

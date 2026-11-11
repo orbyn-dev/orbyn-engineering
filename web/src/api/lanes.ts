@@ -16,12 +16,17 @@ const STREAM_CONNECTIONS = 2;
 /** Slow reads running at once: the rest queue, which leaves 2 of the 6 connections for interactive requests. */
 export const SLOW_LANE_CAP = CONNECTIONS_PER_HOST - STREAM_CONNECTIONS - 2;
 
+/**
+ * A slow read that has not answered by now is abandoned, so two hung forge reads cannot
+ * hold both slots and stall every slow read in the app.
+ */
+export const LANE_TIMEOUT_MS = 30_000;
+
 export type Lane = "slow" | "interactive";
 
 /** Reads whose service work takes from a few hundred milliseconds to seconds. */
 const SLOW_READS: readonly RegExp[] = [
   /^\/api\/pulls(\/|$)/,
-  /^\/api\/forges(\/|$)/,
   /^\/api\/limits(\/|$)/,
   /^\/api\/usage(\/|$)/,
   /^\/api\/health\/dependencies$/,
@@ -50,6 +55,11 @@ class Limit {
   private active = 0;
   private readonly queue: Waiter[] = [];
   constructor(private readonly cap: number) {}
+
+  reset() {
+    this.active = 0;
+    this.queue.length = 0;
+  }
 
   /** Resolves with a release function once a slot is free, in arrival order. */
   acquire(signal?: AbortSignal): Promise<() => void> {
@@ -87,13 +97,35 @@ class Limit {
 
 const slowLane = new Limit(SLOW_LANE_CAP);
 
-/** Runs `work` when its lane has room. A request aborted while it waits never starts. */
-export async function inLane<T>(lane: Lane, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
-  if (lane === "interactive") return work();
+/**
+ * Runs `work` when its lane has room. A request aborted while it waits never starts, and a
+ * slow one that outlasts `LANE_TIMEOUT_MS` is aborted, rejects with `timedOut()` and frees its slot.
+ */
+export async function inLane<T>(
+  lane: Lane,
+  signal: AbortSignal | undefined,
+  work: (signal: AbortSignal | undefined) => Promise<T>,
+  timedOut: () => Error,
+): Promise<T> {
+  if (lane === "interactive") return work(signal);
   const release = await slowLane.acquire(signal);
+  const controller = new AbortController();
+  const follow = () => controller.abort();
+  signal?.addEventListener("abort", follow, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(timedOut());
+      controller.abort();
+    }, LANE_TIMEOUT_MS);
+  });
   try {
-    return await work();
+    const running = work(controller.signal);
+    running.catch(() => undefined);
+    return await Promise.race([running, expiry]);
   } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", follow);
     release();
   }
 }
@@ -102,6 +134,8 @@ interface Flight {
   promise: Promise<unknown>;
   controller: AbortController;
   callers: number;
+  /** The first caller gets the answer itself; only the others get copies. */
+  handedOut: boolean;
 }
 
 const flights = new Map<string, Flight>();
@@ -115,7 +149,7 @@ export function shareRead<T>(key: string, signal: AbortSignal | undefined, start
   let flight = flights.get(key);
   if (!flight) {
     const controller = new AbortController();
-    const made: Flight = { promise: Promise.resolve(), controller, callers: 0 };
+    const made: Flight = { promise: Promise.resolve(), controller, callers: 0, handedOut: false };
     made.promise = start(controller.signal).finally(() => {
       if (flights.get(key) === made) flights.delete(key);
     });
@@ -141,7 +175,9 @@ export function shareRead<T>(key: string, signal: AbortSignal | undefined, start
     joined.promise.then(
       (value) => {
         leave();
-        resolve(structuredClone(value) as T);
+        const own = joined.handedOut ? (structuredClone(value) as T) : (value as T);
+        joined.handedOut = true;
+        resolve(own);
       },
       (error: unknown) => {
         leave();
@@ -149,4 +185,18 @@ export function shareRead<T>(key: string, signal: AbortSignal | undefined, start
       },
     );
   });
+}
+
+/**
+ * A write may change what an identical read answers, so reads sent before it must not be
+ * joined by reads made after it. The reads in flight finish for their own callers.
+ */
+export function forgetFlights() {
+  flights.clear();
+}
+
+/** Test only: drops every shared read and every queued or running slow read. */
+export function resetLanesForTests() {
+  flights.clear();
+  slowLane.reset();
 }

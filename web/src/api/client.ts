@@ -1,6 +1,6 @@
 import { serviceUrl } from "./origin";
 import { readToken } from "./token";
-import { inLane, laneFor, shareRead } from "./lanes";
+import { forgetFlights, inLane, laneFor, shareRead } from "./lanes";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -131,7 +131,6 @@ async function send<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   let response: Response;
-  const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   try {
     response = await fetch(serviceUrl(path), {
       method,
@@ -146,8 +145,6 @@ async function send<T>(
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
-  } finally {
-    clearTimeout(slow);
   }
   if (!response.ok) {
     const failure = await failureFrom(response);
@@ -159,19 +156,37 @@ async function send<T>(
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/** `foreground`: the visible screen's own read, which never waits in the slow lane. */
+export interface RequestOptions {
+  priority?: "foreground";
+}
+
+const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
+
 /**
  * Slow reads queue in their own lane and identical reads in flight share one request
- * (see `lanes.ts`); everything else goes straight out.
+ * (see `lanes.ts`); everything else goes straight out. A write drops the shared reads so
+ * no read after it joins one sent before it. The slow-request warning counts queued time.
  */
 export function request<T>(
   method: string,
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  options: RequestOptions = {},
 ): Promise<T> {
-  if (method !== "GET" || body !== undefined) return send<T>(method, path, body, signal);
-  const lane = laneFor(method, path);
-  return shareRead(`${method} ${path}`, signal, (shared) => inLane(lane, shared, () => send<T>(method, path, body, shared)));
+  const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
+  let sent: Promise<T>;
+  if (method !== "GET" || body !== undefined) {
+    forgetFlights();
+    sent = send<T>(method, path, body, signal).finally(forgetFlights);
+  } else {
+    const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
+    sent = shareRead(`${method} ${path}`, signal, (shared) =>
+      inLane(lane, shared, (laned) => send<T>(method, path, body, laned), unreachable),
+    );
+  }
+  return sent.finally(() => clearTimeout(slow));
 }
 
 /** The bytes a sent message carried. JSON requests can't carry them, so this is separate. */
