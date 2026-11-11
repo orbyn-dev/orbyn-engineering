@@ -9,13 +9,13 @@ use serde_json::Value;
 
 /// How far ahead of the local clock a remote stamp may pull it. A device with a wrong
 /// clock, or a hostile one, must not push every later local edit years into the future.
-const MAX_DRIFT_MS: u64 = 24 * 60 * 60 * 1000;
+pub const MAX_DRIFT_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// When a field was written: wall time in milliseconds, a counter for writes in the
 /// same millisecond, and the writing device. Field order is the comparison order.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Stamp {
-    pub wall_ms: u64,
+    pub wall_ms: i64,
     pub counter: u32,
     pub device: String,
 }
@@ -33,18 +33,18 @@ pub type Record = BTreeMap<String, Field>;
 /// always later.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hlc {
-    pub wall_ms: u64,
+    pub wall_ms: i64,
     pub counter: u32,
 }
 
 impl Hlc {
-    pub fn new(wall_ms: u64, counter: u32) -> Self {
+    pub fn new(wall_ms: i64, counter: u32) -> Self {
         Self { wall_ms, counter }
     }
 
     /// The next stamp for an edit made at `at_ms`. An edit queued while the app was
     /// closed keeps its own time unless the clock already passed it.
-    pub fn tick_at(&mut self, at_ms: u64) -> (u64, u32) {
+    pub fn tick_at(&mut self, at_ms: i64) -> (i64, u32) {
         if at_ms > self.wall_ms {
             self.wall_ms = at_ms;
             self.counter = 0;
@@ -55,7 +55,7 @@ impl Hlc {
     }
 
     /// Moves the clock past a stamp seen on another device, within the drift limit.
-    pub fn observe(&mut self, wall_ms: u64, counter: u32, now_ms: u64) {
+    pub fn observe(&mut self, wall_ms: i64, counter: u32, now_ms: i64) {
         let wall_ms = wall_ms.min(now_ms.saturating_add(MAX_DRIFT_MS));
         if (wall_ms, counter) > (self.wall_ms, self.counter) {
             self.wall_ms = wall_ms;
@@ -137,7 +137,7 @@ mod tests {
 
     use super::*;
 
-    fn field(value: Value, wall_ms: u64, counter: u32, device: &str) -> Field {
+    fn field(value: Value, wall_ms: i64, counter: u32, device: &str) -> Field {
         Field {
             value,
             stamp: Stamp {
@@ -222,7 +222,7 @@ mod tests {
         clock.observe(5000, 3, 4000);
         assert_eq!(clock.tick_at(4000), (5000, 4));
         let mut skewed = Hlc::new(1000, 0);
-        skewed.observe(u64::MAX, 0, 4000);
+        skewed.observe(i64::MAX, 0, 4000);
         assert_eq!(skewed.wall_ms, 4000 + MAX_DRIFT_MS);
     }
 }

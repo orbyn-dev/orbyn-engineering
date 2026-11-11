@@ -204,7 +204,7 @@ Synced data comes from other devices, any of which may be compromised. The apply
 keys plus keybindings; four keys that escalate are never synced; keybindings and `default_model_options` are
 restricted on apply (design note, [No escalation across devices](account.md#no-escalation-across-devices)). Tests:
 every non-allowlisted catalog key from a peer is not applied; a keybinding to an approval or confirm command is not
-applied; a sandbox or skip-permissions model option is dropped.
+applied; no model option is applied (cost or reach never syncs, see [What never syncs](account.md#what-never-syncs)).
 
 ### 6. Orbynd's memory (to build, as a release check)
 

@@ -34,7 +34,8 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
 ];
 
 // The account's settings sync, per zone: the cursor and the capture switch, the local copy
-// of the zone's record with each field's stamp, the outbox of fields not yet uploaded (one row
+// of the zone's record with each field's stamp (and whether this device applied it: only a field
+// that came from the account is ever applied, and once), the outbox of fields not yet uploaded (one row
 // per changed field, with the time the person made the edit and the stamp it replaced, so a
 // concurrent edit on another device can be told from an older one), the offline edits that lost,
 // and the settings kept local because they are over a limit. Non-secret: no key, token or
@@ -55,6 +56,7 @@ CREATE TABLE account_fields (
     wall INTEGER NOT NULL,
     counter INTEGER NOT NULL,
     device TEXT NOT NULL,
+    applied INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (zone, field)
 );
 CREATE TABLE account_outbox (

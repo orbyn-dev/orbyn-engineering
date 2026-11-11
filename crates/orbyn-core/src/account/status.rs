@@ -56,6 +56,9 @@ pub struct AccountStatus {
     pub not_synced: usize,
     /// Lost offline edits the person has not looked at yet.
     pub conflicts: usize,
+    /// Fields from the account stamped too far ahead of this clock to apply. They are
+    /// kept and passed on.
+    pub held_back: usize,
 }
 
 impl Default for AccountStatus {
@@ -65,6 +68,7 @@ impl Default for AccountStatus {
             waiting: 0,
             not_synced: 0,
             conflicts: 0,
+            held_back: 0,
         }
     }
 }

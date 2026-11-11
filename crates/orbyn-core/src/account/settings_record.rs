@@ -46,6 +46,9 @@ pub const MAX_FIELD_NAME: usize = 64;
 pub const MAX_VALUE_BYTES: usize = 8 * 1024;
 pub const MAX_RECORD_BYTES: usize = 64 * 1024;
 pub const MAX_LIST: usize = 500;
+/// A removal marker of a set element older than this is dropped when the record is
+/// uploaded. A device offline for longer than this can bring a removed element back.
+pub const TOMBSTONE_HORIZON_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
 /// A field ready to stage, or one over a limit that stays local.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,11 +100,24 @@ pub fn element_name(key: &str, id: &str) -> String {
     format!("{key}:{}", hash16(id))
 }
 
-/// The field of one keybinding rule: one per key and `when`.
+/// A key chord as compared: trimmed, lowercase, no spaces around `+`.
+pub fn normalize_key(key: &str) -> String {
+    key.split('+')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+/// The field of one keybinding rule: one per key and `when`. The key is normalised
+/// first, so `Mod+Y` and `mod+y` are one field.
 pub fn keybinding_name(key: &str, when: Option<&str>) -> String {
     format!(
         "{KEYBINDINGS}:{}",
-        hash16(&format!("{key}\u{1f}{}", when.unwrap_or_default()))
+        hash16(&format!(
+            "{}\u{1f}{}",
+            normalize_key(key),
+            when.unwrap_or_default()
+        ))
     )
 }
 
@@ -221,7 +237,7 @@ pub fn element_of(name: &str, value: &Value) -> Option<(&'static str, String, bo
 pub fn record_bytes(record: &super::merge::Record) -> usize {
     record
         .iter()
-        .map(|(name, field)| name.len() + field.value.to_string().len() + 48)
+        .map(|(name, field)| name.len() + field.value.to_string().len())
         .sum()
 }
 
@@ -360,6 +376,15 @@ mod tests {
             stage_preference("model_order", None, Some(&json!(many)))[..],
             [Staged::Skipped { .. }]
         ));
+    }
+
+    #[test]
+    fn a_key_is_normalised_before_it_is_hashed() {
+        let name = |key: &str| keybinding_name(key, Some("!terminalFocus"));
+        assert_eq!(name("Mod+Y"), name("mod+y"));
+        assert_eq!(name(" mod + y "), name("mod+y"));
+        assert_ne!(name("mod+y"), name("mod+u"));
+        assert_ne!(name("mod+y"), keybinding_name("mod+y", None));
     }
 
     #[test]

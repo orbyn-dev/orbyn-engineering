@@ -181,11 +181,13 @@ impl Store {
         plan: impl FnOnce(&SettingsSnapshot) -> Result<(R, Vec<SettingWrite>)>,
     ) -> Result<R> {
         let mut queued = 0;
+        // Stamps later than this are not applied: a peer's clock is not to be trusted.
+        let cutoff = crate::util::unix_now_ms() + crate::account::merge::MAX_DRIFT_MS;
         let result = self.commit(|tx, _| {
             let mut current = snapshot(tx)?;
             if !queue {
                 current.account =
-                    super::account_sync::load_record(tx, crate::account::settings_record::ZONE)?;
+                    super::account_sync::load_unapplied(tx, crate::account::settings_record::ZONE, cutoff)?;
             }
             let (result, writes) = plan(&current)?;
             let mut server = None;
@@ -278,6 +280,9 @@ impl Store {
                     SettingWrite::ServerField { .. } => unreachable!(),
                 }
             }
+            if !queue {
+                super::account_sync::mark_applied(tx, crate::account::settings_record::ZONE, cutoff)?;
+            }
             Ok(result)
         })?;
         if queued > 0 {
@@ -314,6 +319,7 @@ fn queue_account_fields(
         crate::account::settings_record::ZONE,
         &staged,
         crate::util::unix_now_ms(),
+        false,
     )
 }
 

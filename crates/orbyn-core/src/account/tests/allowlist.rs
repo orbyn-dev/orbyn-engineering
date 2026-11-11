@@ -40,6 +40,21 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
     for (key, value) in sent.iter().filter(|(key, _)| key != "default_effort") {
         assert_eq!(kept[key].value, *value, "{key}");
     }
+    // The four that would escalate arrive, are kept and are not applied, each by name.
+    for name in [
+        "default_permission_mode",
+        "default_project_scripts",
+        "enable_agent_browser_access",
+        "enable_agent_device_access",
+    ] {
+        let sent_value = &sent.iter().find(|(key, _)| key == name).unwrap().1;
+        assert_eq!(kept[name].value, *sent_value, "{name}");
+        assert_ne!(stored(&core, name), *sent_value, "{name}");
+        assert!(
+            !globals(&core).contains_key(&format!("pref:{name}")),
+            "{name}"
+        );
+    }
     // And it is passed on with the next upload.
     set(&core, "default_model", json!("m"));
     until(&core, |core| api.commits() == 1 && online(core)).await;
@@ -112,26 +127,23 @@ async fn a_peers_keybinding_to_an_approval_command_or_a_dialog_key_is_kept_never
 }
 
 #[tokio::test]
-async fn a_default_model_option_that_means_sandbox_approval_or_skip_permissions_is_dropped_for_each_adapter()
+async fn a_default_model_option_that_costs_more_or_widens_reach_arrives_and_is_not_applied_for_each_adapter()
  {
     let cases = [
         (
             "claude",
             json!({"fast_mode": "on", "dangerously_skip_permissions": "true", "permission_mode": "bypassPermissions"}),
-            json!({"fast_mode": "on"}),
         ),
         (
             "codex",
-            json!({"service_tier": "fast", "sandbox": "danger-full-access", "approval_policy": "never"}),
-            json!({"service_tier": "fast"}),
+            json!({"service_tier": "priority", "sandbox": "danger-full-access", "approval_policy": "never"}),
         ),
         (
             "an-acp-agent",
             json!({"mode": "bypass", "config:approval": "never", "fast_mode": "on"}),
-            json!({}),
         ),
     ];
-    for (engine, sent, kept) in cases {
+    for (engine, sent) in cases {
         let dir = TempDir::new();
         let core = on(&dir, "a");
         let api = Arc::new(FakeDeviceApi::new());
@@ -140,7 +152,7 @@ async fn a_default_model_option_that_means_sandbox_approval_or_skip_permissions_
             future(),
             vec![
                 ("default_engine".into(), json!(engine)),
-                ("default_model_options".into(), sent),
+                ("default_model_options".into(), sent.clone()),
             ],
         );
         let _worker = start(&core, &api);
@@ -148,7 +160,15 @@ async fn a_default_model_option_that_means_sandbox_approval_or_skip_permissions_
             stored(core, "default_engine") == json!(engine) && online(core)
         })
         .await;
-        assert_eq!(stored(&core, "default_model_options"), kept, "{engine}");
+        // The options arrived and are kept, but nothing of them is applied.
+        assert_eq!(
+            stored(&core, "default_model_options"),
+            json!({}),
+            "{engine}"
+        );
+        let kept = core.store.account_record(ZONE).unwrap();
+        assert_eq!(kept["default_model_options"].value, sent, "{engine}");
+        assert_eq!(waiting(&core), 0);
     }
 }
 

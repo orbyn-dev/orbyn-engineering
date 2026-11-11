@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 use super::KeybindingFile;
 use super::apply;
 use super::device_api::{DeviceApi, DeviceError, DeviceStatus, ZoneSnapshot};
-use super::settings_record::{MAX_RECORD_BYTES, record_bytes};
+use super::merge::Record;
+use super::settings_record::{self as names, MAX_RECORD_BYTES, record_bytes};
 use super::status::{PauseReason, SignOutReason, StatusHub, SyncState};
 use crate::error::CoreError;
 use crate::store::Store;
@@ -142,23 +143,25 @@ impl ZoneWorker {
     }
 
     /// Counts that are true whatever the network does.
-    fn counts(&self) -> (usize, usize, usize) {
+    fn counts(&self) -> (usize, usize, usize, usize) {
         let waiting = self.store.account_outbox_len(self.zone).unwrap_or(0);
         let skipped = self.store.account_skipped_len(self.zone).unwrap_or(0);
         let conflicts = self
             .store
             .account_conflicts(self.zone)
             .map_or(0, |list| list.len());
-        (waiting, skipped, conflicts)
+        let held_back = self.store.account_held_back_len(self.zone).unwrap_or(0);
+        (waiting, skipped, conflicts, held_back)
     }
 
     fn show(&self, state: SyncState) {
-        let (waiting, not_synced, conflicts) = self.counts();
+        let (waiting, not_synced, conflicts, held_back) = self.counts();
         self.status.publish(super::AccountStatus {
             state,
             waiting,
             not_synced,
             conflicts,
+            held_back,
         });
     }
 
@@ -290,10 +293,7 @@ impl ZoneWorker {
             if self.store.account_outbox_len(self.zone)? == 0 {
                 return Ok(keyboard);
             }
-            let record = self.store.account_record(self.zone)?;
-            if record_bytes(&record) > MAX_RECORD_BYTES {
-                return Err(DeviceError::TooLarge.into());
-            }
+            let record = self.uploadable()?;
             let base = self.store.account_version(self.zone)?;
             match self.api.push(self.zone, base, &record).await {
                 Ok(version) => {
@@ -313,6 +313,31 @@ impl ZoneWorker {
         }
     }
 
+    /// The record to upload: old removal markers compacted away, and, if it is still over
+    /// the limit, the largest settings waiting to upload left out. Only those stay local,
+    /// with the status counting them; what other devices wrote is never dropped, so a
+    /// record that is too large without them pauses the zone.
+    fn uploadable(&self) -> Result<Record, Failure> {
+        self.store
+            .account_compact(self.zone, crate::util::unix_now_ms())?;
+        let mut record = self.store.account_record(self.zone)?;
+        while record_bytes(&record) > MAX_RECORD_BYTES {
+            let queued = self.store.account_outbox_names(self.zone)?;
+            let Some(biggest) = queued
+                .into_iter()
+                .filter(|name| record.contains_key(name))
+                .max_by_key(|name| {
+                    record_bytes(&Record::from([(name.clone(), record[name].clone())]))
+                })
+            else {
+                return Err(DeviceError::TooLarge.into());
+            };
+            self.store.account_keep_local(self.zone, &biggest)?;
+            record.remove(&biggest);
+        }
+        Ok(record)
+    }
+
     fn merge(&self, snapshot: &ZoneSnapshot) -> Result<(), CoreError> {
         let report = self
             .store
@@ -323,11 +348,13 @@ impl ZoneWorker {
         Ok(())
     }
 
-    /// Applies the merged record: only the allowlist, through the apply plan, in one
-    /// transaction with the record read, and without queuing anything again.
-    /// Returns whether the keybindings file took its rules.
+    /// Applies what the account changed since this device last applied it: only the
+    /// allowlist, through the apply plan, in one transaction with the read, and without
+    /// queuing anything again. A field is applied once, so nothing the person did here
+    /// since (a value over its limit, a keybindings file edited by hand, a change that
+    /// failed to queue) is put back. Returns whether the keybindings file took its rules.
     fn apply(&self) -> Result<bool, CoreError> {
-        let rules = self.store.change_settings_synced(|snapshot| {
+        let (rules, names) = self.store.change_settings_synced(|snapshot| {
             let stored = |key: &str| {
                 snapshot
                     .globals
@@ -349,9 +376,10 @@ impl ZoneWorker {
             for (key, edit) in &plan.sets {
                 let before = stored(key);
                 let list = Value::Array(apply::edited_list(before.as_ref(), edit));
+                let valid = crate::settings::preferences::check_synced(key, &list).is_ok();
                 let unchanged = before.as_ref() == Some(&list)
                     || (before.is_none() && list.as_array().is_some_and(Vec::is_empty));
-                if !unchanged {
+                if valid && !unchanged {
                     crate::settings::preferences::prepare_synced_write(
                         &mut writes,
                         key,
@@ -359,16 +387,29 @@ impl ZoneWorker {
                     );
                 }
             }
-            Ok((plan.keybindings, writes))
+            let names: Vec<String> = snapshot
+                .account
+                .keys()
+                .filter(|name| names::is_keybinding_name(name))
+                .cloned()
+                .collect();
+            Ok(((plan.keybindings, names), writes))
         })?;
-        if rules.is_empty() {
+        if names.is_empty() {
             return Ok(true);
         }
-        Ok(crate::settings::keybindings::write_synced_rules(
+        if rules.is_empty() {
+            self.store.account_mark_applied(self.zone, &names)?;
+            return Ok(true);
+        }
+        let wrote = crate::settings::keybindings::write_synced_rules(
             &self.keybindings.path,
             &self.keybindings.writer,
             &rules,
-        )
-        .is_ok())
+        );
+        if wrote.is_ok() {
+            self.store.account_mark_applied(self.zone, &names)?;
+        }
+        Ok(wrote.is_ok())
     }
 }

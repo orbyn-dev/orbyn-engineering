@@ -284,11 +284,48 @@ A compromised device must not be able to make another one more permissive or run
   never bind a command that approves or denies an agent action, changes permissions, or confirms or runs something.
   It can never override the default keys of the approval dialog or of the "Confirm it's you" dialog. A rule that breaks
   this is kept and passed on, never applied.
-- **(c) `default_model_options`.** On apply, only model-tuning option ids, allowlisted per engine, are kept. An option
-  that an engine adapter turns into a sandbox, approval or skip-permissions flag is never accepted (for example Claude
-  Code's skip-permissions switch, or Codex's sandbox or approval policy). *Test:* such an option arriving from a peer is
-  dropped on apply, for each engine adapter.
+- **(c) `default_model_options`.** On apply, no option is kept for any engine adapter, so the key never changes what
+  this device does; clearing the options (an empty object) is the only change it can apply. See
+  [What never syncs](#what-never-syncs). *Test:* for each adapter (Claude, Codex, an ACP agent), options arriving from a
+  peer are kept in the record and none is applied.
 - **`branch_name_prefix`** is validated as a git ref part and passed as an argument, never through a shell.
+
+## What never syncs
+
+**Rule (Products Research, normative).** A setting that increases cost or widens what an agent may do never syncs.
+Presentation and preference settings (theme, keybindings, composer and project defaults) may. When a case is unclear, the
+stricter rule applies, and the case is reported. The apply path enforces it by allowlist, so a new key or option syncs only
+by a reviewed change to the lists in this note.
+
+Dropped from the allowlist under this rule, and why:
+
+| Option | Adapter | Why it never syncs |
+| --- | --- | --- |
+| `fast_mode` | Claude | Faster, costlier processing for every run |
+| `service_tier` (such as `priority`) | Codex | A paid tier that raises cost on every run |
+| any sandbox, approval or skip-permissions option | Claude, Codex | Widens what an agent may do |
+| `mode` and every `config:*` option | ACP agents | ACP agents name their own options, and `mode` is a permission mode; none can be shown to lower cost or reach |
+
+So the per-adapter option allowlist is empty. The key `default_model_options` stays in the record so that clearing it
+syncs. Still open for the Products Research decision: `default_model`, `fallback_model`, `text_generation_model` and
+`default_effort` can pick a costlier model or more reasoning on another device, and `default_thread_env_mode` set to
+`local` widens where agents work. They stay in the agreed 20 until that decision.
+
+## Record rules the apply path enforces
+
+- **Apply once.** A field from the account is applied once. A value this device changed since (over its limit, a keybindings
+  file edited by hand, a change that failed to queue) is never put back by an older field.
+- **No stamps from the future.** A field stamped later than 24 hours past this device's clock is kept and passed on, never
+  applied, and the status counts it. The local clock also never moves more than that far on a remote stamp.
+- **First sync.** What a person set before the account was on is stamped older than anything the account holds, so the
+  account's newer value wins and a value the account lacks is uploaded. A first sync raises no conflict.
+- **Record size.** A setting that would take the record over 64 KiB stays local and the status counts it. When merging
+  with another device's fields makes the record too large, the largest settings waiting to upload are left out, not the
+  other devices' fields. Only a record that is too large without any of this device's changes pauses the zone.
+- **Removal markers** of set elements (`favorite_models`, `hidden_models`) older than **90 days** are dropped when the record
+  is uploaded. A device that was offline for longer than that and still lists a removed element can bring it back.
+- **Lists** a peer adds to stop at 500 elements and must pass the same value check as a local list.
+- **Keybinding fields** are named from the key as compared (trimmed, lowercase), so `Mod+Y` and `mod+y` are one field.
 
 ## Sign-in gate
 

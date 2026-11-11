@@ -9,6 +9,7 @@ use orbyn_contracts::{KeybindingRule, ShellEvent};
 use serde_json::{Value, json};
 
 mod allowlist;
+mod limits;
 
 use super::fake::FakeDeviceApi;
 use super::settings_record::{self as record, ZONE};
@@ -82,12 +83,12 @@ fn rule_field(rule: &KeybindingRule) -> (String, Value) {
     (name, value)
 }
 
-fn peer(api: &FakeDeviceApi, wall: u64, fields: Vec<(String, Value)>) {
+fn peer(api: &FakeDeviceApi, wall: i64, fields: Vec<(String, Value)>) {
     api.peer_write(ZONE, "peer", wall, fields);
 }
 
-fn future() -> u64 {
-    u64::try_from(crate::util::unix_now_ms()).unwrap() + 60_000
+fn future() -> i64 {
+    crate::util::unix_now_ms() + 60_000
 }
 
 fn stored(core: &Core, key: &str) -> Value {

@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::Store;
 use crate::account::merge::{Field, Hlc, Record, Stamp, merge_records};
-use crate::account::settings_record::Staged;
+use crate::account::settings_record::{MAX_RECORD_BYTES, Staged};
 use crate::error::{CoreError, Result};
 
 /// A lost offline edit: the setting was changed on two devices while both were
@@ -43,7 +43,7 @@ fn field_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, Field)> {
         Field {
             value: serde_json::from_str(&value).unwrap_or(Value::Null),
             stamp: Stamp {
-                wall_ms: u64::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                wall_ms: row.get::<_, i64>(2)?,
                 counter: u32::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
                 device: row.get(4)?,
             },
@@ -69,7 +69,7 @@ fn clock(conn: &Connection, zone: &str) -> Result<Option<(String, Hlc, bool)>> {
                 Ok((
                     row.get::<_, String>(0)?,
                     Hlc::new(
-                        u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+                        row.get::<_, i64>(1)?,
                         u32::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
                     ),
                     row.get::<_, i64>(3)? != 0,
@@ -82,11 +82,7 @@ fn clock(conn: &Connection, zone: &str) -> Result<Option<(String, Hlc, bool)>> {
 fn save_clock(conn: &Connection, zone: &str, hlc: Hlc) -> Result<()> {
     conn.execute(
         "UPDATE account_sync SET hlc_wall = ?2, hlc_counter = ?3 WHERE zone = ?1",
-        params![
-            zone,
-            i64::try_from(hlc.wall_ms).unwrap_or(i64::MAX),
-            i64::from(hlc.counter)
-        ],
+        params![zone, hlc.wall_ms, i64::from(hlc.counter)],
     )?;
     Ok(())
 }
@@ -101,7 +97,7 @@ fn queue_field(
     at_ms: i64,
     base: Option<&Stamp>,
 ) -> Result<()> {
-    let wall = i64::try_from(field.stamp.wall_ms).unwrap_or(i64::MAX);
+    let wall = field.stamp.wall_ms;
     tx.execute(
         "INSERT INTO account_outbox (zone, field, value, wall, counter, device, edited_at, base_wall, base_counter, base_device)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -109,7 +105,7 @@ fn queue_field(
             counter = excluded.counter, device = excluded.device, edited_at = excluded.edited_at",
         params![
             zone, name, text(&field.value), wall, i64::from(field.stamp.counter), field.stamp.device, at_ms,
-            base.map(|base| i64::try_from(base.wall_ms).unwrap_or(i64::MAX)),
+            base.map(|base| base.wall_ms),
             base.map(|base| i64::from(base.counter)),
             base.map(|base| base.device.clone()),
         ],
@@ -117,23 +113,52 @@ fn queue_field(
     Ok(())
 }
 
-fn put_field(tx: &Connection, zone: &str, name: &str, field: &Field) -> Result<()> {
-    let wall = i64::try_from(field.stamp.wall_ms).unwrap_or(i64::MAX);
+/// Stores a field of the local record. A local edit is already in the settings, so it
+/// counts as applied; a field that came from the account is not until it is applied.
+fn put_field(tx: &Connection, zone: &str, name: &str, field: &Field, applied: bool) -> Result<()> {
     tx.execute(
-        "INSERT INTO account_fields (zone, field, value, wall, counter, device)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO account_fields (zone, field, value, wall, counter, device, applied)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (zone, field) DO UPDATE SET value = excluded.value, wall = excluded.wall,
-            counter = excluded.counter, device = excluded.device",
+            counter = excluded.counter, device = excluded.device, applied = excluded.applied",
         params![
             zone,
             name,
             text(&field.value),
-            wall,
+            field.stamp.wall_ms,
             i64::from(field.stamp.counter),
-            field.stamp.device
+            field.stamp.device,
+            applied
         ],
     )?;
     Ok(())
+}
+
+/// The fields from the account this device has not applied yet and may: a stamp later
+/// than `max_wall` is held back. Keybinding fields wait for their file.
+pub(super) fn load_unapplied(conn: &Connection, zone: &str, max_wall: i64) -> Result<Record> {
+    let rows = conn
+        .prepare(
+            "SELECT field, value, wall, counter, device FROM account_fields
+             WHERE zone = ?1 AND applied = 0 AND wall <= ?2",
+        )?
+        .query_map(params![zone, max_wall], field_row)?
+        .collect::<std::result::Result<Record, _>>()?;
+    Ok(rows)
+}
+
+/// Marks applied every unapplied field that is not a keybinding and is not held back.
+pub(super) fn mark_applied(tx: &Connection, zone: &str, max_wall: i64) -> Result<()> {
+    tx.execute(
+        "UPDATE account_fields SET applied = 1
+         WHERE zone = ?1 AND applied = 0 AND wall <= ?2 AND field NOT GLOB 'keybindings:*'",
+        params![zone, max_wall],
+    )?;
+    Ok(())
+}
+
+fn field_size(name: &str, field: &Field) -> usize {
+    name.len() + field.value.to_string().len()
 }
 
 /// Stages `staged` as local edits made at `now_ms`, when capture is on for the zone.
@@ -143,12 +168,16 @@ pub(super) fn capture(
     zone: &str,
     staged: &[Staged],
     now_ms: i64,
+    seed: bool,
 ) -> Result<usize> {
     let Some((device, mut hlc, true)) = clock(tx, zone)? else {
         return Ok(0);
     };
     let local = load_record(tx, zone)?;
-    let at = u64::try_from(now_ms).unwrap_or(0);
+    let mut size: usize = local
+        .iter()
+        .map(|(name, field)| field_size(name, field))
+        .sum();
     let mut touched = 0;
     for item in staged {
         match item {
@@ -160,7 +189,9 @@ pub(super) fn capture(
                 if local.get(name).is_some_and(|known| &known.value == value) {
                     continue;
                 }
-                let (wall_ms, counter) = hlc.tick_at(at);
+                // What the person had before the account was on is older than anything
+                // the account holds, so a first sync never beats a newer account value.
+                let (wall_ms, counter) = if seed { (0, 0) } else { hlc.tick_at(now_ms) };
                 let field = Field {
                     value: value.clone(),
                     stamp: Stamp {
@@ -169,8 +200,30 @@ pub(super) fn capture(
                         device: device.clone(),
                     },
                 };
-                let base = local.get(name).map(|known| &known.stamp);
-                put_field(tx, zone, name, &field)?;
+                // A change that would take the record over its limit stays local.
+                let freed = local.get(name).map_or(0, |known| field_size(name, known));
+                if size.saturating_sub(freed) + field_size(name, &field) > MAX_RECORD_BYTES {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO account_skipped (zone, field) VALUES (?1, ?2)",
+                        params![zone, name],
+                    )?;
+                    touched += 1;
+                    continue;
+                }
+                size = size.saturating_sub(freed) + field_size(name, &field);
+                // A first-sync value combines with the account's rather than conflicts with
+                // it: its base has no device, which the merge reads as "not concurrent".
+                let first_sync = Stamp {
+                    wall_ms: 0,
+                    counter: 0,
+                    device: String::new(),
+                };
+                let base = if seed {
+                    Some(&first_sync)
+                } else {
+                    local.get(name).map(|known| &known.stamp)
+                };
+                put_field(tx, zone, name, &field, true)?;
                 queue_field(tx, zone, name, &field, now_ms, base)?;
                 touched += 1;
             }
@@ -209,7 +262,7 @@ impl Store {
                 "INSERT INTO account_sync (zone, capture, device) VALUES (?1, 1, ?2)",
                 params![zone, crate::util::new_id()],
             )?;
-            capture(tx, zone, seed, crate::util::unix_now_ms())
+            capture(tx, zone, seed, crate::util::unix_now_ms(), true)
         })?;
         if touched > 0 {
             self.account_changes.send_modify(|count| *count += 1);
@@ -219,7 +272,8 @@ impl Store {
 
     /// Queues fields outside a settings write, such as a keybinding saved to its file.
     pub(crate) fn account_stage(&self, zone: &str, staged: &[Staged]) -> Result<()> {
-        let touched = self.commit(|tx, _| capture(tx, zone, staged, crate::util::unix_now_ms()))?;
+        let touched =
+            self.commit(|tx, _| capture(tx, zone, staged, crate::util::unix_now_ms(), false))?;
         if touched > 0 {
             self.account_changes.send_modify(|count| *count += 1);
         }
@@ -229,6 +283,82 @@ impl Store {
     /// The local copy of the zone's record: every field, known or not.
     pub(crate) fn account_record(&self, zone: &str) -> Result<Record> {
         load_record(&self.reader(), zone)
+    }
+
+    /// Marks keybinding fields applied, once their file has taken them.
+    pub(crate) fn account_mark_applied(&self, zone: &str, names: &[String]) -> Result<()> {
+        self.commit(|tx, _| {
+            for name in names {
+                tx.execute(
+                    "UPDATE account_fields SET applied = 1 WHERE zone = ?1 AND field = ?2",
+                    params![zone, name],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Fields from the account stamped later than the drift limit: kept and passed
+    /// on, never applied.
+    pub(crate) fn account_held_back_len(&self, zone: &str) -> Result<usize> {
+        let cutoff = crate::util::unix_now_ms() + crate::account::merge::MAX_DRIFT_MS;
+        let n: i64 = self.reader().query_row(
+            "SELECT COUNT(*) FROM account_fields WHERE zone = ?1 AND applied = 0 AND wall > ?2",
+            params![zone, cutoff],
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
+
+    /// Takes a field out of the record and the outbox and keeps its setting local: the
+    /// upload would be over the record limit.
+    pub(crate) fn account_keep_local(&self, zone: &str, name: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "DELETE FROM account_fields WHERE zone = ?1 AND field = ?2",
+                params![zone, name],
+            )?;
+            tx.execute(
+                "DELETE FROM account_outbox WHERE zone = ?1 AND field = ?2",
+                params![zone, name],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO account_skipped (zone, field) VALUES (?1, ?2)",
+                params![zone, name],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Drops removal markers of set elements older than the horizon, which are not
+    /// waiting to upload, so a record does not grow for ever.
+    pub(crate) fn account_compact(&self, zone: &str, now_ms: i64) -> Result<usize> {
+        use crate::account::settings_record::{TOMBSTONE_HORIZON_MS, set_key_of};
+        self.commit(|tx, _| {
+            let queued = pending_edits(tx, zone)?;
+            let old: Vec<String> = load_record(tx, zone)?
+                .into_iter()
+                .filter(|(name, field)| {
+                    set_key_of(name).is_some()
+                        && field.value.get("removed") == Some(&Value::Bool(true))
+                        && field.stamp.wall_ms < now_ms - TOMBSTONE_HORIZON_MS
+                        && !queued.contains_key(name)
+                })
+                .map(|(name, _)| name)
+                .collect();
+            for name in &old {
+                tx.execute(
+                    "DELETE FROM account_fields WHERE zone = ?1 AND field = ?2",
+                    params![zone, name],
+                )?;
+            }
+            Ok(old.len())
+        })
+    }
+
+    /// The fields waiting to upload.
+    pub(crate) fn account_outbox_names(&self, zone: &str) -> Result<Vec<String>> {
+        Ok(pending_edits(&self.reader(), zone)?.into_keys().collect())
     }
 
     pub(crate) fn account_outbox_len(&self, zone: &str) -> Result<usize> {
@@ -270,15 +400,16 @@ impl Store {
             let merged = merge_records(&local, remote);
             let pending = pending_edits(tx, zone)?;
             for field in remote.values() {
-                hlc.observe(field.stamp.wall_ms, field.stamp.counter, u64::try_from(now_ms).unwrap_or(0));
+                hlc.observe(field.stamp.wall_ms, field.stamp.counter, now_ms);
             }
             for name in &merged.remote_won {
-                put_field(tx, zone, name, &merged.record[name])?;
+                put_field(tx, zone, name, &merged.record[name], false)?;
             }
             let mut conflicts = 0;
             for (name, (queued, base)) in &pending {
                 let Some(theirs) = remote.get(name) else { continue };
                 let concurrent = theirs.stamp.device != device
+                    && base.as_ref().is_none_or(|base| !base.device.is_empty())
                     && base.as_ref() != Some(&theirs.stamp)
                     && theirs.value != *queued;
                 if concurrent {
@@ -316,7 +447,7 @@ impl Store {
             for (name, field) in sent {
                 tx.execute(
                     "DELETE FROM account_outbox WHERE zone = ?1 AND field = ?2 AND wall = ?3 AND counter = ?4 AND device = ?5",
-                    params![zone, name, i64::try_from(field.stamp.wall_ms).unwrap_or(i64::MAX), i64::from(field.stamp.counter), field.stamp.device],
+                    params![zone, name, field.stamp.wall_ms, i64::from(field.stamp.counter), field.stamp.device],
                 )?;
             }
             tx.execute(
@@ -359,7 +490,7 @@ fn pending_edits(
         .query_map([zone], |row| {
             let base = match (row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?) {
                 (Some(wall), Some(counter), Some(device)) => Some(Stamp {
-                    wall_ms: u64::try_from(wall).unwrap_or(0),
+                    wall_ms: wall,
                     counter: u32::try_from(counter).unwrap_or(0),
                     device,
                 }),

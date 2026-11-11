@@ -76,7 +76,7 @@ impl FakeDeviceApi {
     }
 
     /// Another device uploads these fields, as of `wall_ms`, and the live notice fires.
-    pub fn peer_write(&self, zone: &str, device: &str, wall_ms: u64, fields: Vec<(String, Value)>) {
+    pub fn peer_write(&self, zone: &str, device: &str, wall_ms: i64, fields: Vec<(String, Value)>) {
         let theirs: Record = fields
             .into_iter()
             .map(|(name, value)| {

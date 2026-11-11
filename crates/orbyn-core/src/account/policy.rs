@@ -69,26 +69,23 @@ const DIALOG_KEYS: &[&str] = &[
     "shift+tab",
 ];
 
-/// The key as compared: trimmed, lowercase, no spaces around `+`.
-fn normalized(key: &str) -> String {
-    key.split('+')
-        .map(|part| part.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
 /// Whether a rule from a peer may be applied here.
 pub fn keybinding_allowed(rule: &KeybindingRule) -> bool {
     KEYBINDING_COMMANDS.contains(&rule.command.as_str())
-        && !DIALOG_KEYS.contains(&normalized(&rule.key).as_str())
+        && !DIALOG_KEYS.contains(&super::settings_record::normalize_key(&rule.key).as_str())
 }
 
-/// The model-tuning option ids each engine adapter may be given by a synced default.
-/// Anything an adapter turns into a sandbox, approval or skip-permissions setting is
-/// not here. ACP agents name their own options, and their `mode` is a permission mode,
-/// so none is allowed for them.
-const CLAUDE_OPTIONS: &[&str] = &["fast_mode"];
-const CODEX_OPTIONS: &[&str] = &["service_tier"];
+/// The option ids each engine adapter may be given by a synced `default_model_options`.
+///
+/// **None.** The rule ([docs/account.md](../../../../docs/account.md#what-never-syncs)):
+/// a setting that raises cost or widens what an agent may do never syncs. Every option an
+/// adapter offers does one of those. Claude's `fast_mode` and Codex's `service_tier`
+/// (`priority` and the like) buy faster, costlier processing; anything that becomes a
+/// sandbox, approval or skip-permissions flag widens reach; ACP agents name their own
+/// options and their `mode` is a permission mode. The lists stay so that a later change
+/// has one place to add an id that provably lowers cost or changes neither.
+const CLAUDE_OPTIONS: &[&str] = &[];
+const CODEX_OPTIONS: &[&str] = &[];
 
 /// Which adapter an engine id runs on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,9 +114,9 @@ impl Adapter {
     }
 }
 
-/// The options a synced `default_model_options` keeps. With no engine named yet the
-/// default may be for either built-in adapter, so both lists apply; an ACP engine
-/// keeps nothing.
+/// The options a synced `default_model_options` keeps for the engine. With no engine
+/// named the default may be for either built-in adapter, so both lists apply. An ACP
+/// engine keeps nothing.
 pub fn filter_model_options(
     options: &Map<String, Value>,
     engine: Option<&str>,
@@ -254,66 +251,58 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn claude_keeps_fast_mode_and_drops_skip_permissions() {
-        let sent = options(&[
-            ("fast_mode", "on"),
-            ("dangerously_skip_permissions", "true"),
-            ("skip_permissions", "on"),
-            ("permission_mode", "bypassPermissions"),
-        ]);
-        assert_eq!(
-            filter_model_options(&sent, Some("claude")),
-            options(&[("fast_mode", "on")])
-        );
-    }
+    const ADAPTERS: [(&str, &[(&str, &str)]); 4] = [
+        (
+            "claude",
+            &[
+                ("fast_mode", "on"),
+                ("dangerously_skip_permissions", "true"),
+                ("skip_permissions", "on"),
+                ("permission_mode", "bypassPermissions"),
+            ],
+        ),
+        (
+            "codex",
+            &[
+                ("service_tier", "priority"),
+                ("sandbox", "danger-full-access"),
+                ("sandbox_mode", "danger-full-access"),
+                ("approval_policy", "never"),
+            ],
+        ),
+        (
+            "an-acp-agent",
+            &[
+                ("mode", "bypass"),
+                ("config:approval", "never"),
+                ("config:sandbox", "off"),
+                ("config:thought_level", "high"),
+            ],
+        ),
+        (
+            "",
+            &[
+                ("fast_mode", "on"),
+                ("service_tier", "priority"),
+                ("mode", "bypass"),
+            ],
+        ),
+    ];
 
     #[test]
-    fn codex_keeps_service_tier_and_drops_sandbox_and_approval() {
-        let sent = options(&[
-            ("service_tier", "fast"),
-            ("sandbox", "danger-full-access"),
-            ("sandbox_mode", "danger-full-access"),
-            ("approval_policy", "never"),
-            ("fast_mode", "on"),
-        ]);
-        assert_eq!(
-            filter_model_options(&sent, Some("codex")),
-            options(&[("service_tier", "fast")])
-        );
-    }
-
-    #[test]
-    fn an_acp_engine_keeps_no_option_and_its_mode_is_a_permission_mode() {
-        let sent = options(&[
-            ("mode", "bypass"),
-            ("config:approval", "never"),
-            ("config:sandbox", "off"),
-            ("service_tier", "fast"),
-            ("fast_mode", "on"),
-        ]);
-        for engine in ["gemini", "opencode", "some-agent"] {
-            assert!(
-                filter_model_options(&sent, Some(engine)).is_empty(),
-                "{engine}"
-            );
+    fn no_adapter_keeps_any_option_cost_and_reach_never_sync() {
+        for (engine, pairs) in ADAPTERS {
+            let sent = options(pairs);
+            let kept = filter_model_options(&sent, Some(engine));
+            assert!(kept.is_empty(), "{engine}: {kept:?}");
         }
-    }
-
-    #[test]
-    fn with_no_engine_named_only_the_two_built_in_tuning_options_stay() {
-        let sent = options(&[
-            ("service_tier", "fast"),
-            ("fast_mode", "off"),
-            ("mode", "bypass"),
-            ("sandbox", "off"),
-        ]);
-        let kept = filter_model_options(&sent, None);
-        assert_eq!(
-            kept,
-            options(&[("service_tier", "fast"), ("fast_mode", "off")])
-        );
-        assert_eq!(filter_model_options(&sent, Some("")), kept);
+        let everything: Vec<(&str, &str)> = ADAPTERS
+            .iter()
+            .flat_map(|(_, p)| p.iter().copied())
+            .collect();
+        for engine in [None, Some("claude"), Some("codex"), Some("x")] {
+            assert!(filter_model_options(&options(&everything), engine).is_empty());
+        }
     }
 
     #[test]

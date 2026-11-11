@@ -30,14 +30,12 @@ pub struct ApplyPlan {
     pub refused: usize,
 }
 
-/// What `record` asks this device to apply. `local_engine` is the engine default here,
-/// which decides the option allowlist when the record does not change it.
+/// What `record` asks this device to apply. `record` holds only fields from the account
+/// that were not applied yet, so what the person changed here since is never undone.
+/// `local_engine` is the engine default here.
 pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
     let mut plan = ApplyPlan::default();
-    let engine = record
-        .get("default_engine")
-        .and_then(|field| field.value.as_str())
-        .or(local_engine);
+    let engine = applied_engine(record, local_engine);
     for (name, field) in record {
         let value = &field.value;
         if names::is_keybinding_name(name) {
@@ -59,7 +57,7 @@ pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
                 None => plan.refused += 1,
             }
         } else if names::is_synced_key(name) && !names::is_set_key(name) {
-            match accepted(name, value, engine) {
+            match accepted(name, value, engine.as_deref()) {
                 Some(kept) => {
                     plan.values.insert(name.clone(), kept);
                 }
@@ -71,6 +69,19 @@ pub fn plan(record: &Record, local_engine: Option<&str>) -> ApplyPlan {
     plan
 }
 
+/// The engine default as it will be here once this record is applied: the record's
+/// value only when it passes the same check, otherwise the one already here.
+fn applied_engine(record: &Record, local_engine: Option<&str>) -> Option<String> {
+    match record
+        .get("default_engine")
+        .and_then(|field| accepted("default_engine", &field.value, None))
+    {
+        Some(Some(value)) => value.as_str().map(str::to_owned),
+        Some(None) => None,
+        None => local_engine.map(str::to_owned),
+    }
+}
+
 /// The value to store for a plain key: `Some(None)` is a reset, `None` a refusal.
 fn accepted(key: &str, value: &Value, engine: Option<&str>) -> Option<Option<Value>> {
     if value.is_null() {
@@ -79,7 +90,13 @@ fn accepted(key: &str, value: &Value, engine: Option<&str>) -> Option<Option<Val
     crate::settings::preferences::check_synced(key, value).ok()?;
     let kept = match key {
         "default_model_options" => {
-            let kept = policy::filter_model_options(value.as_object()?, engine);
+            let sent = value.as_object()?;
+            let kept = policy::filter_model_options(sent, engine);
+            // Options that were all dropped are not applied at all, so a peer cannot
+            // replace what is set here with nothing.
+            if kept.is_empty() && !sent.is_empty() {
+                return None;
+            }
             Value::Object(kept)
         }
         "branch_name_prefix" => {
@@ -90,7 +107,8 @@ fn accepted(key: &str, value: &Value, engine: Option<&str>) -> Option<Option<Val
     Some(Some(kept))
 }
 
-/// `current` with a set edit applied: removals first, then additions at the end.
+/// `current` with a set edit applied: removals first, then additions at the end, up to
+/// the list limit. Additions past it are not applied.
 pub fn edited_list(current: Option<&Value>, edit: &SetEdit) -> Vec<Value> {
     let mut list: Vec<Value> = current
         .and_then(Value::as_array)
@@ -98,6 +116,9 @@ pub fn edited_list(current: Option<&Value>, edit: &SetEdit) -> Vec<Value> {
         .unwrap_or_default();
     list.retain(|item| item.as_str().is_none_or(|id| !edit.remove.contains(id)));
     for id in &edit.add {
+        if list.len() >= names::MAX_LIST {
+            break;
+        }
         if !list.iter().any(|item| item.as_str() == Some(id)) {
             list.push(Value::String(id.clone()));
         }
@@ -165,28 +186,44 @@ mod tests {
     }
 
     #[test]
-    fn model_options_are_filtered_by_the_engine_the_record_names() {
-        let options = json!({"service_tier": "fast", "sandbox": "off", "fast_mode": "on"});
-        let codex = plan(
-            &record(vec![
-                ("default_engine".into(), json!("codex")),
-                ("default_model_options".into(), options.clone()),
-            ]),
-            Some("claude"),
+    fn model_options_that_cost_or_widen_reach_are_not_applied_for_any_engine() {
+        let options = json!({"service_tier": "priority", "sandbox": "off", "fast_mode": "on"});
+        for engine in ["claude", "codex", "an-acp-agent"] {
+            let plan = plan(
+                &record(vec![
+                    ("default_engine".into(), json!(engine)),
+                    ("default_model_options".into(), options.clone()),
+                ]),
+                None,
+            );
+            assert!(
+                !plan.values.contains_key("default_model_options"),
+                "{engine}"
+            );
+            assert_eq!(plan.refused, 1);
+        }
+        // Clearing the options is not an escalation and applies.
+        let cleared = plan(
+            &record(vec![("default_model_options".into(), json!({}))]),
+            None,
         );
+        assert_eq!(cleared.values["default_model_options"], Some(json!({})));
+    }
+
+    #[test]
+    fn the_engine_used_to_filter_is_the_one_that_is_applied() {
+        let engine = |fields: Vec<(String, Value)>| applied_engine(&record(fields), Some("local"));
+        assert_eq!(engine(vec![]).as_deref(), Some("local"));
         assert_eq!(
-            codex.values["default_model_options"],
-            Some(json!({"service_tier": "fast"}))
+            engine(vec![("default_engine".into(), json!("codex"))]).as_deref(),
+            Some("codex")
         );
-        // With no engine in the record the local default decides.
-        let claude = plan(
-            &record(vec![("default_model_options".into(), options)]),
-            Some("claude"),
-        );
+        // A value that fails the check is not applied, so it is not the engine.
         assert_eq!(
-            claude.values["default_model_options"],
-            Some(json!({"fast_mode": "on"}))
+            engine(vec![("default_engine".into(), json!(5))]).as_deref(),
+            Some("local")
         );
+        assert_eq!(engine(vec![("default_engine".into(), Value::Null)]), None);
     }
 
     #[test]
@@ -228,6 +265,18 @@ mod tests {
         assert_eq!(plan.refused, 1);
         let list = edited_list(Some(&json!(["b", "c"])), &plan.sets["favorite_models"]);
         assert_eq!(list, vec![json!("c"), json!("a")]);
+        // A peer cannot grow a list past the limit.
+        let many: Vec<Value> = (0..names::MAX_LIST)
+            .map(|n| json!(format!("m{n}")))
+            .collect();
+        let more = SetEdit {
+            add: BTreeSet::from(["extra".to_owned()]),
+            remove: BTreeSet::new(),
+        };
+        assert_eq!(
+            edited_list(Some(&Value::Array(many)), &more).len(),
+            names::MAX_LIST
+        );
     }
 
     #[test]
