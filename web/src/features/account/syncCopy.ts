@@ -37,9 +37,10 @@ export function lastSynced(sync: AccountSyncView): string | null {
 const waitingText = (count: number) => `${count} ${count === 1 ? "change" : "changes"} waiting`;
 
 /** The Settings sync row on the Account page. */
-export function syncRowText(sync: AccountSyncView): string {
+export function syncRowText(sync: AccountSyncView, unreachable = false): string {
   const last = lastSynced(sync);
   const tail = last ? ` · last synced ${last}` : "";
+  if (unreachable) return `Couldn’t check${tail}`;
   if (refused(sync)) return `Couldn’t sync${sync.waiting > 0 ? ` · ${waitingText(sync.waiting)}` : ""}${tail}`;
   switch (sync.kind) {
     case "paused":

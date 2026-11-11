@@ -9,6 +9,9 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
 
 type Step = "invite" | "details" | "code" | "done";
 
+const RESEND_SECONDS = 60;
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
 /**
  * Create an account: the invite (while sign-up is invite-only), the email and password, the emailed code,
  * and a last step that confirms it. The password stays in this component until the code is verified, then
@@ -26,10 +29,16 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
   const [sent, setSent] = useState(false);
   const spinning = useAfter(busy);
   const checking = useRef<AbortController | null>(null);
+  const verified = useRef<string | null>(null);
   const left = useCountdown(wait);
+  // A new code can be asked for once a minute, counted on the app's own clock.
+  const [resendAt, setResendAt] = useState<Wait | null>(null);
+  const resendLeft = useCountdown(resendAt);
+  const resendWaiting = resendLeft !== null && resendLeft > 0;
   const throttled = left !== null && left > 0;
   const total = 4;
-  const number = (inviteRequired ? 0 : 1) + { invite: 1, details: 2, code: 3, done: 4 }[step];
+  // Without the invite step the later steps move up by one and there is one fewer.
+  const number = { invite: 1, details: 2, code: 3, done: 4 }[step] - (inviteRequired ? 0 : 1);
   const counted = inviteRequired ? total : total - 1;
 
   const run = async (work: () => Promise<void>) => {
@@ -64,6 +73,8 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
       try {
         await accountApi.startSignUp(invite, email.trim(), controller.signal);
         setCode("");
+        verified.current = null;
+        setResendAt({ seconds: RESEND_SECONDS, at: Date.now() });
         setStep("code");
       } catch (error) {
         // Cancel returns to the form with everything still typed and nothing sent.
@@ -79,7 +90,11 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
     event.preventDefault();
     if (busy || !isEmailCodeComplete(code)) return;
     void run(async () => {
-      await accountApi.verifyCode(code);
+      // A failed register is retried without sending the code again: a real client may count it as used.
+      if (verified.current !== code) {
+        await accountApi.verifyCode(code);
+        verified.current = code;
+      }
       await accountApi.register(password);
       setPassword("");
       setStep("done");
@@ -90,6 +105,8 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
     void run(async () => {
       await accountApi.resendCode();
       setCode("");
+      verified.current = null;
+      setResendAt({ seconds: RESEND_SECONDS, at: Date.now() });
       setSent(true);
     });
 
@@ -185,7 +202,7 @@ export function SignUpCard({ inviteRequired, onSignIn, onFinished }: { inviteReq
           {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
           <div className="ac-acts">
             <Button type="submit" tone="primary" busy={busy && spinning} disabled={busy || !isEmailCodeComplete(code)}>Verify</Button>
-            <Button onClick={resend} disabled={busy}>Send a new code</Button>
+            <Button onClick={resend} disabled={busy || resendWaiting}>{resendWaiting ? `Send a new code in ${clock(resendLeft)}` : "Send a new code"}</Button>
           </div>
           {sent ? <p role="status" className="ac-sub">We sent a new code.</p> : null}
         </form>

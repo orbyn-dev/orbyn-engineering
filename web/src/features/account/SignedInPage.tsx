@@ -5,7 +5,7 @@ import { accountApi } from "./api";
 import { syncRowText } from "./syncCopy";
 
 /** The person's account, and the one sync zone that exists. */
-export function SignedInPage({ view, onChanged, onError }: { view: AccountView; onChanged(): void; onError(message: string): void }) {
+export function SignedInPage({ view, stale = false, onChanged, onError }: { view: AccountView; stale?: boolean; onChanged(): void; onError(message: string): void }) {
   const session = view.session;
   const [busy, setBusy] = useState(false);
   if (!session) return null;
@@ -36,16 +36,18 @@ export function SignedInPage({ view, onChanged, onError }: { view: AccountView; 
       <div className="ac-row">
         <div>
           <b>Settings sync</b>
-          <small>{syncRowText(sync)}</small>
+          <small>{stale ? syncRowText(sync, true) : syncRowText(sync)}</small>
         </div>
         {paused ? null : offline ? (
           <Button small disabled>Waiting for a connection</Button>
         ) : (
           <Button small disabled={busy} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>
         )}
-        <Button small disabled={busy} onClick={() => void act(() => (paused ? accountApi.resumeSync() : accountApi.pauseSync()))}>
-          {paused ? "Resume sync" : "Pause"}
-        </Button>
+        {offline ? null : (
+          <Button small disabled={busy} onClick={() => void act(() => (paused ? accountApi.resumeSync() : accountApi.pauseSync()))}>
+            {paused ? "Resume sync" : "Pause"}
+          </Button>
+        )}
       </div>
       <div className="ac-row">
         <div>

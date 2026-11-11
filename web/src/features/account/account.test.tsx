@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
 import { installMockFetch } from "../../test-support";
+import { act } from "@testing-library/react";
+import { accountApi } from "./api";
+import { announceAccountChange } from "./changes";
 import { AccountSection } from "./AccountSection";
 import { ConfirmItsYou } from "./ConfirmItsYou";
 
@@ -56,6 +59,21 @@ describe("signed out", () => {
     expect(screen.getByRole("button", { name: "Create account" })).toBeVisible();
     expect(screen.queryByText(/passkey/i)).toBeNull();
     expect(screen.queryByText(/Forgot your password/)).toBeNull();
+  });
+});
+
+describe("signed out, with sign-up open to everyone", () => {
+  it("does not say an invite is needed when it is not", async () => {
+    mock.reset("account");
+    mock.setAccount({ inviteRequired: false });
+    render(<AccountSection />);
+    await screen.findByText("Use an account to sync your settings");
+    expect(screen.queryByText(/invite/i)).toBeNull();
+  });
+
+  it("says so while sign-up is invite-only", async () => {
+    await signedOut();
+    expect(screen.getByText("Creating an account needs an invite code while sign-up is invite-only.")).toBeVisible();
   });
 });
 
@@ -116,6 +134,20 @@ describe("sign in", () => {
     expect(await screen.findByText("Sign-in closed")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Start again" }));
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+  });
+
+  it("Back to Account on the closed card returns to the Account page, not to the sign-in form", async () => {
+    const user = await openSignIn();
+    await signIn(user, "two@example.com");
+    await screen.findByText("Enter your two-factor code");
+    await user.type(screen.getByLabelText("6-digit code"), "482914");
+    for (let i = 0; i < 5; i += 1) {
+      await user.click(screen.getByRole("button", { name: "Verify" }));
+      await screen.findByText(i < 4 ? new RegExp(`${4 - i} ${4 - i === 1 ? "try" : "tries"} left`) : "Sign-in closed");
+    }
+    await user.click(screen.getByRole("button", { name: "Back to Account" }));
+    expect(await screen.findByText("Use an account to sync your settings")).toBeVisible();
+    expect(screen.queryByLabelText("Password")).toBeNull();
   });
 
   it("takes a recovery code in any case, with or without the hyphen", async () => {
@@ -202,6 +234,117 @@ describe("create an account", () => {
   });
 });
 
+describe("create an account without an invite step", () => {
+  async function toDetails(user: ReturnType<typeof userEvent.setup>) {
+    mock.reset("account");
+    mock.setAccount({ inviteRequired: false });
+    render(<AccountSection />);
+    await screen.findByText("Use an account to sync your settings");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.type(await screen.findByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("Password"), "a fresh throwaway phrase");
+    await user.click(screen.getByRole("button", { name: "Continue with a password" }));
+    await screen.findByText(/Enter the 8-character code we emailed to new@example.com/);
+  }
+
+  it("counts three steps, not four, and never more than the total", async () => {
+    const user = userEvent.setup();
+    mock.reset("account");
+    mock.setAccount({ inviteRequired: false });
+    render(<AccountSection />);
+    await screen.findByText("Use an account to sync your settings");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    expect(await screen.findByText("Step 1 of 3 · Email and password")).toBeVisible();
+    expect(screen.queryByLabelText("Invite code")).toBeNull();
+    await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("Password"), "a fresh throwaway phrase");
+    await user.click(screen.getByRole("button", { name: "Continue with a password" }));
+    expect(await screen.findByText("Step 2 of 3 · Check your email")).toBeVisible();
+    await user.type(screen.getByLabelText("8-character code"), "ABCDEFGH");
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+    expect(await screen.findByText("Step 3 of 3 · Done")).toBeVisible();
+  });
+
+  it("asks for a new code only once a minute, on the app’s own clock", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await toDetails(user);
+      const resend = screen.getByRole("button", { name: "Send a new code in 1:00" });
+      expect(resend).toBeDisabled();
+      act(() => { vi.advanceTimersByTime(30_000); });
+      expect(await screen.findByRole("button", { name: "Send a new code in 0:30" })).toBeDisabled();
+      act(() => { vi.advanceTimersByTime(31_000); });
+      const ready = await screen.findByRole("button", { name: "Send a new code" });
+      expect(ready).toBeEnabled();
+      await user.click(ready);
+      expect(await screen.findByText("We sent a new code.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Send a new code in 1:00" })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not send the code again when only the last step failed", async () => {
+    const user = userEvent.setup();
+    await toDetails(user);
+    const verify = vi.spyOn(accountApi, "verifyCode");
+    vi.spyOn(accountApi, "register").mockRejectedValueOnce(new Error("offline"));
+    await user.type(screen.getByLabelText("8-character code"), "ABCDEFGH");
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(accountApi.register).toHaveBeenCalledTimes(1));
+    await user.click(await screen.findByRole("button", { name: "Verify" }));
+    expect(await screen.findByText("Your account is ready")).toBeVisible();
+    expect(verify).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+});
+
+describe("the signed-in page when it cannot be fully read", () => {
+  async function signedInPage(knobs: () => void = () => undefined) {
+    mock.reset("account");
+    await fetch("/api/account/sign-in", { method: "POST", body: JSON.stringify({ email: "dev@example.com", password: PASSWORD }) });
+    knobs();
+    render(<AccountSection />);
+    await screen.findByText("Signed in on this device · This computer");
+  }
+
+  it("offline: the sync row says Offline and waiting changes, with the text button and no Pause", async () => {
+    await signedInPage(() => {
+      mock.setAccountWaiting(3);
+      mock.setAccount({ sync: ["offline"] });
+    });
+    expect(screen.getByText(/^Offline · 3 changes waiting/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Waiting for a connection" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+    expect(screen.getByText(/You’re offline\./)).toBeVisible();
+  });
+
+  it("error: keeps the last page dimmed, says it could not check and offers Try again", async () => {
+    await signedInPage();
+    mock.setAccount({ down: true });
+    act(() => announceAccountChange());
+    expect(await screen.findByText("Couldn’t load your account.")).toBeVisible();
+    expect(screen.getByText(/^Couldn’t check/)).toBeVisible();
+    expect(screen.getByText("dev@example.com")).toBeVisible();
+    expect(document.querySelector(".ac-last")).toHaveAttribute("data-stale");
+    mock.setAccount({ down: false });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByText("Couldn’t load your account.")).toBeNull());
+    expect(screen.getByText(/^Up to date/)).toBeVisible();
+  });
+
+  it("loading: keeps the section label while the values are placeholders", async () => {
+    mock.reset("account");
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => (input === "/api/account" ? new Promise<Response>(() => undefined) : real(input, init))));
+    const { container } = render(<AccountSection />);
+    await waitFor(() => expect(container.querySelector(".ac-sk")).not.toBeNull());
+    expect(within(container.querySelector(".ac-sk") as HTMLElement).getByText("Sync")).toBeInTheDocument();
+    expect(container.querySelectorAll(".ac-skr")).toHaveLength(3);
+  });
+});
+
 describe("Confirm it’s you", () => {
   async function opened(onConfirmed = vi.fn()) {
     mock.reset("account");
@@ -223,7 +366,9 @@ describe("Confirm it’s you", () => {
     await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalled();
-    expect(screen.getByText("This confirms removing this device.")).toBeVisible();
+    const line = screen.getByText("This confirms removing this device.");
+    expect(line).toBeVisible();
+    expect(screen.getByLabelText("Password").compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The confirmation names its action and device, and carries the password nowhere else.
     const sent = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/account/confirm");
     expect(sent).toHaveLength(1);

@@ -77,7 +77,10 @@
 .ac-loadfail { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ac-loadfail small { color: var(--color-muted); font-size: 12px; }
 .ac-sk { display: flex; flex-direction: column; gap: 14px; padding: 6px 0; }
-.ac-sk i { display: block; height: 10px; border-radius: 5px; background: var(--color-selected); }
+.ac-skr { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; }
+.ac-skr i { display: block; height: 10px; width: 60%; border-radius: 5px; background: var(--color-selected); }
+.ac-skr i + i { width: 35%; }
+.ac-last[data-stale] { opacity: 0.55; }
 
 /* Sidebar footer: avatar and sync status, then the Settings gear. */
 .ac-foot { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 4px; }
@@ -116,7 +119,7 @@
   padding: 12px 14px;
   border-radius: 14px;
   background: var(--color-surface);
-  box-shadow: 0 12px 36px rgb(0 0 0 / 16%), 0 0 0 1px var(--color-borderStrong);
+  box-shadow: 0 12px 36px var(--color-shadow), 0 0 0 1px var(--color-borderStrong);
   font-size: 12.5px;
   color: var(--color-textSoft);
 }

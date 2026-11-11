@@ -2,7 +2,7 @@ import { Info } from "lucide-react";
 import { Button } from "../../ui/controls";
 
 /** What an account adds, and what it never moves. The page a signed-out person sees first. */
-export function SignedOutHome({ onSignIn, onCreate }: { onSignIn(): void; onCreate(): void }) {
+export function SignedOutHome({ inviteRequired, onSignIn, onCreate }: { inviteRequired: boolean; onSignIn(): void; onCreate(): void }) {
   return (
     <>
       <div className="ac-note">
@@ -18,7 +18,7 @@ export function SignedOutHome({ onSignIn, onCreate }: { onSignIn(): void; onCrea
           <Button tone="primary" onClick={onSignIn}>Sign in</Button>
           <Button onClick={onCreate}>Create account</Button>
         </div>
-        <p className="ac-sub">Creating an account needs an invite code while sign-up is invite-only.</p>
+        {inviteRequired ? <p className="ac-sub">Creating an account needs an invite code while sign-up is invite-only.</p> : null}
       </section>
       <div className="ac-two">
         <div>

@@ -14,7 +14,7 @@ import { useAfter } from "./useCountdown";
 type Mode = "authenticator" | "recovery";
 
 /** The second step of signing in: a six-digit authenticator code, or a recovery code. Five wrong ones close the sign-in. */
-export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel(): void }) {
+export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel(to: "sign-in" | "home"): void }) {
   const [mode, setMode] = useState<Mode>("authenticator");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -38,8 +38,9 @@ export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel()
     }
   };
 
-  const startAgain = () => {
-    void accountApi.cancelSignIn().catch(() => undefined).finally(onCancel);
+  // Both end the pending sign-in; they differ in where the person lands.
+  const leave = (to: "sign-in" | "home") => {
+    void accountApi.cancelSignIn().catch(() => undefined).finally(() => onCancel(to));
   };
 
   if (problem?.kind === "closed") {
@@ -48,8 +49,8 @@ export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel()
         <Failure>Five codes in a row didn’t work, so this sign-in was closed. Nothing was changed on your account.</Failure>
         <p>Start again with your email and password. If you can’t use your authenticator, use one of your recovery codes.</p>
         <div className="ac-acts">
-          <Button tone="primary" onClick={startAgain}>Start again</Button>
-          <Button onClick={startAgain}>Back to Account</Button>
+          <Button tone="primary" onClick={() => leave("sign-in")}>Start again</Button>
+          <Button onClick={() => leave("home")}>Back to Account</Button>
         </div>
       </Card>
     );
@@ -92,7 +93,7 @@ export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel()
         {problem?.kind === "network" ? <Failure>{NETWORK_TEXT}</Failure> : null}
         <div className="ac-acts">
           <Button type="submit" tone="primary" busy={busy && spinning} disabled={busy || !complete}>Verify</Button>
-          <Button onClick={startAgain} disabled={busy}>Cancel</Button>
+          <Button onClick={() => leave("sign-in")} disabled={busy}>Cancel</Button>
         </div>
       </form>
       <div className="ac-lnks">

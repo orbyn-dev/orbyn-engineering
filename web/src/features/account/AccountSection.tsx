@@ -24,6 +24,8 @@ export function AccountSection() {
   useEffect(() => { if (asking) setCodeStep(true); }, [asking]);
   const waiting = account.status === "loading";
   const skeleton = useAfter(waiting);
+  // The last status is kept while a re-read fails: shown dimmed, with the sync row saying it could not check.
+  const stale = account.status === "error";
 
   if (view && !view.available) return null;
   const reload = () => { setProblem(null); account.reload(); };
@@ -37,13 +39,13 @@ export function AccountSection() {
           <Button small onClick={reload}>Try again</Button>
         </div>
       )
-      : skeleton ? <div className="ac-sk" aria-hidden><i /><i /><i /></div> : null;
+      : skeleton ? <Loading /> : null;
   } else if (asking || codeStep) {
-    body = <TwoFactorCard onDone={() => { setCodeStep(false); reload(); }} onCancel={() => { setCodeStep(false); setMode("sign-in"); reload(); }} />;
+    body = <TwoFactorCard onDone={() => { setCodeStep(false); reload(); }} onCancel={(to) => { setCodeStep(false); setMode(to); reload(); }} />;
   } else if (view.session && mode !== "sign-up") {
     body = (
       <>
-        {account.status === "error" ? (
+        {stale ? (
           <div className="ac-loadfail" role="alert">
             <Failure>Couldn’t load your account.</Failure>
             <small>Orbyn didn’t answer. Your settings on this computer are unchanged.</small>
@@ -58,7 +60,9 @@ export function AccountSection() {
           </div>
         ) : null}
         {problem ? <Failure>{problem}</Failure> : null}
-        <SignedInPage view={view} onChanged={reload} onError={setProblem} />
+        <div className="ac-last" data-stale={stale || undefined} inert={stale || undefined}>
+          <SignedInPage view={view} stale={stale} onChanged={reload} onError={setProblem} />
+        </div>
       </>
     );
   } else if (mode === "sign-in") {
@@ -66,7 +70,7 @@ export function AccountSection() {
   } else if (mode === "sign-up") {
     body = <SignUpCard inviteRequired={view.invite_required} onSignIn={() => setMode("sign-in")} onFinished={() => { setMode("home"); reload(); }} />;
   } else {
-    body = <SignedOutHome onSignIn={() => setMode("sign-in")} onCreate={() => setMode("sign-up")} />;
+    body = <SignedOutHome inviteRequired={view.invite_required} onSignIn={() => setMode("sign-in")} onCreate={() => setMode("sign-up")} />;
   }
   return (
     <div className="account-page" aria-busy={waiting || undefined}>
@@ -75,6 +79,18 @@ export function AccountSection() {
         <button type="button" className="ac-back" onClick={() => setMode("home")}>‹ Account</button>
       ) : null}
       {body}
+    </div>
+  );
+}
+
+/** While the account is read: the section label stays, its values are placeholders. */
+function Loading() {
+  return (
+    <div className="ac-sk" aria-hidden>
+      <h2 className="ac-grp">Sync</h2>
+      <div className="ac-skr"><i /><i /></div>
+      <div className="ac-skr"><i /><i /></div>
+      <div className="ac-skr"><i /><i /></div>
     </div>
   );
 }

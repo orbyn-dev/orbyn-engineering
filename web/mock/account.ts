@@ -7,6 +7,7 @@
  * for dev@, two@ (asks for 123456 or the recovery code ABCDE-FGH23), slow@ (rate limited), down@ (offline).
  * Sign-up with hard@ fails its device check; busy@ takes a moment in the service (set `/__mock/delay/<ms>` to see it here).
  */
+import type { AccountView } from "../src/generated/AccountView.ts";
 import type { MockResponse } from "./api.ts";
 
 const INVITE = "K7QM2XWH9QXA3C2D";
@@ -31,23 +32,27 @@ export function createAccountMock() {
   let waiting = 0;
   let lastSynced: number | null = null;
   let wrongConfirms = 0;
+  let inviteRequired = true;
+  let syncKind: AccountView["sync"]["kind"] | null = null;
+  let syncReason: AccountView["sync"]["reason"] | null = null;
+  let viewDown = false;
 
   const view = () => ({
     available: on,
-    invite_required: true,
+    invite_required: inviteRequired,
     platform: "macos",
     ...(session ? { session: { email: session, device_name: "This computer" } } : {}),
     needs_second_factor: pending !== null,
     deletion_scheduled: false,
     sync: {
-      kind: session ? (paused ? "paused" : "online") : "signed_out",
-      ...(paused ? { reason: "by_person" } : {}),
+      kind: syncKind ?? (session ? (paused ? "paused" : "online") : "signed_out"),
+      ...(syncReason ? { reason: syncReason } : paused ? { reason: "by_person" } : {}),
       waiting,
       not_synced: 0,
       conflicts: 0,
       ...(lastSynced ? { last_synced: lastSynced } : {}),
     },
-  });
+  }) satisfies AccountView;
 
   function signedIn(email: string) {
     session = email;
@@ -67,21 +72,38 @@ export function createAccountMock() {
       waiting = 0;
       lastSynced = null;
       wrongConfirms = 0;
+      inviteRequired = true;
+      syncKind = null;
+      syncReason = null;
+      viewDown = false;
     },
     /** Changes waiting to upload, for a spec that wants the offline or paused wording. */
     setWaiting(count: number) {
       waiting = count;
     },
+    /** Sign-up without an invite step. */
+    setInviteRequired(required: boolean) {
+      inviteRequired = required;
+    },
+    /** Forces the sync state the status shows, for the offline and refused wording. */
+    setSync(kind: AccountView["sync"]["kind"] | null, reason: AccountView["sync"]["reason"] | null = null) {
+      syncKind = kind;
+      syncReason = reason;
+    },
+    /** Makes reading the account fail, for the "couldn't load" page. */
+    setViewDown(down: boolean) {
+      viewDown = down;
+    },
     handle(method: string, path: string, body: unknown): MockResponse {
       const data = (body ?? {}) as Record<string, unknown>;
       const route = `${method} ${path}`;
-      if (route === "GET /api/account") return { status: 200, body: view() };
+      if (route === "GET /api/account") return viewDown ? fail(503, "account_offline", "Couldn't reach Orbyn.") : { status: 200, body: view() };
       if (!on) return fail(403, "account_disabled", "Accounts are not available yet.");
       switch (route) {
         case "POST /api/account/sign-up/invite":
           return clean(data.invite) === INVITE ? { status: 204 } : fail(403, "invite_required", "An invite is needed.");
         case "POST /api/account/sign-up/start":
-          if (clean(data.invite) !== INVITE) return fail(403, "invite_required", "An invite is needed.");
+          if (inviteRequired && clean(data.invite) !== INVITE) return fail(403, "invite_required", "An invite is needed.");
           if (data.email === "hard@example.com") return fail(502, "check_failed", "Couldn't finish checking this device.");
           signup = { email: String(data.email ?? ""), verified: false };
           return { status: 204 };
