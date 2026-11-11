@@ -147,6 +147,8 @@ pub struct World {
     pub lead: String,
     pub lead_token: String,
     pub prompts: Arc<Mutex<Vec<(String, String)>>>,
+    /// Read only by the Unix-only leak test, so it is dead code on Windows.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub answers: Arc<Mutex<Vec<String>>>,
 }
 
