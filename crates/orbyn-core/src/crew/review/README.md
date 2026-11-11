@@ -27,7 +27,9 @@ its own. Code, not a model, decides whether a finding is true.
 - **Git cannot be told to look away.** `git update-index --assume-unchanged` or `--skip-worktree` hides an edit from every git-based check. The core
   records the flagged entries (`git ls-files -v`: lowercase tag or `S`) when any task starts and fails the verification if one was added. The cost is one
   `git ls-files` at the start and one per verification, with no file reads; the alternative, a byte snapshot of every tracked file, would cost a read of the whole
-  repository per task. Flags that were there at the start (a sparse checkout's) are not a failure.
+  repository per task. Flags that were there at the start (a sparse checkout's) are not a failure. The checks' own git runs (`git_hardened`) switch off what a worker could set to hide an
+  edit or to run its own program: repository filters and diff converters (a clean filter can report the original bytes), attributes, and replace refs.
+  If git cannot list the index, or the flags were recorded for another directory than the one checked, nothing passes: the task goes to a person (a task whose index cannot be listed does not start).
 - **Findings** are the protocol's object. A finding has no state: it blocks nothing until a Gate at `finding_check` confirms it.
   `crew_finding` is a member tool, so it refuses once the reviewer's run has ended (H7); the Gate is a core write and does not.
 - **The check.** With a `repro` (a check the lead states as the *correct* behaviour, run for at most 2 minutes), the core runs it: failing confirms
@@ -52,8 +54,9 @@ its own. Code, not a model, decides whether a finding is true.
 ## Limits of Preview
 
 - A fingerprint (lane, file, claim) only labels a finding across rounds; the guard and the blocking keep to the lane and file.
-- A path hidden by `.gitignore` or `.git/info/exclude` hides a new file from the git-based checks, and a write outside the checkout is seen by none of them (#451).
-- A fix key cannot hold a manifest that defines check commands (`package.json`, `Makefile`, `justfile`, ...): such a file is refused for a fix.
+- Not closed (#451): a new file hidden through `.gitignore`, `.git/info/exclude` or `core.excludesFile`; `core.untrackedCache` with changed directory times; a crafted `.git/index` whose saved file times match an edited file; a `.git` file pointing to another git folder; and in general a writable `.git` in the checkout. A write outside the checkout is seen by none of the checks.
+- A fix is refused for a file that changes what checks run (`package.json`, `Makefile`, `justfile`, `conftest.py`, `pytest.ini`, `setup.cfg`, `Cargo.toml`, `jest.config.*`, `vitest.config.*`, `.cargo/config.toml`, ...) and for any file a check command of the reviewed task's key names.
+- The lead's clearing repro is the lead's responsibility: it must pass now and is not shown to have failed before the fix (the Gate says so). Every attempt, a failing one too, is recorded. Running it at the finding's commit in a throwaway worktree is #451.
 - A repro runs in the checkout as it is now, not at the finding's commit (its Evidence records the commit it ran on).
 - Reviewers share the lead's checkout. The lease rule, the protected-file comparison and the scope check keep them read-only; no sandbox does (#436).
 - A rule's `when.paths` are file or `dir/**` patterns, like a lease; `required` and `checks` in the rule file are not read yet. Removing a locked lane

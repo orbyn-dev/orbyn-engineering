@@ -101,7 +101,7 @@ pub(super) fn short(text: &str) -> Result<CrewShortText, CrewError> {
 }
 
 pub(super) async fn head(worktree: &Path) -> Option<CrewCommit> {
-    let out = crate::source_control::git::git(worktree, &["rev-parse", "HEAD"])
+    let out = crate::source_control::git::git_hardened(worktree, &["rev-parse", "HEAD"])
         .await
         .ok()?;
     CrewCommit::new(crate::source_control::git::text(&out)).ok()
@@ -188,7 +188,7 @@ impl Core {
             deadline: std::time::Instant::now() + left,
             base: run.base_commit.as_deref(),
         };
-        let dirty = crate::source_control::git::git(worktree, &["status", "--porcelain"])
+        let dirty = crate::source_control::git::git_hardened(worktree, &["status", "--porcelain"])
             .await
             .is_ok_and(|out| !out.is_empty());
         let commit = head(worktree)
@@ -240,15 +240,30 @@ impl Core {
                 return Ok(verdict);
             }
         }
-        // A flag that hides a file from git blinds every git-based check, so one added since the start fails the attempt.
-        if let Some(before) = run
-            .index_flags
-            .as_deref()
-            .and_then(|text| serde_json::from_str::<Vec<String>>(text).ok())
-        {
-            let now = super::index_flags::flagged(worktree)
-                .await
-                .unwrap_or_default();
+        // A flag that hides a file from git blinds every git-based check, so one added since the start fails the attempt. If the
+        // flags cannot be read, or were recorded for another directory than the one checked, nothing is run: the task goes to a
+        // person rather than passing a check that could not be made.
+        if let Some(text) = run.index_flags.as_deref() {
+            let recorded: serde_json::Value = serde_json::from_str(text).map_err(|_| {
+                CrewError::new(
+                    ErrorCode::InvalidObject,
+                    "the index flags were not recorded",
+                )
+            })?;
+            let before: Vec<String> =
+                serde_json::from_value(recorded["flags"].clone()).unwrap_or_default();
+            if recorded["dir"].as_str().map(std::path::Path::new) != Some(worktree) {
+                return Err(CrewError::new(
+                    ErrorCode::InvalidObject,
+                    "the index flags were recorded for another directory than the one checked",
+                ));
+            }
+            let now = super::index_flags::flagged(worktree).await.ok_or_else(|| {
+                CrewError::new(
+                    ErrorCode::InvalidObject,
+                    "the checkout's git index cannot be listed",
+                )
+            })?;
             let hidden = super::index_flags::added(&before, &now);
             if !hidden.is_empty() {
                 verdict.failures.push(Failed {

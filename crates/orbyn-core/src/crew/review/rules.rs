@@ -80,7 +80,7 @@ pub fn read_rules(root: &Path) -> Result<Vec<RuleLane>, String> {
 /// The lanes the rules name at `base`, the commit the work started from. A worker can change the file in the checkout, so
 /// the checkout's copy is never the rule. No such file at `base` is no rules; a file that cannot be read or parsed is an error.
 pub async fn read_rules_at(root: &Path, base: &str) -> Result<Vec<RuleLane>, String> {
-    use crate::source_control::git::{git, text};
+    use crate::source_control::git::{git_hardened as git, text};
     let spec = format!("{base}:{RULES_FILE}");
     let listed = git(root, &["ls-tree", base, "--", RULES_FILE])
         .await

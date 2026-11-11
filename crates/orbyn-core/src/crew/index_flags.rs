@@ -11,7 +11,7 @@ use std::path::Path;
 
 /// The entries the index flags as hiding changes, or `None` when git cannot say.
 pub async fn flagged(root: &Path) -> Option<Vec<String>> {
-    let out = crate::source_control::git::git(root, &["ls-files", "-v", "-z"])
+    let out = crate::source_control::git::git_hardened(root, &["ls-files", "-v", "-z"])
         .await
         .ok()?;
     let mut paths: Vec<String> = out

@@ -239,27 +239,24 @@ impl Core {
             ));
         }
         let (check, ran, worktree) = self.run_repro(thread, subject_run, draft).await?;
-        match ran.outcome {
-            CheckOutcome::Pass => {}
-            CheckOutcome::Fail => {
-                return Ok(json!({
-                    "finding": found.finding.id,
-                    "decision": "still_failing",
-                    "note": "The repro still fails after the fix, so the finding stays.",
-                }));
-            }
+        // Every attempt that ran is recorded, a failing one too, so the lead cannot try repros until one passes and leave no trace.
+        let passed = match ran.outcome {
+            CheckOutcome::Pass => true,
+            CheckOutcome::Fail => false,
             CheckOutcome::Error | CheckOutcome::Skipped => {
                 return Err(invalid("repro: it could not run, so it decides nothing"));
             }
+        };
+        if passed {
+            let repro = serde_json::to_string(&check).map_err(|e| invalid(e.to_string()))?;
+            self.store
+                .add_finding_repro(&FindingRepro {
+                    finding_id: found.finding.id.as_str().to_owned(),
+                    subject_id: subject.id.clone(),
+                    repro,
+                })
+                .map_err(|e| invalid(e.public_message()))?;
         }
-        let repro = serde_json::to_string(&check).map_err(|e| invalid(e.to_string()))?;
-        self.store
-            .add_finding_repro(&FindingRepro {
-                finding_id: found.finding.id.as_str().to_owned(),
-                subject_id: subject.id.clone(),
-                repro,
-            })
-            .map_err(|e| invalid(e.public_message()))?;
         let commit = head(std::path::Path::new(&worktree))
             .await
             .unwrap_or(found.finding.commit.clone());
@@ -286,10 +283,18 @@ impl Core {
             run_id: CrewId::new(subject.run_id.clone()).map_err(invalid)?,
             stage: GateStage::Checks,
             subject: found.finding.id.clone(),
-            decision: GateDecision::Pass,
+            decision: if passed {
+                GateDecision::Pass
+            } else {
+                GateDecision::Fail
+            },
             decided_by: GateDecider::Code,
             evidence: vec![evidence.clone()],
-            reason: short("The lead's repro passes after a fix of the place.")?,
+            reason: short(if passed {
+                "The lead's repro passes after a fix of the place. It was not shown to fail before the fix."
+            } else {
+                "The lead's repro still fails after a fix of the place."
+            })?,
             lane: None,
         };
         gate.validate()?;
@@ -297,9 +302,12 @@ impl Core {
         self.store
             .add_crew_object(&subject.id, &CrewObject::Gate(gate.clone()))
             .map_err(internal)?;
-        Ok(
-            json!({ "finding": found.finding.id, "decision": "cleared", "gate": gate.id, "evidence": evidence }),
-        )
+        Ok(json!({
+            "finding": found.finding.id,
+            "decision": if passed { "cleared" } else { "still_failing" },
+            "gate": gate.id,
+            "evidence": evidence,
+        }))
     }
 
     /// Whether the finding already has a decision, or a second run that has not ended.
@@ -319,9 +327,19 @@ impl Core {
             .map_err(internal)?
         {
             let state = self.store.crew_task(&second.task_id).map_err(internal)?;
-            if state
-                .is_some_and(|t| !crate::crew::lifecycle::is_final(&t.state) || t.state == "passed")
-            {
+            // `needs_person` (no other vendor to route to, say) is not running and does not hold the check.
+            if state.is_some_and(|t| {
+                matches!(
+                    t.state.as_str(),
+                    "passed"
+                        | "briefed"
+                        | "routed"
+                        | "running"
+                        | "verifying"
+                        | "failed"
+                        | "changed_approach"
+                )
+            }) {
                 return Ok(true);
             }
         }

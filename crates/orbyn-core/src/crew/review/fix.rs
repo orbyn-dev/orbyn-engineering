@@ -46,8 +46,25 @@ fn sensitive(path: &str) -> bool {
         // Manifests that define the commands a check runs.
         || matches!(
             name,
-            "package.json" | "makefile" | "justfile" | "taskfile.yml" | "tox.ini" | "noxfile.py" | "pyproject.toml" | "build.rs"
+            "package.json"
+                | "makefile"
+                | "justfile"
+                | "taskfile.yml"
+                | "tox.ini"
+                | "noxfile.py"
+                | "pyproject.toml"
+                | "build.rs"
+                | "conftest.py"
+                | "pytest.ini"
+                | "setup.cfg"
+                | "setup.py"
+                | "cargo.toml"
+                | "cargo.lock"
         )
+        || name.starts_with("jest.config.")
+        || name.starts_with("vitest.config.")
+        || lower.ends_with(".cargo/config.toml")
+        || lower.ends_with(".cargo/config")
         || lower
             .split('/')
             .any(|s| matches!(s, "tests" | "test" | "__tests__" | "spec" | "specs" | "e2e"))
@@ -121,7 +138,14 @@ impl Core {
             .ok_or_else(|| invalid("the task has no key"))?;
         // Which file may a fix write? Only one the reviewed task could.
         let writable = subject_brief.write_paths().any(|p| covers(p, path));
-        if !writable || sensitive(path) || !quotable(path) {
+        // A file that a check command of the reviewed task's key names is part of what the checks run. (The lead's repro names the
+        // finding's file by design, so it is not held to this.)
+        let named = subject_key
+            .checks
+            .iter()
+            .filter_map(CrewCheck::command)
+            .any(|run| run.contains(path));
+        if !writable || sensitive(path) || named || !quotable(path) {
             return Ok(self.no_fix(
                 subject,
                 "refused_path",

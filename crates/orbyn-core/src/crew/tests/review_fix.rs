@@ -239,6 +239,16 @@ async fn the_second_review_needs_another_vendor() {
             .iter()
             .all(|g| g.stage != GateStage::FindingCheck)
     );
+    // The refused run is not running: the finding is not pending, and a repro can still decide it.
+    assert_eq!(w.status(&subject)["findings"][0]["check"], "unchecked");
+    let pass = json!({ "id": "r-pass", "kind": "command", "params": { "run": "exit 0" }, "proves": "It does not hold." });
+    let (decided, error) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": id, "repro": pass }),
+        )
+        .await;
+    assert!(!error && decided["decision"] == "unconfirmed", "{decided}");
 }
 
 /// A second reviewer that files many findings in the file confirms nothing.
@@ -433,6 +443,17 @@ async fn an_agreement_confirmed_finding_needs_a_repro_to_clear() {
         .await;
     assert!(!error && still["decision"] == "still_failing", "{still}");
     assert_eq!(w.status(&subject)["blocked"], true);
+    // The failed attempt is on record: Evidence cited by a failing `checks` Gate on the finding.
+    let attempt = w
+        .core
+        .store
+        .crew_gates(&subject)
+        .unwrap()
+        .into_iter()
+        .find(|g| g.stage == GateStage::Checks && g.subject.as_str() == id)
+        .expect("a gate for the attempt");
+    assert_eq!(attempt.decision, orbyn_contracts::GateDecision::Fail);
+    assert!(!attempt.evidence.is_empty());
     // One that passes after the fix clears it.
     let (cleared, error) = w
         .lead(
@@ -441,6 +462,16 @@ async fn an_agreement_confirmed_finding_needs_a_repro_to_clear() {
         )
         .await;
     assert!(!error && cleared["decision"] == "cleared", "{cleared}");
+    let gates = w.core.store.crew_gates(&subject).unwrap();
+    let pass = gates
+        .iter()
+        .rfind(|g| g.stage == GateStage::Checks && g.subject.as_str() == id)
+        .unwrap();
+    assert!(
+        pass.reason
+            .as_str()
+            .contains("not shown to fail before the fix")
+    );
     let status = w.status(&subject);
     assert_eq!(status["blocked"], false, "{status}");
     assert_eq!(status["findings"][0]["status"], "fixed");
@@ -494,4 +525,86 @@ async fn the_lanes_wait_for_the_last_running_fix() {
         1,
         "no lane ran while a fix was running"
     );
+}
+
+/// A clean filter that reports the original bytes cannot hide a reviewer's edit: the core's git runs without the repository's filters.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_clean_filter_does_not_hide_a_reviewers_edit() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => {
+            crate::testing::run_git(root, &["config", "filter.hide.clean", "printf 'base\\n'"]);
+            let info = root.join(".git/info");
+            std::fs::create_dir_all(&info).unwrap();
+            std::fs::write(info.join("attributes"), "src/base.txt filter=hide\n").unwrap();
+            std::fs::write(root.join("src/base.txt"), "edited in secret\n").unwrap();
+            reviewed(vec![])
+        }
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "stopped").await;
+}
+
+/// A replace ref that makes the base commit read as another commit does not hide an edit either.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_replace_ref_does_not_hide_a_reviewers_edit() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => {
+            std::fs::write(root.join("src/base.txt"), "edited in secret\n").unwrap();
+            let run = |args: &[&str], index: bool| {
+                let mut command = std::process::Command::new("git");
+                command.current_dir(root).args(args);
+                if index {
+                    command.env("GIT_INDEX_FILE", root.join(".git/scratch-index"));
+                }
+                let out = command.output().unwrap();
+                String::from_utf8_lossy(&out.stdout).trim().to_owned()
+            };
+            run(&["add", "-A"], true);
+            let tree = run(&["write-tree"], true);
+            let base = run(&["rev-parse", "HEAD"], false);
+            let fake = run(
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.test",
+                    "commit-tree",
+                    &tree,
+                    "-p",
+                    &base,
+                    "-m",
+                    "x",
+                ],
+                false,
+            );
+            run(&["replace", "--force", &base, &fake], false);
+            reviewed(vec![])
+        }
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "stopped").await;
+}
+
+/// If git cannot list the index, nothing is passed: the run goes to a person.
+#[tokio::test]
+async fn a_check_that_cannot_be_made_goes_to_a_person() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => {
+            std::fs::write(root.join(".git/index"), "not an index").unwrap();
+            reviewed(vec![])
+        }
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "needs_person").await;
 }

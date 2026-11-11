@@ -42,6 +42,46 @@ impl Core {
         }
     }
 
+    /// Starts `review_task_unpassed` for a task that ended or waits for a person without passing.
+    pub(crate) fn spawn_review_unpassed(self: &Arc<Self>, task_id: &str) {
+        if !matches!(self.store.crew_fix_for_task(task_id), Ok(Some(_))) {
+            return;
+        }
+        let (core, id) = (self.clone(), task_id.to_owned());
+        tokio::spawn(async move { core.review_task_unpassed(&id).await });
+    }
+
+    /// A fix did not pass. If an earlier fix passed while this one was still running, the lanes did not run for it then, so
+    /// they run now, once no fix is left running.
+    async fn review_task_unpassed(self: &Arc<Self>, fix_task: &str) {
+        let Ok(Some(fix)) = self.store.crew_fix_for_task(fix_task) else {
+            return;
+        };
+        let Ok(fixes) = self.store.crew_fixes_of(&fix.subject_id) else {
+            return;
+        };
+        let Ok(reviews) = self.store.crew_reviews_of(&fix.subject_id) else {
+            return;
+        };
+        let task = |id: &str| self.store.crew_task(id).ok().flatten();
+        let last_round = reviews
+            .iter()
+            .filter(|r| r.role == "review")
+            .filter_map(|r| task(&r.task_id))
+            .map(|t| t.created_at)
+            .max()
+            .unwrap_or_default();
+        // The newest fix that passed after the last round of lanes started.
+        let owed = fixes
+            .iter()
+            .filter_map(|f| task(&f.fix_task_id).filter(|t| t.state == "passed"))
+            .filter(|t| t.updated_at > last_round)
+            .max_by(|a, b| a.updated_at.cmp(&b.updated_at));
+        if let Some(passed) = owed {
+            self.rerun_lanes(&passed.id, &fix.subject_id).await;
+        }
+    }
+
     fn review_lane_passed(&self, review: &CrewReview) {
         let Ok(filed) = self.store.crew_findings_of_task(&review.task_id) else {
             return;
@@ -75,7 +115,7 @@ impl Core {
     }
 
     /// A fix passed: every lane that has reviewed the work runs its next round on the fix's commit.
-    async fn rerun_lanes(self: &Arc<Self>, fix_task: &str, subject_id: &str) {
+    pub(super) async fn rerun_lanes(self: &Arc<Self>, fix_task: &str, subject_id: &str) {
         let Ok(Some(subject)) = self.store.crew_task(subject_id) else {
             return;
         };
