@@ -75,3 +75,25 @@ test("in a narrow window the sync status is one button in the title bar", async 
   await button.click();
   await expect(page.getByRole("dialog", { name: "Sync" })).toContainText("Your settings are the same on every signed-in computer.");
 });
+
+test("removes a device with the password, then signs out and the page says what stayed", async ({ page }) => {
+  await open(page, "account", "#/settings/account");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByLabel("Email").fill("dev@example.com");
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Manage devices" }).click();
+  await expect(page.getByRole("listitem", { name: "Mac mini" })).toBeVisible();
+  await page.getByRole("button", { name: "Remove Mac mini" }).click();
+  await page.getByRole("button", { name: "Remove device" }).click();
+  const confirm = page.getByRole("dialog", { name: "Confirm it’s you" });
+  await expect(confirm.getByText("To remove Mac mini")).toBeVisible();
+  await confirm.getByLabel("Password").fill(PASSWORD);
+  await confirm.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByText("Mac mini removed.")).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Mac mini" })).toHaveCount(0);
+  await page.getByRole("button", { name: "‹ Account" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByRole("dialog", { name: "Sign out of this computer?" }).getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByText("Signed out. Your threads, projects and settings are still on this computer.")).toBeVisible();
+});

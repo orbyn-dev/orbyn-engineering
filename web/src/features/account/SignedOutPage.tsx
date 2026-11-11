@@ -2,9 +2,10 @@ import { Info } from "lucide-react";
 import { Button } from "../../ui/controls";
 
 /** What an account adds, and what it never moves. The page a signed-out person sees first. */
-export function SignedOutHome({ inviteRequired, onSignIn, onCreate }: { inviteRequired: boolean; onSignIn(): void; onCreate(): void }) {
+export function SignedOutHome({ notice, inviteRequired, onSignIn, onCreate }: { notice: string | null; inviteRequired: boolean; onSignIn(): void; onCreate(): void }) {
   return (
     <>
+      {notice ? <p className="ac-done" role="status">{notice}</p> : null}
       <div className="ac-note">
         <Info size={14} aria-hidden />
         <div>

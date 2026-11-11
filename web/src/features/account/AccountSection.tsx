@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/controls";
 import { Failure } from "./Card";
-import { SignedInPage } from "./SignedInPage";
+import { SignedInSection } from "./SignedInSection";
 import { SignedOutHome } from "./SignedOutPage";
 import { SignInCard } from "./SignInCard";
 import { SignUpCard } from "./SignUpCard";
@@ -16,7 +16,7 @@ type Mode = "home" | "sign-in" | "sign-up";
 export function AccountSection() {
   const account = useAccount();
   const [mode, setMode] = useState<Mode>("home");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const view = account.data;
   // The code card stays until it is finished or given up: its own "closed" state outlives the service's pending sign-in.
   const [codeStep, setCodeStep] = useState(false);
@@ -28,7 +28,7 @@ export function AccountSection() {
   const stale = account.status === "error";
 
   if (view && !view.available) return null;
-  const reload = () => { setProblem(null); account.reload(); };
+  const reload = () => account.reload();
   let body;
   if (!view) {
     body = account.status === "error"
@@ -59,10 +59,7 @@ export function AccountSection() {
             </div>
           </div>
         ) : null}
-        {problem ? <Failure>{problem}</Failure> : null}
-        <div className="ac-last" data-stale={stale || undefined}>
-          <SignedInPage view={view} stale={stale} onChanged={reload} onError={setProblem} />
-        </div>
+        <SignedInSection view={view} stale={stale} reload={reload} onSignedOut={(text) => { setNotice(text); setMode("home"); reload(); }} />
       </>
     );
   } else if (mode === "sign-in") {
@@ -70,7 +67,7 @@ export function AccountSection() {
   } else if (mode === "sign-up") {
     body = <SignUpCard inviteRequired={view.invite_required} onSignIn={() => setMode("sign-in")} onFinished={() => { setMode("home"); reload(); }} />;
   } else {
-    body = <SignedOutHome inviteRequired={view.invite_required} onSignIn={() => setMode("sign-in")} onCreate={() => setMode("sign-up")} />;
+    body = <SignedOutHome notice={notice} inviteRequired={view.invite_required} onSignIn={() => { setNotice(null); setMode("sign-in"); }} onCreate={() => { setNotice(null); setMode("sign-up"); }} />;
   }
   return (
     <div className="account-page" aria-busy={waiting || undefined}>

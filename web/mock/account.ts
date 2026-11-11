@@ -7,6 +7,7 @@
  * for dev@, two@ (asks for 123456 or the recovery code ABCDE-FGH23), slow@ (rate limited), down@ (offline).
  * Sign-up with hard@ fails its device check; busy@ takes a moment in the service (set `/__mock/delay/<ms>` to see it here).
  */
+import type { AccountDevice } from "../src/generated/AccountDevice.ts";
 import type { AccountView } from "../src/generated/AccountView.ts";
 import type { MockResponse } from "./api.ts";
 
@@ -36,6 +37,17 @@ export function createAccountMock() {
   let syncKind: AccountView["sync"]["kind"] | null = null;
   let syncReason: AccountView["sync"]["reason"] | null = null;
   let viewDown = false;
+  let deletionScheduled = false;
+  let devicesDown = false;
+  // The throwaway account's devices, the same three the service stand-in lists.
+  const freshDevices = (): AccountDevice[] => [
+    { id: "dev-this", name: "This computer", platform: "macOS 15", app: "engineering", trusted_since: "2026-07-12T09:00:00Z", last_seen: new Date().toISOString(), current: true },
+    { id: "dev-phone", name: "iPhone", platform: "iOS 18", app: "planner", trusted_since: "2026-08-08T09:00:00Z", last_seen: new Date(Date.now() - 120_000).toISOString(), current: false },
+    { id: "dev-mini", name: "Mac mini", platform: "macOS 15", app: "engineering", trusted_since: "2026-09-26T09:00:00Z", last_seen: new Date(Date.now() - 86_400_000).toISOString(), current: false },
+  ];
+  let deviceList = freshDevices();
+  /** One confirmation for one action (and device), used up by the action. */
+  let grant: { action: string; device: string | null } | null = null;
 
   const view = () => ({
     available: on,
@@ -43,7 +55,7 @@ export function createAccountMock() {
     platform: "macos",
     ...(session ? { session: { email: session, device_name: "This computer" } } : {}),
     needs_second_factor: pending !== null,
-    deletion_scheduled: false,
+    deletion_scheduled: deletionScheduled,
     sync: {
       kind: syncKind ?? (session ? (paused ? "paused" : "online") : "signed_out"),
       ...(syncReason ? { reason: syncReason } : paused ? { reason: "by_person" } : {}),
@@ -53,6 +65,13 @@ export function createAccountMock() {
       ...(lastSynced ? { last_synced: lastSynced } : {}),
     },
   }) satisfies AccountView;
+
+  function signedOut() {
+    session = null;
+    pending = null;
+    paused = false;
+    grant = null;
+  }
 
   function signedIn(email: string) {
     session = email;
@@ -76,6 +95,10 @@ export function createAccountMock() {
       syncKind = null;
       syncReason = null;
       viewDown = false;
+      deletionScheduled = false;
+      devicesDown = false;
+      deviceList = freshDevices();
+      grant = null;
     },
     /** Changes waiting to upload, for a spec that wants the offline or paused wording. */
     setWaiting(count: number) {
@@ -89,6 +112,12 @@ export function createAccountMock() {
     setSync(kind: AccountView["sync"]["kind"] | null, reason: AccountView["sync"]["reason"] | null = null) {
       syncKind = kind;
       syncReason = reason;
+    },
+    /** Deletion scheduled, devices that cannot be read, or only this device. */
+    setDevices(knobs: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean }) {
+      if (knobs.deletionScheduled !== undefined) deletionScheduled = knobs.deletionScheduled;
+      if (knobs.down !== undefined) devicesDown = knobs.down;
+      if (knobs.onlyThis) deviceList = deviceList.filter((device) => device.current);
     },
     /** Makes reading the account fail, for the "couldn't load" page. */
     setViewDown(down: boolean) {
@@ -157,7 +186,24 @@ export function createAccountMock() {
             return fail(403, "wrong_password", "Wrong email or password.");
           }
           wrongConfirms = 0;
+          if (data.action !== "remove_device" && data.action !== "sign_out_everywhere") return fail(400, "invalid", "Say what to confirm.");
+          if (data.action === "remove_device" && !data.device_id) return fail(400, "invalid", "Say which device.");
+          grant = { action: String(data.action), device: data.action === "remove_device" ? String(data.device_id) : null };
           return { status: 204 };
+        case "GET /api/account/devices":
+          if (!session) return fail(403, "reauth_required", "Sign in first.");
+          return devicesDown ? fail(503, "account_offline", "Couldn't reach Orbyn.") : { status: 200, body: deviceList };
+        case "POST /api/account/sign-out":
+          if (session) signedOut();
+          return { status: 204 };
+        case "POST /api/account/sign-out-everywhere": {
+          const allowed = grant?.action === "sign_out_everywhere";
+          grant = null;
+          if (!session || !allowed) return fail(403, "reauth_required", "Confirm it's you to do this.");
+          if (deletionScheduled) return fail(409, "deletion_scheduled", "Deletion is scheduled.");
+          signedOut();
+          return { status: 204 };
+        }
         case "POST /api/account/sync/now":
           lastSynced = Math.floor(Date.now() / 1000);
           return { status: 202 };
@@ -167,8 +213,18 @@ export function createAccountMock() {
         case "POST /api/account/sync/resume":
           paused = false;
           return { status: 204 };
-        default:
+        default: {
+          const removal = /^DELETE \/api\/account\/devices\/([^/]+)$/.exec(route);
+          if (removal) {
+            const id = decodeURIComponent(removal[1] ?? "");
+            const allowed = grant?.action === "remove_device" && grant.device === id;
+            grant = null;
+            if (!session || !allowed) return fail(403, "reauth_required", "Confirm it's you to do this.");
+            deviceList = deviceList.filter((device) => device.id !== id || device.current);
+            return { status: 204 };
+          }
           return fail(404, "not_found", "No such account route.");
+        }
       }
     },
   };

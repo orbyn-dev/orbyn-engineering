@@ -50,7 +50,7 @@ export async function startMockApp(web) {
 }
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const nameOf = (step) => (step.prefix ? new RegExp(`^${escape(step.name)}`) : step.name);
+const nameOf = (step) => (step.exact ? new RegExp(`^${escape(step.name)}$`) : step.prefix ? new RegExp(`^${escape(step.name)}`) : step.name);
 
 async function route(page, spec) {
   await page.route(spec.route, async (request) => {

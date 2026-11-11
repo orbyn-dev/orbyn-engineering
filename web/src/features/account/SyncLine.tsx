@@ -6,6 +6,7 @@ import { IconButton } from "../../ui/controls";
 import { usePopover } from "../../ui/usePopover";
 import type { AccountView } from "../../generated/AccountView";
 import { accountApi } from "./api";
+import { pauseInfo } from "./pauseCopy";
 import { lastSynced, syncLine } from "./syncCopy";
 import { useAccount } from "./useAccount";
 import "./account.css";
@@ -46,7 +47,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
       : { right: Math.max(8, window.innerWidth - rect.right), top: rect.bottom + 8 };
   const refused = sync.kind === "paused" && (sync.reason === "zone_failed" || sync.reason === "too_large");
   const paused = sync.kind === "paused" && !refused;
-  const byPerson = paused && sync.reason === "by_person";
+  const pause = paused ? pauseInfo(sync) : null;
   const offline = sync.kind === "offline";
   const last = lastSynced(sync);
   const act = async (work: () => Promise<void>) => {
@@ -71,9 +72,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
     detail = `No connection. ${changes(sync.waiting)} ${sync.waiting === 1 ? "is" : "are"} saved on this computer and will send when you’re back online.`;
   } else if (paused) {
     title = "Paused";
-    detail = byPerson
-      ? "You paused sync. Changes are kept on this computer and don’t send or arrive until you resume."
-      : "Sync is paused.";
+    detail = pause?.detail ?? "Sync is paused.";
   } else if (sync.kind !== "online" || sync.waiting > 0) {
     title = "Syncing…";
     detail = "Sending or receiving your settings.";
@@ -91,17 +90,24 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
         </small>
       </div>
       <div className="ac-acts">
-        {byPerson ? (
-          <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => void act(() => accountApi.resumeSync())}>Resume sync</button>
+        {pause ? (
+          pause.action.kind === "resume" ? (
+            <button type="button" className="btn btn-secondary btn-small" disabled={busy || !pause.action.enabled} onClick={() => void act(() => accountApi.resumeSync())}>Resume sync</button>
+          ) : pause.action.kind === "keybindings" ? (
+            <button type="button" className="btn btn-secondary btn-small" onClick={() => { onClose(); navigate({ name: "settings", section: "keybindings" }); }}>Open keybindings</button>
+          ) : pause.action.kind === "retry" ? (
+            <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => void act(() => accountApi.syncNow())}>Try again</button>
+          ) : null
         ) : (
           <>
-            <button type="button" className="btn btn-secondary btn-small" disabled={busy || offline || paused} onClick={() => void act(() => accountApi.syncNow())}>
+            <button type="button" className="btn btn-secondary btn-small" disabled={busy || offline} onClick={() => void act(() => accountApi.syncNow())}>
               {refused ? "Try again" : "Sync now"}
             </button>
-            <button type="button" className="btn btn-secondary btn-small" disabled={busy || paused} onClick={() => void act(() => accountApi.pauseSync())}>Pause sync</button>
+            <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => void act(() => accountApi.pauseSync())}>Pause sync</button>
           </>
         )}
       </div>
+      {pause?.off ? <p className="ac-sub">{pause.off}</p> : null}
       <button type="button" className="ac-lnk" onClick={() => { onClose(); navigate({ name: "settings", section: "account" }); }}>Account settings</button>
     </div>,
     document.body,
