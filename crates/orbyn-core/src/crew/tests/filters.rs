@@ -303,3 +303,34 @@ fn with_nothing_usable_the_refusal_lists_every_rejection() {
     let none = refused(&brief(json!({})), &[], &Ask::default());
     assert!(none.rejected.is_empty());
 }
+
+#[test]
+fn tier_words_match_whole_words_only() {
+    let mut odd = engine("codex");
+    odd.models = Some(vec![
+        model("console-1", "Console", true),
+        model("solid-2", "Solid", false),
+    ]);
+    let refusal = refused(
+        &reading(json!({ "kind": "review" })),
+        &[odd],
+        &Ask::default(),
+    );
+    assert_eq!(refusal.rejected[0].why, RejectionWhy::TierBelowLead);
+    // A named model is a whole word too: `son` is not `sonnet`.
+    let named =
+        brief(json!({ "engine": { "id": "claude", "model": "son", "assigned_by": "person" } }));
+    assert_eq!(
+        refused(&named, &[engine("claude")], &Ask::default()).rejected[0].why,
+        RejectionWhy::MissingCapability
+    );
+    let exact = brief(
+        json!({ "engine": { "id": "claude", "model": "claude-sonnet-4", "assigned_by": "person" } }),
+    );
+    assert_eq!(
+        routed(&exact, &[engine("claude")], &Ask::default())
+            .model
+            .as_str(),
+        "claude-sonnet-4"
+    );
+}

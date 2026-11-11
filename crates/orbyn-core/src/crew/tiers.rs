@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 
 use orbyn_contracts::{BriefKind, ModelInfo, RouteRole, RouteTier};
 
-/// The words that mark a model as one tier's, matched in its id or label, ignoring case.
+/// The words that mark a model as one tier's, matched as whole words in its id or label,
+/// ignoring case.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TierWords {
     pub lead: Option<String>,
@@ -95,8 +96,23 @@ pub fn reviews(role: RouteRole) -> bool {
     !matches!(role, RouteRole::Builder | RouteRole::Scout)
 }
 
+fn words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// True when `word` (one or more hyphen- or space-separated words) appears as whole words
+/// in `text`, so `sol` matches `sol-1` and `Sol` but not `console` or `solid`.
+fn has_words(text: &str, word: &str) -> bool {
+    let (text, word) = (words(text), words(word));
+    !word.is_empty() && text.windows(word.len()).any(|run| run == word.as_slice())
+}
+
 fn mentions(model: &ModelInfo, word: &str) -> bool {
-    model.id.to_lowercase().contains(word) || model.label.to_lowercase().contains(word)
+    has_words(&model.id, word) || has_words(&model.label, word)
 }
 
 /// The tier a model fills on `family`, when the family has a mapping that names it.
@@ -158,7 +174,7 @@ pub fn model_for_tier<'a>(
 }
 
 /// A model the lead or person named: the exact id, else the one whose id or label mentions
-/// the name (`sonnet`, `sol`). Names are tokens, so ids with capitals match ignoring case.
+/// the name as whole words (`sonnet`, `sol`), ignoring case.
 pub fn model_named<'a>(
     models: &'a [ModelInfo],
     name: &str,

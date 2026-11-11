@@ -2235,11 +2235,11 @@ declaring writes. `approve` is listed only for Claude.
 
 `crew_route` is the one Crew tool so far, and it is Preview: it exists only while
 `CoreConfig::crew_preview` is on (`ORBYN_CREW_PREVIEW=1` for the service; it ships off), and with it off it is neither listed nor
-callable. It is a dry run of Router v0 (no model, no engine started, nothing stored) that
+callable. It is a dry run of Router v0 (no model, no run started, no engine started for limits, nothing stored) that
 returns the `RouteDecision` for a brief draft: the chosen engine and model at medium effort,
 the ranked alternatives, a reason for every score and a reason for every rejected engine.
 The router reads only the brief and this machine's own engine registry, model lists and
-limit reports, so an engine or model the machine has not configured is never routed to. An
+the limit reports already kept in the usage cache (an engine with none counts as not reporting; the tool never asks an engine for its limits), so an engine or model the machine has not configured is never routed to. An
 engine or model the lead names is still filtered and, if it fails, refused with the reason,
 never swapped. The answer key is never an input, and a decision is checked for secrets and
 for the key's text before it is stored. Its refusals use the Crew Protocol's error codes

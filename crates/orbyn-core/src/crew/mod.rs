@@ -16,7 +16,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub use gather::Machine;
+pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, refuse_leak, refuse_secret};
 pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};

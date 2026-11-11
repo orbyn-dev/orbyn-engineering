@@ -1,5 +1,6 @@
 //! `crew_route`: the dry run of the router. It answers which engine a brief would go to and
-//! why, and starts nothing: no thread, no run, no worktree, and nothing is stored. It is
+//! why, and starts nothing: no thread, no run, no worktree, no engine started for limits
+//! (they are read from the cache only), and nothing is stored. It is
 //! behind the Crew Preview flag (`CoreConfig::crew_preview`, off by default), so with the
 //! flag off the tool is neither listed nor callable.
 

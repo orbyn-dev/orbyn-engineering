@@ -28,6 +28,8 @@ struct Scripted {
     auth: AuthState,
     models: Vec<ModelInfo>,
     used_percent: Option<f64>,
+    /// A dry run must never ask for limits: this driver panics if it is asked.
+    limits_panic: bool,
     starts: Arc<AtomicUsize>,
 }
 
@@ -38,6 +40,7 @@ fn scripted(id: &'static str, starts: &Arc<AtomicUsize>) -> Scripted {
         auth: AuthState::NotApplicable,
         models: vec![model(&format!("{id}-model"), id, true)],
         used_percent: None,
+        limits_panic: false,
         starts: starts.clone(),
     }
 }
@@ -69,6 +72,10 @@ impl EngineDriver for Scripted {
     }
 
     async fn limits(&self) -> Result<Option<Value>> {
+        assert!(
+            !self.limits_panic,
+            "a dry run asked an engine for its limits"
+        );
         Ok(self.used_percent.map(|used| {
             json!({ "windows": [{ "id": "w", "label": "5h", "used_percent": used,
                 "window_minutes": 300, "resets_at": null }] })
@@ -198,7 +205,12 @@ fn three(starts: &Arc<AtomicUsize>) -> Vec<Scripted> {
     signed_out.auth = AuthState::LoggedOut;
     let mut absent = scripted("charlie", starts);
     absent.installed = false;
-    vec![scripted("alpha", starts), signed_out, absent]
+    vec![
+        scripted("alpha", starts),
+        signed_out,
+        absent,
+        scripted("Zulu", starts),
+    ]
 }
 
 fn names(reply: &Value) -> Vec<String> {
@@ -274,6 +286,14 @@ async fn the_dry_run_routes_from_the_machines_own_engines_and_starts_nothing() {
         );
     }
     assert_eq!(answer["alternatives"], json!([]));
+    // An engine a decision cannot name is listed with why, not dropped silently.
+    assert_eq!(answer["left_out"][0]["engine"], "Zulu");
+    assert!(
+        answer["left_out"][0]["why"]
+            .as_str()
+            .unwrap()
+            .contains("protocol token")
+    );
 
     // Nothing started, nothing stored.
     assert_eq!(f.starts.load(Ordering::SeqCst), 0);
@@ -316,6 +336,8 @@ async fn usage_the_default_engine_and_turned_off_engines_come_from_the_machine()
         full.used_percent = Some(100.0);
         vec![full, scripted("bravo", starts), scripted("delta", starts)]
     });
+    // The usage screen has read alpha's limits; the router only looks at what it kept.
+    f.core.engine_limits("alpha", false).await.unwrap();
     let (answer, _) = f.route(json!({ "brief": draft(json!({})) })).await;
     let why = |engine: &str| {
         answer["decision"]["rejected"]
@@ -390,6 +412,31 @@ async fn bad_input_is_refused_with_the_protocols_error_codes() {
         .route(json!({ "brief": draft(json!({})), "role": "boss" }))
         .await;
     assert_eq!(code(&answer), "invalid_object");
+    assert_eq!(f.starts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn limits_are_read_from_the_cache_and_an_engine_is_never_asked() {
+    let f = fixture(true, |starts| {
+        let mut a = scripted("alpha", starts);
+        a.limits_panic = true;
+        a.used_percent = Some(100.0);
+        let mut b = scripted("bravo", starts);
+        b.limits_panic = true;
+        vec![a, b]
+    });
+    // Nothing is cached, so both count as unreported: no quota filter, neutral headroom.
+    let (answer, error) = f.route(json!({ "brief": draft(json!({})) })).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["decision"]["engine"], "alpha");
+    assert!(
+        answer["decision"]["rejected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["why"] != "quota_exhausted")
+    );
+    assert!(f.core.cached_limits("alpha").is_none());
     assert_eq!(f.starts.load(Ordering::SeqCst), 0);
 }
 

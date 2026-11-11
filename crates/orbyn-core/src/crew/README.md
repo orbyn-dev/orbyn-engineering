@@ -14,7 +14,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `score` | Pass rate for the brief's kind (seeded defaults until `EvalHistory` has a measured rate) and quota headroom, in permille |
 | `tiers` | The tier a role needs and the model that fills it, matched against the models this machine lists |
 | `view` | A plain copy of one engine's status, models and usage |
-| `gather` | Builds the views from the engine registry, the model list and the limit report the engine picker reads |
+| `gather` | Builds the views from the engine registry and model list the engine picker reads, and limits from the usage cache only |
 | `stamp` | A brief draft becomes a brief: the core adds the envelope, a draft that carries one is refused |
 | `guard` | The secret scan (H2) and the answer-key leak check (H1) |
 | `persist` | Storing a decision with its task, after both checks |
@@ -31,6 +31,12 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   measured rate with its sample size).
 - No learning, trust score or counterfactual fork here: those are later slices, and
   `EvalHistory` is the one place they will feed in.
+
+## Follow-ups
+
+- Slice 3: scope `crew_route` to the lead's binding once workers exist. Today every thread's
+  binding sees the machine's engine state.
+- Tier words match whole words in a model's id or label; they are defaults to check against real ids.
 
 ## How it is tested
 
