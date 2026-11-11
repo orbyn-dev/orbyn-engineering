@@ -1,6 +1,6 @@
 import { serviceUrl } from "./origin";
 import { readToken } from "./token";
-import { forgetFlights, inLane, laneFor, shareRead } from "./lanes";
+import { inLane, laneFor } from "./lanes";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -159,16 +159,13 @@ async function send<T>(
 /** `foreground`: the visible screen's own read, which never waits in the slow lane. */
 export interface RequestOptions {
   priority?: "foreground";
-  /** Never joins a read already in flight: the answer decides something, so it must be read now. */
-  fresh?: boolean;
 }
 
 const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
 
 /**
- * Slow reads queue in their own lane and identical reads in flight share one request
- * (see `lanes.ts`); everything else goes straight out. A write drops the shared reads so
- * no read after it joins one sent before it. The slow-request warning counts queued time.
+ * Slow reads queue in their own lane (see `lanes.ts`); everything else goes straight out.
+ * The slow-request warning counts queued time.
  */
 export function request<T>(
   method: string,
@@ -178,15 +175,8 @@ export function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
-  let sent: Promise<T>;
-  if (method !== "GET" || body !== undefined) {
-    forgetFlights();
-    sent = send<T>(method, path, body, signal).finally(forgetFlights);
-  } else {
-    const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-    const start = (own: AbortSignal | undefined) => inLane(lane, own, (laned) => send<T>(method, path, body, laned), unreachable);
-    sent = options.fresh ? start(signal) : shareRead(`${method} ${path}`, signal, start);
-  }
+  const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
+  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned), unreachable);
   return sent.finally(() => clearTimeout(slow));
 }
 

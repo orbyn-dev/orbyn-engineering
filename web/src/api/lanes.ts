@@ -1,5 +1,5 @@
 /**
- * Request lanes and shared reads.
+ * Request lanes.
  *
  * The desktop webview (WKWebView) opens at most 6 HTTP/1.1 connections per host to
  * the local service, and two stay busy for good with the shell and thread event
@@ -24,14 +24,16 @@ export const LANE_TIMEOUT_MS = 30_000;
 
 export type Lane = "slow" | "interactive";
 
-/** Reads whose service work takes from a few hundred milliseconds to seconds. */
+/**
+ * Reads whose service work takes from half a second to seconds. The shell's polled reads
+ * (`/api/workspace`, `/api/updates`) stay out: a poll waits for all of them, so queueing them
+ * behind these would hold back every thread and project refresh.
+ */
 const SLOW_READS: readonly RegExp[] = [
   /^\/api\/pulls(\/|$)/,
   /^\/api\/limits(\/|$)/,
   /^\/api\/usage(\/|$)/,
   /^\/api\/health\/dependencies$/,
-  /^\/api\/workspace$/,
-  /^\/api\/updates$/,
   /^\/api\/engines\/[^/]+\/(models|tools)$/,
   /^\/api\/projects\/[^/]+\/pulls(\/|$)/,
   /^\/api\/threads\/[^/]+\/(tools|commands|limits)$/,
@@ -130,83 +132,7 @@ export async function inLane<T>(
   }
 }
 
-/**
- * An identical read is joined only while the first is this young. Reads made together, such as
- * two components mounting in one render, share one request. A read made later, after a key
- * press or an event the client cannot see as a write, may need newer server state than a
- * request that has been in flight since, so it goes out on its own.
- */
-export const SHARE_WINDOW_MS = 100;
-
-interface Flight {
-  startedAt: number;
-  promise: Promise<unknown>;
-  controller: AbortController;
-  callers: number;
-  /** The first caller gets the answer itself; only the others get copies. */
-  handedOut: boolean;
-}
-
-const flights = new Map<string, Flight>();
-
-/**
- * Identical reads in flight share one network request. Each caller gets its own copy of
- * the result and its own abort; the shared request is aborted only once every caller has.
- */
-export function shareRead<T>(key: string, signal: AbortSignal | undefined, start: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  if (signal?.aborted) return Promise.reject(abortError());
-  let flight = flights.get(key);
-  if (flight && Date.now() - flight.startedAt > SHARE_WINDOW_MS) flight = undefined;
-  if (!flight) {
-    const controller = new AbortController();
-    const made: Flight = { startedAt: Date.now(), promise: Promise.resolve(), controller, callers: 0, handedOut: false };
-    made.promise = start(controller.signal).finally(() => {
-      if (flights.get(key) === made) flights.delete(key);
-    });
-    // Callers handle the outcome; this keeps a fully abandoned flight from reporting an unhandled rejection.
-    made.promise.catch(() => undefined);
-    flights.set(key, made);
-    flight = made;
-  }
-  const joined = flight;
-  joined.callers += 1;
-  return new Promise<T>((resolve, reject) => {
-    const leave = () => signal?.removeEventListener("abort", onAbort);
-    const onAbort = () => {
-      leave();
-      joined.callers -= 1;
-      if (joined.callers === 0) {
-        if (flights.get(key) === joined) flights.delete(key);
-        joined.controller.abort();
-      }
-      reject(abortError());
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    joined.promise.then(
-      (value) => {
-        leave();
-        const own = joined.handedOut ? (structuredClone(value) as T) : (value as T);
-        joined.handedOut = true;
-        resolve(own);
-      },
-      (error: unknown) => {
-        leave();
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
- * A write may change what an identical read answers, so reads sent before it must not be
- * joined by reads made after it. The reads in flight finish for their own callers.
- */
-export function forgetFlights() {
-  flights.clear();
-}
-
-/** Test only: drops every shared read and every queued or running slow read. */
+/** Test only: drops every queued or running slow read. */
 export function resetLanesForTests() {
-  flights.clear();
   slowLane.reset();
 }

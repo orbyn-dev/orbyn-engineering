@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NETWORK_ERROR, request } from "./client";
-import { LANE_TIMEOUT_MS, SHARE_WINDOW_MS, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
+import { LANE_TIMEOUT_MS, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
 
 interface Pending {
   path: string;
@@ -51,8 +51,6 @@ describe("laneFor", () => {
       "/api/threads/t1/commands",
       "/api/threads/t1/limits",
       "/api/health/dependencies",
-      "/api/workspace",
-      "/api/updates",
       "/api/usage?days=30",
       "/api/limits",
       "/api/projects/p1/pulls/12/checks",
@@ -64,6 +62,8 @@ describe("laneFor", () => {
   it("keeps the fast reads and every write interactive", () => {
     expect(laneFor("GET", "/api/projects")).toBe("interactive");
     expect(laneFor("GET", "/api/forges")).toBe("interactive");
+    expect(laneFor("GET", "/api/workspace")).toBe("interactive");
+    expect(laneFor("GET", "/api/updates")).toBe("interactive");
     expect(laneFor("GET", "/api/threads?project_id=p1")).toBe("interactive");
     expect(laneFor("GET", "/api/threads/t1")).toBe("interactive");
     expect(laneFor("POST", "/api/pulls/details")).toBe("interactive");
@@ -121,114 +121,6 @@ describe("request lanes", () => {
     await Promise.all(first);
     expect(pending.map((entry) => entry.path)).not.toContain("/api/limits");
   });
-});
-
-describe("shared reads", () => {
-  it("shares one fetch between identical reads and gives each caller its own copy", async () => {
-    const { pending, fetchMock } = holdFetch();
-    const a = request<{ rows: number[] }>("GET", "/api/threads?project_id=p1");
-    const b = request<{ rows: number[] }>("GET", "/api/threads?project_id=p1");
-    await tick();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    pending[0]?.answer({ rows: [1] });
-    const [one, two] = await Promise.all([a, b]);
-    expect(one).toEqual({ rows: [1] });
-    expect(one).not.toBe(two);
-    one.rows.push(2);
-    expect(two.rows).toEqual([1]);
-  });
-
-  it("does not share reads that differ in query, or a write", async () => {
-    const { pending, fetchMock } = holdFetch();
-    const calls = [
-      request("GET", "/api/threads?project_id=p1"),
-      request("GET", "/api/threads?project_id=p2"),
-      request("POST", "/api/queue", {}),
-      request("POST", "/api/queue", {}),
-    ];
-    await tick();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    for (const entry of pending) entry.answer({});
-    await Promise.all(calls);
-  });
-
-  it("aborts the shared request only when every caller has aborted", async () => {
-    const { pending, fetchMock } = holdFetch();
-    const one = new AbortController();
-    const two = new AbortController();
-    const a = request("GET", "/api/projects", undefined, one.signal);
-    const b = request("GET", "/api/projects", undefined, two.signal);
-    await tick();
-    one.abort();
-    await expect(a).rejects.toMatchObject({ name: "AbortError" });
-    expect(pending[0]?.signal?.aborted).toBe(false);
-    two.abort();
-    await expect(b).rejects.toMatchObject({ name: "AbortError" });
-    expect(pending[0]?.signal?.aborted).toBe(true);
-
-    // A later identical read starts a new request instead of joining the abandoned one.
-    const c = request("GET", "/api/projects");
-    await tick();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    pending[1]?.answer([]);
-    await expect(c).resolves.toEqual([]);
-  });
-
-  it("lets one caller finish when another aborts", async () => {
-    const { pending } = holdFetch();
-    const gone = new AbortController();
-    const a = request("GET", "/api/projects", undefined, gone.signal);
-    const b = request<string[]>("GET", "/api/projects");
-    await tick();
-    gone.abort();
-    await expect(a).rejects.toMatchObject({ name: "AbortError" });
-    pending[0]?.answer(["x"]);
-    await expect(b).resolves.toEqual(["x"]);
-  });
-
-  it("starts a fresh read after a write instead of joining one sent before it", async () => {
-    const { pending, fetchMock } = holdFetch();
-    const before = request("GET", "/api/projects/p1/pulls/3");
-    await tick();
-    const write = request("POST", "/api/projects/p1/pulls/3/merge", {});
-    const after = request("GET", "/api/projects/p1/pulls/3");
-    await tick();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(pending[0]?.signal?.aborted).toBe(false);
-    await finishAll(pending);
-    await Promise.all([before, write, after]);
-  });
-
-  it("sends a read made after the share window on its own, so it can see newer server state", async () => {
-    vi.useFakeTimers();
-    const { pending, fetchMock } = holdFetch();
-    const first = request("GET", "/api/threads/t1/scripts");
-    const together = request("GET", "/api/threads/t1/scripts");
-    await vi.advanceTimersByTimeAsync(SHARE_WINDOW_MS + 1);
-    const later = request("GET", "/api/threads/t1/scripts");
-    await vi.advanceTimersByTimeAsync(1);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    for (const entry of pending) entry.answer([]);
-    await Promise.all([first, together, later]);
-  });
-
-  it("never joins a read in flight when asked for a fresh one", async () => {
-    const { pending, fetchMock } = holdFetch();
-    const held = request("GET", "/api/threads/t1/scripts");
-    const fresh = request("GET", "/api/threads/t1/scripts", undefined, undefined, { fresh: true });
-    await tick();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    for (const entry of pending) entry.answer([]);
-    await Promise.all([held, fresh]);
-  });
-
-  it("removes a shared read after it fails, so the next read goes out again", async () => {
-    const fetchMock = vi.fn(async () => new Response("no", { status: 500 }));
-    vi.stubGlobal("fetch", fetchMock);
-    await expect(request("GET", "/api/projects")).rejects.toMatchObject({ code: "http_500" });
-    await expect(request("GET", "/api/projects")).rejects.toMatchObject({ code: "http_500" });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
 
   it("frees the slow slot when a read fails", async () => {
     const calls: string[] = [];
@@ -243,27 +135,15 @@ describe("shared reads", () => {
     expect(calls).toHaveLength(4);
   });
 
-  it("lets a foreground read bypass a full slow lane, and still shares it", async () => {
+  it("lets a foreground read bypass a full slow lane", async () => {
     const { pending, fetchMock } = holdFetch();
     const slow = [request("GET", "/api/pulls?state=open&q="), request("GET", "/api/usage?days=7"), request("GET", "/api/limits")];
     const a = request("GET", "/api/projects/p1/pulls/3", undefined, undefined, { priority: "foreground" });
-    const b = request("GET", "/api/projects/p1/pulls/3", undefined, undefined, { priority: "foreground" });
     await tick();
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(pending.some((entry) => entry.path === "/api/projects/p1/pulls/3")).toBe(true);
     await finishAll(pending);
-    await Promise.all([...slow, a, b]);
-  });
-
-  it("hands the first caller the answer itself and copies it for the others", async () => {
-    const { pending } = holdFetch();
-    const a = request<{ n: number }>("GET", "/api/projects");
-    const b = request<{ n: number }>("GET", "/api/projects");
-    await tick();
-    pending[0]?.answer({ n: 1 });
-    const [one, two] = await Promise.all([a, b]);
-    expect(one).toEqual(two);
-    expect(one).not.toBe(two);
+    await Promise.all([...slow, a]);
   });
 });
 
