@@ -99,6 +99,15 @@ impl ScmReads {
 
     /// A write changed one pull request, and so possibly every list and stack it is in.
     pub(crate) fn pull_changed(&self, project_id: &str, number: u64) {
+        self.pull_dropped(project_id, number);
+        self.list.announce("pulls");
+        self.list.announce(&pull_topic(project_id, number));
+    }
+
+    /// The same, without telling the windows: for a pass that read this pull request again
+    /// on its own and found it changed. Only this pull request's parts, the project's lists
+    /// and stacks go; every other pull request keeps what it has.
+    pub(crate) fn pull_dropped(&self, project_id: &str, number: u64) {
         let pull = key(&[project_id, &number.to_string()]);
         self.detail.invalidate(&pull);
         self.checks.invalidate(&pull);
@@ -106,8 +115,10 @@ impl ScmReads {
         self.timeline.invalidate(&pull);
         self.files.invalidate(&pull);
         self.revisions.invalidate(&pull);
-        self.project_changed(project_id);
-        self.list.announce(&pull_topic(project_id, number));
+        let project = key(&[project_id]);
+        self.project_list.invalidate(&project);
+        self.stack.invalidate(&project);
+        self.list.invalidate_all();
     }
 
     /// Something outside this service may have changed any pull request of a project: a
@@ -144,15 +155,6 @@ impl ScmReads {
         self.reviewers.invalidate_all();
         self.labels.invalidate_all();
         self.lists_changed();
-    }
-
-    /// Pull requests were opened, closed or merged in a project.
-    pub(crate) fn project_changed(&self, project_id: &str) {
-        let project = key(&[project_id]);
-        self.project_list.invalidate(&project);
-        self.stack.invalidate(&project);
-        self.list.invalidate_all();
-        self.list.announce("pulls");
     }
 
     /// Pull requests changed somewhere, as when a thread opened one.

@@ -440,3 +440,43 @@ async fn a_push_and_a_workflow_approval_drop_what_was_kept_for_the_project() {
     f.timed(&checks).await;
     assert_eq!(f.asked("pr checks"), checked + 1);
 }
+
+#[tokio::test]
+async fn a_watch_pass_that_finds_nothing_new_keeps_every_kept_read() {
+    let f = fixture().await;
+    let base = format!("/api/projects/{}/pulls/12", f.project);
+    let checks = format!("{base}/checks");
+    let (code, body) = f
+        .service
+        .send(
+            &format!("/api/threads/{}/pulls", f.thread),
+            json!({ "number": 12 }),
+        )
+        .await;
+    assert_eq!(code, 201, "{body}");
+    f.timed(&base).await;
+    f.timed(&checks).await;
+    f.timed("/api/pulls").await;
+    let checked = f.asked("pr checks");
+
+    // The pass reads the linked pull request again and finds it as it was.
+    let response = f.service.post("/api/watches/check").send().await.unwrap();
+    assert_eq!(response.status().as_u16(), 204);
+    f.timed(&base).await;
+    f.timed(&checks).await;
+    f.timed("/api/pulls").await;
+    assert_eq!(f.asked("pr checks"), checked, "the checks were kept");
+
+    // A pass that finds the pull request changed drops what was kept for it.
+    f.set("gh-title", "changed upstream");
+    f.service.post("/api/watches/check").send().await.unwrap();
+    let detail = f.timed(&base).await.1;
+    assert!(
+        detail["pull"]["title"]
+            .as_str()
+            .unwrap()
+            .ends_with("changed upstream")
+    );
+    f.timed(&checks).await;
+    assert!(f.asked("pr checks") > checked);
+}

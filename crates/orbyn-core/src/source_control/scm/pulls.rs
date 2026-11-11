@@ -41,14 +41,26 @@ impl Core {
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         self.link_branch_pull(id, forge, cwd).await;
-        // What is read below is newer than anything kept for this project.
-        self.scm_reads.project_dropped(&thread.project_id);
         let mut merged = false;
         for pull in self.store.linked_pulls(id)? {
             if pull.state != "open" {
                 continue;
             }
             let fresh = fetch_pull(forge, cwd, pull.number).await?;
+            // Only a pull request that changed loses what is kept for it, so a pass that
+            // finds nothing new leaves every open pull request screen as it was. The link
+            // keeps these fields only, so only they can be compared with what was read.
+            let changed = (
+                &fresh.title,
+                &fresh.state,
+                &fresh.head,
+                &fresh.base,
+                &fresh.url,
+            ) != (&pull.title, &pull.state, &pull.head, &pull.base, &pull.url)
+                || fresh.author != pull.author;
+            if changed {
+                self.scm_reads.pull_dropped(&thread.project_id, pull.number);
+            }
             merged |= fresh.state == "merged";
             self.store.link_pull(id, &fresh)?;
         }

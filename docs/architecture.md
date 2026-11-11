@@ -1754,8 +1754,9 @@ therefore answer from the last known value and refresh in the background
 - **A write that changes the data drops it.** Comments, reviews, reviewers, labels, edits,
   merges, closes and actions drop that pull request's detail, checks, conversation,
   timeline, files, revisions and stack, and every list. A push from a git action, a workflow
-  approval, a run that ends, a thread's pull request refresh and a watch that found news drop
-  every pull request read of the project. Opening a pull request drops the lists. A library
+  approval and a run that ends drop every pull request read of the project. A thread's pull
+  request refresh and a watch pass drop only the pull requests they found changed, silently,
+  so a pass that finds nothing new leaves open screens as they were. Opening a pull request drops the lists. A library
   change (setup, fetch, update, rollback) drops the workspace status; so does any write to a
   project, thread, task, queue, clone, run, approval, history or storage route, silently,
   because the window that wrote reads again. An engine install, update, add, removal or ACP

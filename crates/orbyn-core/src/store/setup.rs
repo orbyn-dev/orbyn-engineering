@@ -180,11 +180,11 @@ impl Store {
         admission: super::Admission<'_>,
         attachments: &[String],
     ) -> Result<Run> {
-        self.commit(|tx, appended| {
+        self.run_changed(self.commit(|tx, appended| {
             let run = super::runs::admit_in(tx, appended, &self.epoch, &admission)?;
             capture_input(tx, &run, admission.prompt, attachments)?;
             Ok(run)
-        })
+        }))
     }
 
     /// Terminal run history stays immutable. Retry creates a new admission and

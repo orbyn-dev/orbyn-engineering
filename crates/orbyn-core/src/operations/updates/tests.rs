@@ -539,10 +539,47 @@ async fn an_engine_update_shows_in_the_polled_status_without_waiting_for_the_fre
     // The first status is younger than its fresh time, yet the update is already in it.
     let after = f.core.updates.cached_status(false).await;
     assert_ne!(current(&before), current(&after));
-    // So is a change to the library or to whether a run is active: other keys.
-    assert_ne!(f.core.updates.status_key(), {
-        f.core.workspace.invalidate_status();
-        f.core.engines.invalidate().await;
-        f.core.updates.status_key()
-    });
+}
+
+#[tokio::test]
+async fn a_library_change_or_a_run_is_a_new_status_key_and_wakes_the_stream() {
+    let f = fixture("exit 0").await;
+    let key = || f.core.updates.status_key(f.core.updates.runs_active());
+    let first = key();
+    let mut watch = f.core.updates.watch();
+
+    // A change to the library itself (here a fetch) is a new key.
+    f.core.workspace.update(false).await.unwrap();
+    let library = key();
+    assert_ne!(first, library);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+    );
+
+    // So is a run starting, which also blocks what cannot apply while one runs.
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert!(f.core.updates.runs_active());
+    let running = key();
+    assert_ne!(library, running);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+    );
+    // The polled status reflects it at once, with no fresh time passing.
+    let status = f.core.updates.cached_status(false).await;
+    assert!(!status.library.can_apply);
+
+    // And it ends: another change, another key.
+    wait_running(&f.core, &run.id).await;
+    f.core.runs.cancel(&run.id).unwrap();
+    wait_stopped(&f.core, &run.id).await;
+    assert_ne!(running, key());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+    );
 }

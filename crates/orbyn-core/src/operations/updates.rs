@@ -52,6 +52,7 @@ pub struct UpdateWatch {
     updates: watch::Receiver<u64>,
     engines: watch::Receiver<u64>,
     library: watch::Receiver<u64>,
+    runs: watch::Receiver<u64>,
 }
 
 impl UpdateWatch {
@@ -61,6 +62,7 @@ impl UpdateWatch {
             changed = self.updates.changed() => changed.is_ok(),
             changed = self.engines.changed() => changed.is_ok(),
             changed = self.library.changed() => changed.is_ok(),
+            changed = self.runs.changed() => changed.is_ok(),
         }
     }
 }
@@ -168,6 +170,7 @@ impl UpdateCenter {
             updates: self.changes.subscribe(),
             engines: self.engines.subscribe_changes(),
             library: self.workspace.subscribe_library(),
+            runs: self.store.subscribe_run_changes(),
         }
     }
 
@@ -301,8 +304,7 @@ impl UpdateCenter {
     /// What the status is read from: engine updates and changes to the engine set, changes
     /// to the library, and whether a run is active. A change to any of them is a new key, so
     /// progress shows at once and never waits for a fresh time to pass.
-    fn status_key(&self) -> String {
-        let runs_active = self.store.active_runs().is_ok_and(|runs| !runs.is_empty());
+    fn status_key(&self, runs_active: bool) -> String {
         crate::util::swr::key(&[
             "status",
             &self.engines.change_epoch().to_string(),
@@ -316,11 +318,16 @@ impl UpdateCenter {
     /// on Git and the engines. `refresh` reads now and keeps the answer.
     pub async fn cached_status(self: &Arc<Self>, refresh: bool) -> UpdateStatus {
         let center = self.clone();
+        // Asked once: the key and the status it reads agree on whether a run is active.
+        let runs_active = self.runs_active();
         let kept = self
             .status_reads
-            .get(&self.status_key(), "updates", refresh, move || async move {
-                Ok(center.status().await)
-            })
+            .get(
+                &self.status_key(runs_active),
+                "updates",
+                refresh,
+                move || async move { Ok(center.status_given(runs_active).await) },
+            )
             .await;
         match kept {
             Ok(status) => status,
@@ -331,7 +338,14 @@ impl UpdateCenter {
     /// The current picture: local Git state and run activity are read fresh, and
     /// the network's answers come from the last check.
     pub async fn status(&self) -> UpdateStatus {
-        let runs_active = self.store.active_runs().is_ok_and(|runs| !runs.is_empty());
+        self.status_given(self.runs_active()).await
+    }
+
+    fn runs_active(&self) -> bool {
+        self.store.active_runs().is_ok_and(|runs| !runs.is_empty())
+    }
+
+    async fn status_given(&self, runs_active: bool) -> UpdateStatus {
         let library = self.library_status(runs_active).await;
         let engines = self.engine_statuses().await;
         let known = lock(&self.known);
