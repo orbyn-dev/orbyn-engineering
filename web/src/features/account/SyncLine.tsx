@@ -2,10 +2,11 @@ import { Check, CloudOff, Settings } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { navigate } from "../../product/state/route";
-import { IconButton } from "../../ui/controls";
+import { Button, IconButton } from "../../ui/controls";
 import { usePopover } from "../../ui/usePopover";
 import type { AccountView } from "../../generated/AccountView";
 import { accountApi } from "./api";
+import { requestConnect } from "./changes";
 import { pauseInfo } from "./pauseCopy";
 import { lastSynced, syncLine } from "./syncCopy";
 import { useAccount } from "./useAccount";
@@ -66,7 +67,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
   let detail = "Your settings are the same on every signed-in computer.";
   if (sync.kind === "not_connected") {
     title = "Not connected";
-    detail = "This computer’s settings stay here until you connect them to your account.";
+    detail = "This computer’s settings stay here. Connect them to your account to sync appearance, keybindings and chat and diff preferences.";
   } else if (refused) {
     title = "Couldn’t sync";
     detail = `The server didn’t accept ${changes(Math.max(1, sync.waiting))}. Nothing was lost; it is kept here.`;
@@ -85,6 +86,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
       <h2>Sync</h2>
       <div className="ac-big">{title === "Up to date" ? <Check size={14} aria-hidden /> : null}{title}</div>
       <p className="ac-sub">{detail}</p>
+      {sync.kind === "not_connected" ? null : (
       <div className="ac-zone">
         <b>Settings</b>
         <span>{sync.waiting} waiting</span>
@@ -92,6 +94,7 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
           {refused ? `${changes(Math.max(1, sync.waiting))} couldn’t be sent${last ? ` · last synced ${last}` : ""}` : last ? `Last synced ${last}` : "Not synced yet"}
         </small>
       </div>
+      )}
       <div className="ac-acts">
         {pause ? (
           pause.action.kind === "resume" ? (
@@ -101,7 +104,9 @@ function SyncPopover({ view, anchor, place, reload, onClose }: { view: AccountVi
           ) : pause.action.kind === "retry" ? (
             <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => void act(() => accountApi.syncNow())}>Try again</button>
           ) : null
-        ) : sync.kind === "not_connected" ? null : (
+        ) : sync.kind === "not_connected" ? (
+          <Button small tone="primary" onClick={() => { onClose(); requestConnect(); navigate({ name: "settings", section: "account" }); }}>Connect settings</Button>
+        ) : (
           <>
             <button type="button" className="btn btn-secondary btn-small" disabled={busy || offline} onClick={() => void act(() => accountApi.syncNow())}>
               {refused ? "Try again" : "Sync now"}

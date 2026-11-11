@@ -87,19 +87,13 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
   }
   if (shown.state === "denied" || shown.state === "codes_differ") {
     // The Engine says nothing about why a request closed on the other side, so every such close reads the same.
-    return (
-      <Card focus alert title="Denied or cancelled." lead="A device you trust said no, or the request was cancelled. If this was you, try again, or sign in from a device you already trust." label="Sign in · approve this device">
-        <div className="ac-acts">
-          <Button tone="primary" disabled={busy} onClick={() => void leave("sign-in")}>Try again</Button>
-          <Button disabled={busy} onClick={() => void leave("home")}>Back to Account</Button>
-        </div>
-      </Card>
-    );
+    return <ClosedCard busy={busy} onLeave={(to) => void leave(to)} />;
   }
   if (failures >= LOOK_FAILURES) {
-    // Looking has failed several times in a row: the request may be lost, so say so instead of waiting for the clock.
+    // Looking has failed several times in a row. Nothing is closed: the request may still be waiting, and the looks go
+    // on, so this reads neutral (no alert, no spinner) and goes back to waiting when one succeeds.
     return (
-      <Card alert title="Couldn’t check this request" lead="Orbyn couldn’t ask whether a trusted device answered. If one already did, cancel and sign in again." label="Sign in · approve this device">
+      <Card title="Couldn’t check this request." lead="This isn’t final: the request may still be waiting on your other device." label="Sign in · approve this device">
         <div className="ac-acts">
           <Button disabled={busy} onClick={() => void leave("sign-in")}>Cancel</Button>
         </div>
@@ -125,14 +119,13 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
   );
 }
 
-/** The one closed state the person makes themselves: they saw the two codes differ on this screen. */
-export function MismatchCard({ onBack }: { onBack(to: "sign-in" | "home"): void }) {
+/** Every closed request, whichever side closed it: one neutral message, because the screen does not know which. */
+export function ClosedCard({ busy = false, onLeave }: { busy?: boolean; onLeave(to: "sign-in" | "home"): void }) {
   return (
-    <Card focus alert title="The codes didn’t match" lead="The code on the other device wasn’t the same as the one on this screen, so this sign-in was closed. No one is signed in." label="Sign in · approve this device">
-      <p>If you started this sign-in, try again and compare the codes carefully. If you didn’t, you don’t need to do anything.</p>
+    <Card focus alert title="Denied or cancelled." lead="A device you trust said no, or the request was cancelled. If this was you, try again, or sign in from a device you already trust." label="Sign in · approve this device">
       <div className="ac-acts">
-        <Button tone="primary" onClick={() => onBack("sign-in")}>Try again</Button>
-        <Button onClick={() => onBack("home")}>Back to Account</Button>
+        <Button tone="primary" disabled={busy} onClick={() => onLeave("sign-in")}>Try again</Button>
+        <Button disabled={busy} onClick={() => onLeave("home")}>Back to Account</Button>
       </div>
     </Card>
   );

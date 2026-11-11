@@ -169,8 +169,19 @@ const LIMIT_WARN_AT = 20;
 const LIMITS_CHECK_MS = 5 * 60 * 1000;
 const lastLimits = new Map<string, { at: number; limits: Promise<EngineLimits> }>();
 
-/** What's left of each limit window for this thread's engine, when it reports one. */
+/** Engines that give no limit window of their own: the row says so instead of staying empty. */
+const LIMITS_NOT_REPORTED: readonly string[] = ["claude", "opencode"];
+
+/** The Limits row: a window only for an engine that reports one (Codex); "Not reported" for Claude and OpenCode. */
 function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
+  if (LIMITS_NOT_REPORTED.includes(engine)) {
+    return <DRow icon={<Activity size={16} aria-hidden />} label="Limits" value={<span className="t3">Not reported</span>} />;
+  }
+  return <ReportedLimitsRow threadId={threadId} engine={engine} />;
+}
+
+/** What's left of each limit window for this thread's engine, when it reports one. */
+function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   const limits = useAsync(`details-limits:${engine}`, (_signal, how) => {
     const kept = lastLimits.get(engine);
     // A change the service announced reads again whatever this card kept.

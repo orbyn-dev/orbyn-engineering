@@ -6,7 +6,7 @@ import type { AccountDevice } from "../../generated/AccountDevice";
 import { accountApi } from "./api";
 import { DeviceRows, DevicesNote } from "./DeviceRows";
 import { pauseInfo } from "./pauseCopy";
-import { syncRowText } from "./syncCopy";
+import { isSyncing, syncRowText } from "./syncCopy";
 
 /** The person's account, and the one sync zone that exists. */
 export function SignedInPage({
@@ -66,7 +66,7 @@ export function SignedInPage({
         </div>
         {view.connect !== "connected" ? (
           <Button small disabled={stale} onClick={onConnect}>Connect settings</Button>
-        ) : pausedAny ? null : offline ? (
+        ) : pausedAny || (isSyncing(sync) && !stale) ? null : offline ? (
           <Button small disabled>Waiting for a connection</Button>
         ) : (
           <Button small disabled={busy || stale} onClick={() => void act(() => accountApi.syncNow())}>Sync now</Button>

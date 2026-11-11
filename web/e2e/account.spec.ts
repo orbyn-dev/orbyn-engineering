@@ -137,6 +137,7 @@ test("a trusted device lets a new one in only after the password", async ({ page
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Manage devices" }).click();
   await page.getByRole("button", { name: "Compare codes" }).click();
+  await expect(page.getByRole("dialog", { name: "New sign-in" }).getByRole("button", { name: "Don’t allow" })).toBeVisible();
   await page.getByRole("button", { name: "Codes match · Allow" }).click();
   const confirm = page.getByRole("dialog", { name: "Confirm it’s you" });
   await expect(confirm.getByText("To let iPad sign in")).toBeVisible();
@@ -155,7 +156,7 @@ test("a computer with settings asks how to join them, shows the first sync and i
   await expect(choice.getByLabel(/Combine them/)).toBeChecked();
   await choice.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("dialog", { name: "Connecting your settings" })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Settings connected" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("dialog", { name: "Settings connected" })).toContainText("24 settings synced.", { timeout: 15000 });
   await page.getByRole("button", { name: "Done" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
