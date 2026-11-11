@@ -155,8 +155,8 @@ ALTER TABLE crew_runs ADD COLUMN verifying_since TEXT;
 // newest revision of a key in a crew is the one that stands, and (crew, key, rev) is unique, so
 // two writes on the same revision cannot both land (H12). A delivery row says how a message
 // reached one recipient: `live` (handed to a running turn's input), `next_turn` (queued, or
-// sent with the next prompt), `held` (the worker is not in a turn, so nothing is sent until its
-// next prompt) or `failed`. Rows are only added; the newest row for a message and recipient says
+// sent with the next prompt), `tool_result` (returned in the recipient's next bus tool result),
+// `held` (no running turn took it, so nothing is sent until a prompt or a tool call) or `failed`. Rows are only added; the newest row for a message and recipient says
 // where it stands. The mode lives here, not in the message, so a message's id does not depend on it.
 pub(super) const CREW_BUS: &str = r#"
 ALTER TABLE crew_messages ADD COLUMN sender TEXT NOT NULL DEFAULT '';
@@ -181,7 +181,7 @@ CREATE TABLE crew_deliveries (
     message_id TEXT NOT NULL REFERENCES crew_messages(id) ON DELETE CASCADE,
     recipient TEXT NOT NULL,
     thread_id TEXT NOT NULL,
-    mode TEXT NOT NULL CHECK(mode IN ('held', 'live', 'next_turn', 'failed')),
+    mode TEXT NOT NULL CHECK(mode IN ('held', 'live', 'next_turn', 'tool_result', 'failed')),
     note TEXT,
     at TEXT NOT NULL
 );

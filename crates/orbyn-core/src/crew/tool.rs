@@ -129,10 +129,7 @@ impl Core {
         let answer = match tool {
             START_TOOL => self.crew_start_tool(binding, args).await,
             REPORT_TOOL => self.crew_report_tool(binding, args).await,
-            super::POST_TOOL => self.crew_post_tool(binding, args).await,
-            super::ASK_TOOL => self.crew_ask_tool(binding, args).await,
-            super::BOARD_READ_TOOL => self.crew_board_read_tool(binding, args).await,
-            super::BOARD_WRITE_TOOL => self.crew_board_write_tool(binding, args).await,
+            bus if super::BUS_TOOLS.contains(&bus) => self.crew_bus_tool(binding, bus, args).await,
             _ => self.crew_route_tool(binding, args).await,
         };
         match answer {

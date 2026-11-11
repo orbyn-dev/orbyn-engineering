@@ -32,12 +32,8 @@ async fn two_engines_exchange_a_board_fact_mid_turn() {
         .await;
     assert!(!error, "{sent}");
     assert_eq!(sent["delivered"][0]["to"], json!(d.mb));
-    assert_eq!(sent["delivered"][0]["mode"], "next_turn");
-    let waiting = d.queued(&wb);
-    assert_eq!(waiting.len(), 1, "{waiting:?}");
-    assert!(waiting[0].contains("trust=\"data\""), "{}", waiting[0]);
-    assert!(waiting[0].contains("api.shape is on the board"));
-    assert!(d.steered_to(&wb).is_empty());
+    assert_eq!(sent["delivered"][0]["mode"], "held");
+    assert!(d.queued(&wb).is_empty() && d.steered_to(&wb).is_empty());
 
     // B reads what A wrote, with its author and revision, and builds on it.
     let (read, error) = d
@@ -84,18 +80,17 @@ async fn two_engines_exchange_a_board_fact_mid_turn() {
         .call(&d.ta, "crew_board_read", json!({ "key": "api.shape" }))
         .await;
     assert_eq!(now["fact"]["value"]["route"], "/parse/duration");
-    d.w.until("the lead is told", |w| {
-        w.sent_to(&w.lead)
-            .iter()
-            .any(|p| p.contains("BoardConflict"))
-    })
-    .await;
+    assert!(d.lead_notices().iter().any(|n| n.contains("BoardConflict")));
+    assert!(
+        d.w.sent_to(&d.w.lead).is_empty(),
+        "no turn was started for the lead"
+    );
 
     // How each message got there is on record, per recipient; the messages hold no mode.
     let by_a = d.w.core.store.crew_deliveries(&d.a).unwrap();
     assert_eq!(
         (by_a[0].recipient.as_str(), by_a[0].mode.as_str()),
-        (d.mb.as_str(), "next_turn")
+        (d.mb.as_str(), "held")
     );
     let by_b = d.w.core.store.crew_deliveries(&d.b).unwrap();
     assert_eq!(
@@ -139,12 +134,11 @@ async fn the_hop_limit_trips_and_the_lead_resets_the_pair() {
         d.refused(&token, "crew_post", args).await,
         "hop_limit_exceeded"
     );
-    d.w.until("the lead is told", |w| {
-        w.sent_to(&w.lead)
+    assert!(
+        d.lead_notices()
             .iter()
-            .any(|p| p.contains("reached 3 messages"))
-    })
-    .await;
+            .any(|n| n.contains("reached 3 messages"))
+    );
 
     // To the lead and to everyone do not count against the pair.
     for n in 0..4 {
@@ -285,10 +279,10 @@ async fn an_ask_goes_pending_or_returns_the_answer() {
     assert_eq!(pending["state"], "pending");
     let question = pending["question"].clone();
     // The question reached B as data, with how to answer it.
-    let queued = d.queued(&d.w.worker(&d.b));
+    let held = d.held_text(&d.b);
     assert!(
-        queued[0].contains("kind=\"question\"") && queued[0].contains("in_reply_to"),
-        "{queued:?}"
+        held.contains("kind=\"question\"") && held.contains("in_reply_to"),
+        "{held}"
     );
 
     // The late answer is an ordinary message to A: handed to its running turn.

@@ -142,10 +142,11 @@ impl Store {
             .collect()
     }
 
-    /// How many messages `sender` has posted in a task's run.
+    /// How many posts `sender` has made in a task's run: its messages and its board writes.
     pub fn count_crew_posts(&self, task_id: &str, sender: &str) -> Result<u32> {
         Ok(self.reader().query_row(
-            "SELECT COUNT(*) FROM crew_messages WHERE task_id = ?1 AND sender = ?2",
+            "SELECT (SELECT COUNT(*) FROM crew_messages WHERE task_id = ?1 AND sender = ?2)
+                  + (SELECT COUNT(*) FROM crew_facts WHERE task_id = ?1 AND author = ?2)",
             params![task_id, sender],
             |row| row.get(0),
         )?)

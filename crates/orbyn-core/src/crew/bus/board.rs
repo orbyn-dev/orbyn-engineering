@@ -70,6 +70,21 @@ impl Core {
         let _bus = self.crew_bus.lock.lock().await;
         let crew = who.crew_id.as_str();
         let members = self.store.crew_tasks_in_crew(crew).map_err(internal)?;
+        // H5: a board write is a post, so rewriting a key is no way round the limit.
+        if let Some(own) = &who.task {
+            let posted = self
+                .store
+                .count_crew_posts(own, who.member.as_str())
+                .map_err(internal)?;
+            if posted >= limits.posts {
+                let error = CrewError::new(
+                    ErrorCode::PostLimitExceeded,
+                    format!("{} reached {} posts in this run", who.member, limits.posts),
+                );
+                self.tell_lead_of(&who, &error);
+                return Err(error);
+            }
+        }
         let live = |state: &str| !crate::crew::lifecycle::is_final(state);
         let task = match (&who.task, named) {
             (Some(own), None) => own.clone(),
@@ -102,6 +117,16 @@ impl Core {
             now: stamp_now()?,
         };
         let fact = stamper.fact(&Value::Object(draft), &run, who.role)?;
+        if fact.rev > limits.revisions {
+            let error = invalid(format!(
+                "{} is at its limit of {} revisions; the lead decides",
+                fact.key, limits.revisions
+            ));
+            if who.role == CrewRole::Worker {
+                self.tell_lead_of(&who, &error);
+            }
+            return Err(error);
+        }
         let value_bytes = orbyn_contracts::canonical_json(&fact.value)?.len();
         if value_bytes > limits.fact_bytes {
             return Err(invalid(format!(

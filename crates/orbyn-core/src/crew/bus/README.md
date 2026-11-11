@@ -31,11 +31,19 @@ the rest of [crew](../README.md): off, the four tools do not exist.
   A lead message to a member starts the count again for every pair that member is in; to `all` or to a third
   member it resets nothing. This is H4 as written; narrowing it to the pairs the lead was told about
   is a protocol decision (#446). Counted from the stored messages in order, so a restart loses nothing.
-- **Delivery.** A running worker is steered when its engine takes input mid-turn (`runs.steer`), else the
-  message is queued for its next turn. The record says `live` only when the text was handed to the running
-  turn's input; a real engine may read it after the tool call it is in (#444). A worker that is not in a turn
-  (verifying, waiting for a person) has the message `held`, so it cannot start a turn on files the verifier
-  is reading; it goes out with the next retry prompt (#447). The lead is always queued, never steered.
+- **Delivery.** The bus never starts a turn and never writes a thread's queue (that is the person's: the
+  queue and a plain steer show text as the person's own). Text is handed only to a turn that is running and
+  takes input (`runs.steer_live`), and the timeline shows it under the role `crew`. Otherwise it is `held` and
+  reaches the recipient with the next prompt the core sends it (a retry or change-of-approach prompt, a result for
+  the lead) or in the `inbox` of its next bus tool result (`tool_result`). A worker's task state is read again when
+  the text is handed over, so a worker being verified is never handed anything. If no turn comes and the recipient
+  calls no bus tool, the message is not delivered and stays `held` on record (#447). `live` means handed to the
+  running turn's input; a real engine may read it after the tool call it is in (#444).
+- A held or live text is checked for secrets and the answer key again when it leaves, against the keys as they are
+  then; so is a board read by a worker and an answer returned to a waiting `crew_ask`. A text a key now covers is
+  replaced by a plain notice. A worker's first prompt leaves out board facts and messages a key covers.
+- **Posts.** A board write counts as a post (H5), and a key has at most 16 revisions, so rewriting a key is no way
+  round the limits.
 - The lead is told once per distinct refusal (hop, post limit, board conflict), by a message from the core
   stored and queued like any other. The worker that keeps knocking does not fill the lead's queue.
 - `all` means every other member whose run is live. The lead reads its worker's messages to `lead`.
@@ -53,5 +61,5 @@ as a pure rule.
 
 ## Limits of Preview
 
-- Limits come from `Bus::lower`; no rule file is read yet (#445).
+- Limits come from `Bus::lower`, which applies to every crew in the process; no rule file is read yet and limits should be per crew (#445).
 - Fake engines only. No real Claude or Codex run has shown when a steered message is read (#444).

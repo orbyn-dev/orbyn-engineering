@@ -409,11 +409,43 @@ impl RunManager {
             self.enqueue(thread_id, prompt, &[])?;
             return Ok(SteerState::Queued);
         };
-        let message_id = format!("{}:{}:prompt", run.id, new_id());
+        self.send_steer(&run.id, &input, prompt, "user")?;
+        Ok(SteerState::Delivered)
+    }
+
+    /// Hands `prompt` to the running turn's input and to nothing else: no queue, no new turn.
+    /// False when there is no running turn that takes input. The timeline shows the text under
+    /// `role`, so it is not taken for something the person typed.
+    pub fn steer_live(self: &Arc<Self>, thread_id: &str, prompt: &str, role: &str) -> Result<bool> {
+        check_prompt(prompt)?;
+        let Some(run) = self.store.thread(thread_id)?.active_run else {
+            return Ok(false);
+        };
+        if matches!(run.state, RunState::Admitted | RunState::Starting) {
+            return Ok(false);
+        }
+        let input = self
+            .lock()
+            .get(&run.id)
+            .and_then(|active| active.input.clone());
+        let Some(input) = input else {
+            return Ok(false);
+        };
+        Ok(self.send_steer(&run.id, &input, prompt, role).is_ok())
+    }
+
+    fn send_steer(
+        &self,
+        run_id: &str,
+        input: &tokio::sync::mpsc::UnboundedSender<String>,
+        prompt: &str,
+        role: &str,
+    ) -> Result<()> {
+        let message_id = format!("{run_id}:{}:prompt", new_id());
         for event in [
             AgUiEvent::TextMessageStart {
                 message_id: message_id.clone(),
-                role: "user".into(),
+                role: role.into(),
             },
             AgUiEvent::TextMessageContent {
                 message_id: message_id.clone(),
@@ -421,12 +453,11 @@ impl RunManager {
             },
             AgUiEvent::TextMessageEnd { message_id },
         ] {
-            self.store.append_run_event(&run.id, &event)?;
+            self.store.append_run_event(run_id, &event)?;
         }
         input
             .send(prompt.to_owned())
-            .map_err(|_| CoreError::RunClosed)?;
-        Ok(SteerState::Delivered)
+            .map_err(|_| CoreError::RunClosed)
     }
 
     /// Asks the running engine to stop the workflow one of its tool calls launched.

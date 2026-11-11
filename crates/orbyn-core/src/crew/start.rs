@@ -298,14 +298,20 @@ impl Core {
     /// What the worker is told: the objects `WorkerObject` allows, as data, with the leak and
     /// secret checks every object that reaches a worker passes (H1, H2).
     fn worker_prompt(&self, brief: &Brief, member: &CrewMember) -> Result<String, CrewError> {
-        let objects: Vec<WorkerObject> = self
+        let mut objects: Vec<WorkerObject> = self
             .store
             .crew_worker_objects(brief.id.as_str(), member.as_str())
             .map_err(internal)?;
+        // The board and the messages of the whole crew can reach this worker, and a key added since
+        // they were stored may cover them: such an object is left out, not the start refused.
+        // The brief itself was checked against its own key at the start.
+        let needles = self.crew_key_needles(brief.crew_id.as_str())?;
+        objects.retain(|object| {
+            matches!(object, WorkerObject::Brief(_))
+                || serde_json::to_value(object).is_ok_and(|v| refuse_leak(&v, &needles).is_ok())
+        });
         let value = serde_json::to_value(&objects)
             .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.to_string()))?;
-        // The board and the messages of the whole crew can reach this worker: every key counts.
-        refuse_leak(&value, &self.crew_key_needles(brief.crew_id.as_str())?)?;
         refuse_secret(&value)?;
         let body = value.to_string().replace('&', "&amp;").replace('<', "&lt;");
         Ok(format!(

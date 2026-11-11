@@ -155,10 +155,15 @@ impl Core {
         if !result.r#final && result.state != ResultState::NeedsPerson {
             return;
         }
-        if let Err(error) = self
-            .runs
-            .enqueue(&run.lead_thread_id, &lead_message(result), &[])
-        {
+        if let Err(error) = self.runs.enqueue(
+            &run.lead_thread_id,
+            &format!(
+                "{}{}",
+                lead_message(result),
+                self.take_held_for_lead(run, result.crew_id.as_str())
+            ),
+            &[],
+        ) {
             tracing::warn!(%error, "could not tell the lead a crew task's result");
         }
     }

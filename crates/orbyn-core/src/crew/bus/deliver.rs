@@ -1,14 +1,18 @@
 //! Carrying a message to its recipients. The body goes inside the data wrapper of SPEC.md
 //! section 4 (H6), and the text passes the secret scan and, for a worker, the answer-key leak
-//! check on its way out (H1, H2). A running worker is steered when its engine takes input
-//! mid-turn; any other recipient has the message queued for its next turn. What happened is
-//! recorded per recipient and never claims more than it knows: `live` means the text was handed
-//! to the running turn's input. An engine such as Claude reads that input at its own next
-//! opportunity, which can be after the tool call it is in.
+//! check on its way out (H1, H2).
+//!
+//! The bus never starts a turn and never writes to a thread's queue, which belongs to the person
+//! (the queue and the steer path show text as the person's own). A message is handed to a turn
+//! that is running and takes input (`live`); otherwise it is `held` and reaches the recipient
+//! with the next prompt the core sends it, or in the result of the recipient's next bus tool
+//! call. If no turn comes and the recipient calls no bus tool, it is not delivered; the record
+//! says `held`. `live` means the text was handed to the running turn's input. An engine such as
+//! Claude reads that input at its own next opportunity, which can be after the tool call it is in.
 
 use std::sync::Arc;
 
-use orbyn_contracts::{CrewError, CrewMessage, MessageKind, SteerState};
+use orbyn_contracts::{CrewError, CrewMessage, MessageKind};
 use serde_json::json;
 
 use super::super::guard::{key_needles, refuse_leak, refuse_secret};
@@ -16,20 +20,21 @@ use super::super::leases::internal;
 use crate::app::Core;
 use crate::store::{CrewRun, CrewTask};
 
+/// The role the timeline shows a steered crew message under: not the person's.
+const CREW_ROLE: &str = "crew";
+
 /// What a recipient reads when its message may not be shown: no text of the message.
 const WITHHELD: &str = "A crew message for you was withheld because it matched the answer key or held a secret. \
     Ask the lead if you need it.";
 
 /// One recipient of a message.
-pub(super) struct Target {
+pub(in crate::crew) struct Target {
     /// A member id, or `lead`.
     pub recipient: String,
     pub thread: Option<String>,
-    /// Hand the text to the running turn when the engine takes input mid-turn.
-    pub steer: bool,
-    /// The worker is not in a turn (it is verified, or waits for a person), so nothing is sent
-    /// now: the message goes with its next prompt.
-    pub hold: bool,
+    /// A worker's task. Its state is read again at the moment of delivery: a worker that is
+    /// being verified, or waits for a person, is not handed anything.
+    pub task: Option<String>,
     /// Check the text against the answer key too (H1). The lead's messages are not checked.
     pub guard: bool,
 }
@@ -83,7 +88,13 @@ impl Core {
     }
 
     /// The text for a recipient, or a plain notice when the message may not leave the core.
-    fn outbound(&self, message: &CrewMessage, guard: bool, needles: &[String]) -> (String, bool) {
+    /// True when it was withheld.
+    pub(crate) fn outbound(
+        &self,
+        message: &CrewMessage,
+        guard: bool,
+        needles: &[String],
+    ) -> (String, bool) {
         let text = announcement(message);
         let value = json!({ "prompt": text });
         if refuse_secret(&value).is_err() || (guard && refuse_leak(&value, needles).is_err()) {
@@ -92,9 +103,9 @@ impl Core {
         (text, false)
     }
 
-    /// Hands `message` to one recipient, records how it went and returns the mode recorded
-    /// (`held`, `live`, `next_turn` or `failed`).
-    pub(super) fn deliver_crew_message(
+    /// Hands `message` to one recipient and records how it went: `live` when a running turn took
+    /// it, else `held` (or `failed`). Returns the mode recorded.
+    pub(in crate::crew) fn deliver_crew_message(
         self: &Arc<Self>,
         message: &CrewMessage,
         target: &Target,
@@ -120,66 +131,96 @@ impl Core {
         target: &Target,
         needles: &[String],
     ) -> (&'static str, Option<String>) {
-        if target.hold {
-            return (
-                "held",
-                Some("the worker is not in a turn; it is sent with its next prompt".into()),
-            );
+        const HELD: &str =
+            "no running turn took it; it comes with the next prompt or bus tool result";
+        // The state is read here, not when the message was routed: it can change in between.
+        if let Some(task) = &target.task {
+            match self.store.crew_task(task) {
+                Ok(Some(row)) if row.state == "running" => {}
+                _ => return ("held", Some(HELD.into())),
+            }
         }
         let Some(thread) = &target.thread else {
-            return ("failed", Some("the recipient has no thread yet".into()));
+            return ("held", Some(HELD.into()));
         };
         let (text, withheld) = self.outbound(message, target.guard, needles);
         let note =
             withheld.then(|| "the text was withheld; a plain notice was sent instead".to_owned());
-        if target.steer {
-            match self.runs.steer(thread, &text) {
-                Ok(SteerState::Delivered) => {
-                    return (
-                        "live",
-                        note.or_else(|| Some("handed to the running turn's input".into())),
-                    );
-                }
-                Ok(SteerState::Queued) => return ("next_turn", note),
-                // Nothing is running, or the run is still starting: queue it.
-                Err(_) => {}
-            }
-        }
-        match self.runs.enqueue(thread, &text, &[]) {
-            Ok(_) => ("next_turn", note),
-            Err(error) => ("failed", Some(error.public_message())),
+        match self.runs.steer_live(thread, &text, CREW_ROLE) {
+            Ok(true) => (
+                "live",
+                note.or_else(|| Some("handed to the running turn's input".into())),
+            ),
+            _ => ("held", Some(HELD.into())),
         }
     }
 
-    /// The messages held for a worker, as text for its next prompt, and recorded as sent.
-    /// Empty when nothing is held.
-    pub(crate) fn take_held_messages(&self, task: &CrewTask, run: &CrewRun) -> String {
-        let held = match self.store.held_crew_messages(&task.crew_id, &run.member) {
+    /// The messages held for `recipient`, as the text to send, each checked again on the way out
+    /// and recorded as sent with `mode`.
+    pub(crate) fn take_held(
+        &self,
+        crew_id: &str,
+        recipient: &str,
+        thread: &str,
+        guard: bool,
+        mode: &str,
+        note: &str,
+    ) -> Vec<String> {
+        let held = match self.store.held_crew_messages(crew_id, recipient) {
             Ok(held) if !held.is_empty() => held,
-            _ => return String::new(),
+            _ => return Vec::new(),
         };
-        let needles = self.crew_key_needles(&task.crew_id).unwrap_or_default();
-        let thread = run.worker_thread_id.clone().unwrap_or_default();
-        let mut text = String::new();
+        let needles = self.crew_key_needles(crew_id).unwrap_or_default();
+        let mut texts = Vec::new();
         for message in &held {
-            let (one, withheld) = self.outbound(message, true, &needles);
-            text.push_str("\n\n");
-            text.push_str(&one);
+            let (text, withheld) = self.outbound(message, guard, &needles);
             let note = if withheld {
                 "the text was withheld; a plain notice was sent instead"
             } else {
-                "sent with the worker's next prompt"
+                note
             };
             if let Err(error) = self.store.record_crew_delivery(
                 message.id.as_str(),
-                &run.member,
-                &thread,
-                "next_turn",
+                recipient,
+                thread,
+                mode,
                 Some(note),
             ) {
                 tracing::warn!(%error, "could not record a held crew message's delivery");
             }
+            texts.push(text);
         }
-        text
+        texts
+    }
+
+    /// The messages held for a worker, as text for its next prompt. Empty when none.
+    pub(crate) fn take_held_messages(&self, task: &CrewTask, run: &CrewRun) -> String {
+        let thread = run.worker_thread_id.clone().unwrap_or_default();
+        self.take_held(
+            &task.crew_id,
+            &run.member,
+            &thread,
+            true,
+            "next_turn",
+            "sent with the worker's next prompt",
+        )
+        .iter()
+        .map(|text| format!("\n\n{text}"))
+        .collect()
+    }
+
+    /// The messages held for the lead, as text for its next prompt. Empty when none.
+    pub(crate) fn take_held_for_lead(&self, run: &CrewRun, crew_id: &str) -> String {
+        self.take_held(
+            crew_id,
+            "lead",
+            &run.lead_thread_id,
+            false,
+            "next_turn",
+            "sent with the lead's next result",
+        )
+        .iter()
+        .map(|text| format!("\n\n{text}"))
+        .collect()
     }
 }

@@ -105,6 +105,28 @@ impl Duo {
             .collect()
     }
 
+    /// What the core told the lead and the lead has not read: held, since the bus starts no turn.
+    pub fn lead_notices(&self) -> Vec<String> {
+        let crew = self.w.task(&self.a).crew_id;
+        self.w
+            .core
+            .store
+            .held_crew_messages(&crew, "lead")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.body.to_string())
+            .collect()
+    }
+
+    /// The text of what is held for a worker, as its next prompt would carry it (and sent).
+    pub fn held_text(&self, task: &str) -> String {
+        let (task, run) = (
+            self.w.task(task),
+            self.w.core.store.crew_run(task).unwrap().unwrap(),
+        );
+        self.w.core.take_held_messages(&task, &run)
+    }
+
     pub fn steered_to(&self, thread: &str) -> Vec<String> {
         self.w
             .steered

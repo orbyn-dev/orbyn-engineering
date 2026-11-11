@@ -3,7 +3,7 @@
 //! only ever calls a tool with a draft.
 
 mod board;
-mod deliver;
+pub(super) mod deliver;
 mod notify;
 mod post;
 pub(super) mod rules;
@@ -41,6 +41,9 @@ pub struct Limits {
     pub fact_bytes: usize,
     /// Keys on one crew's board.
     pub board_keys: usize,
+    /// Revisions of one key. A board write also counts as a post (H5), so two workers cannot
+    /// talk without limit by rewriting a key.
+    pub revisions: u64,
 }
 
 impl Default for Limits {
@@ -51,6 +54,7 @@ impl Default for Limits {
             body_chars: 4000,
             fact_bytes: 8192,
             board_keys: 128,
+            revisions: 16,
         }
     }
 }
@@ -104,6 +108,8 @@ pub(super) struct Sender {
     /// A worker's own task. The lead has none.
     pub task: Option<String>,
     pub lead_thread: String,
+    /// The caller's own thread.
+    pub thread: String,
 }
 
 impl Sender {
@@ -187,6 +193,41 @@ pub fn specs() -> Vec<Value> {
 }
 
 impl Core {
+    /// Runs a bus tool. What was held for the caller comes back with the result as `inbox`:
+    /// the bus never starts a turn, so a recipient with no running turn reads it here.
+    pub(super) async fn crew_bus_tool(
+        self: &std::sync::Arc<Self>,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> Result<Value, CrewError> {
+        let mut answer = match tool {
+            POST_TOOL => self.crew_post_tool(binding, args).await?,
+            ASK_TOOL => self.crew_ask_tool(binding, args).await?,
+            BOARD_READ_TOOL => self.crew_board_read_tool(binding, args).await?,
+            _ => self.crew_board_write_tool(binding, args).await?,
+        };
+        if let Ok(who) = self.bus_sender(binding, tool) {
+            let address = if who.is_lead() {
+                "lead"
+            } else {
+                who.member.as_str()
+            };
+            let held = self.take_held(
+                who.crew_id.as_str(),
+                address,
+                &who.thread,
+                !who.is_lead(),
+                "tool_result",
+                "returned in the recipient's bus tool result",
+            );
+            if !held.is_empty() {
+                answer["inbox"] = json!(held);
+            }
+        }
+        Ok(answer)
+    }
+
     /// The limits a crew runs on.
     pub(super) fn crew_limits(&self) -> Limits {
         self.crew_bus.limits()
@@ -213,6 +254,7 @@ impl Core {
                     crew_id: CrewId::new(task.crew_id.clone()).map_err(invalid)?,
                     task: Some(task.id.clone()),
                     lead_thread: run.lead_thread_id.clone(),
+                    thread: binding.scope.thread_id.clone(),
                 }
             }
             Caller::Lead => Sender {
@@ -222,6 +264,7 @@ impl Core {
                 crew_id: CrewId::new(binding.scope.thread_id.clone()).map_err(invalid)?,
                 task: None,
                 lead_thread: binding.scope.thread_id.clone(),
+                thread: binding.scope.thread_id.clone(),
             },
         })
     }

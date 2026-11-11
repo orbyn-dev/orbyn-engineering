@@ -9,9 +9,9 @@ use orbyn_contracts::{CrewError, CrewMessage, CrewObject};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
-use super::ASK_TOOL;
 use super::deliver::wrap;
 use super::rules::answer_to;
+use super::{ASK_TOOL, Sender};
 use crate::app::Core;
 use crate::crew::leases::internal;
 use crate::tools::mcp::McpBinding;
@@ -37,22 +37,20 @@ impl Core {
         args: &Value,
     ) -> Result<Value, CrewError> {
         let sent = self.send_crew_message(binding, args, ASK_TOOL).await?;
-        let (question, asker) = (
-            sent.message.id.as_str().to_owned(),
-            self.bus_sender(binding, ASK_TOOL)?,
-        );
+        let asker = &sent.who;
+        let question = sent.message.id.as_str().to_owned();
         let address = if asker.is_lead() {
             "lead"
         } else {
             asker.member.as_str()
         }
         .to_owned();
+        let _waiting = Waiting(self, question.clone());
         let wait = sent
             .message
             .wait_seconds
             .unwrap_or(LONGEST_WAIT)
             .min(LONGEST_WAIT);
-        let _waiting = Waiting(self, question.clone());
         let deadline = Instant::now() + Duration::from_secs(wait.into());
         let crew = asker.crew_id.as_str().to_owned();
         let outcome = loop {
@@ -63,11 +61,11 @@ impl Core {
                 break Some(answer);
             }
             let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
+            // The asker's own run ending ends the wait (H7). The question was posted, so the
+            // ask still answers: it is pending.
+            if left.is_zero() || self.asker_run_ended(asker) {
                 break None;
             }
-            // The asker's own run ending ends the wait (H7).
-            self.bus_sender(binding, ASK_TOOL)?;
             let _ = tokio::time::timeout(left, notified).await;
         };
         // Stop waiting under the lock, then look once more: an answer posted just now was
@@ -79,17 +77,46 @@ impl Core {
             None => self.answer_for(&crew, &question, &address)?,
         };
         Ok(match answer {
-            Some(answer) => json!({
-                "state": "answered",
-                "question": question,
-                "answer": CrewObject::Message(answer.clone()).to_value(),
-                "delivered_as": wrap(&answer),
-            }),
+            Some(answer) => self.answered_view(&question, &answer, !asker.is_lead()),
             None => json!({
                 "state": "pending",
                 "question": question,
                 "note": "No answer yet. It arrives later as a message.",
             }),
+        })
+    }
+
+    fn asker_run_ended(&self, asker: &Sender) -> bool {
+        asker.task.as_deref().is_some_and(|task| {
+            self.store
+                .crew_task(task)
+                .ok()
+                .flatten()
+                .is_none_or(|row| crate::crew::lifecycle::is_final(&row.state))
+        })
+    }
+
+    /// What `crew_ask` returns for an answer. The text passes the same check on the way out as
+    /// any message to a worker, against the keys as they are now: a key added since the answer
+    /// was posted counts.
+    pub(crate) fn answered_view(&self, question: &str, answer: &CrewMessage, guard: bool) -> Value {
+        let needles = self
+            .crew_key_needles(answer.crew_id.as_str())
+            .unwrap_or_default();
+        let (text, withheld) = self.outbound(answer, guard, &needles);
+        if withheld {
+            return json!({
+                "state": "answered",
+                "question": question,
+                "withheld": true,
+                "delivered_as": text,
+            });
+        }
+        json!({
+            "state": "answered",
+            "question": question,
+            "answer": CrewObject::Message(answer.clone()).to_value(),
+            "delivered_as": wrap(answer),
         })
     }
 

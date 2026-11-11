@@ -75,8 +75,7 @@ impl Core {
         let target = Target {
             recipient: "lead".into(),
             thread: Some(who.lead_thread.clone()),
-            steer: false,
-            hold: false,
+            task: None,
             guard: false,
         };
         self.deliver_crew_message(&notice, &target, &[]);

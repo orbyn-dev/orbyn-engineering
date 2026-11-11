@@ -32,6 +32,7 @@ struct Route {
 
 /// What a send came to.
 pub(super) struct Sent {
+    pub who: Sender,
     pub message: CrewMessage,
     /// `(recipient, mode)` for each recipient reached now.
     pub delivered: Vec<(String, String)>,
@@ -43,10 +44,9 @@ fn target_of(task: &CrewTask, run: &CrewRun) -> Target {
     Target {
         recipient: run.member.clone(),
         thread: run.worker_thread_id.clone(),
-        steer: true,
-        // A worker that is being verified, or waits for a person, is not in a turn: a message
-        // must not start one (the checks run on files it must not change).
-        hold: task.state != "running",
+        // Its state is read again when the text is handed over (a worker being verified is
+        // not handed anything).
+        task: Some(task.id.clone()),
         guard: true,
     }
 }
@@ -83,8 +83,7 @@ impl Core {
                     targets: vec![Target {
                         recipient: "lead".into(),
                         thread: Some(who.lead_thread.clone()),
-                        steer: false,
-                        hold: false,
+                        task: None,
                         guard: false,
                     }],
                     pair: None,
@@ -222,6 +221,7 @@ impl Core {
         let log = self.store.crew_messages_in_crew(crew).map_err(internal)?;
         if log.iter().any(|(_, m)| m.id == message.id) {
             return Ok(Sent {
+                who,
                 message,
                 delivered: Vec::new(),
                 duplicate: true,
@@ -302,6 +302,7 @@ impl Core {
             delivered.push((target.recipient.clone(), mode.to_owned()));
         }
         Ok(Sent {
+            who,
             message,
             delivered,
             duplicate: false,
