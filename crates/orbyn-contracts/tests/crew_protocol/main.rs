@@ -3,6 +3,7 @@
 //! model, and keeps the spec, the schemas and the cases in step. No engine runs.
 
 mod model;
+mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;

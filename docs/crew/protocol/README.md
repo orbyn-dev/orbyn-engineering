@@ -44,28 +44,31 @@ CI runs it with the rest of `cargo test --workspace`, and a change under
 No case needs an engine, so none uses the fake engine yet. Cases that need one arrive with
 the router and the bus (slices 2 to 4).
 
-## For slice 1: Rust types and store tables
+## Rust types and store tables (slice 1)
 
-Slice 1 adds the Rust wire types `Brief`, `AnswerKey`, `CrewResult`, `RouteDecision` and
-`CrewMessage` to `orbyn-contracts`. The schemas are shaped for that:
+The Rust wire types live in `crates/orbyn-contracts/src/crew/`: one file per object (`Brief`,
+`AnswerKey`, `Lease`, `CrewMessage`, `Fact`, `Claim`, `Report`, `Evidence`, `Finding`,
+`Disagreement`, `Gate`, `CrewResult`, `RouteDecision`), the shared shapes, the refusal object
+`CrewError` and the `CrewObject` union that carries the `type` tag. ts-rs writes their
+TypeScript into `web/src/generated`.
 
-- **Field names are the wire names.** Every object is a flat JSON object in `snake_case`
-  with `additionalProperties`-style closure (`unevaluatedProperties: false`), so a Rust
-  struct maps one to one. The envelope (`type`, `v`, `id`, `crew_id`, `author`,
-  `created_at`) is one shared struct, flattened into each type with `#[serde(flatten)]`,
-  and `type` is the serde tag.
-- **Closed enums become Rust enums.** `kind`, `state`, `stop_reason`, check `kind`, error
-  `code` and the others are `enum` lists in the schemas.
-- **Integers only.** No `f32` or `f64` appears on the wire, so ids hash the same in every
-  language. Rates travel as permille.
-- **Validate, do not generate, in v0.** The types stay hand-written with the contract
-  macros, and ts-rs still writes the TypeScript. The schema is the check: slice 1 extends
-  `crates/orbyn-contracts/tests/crew_protocol/` so that every valid example deserialises into its Rust type and
-  serialises back to the same JSON, every invalid example is refused by the schema, and a
-  sample of each type validates against its schema. A field added to a Rust type without
-  the schema (or the reverse) then fails the test.
-- **Store tables** keep the objects as canonical JSON keyed by `id`, which is the content
-  address, so a row can be verified by re-hashing it.
+- **Field names are the wire names.** Every object is a flat `snake_case` JSON object. The
+  envelope fields (`v`, `id`, `crew_id`, `author`, `created_at`) are declared on each type by one
+  macro, so `deny_unknown_fields` closes it the way `unevaluatedProperties: false` does.
+- **Closed enums are Rust enums**, and a pattern string (a hash, a path, a member id, a commit,
+  a loopback URL, a timestamp) is a newtype that refuses a bad value when it is read.
+- **Integers only.** No `f32` or `f64` appears. `CrewObject::parse` refuses a float anywhere,
+  even `30.0`, then checks `v`, the type's own rules (`validate`) and that `id` is the hash.
+- **The schema is the check.** `tests/crew_protocol/types.rs` reads every valid example into its
+  type and writes it back to the same canonical JSON, refuses every invalid example, and
+  validates what the types write against the schemas. A field added to a type without the
+  schema (or the reverse) fails it.
+- **Store tables** (`crew_tasks`, `crew_briefs`, `crew_answer_keys`, `crew_messages`,
+  `crew_leases`, `crew_evidence`, `crew_gates`, `crew_results`, migration 30) keep each object as
+  canonical JSON keyed by its `id`, which is the content address, and verify it on the way in.
+  The answer key has its own table and reader, so the brief a worker reads cannot hold it (H1).
+  A task is keyed by its brief's id. Facts, claims, reports, findings, disagreements and route
+  decisions have no table yet; they arrive with the router and the bus.
 
 When the real router and bus exist (slices 2 to 4), they run the same
 [conformance cases](conformance/README.md) through a second adapter. The reference model

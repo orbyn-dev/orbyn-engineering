@@ -1,6 +1,8 @@
 //! Ordered, forward-only schema. Each entry applies once inside a transaction
 //! and is recorded in `schema_migrations`. Published entries never change.
 
+use super::crew_schema::CREW_TABLES;
+
 pub const MIGRATIONS: &[(i64, &str)] = &[
     (1, INITIAL),
     (2, THREAD_LIFECYCLE),
@@ -31,6 +33,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (27, TASK_RUNS),
     (28, TASK_RUN_LINKS),
     (29, ACCOUNT_SYNC),
+    (30, CREW_TABLES),
 ];
 
 // The account's settings sync, per zone: the cursor and the capture switch, the local copy
