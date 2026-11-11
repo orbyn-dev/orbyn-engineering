@@ -17,6 +17,10 @@ pub(crate) struct SettingsSnapshot {
     /// Only pref:* and the existing server_settings document; no other settings.
     pub globals: BTreeMap<String, String>,
     pub overrides: BTreeMap<String, BTreeMap<String, String>>,
+    /// The account's local copy of the settings record. Read only for values that
+    /// arrived from a synced device, so applying them sees the record in the same
+    /// transaction as the write; empty otherwise.
+    pub account: crate::account::merge::Record,
 }
 
 pub(crate) enum ServerSettingField {
@@ -69,6 +73,7 @@ fn snapshot(conn: &Connection) -> Result<SettingsSnapshot> {
         projects,
         globals,
         overrides,
+        account: Default::default(),
     })
 }
 
@@ -158,8 +163,30 @@ impl Store {
         &self,
         plan: impl FnOnce(&SettingsSnapshot) -> Result<(R, Vec<SettingWrite>)>,
     ) -> Result<R> {
-        self.commit(|tx, _| {
-            let current = snapshot(tx)?;
+        self.change_settings_as(true, plan)
+    }
+
+    /// For values that arrived from a synced device: the same transaction, and nothing
+    /// is queued again, or a setting would bounce between devices for ever.
+    pub(crate) fn change_settings_synced<R>(
+        &self,
+        plan: impl FnOnce(&SettingsSnapshot) -> Result<(R, Vec<SettingWrite>)>,
+    ) -> Result<R> {
+        self.change_settings_as(false, plan)
+    }
+
+    fn change_settings_as<R>(
+        &self,
+        queue: bool,
+        plan: impl FnOnce(&SettingsSnapshot) -> Result<(R, Vec<SettingWrite>)>,
+    ) -> Result<R> {
+        let mut queued = 0;
+        let result = self.commit(|tx, _| {
+            let mut current = snapshot(tx)?;
+            if !queue {
+                current.account =
+                    super::account_sync::load_record(tx, crate::account::settings_record::ZONE)?;
+            }
             let (result, writes) = plan(&current)?;
             let mut server = None;
             for write in &writes {
@@ -201,6 +228,9 @@ impl Store {
                 } else {
                     ordinary.push(write);
                 }
+            }
+            if queue {
+                queued = queue_account_fields(tx, &current, &ordinary)?;
             }
             if let Some(server) = &server {
                 let typed: ServerSettings = serde_json::from_value(server.clone())?;
@@ -249,8 +279,42 @@ impl Store {
                 }
             }
             Ok(result)
-        })
+        })?;
+        if queued > 0 {
+            self.account_changes.send_modify(|count| *count += 1);
+        }
+        Ok(result)
     }
+}
+
+/// Queues the account fields a person-level preference write stages, in the write's own
+/// transaction. Nothing is queued while the account is off.
+fn queue_account_fields(
+    tx: &rusqlite::Transaction<'_>,
+    current: &SettingsSnapshot,
+    writes: &[SettingWrite],
+) -> Result<usize> {
+    let parse = |text: &str| serde_json::from_str::<Value>(text).ok();
+    let mut staged = Vec::new();
+    for write in writes {
+        if let SettingWrite::Global { key, value } = write
+            && let Some(name) = key.strip_prefix("pref:")
+        {
+            let old = current.globals.get(key).and_then(|text| parse(text));
+            let new = value.as_deref().and_then(parse);
+            staged.extend(crate::account::settings_record::stage_preference(
+                name,
+                old.as_ref(),
+                new.as_ref(),
+            ));
+        }
+    }
+    super::account_sync::capture(
+        tx,
+        crate::account::settings_record::ZONE,
+        &staged,
+        crate::util::unix_now_ms(),
+    )
 }
 
 #[cfg(test)]

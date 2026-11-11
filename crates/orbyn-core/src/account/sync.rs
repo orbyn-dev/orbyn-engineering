@@ -1,0 +1,374 @@
+//! One worker per zone. It pulls, merges, applies, and uploads the outbox against the
+//! adapter, then sleeps until a live notice, a local change or its backoff timer wakes
+//! it. Its failures end in a status, never in an error to a caller, and nothing a
+//! person does (a settings write, a run, a request) ever waits on it: they only touch
+//! the local store. A failing zone backs off by itself; other zones are unaffected.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::Value;
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
+
+use super::KeybindingFile;
+use super::apply;
+use super::device_api::{DeviceApi, DeviceError, DeviceStatus, ZoneSnapshot};
+use super::settings_record::{MAX_RECORD_BYTES, record_bytes};
+use super::status::{PauseReason, SignOutReason, StatusHub, SyncState};
+use crate::error::CoreError;
+use crate::store::Store;
+
+/// Upload rounds in one cycle before giving the zone a rest, so edits that keep
+/// arriving cannot hold the worker in a loop.
+const MAX_ROUNDS: usize = 5;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SyncTiming {
+    pub backoff_base: Duration,
+    pub backoff_max: Duration,
+}
+
+impl Default for SyncTiming {
+    fn default() -> Self {
+        Self {
+            backoff_base: Duration::from_secs(2),
+            backoff_max: Duration::from_secs(300),
+        }
+    }
+}
+
+pub(super) struct ZoneWorker {
+    pub zone: &'static str,
+    pub store: Arc<Store>,
+    pub api: Arc<dyn DeviceApi>,
+    pub status: Arc<StatusHub>,
+    pub keybindings: KeybindingFile,
+    pub timing: SyncTiming,
+}
+
+/// Stops its worker when dropped, or when `stop` is awaited.
+pub struct SyncHandle {
+    cancel: CancellationToken,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl SyncHandle {
+    pub async fn stop(mut self) {
+        self.cancel.cancel();
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for SyncHandle {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
+pub(super) fn spawn(worker: ZoneWorker) -> SyncHandle {
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(worker.run(cancel.clone()));
+    SyncHandle {
+        cancel,
+        task: Some(task),
+    }
+}
+
+enum Flow {
+    /// Nothing more to do until something wakes the worker.
+    Idle,
+    Retry(Duration),
+    Stop,
+}
+
+/// Why a cycle ended early.
+enum Failure {
+    Device(DeviceError),
+    Local(CoreError),
+    /// More edits arrived than a cycle will chase.
+    Busy,
+}
+
+impl From<DeviceError> for Failure {
+    fn from(error: DeviceError) -> Self {
+        Self::Device(error)
+    }
+}
+
+impl From<CoreError> for Failure {
+    fn from(error: CoreError) -> Self {
+        Self::Local(error)
+    }
+}
+
+/// A receiver that never fires once its sender is gone, instead of firing for ever.
+async fn changed<T>(receiver: &mut watch::Receiver<T>) {
+    if receiver.changed().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+impl ZoneWorker {
+    async fn run(self, cancel: CancellationToken) {
+        let mut local = self.store.subscribe_account_changes();
+        let mut notices = self.api.notices();
+        let mut device = self.api.status();
+        let (mut failures, mut offline_since) = (0u32, None::<i64>);
+        loop {
+            local.borrow_and_update();
+            notices.borrow_and_update();
+            device.borrow_and_update();
+            let wait = match self.cycle(&mut failures, &mut offline_since).await {
+                Flow::Stop => return,
+                Flow::Idle => None,
+                Flow::Retry(delay) => Some(delay),
+            };
+            tokio::select! {
+                () = cancel.cancelled() => return,
+                () = changed(&mut local) => {}
+                () = changed(&mut notices) => {}
+                () = changed(&mut device) => {}
+                () = async {
+                    match wait {
+                        Some(delay) => tokio::time::sleep(delay).await,
+                        None => std::future::pending().await,
+                    }
+                } => {}
+            }
+        }
+    }
+
+    /// Counts that are true whatever the network does.
+    fn counts(&self) -> (usize, usize, usize) {
+        let waiting = self.store.account_outbox_len(self.zone).unwrap_or(0);
+        let skipped = self.store.account_skipped_len(self.zone).unwrap_or(0);
+        let conflicts = self
+            .store
+            .account_conflicts(self.zone)
+            .map_or(0, |list| list.len());
+        (waiting, skipped, conflicts)
+    }
+
+    fn show(&self, state: SyncState) {
+        let (waiting, not_synced, conflicts) = self.counts();
+        self.status.publish(super::AccountStatus {
+            state,
+            waiting,
+            not_synced,
+            conflicts,
+        });
+    }
+
+    async fn cycle(&self, failures: &mut u32, offline_since: &mut Option<i64>) -> Flow {
+        let client = self.api.status().borrow().clone();
+        match client {
+            DeviceStatus::SignedOut => {
+                self.show(SyncState::SignedOut { reason: None });
+                return Flow::Idle;
+            }
+            DeviceStatus::SigningIn => {
+                self.show(SyncState::SigningIn);
+                return Flow::Idle;
+            }
+            DeviceStatus::Paused { .. } => {
+                self.show(SyncState::Paused {
+                    reason: PauseReason::ZoneFailed,
+                });
+                return Flow::Idle;
+            }
+            DeviceStatus::Online | DeviceStatus::Offline { .. } => {}
+        }
+        self.show(SyncState::Syncing);
+        match self.sync_once().await {
+            Ok(keyboard_ok) => {
+                *failures = 0;
+                *offline_since = None;
+                self.show(if keyboard_ok {
+                    SyncState::Online
+                } else {
+                    SyncState::Paused {
+                        reason: PauseReason::InvalidKeyboardFile,
+                    }
+                });
+                Flow::Idle
+            }
+            Err(failure) => self.failed(failure, failures, offline_since),
+        }
+    }
+
+    /// The client's errors as app behaviour: see the table in docs/account.md.
+    fn failed(
+        &self,
+        failure: Failure,
+        failures: &mut u32,
+        offline_since: &mut Option<i64>,
+    ) -> Flow {
+        let pause = |reason| {
+            self.show(SyncState::Paused { reason });
+            Flow::Idle
+        };
+        match failure {
+            Failure::Device(DeviceError::Offline | DeviceError::Server { retryable: true })
+            | Failure::Busy => {
+                *failures += 1;
+                let since = *offline_since.get_or_insert_with(crate::util::unix_now);
+                self.show(SyncState::Offline { since_unix: since });
+                Flow::Retry(self.backoff(*failures))
+            }
+            Failure::Device(DeviceError::RateLimited { retry_after }) => {
+                self.show(SyncState::Throttled {
+                    retry_after_secs: retry_after.as_secs(),
+                });
+                Flow::Retry(retry_after)
+            }
+            Failure::Device(DeviceError::TooLarge) => pause(PauseReason::TooLarge),
+            Failure::Device(DeviceError::ProtectionAdvanced) => {
+                pause(PauseReason::ProtectionAdvanced)
+            }
+            Failure::Device(DeviceError::DeletionScheduled) => {
+                pause(PauseReason::DeletionScheduled)
+            }
+            Failure::Device(DeviceError::Unauthorized) => {
+                // Destroying key material belongs to the sign-out path; settings and the
+                // outbox stay, so signing in again resumes where this left off.
+                self.show(SyncState::SignedOut {
+                    reason: Some(SignOutReason::SessionEnded),
+                });
+                Flow::Stop
+            }
+            Failure::Device(DeviceError::AccountGone) => {
+                self.show(SyncState::SignedOut {
+                    reason: Some(SignOutReason::AccountGone),
+                });
+                Flow::Stop
+            }
+            Failure::Device(
+                DeviceError::Server { retryable: false }
+                | DeviceError::InvalidKey
+                | DeviceError::Conflict(_)
+                | DeviceError::InviteRequired
+                | DeviceError::WrongPassword
+                | DeviceError::InvalidCode,
+            ) => pause(PauseReason::ZoneFailed),
+            Failure::Local(error) => {
+                tracing::warn!(
+                    code = error.code(),
+                    zone = self.zone,
+                    "account sync could not use the local store"
+                );
+                *failures += 1;
+                self.show(SyncState::Paused {
+                    reason: PauseReason::ZoneFailed,
+                });
+                Flow::Retry(self.backoff(*failures))
+            }
+        }
+    }
+
+    /// Exponential backoff with jitter of up to a fifth either way.
+    fn backoff(&self, failures: u32) -> Duration {
+        let doubled = self
+            .timing
+            .backoff_base
+            .saturating_mul(1u32 << failures.saturating_sub(1).min(16));
+        let capped = doubled.min(self.timing.backoff_max);
+        let jitter = crate::util::random_bytes::<1>().map_or(128, |bytes| bytes[0]);
+        capped.mul_f64(0.8 + 0.4 * f64::from(jitter) / 255.0)
+    }
+
+    /// One pull, merge, apply and upload. `Ok(false)` means everything synced but the
+    /// keybindings file could not be written, which the status says.
+    async fn sync_once(&self) -> Result<bool, Failure> {
+        if let Some(snapshot) = self.api.pull(self.zone).await? {
+            self.merge(&snapshot)?;
+        }
+        let mut keyboard = self.apply()?;
+        for _ in 0..MAX_ROUNDS {
+            if self.store.account_outbox_len(self.zone)? == 0 {
+                return Ok(keyboard);
+            }
+            let record = self.store.account_record(self.zone)?;
+            if record_bytes(&record) > MAX_RECORD_BYTES {
+                return Err(DeviceError::TooLarge.into());
+            }
+            let base = self.store.account_version(self.zone)?;
+            match self.api.push(self.zone, base, &record).await {
+                Ok(version) => {
+                    self.store.account_pushed(self.zone, &record, version)?;
+                }
+                Err(DeviceError::Conflict(current)) => {
+                    self.merge(&current)?;
+                    keyboard &= self.apply()?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if self.store.account_outbox_len(self.zone)? == 0 {
+            Ok(keyboard)
+        } else {
+            Err(Failure::Busy)
+        }
+    }
+
+    fn merge(&self, snapshot: &ZoneSnapshot) -> Result<(), CoreError> {
+        let report = self
+            .store
+            .account_merge(self.zone, &snapshot.record, snapshot.version)?;
+        if report.conflicts > 0 {
+            self.show(SyncState::Syncing);
+        }
+        Ok(())
+    }
+
+    /// Applies the merged record: only the allowlist, through the apply plan, in one
+    /// transaction with the record read, and without queuing anything again.
+    /// Returns whether the keybindings file took its rules.
+    fn apply(&self) -> Result<bool, CoreError> {
+        let rules = self.store.change_settings_synced(|snapshot| {
+            let stored = |key: &str| {
+                snapshot
+                    .globals
+                    .get(&format!("pref:{key}"))
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            };
+            let engine = stored("default_engine");
+            let plan = apply::plan(&snapshot.account, engine.as_ref().and_then(Value::as_str));
+            let mut writes = Vec::new();
+            for (key, value) in &plan.values {
+                if stored(key) != *value {
+                    crate::settings::preferences::prepare_synced_write(
+                        &mut writes,
+                        key,
+                        value.as_ref(),
+                    );
+                }
+            }
+            for (key, edit) in &plan.sets {
+                let before = stored(key);
+                let list = Value::Array(apply::edited_list(before.as_ref(), edit));
+                let unchanged = before.as_ref() == Some(&list)
+                    || (before.is_none() && list.as_array().is_some_and(Vec::is_empty));
+                if !unchanged {
+                    crate::settings::preferences::prepare_synced_write(
+                        &mut writes,
+                        key,
+                        Some(&list),
+                    );
+                }
+            }
+            Ok((plan.keybindings, writes))
+        })?;
+        if rules.is_empty() {
+            return Ok(true);
+        }
+        Ok(crate::settings::keybindings::write_synced_rules(
+            &self.keybindings.path,
+            &self.keybindings.writer,
+            &rules,
+        )
+        .is_ok())
+    }
+}

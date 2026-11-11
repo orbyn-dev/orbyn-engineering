@@ -224,6 +224,28 @@ fn model_options(value: &Value) -> bool {
     })
 }
 
+/// Every key in the catalog, for checks that must cover all of them.
+#[cfg(test)]
+pub(crate) fn catalog_keys() -> impl Iterator<Item = &'static str> {
+    DEFINITIONS.iter().map(|definition| definition.key)
+}
+
+/// Whether `value` is valid for `key`: the same check a local write gets, for a value
+/// that arrives from a synced device.
+pub(crate) fn check_synced(key: &str, value: &Value) -> Result<()> {
+    check(definition(key)?, value)
+}
+
+/// The writes for one person-level value that arrived from a synced device: the same
+/// preparation a local write gets, so `default_theme` is stamped as applied here.
+pub(crate) fn prepare_synced_write(
+    writes: &mut Vec<crate::store::scoped_settings::SettingWrite>,
+    key: &str,
+    value: Option<&Value>,
+) {
+    scoped::prepare_write(writes, key, None, value);
+}
+
 fn setting_key(key: &str) -> String {
     format!("pref:{key}")
 }

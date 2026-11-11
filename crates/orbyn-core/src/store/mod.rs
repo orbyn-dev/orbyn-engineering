@@ -2,6 +2,7 @@
 //! checks the current owner and state first; followers are woken only after
 //! commit. Calls are short local SQLite operations and never span an await.
 
+mod account_sync;
 mod agent_projects;
 mod approvals;
 mod automations;
@@ -16,6 +17,7 @@ mod questions;
 mod queue;
 mod runs;
 pub(crate) mod scoped_settings;
+pub use account_sync::{MergeReport, SyncConflict};
 mod setup;
 #[cfg(test)]
 mod tests;
@@ -54,6 +56,8 @@ pub struct Store {
     hub: EventHub,
     /// Counts runs starting and ending, for what shows whether a run is active.
     run_changes: tokio::sync::watch::Sender<u64>,
+    /// Counts local changes that queued an account field, to wake the sync worker.
+    account_changes: tokio::sync::watch::Sender<u64>,
     upgrade: Option<orbyn_contracts::DatabaseUpgrade>,
 }
 
@@ -121,6 +125,7 @@ impl Store {
             epoch: epoch.into(),
             hub: EventHub::default(),
             run_changes: tokio::sync::watch::channel(0).0,
+            account_changes: tokio::sync::watch::channel(0).0,
             upgrade,
         })
     }

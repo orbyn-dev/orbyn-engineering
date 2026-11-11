@@ -1,0 +1,386 @@
+//! Durable state of the account's settings sync: the local copy of each zone's record
+//! with its stamps, the outbox of fields not yet uploaded, the zone cursor and the
+//! conflicts to show. Non-secret by rule: no key, token or password is stored here.
+//! The SQLite database stays the source of truth for settings; a preference write
+//! appends its outbox rows in the same transaction (`change_settings`), so a crash
+//! loses neither.
+
+use std::collections::BTreeMap;
+
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde_json::Value;
+
+use super::Store;
+use crate::account::merge::{Field, Hlc, Record, Stamp, merge_records};
+use crate::account::settings_record::Staged;
+use crate::error::{CoreError, Result};
+
+/// A lost offline edit: the setting was changed on two devices while both were
+/// offline. The newer change won; the older value is kept here to offer back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncConflict {
+    pub field: String,
+    pub kept: Value,
+    pub lost: Value,
+    pub at_ms: i64,
+}
+
+/// What one merge of a remote record did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct MergeReport {
+    pub conflicts: usize,
+    pub waiting: usize,
+}
+
+fn text(value: &Value) -> String {
+    value.to_string()
+}
+
+fn field_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, Field)> {
+    let value: String = row.get(1)?;
+    Ok((
+        row.get(0)?,
+        Field {
+            value: serde_json::from_str(&value).unwrap_or(Value::Null),
+            stamp: Stamp {
+                wall_ms: u64::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                counter: u32::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+                device: row.get(4)?,
+            },
+        },
+    ))
+}
+
+pub(super) fn load_record(conn: &Connection, zone: &str) -> Result<Record> {
+    let rows = conn
+        .prepare("SELECT field, value, wall, counter, device FROM account_fields WHERE zone = ?1")?
+        .query_map([zone], field_row)?
+        .collect::<std::result::Result<Record, _>>()?;
+    Ok(rows)
+}
+
+/// The zone's device id and clock, when capture is on.
+fn clock(conn: &Connection, zone: &str) -> Result<Option<(String, Hlc, bool)>> {
+    Ok(conn
+        .query_row(
+            "SELECT device, hlc_wall, hlc_counter, capture FROM account_sync WHERE zone = ?1",
+            [zone],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    Hlc::new(
+                        u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+                        u32::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                    ),
+                    row.get::<_, i64>(3)? != 0,
+                ))
+            },
+        )
+        .optional()?)
+}
+
+fn save_clock(conn: &Connection, zone: &str, hlc: Hlc) -> Result<()> {
+    conn.execute(
+        "UPDATE account_sync SET hlc_wall = ?2, hlc_counter = ?3 WHERE zone = ?1",
+        params![
+            zone,
+            i64::try_from(hlc.wall_ms).unwrap_or(i64::MAX),
+            i64::from(hlc.counter)
+        ],
+    )?;
+    Ok(())
+}
+
+/// Queues `field`. `base` is the stamp it replaced; a field edited again before it
+/// uploads keeps the first one, since that is what the other devices may have seen.
+fn queue_field(
+    tx: &Connection,
+    zone: &str,
+    name: &str,
+    field: &Field,
+    at_ms: i64,
+    base: Option<&Stamp>,
+) -> Result<()> {
+    let wall = i64::try_from(field.stamp.wall_ms).unwrap_or(i64::MAX);
+    tx.execute(
+        "INSERT INTO account_outbox (zone, field, value, wall, counter, device, edited_at, base_wall, base_counter, base_device)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT (zone, field) DO UPDATE SET value = excluded.value, wall = excluded.wall,
+            counter = excluded.counter, device = excluded.device, edited_at = excluded.edited_at",
+        params![
+            zone, name, text(&field.value), wall, i64::from(field.stamp.counter), field.stamp.device, at_ms,
+            base.map(|base| i64::try_from(base.wall_ms).unwrap_or(i64::MAX)),
+            base.map(|base| i64::from(base.counter)),
+            base.map(|base| base.device.clone()),
+        ],
+    )?;
+    Ok(())
+}
+
+fn put_field(tx: &Connection, zone: &str, name: &str, field: &Field) -> Result<()> {
+    let wall = i64::try_from(field.stamp.wall_ms).unwrap_or(i64::MAX);
+    tx.execute(
+        "INSERT INTO account_fields (zone, field, value, wall, counter, device)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT (zone, field) DO UPDATE SET value = excluded.value, wall = excluded.wall,
+            counter = excluded.counter, device = excluded.device",
+        params![
+            zone,
+            name,
+            text(&field.value),
+            wall,
+            i64::from(field.stamp.counter),
+            field.stamp.device
+        ],
+    )?;
+    Ok(())
+}
+
+/// Stages `staged` as local edits made at `now_ms`, when capture is on for the zone.
+/// Returns how many rows changed, so the caller can wake the worker.
+pub(super) fn capture(
+    tx: &Transaction<'_>,
+    zone: &str,
+    staged: &[Staged],
+    now_ms: i64,
+) -> Result<usize> {
+    let Some((device, mut hlc, true)) = clock(tx, zone)? else {
+        return Ok(0);
+    };
+    let local = load_record(tx, zone)?;
+    let at = u64::try_from(now_ms).unwrap_or(0);
+    let mut touched = 0;
+    for item in staged {
+        match item {
+            Staged::Field { name, value } => {
+                tx.execute(
+                    "DELETE FROM account_skipped WHERE zone = ?1 AND field = ?2",
+                    params![zone, name],
+                )?;
+                if local.get(name).is_some_and(|known| &known.value == value) {
+                    continue;
+                }
+                let (wall_ms, counter) = hlc.tick_at(at);
+                let field = Field {
+                    value: value.clone(),
+                    stamp: Stamp {
+                        wall_ms,
+                        counter,
+                        device: device.clone(),
+                    },
+                };
+                let base = local.get(name).map(|known| &known.stamp);
+                put_field(tx, zone, name, &field)?;
+                queue_field(tx, zone, name, &field, now_ms, base)?;
+                touched += 1;
+            }
+            Staged::Skipped { name } => {
+                tx.execute(
+                    "INSERT OR IGNORE INTO account_skipped (zone, field) VALUES (?1, ?2)",
+                    params![zone, name],
+                )?;
+                touched += 1;
+            }
+        }
+    }
+    save_clock(tx, zone, hlc)?;
+    Ok(touched)
+}
+
+impl Store {
+    /// Wakes on any local change that queued a field.
+    pub fn subscribe_account_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.account_changes.subscribe()
+    }
+
+    /// Turns capture on for `zone`. The first time, `seed` stages what the person has
+    /// set so far, so a first sync combines it with what the account holds.
+    pub(crate) fn account_enable(&self, zone: &str, seed: &[Staged]) -> Result<()> {
+        let touched = self.commit(|tx, _| {
+            let known = clock(tx, zone)?;
+            if known.is_some() {
+                tx.execute(
+                    "UPDATE account_sync SET capture = 1 WHERE zone = ?1",
+                    [zone],
+                )?;
+                return Ok(0);
+            }
+            tx.execute(
+                "INSERT INTO account_sync (zone, capture, device) VALUES (?1, 1, ?2)",
+                params![zone, crate::util::new_id()],
+            )?;
+            capture(tx, zone, seed, crate::util::unix_now_ms())
+        })?;
+        if touched > 0 {
+            self.account_changes.send_modify(|count| *count += 1);
+        }
+        Ok(())
+    }
+
+    /// Queues fields outside a settings write, such as a keybinding saved to its file.
+    pub(crate) fn account_stage(&self, zone: &str, staged: &[Staged]) -> Result<()> {
+        let touched = self.commit(|tx, _| capture(tx, zone, staged, crate::util::unix_now_ms()))?;
+        if touched > 0 {
+            self.account_changes.send_modify(|count| *count += 1);
+        }
+        Ok(())
+    }
+
+    /// The local copy of the zone's record: every field, known or not.
+    pub(crate) fn account_record(&self, zone: &str) -> Result<Record> {
+        load_record(&self.reader(), zone)
+    }
+
+    pub(crate) fn account_outbox_len(&self, zone: &str) -> Result<usize> {
+        count(&self.reader(), "account_outbox", zone)
+    }
+
+    pub(crate) fn account_skipped_len(&self, zone: &str) -> Result<usize> {
+        count(&self.reader(), "account_skipped", zone)
+    }
+
+    pub(crate) fn account_version(&self, zone: &str) -> Result<Option<u64>> {
+        let version: Option<i64> = self
+            .reader()
+            .query_row(
+                "SELECT version FROM account_sync WHERE zone = ?1",
+                [zone],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(version.and_then(|version| u64::try_from(version).ok()))
+    }
+
+    /// Merges the zone's record as the server holds it into the local copy, in one
+    /// transaction. Afterwards the outbox holds exactly the fields the server lacks or
+    /// holds an older stamp for. A queued edit meets a conflict when another device
+    /// changed the same field since the stamp the edit replaced: both changed while the
+    /// devices were apart, and the older one lost.
+    pub(crate) fn account_merge(
+        &self,
+        zone: &str,
+        remote: &Record,
+        version: u64,
+    ) -> Result<MergeReport> {
+        self.commit(|tx, _| {
+            let (device, mut hlc, _) = clock(tx, zone)?.ok_or_else(|| CoreError::Internal("account sync is not set up".into()))?;
+            let now_ms = crate::util::unix_now_ms();
+            let local = load_record(tx, zone)?;
+            let merged = merge_records(&local, remote);
+            let pending = pending_edits(tx, zone)?;
+            for field in remote.values() {
+                hlc.observe(field.stamp.wall_ms, field.stamp.counter, u64::try_from(now_ms).unwrap_or(0));
+            }
+            for name in &merged.remote_won {
+                put_field(tx, zone, name, &merged.record[name])?;
+            }
+            let mut conflicts = 0;
+            for (name, (queued, base)) in &pending {
+                let Some(theirs) = remote.get(name) else { continue };
+                let concurrent = theirs.stamp.device != device
+                    && base.as_ref() != Some(&theirs.stamp)
+                    && theirs.value != *queued;
+                if concurrent {
+                    let (kept, lost) = if merged.remote_won.contains(name) {
+                        (&theirs.value, queued)
+                    } else {
+                        (queued, &theirs.value)
+                    };
+                    tx.execute(
+                        "INSERT INTO account_conflicts (zone, field, kept, lost, at_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![zone, name, text(kept), text(lost), now_ms],
+                    )?;
+                    conflicts += 1;
+                }
+            }
+            for name in pending.keys().filter(|name| !merged.local_ahead.contains(*name)) {
+                tx.execute("DELETE FROM account_outbox WHERE zone = ?1 AND field = ?2", params![zone, name])?;
+            }
+            for name in merged.local_ahead.iter().filter(|name| !pending.contains_key(*name)) {
+                queue_field(tx, zone, name, &merged.record[name], now_ms, None)?;
+            }
+            save_clock(tx, zone, hlc)?;
+            tx.execute(
+                "UPDATE account_sync SET version = ?2 WHERE zone = ?1",
+                params![zone, i64::try_from(version).unwrap_or(i64::MAX)],
+            )?;
+            Ok(MergeReport { conflicts, waiting: count(tx, "account_outbox", zone)? })
+        })
+    }
+
+    /// Records an accepted upload: the outbox rows for exactly the stamps sent are
+    /// done, and a field edited again while it was in flight stays queued.
+    pub(crate) fn account_pushed(&self, zone: &str, sent: &Record, version: u64) -> Result<usize> {
+        self.commit(|tx, _| {
+            for (name, field) in sent {
+                tx.execute(
+                    "DELETE FROM account_outbox WHERE zone = ?1 AND field = ?2 AND wall = ?3 AND counter = ?4 AND device = ?5",
+                    params![zone, name, i64::try_from(field.stamp.wall_ms).unwrap_or(i64::MAX), i64::from(field.stamp.counter), field.stamp.device],
+                )?;
+            }
+            tx.execute(
+                "UPDATE account_sync SET version = ?2 WHERE zone = ?1",
+                params![zone, i64::try_from(version).unwrap_or(i64::MAX)],
+            )?;
+            count(tx, "account_outbox", zone)
+        })
+    }
+
+    pub(crate) fn account_conflicts(&self, zone: &str) -> Result<Vec<SyncConflict>> {
+        let rows = self
+            .reader()
+            .prepare("SELECT field, kept, lost, at_ms FROM account_conflicts WHERE zone = ?1 ORDER BY id")?
+            .query_map([zone], |row| {
+                let value = |index: usize| -> rusqlite::Result<Value> {
+                    Ok(serde_json::from_str(&row.get::<_, String>(index)?).unwrap_or(Value::Null))
+                };
+                Ok(SyncConflict { field: row.get(0)?, kept: value(1)?, lost: value(2)?, at_ms: row.get(3)? })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub(crate) fn account_clear_conflicts(&self, zone: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute("DELETE FROM account_conflicts WHERE zone = ?1", [zone])?;
+            Ok(())
+        })
+    }
+}
+
+/// The queued edits: each field's value and the stamp it replaced.
+fn pending_edits(
+    conn: &Connection,
+    zone: &str,
+) -> Result<BTreeMap<String, (Value, Option<Stamp>)>> {
+    let rows = conn
+        .prepare("SELECT field, value, base_wall, base_counter, base_device FROM account_outbox WHERE zone = ?1")?
+        .query_map([zone], |row| {
+            let base = match (row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?) {
+                (Some(wall), Some(counter), Some(device)) => Some(Stamp {
+                    wall_ms: u64::try_from(wall).unwrap_or(0),
+                    counter: u32::try_from(counter).unwrap_or(0),
+                    device,
+                }),
+                _ => None,
+            };
+            let value: String = row.get(1)?;
+            Ok((row.get::<_, String>(0)?, (serde_json::from_str(&value).unwrap_or(Value::Null), base)))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
+fn count(conn: &Connection, table: &str, zone: &str) -> Result<usize> {
+    let table = match table {
+        "account_outbox" | "account_skipped" | "account_conflicts" => table,
+        _ => return Err(CoreError::Internal("unknown account table".into())),
+    };
+    let n: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE zone = ?1"),
+        [zone],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(n).unwrap_or(0))
+}
