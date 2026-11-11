@@ -140,8 +140,13 @@ fn read<T: serde::de::DeserializeOwned>(kind: CheckKind, params: &Value) -> Resu
             "params of a {kind:?} check must be an object"
         )));
     }
-    serde_json::from_value(params.clone())
-        .map_err(|e| CrewError::invalid(format!("params of a {kind:?} check: {e}")))
+    serde_path_to_error::deserialize(params).map_err(|e| {
+        CrewError::invalid(format!(
+            "params of a {kind:?} check, {}: {}",
+            e.path(),
+            e.inner()
+        ))
+    })
 }
 
 impl CrewCheck {

@@ -138,9 +138,9 @@ impl Gate {
         );
         if finding_check != confirms {
             return Err(CrewError::invalid(if finding_check {
-                "a finding_check gate decides confirmed or unconfirmed"
+                "`decision` of a finding_check gate is confirmed or unconfirmed"
             } else {
-                "only a finding_check gate decides confirmed or unconfirmed; the others pass or fail"
+                "`decision` is pass or fail; only a finding_check gate confirms or does not"
             }));
         }
         if self.decided_by == GateDecider::Person {

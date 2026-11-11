@@ -14,6 +14,7 @@ import type { Report } from "./Report";
 import type { RouteDecision } from "./RouteDecision";
 
 /**
- * Any v0 object, selected by `type`.
+ * Any v0 object, selected by `type`. It includes the answer key, so it belongs to the
+ * core: never return it to a worker or a member (H1). Use [`WorkerObject`] there.
  */
 export type CrewObject = { "type": "brief" } & Brief | { "type": "answer_key" } & AnswerKey | { "type": "lease" } & Lease | { "type": "message" } & CrewMessage | { "type": "fact" } & Fact | { "type": "claim" } & Claim | { "type": "report" } & Report | { "type": "evidence" } & Evidence | { "type": "finding" } & Finding | { "type": "disagreement" } & Disagreement | { "type": "gate" } & Gate | { "type": "result" } & CrewResult | { "type": "route_decision" } & RouteDecision;

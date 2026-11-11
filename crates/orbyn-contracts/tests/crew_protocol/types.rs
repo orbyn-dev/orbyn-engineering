@@ -66,28 +66,79 @@ fn every_valid_example_round_trips_through_its_type() {
     );
 }
 
+/// The field an invalid example is wrong in: the last named segment of the pointer in
+/// `invalid-examples.json`. A failure at the root (a missing field or a failed `not`)
+/// names no field there, so the test names it.
+fn field_of(name: &str, at: &str) -> String {
+    let named = at
+        .split('/')
+        .rev()
+        .find(|s| !s.is_empty() && s.parse::<usize>().is_err());
+    if let Some(field) = named {
+        return field.to_owned();
+    }
+    match name {
+        "answer-key.invalid.no-protected-paths.json" => "protected_paths",
+        "brief.invalid.no-budget.json" => "budget",
+        "evidence.invalid.no-does-not-prove.json" => "does_not_prove",
+        "fact.invalid.contract-without-check.json" => "check",
+        "finding.invalid.no-commit.json" => "commit",
+        "gate.invalid.lane-on-checks.json" | "gate.invalid.review-without-lane.json" => "lane",
+        "lease.invalid.target-without-transfer.json"
+        | "lease.invalid.transfer-without-target.json" => "to",
+        "message.invalid.answer-without-reply.json" => "in_reply_to",
+        "report.invalid.no-not-verified.json" | "result.invalid.no-not-verified.json" => {
+            "not_verified"
+        }
+        "result.invalid.reason-on-passed.json" | "result.invalid.stopped-without-reason.json" => {
+            "stop_reason"
+        }
+        "result.invalid.route-missing.json" => "route",
+        "route-decision.invalid.assigned-without-request.json" => "requested",
+        "route-decision.invalid.lane-on-builder.json"
+        | "route-decision.invalid.review-without-lane.json" => "lane",
+        other => panic!("{other}: name the field it is wrong in"),
+    }
+    .to_owned()
+}
+
+/// Every invalid example is refused as `invalid_object`, and the refusal names the field
+/// `invalid-examples.json` says it is wrong in, so an incidental refusal cannot hide a
+/// missing rule.
 #[test]
-fn every_invalid_example_is_refused() {
+fn every_invalid_example_is_refused_for_its_own_field() {
+    let expected = read_json(&protocol_dir().join("schemas/invalid-examples.json"));
+    let mut wrong = Vec::new();
     for (schema, name, valid, value) in examples() {
         if valid {
             continue;
         }
         let refusal: Option<CrewError> = if schema == "error" {
-            serde_json::from_value::<CrewError>(value.clone())
-                .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.to_string()))
-                .and_then(|e| e.validate().map(|()| e))
-                .err()
+            CrewError::parse(&value).err()
         } else {
             CrewObject::parse(&value).err()
         };
         let refusal = refusal.unwrap_or_else(|| panic!("{name} should be refused"));
-        // The example's id is not what refuses it: the object is wrong in itself.
-        assert_ne!(
-            refusal.code,
-            ErrorCode::IdMismatch,
-            "{name} is refused only for its id: {refusal}"
-        );
+        let want = &expected["expected"][name.as_str()];
+        let field = field_of(&name, want["at"].as_str().unwrap());
+        let code = if name == "brief.invalid.wrong-version.json" {
+            ErrorCode::UnsupportedVersion
+        } else {
+            ErrorCode::InvalidObject
+        };
+        if refusal.code != code {
+            wrong.push(format!(
+                "{name}: code {:?}: {}",
+                refusal.code, refusal.message
+            ));
+        } else if !refusal.message.contains(&field) {
+            wrong.push(format!(
+                "{name}: should name `{field}`: {}",
+                refusal.message
+            ));
+        }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 #[test]
@@ -170,4 +221,22 @@ fn the_brief_has_no_place_for_the_answer_key() {
     let mut smuggled = wire.clone();
     smuggled["checks"] = key.to_value()["checks"].clone();
     assert!(CrewObject::parse(&smuggled).is_err());
+}
+
+/// H1 in the types: the union a worker reads has no answer key variant.
+#[test]
+fn the_worker_union_cannot_hold_an_answer_key() {
+    use orbyn_contracts::WorkerObject;
+    let dir = protocol_dir().join("schemas/examples");
+    let key = read_json(&dir.join("answer-key.valid.basic.json"));
+    assert!(serde_json::from_value::<WorkerObject>(key.clone()).is_err());
+    let key = CrewObject::parse(&key).unwrap();
+    assert_eq!(
+        WorkerObject::try_from(key).unwrap_err().code,
+        ErrorCode::AnswerKeyForbidden
+    );
+    let brief = CrewObject::parse(&read_json(&dir.join("brief.valid.basic.json"))).unwrap();
+    let worker = WorkerObject::try_from(brief.clone()).unwrap();
+    assert_eq!(CrewObject::from(worker.clone()), brief);
+    assert_eq!(serde_json::to_value(&worker).unwrap(), brief.to_value());
 }

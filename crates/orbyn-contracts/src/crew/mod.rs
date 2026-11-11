@@ -62,7 +62,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 wire! {
-/// Any v0 object, selected by `type`.
+/// Any v0 object, selected by `type`. It includes the answer key, so it belongs to the
+/// core: never return it to a worker or a member (H1). Use [`WorkerObject`] there.
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CrewObject {
     Brief(Brief),
@@ -79,6 +80,73 @@ pub enum CrewObject {
     Result(CrewResult),
     RouteDecision(RouteDecision),
 }
+}
+
+wire! {
+/// Any v0 object a worker may see: every [`CrewObject`] except the answer key (H1).
+/// The type itself cannot hold a key.
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkerObject {
+    Brief(Brief),
+    Lease(Lease),
+    Message(CrewMessage),
+    Fact(Fact),
+    Claim(Claim),
+    Report(Report),
+    Evidence(Evidence),
+    Finding(Finding),
+    Disagreement(Disagreement),
+    Gate(Gate),
+    Result(CrewResult),
+    RouteDecision(RouteDecision),
+}
+}
+
+impl TryFrom<CrewObject> for WorkerObject {
+    type Error = CrewError;
+
+    /// Refuses the answer key with `answer_key_forbidden`.
+    fn try_from(object: CrewObject) -> Result<Self, CrewError> {
+        Ok(match object {
+            CrewObject::AnswerKey(_) => {
+                return Err(CrewError::new(
+                    ErrorCode::AnswerKeyForbidden,
+                    "the answer key is never shown to a worker",
+                ));
+            }
+            CrewObject::Brief(o) => Self::Brief(o),
+            CrewObject::Lease(o) => Self::Lease(o),
+            CrewObject::Message(o) => Self::Message(o),
+            CrewObject::Fact(o) => Self::Fact(o),
+            CrewObject::Claim(o) => Self::Claim(o),
+            CrewObject::Report(o) => Self::Report(o),
+            CrewObject::Evidence(o) => Self::Evidence(o),
+            CrewObject::Finding(o) => Self::Finding(o),
+            CrewObject::Disagreement(o) => Self::Disagreement(o),
+            CrewObject::Gate(o) => Self::Gate(o),
+            CrewObject::Result(o) => Self::Result(o),
+            CrewObject::RouteDecision(o) => Self::RouteDecision(o),
+        })
+    }
+}
+
+impl From<WorkerObject> for CrewObject {
+    fn from(object: WorkerObject) -> Self {
+        match object {
+            WorkerObject::Brief(o) => Self::Brief(o),
+            WorkerObject::Lease(o) => Self::Lease(o),
+            WorkerObject::Message(o) => Self::Message(o),
+            WorkerObject::Fact(o) => Self::Fact(o),
+            WorkerObject::Claim(o) => Self::Claim(o),
+            WorkerObject::Report(o) => Self::Report(o),
+            WorkerObject::Evidence(o) => Self::Evidence(o),
+            WorkerObject::Finding(o) => Self::Finding(o),
+            WorkerObject::Disagreement(o) => Self::Disagreement(o),
+            WorkerObject::Gate(o) => Self::Gate(o),
+            WorkerObject::Result(o) => Self::Result(o),
+            WorkerObject::RouteDecision(o) => Self::RouteDecision(o),
+        }
+    }
 }
 
 /// Runs `$body` with `$o` bound to whichever object `$self` holds.
@@ -168,6 +236,44 @@ impl CrewObject {
         object_id(&self.to_value())
     }
 
+    /// Reads the object by its `type`, keeping the path of the field that fails, which
+    /// serde loses inside an internally tagged enum.
+    fn read(value: &Value) -> Result<Self, CrewError> {
+        fn body<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, CrewError> {
+            let mut value = value.clone();
+            if let Some(map) = value.as_object_mut() {
+                map.remove("type");
+            }
+            serde_path_to_error::deserialize(value).map_err(|e| {
+                CrewError::new(
+                    ErrorCode::InvalidObject,
+                    format!("{}: {}", e.path(), e.inner()),
+                )
+            })
+        }
+        let tag = value.get("type").and_then(Value::as_str);
+        Ok(match tag {
+            Some("brief") => Self::Brief(body(value)?),
+            Some("answer_key") => Self::AnswerKey(body(value)?),
+            Some("lease") => Self::Lease(body(value)?),
+            Some("message") => Self::Message(body(value)?),
+            Some("fact") => Self::Fact(body(value)?),
+            Some("claim") => Self::Claim(body(value)?),
+            Some("report") => Self::Report(body(value)?),
+            Some("evidence") => Self::Evidence(body(value)?),
+            Some("finding") => Self::Finding(body(value)?),
+            Some("disagreement") => Self::Disagreement(body(value)?),
+            Some("gate") => Self::Gate(body(value)?),
+            Some("result") => Self::Result(body(value)?),
+            Some("route_decision") => Self::RouteDecision(body(value)?),
+            other => {
+                return Err(CrewError::invalid(format!(
+                    "type {other:?} is not a v0 object"
+                )));
+            }
+        })
+    }
+
     /// Reads and checks an object in the order the spec's errors apply: an unsupported
     /// `v`, then an invalid object (a float, an unknown type or field, a failed rule),
     /// then an `id` that is not the hash of the object.
@@ -179,8 +285,7 @@ impl CrewObject {
             ));
         }
         reject_floats(value)?;
-        let object: Self = serde_json::from_value(value.clone())
-            .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.to_string()))?;
+        let object = Self::read(value)?;
         object.validate()?;
         let computed = object.computed_id()?;
         if &computed != object.id() {

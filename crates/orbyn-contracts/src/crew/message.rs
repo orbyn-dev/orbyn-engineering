@@ -55,7 +55,9 @@ impl CrewMessage {
         if let Some(wait) = self.wait_seconds {
             within("wait_seconds", wait.into(), 0, 40)?;
             if self.kind != MessageKind::Question {
-                return Err(CrewError::invalid("only a question has `wait_seconds`"));
+                return Err(CrewError::invalid(
+                    "only a question has `wait_seconds`, and `kind` is not question",
+                ));
             }
         }
         Ok(())

@@ -340,3 +340,51 @@ fn migration_29_is_the_crew_migration_and_numbering_has_no_gap() {
         .1;
     assert!(sql.contains("CREATE TABLE crew_answer_keys"));
 }
+
+#[test]
+fn creating_a_task_again_needs_the_same_key_and_run() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    // A corrected key (a different id) is refused, and the stored one stays.
+    let mut corrected = key();
+    corrected
+        .protected_paths
+        .push(orbyn_contracts::CrewPathPattern::new("extra/**").unwrap());
+    corrected.id = CrewObject::AnswerKey(corrected.clone())
+        .computed_id()
+        .unwrap();
+    let error = store
+        .create_crew_task(&brief(), &corrected, "run-01")
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("different answer key"),
+        "{error}"
+    );
+    assert_eq!(store.crew_answer_key(&id).unwrap(), Some(key()));
+    // The same key under another run is refused too.
+    let error = store
+        .create_crew_task(&brief(), &key(), "run-02")
+        .unwrap_err();
+    assert!(error.to_string().contains("different run"), "{error}");
+    assert_eq!(store.crew_task(&id).unwrap().unwrap().run_id, "run-01");
+}
+
+#[test]
+fn a_worker_reads_every_object_but_the_key() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    store
+        .add_crew_object(&id, &object(example!("message.valid.question")))
+        .unwrap();
+    store
+        .add_crew_object(&id, &object(example!("result.valid.passed")))
+        .unwrap();
+    let shown = store.crew_worker_objects(&id).unwrap();
+    let kinds: Vec<_> = shown
+        .iter()
+        .map(|o| CrewObject::from(o.clone()).type_name())
+        .collect();
+    assert_eq!(kinds, ["brief", "message", "result"]);
+    let wire = serde_json::to_string(&shown).unwrap();
+    assert!(!wire.contains(key().id.as_str()) && !wire.contains("protected_paths"));
+}

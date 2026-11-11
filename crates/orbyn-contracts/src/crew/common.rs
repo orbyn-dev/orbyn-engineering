@@ -90,6 +90,14 @@ impl CrewError {
         Self::new(ErrorCode::InvalidObject, message)
     }
 
+    /// Reads a refusal object, naming the field that fails, then checks it.
+    pub fn parse(value: &Value) -> Result<Self, CrewError> {
+        let error: Self = serde_path_to_error::deserialize(value)
+            .map_err(|e| Self::invalid(format!("{}: {}", e.path(), e.inner())))?;
+        error.validate()?;
+        Ok(error)
+    }
+
     /// The error object itself must be a valid v0 object.
     pub fn validate(&self) -> Verdict {
         version(self.v)?;
@@ -175,9 +183,9 @@ pub(super) fn author(author: &CrewAuthor) -> Verdict {
         return Ok(());
     }
     Err(CrewError::invalid(if author.role.is_member() {
-        "a lead, worker or reviewer author names its member"
+        "author: a lead, worker or reviewer names its member"
     } else {
-        "the core and a person have no member id"
+        "author: the core and a person have no member id"
     }))
 }
 
@@ -186,7 +194,7 @@ pub(super) fn written_by(what: &str, author: &CrewAuthor, allowed: &[CrewRole]) 
         return Ok(());
     }
     Err(CrewError::invalid(format!(
-        "{what} is not written by a {:?}",
+        "author.role: {what} is not written by a {:?}",
         author.role
     )))
 }
@@ -197,14 +205,30 @@ pub(super) fn envelope(v: u8, author_of: &CrewAuthor) -> Verdict {
     author(author_of)
 }
 
-/// Integers only (SPEC.md section 2.3): a float anywhere makes an object invalid.
+/// Integers only (SPEC.md section 2.3): a float anywhere makes an object invalid. The
+/// message names the field it found it in.
 pub fn reject_floats(value: &Value) -> Verdict {
+    walk_floats(value, "")
+}
+
+fn walk_floats(value: &Value, path: &str) -> Verdict {
     match value {
         Value::Number(n) if !(n.is_i64() || n.is_u64()) => Err(CrewError::invalid(format!(
-            "floating-point number {n}: objects hold integers only"
+            "{}: floating-point number {n}: objects hold integers only",
+            if path.is_empty() { "." } else { path }
         ))),
-        Value::Array(items) => items.iter().try_for_each(reject_floats),
-        Value::Object(map) => map.values().try_for_each(reject_floats),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .try_for_each(|(i, item)| walk_floats(item, &format!("{path}[{i}]"))),
+        Value::Object(map) => map.iter().try_for_each(|(key, item)| {
+            let at = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            walk_floats(item, &at)
+        }),
         _ => Ok(()),
     }
 }

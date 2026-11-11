@@ -5,7 +5,7 @@
 
 use orbyn_contracts::{
     AnswerKey, Brief, CrewError, CrewMessage, CrewObject, CrewResult, Evidence, Gate, Lease,
-    canonical_json,
+    WorkerObject, canonical_json,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
@@ -86,7 +86,8 @@ fn belongs_to(task: &CrewTask, object: &CrewObject) -> Result<()> {
 
 impl Store {
     /// Stores a brief and its answer key together, in the state `briefed`. The key's
-    /// `brief` must be this brief's id. Storing the same task again returns it as it is.
+    /// `brief` must be this brief's id. Storing the same task again, with the same key and
+    /// run, returns it as it is; a different key or run is refused.
     pub fn create_crew_task(
         &self,
         brief: &Brief,
@@ -111,6 +112,23 @@ impl Store {
                 )
                 .optional()?
             {
+                let stored_key: String = tx.query_row(
+                    "SELECT id FROM crew_answer_keys WHERE task_id = ?1",
+                    [brief.id.as_str()],
+                    |row| row.get(0),
+                )?;
+                // Same brief, but a different key or run: refuse, never return the old one.
+                if stored_key != key.id.as_str() || existing.run_id != run_id {
+                    return Err(CoreError::Invalid(format!(
+                        "crew task {} already exists with a different {}",
+                        existing.id,
+                        if stored_key != key.id.as_str() {
+                            "answer key"
+                        } else {
+                            "run"
+                        }
+                    )));
+                }
                 return Ok(existing);
             }
             let stamp = now();
@@ -252,6 +270,28 @@ impl Store {
             .query_map([task_id], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         bodies.iter().map(|text| read_object(text)).collect()
+    }
+
+    /// Everything a worker may be shown about a task: the brief and what the run produced.
+    /// The answer key is not a `WorkerObject`, so it cannot be in the result.
+    pub fn crew_worker_objects(&self, task_id: &str) -> Result<Vec<WorkerObject>> {
+        let mut all: Vec<CrewObject> = self
+            .crew_brief(task_id)?
+            .into_iter()
+            .map(CrewObject::Brief)
+            .collect();
+        for table in [
+            "crew_messages",
+            "crew_leases",
+            "crew_evidence",
+            "crew_gates",
+            "crew_results",
+        ] {
+            all.extend(self.crew_objects(table, task_id)?);
+        }
+        all.into_iter()
+            .map(|object| WorkerObject::try_from(object).map_err(refuse))
+            .collect()
     }
 
     pub fn crew_messages(&self, task_id: &str) -> Result<Vec<CrewMessage>> {
