@@ -232,15 +232,19 @@
   padding: 0 10px;
   border-radius: var(--radius-9);
   background: var(--color-chip);
-  color: var(--color-faint);
+  color: var(--color-muted);
   font-size: var(--text-nav);
+}
+.search-trigger > svg,
+.search-field > svg {
+  color: var(--color-faint);
 }
 .search-trigger {
   border: 0;
   text-align: left;
   cursor: pointer;
 }
-.search-trigger:hover {
+.search-trigger:hover > svg {
   color: var(--color-muted);
 }
 .search-trigger kbd {
