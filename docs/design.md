@@ -53,7 +53,7 @@ custom theme files keep working through `THEME_TOKENS`. Literal colours live onl
 `web/src/styles/tokens.css`; `tokens.test.ts` enforces it.
 
 Ink is alpha white or black over the surface (`--color-text` 92-94%, `--color-textSoft`
-74-78%, `--color-muted` 60-64%, `--color-faint` 52-54%). Muted and faint sit a few points
+74-78%, `--color-muted` 58-64%, `--color-faint` 52-54%). Muted and faint sit a few points
 above the reference mock-up so small text keeps at least 4.5:1 on its surface.
 
 ## Type
