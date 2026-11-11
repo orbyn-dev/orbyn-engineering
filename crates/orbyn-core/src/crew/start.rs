@@ -123,6 +123,21 @@ impl Core {
         self.store
             .add_crew_run(&task.id, &thread.id, member.as_str())
             .map_err(internal)?;
+        // What the protected files hold now, before the worker exists. The verifier compares.
+        if !key.protected_paths.is_empty() {
+            let (root, paths) = (
+                std::path::PathBuf::from(&thread.cwd),
+                key.protected_paths.clone(),
+            );
+            let before =
+                tokio::task::spawn_blocking(move || super::protect::snapshot(&root, &paths))
+                    .await
+                    .map_err(|e| invalid(e.to_string()))?;
+            let text = serde_json::to_string(&before).map_err(|e| invalid(e.to_string()))?;
+            self.store
+                .set_crew_protected(&task.id, &text)
+                .map_err(internal)?;
+        }
 
         let machine = self
             .crew_machine(Some(&thread.project_id))

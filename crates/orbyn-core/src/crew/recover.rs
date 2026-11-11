@@ -22,6 +22,8 @@ impl Core {
     }
 
     pub(crate) async fn recover_crew_tasks(self: &Arc<Self>) {
+        // No verification is alive at a start, so a claim found now is from one that died.
+        let _ = self.store.clear_crew_claims();
         let Ok(tasks) = self.store.crew_tasks_in_flight() else {
             return;
         };

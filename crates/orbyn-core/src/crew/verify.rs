@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use super::checks::{Ran, Site, run_check, tail};
 use super::guard::{key_needles, redact, refuse_leak, refuse_secret, withhold};
 use super::leases::{core_author, internal, timestamp};
-use super::protect::protected_changes;
+use super::protect::{Snapshot, protected_changes};
 use crate::app::Core;
 use crate::store::{CrewRun, CrewTask};
 
@@ -208,10 +208,12 @@ impl Core {
         };
         // N7, H9 and H11: if the worker changed a file the checks use, nothing is run. The
         // checks would be the worker's own. The reason does not name the file.
-        if let (Some(base), false) = (run.base_commit.as_deref(), key.protected_paths.is_empty()) {
-            let touched = protected_changes(worktree, base, &key.protected_paths)
-                .await
-                .map_err(internal)?;
+        let before: Option<Snapshot> = run
+            .protected
+            .as_deref()
+            .and_then(|text| serde_json::from_str(text).ok());
+        if let Some(before) = before {
+            let touched = protected_changes(&before, worktree, &key.protected_paths);
             if !touched.is_empty() {
                 verdict.failures.push(Failed {
                     id: "protected_paths".to_owned(),

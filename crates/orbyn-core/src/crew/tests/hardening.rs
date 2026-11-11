@@ -239,8 +239,17 @@ async fn every_orbyn_tool_off_the_allow_list_is_refused_to_a_worker() {
     let mut refused = 0;
     for name in &names {
         // The lead is never limited by this list.
-        assert!(w.core.refuse_for_crew_worker(&lead, name).is_ok(), "{name}");
-        let result = w.core.refuse_for_crew_worker(&worker, name);
+        assert!(
+            w.core
+                .refuse_for_crew_worker(&lead, name, &json!({}))
+                .is_ok(),
+            "{name}"
+        );
+        let result = w.core.refuse_for_crew_worker(
+            &worker,
+            name,
+            &json!({ "thread_id": worker.scope.thread_id }),
+        );
         assert_eq!(result.is_ok(), allowed(name), "{name}");
         refused += usize::from(result.is_err());
     }
@@ -258,7 +267,9 @@ async fn every_orbyn_tool_off_the_allow_list_is_refused_to_a_worker() {
         "orbyn_thread_update",
     ] {
         assert!(
-            w.core.refuse_for_crew_worker(&worker, name).is_err(),
+            w.core
+                .refuse_for_crew_worker(&worker, name, &json!({}))
+                .is_err(),
             "{name}"
         );
     }
@@ -367,4 +378,95 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
         w.task(&made[1]).stop_reason.as_deref(),
         Some("engine_error")
     );
+}
+
+/// An attachment tool takes any thread of the project; a worker may use only its own.
+#[tokio::test]
+async fn a_worker_may_attach_only_to_its_own_thread() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, _) = w.start(brief(json!({})), key()).await;
+    let id = started["task"].as_str().unwrap().to_owned();
+    let own = w.worker(&id);
+    let token = bind(&w.core, &own, "run-w");
+    for tool in ["orbyn_attachment_add", "orbyn_attachment_discard"] {
+        let (text, error) = w
+            .raw(
+                &token,
+                tool,
+                json!({ "thread_id": w.lead, "path": "src/base.txt", "attachment_id": "x" }),
+            )
+            .await;
+        assert!(
+            error && text.contains("only on its own thread"),
+            "{tool}: {text}"
+        );
+        let (text, _) = w
+            .raw(
+                &token,
+                tool,
+                json!({ "thread_id": own, "path": "src/base.txt", "attachment_id": "x" }),
+            )
+            .await;
+        assert!(!text.contains("only on its own thread"), "{tool}: {text}");
+    }
+    // Without a thread it is refused as well.
+    let (text, error) = w
+        .raw(
+            &token,
+            "orbyn_attachment_add",
+            json!({ "path": "src/base.txt" }),
+        )
+        .await;
+    assert!(error && text.contains("only on its own thread"), "{text}");
+}
+
+/// Two verifications of one task at once are one: the second finds the claim taken, so the
+/// checks do not run twice in a checkout and the loop guard counts the failure once.
+#[tokio::test]
+async fn two_verifications_at_once_are_one() {
+    use crate::crew::tests::fake::stamper;
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let s = stamper();
+    let brief = s
+        .brief(&super::harness::brief(json!({ "files": [] })))
+        .unwrap();
+    let failing = json!({
+        "checks": [{ "id": "chk-run", "kind": "command", "params": { "run": "exit 3" },
+                     "proves": "It exits 0." }],
+        "protected_paths": []
+    });
+    let key = s.answer_key(&failing, &brief.id).unwrap();
+    let task = w
+        .core
+        .store
+        .create_crew_task(&brief, &key, "run-claim")
+        .unwrap();
+    w.core
+        .store
+        .add_crew_run(&task.id, &w.lead, "worker-claim")
+        .unwrap();
+    let thread = w.core.store.thread(&w.lead).unwrap();
+    w.core
+        .store
+        .set_crew_worker(&task.id, &w.lead, &thread.cwd, None)
+        .unwrap();
+    for step in ["routed", "running"] {
+        w.core.store.move_crew_task(&task.id, step, None).unwrap();
+    }
+    w.core
+        .store
+        .begin_crew_verification(&task.id, "run-x", None)
+        .unwrap();
+    assert!(w.core.store.claim_crew_verification(&task.id).unwrap());
+    assert!(!w.core.store.claim_crew_verification(&task.id).unwrap());
+    // A claim from a dead process is cleared at the next start.
+    w.core.store.clear_crew_claims().unwrap();
+    let (a, b) = tokio::join!(
+        w.core.verify_crew_task(&task.id),
+        w.core.verify_crew_task(&task.id)
+    );
+    let _ = (a, b);
+    let run = w.core.store.crew_run(&task.id).unwrap().unwrap();
+    assert_eq!(run.failures, 1, "one failure, counted once");
+    assert_eq!(w.core.store.crew_evidence(&task.id).unwrap().len(), 1);
 }

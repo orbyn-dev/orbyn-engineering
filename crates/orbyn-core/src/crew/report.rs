@@ -75,6 +75,11 @@ impl Core {
         else {
             return;
         };
+        // One verification at a time: a second caller, such as a restart racing a run's end,
+        // finds the claim taken and does nothing.
+        if !self.store.claim_crew_verification(task_id).unwrap_or(false) {
+            return;
+        }
         match self.crew_verify_live(&task, &run).await {
             Ok(judged) => self.settle_crew_task(task_id, &judged),
             // Stopped meanwhile, by the budget timer or a cancel: nothing more to decide.

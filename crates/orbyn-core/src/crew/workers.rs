@@ -6,6 +6,7 @@
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::tools::mcp::McpBinding;
+use serde_json::Value;
 
 /// The only `orbyn_*` tools a worker may call: its preview tabs, the worktree and environment
 /// it works in, and its own attachments.
@@ -26,15 +27,27 @@ pub(crate) fn allowed(tool: &str) -> bool {
 
 impl Core {
     /// Refuses `tool` when the caller's thread works a Crew task, whatever the task's state.
-    pub(crate) fn refuse_for_crew_worker(&self, binding: &McpBinding, tool: &str) -> Result<()> {
-        if !allowed(tool)
-            && self
-                .store
-                .crew_task_for_worker(&binding.scope.thread_id)?
-                .is_some()
-        {
+    pub(crate) fn refuse_for_crew_worker(
+        &self,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> Result<()> {
+        let own = &binding.scope.thread_id;
+        if self.store.crew_task_for_worker(own)?.is_none() {
+            return Ok(());
+        }
+        if !allowed(tool) {
             return Err(CoreError::Invalid(format!(
                 "A crew worker cannot use {tool}."
+            )));
+        }
+        // An attachment tool takes any thread of the project; a worker's is its own.
+        if tool.starts_with("orbyn_attachment_")
+            && args.get("thread_id").and_then(Value::as_str) != Some(own.as_str())
+        {
+            return Err(CoreError::Invalid(format!(
+                "A crew worker can use {tool} only on its own thread."
             )));
         }
         Ok(())

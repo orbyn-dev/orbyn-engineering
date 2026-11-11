@@ -25,6 +25,10 @@ pub struct CrewRun {
     pub guard: Guard,
     /// The run of the engine that last reported, so its end is not read as a missing report.
     pub last_report_run: Option<String>,
+    /// The protected files as they were when the task started, as JSON.
+    pub protected: Option<String>,
+    /// Set while one verification has claimed the task.
+    pub verifying_since: Option<String>,
 }
 
 fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
@@ -43,6 +47,8 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
             approach_changed: row.get::<_, i64>("approach_changed")? != 0,
         },
         last_report_run: row.get("last_report_run")?,
+        protected: row.get("protected")?,
+        verifying_since: row.get("verifying_since")?,
     })
 }
 
@@ -96,6 +102,11 @@ fn step(
         "UPDATE crew_tasks SET state = ?2, stop_reason = ?3, updated_at = ?4 WHERE id = ?1",
         params![task.id, to, stop_reason, now()],
     )?;
+    // A claim on a verification ends with the state it was for.
+    tx.execute(
+        "UPDATE crew_runs SET verifying_since = NULL WHERE task_id = ?1",
+        [&task.id],
+    )?;
     find_task(tx, &task.id)
 }
 
@@ -109,6 +120,43 @@ impl Store {
                  ON CONFLICT(task_id) DO NOTHING",
                 params![task_id, lead_thread_id, member],
             )?;
+            Ok(())
+        })
+    }
+
+    /// Records the protected files as they are before the worker exists.
+    pub fn set_crew_protected(&self, task_id: &str, snapshot: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            find_run(tx, task_id)?;
+            tx.execute(
+                "UPDATE crew_runs SET protected = ?2 WHERE task_id = ?1",
+                params![task_id, snapshot],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Claims the verification of a task that is `verifying`. True for the one caller that
+    /// gets it; any other, at the same time or later, gets false and verifies nothing.
+    pub fn claim_crew_verification(&self, task_id: &str) -> Result<bool> {
+        self.commit(|tx, _| {
+            let task = find_task(tx, task_id)?;
+            if task.state != "verifying" {
+                return Ok(false);
+            }
+            let claimed = tx.execute(
+                "UPDATE crew_runs SET verifying_since = ?2
+                 WHERE task_id = ?1 AND verifying_since IS NULL",
+                params![task_id, now()],
+            )?;
+            Ok(claimed == 1)
+        })
+    }
+
+    /// At a start no verification is alive, so any claim left over is from one that died.
+    pub fn clear_crew_claims(&self) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute("UPDATE crew_runs SET verifying_since = NULL", [])?;
             Ok(())
         })
     }

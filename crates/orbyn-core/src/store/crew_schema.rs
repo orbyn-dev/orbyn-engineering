@@ -142,3 +142,10 @@ CREATE INDEX crew_reports_by_task ON crew_reports(task_id);
 CREATE TRIGGER crew_reports_immutable BEFORE UPDATE ON crew_reports
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
+
+// Schema 33: what the protected paths held when the task started (a hash per file, never a
+// check) and the claim that makes one verification run at a time.
+pub(super) const CREW_PROTECTED: &str = r#"
+ALTER TABLE crew_runs ADD COLUMN protected TEXT;
+ALTER TABLE crew_runs ADD COLUMN verifying_since TEXT;
+"#;

@@ -26,8 +26,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
-| `protect` | Compares the key's protected paths with the starting commit by reading both directly: a new, missing, changed or renamed file counts, whatever git is told to ignore |
-| `recover` | After a restart: verifies a task left `verifying`, stops one whose worker is gone, sets the budget timers again |
+| `protect` | Records the key's protected files (type, executable bit, SHA-256 of the exact bytes, links not followed) before the worker exists, and compares at verify time. Git is not asked, so nothing the worker can write in `.git` hides a change |
+| `recover` | After a restart: clears dead verification claims, verifies a task left `verifying`, stops one whose worker is gone, sets the budget timers again |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
 ## Rules to keep
@@ -45,8 +45,9 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   tools refuse once the run ends (H7); the core's own verification still adds Evidence and a Gate.
 - The checks run when the worker's turn has ended, never during it, so the worker cannot change files
   while they run. Before any check, a change to a file in the key's protected paths fails the attempt
-  with a reason that names no file (N7, H9, H11). The files are compared directly, not through
-  `git status`, so `.gitignore`, `update-index` flags and `.git/config` cannot hide an edit.
+  with a reason that names no file (N7, H9, H11). The files are recorded at `crew_start` and compared
+  byte for byte, never through git, so `.gitignore`, `update-index` flags, `.git/config`, replace refs, loose objects
+  and alternates cannot hide an edit. Exactly one verification runs per task: it is claimed in the transaction.
 - The verifier is code. A worker is told why a check failed (redacted, with the key's text
   withheld, then proven free of both) and never the check, its id or any other part of the key (H1).
 - `failed` is never at rest: a failed verification goes through it to the state the loop guard
@@ -56,6 +57,16 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   failure after that stops the run (`repeated_failure`).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
+
+## Known limits of Preview
+
+- Background processes a worker starts outlive its turn. They can edit protected files after a check has read
+  them, or read a check command from `ps`. Fixing it needs the worker's own worktree and killing its process
+  group (#436).
+- A worker runs as the same OS user, so its shell can read the Orbyn SQLite store (the answer-key table and the
+  lead's thread) or call the `orbyn` CLI. No tool refusal can stop that; it needs a sandbox that blocks reads of
+  the app data folder (#441).
+- An attachment tool takes a thread id; a worker may name only its own.
 
 ## Follow-ups
 
