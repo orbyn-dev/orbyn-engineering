@@ -272,11 +272,13 @@ impl Store {
         bodies.iter().map(|text| read_object(text)).collect()
     }
 
-    /// What a worker may be shown about a task: the brief and the messages not addressed
-    /// to the lead. Evidence, gates and results are left out, since they carry the answer
-    /// key's check ids and commands. The H1 leak check must still run on each object
+    /// What the worker `reader` may be shown about a task: the brief, and the messages
+    /// addressed to `all` or to `reader`. A message to the lead or to another member is
+    /// left out, and so are the reader's own sent messages (the spec does not give a worker
+    /// a view of them). Evidence, gates and results are left out too, since they carry the
+    /// answer key's check ids and commands. The H1 leak check must still run on each object
     /// before it reaches a worker: a message can quote a check.
-    pub fn crew_worker_objects(&self, task_id: &str) -> Result<Vec<WorkerObject>> {
+    pub fn crew_worker_objects(&self, task_id: &str, reader: &str) -> Result<Vec<WorkerObject>> {
         let mut shown: Vec<WorkerObject> = self
             .crew_brief(task_id)?
             .into_iter()
@@ -285,10 +287,10 @@ impl Store {
         let bodies = {
             let conn = self.reader();
             let mut statement = conn.prepare(
-                "SELECT body FROM crew_messages WHERE task_id = ?1 AND recipient != 'lead' ORDER BY rowid",
+                "SELECT body FROM crew_messages WHERE task_id = ?1 AND (recipient = 'all' OR recipient = ?2) ORDER BY rowid",
             )?;
             statement
-                .query_map([task_id], |row| row.get::<_, String>(0))?
+                .query_map(params![task_id, reader], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
         for body in bodies {

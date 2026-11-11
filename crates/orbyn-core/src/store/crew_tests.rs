@@ -387,7 +387,7 @@ fn a_worker_reads_the_brief_and_messages_but_nothing_with_the_checks() {
         evidence[0].command.as_str().contains("cargo test"),
         "the stored evidence names the command"
     );
-    let shown = store.crew_worker_objects(&id).unwrap();
+    let shown = store.crew_worker_objects(&id, "worker-02").unwrap();
     let kinds: Vec<_> = shown
         .iter()
         .map(|o| CrewObject::from(o.clone()).type_name())
@@ -406,4 +406,44 @@ fn a_worker_reads_the_brief_and_messages_but_nothing_with_the_checks() {
     ] {
         assert!(!wire.contains(secret), "a worker was shown {secret}");
     }
+}
+
+/// A message restated with another recipient, under its own content address.
+fn message_to(to: &str, body: &str) -> CrewObject {
+    let CrewObject::Message(mut message) = object(example!("message.valid.question")) else {
+        unreachable!()
+    };
+    message.to = orbyn_contracts::CrewAddressee::new(to).unwrap();
+    message.body = orbyn_contracts::CrewLongText::new(body).unwrap();
+    message.wait_seconds = None;
+    message.id = CrewObject::Message(message.clone()).computed_id().unwrap();
+    CrewObject::Message(message)
+}
+
+#[test]
+fn a_worker_sees_only_messages_to_all_or_to_itself() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    for (to, body) in [
+        ("worker-01", "for A"),
+        ("worker-02", "for B"),
+        ("lead", "for the lead"),
+        ("all", "for everyone"),
+    ] {
+        store.add_crew_object(&id, &message_to(to, body)).unwrap();
+    }
+    let bodies = |reader: &str| -> Vec<String> {
+        store
+            .crew_worker_objects(&id, reader)
+            .unwrap()
+            .into_iter()
+            .filter_map(|o| match o {
+                orbyn_contracts::WorkerObject::Message(m) => Some(m.body.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(bodies("worker-01"), ["for A", "for everyone"]);
+    assert_eq!(bodies("worker-02"), ["for B", "for everyone"]);
+    assert_eq!(bodies("worker-03"), ["for everyone"]);
 }
