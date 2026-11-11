@@ -166,7 +166,7 @@ const FOCUS_AREAS = [
   "nav[aria-label='Workspace'] .thread-row a, nav[aria-label='Workspace'] a",
   ".transcript, [aria-label='Thread messages']",
   ".composer textarea",
-  "[aria-label='Thread context'] button, .details button",
+  "[aria-label='Thread context'] button",
 ];
 
 function cycleFocus(step: number): boolean {

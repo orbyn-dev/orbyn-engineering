@@ -571,7 +571,7 @@ describe("App against the mock API", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "Details" }));
-    const details = await screen.findByRole("group", { name: "Thread details" });
+    const details = await screen.findByRole("dialog", { name: "Thread details" });
     await waitFor(() => expect(details).toHaveTextContent("+42 −3"));
     expect(within(details).getByText("approval-timeout")).toBeInTheDocument();
     expect(within(details).queryByText("Commit")).toBeNull();
@@ -694,7 +694,7 @@ describe("App against the mock API", () => {
     setViewportWidth(1700);
     useUi.setState({
       panelOpen: true,
-      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"], detailsOpen: false, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
+      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"], terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
     });
     go("#/threads/t-done");
     render(<App />);

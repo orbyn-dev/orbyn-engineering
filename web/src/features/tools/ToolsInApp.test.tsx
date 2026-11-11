@@ -12,7 +12,7 @@ beforeEach(() => {
   useUi.setState({
     projectFolders: true,
     panelOpen: true,
-    layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["browser", "activity", "side", "tools"], detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
+    layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["browser", "activity", "side", "tools"], terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
   });
   useUi.getState().setPrefs({ welcomeDone: true });
   window.location.hash = "#/threads/t-done";

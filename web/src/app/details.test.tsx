@@ -5,6 +5,7 @@ import { installMockFetch, setViewportWidth } from "../test-support";
 import { api } from "../api/client";
 import { useWorkspace } from "../product/state/workspace";
 import { useUi } from "../product/state/ui";
+import { useThreadLogs } from "../product/state/threadLogs";
 import { runShellCommand } from "./shell/commands";
 import { parseRoute } from "../product/state/route";
 import { App } from "./App";
@@ -20,7 +21,7 @@ beforeEach(() => {
 const wait = { timeout: 8000 };
 const details = () => screen.findByRole("button", { name: "Details" }, wait);
 const popover = () => screen.queryByRole("dialog", { name: "Thread details" });
-const card = () => screen.queryByRole("group", { name: "Thread details" });
+const card = () => screen.queryByRole("dialog", { name: "Thread details" });
 const panel = () => screen.queryByRole("complementary", { name: "Thread context" });
 
 describe("the Details button and the Details popover", () => {
@@ -183,6 +184,44 @@ describe("the Details button and the Details popover", () => {
     expect(within(card()!).getByText("None running")).toBeInTheDocument();
   });
 
+  it("keeps the Changes counts already read when a later read of the diff fails", async () => {
+    setViewportWidth(1400);
+    const user = userEvent.setup();
+    const diff = vi.spyOn(api, "diff").mockResolvedValue([{ path: "a.ts", additions: 4, deletions: 3 }] as never);
+    render(<App />);
+    await user.click(await details());
+    expect(await within(card()!).findByText("· 1 file", { exact: false }, wait)).toBeInTheDocument();
+    diff.mockRejectedValue(new Error("down"));
+    const before = diff.mock.calls.length;
+    act(() => useThreadLogs.setState((state) => ({ diffVersion: { ...state.diffVersion, "t-done": (state.diffVersion["t-done"] ?? 0) + 1 } })));
+    await waitFor(() => expect(diff.mock.calls.length).toBeGreaterThan(before));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(card()!).queryByRole("alert")).toBeNull();
+    expect(within(card()!).getByText("+4")).toBeInTheDocument();
+  });
+
+  it("is put away when the panel takes the thread's place on a phone", async () => {
+    setViewportWidth(500);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await details());
+    expect(popover()).toBeInTheDocument();
+    act(() => useUi.getState().setPanelOpen(true));
+    await waitFor(() => expect(popover()).toBeNull());
+  });
+
+  it("is not a stop of the workspace's focus cycle", async () => {
+    setViewportWidth(1400);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await details());
+    for (let step = 0; step < 6; step += 1) {
+      (document.activeElement as HTMLElement | null)?.blur();
+      act(() => void runShellCommand("workspace.focusNext", parseRoute(window.location.hash)));
+      expect(popover()?.contains(document.activeElement)).toBeFalsy();
+    }
+  });
+
   it("says so in quiet words, with no chevron, for a row with nothing to show", async () => {
     setViewportWidth(1400);
     const user = userEvent.setup();
@@ -218,7 +257,7 @@ describe("the Details button and the Details popover", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(await details());
-    await user.pointer({ keys: "[MouseRight]", target: card()! });
+    await user.pointer({ keys: "[MouseRight]", target: within(card()!).getByText("Details") });
     const usage = await screen.findByRole("menuitemcheckbox", { name: "Usage" });
     expect(usage).toHaveAttribute("aria-checked", "false");
     await user.click(usage);

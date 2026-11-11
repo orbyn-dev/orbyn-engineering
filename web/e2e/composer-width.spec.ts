@@ -12,7 +12,7 @@ async function openThread(page: Page, layout: Layout, chatWidth: Width) {
     if (sessionStorage.getItem("composer-width-seeded")) return;
     localStorage.setItem("orbyn.prefs.v1", JSON.stringify({
       workspaceLayout: layout, chatWidth, panelOpen: true, panelAnimationMs: 0,
-      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side"], panelTabsClosed: [], detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: 380, sideChat: null } },
+      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side"], panelTabsClosed: [], terminalOpen: false, panelMaximized: false, panelWidth: 380, sideChat: null } },
     }));
     sessionStorage.setItem("composer-width-seeded", "1");
   }, { layout, chatWidth });

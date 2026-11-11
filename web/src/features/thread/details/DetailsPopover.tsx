@@ -102,7 +102,6 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
         <div
           className="dcard"
           role="group"
-          aria-label="Thread details"
           onContextMenu={(event) => {
             event.preventDefault();
             setMenu({ x: event.clientX, y: event.clientY });

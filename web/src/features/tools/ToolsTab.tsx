@@ -53,6 +53,12 @@ function SkillsLine({ count }: { count: number }) {
   );
 }
 
+/** Orbyn's own library is known without asking the engine; it is read only when this line is on screen. */
+function OrbynSkills() {
+  const skills = useAsync("tools-skills-count", (signal) => api.skills(signal));
+  return skills.data ? <SkillsLine count={skills.data.skills.length} /> : null;
+}
+
 /** What the last good read said, dimmed, so nothing the person knew disappears. Read-only. */
 function LastRead({ data }: { data: EngineTools }) {
   const at = clock(data.checked_at);
@@ -80,7 +86,6 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
   const tools = useAsync(`thread-tools:${threadId}`, (signal) => api.threadTools(threadId, false, signal), { refreshOn: topics(`tools:${threadId}`) });
   const waited = useWaited(tools.status === "loading");
   const [checking, setChecking] = useState(false);
-  const skillsCount = useAsync("tools-skills-count", (signal) => api.skills(signal));
   // Check again asks the engine itself; a plain reload could be answered from what is kept.
   const checkAgain = async () => {
     setChecking(true);
@@ -116,7 +121,7 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
           <Plug size={22} aria-hidden className="tg-empty-icon" />
           <h4>Not reported by {engineName}</h4>
           <span>{engineName} doesn’t list its tools to Orbyn, so there is nothing to show here. Orbyn’s own skills are still available.</span>
-          {skillsCount.data ? <SkillsLine count={skillsCount.data.skills.length} /> : null}
+          <OrbynSkills />
         </div>
       </div>
     );

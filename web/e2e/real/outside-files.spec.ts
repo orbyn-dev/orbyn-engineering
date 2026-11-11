@@ -41,7 +41,7 @@ test("a file outside the checkout opens read-only and its HTML stays isolated", 
     await page.evaluate(([thread, tab]) => {
       const prefs = JSON.parse(localStorage.getItem("orbyn.prefs.v1") ?? "{}");
       const builtin = ["diff", "browser", "activity", "side", "tools"];
-      const layout = { panelTab: tab, panelTabOrder: [...builtin, tab], panelTabsClosed: builtin, detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null };
+      const layout = { panelTab: tab, panelTabOrder: [...builtin, tab], panelTabsClosed: builtin, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null };
       // The open thread's layout is the top-level fields; the others wait under `layouts`.
       Object.assign(prefs, layout, { panelOpen: true, layouts: { ...prefs.layouts, [thread!]: layout } });
       localStorage.setItem("orbyn.prefs.v1", JSON.stringify(prefs));

@@ -24,11 +24,12 @@ export function ToolsRow({ thread, onOpen }: { thread: Thread; onOpen?(): void }
     onOpen?.();
   };
   const data = tools.data;
-  const summary = data?.reported ? summarize(data) : null;
+  // A last good list that came back with an error is the error state, not a count.
+  const summary = data?.reported && !data.error ? summarize(data) : null;
   const problems = summary ? problemLine(summary) : null;
   const failed = (summary?.failed ?? 0) > 0;
   const notReported = tools.status === "error" && tools.error.code === NOT_REPORTED_CODE;
-  const unread = tools.status === "error" && !notReported && !summary;
+  const unread = !summary && !notReported && (tools.status === "error" || Boolean(data?.error));
   return (
     <DRow
       icon={<Plug size={16} aria-hidden />}

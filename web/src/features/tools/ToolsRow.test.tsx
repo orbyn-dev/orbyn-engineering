@@ -66,3 +66,10 @@ it("says Shown once this engine has run before a reporting engine has", async ()
   render(<ToolsRow thread={thread("claude")} />);
   expect(await screen.findByText("Shown once this engine has run")).toBeInTheDocument();
 });
+
+it("shows the error state, not a count, when the last good list came back with an error", async () => {
+  vi.spyOn(api, "threadTools").mockResolvedValue({ ...engineTools("claude"), error: "The engine did not answer." });
+  render(<ToolsRow thread={thread("claude")} />);
+  expect(await screen.findByText("Couldn’t read")).toBeInTheDocument();
+  expect(screen.queryByText(/ready/)).toBeNull();
+});

@@ -50,9 +50,9 @@ export function useDetailsLoads(threadId: string, shows: (row: string) => boolea
     if (version > 0 && changes) reload();
   }, [version, changes, reload]);
   const failed = [
-    ...(changes && diff.status === "error" ? ["changes"] : []),
-    ...(servers && running.status === "error" ? ["servers"] : []),
-    ...(scripts && project.status === "error" ? ["scripts"] : []),
+    ...(changes && diff.status === "error" && diff.data === null ? ["changes"] : []),
+    ...(servers && running.status === "error" && running.data === null ? ["servers"] : []),
+    ...(scripts && project.status === "error" && project.data === null ? ["scripts"] : []),
   ];
   const retry = () => {
     if (failed.includes("changes")) void diff.reload();
@@ -126,7 +126,7 @@ export function ServersRow({ threadId, servers }: { threadId: string; servers: R
               onSelect: () => {
                 stopThreadServer(threadId, server.pid).then(
                   () => servers.reload(),
-                  (failure: unknown) => pushToast(`Couldn't stop it. ${toFailure(failure).message}`),
+                  (failure: unknown) => pushToast(`Couldn’t stop it. ${toFailure(failure).message}`),
                 );
               },
             },

@@ -410,6 +410,10 @@ export function ThreadView({ id }: { id: string }) {
   useEffect(() => {
     if (panelOpen && layout === "small") useSidebarDrawer.getState().close();
   }, [panelOpen, layout]);
+  // The thread and its header are put away when the panel takes their place (a phone, or maximised), so the popover goes too.
+  useEffect(() => {
+    if (panelOpen && (phone || maximized)) setDetailsPopover(false);
+  }, [panelOpen, phone, maximized]);
   const panelPresent = useLingering(panelOpen, motion.exitMs);
   // A panel that is already open when the thread appears stays still; later opens and closes slide.
   const panelMoves = useSettledAfter(thread ? id : null);
