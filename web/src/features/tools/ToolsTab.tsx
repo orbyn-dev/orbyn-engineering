@@ -1,6 +1,7 @@
 import { RefreshCw, Settings } from "lucide-react";
 import { useState } from "react";
 import { api } from "./api";
+import { topics } from "../../lib/dataRefresh";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited } from "../../lib/motion";
 import { navigate } from "../../product/state/route";
@@ -40,7 +41,7 @@ function Header({ engineName, source, checkedAt, onRefresh, busy }: { engineName
 export function ToolsTab({ threadId, engine }: { threadId: string; engine: string }) {
   const engines = useWorkspace((state) => state.engines.data);
   const engineName = engineById(engines, engine)?.name ?? engine;
-  const tools = useAsync(`thread-tools:${threadId}`, (signal) => api.threadTools(threadId, false, signal));
+  const tools = useAsync(`thread-tools:${threadId}`, (signal) => api.threadTools(threadId, false, signal), { refreshOn: topics(`tools:${threadId}`) });
   const waited = useWaited(tools.status === "loading");
   const [checking, setChecking] = useState(false);
   // Check again asks the engine itself; a plain reload could be answered from what is kept.

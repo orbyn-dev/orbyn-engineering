@@ -5,6 +5,7 @@ import { tabKeys } from "../../../ui/tabKeys";
 import { usePageLabel } from "./pageLabel";
 import type { PullRequestDetail } from "../../../api/types";
 import { agoWords } from "../../../lib/format";
+import { topics } from "../../../lib/dataRefresh";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
@@ -50,15 +51,17 @@ export function PullDetail({
   /** Moves to another pull request in the same stack. */
   onOpen?(number: number): void;
 }) {
-  const detail = useAsync(`pull:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal, { priority: "foreground" }), { keep: true });
+  const changed = topics(`pull:${projectId}:${number}`);
+  const detail = useAsync(`pull:${projectId}:${number}`, (signal, how) => pullsApi.detail(projectId, number, signal, how.background ? undefined : { priority: "foreground" }, how.force), { keep: true, refreshOn: changed });
   const page = layout === "page";
   // What the page layout adds beside the detail: files, checks, the details the list also reads, and who is signed in.
-  const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])));
-  const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])));
+  const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
+  const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
   const extras = useAsync(`pull-extras:${projectId}:${number}:${page}`, (signal) =>
     page ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: null }], fresh: false }, signal) : Promise.resolve({ details: [], paused: [] }),
+    { refreshOn: changed },
   );
-  const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal));
+  const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
   const connection = useConnectionKind();
   const projects = useVisibleProjects();
   const pullUrl = detail.data?.pull.url;
@@ -220,6 +223,7 @@ export function PullDetail({
     <People
       title="Reviewers"
       chosen={current.reviewers}
+      refreshTopic={`pull-people:${projectId}`}
       load={(signal) => pullsApi.reviewerCandidates(projectId, signal)}
       save={(add, remove) => pullsApi.setReviewers(projectId, number, add, remove).then(detail.reload)}
     />
@@ -228,6 +232,7 @@ export function PullDetail({
     <People
       title="Labels"
       chosen={pull.labels}
+      refreshTopic={`pull-people:${projectId}`}
       load={(signal) => pullsApi.labelCandidates(projectId, signal)}
       save={(add, remove) => pullsApi.setLabels(projectId, number, add, remove).then(detail.reload)}
     />

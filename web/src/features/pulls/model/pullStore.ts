@@ -41,11 +41,22 @@ const couldBeReady = (pull: PullRequest) => pull.state === "open" && !pull.draft
 /** Most pull requests asked about at once: the rest keep the label they would have without it. */
 const MAX_MERGEABLE_READS = 8;
 
+/** Reads again the lists a mounted chip shows, when the service says pull requests changed. Set by the store. */
+let quietReloadHeld: (what: string) => void = () => undefined;
+export const reloadHeldPulls = (what: string) => quietReloadHeld(what);
+
 export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
   // The newest read per thread wins; an older one that lands late is ignored.
   const newest = new Map<string, number>();
   const pending = new Map<string, number>();
   const holders = new Map<string, number>();
+  const known = new Map<string, { id: string; project_id: string }>();
+  quietReloadHeld = (what) => {
+    for (const [id, thread] of known) {
+      if ((holders.get(id) ?? 0) <= 0) continue;
+      if (what === "pulls" || what.startsWith(`pull:${thread.project_id}:`)) void read(thread, pullsApi.linked(id), false, true);
+    }
+  };
   let counter = 0;
   const patch = (id: string, change: Partial<ThreadPullsEntry>) =>
     set((state) => ({ byThread: { ...state.byThread, [id]: { ...(state.byThread[id] ?? empty), ...change } } }));
@@ -64,11 +75,13 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
     return { ...Object.fromEntries(wanted.filter((pull) => pull.number in known).map((pull) => [pull.number, known[pull.number] ?? null])), ...Object.fromEntries(entries) };
   }
 
-  async function read(thread: { id: string; project_id: string }, work: Promise<PullRequest[]>, fresh: boolean) {
+  async function read(thread: { id: string; project_id: string }, work: Promise<PullRequest[]>, fresh: boolean, quiet = false) {
+    known.set(thread.id, thread);
     const mine = ++counter;
     newest.set(thread.id, mine);
     pending.set(thread.id, (pending.get(thread.id) ?? 0) + 1);
-    patch(thread.id, { busy: true });
+    // An event-driven read shows no busy state.
+    if (!quiet) patch(thread.id, { busy: true });
     const current = () => newest.get(thread.id) === mine;
     try {
       // The list matters more than the Watch switches: a failed read of those leaves them off.
@@ -79,7 +92,7 @@ export const useThreadPulls = create<ThreadPullsStore>((set, get) => {
       const mergeable = await mergeables(thread, pulls, get().byThread[thread.id]?.mergeable ?? {}, fresh);
       if (current()) patch(thread.id, { mergeable });
     } catch {
-      if (current()) patch(thread.id, { failed: true });
+      if (current() && !quiet) patch(thread.id, { failed: true });
     } finally {
       const left = (pending.get(thread.id) ?? 1) - 1;
       if (left <= 0) {

@@ -1,6 +1,7 @@
 import { FileDiff, MessageSquarePlus, Search, X } from "lucide-react";
 import { useState } from "react";
 import type { PullFile, ReviewLineComment } from "../../../api/types";
+import { topics } from "../../../lib/dataRefresh";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
@@ -137,9 +138,11 @@ export function PullCode({
   onReviewed(): void;
 }) {
   const [revision, setRevision] = useState("");
-  const revisions = useAsync(`pull-revisions:${projectId}:${number}`, (signal) => pullsApi.revisions(projectId, number, signal));
+  const changed = topics(`pull:${projectId}:${number}`);
+  const revisions = useAsync(`pull-revisions:${projectId}:${number}`, (signal) => pullsApi.revisions(projectId, number, signal), { refreshOn: changed });
   const own = useAsync(`pull-files:${projectId}:${number}:${revision}`, (signal) =>
     revision ? pullsApi.commitFiles(projectId, revision, signal) : shared ? Promise.resolve([]) : pullsApi.files(projectId, number, signal),
+    { refreshOn: revision ? undefined : changed },
   );
   const files = revision || !shared ? own : shared;
   const [drafts, setDrafts] = useState<ReviewLineComment[]>([]);

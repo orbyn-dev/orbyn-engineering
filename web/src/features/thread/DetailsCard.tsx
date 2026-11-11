@@ -4,6 +4,7 @@ import { api, listThreadScripts, listThreadServers } from "./api";
 import type { EngineLimits, LocalServer, Thread } from "../../api/types";
 import type { ProjectScript } from "../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../lib/motion";
+import { topics } from "../../lib/dataRefresh";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
@@ -170,14 +171,15 @@ const lastLimits = new Map<string, { at: number; limits: Promise<EngineLimits> }
 
 /** What's left of each limit window for this thread's engine, when it reports one. */
 function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
-  const limits = useAsync(`details-limits:${engine}`, () => {
+  const limits = useAsync(`details-limits:${engine}`, (_signal, how) => {
     const kept = lastLimits.get(engine);
-    if (kept && Date.now() - kept.at < LIMITS_CHECK_MS) return kept.limits;
+    // A change the service announced reads again whatever this card kept.
+    if (!how.background && kept && Date.now() - kept.at < LIMITS_CHECK_MS) return kept.limits;
     const fresh = api.threadLimits(threadId);
     lastLimits.set(engine, { at: Date.now(), limits: fresh });
     fresh.catch(() => lastLimits.delete(engine));
     return fresh;
-  });
+  }, { refreshOn: topics("limits", `limits:${engine}`) });
   const windows = limits.data?.windows ?? [];
   if (windows.length === 0) return null;
   return <DRow icon={<Activity size={16} aria-hidden />} label="Limits" value={<LimitValue windows={windows} />} />;

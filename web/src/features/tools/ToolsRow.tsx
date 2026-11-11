@@ -1,6 +1,7 @@
 import { ChevronRight, Plug } from "lucide-react";
 import type { Thread } from "../../api/types";
 import { api } from "./api";
+import { topics } from "../../lib/dataRefresh";
 import { useAsync } from "../../lib/useAsync";
 import { useWaited as useWaitedFor } from "../../lib/motion";
 import { engineById, useWorkspace } from "../../product/state/workspace";
@@ -12,7 +13,7 @@ import { problemLine, summarize } from "./toolsModel";
 export function ToolsRow({ thread }: { thread: Thread }) {
   const engines = useWorkspace((state) => state.engines.data);
   const engineName = engineById(engines, thread.engine)?.name ?? thread.engine;
-  const tools = useAsync(`thread-tools:${thread.id}`, (signal) => api.threadTools(thread.id, false, signal));
+  const tools = useAsync(`thread-tools:${thread.id}`, (signal) => api.threadTools(thread.id, false, signal), { refreshOn: topics(`tools:${thread.id}`) });
   const waited = useWaitedFor(tools.status === "loading");
   const reopen = useUi((state) => state.reopenPanelTab);
   const open = () => reopen("tools");

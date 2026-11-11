@@ -11,6 +11,8 @@ interface ModelState {
   load(engine: string, refresh?: boolean): Promise<void>;
   /** Reads the list again, after something that changes it. */
   reload(engine: string): Promise<void>;
+  /** The service says a list changed: reads the lists on screen again, quietly and without forcing a real read. */
+  revalidate(engine?: string): Promise<void>;
 }
 
 const started = new Set<string>();
@@ -23,6 +25,22 @@ export const useModelStore = create<ModelState>((set, get) => ({
   errors: {},
   async reload(engine) {
     await get().load(engine, true);
+  },
+  async revalidate(engine) {
+    const engines = engine === undefined ? Object.keys(get().byEngine) : get().byEngine[engine] ? [engine] : [];
+    await Promise.all(
+      engines.map(async (id) => {
+        const generation = (generations.get(id) ?? 0) + 1;
+        generations.set(id, generation);
+        try {
+          const models = await api.models(id);
+          if (generations.get(id) !== generation || models.error) return;
+          set((state) => ({ byEngine: { ...state.byEngine, [id]: models }, errors: { ...state.errors, [id]: null } }));
+        } catch {
+          // The list on screen stays; the next open reads again.
+        }
+      }),
+    );
   },
   async load(engine, refresh = false) {
     if (!refresh && started.has(engine)) return;

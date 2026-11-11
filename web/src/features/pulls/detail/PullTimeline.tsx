@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { relativeTime } from "../../../lib/format";
+import { topics } from "../../../lib/dataRefresh";
 import { useAsync } from "../../../lib/useAsync";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { pullsApi } from "../api";
@@ -12,7 +13,7 @@ export function useTimelineEvents(projectId: string, number: number, enabled: bo
   return useAsync(
     `pull-timeline:${projectId}:${number}:${enabled}`,
     (signal) => (enabled ? pullsApi.timeline(projectId, number, signal) : Promise.resolve(null)),
-    { keep: true },
+    { keep: true, refreshOn: topics(`pull:${projectId}:${number}`) },
   );
 }
 

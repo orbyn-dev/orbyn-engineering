@@ -57,6 +57,12 @@ function reuseThreads(base: Record<string, Thread>, list: readonly Thread[]) {
 
 const idle = <T>(): Loadable<T> => ({ data: null, error: null, loading: false });
 
+/** `force`: the person asked, so read now. `quiet`: an event asked, so show no loading state. */
+interface ReadOptions {
+  force?: boolean;
+  quiet?: boolean;
+}
+
 interface WorkspaceState {
   projects: Loadable<Project[]>;
   /** Thread ids per project, in server order. */
@@ -76,8 +82,8 @@ interface WorkspaceState {
   updateRun: UpdateRun | null;
 
   runAllUpdates(): Promise<void>;
-  refreshManaged(): Promise<void>;
-  refreshUpdates(): Promise<void>;
+  refreshManaged(options?: ReadOptions): Promise<void>;
+  refreshUpdates(options?: ReadOptions): Promise<void>;
   putUpdates(status: UpdateStatus): void;
   putManaged(status: WorkspaceStatus): void;
   refreshProjects(): Promise<void>;
@@ -229,13 +235,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async refreshUpdates() {
+  async refreshUpdates(options) {
     const current = claim("updates");
     try {
-      const data = await api.updates();
+      const data = await api.updates(undefined, options?.force === true);
       if (current()) set({ updates: { data, error: null, loading: false } });
     } catch (error) {
-      if (!current()) return;
+      if (!current() || options?.quiet === true) return;
       const failure = toFailure(error);
       set((state) => ({
         updates: { data: state.updates.data, error: failure, loading: false },
@@ -249,14 +255,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     set({ updates: { data: status, error: null, loading: false } });
   },
 
-  async refreshManaged() {
+  async refreshManaged(options) {
     const current = claim("managed");
-    set((state) => ({ managed: { ...state.managed, loading: true } }));
+    if (options?.quiet !== true) set((state) => ({ managed: { ...state.managed, loading: true } }));
     try {
-      const data = await api.workspace();
+      const data = await api.workspace(undefined, options?.force === true);
       if (current()) set({ managed: { data, error: null, loading: false } });
     } catch (error) {
-      if (!current()) return;
+      if (!current() || options?.quiet === true) return;
       const failure = toFailure(error);
       set((state) => ({
         managed: { data: state.managed.data, error: failure, loading: false },

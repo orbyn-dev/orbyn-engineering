@@ -15,3 +15,24 @@ describe("pullsApi.details", () => {
     expect(JSON.parse(init.body as string)).toEqual(body);
   });
 });
+
+describe("a refresh the person pressed", () => {
+  const urls = () => {
+    const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    return () => (fetchMock.mock.calls as unknown as [string][]).map(([url]) => url);
+  };
+
+  it("asks for a real read of the list, the detail and the forges", async () => {
+    const seen = urls();
+    await pullsApi.list("open", "", undefined, undefined, true);
+    await pullsApi.list("open", "", undefined, undefined, false);
+    await pullsApi.detail("p", 3, undefined, undefined, true);
+    await pullsApi.forges(undefined, true);
+    const [forced, plain, detail, forges] = seen();
+    expect(forced).toContain("&refresh=1");
+    expect(plain).not.toContain("refresh");
+    expect(detail).toContain("/pulls/3?refresh=1");
+    expect(forges).toContain("/api/forges?rescan=true");
+  });
+});

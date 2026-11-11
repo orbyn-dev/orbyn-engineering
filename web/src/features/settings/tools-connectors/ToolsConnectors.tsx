@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
+import { topics } from "../../../lib/dataRefresh";
 import { useAsync } from "../../../lib/useAsync";
 import { useWaited } from "../../../lib/motion";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -16,7 +17,7 @@ const clock = (iso: string | null | undefined) => {
 
 /** One engine's list. The engine is asked when the tab opens and again on Check again. */
 function EnginePanel({ engine, name }: { engine: string; name: string }) {
-  const tools = useAsync(`engine-tools:${engine}`, (signal) => api.engineTools(engine, false, signal));
+  const tools = useAsync(`engine-tools:${engine}`, (signal) => api.engineTools(engine, false, signal), { refreshOn: topics(`engine-tools:${engine}`) });
   const [checking, setChecking] = useState(false);
   const waited = useWaited(tools.status === "loading");
   const checkAgain = async () => {

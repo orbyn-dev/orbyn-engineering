@@ -1,5 +1,6 @@
 import { Layers } from "lucide-react";
 import { useState } from "react";
+import { topics } from "../../../lib/dataRefresh";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
@@ -7,7 +8,7 @@ import { pullsApi } from "../api";
 
 /** Where this pull request sits among the ones stacked on each other. */
 export function Stack({ projectId, number, onOpen }: { projectId: string; number: number; onOpen?(number: number): void }) {
-  const stack = useAsync(`pull-stack:${projectId}:${number}`, (signal) => pullsApi.stack(projectId, number, signal));
+  const stack = useAsync(`pull-stack:${projectId}:${number}`, (signal) => pullsApi.stack(projectId, number, signal), { refreshOn: topics(`pull:${projectId}:${number}`) });
   const [method, setMethod] = useState("squash");
   const pushToast = useUi((state) => state.pushToast);
   if (!stack.data || stack.data.layers.length < 2) return null;

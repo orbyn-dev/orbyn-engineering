@@ -48,6 +48,9 @@ export function onDataChanged(listener: (what: string) => void): () => void {
 
 export const dataChanged = (what: string) => dataListeners.forEach((listener) => listener(what));
 
+/** Not a service topic: the event stream came back after a gap, so anything may have changed unheard. */
+export const ALL_DATA = "*";
+
 /** Zoom keys the native menu doesn't catch: the keypad, and Cmd with the shifted `+`. */
 export function zoomKeyAction(event: KeyboardEvent): ShellAction | null {
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return null;
@@ -68,6 +71,8 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
   // was up for a while is retried within 250 ms. One that connects and closes at once (a server that accepts and
   // drops) counts as a failure, so it backs off from 250 ms up to RETRY_MS instead of being retried hot forever.
   let failures = 0;
+  // Events are dropped while the stream is down, so the next one that comes up says everything may have changed.
+  let missed = false;
   const connect = async () => {
     let delivered = false;
     // When the stream came up, set outside the try so a stream that then errors is still measured.
@@ -80,6 +85,8 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
       });
       if (!response.ok || !response.body) throw new Error("no stream");
       upSince = Date.now();
+      if (missed) dataChanged(ALL_DATA);
+      missed = false;
       const parser = new SseParser();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       for (;;) {
@@ -98,6 +105,7 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
       // Retried below, unless this stream was stopped.
     }
     if (controller.signal.aborted) return;
+    missed = true;
     const upFor = upSince === null ? 0 : Date.now() - upSince;
     // Healthy: it delivered something or stayed up for a few seconds. Then the next try is the first, not a retry.
     failures = delivered || upFor >= STABLE_MS ? 1 : failures + 1;

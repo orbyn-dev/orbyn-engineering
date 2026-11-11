@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { followShell, zoomKeyAction } from "./shell";
+import { ALL_DATA, followShell, onDataChanged, zoomKeyAction } from "./shell";
 
 const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
 
@@ -109,5 +109,25 @@ describe("followShell", () => {
     await vi.advanceTimersByTimeAsync(260);
     expect(calls).toBe(2);
     stop();
+  });
+
+  it("says everything may have changed when the stream comes back after a gap, and not on the first connection", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const open = () => new Response(new ReadableStream({ start: (controller) => { setTimeout(() => controller.close(), 10); } }), { status: 200 });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("down");
+      return open();
+    }));
+    const heard: string[] = [];
+    const off = onDataChanged((what) => heard.push(what));
+    const stop = followShell(() => undefined);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(heard).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(heard).toEqual([ALL_DATA, ALL_DATA]);
+    stop();
+    off();
   });
 });

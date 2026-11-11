@@ -14,6 +14,7 @@ import { useReadingNav } from "../readingNav";
 import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
 import { useEscapeClose } from "../../ui/useEscapeClose";
 import { PreviewFloat } from "../../features/panels";
+import { startAppDataRefresh } from "./dataRefresh";
 import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
 import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
 import { useGlobalKeys } from "./keys";
@@ -50,6 +51,7 @@ export function Shell() {
   useEffect(() => {
     void loadAll();
     void loadEngines();
+    const stopRefresh = startAppDataRefresh();
     let ticks = 0;
     const timer = setInterval(() => {
       ticks += 1;
@@ -63,6 +65,7 @@ export function Shell() {
     window.addEventListener("focus", onFocus);
     return () => {
       clearInterval(timer);
+      stopRefresh();
       window.removeEventListener("focus", onFocus);
     };
   }, []);
