@@ -1281,7 +1281,10 @@ fn a_database_that_ran_27_without_the_run_links_gets_them_in_28() {
     let store = Store::open(&path, "a").unwrap();
     assert_eq!(
         store.upgrade(),
-        Some(orbyn_contracts::DatabaseUpgrade { from: 27, to: 28 })
+        Some(orbyn_contracts::DatabaseUpgrade {
+            from: 27,
+            to: super::migrations::MIGRATIONS.last().unwrap().0,
+        })
     );
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();

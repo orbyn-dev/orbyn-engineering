@@ -9,6 +9,7 @@ license-file.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 ts-rs.workspace = true
 
 # The Crew Protocol conformance test (tests/crew_protocol/main.rs) validates the
@@ -16,4 +17,3 @@ ts-rs.workspace = true
 [dev-dependencies]
 boon.workspace = true
 regex.workspace = true
-sha2.workspace = true

@@ -8,6 +8,9 @@ mod automations;
 mod catalog;
 mod changes;
 mod checkpoints;
+mod crew;
+#[cfg(test)]
+mod crew_tests;
 mod hub;
 mod migrations;
 mod native_sessions;
