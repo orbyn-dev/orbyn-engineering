@@ -143,8 +143,11 @@ fn the_answer_key_lives_in_its_own_table() {
                 .collect()
         };
         for row in rows {
-            for secret in &secrets {
-                assert!(!row.contains(secret.as_str()), "{table} holds {secret}");
+            for (number, secret) in secrets.iter().enumerate() {
+                assert!(
+                    !row.contains(secret.as_str()),
+                    "{table} holds secret number {number}"
+                );
             }
         }
     }
@@ -398,13 +401,13 @@ fn a_worker_reads_the_brief_and_messages_but_nothing_with_the_checks() {
         "no evidence, gate, result or message to the lead"
     );
     let wire = serde_json::to_string(&shown).unwrap();
-    for secret in [
-        evidence[0].command.as_str(),
-        key().id.as_str(),
-        "protected_paths",
-        "chk-tests",
+    for (label, secret) in [
+        ("check command", evidence[0].command.as_str()),
+        ("answer key id", key().id.as_str()),
+        ("protected paths field", "protected_paths"),
+        ("check id", "chk-tests"),
     ] {
-        assert!(!wire.contains(secret), "a worker was shown {secret}");
+        assert!(!wire.contains(secret), "a worker was shown the {label}");
     }
 }
 
