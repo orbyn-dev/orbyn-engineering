@@ -12,7 +12,8 @@ export function PanelEmpty({ onOpen }: { onOpen(tab: RightTab): void }) {
     <div className="panel-empty">
       <PanelRight size={22} aria-hidden />
       <h4>Nothing open</h4>
-      <span>Add a tab with +, or open a file from the left bar.</span>
+      {/* Until the left-bar explorer ships (shell PR 1b) there is no file to open from the left bar; 1b switches this to the drawn line. */}
+      <span>Add a tab with +.</span>
       <div className="panel-empty-choices">
         {CHOICES.map((id) => {
           const { label, icon: Icon } = tabOf(id);
