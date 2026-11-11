@@ -316,15 +316,28 @@ it("says a Codex read failed with no last figure, and Try again asks that engine
   expect(all).not.toHaveBeenCalledWith(true);
 });
 
-it("uses the short Claude Code line beside a calm Codex window and the full one alone", async () => {
-  vi.spyOn(api, "limits").mockResolvedValue(
-    limitsOf([
-      { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] },
-      { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 62 })] },
-    ]),
-  );
+it("keeps the full Claude Code line whatever the Codex percentage, and the short one only when Codex has no window", async () => {
+  const claude = { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] };
+  const codexAt = (used: number) => ({ engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: used })] });
+  const full = /claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./;
+  const spy = vi.spyOn(api, "limits").mockResolvedValue(limitsOf([claude, codexAt(62)]));
+  const first = render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  expect(await screen.findByText(full)).toBeVisible();
+  first.unmount();
+  spy.mockResolvedValue(limitsOf([claude, codexAt(100)]));
+  render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  expect(await screen.findByText(full)).toBeVisible();
+});
+
+it("uses the short Claude Code line when Codex is signed out", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] }]));
+  useWorkspace.setState({ engines: { data: [engine("claude", "Claude Code"), engine("codex", "Codex", { auth: "logged_out" })], error: null, loading: false } });
   await openLimits();
-  expect(await screen.findByText("claude doesn\u2019t report one.")).toBeVisible();
+  expect(await screen.findByText("Claude Code doesn\u2019t report one.")).toBeVisible();
 });
 
 it("draws Cu for Cursor and X for Codex on the provider tiles", async () => {

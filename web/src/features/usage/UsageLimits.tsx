@@ -137,9 +137,8 @@ export function LimitsView({ data, nameOf, engines, onCheck, onRetry }: LimitsVi
   // Signed out wins over any window in the answer: the service keeps a read per engine, so it can outlive a sign-out.
   const signedOut = codex && known.get(WINDOW_ENGINE)?.auth === "logged_out";
   const codexFailed = codex && !signedOut && failed.has(WINDOW_ENGINE);
-  // Claude Code beside a calm Codex gets the short line; alone, or beside a window at its cap, the full one.
-  const nearCap = codexWindows.some((entry) => entry.used_percent >= 90);
-  const claudeNote = codex && !codexFailed && !nearCap
+  // The short line only where Codex has no window to show (signed out or unreadable); the full line everywhere else.
+  const claudeNote = signedOut || codexFailed
     ? `${nameOf("claude")} doesn\u2019t report one.`
     : `${nameOf("claude")} doesn\u2019t report one. Usage and cost are on the Usage tab.`;
   const others = [
