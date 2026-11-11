@@ -1,5 +1,6 @@
 //! Projects, their files, icons, scopes, setup and workspaces.
 
+pub mod explorer;
 pub mod file_bytes;
 pub mod files;
 pub mod outside_files;

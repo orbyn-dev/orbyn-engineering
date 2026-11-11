@@ -145,6 +145,8 @@ pub struct Core {
     /// The last lists of tools and connectors each engine reported.
     /// What each engine's tools check last said, served at once while it is asked again.
     pub(crate) health_reads: crate::util::swr::Swr<orbyn_contracts::DependencyHealth>,
+    /// The explorer's worktree lists and Git statuses, served from the last known value.
+    pub explorer: Arc<crate::project::explorer::ExplorerReads>,
     pub(crate) tool_reads: crate::util::swr::Swr<Option<orbyn_contracts::EngineTools>>,
     pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
     /// What each engine id's tools check keeps between calls: one per id, because an engine
@@ -216,6 +218,7 @@ impl Core {
             computer.clone(),
         ));
         let scm_reads: Arc<crate::source_control::scm::read_cache::ScmReads> = Arc::default();
+        let explorer: Arc<crate::project::explorer::ExplorerReads> = Arc::default();
         let runs = Arc::new(RunManager::new(RunServices {
             store: store.clone(),
             gate: gate.clone(),
@@ -226,6 +229,7 @@ impl Core {
             mcp: mcp.clone(),
             base_url: config.base_url.clone(),
             scm_reads: scm_reads.clone(),
+            explorer: explorer.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -273,6 +277,7 @@ impl Core {
             account,
             pull_details: Mutex::new(Default::default()),
             scm_reads,
+            explorer,
             health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
                 crate::operations::health::HEALTH_FRESH,
                 crate::operations::health::HEALTH_MAX_AGE,
@@ -318,6 +323,7 @@ impl Core {
         self.updates.set_notify(&notify);
         self.usage.set_notify(&notify);
         self.account.set_notify(&notify);
+        self.explorer.set_notify(&notify);
         self.tool_reads.set_notify(notify.clone());
         self.health_reads.set_notify(notify.clone());
     }

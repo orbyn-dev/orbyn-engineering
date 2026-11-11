@@ -9,6 +9,7 @@ mod automations;
 mod checkpoints;
 mod composer;
 mod engines;
+mod explorer;
 mod files;
 mod governance;
 mod interactions;
@@ -61,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(explorer::routes())
         .merge(files::routes())
         .merge(raw_files::routes())
         .merge(mcp_apps::routes())

@@ -336,3 +336,39 @@ async fn forced_reads_that_overlap_share_one_read() {
         3
     );
 }
+
+#[tokio::test]
+async fn a_cold_read_past_the_wait_answers_none_and_announces_when_it_lands() {
+    let swr = Arc::new(Swr::new(LONG, LONG, 8));
+    let (reads, heard) = counting(&swr);
+    let wait = Duration::from_millis(10);
+    let first = swr
+        .get_within("k", "explorer", false, wait, || read(reads.clone(), 120))
+        .await
+        .unwrap();
+    assert_eq!(first, None);
+    assert!(heard.lock().unwrap().is_empty());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(*heard.lock().unwrap(), ["explorer"]);
+    // The read was kept: the next call answers at once, and none is started.
+    let kept = swr
+        .get_within("k", "explorer", false, wait, || read(reads.clone(), 0))
+        .await
+        .unwrap();
+    assert_eq!(kept, Some(1));
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_cold_read_inside_the_wait_answers_with_its_value() {
+    let swr = Arc::new(Swr::new(LONG, LONG, 8));
+    let (reads, heard) = counting(&swr);
+    let answer = swr
+        .get_within("k", "explorer", false, Duration::from_secs(5), || {
+            read(reads.clone(), 0)
+        })
+        .await
+        .unwrap();
+    assert_eq!(answer, Some(1));
+    assert!(heard.lock().unwrap().is_empty());
+}

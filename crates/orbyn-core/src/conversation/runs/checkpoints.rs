@@ -53,6 +53,8 @@ impl RunManager {
                 // A run may have pushed to a branch that has a pull request.
                 if let Ok(thread) = self.store.thread(&run.thread_id) {
                     self.scm_reads.project_all_changed(&thread.project_id);
+                    // And the run's files: change letters and the dirty summary moved.
+                    self.explorer.changed(&thread.project_id);
                 }
                 Some(run)
             }

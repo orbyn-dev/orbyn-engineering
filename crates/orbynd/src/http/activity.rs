@@ -38,6 +38,7 @@ pub async fn note_activity(
     let response = next.run(request).await;
     if changes {
         state.core.workspace.invalidate_status();
+        state.core.explorer.invalidate();
     }
     timing.finish(response.status().as_u16() < 400);
     response

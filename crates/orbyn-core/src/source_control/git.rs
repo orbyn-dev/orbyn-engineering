@@ -189,33 +189,64 @@ pub struct RegisteredWorktree {
     pub revision: String,
 }
 
-/// Linked worktrees, without the primary checkout.
-pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktree>> {
+/// One entry of `git worktree list`, with the flags that say whether it can be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorktreeRecord {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub revision: String,
+    pub detached: bool,
+    pub locked: bool,
+    pub prunable: bool,
+}
+
+/// Every worktree of the repository, the primary checkout first.
+pub(crate) async fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>> {
     let listing = git(repo, &["worktree", "list", "--porcelain", "-z"]).await?;
     let mut worktrees = Vec::new();
-    let mut current: Option<RegisteredWorktree> = None;
+    let mut current: Option<WorktreeRecord> = None;
     for field in listing.split(|byte| *byte == 0) {
         let line = String::from_utf8_lossy(field);
         if let Some(path) = line.strip_prefix("worktree ") {
             worktrees.extend(current.take());
-            current = Some(RegisteredWorktree {
+            current = Some(WorktreeRecord {
                 path: PathBuf::from(path),
                 branch: None,
                 revision: String::new(),
+                detached: false,
+                locked: false,
+                prunable: false,
             });
         } else if let Some(entry) = current.as_mut() {
             if let Some(head) = line.strip_prefix("HEAD ") {
                 entry.revision = head.to_owned();
             } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
                 entry.branch = Some(branch.to_owned());
+            } else if line == "detached" {
+                entry.detached = true;
+            } else if line == "locked" || line.starts_with("locked ") {
+                entry.locked = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                entry.prunable = true;
             }
         }
     }
     worktrees.extend(current);
-    if !worktrees.is_empty() {
-        worktrees.remove(0);
-    }
     Ok(worktrees)
+}
+
+/// Linked worktrees, without the primary checkout.
+pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktree>> {
+    Ok(worktree_records(repo)
+        .await?
+        .into_iter()
+        .skip(1)
+        .map(|record| RegisteredWorktree {
+            path: record.path,
+            branch: record.branch,
+            revision: record.revision,
+        })
+        .collect())
 }
 
 /// How a new worktree starts, from the settings and the project file.

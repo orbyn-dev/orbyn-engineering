@@ -172,6 +172,52 @@ impl<V: Clone + PartialEq + Send + Sync + 'static> Swr<V> {
         }
     }
 
+    /// Like [`Swr::get`], but a call with nothing kept waits at most `wait` for the read. Past
+    /// that it answers `None` while the read carries on, and announces `topic` when the read
+    /// lands, so a window shows what it has and reads again.
+    pub async fn get_within<F, Fut>(
+        &self,
+        key: &str,
+        topic: &str,
+        refresh: bool,
+        wait: Duration,
+        read: F,
+    ) -> Result<Option<V>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<V>> + Send + 'static,
+    {
+        let flight = match self.begin(key, topic, refresh, read) {
+            Begun::Answer(value) => return Ok(Some(value)),
+            Begun::Wait(flight) => flight,
+        };
+        let mut waiting = flight.clone();
+        let answer = match tokio::time::timeout(wait, waiting.wait_for(Option::is_some)).await {
+            Ok(Ok(answer)) => answer.clone(),
+            Ok(Err(_)) => None,
+            Err(_) => {
+                let notify = self.notify.get().cloned();
+                let topic = topic.to_owned();
+                let mut flight = flight;
+                tokio::spawn(async move {
+                    let landed = match flight.wait_for(Option::is_some).await {
+                        Ok(answer) => matches!(answer.as_deref(), Some(Ok(_))),
+                        Err(_) => false,
+                    };
+                    if landed && let Some(notify) = notify {
+                        notify(&topic);
+                    }
+                });
+                return Ok(None);
+            }
+        };
+        match answer.as_deref() {
+            Some(Ok(value)) => Ok(Some(value.clone())),
+            Some(Err(error)) => Err(error.duplicate()),
+            None => Err(CoreError::Internal("a shared read ended early".into())),
+        }
+    }
+
     fn begin<F, Fut>(&self, key: &str, topic: &str, refresh: bool, read: F) -> Begun<V>
     where
         F: FnOnce() -> Fut,
