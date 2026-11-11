@@ -64,6 +64,15 @@ pub struct McpService {
 }
 
 impl McpService {
+    /// Whether the Crew Preview tools exist. They are off until the flag is on, and then
+    /// they are listed and callable for every run.
+    fn crew_enabled(&self) -> bool {
+        self.host
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|core| core.crew_enabled())
+    }
+
     pub fn new(
         gate: Arc<ApprovalGate>,
         questions: Arc<QuestionDesk>,
@@ -152,7 +161,13 @@ impl McpService {
                 "serverInfo": { "name": MCP_SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
             })),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tool_list(binding.permission_prompt) })),
+            "tools/list" => {
+                let mut tools = tool_list(binding.permission_prompt);
+                if self.crew_enabled() {
+                    tools.extend(crate::crew::tool_specs());
+                }
+                Ok(json!({ "tools": tools }))
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 match budget_for(name) {
@@ -200,6 +215,19 @@ impl McpService {
                     Ok(text) => Ok(text_result(&text, false)),
                     Err(error) => Ok(text_result(&error.public_message(), true)),
                 }
+            }
+            crate::crew::ROUTE_TOOL if self.crew_enabled() => {
+                let Some(core) = self.host.get().and_then(Weak::upgrade) else {
+                    return Ok(text_result("This service is not ready.", true));
+                };
+                if let Err(error) = core.note_tool(binding, crate::crew::ROUTE_TOOL) {
+                    tracing::warn!(%error, "could not record a tool call");
+                }
+                // A Crew refusal is the protocol's error object, so the lead reads its code.
+                Ok(match core.crew_route_tool(binding, &args).await {
+                    Ok(answer) => text_result(&answer.to_string(), false),
+                    Err(error) => text_result(&json!(error).to_string(), true),
+                })
             }
             other if crate::tools::mcp_tools::is_tool(other) => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {

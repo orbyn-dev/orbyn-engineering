@@ -139,6 +139,8 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     config.browser_headless = env_flag("ORBYN_BROWSER_HEADLESS");
     config.browser_in_process_gpu = env_flag("ORBYN_BROWSER_IN_PROCESS_GPU");
     development_account(&mut config);
+    // Crew is Preview and has no screen yet: a developer turns its tools on here.
+    config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
     Ok(config)
 }
 

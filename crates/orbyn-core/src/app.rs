@@ -82,6 +82,8 @@ pub struct CoreConfig {
     /// What the account talks to. Ships `None`; the development stand-in exists in
     /// debug builds only.
     pub account_backend: crate::account::AccountBackendKind,
+    /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
+    pub crew_preview: bool,
 }
 
 impl CoreConfig {
@@ -101,6 +103,7 @@ impl CoreConfig {
             browser_in_process_gpu: false,
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
+            crew_preview: false,
         }
     }
 }
