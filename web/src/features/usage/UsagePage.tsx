@@ -6,6 +6,7 @@ import { api } from "./api";
 import { useCommand } from "../../product/shell/shortcuts";
 import { useWaited } from "../../lib/motion";
 import { readJson, writeJson } from "../../lib/storage";
+import { under } from "../../lib/dataRefresh";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
@@ -61,7 +62,7 @@ export function UsagePage() {
   const dimmed = useWaited(usage.pending && usage.data !== null);
   const limits = useAsync(`limits:${metric === "limits"}`, (signal) =>
     metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
-  { keep: true },
+  { keep: true, refreshOn: metric === "limits" ? under("limits") : undefined },
 );
 
   // An engine that never answers must not leave the tab loading for good.

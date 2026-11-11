@@ -27,9 +27,10 @@ const q = encodeURIComponent;
 const base = (projectId: string, number: number) => `/api/projects/${q(projectId)}/pulls/${number}`;
 
 export const pullsApi = {
-  forges: (signal?: AbortSignal) => request<ForgeStatus[]>("GET", "/api/forges", undefined, signal),
-  list: (state: string, query: string, signal?: AbortSignal, options?: RequestOptions) =>
-    request<PullList>("GET", `/api/pulls?state=${q(state)}&q=${q(query)}`, undefined, signal, options),
+  /** `rescan` asks the forge programs again, for a Refresh the person pressed. */
+  forges: (signal?: AbortSignal, rescan = false) => request<ForgeStatus[]>("GET", `/api/forges${rescan ? "?rescan=true" : ""}`, undefined, signal),
+  list: (state: string, query: string, signal?: AbortSignal, options?: RequestOptions, force = false) =>
+    request<PullList>("GET", `/api/pulls?state=${q(state)}&q=${q(query)}${force ? "&refresh=1" : ""}`, undefined, signal, options),
   /**
    * What the base list leaves out (reviewers, the viewer's review, comment totals, when
    * opened), for rows already shown, so the list paints first. Pass `fresh` only for a
@@ -37,8 +38,8 @@ export const pullsApi = {
    */
   details: (body: PullDetailsRequest, signal?: AbortSignal) =>
     request<PullDetailsResponse>("POST", "/api/pulls/details", body, signal),
-  detail: (projectId: string, number: number, signal?: AbortSignal, options?: RequestOptions) =>
-    request<PullRequestDetail>("GET", base(projectId, number), undefined, signal, options),
+  detail: (projectId: string, number: number, signal?: AbortSignal, options?: RequestOptions, force = false) =>
+    request<PullRequestDetail>("GET", `${base(projectId, number)}${force ? "?refresh=1" : ""}`, undefined, signal, options),
   checks: (projectId: string, number: number, signal?: AbortSignal) =>
     request<PullCheck[]>("GET", `${base(projectId, number)}/checks`, undefined, signal),
   timeline: (projectId: string, number: number, signal?: AbortSignal) =>

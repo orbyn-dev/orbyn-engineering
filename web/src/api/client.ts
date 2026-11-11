@@ -1,6 +1,6 @@
 import { serviceUrl } from "./origin";
 import { readToken } from "./token";
-import { inLane, laneFor } from "./lanes";
+import { inBackground, inLane, laneFor } from "./lanes";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -176,7 +176,7 @@ export function request<T>(
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned), unreachable);
+  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned), unreachable, inBackground());
   return sent.finally(() => clearTimeout(slow));
 }
 
@@ -321,7 +321,8 @@ export const api = {
   refreshUsage: (days: number) => request<UsageReport>("POST", `/api/usage/refresh?days=${days}`),
   limits: (force: boolean, signal?: AbortSignal) =>
     request<LimitsOverview>("GET", `/api/limits${force ? "?force=true" : ""}`, undefined, signal),
-  updates: (signal?: AbortSignal) => request<UpdateStatus>("GET", "/api/updates", undefined, signal),
+  /** `refresh` reads now, whatever the service has kept, for a check the person asked for. */
+  updates: (signal?: AbortSignal, refresh = false) => request<UpdateStatus>("GET", `/api/updates${refresh ? "?refresh=1" : ""}`, undefined, signal),
   shell: (signal?: AbortSignal) => request<ShellStatus>("GET", "/api/shell", undefined, signal),
   shellAction: (action: ShellAction) => request<void>("POST", "/api/shell/actions", { action }),
   checkUpdates: () => request<UpdateStatus>("POST", "/api/updates/check"),
@@ -335,8 +336,8 @@ export const api = {
   updateSettings: async (change: (current: ServerSettings) => ServerSettings) =>
     api.putSettings(change(await api.settings())),
 
-  workspace: (signal?: AbortSignal) =>
-    request<WorkspaceStatus>("GET", "/api/workspace", undefined, signal),
+  workspace: (signal?: AbortSignal, refresh = false) =>
+    request<WorkspaceStatus>("GET", `/api/workspace${refresh ? "?refresh=1" : ""}`, undefined, signal),
   setupWorkspace: (body: WorkspaceSetup) =>
     request<WorkspaceStatus>("POST", "/api/workspace/setup", body),
   updateLibrary: (apply: boolean) =>

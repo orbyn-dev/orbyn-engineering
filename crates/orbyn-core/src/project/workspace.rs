@@ -43,8 +43,8 @@ const CLONE_SYMLINKS: &str = "core.symlinks=true";
 /// worktrees costs seconds to read, so a request never waits for that read when an
 /// earlier answer exists.
 const STATUS_FRESH: Duration = Duration::from_secs(15);
-/// Past this, an earlier status is no longer shown without waiting for a new one. The web
-/// does not yet re-read on `data_changed`, so it stays short.
+/// Past this, an earlier status is no longer shown without waiting for a new one. A window
+/// reads again on `data_changed`, but it may have missed one, so this stays short.
 const STATUS_MAX_AGE: Duration = Duration::from_secs(60);
 /// Checkouts and worktrees read at the same time.
 const STATUS_PARALLEL: usize = 6;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { followShell, zoomKeyAction } from "./shell";
+import { ALL_DATA, followShell, onDataChanged, zoomKeyAction } from "./shell";
 
 const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
 
@@ -109,5 +109,30 @@ describe("followShell", () => {
     await vi.advanceTimersByTimeAsync(260);
     expect(calls).toBe(2);
     stop();
+  });
+
+  it("says everything may have changed after a real gap, not on the first connection or a quick retry", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const open = () => new Response(new ReadableStream({ start: (controller) => { setTimeout(() => controller.close(), 10); } }), { status: 200 });
+    // Calls 2 and 3 are quick retries after a closed stream; 4 to 7 fail for over ten seconds.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      if (calls >= 4 && calls <= 7) throw new Error("down");
+      return open();
+    }));
+    const heard: string[] = [];
+    const off = onDataChanged((what) => heard.push(what));
+    const stop = followShell(() => undefined);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(heard).toEqual([]);
+    // Calls 2 and 3 reconnect within 250 ms each: no storm.
+    await vi.advanceTimersByTimeAsync(600);
+    expect(heard).toEqual([]);
+    // The long outage ends: one event.
+    await vi.advanceTimersByTimeAsync(12_500);
+    expect(heard).toEqual([ALL_DATA]);
+    stop();
+    off();
   });
 });

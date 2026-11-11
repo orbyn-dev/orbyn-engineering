@@ -6,7 +6,8 @@ import { agoWords, relativeTime } from "../../../lib/format";
 import { useWaited } from "../../../lib/motion";
 import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
 import { ApiFailure } from "../api";
-import { toFailure, useAsync } from "../../../lib/useAsync";
+import { topics } from "../../../lib/dataRefresh";
+import { toFailure, useAsync, type LoadContext } from "../../../lib/useAsync";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { navigate, useRoute } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
@@ -41,8 +42,10 @@ import {
 } from "../model/pullModel";
 import { pullsApi } from "../api";
 /** One request per state the service is asked for, merged into one list. */
-async function loadPulls(states: readonly string[], query: string, signal: AbortSignal): Promise<PullList> {
-  const lists = await Promise.all(states.map((state) => pullsApi.list(state, query, signal, { priority: "foreground" })));
+async function loadPulls(states: readonly string[], query: string, signal: AbortSignal, how: LoadContext): Promise<PullList> {
+  // The shown list is the visible screen's own read; one an event started is background work.
+  const options = how.background ? undefined : { priority: "foreground" as const };
+  const lists = await Promise.all(states.map((state) => pullsApi.list(state, query, signal, options, how.force)));
   const seen = new Set<string>();
   const pulls = lists.flatMap((list) => list.pulls).filter((entry) => {
     const key = `${entry.project_id}:${entry.pull.number}`;
@@ -72,8 +75,8 @@ export function PullsPage() {
   const phone = useLayoutWidth() === "phone";
   const connection = useConnectionKind();
   const asked = statesToAsk(filters.states);
-  const list = useAsync(`pulls:${[...asked].sort().join("+")}:${submitted}`, (signal) => loadPulls(asked, submitted, signal), { keep: true });
-  const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal));
+  const list = useAsync(`pulls:${[...asked].sort().join("+")}:${submitted}`, (signal, how) => loadPulls(asked, submitted, signal, how), { keep: true, refreshOn: topics("pulls") });
+  const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
   const all = useMemo(() => list.data?.pulls ?? [], [list.data]);
   const details = usePullDetails(all);
   const signedIn = (forges.data ?? []).filter((forge) => forge.signed_in);
@@ -128,7 +131,7 @@ export function PullsPage() {
   };
   const refreshByPerson = () => {
     details.markFresh();
-    refresh();
+    void list.reloadNow();
   };
   const loading = list.status === "loading";
   const refreshing = list.status === "ready" && list.refreshing;

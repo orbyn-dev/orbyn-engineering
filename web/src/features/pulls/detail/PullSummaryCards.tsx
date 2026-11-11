@@ -1,6 +1,8 @@
 import { Check, CircleDashed, ExternalLink, Pencil, Plus, X } from "lucide-react";
 import { useState } from "react";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
+import { topics } from "../../../lib/dataRefresh";
+import { pullChanged } from "../model/pullTopics";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button, IconButton, Pill } from "../../../ui/controls";
@@ -26,7 +28,7 @@ const waitingRun = (check: PullCheck): number | null => {
 };
 
 export function Checks({ projectId, number }: { projectId: string; number: number }) {
-  const checks = useAsync(`pull-checks:${projectId}:${number}`, (signal) => pullsApi.checks(projectId, number, signal), { keep: true });
+  const checks = useAsync(`pull-checks:${projectId}:${number}`, (signal) => pullsApi.checks(projectId, number, signal), { keep: true, refreshOn: pullChanged(projectId, number) });
   const pushToast = useUi((state) => state.pushToast);
   if (checks.status !== "ready" || checks.data.length === 0) return null;
   const approve = (run: number) => {
@@ -73,14 +75,17 @@ export function People({
   chosen,
   load,
   save,
+  refreshTopic,
 }: {
   title: string;
+  /** The service topic that says the candidates changed. */
+  refreshTopic?: string;
   chosen: string[];
   load(signal: AbortSignal): Promise<{ name: string }[]>;
   save(add: string[], remove: string[]): Promise<void>;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const candidates = useAsync(`pull-${title}`, load);
+  const candidates = useAsync(`pull-${title}:${refreshTopic ?? ""}`, load, { refreshOn: refreshTopic ? topics(refreshTopic) : undefined });
   const pushToast = useUi((state) => state.pushToast);
   const change = (add: string[], remove: string[]) => {
     save(add, remove).catch((failure: unknown) => pushToast(`Couldn't change that. ${toFailure(failure).message}`));

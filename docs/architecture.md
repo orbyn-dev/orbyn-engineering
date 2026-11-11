@@ -1734,8 +1734,12 @@ therefore answer from the last known value and refresh in the background
 - **A kept value answers at once.** Past its fresh time the same call starts one refresh
   that every other caller shares; a refresh already running is not started again. A value
   older than its maximum age is not shown: that call waits for a read, which concurrent
-  callers share. The maximum ages are short because the web does not yet re-read on
-  `data_changed`.
+  callers share. The web reads again on `data_changed` (`useAsync`'s `refreshOn`, held for 200 ms so a burst
+  reads once) and after the event stream reconnects from a gap of two seconds or more. These
+  reads are quiet: no loading state, and an error never replaces data on screen. Those that
+  the slow lane carries (pull requests, forges, models, limits, tools) queue behind slow reads a
+  person started; the workspace and update status and a thread's linked pull requests use the
+  interactive lane. A refresh control the person presses sends the read-now flag.
 - **A key holds every input of the read**: project, pull request number, engine, thread,
   state, query and folder. The update status and the dependency check also key on what they
   are read from (engine updates and engine set changes, library changes, whether a run is

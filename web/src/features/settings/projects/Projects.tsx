@@ -40,7 +40,7 @@ export function Library({ library }: { library: LibraryStatus }) {
     updates?.library.blocked_reason ??
     (library.dirty ? "The library has local changes. Commit or discard them first." : null);
   const canUpdate = blocked === null && library.behind > 0;
-  const refresh = () => Promise.all([refreshManaged(), refreshUpdates()]).then(() => undefined);
+  const refresh = () => Promise.all([refreshManaged({ force: true }), refreshUpdates({ force: true })]).then(() => undefined);
 
   return (
     <>
