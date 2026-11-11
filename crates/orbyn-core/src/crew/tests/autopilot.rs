@@ -159,7 +159,7 @@ async fn a_second_key_missing_asks_a_person_under_on_and_off() {
             &ask(ActionKind::Command, "npm install left-pad", &[]),
         )
         .await;
-    assert_eq!(review, Review::Pass, "a person answers");
+    assert_eq!(review, Review::Person, "a person answers");
     assert_eq!(events(&w, &task.id, "person").len(), 1);
     assert_eq!(events(&w, &task.id, "denied").len(), 0);
 }
@@ -176,12 +176,12 @@ async fn off_leaves_every_request_to_a_person_but_the_hard_rules_still_apply() {
         .core
         .crew_review_action(&scope(&w, &id), &ask(ActionKind::Command, "cargo fmt", &[]))
         .await;
-    assert_eq!(pass, Review::Pass);
+    assert_eq!(pass, Review::Person);
     let read = w
         .core
         .crew_review_action(&scope(&w, &id), &ask(ActionKind::Command, "ls src", &[]))
         .await;
-    assert_eq!(read, Review::Pass, "off asks a person even for a read");
+    assert_eq!(read, Review::Person, "off asks a person even for a read");
     let hard = w
         .core
         .crew_review_action(
@@ -348,9 +348,12 @@ async fn three_denials_in_a_row_stop_the_task() {
 #[tokio::test]
 async fn an_approval_resets_the_row_but_twenty_denials_in_a_run_stop_the_task() {
     let (w, id) = running().await;
-    let lead = Scripted::no("alpha", "alpha");
+    let lead = Scripted::new("alpha", "alpha", |summary| Answer {
+        approve: summary.target.contains("clippy"),
+        reason: "Decided.".into(),
+    });
     w.core.set_crew_approvers(approvers(&lead, &[]));
-    // Two denials and a read, ten times: never three in a row, twenty in all on the last denial.
+    // Two denials and a lead's approval, ten times: never three in a row, twenty in all on the last denial.
     for round in 0..10 {
         for _ in 0..2 {
             let verdict = request(&w, &id, ActionKind::Command, "cargo fmt").await;
@@ -360,7 +363,7 @@ async fn an_approval_resets_the_row_but_twenty_denials_in_a_run_stop_the_task() 
         }
         if round < 9 {
             assert_eq!(
-                request(&w, &id, ActionKind::Command, "ls src").await,
+                request(&w, &id, ActionKind::Command, "cargo clippy").await,
                 Verdict::Allow
             );
             assert_eq!(w.task(&id).state, "running", "round {round}");
@@ -446,4 +449,58 @@ async fn the_ledger_only_grows() {
         .unwrap_err();
     assert!(error.to_string().contains("no autopilot event kind"));
     assert_eq!(kinds(&w, &id), ["allowed"]);
+}
+
+#[tokio::test]
+async fn a_read_between_denials_does_not_break_the_run_of_three() {
+    let (w, id) = running().await;
+    let lead = Scripted::no("alpha", "alpha");
+    w.core.set_crew_approvers(approvers(&lead, &[]));
+    for _ in 0..2 {
+        assert!(
+            words(&request(&w, &id, ActionKind::Command, "cargo fmt").await).starts_with("Denied:")
+        );
+        assert_eq!(
+            request(&w, &id, ActionKind::Command, "ls src").await,
+            Verdict::Allow
+        );
+    }
+    let third = request(&w, &id, ActionKind::Command, "cargo fmt").await;
+    assert!(
+        words(&third).contains("too many denials"),
+        "{}",
+        words(&third)
+    );
+    assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
+    assert_eq!(events(&w, &id, "tripwire")[0].body["in_a_row"], 3);
+}
+
+#[tokio::test]
+async fn under_off_a_threads_own_accepting_mode_does_not_stand_in_for_the_person() {
+    let (w, id) = running().await;
+    w.core
+        .set_crew_autopilot_mode(&ModeScope::Default, Mode::Off)
+        .unwrap();
+    let mut accepting = scope(&w, &id);
+    accepting.mode = orbyn_contracts::PermissionMode::FullAccess;
+    // Under an accepting mode the gate used to allow this itself. Now it goes on to ask a person: the scope's run is not a
+    // real one, so creating that request fails and the gate denies, which is closed. It is never `Allow`.
+    let verdict = w
+        .core
+        .gate
+        .request(&accepting, ask(ActionKind::Command, "cargo fmt", &[]))
+        .await;
+    assert!(
+        matches!(verdict, Verdict::Deny(_)),
+        "the thread's own mode allowed it"
+    );
+    assert_eq!(
+        w.core
+            .store
+            .crew_autopilot_events(&id)
+            .unwrap()
+            .last()
+            .map(|e| e.kind.as_str()),
+        Some("person")
+    );
 }

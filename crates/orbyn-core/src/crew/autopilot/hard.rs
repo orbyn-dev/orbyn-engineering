@@ -3,14 +3,14 @@
 //! refuses, and the lead is never even asked. It reads the action's kind, target and paths with
 //! the checks in [`shell`](super::shell); a refusal names the rule and never the match.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use orbyn_contracts::{ActionKind, CrewPathPattern};
 use regex::Regex;
 use serde_json::json;
 
-use super::shell::{self, Simple, host_allowed, hosts, is_path_like, outside, relative};
+use super::shell::{self, Simple, host_allowed, hosts, outside, outside_from, relative};
 use crate::account::changes::{account_paths_in, changes_account_state};
 use crate::crew::checks::covers;
 use crate::crew::find_secret;
@@ -44,7 +44,7 @@ pub const RULES: [(&str, &str); 10] = [
         "network access to a host the repository has not allowed",
     ),
     ("N4", "writing or deleting outside the worktree"),
-    ("N5", "force-push or history rewrite on main"),
+    ("N5", "force-push, history rewrite or any push to main"),
     ("N6", "changing branch protection, permissions or settings"),
     ("N7", "editing answer keys, check files or .orbyn/crew.json"),
     ("N8", "production deploys"),
@@ -57,6 +57,7 @@ type Rule = fn(&Ctx<'_>) -> bool;
 /// What every rule reads.
 pub(super) struct Ctx<'a> {
     pub kind: ActionKind,
+    pub target: String,
     pub text: String,
     pub paths: &'a [String],
     pub commands: Vec<Simple>,
@@ -91,6 +92,7 @@ pub(super) fn context<'a>(
         .join("\n");
     Ctx {
         kind,
+        target: target.to_owned(),
         text,
         paths,
         commands,
@@ -120,7 +122,53 @@ pub(super) fn refuse_in(ctx: &Ctx<'_>) -> Option<Refusal> {
         })
 }
 
-/// Whether text names a state-changing account route. The one rule enforced outside a Crew task.
+/// Programs that open a connection, or run code that can: the ones an account route can be reached with.
+const CONNECTING: [&str; 22] = [
+    "curl",
+    "wget",
+    "http",
+    "https",
+    "xh",
+    "httpie",
+    "nc",
+    "ncat",
+    "netcat",
+    "telnet",
+    "powershell",
+    "pwsh",
+    "python",
+    "python3",
+    "node",
+    "deno",
+    "bun",
+    "ruby",
+    "perl",
+    "php",
+    "sh",
+    "bash",
+];
+
+/// Whether an action reaches a state-changing account route. A file's path, a search, a read of a document that
+/// merely names the route are not a request to it: only a network, browser or tool action, or a command run by a
+/// connecting program, is looked at.
+pub fn account_refused(kind: ActionKind, target: &str, paths: &[String]) -> bool {
+    match kind {
+        ActionKind::FileChange => false,
+        ActionKind::Command => shell::simple_commands(target).iter().any(|command| {
+            CONNECTING.contains(&command.program.as_str())
+                && account_change(&format!("{} {}", command.program, command.args.join(" ")))
+        }),
+        _ => {
+            let text = std::iter::once(target)
+                .chain(paths.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            account_change(&text)
+        }
+    }
+}
+
+/// Whether text names a state-changing account route.
 pub fn account_change(text: &str) -> bool {
     account_paths_in(text)
         .iter()
@@ -129,7 +177,7 @@ pub fn account_change(text: &str) -> bool {
 
 /// N1: a request to a state-changing account route, or to one this module does not know.
 fn n1(ctx: &Ctx<'_>) -> bool {
-    account_change(&ctx.text)
+    account_refused(ctx.kind, &ctx.target, ctx.paths)
 }
 
 fn secret_names() -> &'static Regex {
@@ -245,6 +293,21 @@ fn n2(ctx: &Ctx<'_>) -> bool {
     })
 }
 
+const GIT_READS: [&str; 12] = [
+    "status",
+    "diff",
+    "log",
+    "show",
+    "ls-files",
+    "rev-parse",
+    "blame",
+    "grep",
+    "cat-file",
+    "describe",
+    "shortlog",
+    "ls-tree",
+];
+
 /// The files a command writes or deletes, as the words it names them by.
 pub(super) fn writes(command: &Simple) -> Vec<String> {
     let args: Vec<&String> = command
@@ -259,25 +322,28 @@ pub(super) fn writes(command: &Simple) -> Vec<String> {
             .iter()
             .any(|a| a == f || a.starts_with(&format!("{f}.")))
     };
+    let after = |f: &str| {
+        command
+            .args
+            .iter()
+            .position(|a| a == f)
+            .and_then(|at| command.args.get(at + 1))
+            .cloned()
+    };
     match command.program.as_str() {
         "rm" | "rmdir" | "unlink" | "shred" | "truncate" | "touch" | "mkdir" | "chmod"
         | "chown" | "chgrp" | "mv" | "tee" | "ln" | "del" | "erase" | "rd" | "remove-item"
         | "move-item" | "new-item" | "set-content" => out.extend(args.iter().map(|a| (*a).clone())),
         "cp" | "install" | "rsync" | "scp" | "copy" | "copy-item" => {
-            let target = command
-                .args
-                .iter()
-                .position(|a| a == "-t")
-                .and_then(|at| command.args.get(at + 1))
+            let target = after("-t")
                 .or_else(|| {
                     command
                         .args
                         .iter()
-                        .find_map(|a| a.strip_prefix("--target-directory=").map(|_| a))
+                        .find_map(|a| a.strip_prefix("--target-directory=").map(str::to_owned))
                 })
-                .cloned()
                 .or_else(|| args.last().map(|a| (*a).clone()));
-            out.extend(target.map(|t| t.trim_start_matches("--target-directory=").to_owned()));
+            out.extend(target);
         }
         "sed" | "perl" | "ruby" if flag("-i") || flag("-pi") || flag("-ni") => {
             out.extend(args.iter().map(|a| (*a).clone()));
@@ -288,16 +354,85 @@ pub(super) fn writes(command: &Simple) -> Vec<String> {
                 .iter()
                 .filter_map(|a| a.strip_prefix("of=").map(str::to_owned)),
         ),
+        "find" => {
+            if command.args.iter().any(|a| {
+                matches!(
+                    a.as_str(),
+                    "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir"
+                )
+            }) {
+                out.extend(
+                    command
+                        .args
+                        .iter()
+                        .take_while(|a| !a.starts_with(['-', '(', '!']))
+                        .cloned(),
+                );
+            }
+        }
+        "tar" | "bsdtar" => {
+            out.extend(after("-C"));
+            out.extend(after("--directory"));
+            out.extend(
+                command
+                    .args
+                    .iter()
+                    .filter_map(|a| a.strip_prefix("--directory=").map(str::to_owned)),
+            );
+        }
+        "unzip" => out.extend(after("-d")),
         "git" => {
-            let sub = args.first().map(|s| s.as_str());
-            if matches!(
-                sub,
-                Some("checkout" | "restore" | "rm" | "mv" | "apply" | "clean")
-            ) {
-                out.extend(args.iter().skip(1).map(|a| (*a).clone()));
+            let mut rest = command.args.iter();
+            let mut dir = None;
+            let mut sub = None;
+            while let Some(arg) = rest.next() {
+                match arg.as_str() {
+                    "-C" => dir = rest.next().cloned(),
+                    "-c" | "--git-dir" | "--work-tree" | "--namespace" => {
+                        rest.next();
+                    }
+                    flag if flag.starts_with('-') => {}
+                    other => {
+                        sub = Some(other.to_owned());
+                        break;
+                    }
+                }
+            }
+            let words: Vec<String> = rest.filter(|a| !a.starts_with('-')).cloned().collect();
+            let Some(sub) = sub else { return out };
+            if !GIT_READS.contains(&sub.as_str()) {
+                // `git -C ../other <anything that changes>` acts on another repository.
+                out.extend(dir);
+            }
+            match sub.as_str() {
+                "checkout" | "restore" | "rm" | "mv" | "clean" => out.extend(words),
+                "worktree" if matches!(words.first().map(String::as_str), Some("add" | "move")) => {
+                    out.extend(words.into_iter().skip(1));
+                }
+                "init" | "clone" => out.extend(words.last().cloned()),
+                _ => {}
             }
         }
         _ => {}
+    }
+    out
+}
+
+/// A written word and the directory it is read from: `None` once a `cd` to somewhere unknown has happened.
+pub(super) fn write_targets(ctx: &Ctx<'_>) -> Vec<(String, Option<PathBuf>)> {
+    let mut cwd = Some(ctx.scene.worktree.to_path_buf());
+    let mut out = Vec::new();
+    for command in &ctx.commands {
+        if matches!(command.program.as_str(), "cd" | "pushd" | "chdir" | "popd") {
+            let word = command
+                .args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(String::as_str);
+            cwd = shell::change_dir(cwd.as_deref(), word);
+            continue;
+        }
+        out.extend(writes(command).into_iter().map(|w| (w, cwd.clone())));
     }
     out
 }
@@ -309,25 +444,26 @@ fn n4(ctx: &Ctx<'_>) -> bool {
         return ctx.paths.iter().any(|p| outside(p, tree))
             || (ctx.paths.is_empty() && outside(ctx.text.lines().next().unwrap_or(""), tree));
     }
-    ctx.commands
+    write_targets(ctx)
         .iter()
-        .flat_map(writes)
-        .any(|word| (is_path_like(&word) || word.starts_with('~')) && outside(&word, tree))
+        .any(|(word, cwd)| outside_from(word, cwd.as_deref(), tree))
 }
 
 /// The files the action writes, as worktree-relative paths where they lie inside it.
 pub(super) fn written(ctx: &Ctx<'_>) -> Vec<String> {
     let tree = ctx.scene.worktree;
-    let words: Vec<String> = if ctx.kind == ActionKind::FileChange {
-        if ctx.paths.is_empty() {
+    if ctx.kind == ActionKind::FileChange {
+        let words: Vec<String> = if ctx.paths.is_empty() {
             ctx.text.lines().take(1).map(str::to_owned).collect()
         } else {
             ctx.paths.to_vec()
-        }
-    } else {
-        ctx.commands.iter().flat_map(writes).collect()
-    };
-    words.iter().filter_map(|w| relative(w, tree)).collect()
+        };
+        return words.iter().filter_map(|w| relative(w, tree)).collect();
+    }
+    write_targets(ctx)
+        .iter()
+        .filter_map(|(w, cwd)| shell::relative_from(w, cwd.as_deref(), tree))
+        .collect()
 }
 
 /// N7: a write to `.orbyn/crew.json` or to a path the answer key protects.

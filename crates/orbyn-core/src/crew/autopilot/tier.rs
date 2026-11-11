@@ -170,10 +170,20 @@ fn generated(command: &Simple, ctx: &Ctx<'_>, grants: &Grants<'_>) -> bool {
                 "-c" | "-e" | "-p" | "-r" | "-command" | "-Command" | "--eval" | "--print" | "-lc"
             )
         });
-        let file = command.args.iter().find(|a| !a.starts_with('-'));
-        // A shell with no arguments reads a script from its input: `curl ... | sh`.
-        let piped = shell && command.args.is_empty();
-        return inline || piped || file.is_some_and(|f| in_lease(f));
+        // A file to run, wherever it is (the repository's own scripts can be changed by the worker), code on the input
+        // (`python3 - <<EOF`, `node < x.js`, a pipe) or no argument at all. `python -m pytest` runs a module.
+        let module = command
+            .args
+            .iter()
+            .any(|a| matches!(a.as_str(), "-m" | "--version" | "-V" | "--help" | "-h"));
+        let file = command.args.iter().any(|a| !a.starts_with('-'));
+        return inline || (!module && (file || command.args.iter().all(|a| a.starts_with('-'))));
+    }
+    // A patch can name any path, so what it writes is not known.
+    if command.program == "patch"
+        || command.program == "git" && command.args.iter().any(|a| a == "apply" || a == "am")
+    {
+        return true;
     }
     command.raw.contains('/') && in_lease(&command.raw)
 }
@@ -270,8 +280,11 @@ pub(super) fn tier(ctx: &Ctx<'_>, grants: &Grants<'_>) -> Tiered {
                     .all(|p| grants.writes.iter().any(|g| covers(g, p)))
         }
         ActionKind::Command => {
-            let text = ctx.text.lines().next().unwrap_or("").trim();
-            grants.check_commands.iter().any(|c| c.trim() == text)
+            // The whole target must be the check command, as one simple command: a second line is a second command.
+            let text = ctx.target.trim();
+            (ctx.commands.len() == 1
+                && !text.contains('\n')
+                && grants.check_commands.iter().any(|c| c.trim() == text))
                 || !ctx.commands.is_empty() && ctx.commands.iter().all(|c| read_only(c, ctx))
         }
         _ => false,

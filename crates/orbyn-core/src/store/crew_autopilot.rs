@@ -114,7 +114,13 @@ impl Store {
                     streak += 1;
                     total += 1;
                 }
-                "allowed" => streak = 0,
+                // Only an approval by the lead or by two keys breaks a run of denials: a read that needs nobody does not, or a
+                // worker could put one between its denials.
+                "allowed"
+                    if matches!(event.body["decided_by"].as_str(), Some("lead" | "two_keys")) =>
+                {
+                    streak = 0;
+                }
                 _ => {}
             }
         }

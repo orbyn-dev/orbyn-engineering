@@ -74,7 +74,7 @@ mod tests {
         let needles = vec!["orbyn-key-marker-77".to_owned()];
         let body = json!({
             "reason": "token = abcdefgh12345678 and orbyn-key-marker-77 ran",
-            "nested": ["ghp_0123456789012345678901234567890123456"],
+            "nested": [format!("ghp_{}", "a1".repeat(19))],
         });
         let stored = safe(&body, &needles).to_string();
         assert!(!stored.contains("abcdefgh12345678"));

@@ -127,7 +127,7 @@ pub fn changes_account_state(path: &str) -> bool {
 /// its path. A host in front, quotes and a scheme do not matter.
 pub fn account_paths_in(text: &str) -> Vec<String> {
     let text = &decode_unreserved(text);
-    let lower = text.to_lowercase();
+    let lower = text.to_ascii_lowercase();
     let mut found = Vec::new();
     let mut from = 0;
     while let Some(at) = lower[from..].find(PREFIX) {
