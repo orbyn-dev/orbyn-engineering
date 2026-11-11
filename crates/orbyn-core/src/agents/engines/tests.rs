@@ -242,20 +242,20 @@ fn keyed_manager(dir: &TempDir, key: Option<&str>, failing: bool, empty: bool) -
 async fn a_stored_catalog_is_served_only_under_its_own_key() {
     let dir = TempDir::new();
     let good = keyed_manager(&dir, Some("one"), false, false)
-        .models("keyed", true)
+        .read_models("keyed", true)
         .await
         .unwrap();
     assert!(good.error.is_none());
 
     let changed = keyed_manager(&dir, Some("two"), true, false)
-        .models("keyed", true)
+        .read_models("keyed", true)
         .await
         .unwrap();
     assert!(changed.models.is_empty(), "{changed:?}");
     assert!(changed.error.is_some());
 
     let remembered = keyed_manager(&dir, Some("one"), true, false)
-        .models("keyed", true)
+        .read_models("keyed", true)
         .await
         .unwrap();
     assert_eq!(remembered.models, good.models);
@@ -268,7 +268,7 @@ async fn a_stored_catalog_is_served_only_under_its_own_key() {
 async fn a_failure_is_not_saved() {
     let dir = TempDir::new();
     let failed = keyed_manager(&dir, None, true, false)
-        .models("keyed", true)
+        .read_models("keyed", true)
         .await
         .unwrap();
     assert!(failed.models.is_empty());
@@ -281,13 +281,13 @@ async fn a_failure_is_not_saved() {
 async fn an_empty_answer_is_not_replaced_by_the_stored_catalog() {
     let dir = TempDir::new();
     let good = keyed_manager(&dir, Some("one"), false, false)
-        .models("keyed", true)
+        .read_models("keyed", true)
         .await
         .unwrap();
     assert!(!good.models.is_empty());
 
     let empty = keyed_manager(&dir, Some("one"), false, true)
-        .models("keyed", true)
+        .read_models("keyed", true)
         .await
         .unwrap();
     assert!(empty.models.is_empty(), "{empty:?}");
@@ -534,4 +534,187 @@ fn a_progress_line_drops_colour_codes_and_control_characters() {
         strip_escapes("\u{1b}]0;npm install\u{7}\u{1b}(Badded\u{1b}]8;;x\u{1b}\\ 1"),
         "added 1"
     );
+}
+
+/// An engine whose model list is slow to read, counts its reads and can change or fail.
+struct SlowDriver {
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+    generation: Arc<std::sync::atomic::AtomicUsize>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl EngineDriver for SlowDriver {
+    fn descriptor(&self) -> crate::agents::driver::EngineDescriptor {
+        let mut descriptor = KeyedDriver {
+            key: None,
+            failing: false,
+            empty: false,
+        }
+        .descriptor();
+        descriptor.id = "slow".into();
+        descriptor
+    }
+
+    async fn probe(&self) -> crate::agents::driver::EngineProbe {
+        crate::agents::driver::EngineProbe::default()
+    }
+
+    async fn start_run(
+        &self,
+        _spec: crate::agents::driver::RunSpec,
+        _events: tokio::sync::mpsc::Sender<crate::agents::driver::EngineEvent>,
+    ) -> Result<crate::agents::driver::RunHandle> {
+        Err(CoreError::Unsupported("no run".into()))
+    }
+
+    async fn models(&self) -> Result<Option<ModelCatalog>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.reads.fetch_add(1, SeqCst);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if self.failing.load(SeqCst) {
+            return Err(CoreError::EngineUnavailable("the engine is gone".into()));
+        }
+        let generation = self.generation.load(SeqCst);
+        Ok(Some(ModelCatalog::engine(vec![
+            orbyn_contracts::ModelInfo {
+                id: "slow-model".into(),
+                label: format!("Slow Model {generation}"),
+                description: None,
+                is_default: true,
+                custom: false,
+                options: Vec::new(),
+                input_modalities: Vec::new(),
+                upgrade: None,
+            },
+        ])))
+    }
+
+    async fn catalog_key(&self) -> Option<String> {
+        Some(format!(
+            "g{}",
+            self.generation.load(std::sync::atomic::Ordering::SeqCst)
+        ))
+    }
+}
+
+struct Slow {
+    engines: Arc<EngineManager>,
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+    generation: Arc<std::sync::atomic::AtomicUsize>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+    heard: Arc<Mutex<Vec<String>>>,
+    _dir: TempDir,
+}
+
+fn slow_manager() -> Slow {
+    let dir = TempDir::new();
+    let config = EngineConfig {
+        cache_dir: Some(dir.path().join("model-cache")),
+        ..EngineConfig::default()
+    };
+    let engines = Arc::new(EngineManager::new(
+        Arc::new(Store::open(&dir.path().join("store.sqlite3"), "test").unwrap()),
+        Arc::new(TerminalManager::default()),
+        reqwest::Client::new(),
+        config,
+    ));
+    let slow = Slow {
+        engines: engines.clone(),
+        reads: Arc::default(),
+        generation: Arc::default(),
+        failing: Arc::default(),
+        heard: Arc::default(),
+        _dir: dir,
+    };
+    engines.register(Arc::new(SlowDriver {
+        reads: slow.reads.clone(),
+        generation: slow.generation.clone(),
+        failing: slow.failing.clone(),
+    }));
+    let heard = slow.heard.clone();
+    let notify: crate::util::swr::Notify = Arc::new(move |what: &str| {
+        heard.lock().unwrap().push(what.to_owned());
+    });
+    engines.set_notify(&notify);
+    slow
+}
+
+impl Slow {
+    fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[tokio::test]
+async fn models_answer_from_memory_and_concurrent_first_calls_share_one_read() {
+    let slow = slow_manager();
+    let first = (0..8).map(|_| {
+        let engines = slow.engines.clone();
+        tokio::spawn(async move { engines.models("slow", false).await })
+    });
+    for answer in futures_util::future::join_all(first).await {
+        assert_eq!(answer.unwrap().unwrap().models[0].label, "Slow Model 0");
+    }
+    assert_eq!(slow.reads(), 1);
+    let started = std::time::Instant::now();
+    for _ in 0..200 {
+        slow.engines.models("slow", false).await.unwrap();
+    }
+    assert!(started.elapsed() < Duration::from_millis(300));
+    assert_eq!(slow.reads(), 1);
+}
+
+#[tokio::test]
+async fn a_stale_list_answers_at_once_and_the_change_is_announced() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let slow = slow_manager();
+    slow.engines.models("slow", false).await.unwrap();
+    slow.generation.store(1, SeqCst);
+    slow.engines
+        .model_reads
+        .age_all(MODELS_FRESH + Duration::from_secs(1));
+    // The engine's catalog key is compared once a minute; let that minute pass too.
+    for cached in slow.engines.models.lock().await.values_mut() {
+        cached.checked -= MODELS_KEY_CHECK + Duration::from_secs(1);
+    }
+    let started = std::time::Instant::now();
+    let stale = slow.engines.models("slow", false).await.unwrap();
+    assert_eq!(stale.models[0].label, "Slow Model 0");
+    assert!(started.elapsed() < Duration::from_millis(50));
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if !slow.heard.lock().unwrap().is_empty() {
+            break;
+        }
+    }
+    assert_eq!(*slow.heard.lock().unwrap(), ["models:slow"]);
+    let fresh = slow.engines.models("slow", false).await.unwrap();
+    assert_eq!(fresh.models[0].label, "Slow Model 1");
+}
+
+#[tokio::test]
+async fn refresh_reads_again_and_a_failure_keeps_the_last_good_list() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let slow = slow_manager();
+    slow.engines.models("slow", false).await.unwrap();
+    slow.engines.models("slow", true).await.unwrap();
+    assert_eq!(slow.reads(), 2);
+    slow.failing.store(true, SeqCst);
+    // A forced read reports the failure as before, with the last list kept under it.
+    let failed = slow.engines.models("slow", true).await.unwrap();
+    assert!(failed.error.is_some());
+    // The failed answer was not kept: the list that answers is the last good one.
+    let kept = slow.engines.models("slow", false).await.unwrap();
+    assert!(kept.error.is_none(), "{kept:?}");
+    assert_eq!(kept.models[0].label, "Slow Model 0");
+}
+
+#[tokio::test]
+async fn a_changed_engine_set_drops_the_kept_lists() {
+    let slow = slow_manager();
+    slow.engines.models("slow", false).await.unwrap();
+    slow.engines.instances_changed().await;
+    slow.engines.models("slow", false).await.unwrap();
+    assert_eq!(slow.reads(), 2);
 }

@@ -2,7 +2,6 @@ use crate::app::Core;
 use orbyn_contracts::{ForgeStatus, PullRequest};
 use std::time::{Duration, Instant};
 
-use super::forges::FORGES_TTL;
 use super::stack::stack_of;
 use super::watch::{WatchState, watch_news};
 use super::*;
@@ -88,20 +87,19 @@ fn forge_stub(name: &str) -> ForgeStatus {
 }
 
 #[tokio::test]
-async fn forges_answer_from_memory_until_rescanned_or_expired() {
+async fn forges_answer_from_memory_without_asking_the_clis() {
     let dir = crate::testing::TempDir::new();
     let mut config =
         crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
     let core = Core::open(config).unwrap();
-    assert!(core.known_forges().is_none());
-    *core.forge_statuses.lock().unwrap() = Some((Instant::now(), vec![forge_stub("kept")]));
-    assert_eq!(core.forges(false).await[0].id, "kept");
+    let key = crate::util::swr::key(&["forges"]);
+    core.scm_reads.forges.put(&key, vec![forge_stub("kept")]);
     // Asking for a rescan runs the real CLIs, so it is left to the end-to-end tests;
-    // here only what is kept and when it expires.
-    *core.forge_statuses.lock().unwrap() = Some((
-        Instant::now() - FORGES_TTL - Duration::from_secs(1),
-        vec![forge_stub("old")],
-    ));
-    assert!(core.known_forges().is_none());
+    // here only what is kept.
+    let started = Instant::now();
+    for _ in 0..100 {
+        assert_eq!(core.forges(false).await[0].id, "kept");
+    }
+    assert!(started.elapsed() < Duration::from_millis(500));
 }

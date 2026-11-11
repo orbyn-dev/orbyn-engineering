@@ -1,4 +1,4 @@
-import { shellChanged } from "../../api/shell";
+import { dataChanged, shellChanged } from "../../api/shell";
 import type { ShellEvent } from "../../api/types";
 import { goToHash, parseRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
@@ -16,6 +16,9 @@ export function onShellEvent(event: ShellEvent) {
       return;
     case "changed":
       shellChanged();
+      return;
+    case "data_changed":
+      dataChanged(event.what);
       return;
     case "failed":
       useUi.getState().pushToast(event.message);

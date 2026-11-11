@@ -801,7 +801,7 @@ mod tests {
         let link = root.join(".claude/skills/one");
         assert!(link.join("SKILL.md").is_file() || link.is_file());
         validate_library(&root).await.unwrap();
-        let status = workspace.status(&[]).await.unwrap();
+        let status = workspace.compute_status(&[]).await.unwrap();
         assert!(status.configured);
         let library = status.library.unwrap();
         assert!(library.snapshot);
@@ -901,7 +901,7 @@ mod tests {
         validate_library(&root).await.unwrap();
         assert!(
             workspace
-                .status(&[])
+                .compute_status(&[])
                 .await
                 .unwrap()
                 .library
@@ -988,7 +988,12 @@ mod tests {
                 .unwrap()
                 .unwrap()
         );
-        let library = workspace.status(&[]).await.unwrap().library.unwrap();
+        let library = workspace
+            .compute_status(&[])
+            .await
+            .unwrap()
+            .library
+            .unwrap();
         assert!(!library.snapshot);
         assert_eq!(library.upstream.as_deref(), Some("origin/main"));
     }
@@ -1030,7 +1035,7 @@ mod tests {
         let dir = TempDir::new();
         let workspace = workspace(&dir, &offline_url(&dir), None);
         workspace.provision().await.unwrap();
-        waits(&workspace, workspace.status(&[])).await;
+        waits(&workspace, workspace.compute_status(&[])).await;
         waits(&workspace, workspace.identity()).await;
         waits(&workspace, workspace.upstream_revision()).await;
         waits(&workspace, workspace.fetch()).await;
@@ -1052,7 +1057,12 @@ mod tests {
         assert!(workspace.upgrade_snapshot(true).await.unwrap());
         assert_eq!(workspace.root().unwrap(), root);
         assert_eq!(std::fs::read(root.join("repo/app/file")).unwrap(), b"mine");
-        let library = workspace.status(&[]).await.unwrap().library.unwrap();
+        let library = workspace
+            .compute_status(&[])
+            .await
+            .unwrap()
+            .library
+            .unwrap();
         assert!(!library.snapshot);
         assert!(library.upstream.is_some(), "updates can arrive now");
         assert!(Workspace::leftovers(root.parent().unwrap()).is_empty());
@@ -1118,7 +1128,7 @@ mod tests {
         *workspace.moving_lock() = false;
         assert!(
             workspace
-                .status(&[])
+                .compute_status(&[])
                 .await
                 .unwrap()
                 .library
@@ -1151,7 +1161,7 @@ mod tests {
         assert_eq!(second.root().unwrap(), root);
         assert!(!dir.path().join("data/workspace").exists());
         assert!(!second.upgrade_snapshot(true).await.unwrap());
-        let library = second.status(&[]).await.unwrap().library.unwrap();
+        let library = second.compute_status(&[]).await.unwrap().library.unwrap();
         assert!(library.adopted && !library.snapshot);
     }
 
@@ -1172,7 +1182,7 @@ mod tests {
         drop(first);
         let second = workspace(&dir, &url, Some(bundle(&dir)));
         second.provision().await.unwrap();
-        let library = second.status(&[]).await.unwrap().library.unwrap();
+        let library = second.compute_status(&[]).await.unwrap().library.unwrap();
         assert!(!library.snapshot);
         assert_eq!(second.root().unwrap(), root);
     }

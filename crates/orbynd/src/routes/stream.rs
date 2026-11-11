@@ -122,7 +122,8 @@ pub async fn update_events(
             if !first {
                 changes.changed().await.ok()?;
             }
-            let status = updates.status().await;
+            // A change dropped the kept status; reading it here keeps the next poll instant.
+            let status = updates.cached_status(!first).await;
             let frame = Event::default().json_data(&status).ok()?;
             Some((Ok(frame), (updates, changes, false)))
         },

@@ -105,7 +105,9 @@ impl Core {
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         self.scm_audit(actor, "git.review", &number.to_string(), Some(id))?;
-        forge::submit_review(forge, cwd, number, review).await
+        let outcome = forge::submit_review(forge, cwd, number, review).await;
+        self.scm_reads.pull_changed(&thread.project_id, number);
+        outcome
     }
 
     pub async fn merge_pull(
@@ -119,7 +121,9 @@ impl Core {
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         self.scm_audit(actor, "git.merge", &number.to_string(), Some(id))?;
-        forge::merge(forge, cwd, number, options).await?;
+        let outcome = forge::merge(forge, cwd, number, options).await;
+        self.scm_reads.pull_changed(&thread.project_id, number);
+        outcome?;
         self.refresh_pulls(id).await.map(|_| ())
     }
 
@@ -133,46 +137,48 @@ impl Core {
         Ok((project, forge))
     }
 
+    /// A project's pull requests, from the last known list while it is read again in the
+    /// background. `refresh` reads them now.
     pub async fn project_pulls(
         &self,
         project_id: &str,
         filter: &PullFilter,
+        refresh: bool,
     ) -> Result<Vec<PullRequest>> {
         check_state(&filter.state)?;
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::list_pulls(forge, Path::new(&project.path), filter).await
+        let project = self.trusted_project(project_id)?;
+        let key = crate::util::swr::key(&[&project.id, &format!("{filter:?}"), &project.path]);
+        let filter = filter.clone();
+        self.scm_reads
+            .project_list
+            .get(&key, "pulls", refresh, move || async move {
+                list_one(Path::new(&project.path), &filter).await
+            })
+            .await
     }
 
     /// Pull requests across every trusted project with a remote. A project that
     /// cannot be read is named, so a partial list is never mistaken for a whole one.
-    pub async fn all_pulls(&self, filter: &PullFilter) -> Result<PullList> {
+    /// The last known list answers at once and is read again in the background; the
+    /// projects it covers are part of its key, so adding or trusting one reads again.
+    pub async fn all_pulls(&self, filter: &PullFilter, refresh: bool) -> Result<PullList> {
         check_state(&filter.state)?;
-        let mut list = PullList {
-            pulls: Vec::new(),
-            failed: Vec::new(),
-        };
-        for project in self.store.list_projects()? {
-            if !project.trusted || !project.is_git {
-                continue;
-            }
-            let cwd = PathBuf::from(&project.path);
-            if git(&cwd, &["remote", "get-url", "origin"]).await.is_err() {
-                continue;
-            }
-            match self.project_pulls(&project.id, filter).await {
-                Ok(pulls) => list
-                    .pulls
-                    .extend(pulls.into_iter().map(|pull| PullListEntry {
-                        project_id: project.id.clone(),
-                        pull,
-                    })),
-                Err(error) => list.failed.push(PullListFailure {
-                    project_id: project.id,
-                    message: error.public_message(),
-                }),
-            }
-        }
-        Ok(list)
+        let projects: Vec<Project> = self
+            .store
+            .list_projects()?
+            .into_iter()
+            .filter(|project| project.trusted && project.is_git)
+            .collect();
+        let covered: Vec<String> = projects
+            .iter()
+            .map(|project| format!("{}={}", project.id, project.path))
+            .collect();
+        let key = crate::util::swr::key(&["all", &format!("{filter:?}"), &covered.join(",")]);
+        let filter = filter.clone();
+        self.scm_reads
+            .list
+            .get(&key, "pulls", refresh, move || read_all(projects, filter))
+            .await
     }
 
     /// What the base list leaves out, for pull requests the caller already shows. GitHub
@@ -287,14 +293,22 @@ impl Core {
         })
     }
 
-    pub async fn project_pull(&self, project_id: &str, number: u64) -> Result<PullRequestDetail> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::pull_detail(forge, Path::new(&project.path), number).await
+    pub async fn project_pull(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<PullRequestDetail> {
+        self.cached_detail(project_id, number, refresh).await
     }
 
-    pub async fn pull_checks(&self, project_id: &str, number: u64) -> Result<Vec<PullCheck>> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::pull_checks(forge, Path::new(&project.path), number).await
+    pub async fn pull_checks(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<Vec<PullCheck>> {
+        self.cached_checks(project_id, number, refresh).await
     }
 
     pub async fn approve_workflow(&self, project_id: &str, run: u64, actor: &str) -> Result<()> {
@@ -307,34 +321,37 @@ impl Core {
         &self,
         project_id: &str,
         number: u64,
+        refresh: bool,
     ) -> Result<PullConversation> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::conversation(forge, Path::new(&project.path), number).await
+        self.cached_conversation(project_id, number, refresh).await
     }
 
     pub async fn pull_timeline(
         &self,
         project_id: &str,
         number: u64,
+        refresh: bool,
     ) -> Result<Vec<PullTimelineEvent>> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::timeline(forge, Path::new(&project.path), number).await
+        self.cached_timeline(project_id, number, refresh).await
     }
 
     /// Changed files, with this service's viewed marks.
-    pub async fn pull_files(&self, project_id: &str, number: u64) -> Result<Vec<PullFile>> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        let viewed = self.store.viewed_files(project_id, number)?;
-        let mut files = forge::pull_files(forge, Path::new(&project.path), number).await?;
-        for file in &mut files {
-            file.viewed = viewed.contains(&file.path);
-        }
-        Ok(files)
+    pub async fn pull_files(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<Vec<PullFile>> {
+        self.cached_files(project_id, number, refresh).await
     }
 
-    pub async fn pull_revisions(&self, project_id: &str, number: u64) -> Result<Vec<PullRevision>> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::pull_revisions(forge, Path::new(&project.path), number).await
+    pub async fn pull_revisions(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<Vec<PullRevision>> {
+        self.cached_revisions(project_id, number, refresh).await
     }
 
     /// One commit's files. Viewed marks belong to the whole pull request, not a commit.
@@ -342,4 +359,35 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         forge::revision_files(forge, Path::new(&project.path), sha).await
     }
+}
+
+/// One project's list, read from its forge.
+async fn list_one(cwd: &Path, filter: &PullFilter) -> Result<Vec<PullRequest>> {
+    forge::list_pulls(forge_of(cwd).await?, cwd, filter).await
+}
+
+async fn read_all(projects: Vec<Project>, filter: PullFilter) -> Result<PullList> {
+    let mut list = PullList {
+        pulls: Vec::new(),
+        failed: Vec::new(),
+    };
+    for project in projects {
+        let cwd = PathBuf::from(&project.path);
+        if git(&cwd, &["remote", "get-url", "origin"]).await.is_err() {
+            continue;
+        }
+        match list_one(&cwd, &filter).await {
+            Ok(pulls) => list
+                .pulls
+                .extend(pulls.into_iter().map(|pull| PullListEntry {
+                    project_id: project.id.clone(),
+                    pull,
+                })),
+            Err(error) => list.failed.push(PullListFailure {
+                project_id: project.id,
+                message: error.public_message(),
+            }),
+        }
+    }
+    Ok(list)
 }

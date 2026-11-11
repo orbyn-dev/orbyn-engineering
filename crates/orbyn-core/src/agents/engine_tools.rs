@@ -10,6 +10,12 @@ use orbyn_contracts::{EngineTools, ToolGroup};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 
+/// A tools list is served without a refresh for this long, as long as the drivers keep
+/// their own engine-wide answer.
+pub(crate) const TOOLS_FRESH: std::time::Duration = std::time::Duration::from_secs(30);
+/// Past this, the last list is no longer shown without waiting for the engine.
+pub(crate) const TOOLS_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
 /// The last good list per engine and thread, kept so a failed check can still show it.
 #[derive(Default)]
 pub(crate) struct ToolsCache {
@@ -86,6 +92,13 @@ impl Core {
     ) -> Result<EngineTools> {
         let driver = self.engines.driver(engine)?;
         let key = format!("{engine}\n{}", thread.unwrap_or(""));
+        // What a run reported is an input of the answer, so a new report is a new key.
+        let reported = init.as_ref().map_or("", |(id, _)| id.as_str());
+        let read_key = crate::util::swr::key(&[engine, thread.unwrap_or(""), reported]);
+        let topic = match thread {
+            Some(thread) => format!("tools:{thread}"),
+            None => format!("engine-tools:{engine}"),
+        };
         // A neutral folder, never the thread's: asking Codex starts an app-server that
         // loads its folder's `.codex` config and servers, and a project's must not run
         // because a tab was opened. A project's own servers show through a run's frame.
@@ -94,8 +107,16 @@ impl Core {
             .entry(engine.to_owned())
             .or_default()
             .clone();
-        let answered = driver
-            .tools(&cwd, init.as_ref().map(|(_, value)| value), refresh, &probe)
+        let reported_value = init.map(|(_, value)| value);
+        // The last answer is served at once and the engine is asked again in the
+        // background, so a tab never waits on an engine process it has already heard from.
+        let answered = self
+            .tool_reads
+            .get(&read_key, &topic, refresh, move || async move {
+                driver
+                    .tools(&cwd, reported_value.as_ref(), refresh, &probe)
+                    .await
+            })
             .await;
         let mut tools = match answered {
             Ok(Some(tools)) => tools,

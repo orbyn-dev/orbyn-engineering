@@ -14,6 +14,11 @@ pub enum ShellEvent {
     Command { command: String },
     /// `ShellStatus` has changed.
     Changed,
+    /// Data the service answers from its last known value has changed, so a window
+    /// showing it reads it again. `what` names the data: `pulls`, `pull:<project>:<number>`,
+    /// `models:<engine>`, `workspace`, `updates`, and so on. A window ignores a name it
+    /// does not show.
+    DataChanged { what: String },
     /// Something a window asked for could not be done.
     Failed { message: String },
     /// Show this preview tab, which the service opened for a web link from another app.

@@ -41,6 +41,9 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
 8. An engine that cannot ask permission is labelled unmanaged in every surface.
 9. Update only through the installer that provably owns the binary; otherwise
    show manual instructions. Never update during an active run.
+10. A read that costs a process, a forge call or an engine answers from its last known
+    value once it has one, and refreshes in the background ([Instant reads](#instant-reads)).
+    A request never waits on a slow source it has already heard from.
 
 ## Run lifecycle
 
@@ -254,7 +257,8 @@ the session's own options. It then deletes that session where the agent offers
 
 Claude's list is kept until its CLI version or login changes, which is compared at most
 once a minute. Other lists are kept five minutes, a stand-in 30 seconds, and `?refresh=
-true` always asks. A failure, a stand-in or an answer with no models never replaces a good list: the last
+true` always asks. The route answers from the last list at once and checks in the background
+([Instant reads](#instant-reads)). A failure, a stand-in or an answer with no models never replaces a good list: the last
 one stays, with `error` saying why, and a read of Claude stops at 4 MiB. With no list
 yet, a failure is reported with the list empty rather than as an error.
 
@@ -430,7 +434,8 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Subscription
 limits appear only where an engine reports them itself, as Codex does through
-`account/rateLimits/read`, cached for five minutes. Only Codex's `rateLimits`,
+`account/rateLimits/read`, answered from the last report and read again in the background after
+five minutes. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
 reset-credit offers are dropped; `?force=true` reads again and
 spends no model usage. `/api/limits` also gives one number per window length across
@@ -582,7 +587,10 @@ starts sets `fresh` and asks again for every row. If GitHub's rate limit is spen
 no details, `paused` names every withheld field as it appears on the row (`created_at`,
 `requested_reviewers`, `viewer_review_state`, `comment_count`), and details are not asked
 for again for 2 minutes, `fresh` included. `ForgeStatus.viewer` is the login the CLI is
-signed in as, read on each `GET /api/forges` rescan.
+signed in as, read on each `GET /api/forges` rescan. Pull request reads (the lists, a pull
+request's detail, checks, comments, timeline, files, revisions and stack, and the reviewer and
+label candidates) answer from the last known value and take `?refresh=1`; any write to a pull
+request drops what was kept for it ([Instant reads](#instant-reads)).
 
 A git action runs commit, push and pull request in order, logs each phase as `CUSTOM
 git.phase`, and stops at the first failure; earlier phases stand. These are the
@@ -658,7 +666,8 @@ large, so they are reduced to names, states and short descriptions inside the dr
 person can reach and plugins to the installed and enabled. Only names, states and short reasons leave the
 engine's reply: no address, token or request body. Both checks run in a neutral folder, never a project's, so no project config or server starts for a page view.
 Each driver keeps its engine-wide answer for 30 seconds and shares one read between callers, so opening
-threads does not start `claude mcp list` or a Codex app-server each time. A check that fails, or comes back
+threads does not start `claude mcp list` or a Codex app-server each time. The routes answer from the last
+list at once and ask again in the background, keyed by engine, thread and what the thread's last run reported. A check that fails, or comes back
 with an error, returns the last good list marked with that error, and `error` is never set just because a
 group is absent. There is no per-tool switch:
 the engine decides what is enabled.
@@ -1714,6 +1723,59 @@ holding the engine process. A resume must answer every open interrupt, replaying
 one is safe, and new input on a paused thread gets `RUN_ERROR`. `payload.approved`
 carries the decision and anything but `true` denies.
 
+## Instant reads
+
+The webview holds a handful of HTTP/1.1 connections to the service, two of them taken by
+event streams. A request that waits seconds on a forge, an engine or Git holds one, so the
+quick requests behind it arrive late. Reads that cost a process or a network round trip
+therefore answer from the last known value and refresh in the background
+(`util::swr::Swr`, stale-while-revalidate).
+
+- **A kept value answers at once.** Past its fresh time the same call starts one refresh
+  that every other caller shares; a refresh already running is not started again. A value
+  older than its maximum age is not shown: that call waits for a read, which concurrent
+  callers share.
+- **A key holds every input of the read**: project, pull request number, engine, thread,
+  state, query and folder. A value is never served for another key. Keys are capped and the
+  least recently used one goes first.
+- **A failure never clobbers.** A failed refresh keeps the last good value and is not
+  retried for 5 seconds. With nothing kept, the call gets the read's own error, as before,
+  and nothing is stored. An answer a source marks as a failure or stand-in (an engine's
+  model list with `error` set) is returned to its callers but not kept.
+- **`?refresh=1` (or `true`; models keep `refresh=true`, limits `force=true` and forges `rescan=true`) reads
+  now** and waits for the read, whatever is kept. A forced read that fails reports its error
+  and keeps the last good value.
+- **A write that changes the data drops it.** Comments, reviews, reviewers, labels, edits,
+  merges, closes and actions drop that pull request's detail, checks, conversation,
+  timeline, files, revisions and stack, and every list; opening a pull request drops the
+  lists; a library change drops the workspace status; an engine install or update and an
+  engine set change drop the model lists; any update state change drops the update status.
+  A read that began before the write is not kept, so it cannot put old data back.
+- **A window hears what changed.** A refresh that changed the answer, and a write that
+  dropped it, send `ShellEvent::DataChanged { what }` on `GET /api/shell/events`, so a
+  window showing that data reads it again. `what` is `pulls`, `pull:<project>:<number>`,
+  `pull-people:<project>`, `forges`, `models:<engine>` (`models` after a change to every
+  engine), `workspace`, `updates`, `limits:<engine>`, `tools:<thread>`,
+  `engine-tools:<engine>` or `health`. A read time or a measured latency that differs on
+  every read is not a change.
+
+| Read | Fresh for | Shown for at most |
+| --- | --- | --- |
+| `GET /api/pulls`, `GET /api/projects/:id/pulls` | 20 s | 15 min |
+| A pull request's detail, checks, comments, timeline, files, revisions and stack | 10 s | 15 min |
+| Reviewer and label candidates | 2 min | 15 min |
+| `GET /api/forges` | 60 s | 15 min |
+| `GET /api/engines/:id/models` | 30 s, then the engine's catalog key is compared at most once a minute | 30 min |
+| `GET /api/workspace` | 15 s | 10 min |
+| `GET /api/updates` | 20 s | 10 min |
+| `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 5 min | 1 hour |
+| `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 30 min |
+| `GET /api/health/dependencies` | 60 s | 10 min |
+
+`GET /api/threads/:id/commands` waits on the model list only, so it is instant once that is
+kept. Viewed marks on a pull request's files are this service's own and are read on every
+call, never kept with the forge's answer.
+
 ## Driver contract
 
 `EngineDriver` in core declares `EngineDescriptor` (identity, tier, capabilities)
@@ -2030,7 +2092,8 @@ product origin and does not reach this page, and Dim is not offered here.
 There are no default core/plugin command permissions. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
 the service, which asks the shell over stdin/stdout; results return through
-`GET /api/shell/events`. `ShellBridge` owns this Core channel. Events wait, eight at
+`GET /api/shell/events`, which also carries `data_changed` when data the service answers from
+memory changed ([Instant reads](#instant-reads)). `ShellBridge` owns this Core channel. Events wait, eight at
 most, for the first window; `GET /api/shell` counts attached windows. Lines belonging
 to app updates continue to `UpdateCenter`.
 
@@ -2689,7 +2752,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
-| `GET /api/forges` | `ForgeStatus[]`; never cached, so it is also the rescan |
+| `GET /api/forges?rescan=true` | `ForgeStatus[]`; the last answer for a minute, then read again in the background; `rescan` asks the CLIs now |
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
 | `GET, POST /api/threads/:id/pulls`, `POST .../pulls/refresh` | Linked pull requests; refresh also links the branch's own |
@@ -2697,7 +2760,7 @@ every method, path and which routes need a credential.
 | `POST /api/watches/check` | One watch pass now (`204`) |
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |
-| `GET /api/pulls?state=&q=&author=&label=` | `PullList` across trusted projects; `failed` names any it could not read |
+| `GET /api/pulls?state=&q=&author=&label=&refresh=` | `PullList` across trusted projects; `failed` names any it could not read |
 | `POST /api/pulls/details` | `PullDetailsResponse` for listed rows: reviewers, viewer review, comment totals, opened time; `paused` names details withheld by a spent rate limit |
 | `GET /api/projects/:id/pulls?state=&q=&author=&label=` | `PullRequest[]` |
 | `POST /api/projects/:id/pulls/close` | `BulkClosePulls` to `PullBulkResult[]` |

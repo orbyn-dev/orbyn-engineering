@@ -33,7 +33,9 @@ group; a new group adds its own `README.md` and a row here.
 | [host](src/host/README.md) | Child processes, inherited environment, terminals and the desktop shell bridge |
 
 Shared by every group, at the crate root: `app` (assembly), `error`, `store`
-(durable state), `util` and `testing` (unit-test helpers).
+(durable state), `util` (including `util::swr`, the stale-while-revalidate cache that
+slow reads answer from; see [Instant reads](../../docs/architecture.md#instant-reads))
+and `testing` (unit-test helpers).
 
 Before a group calls into another, check that the decision belongs to the group
 being called, not the caller.

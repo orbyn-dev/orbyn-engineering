@@ -27,6 +27,11 @@ const IDLE_BEFORE_INSTALL: Duration = Duration::from_secs(2 * 60);
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(8);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// How long `GET /api/updates` is answered without a refresh. A status reads Git and
+/// the engines, which the poll behind it asks for every few seconds.
+const STATUS_FRESH: Duration = Duration::from_secs(20);
+/// Past this, an earlier status is no longer shown without waiting for a new one.
+const STATUS_MAX_AGE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Default)]
 struct Known {
@@ -53,6 +58,8 @@ pub struct UpdateCenter {
     changes: watch::Sender<u64>,
     /// When someone last did something through a client.
     last_activity: Mutex<Instant>,
+    /// The last status, for the polled read; dropped whenever `changed` fires.
+    status_reads: crate::util::swr::Swr<UpdateStatus>,
 }
 
 #[derive(Deserialize)]
@@ -80,7 +87,12 @@ impl UpdateCenter {
             shell: Mutex::new(None),
             changes: watch::channel(0).0,
             last_activity: Mutex::new(Instant::now()),
+            status_reads: crate::util::swr::Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 1),
         }
+    }
+
+    pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
+        self.status_reads.set_notify(notify.clone());
     }
 
     /// Marks a person as present, which puts off an automatic install.
@@ -131,6 +143,8 @@ impl UpdateCenter {
     }
 
     fn changed(&self) {
+        self.status_reads.invalidate_all();
+        self.status_reads.announce("updates");
         self.changes.send_modify(|version| *version += 1);
     }
 
@@ -253,6 +267,26 @@ impl UpdateCenter {
         known.app_notes = manifest.notes;
         known.app_latest = Some(manifest.version);
         Ok(())
+    }
+
+    /// The last status at once, read again in the background after 20 seconds and
+    /// announced as `updates` when it changed; for the polled read, which must not wait
+    /// on Git and the engines. `refresh` reads now and keeps the answer.
+    pub async fn cached_status(self: &Arc<Self>, refresh: bool) -> UpdateStatus {
+        let center = self.clone();
+        let kept = self
+            .status_reads
+            .get(
+                &crate::util::swr::key(&["status"]),
+                "updates",
+                refresh,
+                move || async move { Ok(center.status().await) },
+            )
+            .await;
+        match kept {
+            Ok(status) => status,
+            Err(_) => self.status().await,
+        }
     }
 
     /// The current picture: local Git state and run activity are read fresh, and

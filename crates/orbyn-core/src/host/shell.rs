@@ -178,6 +178,17 @@ impl ShellBridge {
         }
     }
 
+    /// Announces that data changed. Windows reread what they show on connecting, so
+    /// nothing is held for one that is not there.
+    pub fn notifier(&self) -> crate::util::swr::Notify {
+        let events = self.events.clone();
+        std::sync::Arc::new(move |what| {
+            let _ = events.send(ShellEvent::DataChanged {
+                what: what.to_owned(),
+            });
+        })
+    }
+
     fn publish(&self, event: ShellEvent) {
         let mut held = lock(&self.held);
         if self.events.send(event.clone()).is_err() {

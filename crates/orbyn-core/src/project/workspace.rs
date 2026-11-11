@@ -8,7 +8,7 @@ mod provision;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use orbyn_contracts::{
@@ -38,9 +38,13 @@ const HOSTS: &[&str] = &[".agents", ".claude", ".cursor"];
 /// Skill link directories that must materialize for native discovery.
 const LINK_ROOTS: &[&str] = &[".claude/skills", ".agents/skills"];
 const CLONE_SYMLINKS: &str = "core.symlinks=true";
-/// How long a computed status answers repeat requests. Every Git call behind it is
-/// local, but a registered checkout with many worktrees costs seconds to read.
-const STATUS_TTL: Duration = Duration::from_secs(15);
+/// How long a computed status answers repeat requests before it is read again in the
+/// background. Every Git call behind it is local, but a registered checkout with many
+/// worktrees costs seconds to read, so a request never waits for that read when an
+/// earlier answer exists.
+const STATUS_FRESH: Duration = Duration::from_secs(15);
+/// Past this, an earlier status is no longer shown without waiting for a new one.
+const STATUS_MAX_AGE: Duration = Duration::from_secs(10 * 60);
 /// Checkouts and worktrees read at the same time.
 const STATUS_PARALLEL: usize = 6;
 /// Git processes a status read has running at once, across all its checkouts and
@@ -58,13 +62,6 @@ fn status_git() -> &'static tokio::sync::Semaphore {
 async fn gated<T>(read: impl std::future::Future<Output = T>) -> T {
     let _slot = status_git().acquire().await;
     read.await
-}
-
-/// A status answer and what it was computed for.
-struct CachedStatus {
-    at: Instant,
-    projects: Vec<(String, String)>,
-    status: WorkspaceStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,10 +101,10 @@ pub struct Workspace {
     moving: Mutex<bool>,
     /// Set from an app install until exit, or until the install fails.
     installing: AtomicBool,
-    /// The last computed status; dropped when the library or its position changes.
-    status_cache: Mutex<Option<CachedStatus>>,
-    /// Bumped by every invalidation, so a slow read that began before one cannot store.
-    status_generation: std::sync::atomic::AtomicU64,
+    /// The last computed status per set of projects; dropped when the library or its
+    /// position changes. An invalidation also keeps a slow read that began before it
+    /// from storing.
+    status_reads: crate::util::swr::Swr<WorkspaceStatus>,
 }
 
 fn refused(message: impl Into<String>) -> CoreError {
@@ -370,8 +367,7 @@ impl Workspace {
             state: RwLock::new(state),
             moving: Mutex::new(false),
             installing: AtomicBool::new(false),
-            status_cache: Mutex::new(None),
-            status_generation: std::sync::atomic::AtomicU64::new(0),
+            status_reads: crate::util::swr::Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 8),
         })
     }
 
@@ -391,11 +387,12 @@ impl Workspace {
     /// Forgets the cached status so the next read looks at Git again. Callers that
     /// change a checkout (setup, update, rollback, a project's own Git actions) use it.
     pub fn invalidate_status(&self) {
-        self.status_generation.fetch_add(1, Ordering::SeqCst);
-        *self
-            .status_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.status_reads.invalidate_all();
+        self.status_reads.announce("workspace");
+    }
+
+    pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
+        self.status_reads.set_notify(notify.clone());
     }
 
     fn save(&self, state: WorkspaceState) -> Result<()> {
@@ -451,9 +448,9 @@ impl Workspace {
                 state.url = request.url.or(state.url);
                 self.save(state)?;
                 self.upgrade_snapshot(false).await?;
-                return self.status(&[]).await;
+                return self.compute_status(&[]).await;
             }
-            Some(_) if request.url.is_none() => return self.status(&[]).await,
+            Some(_) if request.url.is_none() => return self.compute_status(&[]).await,
             Some(_) => {
                 return Err(CoreError::Invalid(
                     "The library is already a clone. Adopt a folder to use another.".into(),
@@ -492,7 +489,7 @@ impl Workspace {
             json!({ "adopted": state.adopted, "url": state.url }),
         )?;
         self.save(state)?;
-        self.status(&[]).await
+        self.compute_status(&[]).await
     }
 
     async fn clone_library(&self, url: &str) -> Result<WorkspaceState> {
@@ -713,43 +710,24 @@ impl Workspace {
         })
     }
 
-    pub async fn status(&self, projects: &[orbyn_contracts::Project]) -> Result<WorkspaceStatus> {
-        let key: Vec<(String, String)> = projects
+    /// The last status answers at once; one read in the background brings it up to
+    /// date, and `workspace` is announced when it changed. With none kept for these
+    /// projects, the call waits for the read.
+    pub async fn status(
+        self: &Arc<Self>,
+        projects: &[orbyn_contracts::Project],
+    ) -> Result<WorkspaceStatus> {
+        let covered: Vec<String> = projects
             .iter()
-            .map(|project| (project.id.clone(), project.path.clone()))
+            .map(|project| format!("{}={}", project.id, project.path))
             .collect();
-        if let Some(cached) = self.cached_status(&key) {
-            return Ok(cached);
-        }
-        let generation = self.status_generation.load(Ordering::SeqCst);
-        let status = self.compute_status(projects).await?;
-        self.keep_status(generation, key, &status);
-        Ok(status)
-    }
-
-    /// Keeps a computed status unless something invalidated while it was being read,
-    /// since it may then describe the old state.
-    fn keep_status(&self, generation: u64, key: Vec<(String, String)>, status: &WorkspaceStatus) {
-        let mut cache = self
-            .status_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if self.status_generation.load(Ordering::SeqCst) == generation {
-            *cache = Some(CachedStatus {
-                at: Instant::now(),
-                projects: key,
-                status: status.clone(),
-            });
-        }
-    }
-
-    fn cached_status(&self, key: &[(String, String)]) -> Option<WorkspaceStatus> {
-        let cache = self
-            .status_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let cached = cache.as_ref()?;
-        (cached.at.elapsed() < STATUS_TTL && cached.projects == key).then(|| cached.status.clone())
+        let key = crate::util::swr::key(&[&covered.join(",")]);
+        let (workspace, projects) = (self.clone(), projects.to_vec());
+        self.status_reads
+            .get(&key, "workspace", false, move || async move {
+                workspace.compute_status(&projects).await
+            })
+            .await
     }
 
     async fn compute_status(
@@ -956,11 +934,11 @@ mod tests {
     use super::*;
     use crate::testing::{TempDir, library, run_git};
 
-    async fn service(dir: &TempDir) -> Workspace {
+    async fn service(dir: &TempDir) -> Arc<Workspace> {
         let data = dir.path().join("data");
         std::fs::create_dir_all(&data).unwrap();
         let store = Arc::new(Store::open(&data.join("db"), "e").unwrap());
-        Workspace::new(store, data, DEFAULT_LIBRARY_URL.into(), None).unwrap()
+        Arc::new(Workspace::new(store, data, DEFAULT_LIBRARY_URL.into(), None).unwrap())
     }
 
     fn adopt(path: &Path) -> WorkspaceSetup {
@@ -971,7 +949,7 @@ mod tests {
     }
 
     /// An upstream library and a clone of it set up as the workspace.
-    async fn cloned(dir: &TempDir) -> (Workspace, PathBuf) {
+    async fn cloned(dir: &TempDir) -> (Arc<Workspace>, PathBuf) {
         let upstream = library(&dir.path().join("upstream"));
         let workspace = service(dir).await;
         workspace
@@ -1308,34 +1286,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_expired_status_is_computed_again() {
+    async fn an_expired_status_answers_at_once_and_is_read_again_in_the_background() {
         let dir = TempDir::new();
         let path = library(&dir.path().join("mine"));
         let workspace = service(&dir).await;
         workspace.setup(adopt(&path)).await.unwrap();
-        workspace.status(&[]).await.unwrap();
+        // Nothing kept yet: the call waits for the read.
+        let first = workspace.status(&[]).await.unwrap();
+        assert!(!first.library.unwrap().dirty);
         std::fs::write(path.join("scratch.txt"), "x").unwrap();
-        workspace.status_cache.lock().unwrap().as_mut().unwrap().at =
-            Instant::now() - STATUS_TTL - Duration::from_secs(1);
-        assert!(workspace.status(&[]).await.unwrap().library.unwrap().dirty);
-    }
-
-    #[tokio::test]
-    async fn a_status_read_that_an_invalidation_overtook_is_not_kept() {
-        let dir = TempDir::new();
-        let path = library(&dir.path().join("mine"));
-        let workspace = service(&dir).await;
-        workspace.setup(adopt(&path)).await.unwrap();
-        let before = workspace.status_generation.load(Ordering::SeqCst);
-        let slow = workspace.compute_status(&[]).await.unwrap();
-        // A branch switch lands while that read was still running.
-        workspace.invalidate_status();
-        workspace.keep_status(before, Vec::new(), &slow);
-        assert!(workspace.cached_status(&[]).is_none());
-        // A read that began after the invalidation is kept.
-        let after = workspace.status_generation.load(Ordering::SeqCst);
-        workspace.keep_status(after, Vec::new(), &slow);
-        assert!(workspace.cached_status(&[]).is_some());
+        workspace
+            .status_reads
+            .age_all(STATUS_FRESH + Duration::from_secs(1));
+        let stale = workspace.status(&[]).await.unwrap();
+        assert!(!stale.library.unwrap().dirty, "the kept answer is served");
+        let mut dirty = false;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            dirty = workspace.status(&[]).await.unwrap().library.unwrap().dirty;
+            if dirty {
+                break;
+            }
+        }
+        assert!(dirty, "the background read landed");
     }
 
     #[tokio::test]

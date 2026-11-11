@@ -5,6 +5,7 @@
 
 mod forges;
 mod pulls;
+pub mod read_cache;
 mod review;
 mod stack;
 mod watch;
@@ -188,6 +189,7 @@ impl Core {
             draft.base.as_deref(),
         )
         .await?;
+        self.scm_reads.lists_changed();
         // The pull request exists now; a failed lookup must not report otherwise.
         match number_from_url(&url) {
             Some(number) => {

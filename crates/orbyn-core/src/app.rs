@@ -123,10 +123,13 @@ pub struct Core {
     pub(crate) keybinding_writer: Mutex<()>,
     /// Pull request details asked of GitHub, reused while a pull request is unchanged.
     pub(crate) pull_details: Mutex<crate::source_control::forge::cache::DetailCache>,
-    /// What each forge's CLI said, reused briefly: asking costs a process per forge.
-    pub(crate) forge_statuses:
-        Mutex<Option<(std::time::Instant, Vec<orbyn_contracts::ForgeStatus>)>>,
+    /// Pull request and forge reads answered from the last known value, refreshed in the
+    /// background: asking a forge costs a process and a round trip.
+    pub(crate) scm_reads: crate::source_control::scm::read_cache::ScmReads,
     /// The last lists of tools and connectors each engine reported.
+    /// What each engine's tools check last said, served at once while it is asked again.
+    pub(crate) health_reads: crate::util::swr::Swr<orbyn_contracts::DependencyHealth>,
+    pub(crate) tool_reads: crate::util::swr::Swr<Option<orbyn_contracts::EngineTools>>,
     pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
     /// What each engine id's tools check keeps between calls: one per id, because an engine
     /// instance is a new driver on every lookup.
@@ -238,14 +241,48 @@ impl Core {
             recovery,
             keybinding_writer: Mutex::new(()),
             pull_details: Mutex::new(Default::default()),
-            forge_statuses: Mutex::new(None),
+            scm_reads: Default::default(),
+            health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
+                crate::operations::health::HEALTH_FRESH,
+                crate::operations::health::HEALTH_MAX_AGE,
+                2,
+            )
+            .same_as(crate::operations::health::same_health),
+            tool_reads: crate::util::swr::Swr::<Option<orbyn_contracts::EngineTools>>::new(
+                crate::agents::engine_tools::TOOLS_FRESH,
+                crate::agents::engine_tools::TOOLS_MAX_AGE,
+                64,
+            )
+            .keeping(|tools| tools.as_ref().is_none_or(|tools| tools.error.is_none()))
+            .same_as(|old, new| match (old, new) {
+                (Some(old), Some(new)) => {
+                    let mut new = new.clone();
+                    new.checked_at.clone_from(&old.checked_at);
+                    *old == new
+                }
+                (old, new) => old == new,
+            }),
             tool_lists: Mutex::new(Default::default()),
             tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             _lock: lock,
         };
         core.apply_login_preference()?;
+        core.wire_changes();
         Ok(core)
+    }
+
+    /// Lets every answer kept for later tell the windows, through the shell's event
+    /// stream, when a background refresh changed it.
+    fn wire_changes(&self) {
+        let notify = self.shell.notifier();
+        self.scm_reads.set_notify(&notify);
+        self.engines.set_notify(&notify);
+        self.workspace.set_notify(&notify);
+        self.updates.set_notify(&notify);
+        self.usage.set_notify(&notify);
+        self.tool_reads.set_notify(notify.clone());
+        self.health_reads.set_notify(notify.clone());
     }
 
     /// Records a user action without exposing store types to transport.

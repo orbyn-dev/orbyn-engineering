@@ -2,7 +2,9 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use std::collections::HashMap;
+
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -17,8 +19,14 @@ pub fn routes() -> Router<AppState> {
         .route("/api/updates/apply-all", post(apply_all_updates))
 }
 
-async fn updates(State(state): State<AppState>) -> Json<orbyn_contracts::UpdateStatus> {
-    Json(state.core.updates.status().await)
+/// The last known status, so the poll behind it never waits on Git or the engines.
+/// `?refresh=1` reads them now.
+async fn updates(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Json<orbyn_contracts::UpdateStatus> {
+    let refresh = matches!(query.get("refresh").map(String::as_str), Some("1" | "true"));
+    Json(state.core.updates.cached_status(refresh).await)
 }
 
 async fn check_updates(State(state): State<AppState>) -> Json<orbyn_contracts::UpdateStatus> {

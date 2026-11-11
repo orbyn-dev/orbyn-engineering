@@ -490,3 +490,34 @@ async fn the_setting_turns_background_checks_off() {
     assert_eq!(f.core.updates.status().await.library.behind, 0);
     assert!(f.core.updates.status().await.checked_at.is_none());
 }
+
+#[tokio::test]
+async fn the_polled_status_is_kept_until_something_changes_and_then_announced() {
+    let f = fixture("exit 0").await;
+    // `Core` already wires the status to the shell's event stream, which windows follow.
+    let mut windows = f.core.shell.watch();
+
+    let first = f.core.updates.cached_status(false).await;
+    lock(&f.core.updates.known).app_latest = Some("99.0.0".into());
+    // Kept: 200 polls answer from memory without reading Git or the engines again.
+    let started = Instant::now();
+    for _ in 0..200 {
+        let kept = f.core.updates.cached_status(false).await;
+        assert_eq!(kept.app.latest, first.app.latest);
+    }
+    assert!(started.elapsed() < Duration::from_millis(500));
+    // A forced read looks again.
+    let forced = f.core.updates.cached_status(true).await;
+    assert_eq!(forced.app.latest.as_deref(), Some("99.0.0"));
+    // Anything that changes the picture drops what was kept and says so.
+    lock(&f.core.updates.known).app_latest = Some("100.0.0".into());
+    f.core.updates.changed();
+    assert_eq!(
+        windows.events.try_recv().unwrap(),
+        orbyn_contracts::ShellEvent::DataChanged {
+            what: "updates".into()
+        }
+    );
+    let after = f.core.updates.cached_status(false).await;
+    assert_eq!(after.app.latest.as_deref(), Some("100.0.0"));
+}

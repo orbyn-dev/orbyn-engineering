@@ -30,6 +30,23 @@ export function onShellChange(listener: () => void): () => void {
 
 export const shellChanged = () => changeListeners.forEach((listener) => listener());
 
+const dataListeners = new Set<(what: string) => void>();
+
+/**
+ * Calls back when the service answered from its last known value and a fresher one has landed,
+ * with what changed: `pulls`, `pull:<project>:<number>`, `models:<engine>`, `workspace`,
+ * `updates`, `limits:<engine>`, `tools:<thread>`, `health`. A listener ignores names it does not
+ * show. Returns a stop function.
+ */
+export function onDataChanged(listener: (what: string) => void): () => void {
+  dataListeners.add(listener);
+  return () => {
+    dataListeners.delete(listener);
+  };
+}
+
+export const dataChanged = (what: string) => dataListeners.forEach((listener) => listener(what));
+
 /** Zoom keys the native menu doesn't catch: the keypad, and Cmd with the shifted `+`. */
 export function zoomKeyAction(event: KeyboardEvent): ShellAction | null {
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return null;
