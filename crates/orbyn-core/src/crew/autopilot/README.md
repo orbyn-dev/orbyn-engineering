@@ -40,14 +40,24 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
    raw page or tool text, and must give a reason (an approval without one is a denial). Two keys: a second approver on
    another vendor (`family`) must also say yes. A disagreement is denied and logged as its own row. A person's deny rule
    still wins over an approval, and an allow rule or no rule lets an approval through.
-6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`.
+6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
+   (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
+   so a worker cannot put `ls` between its denials.
 
-Outside a Crew task only N1 (the account) is enforced, so an ordinary thread cannot call a state-changing account route.
+Outside a Crew task only N1 (the account) is enforced, so an ordinary thread cannot call a state-changing account route. N1 looks
+at requests, not at files: a network, browser or tool action that names a route, or a command run by a connecting program
+(curl, wget, an interpreter) that does. A file change, a search or a read of a document that merely names `/api/account/...`
+is not refused, so ordinary work does not trip the wires.
+
+**Pushing to main is a person's.** Any `git push` to main, master or trunk (`HEAD:main`, `+main`, a bare `push` while on it) is
+refused in every mode (N5), since it would bypass the merge queue and the Review queue. The queue merges locally and pushes
+nothing.
 
 **Modes.** `full` (default): the lead approves; without a lead, or without a second key on another vendor for a two-key
 action, the action is denied (the row says `needs_second_engine`) and the work goes on. `on`: the same, but where
 `full` would deny for want of an approver a person is asked. `off`: no one is approved by code, so every request goes to
-a person as before, and the hard rules, the injection wire and the denial counts still apply.
+a person as before (the thread's own permission mode does not accept it for them, though a person's saved rule still can), and
+the hard rules, the injection wire and the denial counts still apply.
 
 ## Merge queue, Review queue and watch on main
 
@@ -81,7 +91,8 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
 ## The always-denied list: what it reads, and what it cannot
 
 It reads the kind, target and paths the gate is given, and for a command the simple commands inside it. It cannot see
-what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It reads
+what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It follows a `cd` (so `cd .. && rm x` is outside), `git -C`, `git worktree add`, `find -delete`, `tar -C` and `unzip -d`, and counts a
+patch (`patch`, `git apply`), an interpreter reading a file, its input or a pipe, as generated code (two keys). It reads
 no script's contents, so a script that does a forbidden thing inside itself passes unless it is a generated script (two
 keys). It misses obfuscation and encoding (`base64 -d | sh` is caught as a pipe to a shell and two keys, not by name), aliases
 and shell functions. A host in `allowed_hosts` is trusted whatever runs there. A package manager's own registry is not
@@ -89,6 +100,11 @@ checked against `allowed_hosts` unless the command names a host (installing is t
 branch` is the repository's own remote and reaches the lead as network, two keys. N10 and N9 match by host and
 program, and for tools and pages by word, so they can both miss and over-match. Tests pin the cases that matter and the
 near misses that must pass (`grep -r stripe` is not a payment).
+
+Not caught, listed with [#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457): a symlink inside the worktree that
+points out (a path is read lexically, so a write through it lands outside), a path that `xargs` or a pipe supplies, the files
+a patch names, a script's own contents, and anything an engine does without asking. The scratch checkouts of the merge queue
+sit inside the data folder, which a worker running as the same user can read: the sandbox follow-up is #441.
 
 ## Ledger
 

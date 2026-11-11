@@ -22,6 +22,22 @@ fn is_main(name: &str) -> bool {
     matches!(name, "main" | "master" | "trunk" | "HEAD" | "")
 }
 
+/// Whether a push of `refs` lands on the main line: a ref spec whose destination is main, a bare `HEAD` or no ref while on it.
+/// Pushing main is a person's: the merge queue merges locally and nothing here pushes.
+fn pushes_to_main(refs: &[&&str], on_main: bool) -> bool {
+    if refs.is_empty() {
+        return on_main;
+    }
+    refs.iter().any(|r| {
+        let r = r.trim_start_matches('+');
+        match r.split_once(':') {
+            Some((_, dst)) => is_main(dst) && dst != "HEAD",
+            None if r == "HEAD" => on_main,
+            None => is_main(r),
+        }
+    })
+}
+
 /// The sub-command of a git command and the words after it. Global options (`-c x`, `-C dir`) are skipped.
 fn git_sub(command: &Simple) -> Option<(&str, Vec<&str>)> {
     let mut args = command.args.iter().map(String::as_str);
@@ -71,7 +87,8 @@ pub(super) fn n5(ctx: &Ctx<'_>) -> bool {
                 ]) || named.iter().any(|w| w.starts_with('+'));
                 let delete = flags(&["--delete", "-d"]) || named.iter().any(|w| w.starts_with(':'));
                 let refs: Vec<&&str> = named.iter().skip(1).collect();
-                (force || delete) && (refs.is_empty() || refs.iter().any(|r| is_main(r)))
+                ((force || delete) && (refs.is_empty() || refs.iter().any(|r| is_main(r))))
+                    || pushes_to_main(&refs, on_main)
             }
             "filter-branch" | "filter-repo" => true,
             "reflog" => rest.iter().any(|w| matches!(*w, "expire" | "delete")),

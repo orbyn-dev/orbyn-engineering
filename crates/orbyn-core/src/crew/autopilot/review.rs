@@ -94,11 +94,7 @@ impl Core {
     }
 
     fn account_only(&self, ask: &ActionAsk) -> Review {
-        let text = std::iter::once(ask.target.as_str())
-            .chain(ask.paths.iter().map(String::as_str))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if hard::account_change(&text) {
+        if hard::account_refused(ask.kind, &ask.target, &ask.paths) {
             Review::Deny(denied_words("N1", hard::RULES[0].1))
         } else {
             Review::Pass
@@ -275,7 +271,7 @@ impl Core {
                 let mut body = base("person");
                 body["why"] = json!(why);
                 self.autopilot_record(task, "person", &body, needles)?;
-                Ok(Review::Pass)
+                Ok(Review::Person)
             }
             Outcome::Deny {
                 decided_by,

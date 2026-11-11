@@ -113,7 +113,7 @@ pub async fn decide(mode: Mode, need: Need, summary: &Summary, approvers: &Appro
         return match mode {
             Mode::Full => deny(
                 "no_approver",
-                "No lead is available to approve this, so it waits for your review.",
+                "No lead is available to approve this, so it was denied.",
             ),
             _ => Outcome::Person {
                 why: "no lead is available to approve",

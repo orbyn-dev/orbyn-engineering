@@ -136,6 +136,8 @@ impl Verdict {
 pub enum Review {
     /// No opinion: policy, then a person, as always.
     Pass,
+    /// Autopilot leaves this to a person: the thread's own permission mode does not accept it, though a rule still can.
+    Person,
     /// Approved by the chain. A person's deny rule still wins; a rule that allows or none lets it through.
     Approved,
     /// Refused, with the words the requester reads. No rule, mode or person's allow can undo it.
@@ -271,6 +273,7 @@ impl ApprovalGate {
             decision.reason = "Approved by Autopilot".into();
         } else if decision.effect == PolicyEffect::Ask
             && decision.rule_id.is_none()
+            && review != Review::Person
             && mode_accepts(scope.mode, ask.kind)
         {
             decision.effect = PolicyEffect::Allow;

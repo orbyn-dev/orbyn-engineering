@@ -110,6 +110,7 @@ fn parse(text: &str, depth: u8, out: &mut Vec<Simple>) {
                 end_word!();
             }
             '&' if chars.peek() == Some(&'>') => {}
+            '(' | ')' if started && !word.ends_with('$') => word.push(c),
             ';' | '\n' | '|' | '&' | '(' | ')' | '`' => {
                 end_command!();
             }
@@ -270,44 +271,70 @@ pub fn is_path_like(word: &str) -> bool {
 /// Whether `word`, read as a path from `worktree`, lands outside it. A variable or `~` is read as
 /// outside, because it is not known; `/dev/null` is not a place.
 pub fn outside(word: &str, worktree: &Path) -> bool {
+    outside_from(word, Some(worktree), worktree)
+}
+
+fn is_absolute_word(word: &str) -> bool {
+    Path::new(word).is_absolute()
+        || word.starts_with(['/', '\\'])
+        || is_path_like(word) && word.as_bytes().get(1) == Some(&b':')
+}
+
+fn roots(worktree: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![lexical(worktree)];
+    if let Ok(real) = crate::util::canonicalize(worktree) {
+        roots.push(real);
+    }
+    roots
+}
+
+/// As [`outside`], for a command that runs in `cwd` after a `cd`. `None` is a directory that is not known, so a relative
+/// word is read as outside.
+pub fn outside_from(word: &str, cwd: Option<&Path>, worktree: &Path) -> bool {
     if matches!(word, "/dev/null" | "NUL" | "nul") {
         return false;
     }
     if word.starts_with(['~', '$', '%']) {
         return true;
     }
-    let path = Path::new(word);
-    let absolute = path.is_absolute()
-        || word.starts_with(['/', '\\'])
-        || is_path_like(word) && word.as_bytes().get(1) == Some(&b':');
-    let joined = if absolute {
-        lexical(path)
+    let joined = if is_absolute_word(word) {
+        lexical(Path::new(word))
     } else {
-        lexical(&worktree.join(path))
+        match cwd {
+            Some(cwd) => lexical(&cwd.join(word)),
+            None => return true,
+        }
     };
-    let mut roots = vec![lexical(worktree)];
-    if let Ok(real) = crate::util::canonicalize(worktree) {
-        roots.push(real);
+    !roots(worktree).iter().any(|root| joined.starts_with(root))
+}
+
+/// The directory after `cd word` from `cwd`: `None` when it is not known (no argument, a variable, `-`, an unknown start).
+pub fn change_dir(cwd: Option<&Path>, word: Option<&str>) -> Option<PathBuf> {
+    let word = word?;
+    if word.starts_with(['~', '$', '%', '-']) {
+        return None;
     }
-    !roots.iter().any(|root| joined.starts_with(root))
+    if is_absolute_word(word) {
+        return Some(lexical(Path::new(word)));
+    }
+    Some(lexical(&cwd?.join(word)))
 }
 
 /// A repository-relative form of `word` (forward slashes, no `./`), when it lies inside `worktree`.
 pub fn relative(word: &str, worktree: &Path) -> Option<String> {
-    if word.starts_with(['~', '$', '%']) || outside(word, worktree) {
+    relative_from(word, Some(worktree), worktree)
+}
+
+pub fn relative_from(word: &str, cwd: Option<&Path>, worktree: &Path) -> Option<String> {
+    if outside_from(word, cwd, worktree) {
         return None;
     }
-    let path = Path::new(word);
-    let full = if path.is_absolute() {
-        lexical(path)
+    let full = if is_absolute_word(word) {
+        lexical(Path::new(word))
     } else {
-        lexical(&worktree.join(path))
+        lexical(&cwd?.join(word))
     };
-    let mut roots = vec![lexical(worktree)];
-    if let Ok(real) = crate::util::canonicalize(worktree) {
-        roots.push(real);
-    }
-    roots.iter().find_map(|root| {
+    roots(worktree).iter().find_map(|root| {
         full.strip_prefix(root).ok().map(|rest| {
             rest.components()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
