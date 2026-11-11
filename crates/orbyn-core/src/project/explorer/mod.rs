@@ -202,10 +202,25 @@ fn well_formed(id: &str) -> bool {
         .is_some_and(|hex| hex.len() == 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// The path as the product stores it when the folder exists.
+/// The path as the product stores it. A folder that is gone keeps the same spelling as
+/// before it went: the nearest folder that still exists is resolved (Windows short
+/// names, links, drive-letter case) and the missing rest is appended as written, so
+/// a worktree's id does not change when its folder is deleted.
 fn plain(path: &std::path::Path) -> PathBuf {
-    crate::util::canonicalize(path)
-        .unwrap_or_else(|_| strip_verbatim(&path.to_string_lossy()).into())
+    if let Ok(found) = crate::util::canonicalize(path) {
+        return found;
+    }
+    let mut rest = Vec::new();
+    let mut head = path;
+    while let (Some(parent), Some(name)) = (head.parent(), head.file_name()) {
+        rest.push(name);
+        if let Ok(mut found) = crate::util::canonicalize(parent) {
+            found.extend(rest.iter().rev());
+            return found;
+        }
+        head = parent;
+    }
+    strip_verbatim(&path.to_string_lossy()).into()
 }
 
 impl Core {

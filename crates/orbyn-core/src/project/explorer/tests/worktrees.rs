@@ -163,7 +163,11 @@ async fn a_missing_worktree_is_listed_read_only_and_cannot_be_browsed() {
     // Gone before anything lists it: a status read running in a worktree would hold the
     // folder open on Windows.
     let gone_id = worktree_id(&plain(&gone));
+    let spelled = plain(&gone);
     std::fs::remove_dir_all(&gone).unwrap();
+    // The id and the spelling it comes from do not change when the folder goes.
+    assert_eq!(plain(&gone), spelled);
+    assert_eq!(worktree_id(&plain(&gone)), gone_id);
     let listed = core
         .explorer_worktrees(&project.id, None, false)
         .await
