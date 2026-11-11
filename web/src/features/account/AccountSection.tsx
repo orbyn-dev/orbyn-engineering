@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/controls";
 import { accountApi } from "./api";
+import { clearConnectRequest } from "./changes";
 import { Dialog } from "../../ui/Dialog";
 import { BackLink, Failure } from "./Card";
 import { ApprovalCard, ClosedCard } from "./ApprovalCard";
@@ -25,6 +26,9 @@ export function AccountSection() {
   const [codeStep, setCodeStep] = useState(false);
   const asking = view?.needs_second_factor === true;
   useEffect(() => { if (asking) setCodeStep(true); }, [asking]);
+  // An ask to connect settings is only for a signed-in page: once the account is read without a session, it is dropped.
+  const signedOut = view !== null && view !== undefined && !view.session;
+  useEffect(() => { if (signedOut) clearConnectRequest(); }, [signedOut]);
   // The person tapped They don’t match on this screen: it closes like any other request, with the same words.
   const [mismatch, setMismatch] = useState(false);
   const waiting = account.status === "loading";
@@ -68,7 +72,7 @@ export function AccountSection() {
             </div>
           </div>
         ) : null}
-        <SignedInSection view={view} stale={stale} reload={reload} onSignedOut={(text) => { setNotice(text); setMode("home"); reload(); }} />
+        <SignedInSection view={view} stale={stale} reload={reload} onSignedOut={(text) => { clearConnectRequest(); setNotice(text); setMode("home"); reload(); }} />
       </>
     );
   } else if (mode === "sign-in") {

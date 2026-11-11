@@ -26,6 +26,11 @@ export function requestConnect(): void {
   connectBus.dispatchEvent(new Event("ask"));
 }
 
+/** Drops an ask nobody took: it must not open the dialog much later, after a sign-out or on a page with no account. */
+export function clearConnectRequest(): void {
+  connectAsked = false;
+}
+
 /** True once for each ask, to whichever page takes it first. */
 export function takeConnectRequest(): boolean {
   const asked = connectAsked;

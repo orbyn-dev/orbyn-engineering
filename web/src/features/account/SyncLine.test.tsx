@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MockApi } from "../../../mock/api";
 import { installMockFetch } from "../../test-support";
+import { clearConnectRequest, requestConnect, takeConnectRequest } from "./changes";
 import { AccountSection } from "./AccountSection";
 import { SyncTitleButton, useSignedInAccount } from "./SyncLine";
 
@@ -33,6 +34,25 @@ describe("the sync popover on a computer whose settings are not connected", () =
     await user.click(within(popover).getByRole("button", { name: "Connect settings" }));
     expect(await screen.findByRole("dialog", { name: "Sync your settings?" })).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "Sync" })).toBeNull();
+  });
+});
+
+describe("an ask to connect settings that nobody took", () => {
+  it("is dropped when the Account page reads a signed-out account, so it cannot open the dialog later", async () => {
+    mock.reset("account");
+    requestConnect();
+    render(<AccountSection />);
+    await screen.findByText("Use an account to sync your settings");
+    await waitFor(() => expect(takeConnectRequest()).toBe(false));
+  });
+
+  it("is taken once, and clearConnectRequest drops it", () => {
+    requestConnect();
+    expect(takeConnectRequest()).toBe(true);
+    expect(takeConnectRequest()).toBe(false);
+    requestConnect();
+    clearConnectRequest();
+    expect(takeConnectRequest()).toBe(false);
   });
 });
 
