@@ -31,7 +31,7 @@ mod tests;
 
 pub use api::{AccountApi, Backend, Password, SessionInfo, SignInOutcome};
 pub use device_api::{DeviceApi, DeviceError, DeviceStatus, Version, ZoneSnapshot};
-pub use flow::{ConfirmFor, Confirmed};
+pub use flow::{APPROVAL_LIFETIME, ConfirmFor, Confirmed};
 pub use status::{AccountStatus, PauseReason, SignOutReason, StatusHub, SyncState};
 pub use sync::{SyncHandle, SyncTiming};
 
@@ -50,6 +50,19 @@ pub enum AccountGate {
     Off,
     #[cfg(any(test, debug_assertions))]
     LocalOnly,
+}
+
+/// How this computer's settings join the account's the first time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FirstSync {
+    /// One setting at a time. The account's value wins where it has one; settings only this
+    /// computer has go up. The default.
+    #[default]
+    Combine,
+    /// This computer's settings are as new as an edit made now, so they win everywhere.
+    UseDevice,
+    /// This computer's settings are not uploaded; the account's are applied.
+    UseAccount,
 }
 
 /// Which backend the account talks to. `Development` is an in-memory stand-in for the
@@ -98,6 +111,10 @@ pub struct AccountCenter {
     status: Arc<StatusHub>,
     inner: tokio::sync::Mutex<flow::Inner>,
     confirmed: Mutex<Option<flow::Grant>>,
+    approval_life: Mutex<std::time::Duration>,
+    /// The development stand-in itself, so a test can play the trusted device.
+    #[cfg(test)]
+    stand_in: Option<Arc<dev::DevAccount>>,
 }
 
 impl AccountCenter {
@@ -108,14 +125,25 @@ impl AccountCenter {
         keybindings_path: PathBuf,
         keybinding_writer: Arc<Mutex<()>>,
     ) -> Self {
+        #[cfg(test)]
+        let mut stand_in = None;
         let backend = match (gate, kind) {
             #[cfg(any(test, debug_assertions))]
-            (AccountGate::LocalOnly, AccountBackendKind::Development) => Some(dev::backend()),
+            (AccountGate::LocalOnly, AccountBackendKind::Development) => {
+                let (backend, _handle) = dev::handle();
+                #[cfg(test)]
+                {
+                    stand_in = Some(_handle);
+                }
+                Some(backend)
+            }
             _ => None,
         };
         Self {
             gate,
             backend,
+            #[cfg(test)]
+            stand_in,
             store,
             keybindings: KeybindingFile {
                 path: keybindings_path,
@@ -124,7 +152,23 @@ impl AccountCenter {
             status: Arc::new(StatusHub::default()),
             inner: tokio::sync::Mutex::default(),
             confirmed: Mutex::new(None),
+            approval_life: Mutex::new(flow::APPROVAL_LIFETIME),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stand_in(&self) -> Arc<dev::DevAccount> {
+        self.stand_in
+            .clone()
+            .expect("a core on the development stand-in")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_approval_life(&self, life: std::time::Duration) {
+        *self
+            .approval_life
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = life;
     }
 
     pub fn gate(&self) -> AccountGate {
@@ -164,11 +208,28 @@ impl AccountCenter {
         api: Arc<dyn DeviceApi>,
         timing: SyncTiming,
     ) -> Result<SyncHandle> {
+        self.start_first_sync(api, timing, FirstSync::Combine)
+    }
+
+    /// As [`Self::start_settings_sync`], with the person's choice for how this computer's
+    /// settings join the account's the first time. After the first time the choice is moot:
+    /// the computer already has a record.
+    pub fn start_first_sync(
+        &self,
+        api: Arc<dyn DeviceApi>,
+        timing: SyncTiming,
+        first: FirstSync,
+    ) -> Result<SyncHandle> {
         if self.gate == AccountGate::Off {
             return Err(CoreError::AccountDisabled);
         }
+        let seed = if first == FirstSync::UseAccount {
+            Vec::new()
+        } else {
+            self.seed()?
+        };
         self.store
-            .account_enable(settings_record::ZONE, &self.seed()?)?;
+            .account_enable(settings_record::ZONE, &seed, first == FirstSync::UseDevice)?;
         Ok(sync::spawn(sync::ZoneWorker {
             zone: settings_record::ZONE,
             store: self.store.clone(),
@@ -177,6 +238,11 @@ impl AccountCenter {
             keybindings: self.keybindings.clone(),
             timing,
         }))
+    }
+
+    /// Whether this computer has settings of its own to join to the account's.
+    pub(crate) fn has_settings(&self) -> Result<bool> {
+        Ok(!self.seed()?.is_empty())
     }
 
     /// What the person has set so far, as first-sync fields: only person-level values of

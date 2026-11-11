@@ -373,11 +373,24 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
 10. A test that request-body logging stays off the account routes, so no password reaches a log.
 11. A runtime "changes account state" marker on these routes, so Autopilot's always-denied rule (Crew slice 4f) can
     refuse them by policy. Today governance sees only a generic command or network action.
-12. Bind the "Confirm it's you" confirmation to the caller (issue #435). Today a confirmation is tied to the action
+    Every state-changing account route must be refusable by that policy, so the list includes the new ones:
+    `approvals/:id/approve`, `approvals/:id/deny`, `sign-in/approval`, `connect`, `connect/use-device`,
+    `connect/use-account`, `connect/later` and `connect/seen`. A later "Refused on this computer" activity item for
+    them is out of scope.
+12. Contract for engine-v0.2.0, on the trusted side. The app cannot enforce these, so the Engine must: a request that
+    expired (ten minutes), was answered, or was given up by the new device is gone, and `approve(id)` and `deny(id)` on
+    it answer an error and never approve (the stand-in answers `RequestGone`); `approval_requests()` lists only live
+    requests with the time they have left. `deny(id)` carries no reason in the agreed trait, so "Codes don't match"
+    cannot reach the new device and a real mismatch will show there as "This sign-in wasn't allowed" until the Engine
+    adds one.
+13. Bind the "Confirm it's you" confirmation to the caller (issue #435). Today a confirmation is tied to the action
     and the device but not to who typed the password, so after the person confirms, any holder of the service token can
     run that exact action first, and an abandoned prompt leaves the confirmation live for ten minutes because there is no
     cancel route. The fix is a one-time nonce that `/confirm` returns and the action request sends back, plus a cancel
     route.
+14. Key "this computer already joined this account" by the account id when the real client provides one. `SessionInfo`
+    has none yet, so it is the email compared without case or edge spaces: a change of email on the Engine would
+    count as another account and start the settings from nothing.
 
 `LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
 the rule:
@@ -451,9 +464,9 @@ The app records them here so the backend carries what the screens will need.
 invite, the device check, the emailed code), the signed-in page with Sync now, Pause and Resume sync, the sync
 line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
 adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
-popovers, and the code-age hint. **Not in it:** new-device approval and "Connect this computer's settings", which
-need `AwaitingApproval`, `approve` and `deny` and a first-sync policy in the account module and follow in a later
-pull request; renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
+popovers, and the code-age hint. **New-device approval and "Connect this computer's settings"** are built behind the account module against the
+stand-in (`AwaitingApproval`, `approve`, `deny`, the first-sync policy), with the screens in the pull request after
+it, and wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
 (`signout-other-device-removed`), because the Engine answers a removed device and an ended session with the same 401;
 the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
 The designs decided that with the gate `Off` Settings > Account is hidden, the palette has no Account entry, and the

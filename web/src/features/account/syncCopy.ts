@@ -24,6 +24,8 @@ export function syncLine(sync: AccountSyncView): SyncLine {
       return { label: "Syncing…", tone: "quiet", done: false };
     case "online":
       return sync.waiting > 0 ? { label: "Syncing…", tone: "quiet", done: false } : { label: "Synced", tone: "quiet", done: true };
+    case "not_connected":
+      return { label: "Not connected", tone: "quiet", done: false };
     case "signed_out":
       return { label: "Signed out", tone: "quiet", done: false };
   }
@@ -53,6 +55,8 @@ export function syncRowText(sync: AccountSyncView, unreachable = false): string 
       return "Syncing…";
     case "online":
       return sync.waiting > 0 ? "Syncing…" : `Up to date${tail}`;
+    case "not_connected":
+      return "Not connected · this computer’s settings stay here";
     case "signed_out":
       return "Signed out";
   }

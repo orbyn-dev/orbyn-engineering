@@ -35,6 +35,8 @@ pub enum SyncState {
         reason: Option<SignOutReason>,
     },
     SigningIn,
+    /// Signed in, with this computer's settings not joined to the account's yet.
+    NotConnected,
     Online,
     Syncing,
     Offline {

@@ -190,7 +190,7 @@ CREATE TRIGGER crew_deliveries_immutable BEFORE UPDATE ON crew_deliveries
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
 
-// Schema 35: the bus ledger. One row per event the bus decides on its own, appended by the core only and never
+// Schema 36: the bus ledger. One row per event the bus decides on its own, appended by the core only and never
 // changed. Today the only kind is `hop_reset`: a lead message to one member restarted the exchange count of every
 // pair that member is in (SPEC.md H4). The body names the member, the message by id and each pair with its count
 // before the reset. It holds no message text, and passes the secret scan and the answer-key check before it is stored.
@@ -208,7 +208,7 @@ CREATE TRIGGER crew_bus_events_immutable BEFORE UPDATE ON crew_bus_events
 BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
 "#;
 
-// Schema 36: review lanes, findings and the fix loop (docs/crew.md, "Review stages"). A review run is a task of its own; its
+// Schema 37: review lanes, findings and the fix loop (docs/crew.md, "Review stages"). A review run is a task of its own; its
 // row names the work it reviews (`subject_id`), its lane, its round (a re-review of a lane is the next round) and the commit
 // it read. `check_of` is set when the run is the independent second run of a finding check. A finding is the protocol's
 // object, kept beside the lane, round and a fingerprint of (lane, path, claim) so a later round can tell the same
