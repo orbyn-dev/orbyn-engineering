@@ -13,6 +13,8 @@
 //! | `two@example.com` | asks for a code: `123456` or the recovery code `ABCDE-FGH23` |
 //! | `slow@example.com` | `RateLimited` for 90 seconds |
 //! | `down@example.com` | `Offline` |
+//! | `busy@example.com` | sign-up asks for a visible check first (1.5 s), then goes on |
+//! | `hard@example.com` | sign-up's check fails (`ProofFailed`) |
 //! | `delete@example.com` | signs in; Sign out everywhere says deletion is scheduled |
 
 use std::sync::{Arc, Mutex};
@@ -130,6 +132,16 @@ impl AccountApi for DevAccount {
 
     async fn start_sign_up(&self, invite: &str, email: &str) -> Result<(), DeviceError> {
         self.check_invite(invite).await?;
+        // The Engine answers 428 when one network starts too many sign-ups in an hour, and
+        // the client then does a short proof of work. The stand-in only takes its time.
+        match email {
+            "busy@example.com" => tokio::time::sleep(Duration::from_millis(1500)).await,
+            "hard@example.com" => {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                return Err(DeviceError::ProofFailed);
+            }
+            _ => {}
+        }
         let mut state = self.lock();
         state.signup = Some(email.to_owned());
         state.verified = false;

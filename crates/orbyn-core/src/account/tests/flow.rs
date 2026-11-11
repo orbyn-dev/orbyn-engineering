@@ -333,3 +333,24 @@ async fn no_password_shows_in_any_debug_or_error_text() {
     let view = format!("{:?}", core.account.view("macos").await);
     assert!(!view.contains(secret));
 }
+
+#[tokio::test]
+async fn a_busy_network_gets_a_visible_check_and_a_failed_check_sends_nothing() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "check");
+    let a = &core.account;
+    let failed = a
+        .start_sign_up(INVITE, "hard@example.com")
+        .await
+        .unwrap_err();
+    assert_eq!(failed.code(), "check_failed");
+    // Nothing was sent: no code can be verified for that email.
+    assert_eq!(
+        code(a.verify_email_code("ABCD-EFGH").await.unwrap_err()),
+        "invalid_code"
+    );
+    let started = std::time::Instant::now();
+    a.start_sign_up(INVITE, "busy@example.com").await.unwrap();
+    assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
+    a.verify_email_code("ABCD-EFGH").await.unwrap();
+}
