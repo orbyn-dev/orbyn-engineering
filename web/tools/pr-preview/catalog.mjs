@@ -263,4 +263,91 @@ export const FRAMES = {
       click("button", "Compare codes"),
     ],
   },
+  "acct-device-approved": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "approve@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-denied": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 4200,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "deny@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-timeout": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 3200,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "expired@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-codes-mismatch": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "late@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "They don’t match"),
+    ],
+  },
+  "acct-connect-workspace": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-connect-progress": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Connect"),
+    ],
+  },
+  "acct-connect-done": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 5500,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Connect"),
+    ],
+  },
+  "signout-other-device-removed": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "removed@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
 };

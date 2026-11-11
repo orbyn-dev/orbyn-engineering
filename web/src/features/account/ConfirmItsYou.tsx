@@ -69,6 +69,7 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
         {subject ? <p className="ac-sub">{subject}</p> : null}
         {throttled ? <Failure>Too many attempts. Try again {retryText(left)}.</Failure> : null}
         {network ? <Failure>{NETWORK_TEXT}</Failure> : null}
+        {problem?.kind === "gone" ? <Failure>Denied or cancelled.</Failure> : null}
         {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
         <Field label="Password" error={problem?.kind === "wrong" ? "That isn’t your password. Check it and try again." : null}>
           {(props) => (

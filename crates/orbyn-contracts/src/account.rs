@@ -90,6 +90,9 @@ pub struct AccountView {
     #[ts(optional)]
     pub approval: Option<AccountApprovalView>,
     pub connect: AccountConnectState,
+    /// The service ended this computer's session (not the person: a removal or an ended session)
+    /// and the person has not been told yet.
+    pub ended_notice: bool,
     /// Set after the first sync of a joined computer, until the person closes the summary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

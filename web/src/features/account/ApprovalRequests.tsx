@@ -8,7 +8,7 @@ import { accountApi } from "./api";
 import { onAccountChange } from "./changes";
 import { Failure } from "./Card";
 import { ConfirmItsYou } from "./ConfirmItsYou";
-import { problemOf } from "./problem";
+import { NETWORK_TEXT, problemOf } from "./problem";
 
 const POLL_MS = 5000;
 const appName = (request: AccountApprovalRequest) => (request.app === "engineering" ? "Orbyn Engineering" : "Orbyn Planner");
@@ -25,24 +25,39 @@ function useApprovals() {
   return read;
 }
 
+/** What went wrong with refusing or letting in: a request that is gone reads like any other close. */
+function refusalText(error: unknown): string {
+  const problem = problemOf(error);
+  if (problem.kind === "network") return NETWORK_TEXT;
+  if (problem.kind === "gone") return "Denied or cancelled.";
+  return problem.kind === "other" ? problem.message : "Couldn’t answer this request. Nothing was changed.";
+}
+
 /** A device that asked to sign in, at the top of the Devices page, with Compare codes and Don't allow. */
 export function ApprovalRequests() {
   const approvals = useApprovals();
   const [comparing, setComparing] = useState<AccountApprovalRequest | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const list = approvals.data ?? [];
 
+  // The request ended (answered, given up or expired) while its prompt was open.
+  const ended = comparing !== null && approvals.data !== null && !approvals.data.some((request) => request.id === comparing.id);
+
   const deny = async (request: AccountApprovalRequest) => {
+    if (busy) return;
+    setBusy(request.id);
     setProblem(null);
     try {
       await accountApi.deny(request.id);
     } catch (error) {
-      setProblem(problemOf(error).kind === "network" ? "Couldn’t reach Orbyn. Nothing was changed." : "Denied or cancelled.");
+      setProblem(refusalText(error));
     }
     approvals.reload();
+    setBusy(null);
   };
 
-  if (list.length === 0 && !problem) return null;
+  if (list.length === 0 && !problem && !comparing) return null;
   return (
     <>
       {problem ? <Failure>{problem}</Failure> : null}
@@ -55,20 +70,25 @@ export function ApprovalRequests() {
               <small>Waiting for approval{request.near ? ` · ${request.near}` : ""} · {relativeTime(request.asked_at)}</small>
             </div>
             <span className="ac-tags"><span className="ac-tag">{appName(request)}</span></span>
-            <Button small onClick={() => void deny(request)}>Don’t allow</Button>
-            <Button small tone="primary" onClick={() => setComparing(request)}>Compare codes</Button>
+            <Button small disabled={busy !== null} onClick={() => void deny(request)}>Don’t allow</Button>
+            <Button small tone="primary" disabled={busy !== null} onClick={() => setComparing(request)}>Compare codes</Button>
           </li>
         ))}
       </ul>
-      {comparing ? <ApprovePrompt request={comparing} onClose={() => { setComparing(null); approvals.reload(); }} /> : null}
+      {comparing ? <ApprovePrompt request={comparing} ended={ended} onClose={() => { setComparing(null); approvals.reload(); }} /> : null}
     </>
   );
 }
 
 /** Compare the code with the new device's screen: refuse, or allow after the password is typed for this request. */
-function ApprovePrompt({ request, onClose }: { request: AccountApprovalRequest; onClose(): void }) {
+function ApprovePrompt({ request, ended, onClose }: { request: AccountApprovalRequest; ended: boolean; onClose(): void }) {
   const [confirming, setConfirming] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [refusing, setRefusing] = useState(false);
+  // The comparison closes when its request ends; the password step stays, so what it says about the request is read.
+  useEffect(() => {
+    if (ended && !confirming) onClose();
+  }, [ended, confirming, onClose]);
   if (confirming) {
     return (
       <ConfirmItsYou
@@ -81,11 +101,14 @@ function ApprovePrompt({ request, onClose }: { request: AccountApprovalRequest; 
     );
   }
   const refuse = async () => {
+    if (refusing) return;
+    setRefusing(true);
     try {
       await accountApi.deny(request.id);
       onClose();
-    } catch {
-      setProblem("Denied or cancelled.");
+    } catch (error) {
+      setProblem(refusalText(error));
+      setRefusing(false);
     }
   };
   return (
@@ -94,8 +117,8 @@ function ApprovePrompt({ request, onClose }: { request: AccountApprovalRequest; 
       onClose={onClose}
       footer={
         <>
-          <Button onClick={() => void refuse()}>Codes don’t match</Button>
-          <Button tone="primary" onClick={() => setConfirming(true)}>Codes match · Allow</Button>
+          <Button disabled={refusing} onClick={() => void refuse()}>Codes don’t match</Button>
+          <Button tone="primary" disabled={refusing} onClick={() => setConfirming(true)}>Codes match · Allow</Button>
         </>
       }
     >

@@ -129,7 +129,7 @@ test("a new device waits for a trusted one and signs in when it is allowed", asy
   await expect(page.getByText("Signed in on this device · This computer")).toBeVisible({ timeout: 15000 });
 });
 
-test("a trusted device lets a new one in only after the password, and the first sync asks how to join", async ({ page }) => {
+test("a trusted device lets a new one in only after the password", async ({ page }) => {
   await open(page, "account", "#/settings/account");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByLabel("Email").fill("dev@example.com");
@@ -143,4 +143,19 @@ test("a trusted device lets a new one in only after the password, and the first 
   await confirm.getByLabel("Password").fill(PASSWORD);
   await confirm.getByRole("button", { name: "Confirm" }).click();
   await expect(page.getByRole("listitem", { name: "iPad asks to sign in" })).toHaveCount(0);
+});
+
+test("a computer with settings asks how to join them, shows the first sync and its summary", async ({ page }) => {
+  await open(page, "account", "#/settings/account");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByLabel("Email").fill("connect@example.com");
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  const choice = page.getByRole("dialog", { name: "Sync your settings?" });
+  await expect(choice.getByLabel(/Combine them/)).toBeChecked();
+  await choice.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("dialog", { name: "Connecting your settings" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Settings connected" })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });

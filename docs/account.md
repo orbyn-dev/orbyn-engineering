@@ -465,8 +465,9 @@ invite, the device check, the emailed code), the signed-in page with Sync now, P
 line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
 adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
 popovers, and the code-age hint. **New-device approval and "Connect this computer's settings"** are built behind the account module against the
-stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); they wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); the removed-device notice
-(`signout-other-device-removed`), because the Engine answers a removed device and an ended session with the same 401;
+stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); they wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); a removed-device notice that names a removal (the Engine answers a removed device and an ended session with the same
+401, so `signout-other-device-removed` says neutrally "This device may have been removed, or your sessions ended", once, and
+not after the person's own sign out everywhere: the service keeps that in memory, `ended_notice` and `POST /api/account/ended/seen`);
 the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
 The designs decided that with the gate `Off` Settings > Account is hidden, the palette has no Account entry, and the
 sidebar footer shows no sync status. The sections below are the plan as written before that work.

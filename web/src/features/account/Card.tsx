@@ -1,12 +1,22 @@
 import { AlertCircle, ChevronLeft } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 /** The card every account step sits in. */
-export function Card({ title, lead, wide, children, label }: { title: string; lead?: ReactNode; wide?: boolean; children: ReactNode; label?: string }) {
+export function Card({ title, lead, wide, children, label, alert, focus }: { title: string; lead?: ReactNode; wide?: boolean; children: ReactNode; label?: string; alert?: boolean; focus?: boolean }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  // A card that replaces another takes the focus, so it does not fall to the page.
+  useEffect(() => {
+    if (focus) heading.current?.focus();
+  }, [focus, title]);
+  const head = (
+    <>
+      <h2 ref={heading} tabIndex={focus ? -1 : undefined}>{title}</h2>
+      {lead ? <p>{lead}</p> : null}
+    </>
+  );
   return (
     <section className="ac-card" data-wide={wide || undefined} aria-label={label ?? title}>
-      <h2>{title}</h2>
-      {lead ? <p>{lead}</p> : null}
+      {alert ? <div role="alert">{head}</div> : head}
       {children}
     </section>
   );

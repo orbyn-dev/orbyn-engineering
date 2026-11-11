@@ -618,3 +618,36 @@ async fn a_row_from_before_the_owner_was_recorded_is_claimed_not_dropped() {
     );
     assert!(!core.store.account_record(ZONE).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn an_ended_session_is_told_once_and_not_after_the_persons_own_sign_out_everywhere() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "ended");
+    let a = &core.account;
+    assert!(!a.view("macos").await.ended_notice);
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    // The service ends the session: the next authenticated call finds out.
+    a.stand_in().sign_out_elsewhere();
+    assert_eq!(code(a.devices().await.unwrap_err()), "session_ended");
+    assert!(a.view("macos").await.ended_notice);
+    // A new window, a remount or a reload sees the same, until it is dismissed once.
+    assert!(a.view("macos").await.ended_notice);
+    a.ended_seen().await.unwrap();
+    assert!(!a.view("macos").await.ended_notice);
+    // A new sign-in and a new ending are told again.
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.stand_in().sign_out_elsewhere();
+    assert_eq!(code(a.devices().await.unwrap_err()), "session_ended");
+    assert!(a.view("macos").await.ended_notice);
+    // Signing out everywhere is the person\'s own doing.
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
+        .await
+        .unwrap();
+    let token = a
+        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .await
+        .unwrap();
+    a.sign_out_everywhere(token).await.unwrap();
+    assert!(!a.view("macos").await.ended_notice);
+}

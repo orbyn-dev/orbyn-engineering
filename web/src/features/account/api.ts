@@ -43,6 +43,8 @@ export const accountApi = {
   connectUseAccount: () => post("/connect/use-account"),
   connectLater: () => post("/connect/later"),
   connectSeen: () => post("/connect/seen"),
+  /** The person was told their session ended, or dismissed it. */
+  endedSeen: () => post("/ended/seen"),
   devices: (signal?: AbortSignal) => request<AccountDevice[]>("GET", "/api/account/devices", undefined, signal),
   /** Needs a confirmation for exactly this device; the service refuses without one. */
   removeDevice: (id: string) => changed(request<void>("DELETE", `/api/account/devices/${encodeURIComponent(id)}`)),

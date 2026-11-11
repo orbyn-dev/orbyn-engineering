@@ -1039,16 +1039,9 @@ export function createMockApi(options: MockOptions = {}) {
     setAccountWaiting(count: number) {
       accountMock.setWaiting(count);
     },
-    /** Account knobs for the states a spec cannot reach by clicking: no invite step, a forced sync state, a failed read. */
-    setAccount(knobs: { devices?: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean }; inviteRequired?: boolean; sync?: [Parameters<typeof accountMock.setSync>[0], Parameters<typeof accountMock.setSync>[1]?]; down?: boolean }) {
-      if (knobs.devices) accountMock.setDevices(knobs.devices);
-      if (knobs.inviteRequired !== undefined) accountMock.setInviteRequired(knobs.inviteRequired);
-      if (knobs.sync) accountMock.setSync(knobs.sync[0], knobs.sync[1] ?? null);
-      if (knobs.down !== undefined) accountMock.setViewDown(knobs.down);
-    },
-    /** A trusted device's answer to the new device's request, and a computer that has settings to join. */
-    setApproval(knobs: Parameters<typeof accountMock.setApproval>[0]) {
-      accountMock.setApproval(knobs);
+    /** Account knobs for the states a spec cannot reach by clicking; see `createAccountMock().setKnobs`. */
+    setAccount(knobs: Parameters<typeof accountMock.setKnobs>[0]) {
+      accountMock.setKnobs(knobs);
     },
     events(threadId: string, after: number): WireThreadEvent[] {
       return (logs[threadId] ?? []).filter((event) => event.seq > after);

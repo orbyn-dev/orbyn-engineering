@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/controls";
+import { accountApi } from "./api";
 import { Dialog } from "../../ui/Dialog";
 import { BackLink, Failure } from "./Card";
 import { ApprovalCard, MismatchCard } from "./ApprovalCard";
@@ -26,8 +27,6 @@ export function AccountSection() {
   useEffect(() => { if (asking) setCodeStep(true); }, [asking]);
   // The person saw the codes differ on this screen: the one closed state they make themselves.
   const [mismatch, setMismatch] = useState(false);
-  // The service ended this computer's session and the person did not: said once, neutrally.
-  const [endedSeen, setEndedSeen] = useState(false);
   const waiting = account.status === "loading";
   const skeleton = useAfter(waiting);
   // The last status is kept while a re-read fails: shown dimmed, with the sync row saying it could not check.
@@ -79,17 +78,19 @@ export function AccountSection() {
   } else {
     body = <SignedOutHome notice={notice} inviteRequired={view.invite_required} onSignIn={() => { setNotice(null); setMode("sign-in"); }} onCreate={() => { setNotice(null); setMode("sign-up"); }} />;
   }
-  const ended = view?.sync.kind === "signed_out" && view.sync.reason === "session_ended" && !view.session && !notice && !endedSeen;
+  // The service ended this computer's session and the person did not; it says so until it is dismissed once.
+  const ended = view?.ended_notice === true && !view.session;
+  const dismissEnded = () => void accountApi.endedSeen().then(reload, reload);
   return (
     <div className="account-page" aria-busy={waiting || undefined}>
       {ended ? (
         <Dialog
           title="You were signed out"
-          onClose={() => setEndedSeen(true)}
+          onClose={dismissEnded}
           footer={
             <>
-              <Button onClick={() => setEndedSeen(true)}>Not now</Button>
-              <Button tone="primary" onClick={() => { setEndedSeen(true); setMode("sign-in"); }}>Sign in again</Button>
+              <Button onClick={dismissEnded}>Not now</Button>
+              <Button tone="primary" onClick={() => { dismissEnded(); setMode("sign-in"); }}>Sign in again</Button>
             </>
           }
         >

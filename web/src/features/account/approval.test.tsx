@@ -3,9 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
 import { installMockFetch } from "../../test-support";
+import { ApiFailure } from "../../api/client";
 import { accountApi } from "./api";
+import { announceAccountChange } from "./changes";
 import { AccountSection } from "./AccountSection";
 import { ApprovalCard } from "./ApprovalCard";
+import { ConnectProgress } from "./ConnectDialogs";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -37,7 +40,9 @@ describe("a new device waiting for a trusted one", () => {
     await signIn(user, "approve@example.com");
     expect(await screen.findByText("Approve this sign-in on another device")).toBeVisible();
     expect(screen.getByText("418 207")).toBeVisible();
-    expect(screen.getByText(/Waiting for approval · this request expires in \d+:\d\d/)).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(/^Waiting for approval$/);
+    expect(screen.getByText(/this request expires in \d+:\d\d/)).toBeVisible();
+    expect(screen.getByLabelText("Code 4 1 8, 2 0 7")).toBeVisible();
     // Allowed: a spinner and words, no bar, then the signed-in page.
     expect(await screen.findByText("Signed in on this device · This computer", undefined, SLOW)).toBeVisible();
     expect(screen.queryByRole("progressbar")).toBeNull();
@@ -59,7 +64,7 @@ describe("a new device waiting for a trusted one", () => {
     const user = await openSignIn();
     await signIn(user, "late@example.com");
     await screen.findByText("Approve this sign-in on another device");
-    mock.setApproval({ answer: "timed_out" });
+    mock.setAccount({ answer: "timed_out" });
     expect(await screen.findByText("No one approved this sign-in in time", undefined, SLOW)).toBeVisible();
     expect(screen.getByText(/A request expires after 10 minutes\./)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -135,7 +140,7 @@ describe("a trusted device answering", () => {
   it("a request that is gone says Denied or cancelled", async () => {
     const user = await devicesPage();
     const row = await screen.findByRole("listitem", { name: "iPad asks to sign in" });
-    vi.spyOn(accountApi, "deny").mockRejectedValueOnce(new Error("gone"));
+    vi.spyOn(accountApi, "deny").mockRejectedValueOnce(new ApiFailure("request_gone", "That request has ended.", 404));
     await user.click(within(row).getByRole("button", { name: "Don’t allow" }));
     expect(await screen.findByText("Denied or cancelled.")).toBeVisible();
     vi.restoreAllMocks();
@@ -149,7 +154,7 @@ describe("joining this computer's settings", () => {
   }
 
   it("asks once, with Combine them as the default, and no password for it", async () => {
-    const user = await openSignIn(() => mock.setApproval({ connectNeeded: true }));
+    const user = await openSignIn(() => mock.setAccount({ connectNeeded: true }));
     const dialog = await signedIn(user);
     expect(within(dialog).getByLabelText(/Combine them/)).toBeChecked();
     expect(within(dialog).getByText("Will sync")).toBeVisible();
@@ -161,7 +166,7 @@ describe("joining this computer's settings", () => {
   });
 
   it("the two choices that overwrite ask for the password for that choice", async () => {
-    const user = await openSignIn(() => mock.setApproval({ connectNeeded: true }));
+    const user = await openSignIn(() => mock.setAccount({ connectNeeded: true }));
     const dialog = await signedIn(user);
     await user.click(within(dialog).getByLabelText(/Use this device’s settings/));
     await user.click(within(dialog).getByRole("button", { name: "Connect" }));
@@ -173,7 +178,7 @@ describe("joining this computer's settings", () => {
   });
 
   it("Not now keeps the settings here, says so, and Connect settings asks again", async () => {
-    const user = await openSignIn(() => mock.setApproval({ connectNeeded: true }));
+    const user = await openSignIn(() => mock.setAccount({ connectNeeded: true }));
     const dialog = await signedIn(user);
     await user.click(within(dialog).getByRole("button", { name: "Not now" }));
     expect(await screen.findByText(/^Not connected · this computer’s settings stay here/)).toBeVisible();
@@ -211,5 +216,139 @@ describe("an allowed request", () => {
     expect(screen.getByText("Approved")).toBeVisible();
     expect(screen.getByText("Signing you in…")).toBeVisible();
     expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+});
+
+describe("answering a request, the edges", () => {
+  async function devicesPage() {
+    mock.reset("account");
+    await fetch("/api/account/sign-in", { method: "POST", body: JSON.stringify({ email: "dev@example.com", password: PASSWORD }) });
+    const user = userEvent.setup();
+    render(<AccountSection />);
+    await user.click(await screen.findByRole("button", { name: "Manage devices" }));
+    return user;
+  }
+
+  it("a request that ended before the password was confirmed reads Denied or cancelled.", async () => {
+    const user = await devicesPage();
+    await user.click(await screen.findByRole("button", { name: "Compare codes" }));
+    const prompt = await screen.findByRole("dialog", { name: "New sign-in" });
+    await user.click(within(prompt).getByRole("button", { name: "Codes match · Allow" }));
+    const confirm = await screen.findByRole("dialog", { name: "Confirm it’s you" });
+    mock.setAccount({ dropIncoming: "req-ipad" });
+    await user.type(within(confirm).getByLabelText("Password"), PASSWORD);
+    await user.click(within(confirm).getByRole("button", { name: "Confirm" }));
+    expect(await within(confirm).findByText("Denied or cancelled.")).toBeVisible();
+    expect(within(confirm).queryByText("That request has ended.")).toBeNull();
+  });
+
+  it("the prompt closes when its request leaves the list", async () => {
+    const user = await devicesPage();
+    await user.click(await screen.findByRole("button", { name: "Compare codes" }));
+    await screen.findByRole("dialog", { name: "New sign-in" });
+    mock.setAccount({ dropIncoming: "req-ipad" });
+    act(() => announceAccountChange());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New sign-in" })).toBeNull());
+  });
+
+  it("a double click refuses once, and a refusal that needs the password does not read as a close", async () => {
+    const user = await devicesPage();
+    const deny = vi.spyOn(accountApi, "deny");
+    const row = await screen.findByRole("listitem", { name: "iPad asks to sign in" });
+    const button = within(row).getByRole("button", { name: "Don’t allow" });
+    await user.dblClick(button);
+    await waitFor(() => expect(screen.queryByRole("listitem", { name: "iPad asks to sign in" })).toBeNull());
+    expect(deny).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Denied or cancelled.")).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it("a refusal the service answers with reauth_required says what it says", async () => {
+    const user = await devicesPage();
+    vi.spyOn(accountApi, "deny").mockRejectedValueOnce(new ApiFailure("reauth_required", "Sign in to answer this.", 403));
+    const row = await screen.findByRole("listitem", { name: "iPad asks to sign in" });
+    await user.click(within(row).getByRole("button", { name: "Don’t allow" }));
+    expect(await screen.findByText("Sign in to answer this.")).toBeVisible();
+    expect(screen.queryByText("Denied or cancelled.")).toBeNull();
+    vi.restoreAllMocks();
+  });
+});
+
+describe("the waiting screen over time", () => {
+  it("counts down between looks and takes the service's time again on each look", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const view = { state: "waiting" as const, digits: "418 207", expires_in_secs: 600 };
+      const poll = vi.spyOn(accountApi, "pollApproval").mockResolvedValue({ ...view, expires_in_secs: 580 });
+      render(<ApprovalCard approval={view} onChanged={() => undefined} onBack={() => undefined} onMismatch={() => undefined} />);
+      expect(screen.getByText(/expires in 10:00/)).toBeVisible();
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(screen.getByText(/expires in 9:59/)).toBeVisible();
+      // At the first look the service says 580: the screen follows it, not its own count.
+      await act(async () => { vi.advanceTimersByTime(1000); });
+      await waitFor(() => expect(screen.getByText(/expires in 9:40/)).toBeVisible());
+      expect(poll).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("after three failed looks in a row says so quietly, with Cancel", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.spyOn(accountApi, "pollApproval").mockRejectedValue(new Error("down"));
+      render(<ApprovalCard approval={{ state: "waiting", digits: "418 207", expires_in_secs: 600 }} onChanged={() => undefined} onBack={() => undefined} onMismatch={() => undefined} />);
+      await act(async () => { vi.advanceTimersByTime(6500); });
+      expect(await screen.findByText("Couldn’t check this request.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("keeps the clock out of the live region and gives a closed card an alert and the focus", async () => {
+    render(<ApprovalCard approval={{ state: "denied", digits: "418 207", expires_in_secs: 0 }} onChanged={() => undefined} onBack={() => undefined} onMismatch={() => undefined} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Denied or cancelled.");
+    expect(screen.getByRole("heading", { name: "Denied or cancelled." })).toHaveFocus();
+  });
+});
+
+describe("the first sync, while it runs", () => {
+  it("is a spinner and words with no count, no bar and no Cancel", () => {
+    render(<ConnectProgress onDismiss={() => undefined} />);
+    expect(screen.getByRole("dialog", { name: "Connecting your settings" })).toBeVisible();
+    expect(screen.getByText("Combining settings…")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByText(/\d+ of \d+/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Keep working" })).toBeVisible();
+  });
+
+  it("shows the progress dialog while the first sync takes its time, then the summary", { timeout: 20000 }, async () => {
+    const user = await openSignIn();
+    await signIn(user, "connect@example.com");
+    const choice = await screen.findByRole("dialog", { name: "Sync your settings?" });
+    await user.click(within(choice).getByRole("button", { name: "Connect" }));
+    expect(await screen.findByRole("dialog", { name: "Connecting your settings" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Sync your settings?" })).toBeNull();
+    expect(await screen.findByRole("dialog", { name: "Settings connected" }, { timeout: 8000 })).toBeVisible();
+  });
+});
+
+describe("a session the service ended, told once", () => {
+  it("is not said again after it was dismissed, even in a new window", async () => {
+    mock.reset("account");
+    mock.setAccount({ sync: ["signed_out", "session_ended"] });
+    const user = userEvent.setup();
+    const first = render(<AccountSection />);
+    const dialog = await screen.findByRole("dialog", { name: "You were signed out" });
+    await user.click(within(dialog).getByRole("button", { name: "Not now" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "You were signed out" })).toBeNull());
+    first.unmount();
+    render(<AccountSection />);
+    expect(await screen.findByText("Use an account to sync your settings")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "You were signed out" })).toBeNull();
   });
 });

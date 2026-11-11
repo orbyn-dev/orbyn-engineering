@@ -4,9 +4,13 @@ import type { AccountApprovalView } from "../../generated/AccountApprovalView";
 import { Button } from "../../ui/controls";
 import { accountApi } from "./api";
 import { Card } from "./Card";
-import { useAfter, useCountdown, type Wait } from "./useCountdown";
+import { useAfter } from "./useCountdown";
 
 const POLL_MS = 2000;
+/** Failed looks in a row before the screen stops saying it is waiting. */
+const LOOK_FAILURES = 3;
+/** "418 207" read as digits in two groups: "4 1 8, 2 0 7". */
+const spoken = (digits: string) => `Code ${digits.split(" ").map((group) => [...group].join(" ")).join(", ")}`;
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
 /**
@@ -15,27 +19,34 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds
  */
 export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { approval: AccountApprovalView; onChanged(): void; onBack(to: "sign-in" | "home"): void; onMismatch(): void }) {
   const [shown, setShown] = useState(approval);
-  const [wait, setWait] = useState<Wait>({ seconds: approval.expires_in_secs, at: Date.now() });
+  // The time left is the service's, taken again on every look and counted down here between looks by ticks, not by
+  // the wall clock: a laptop that slept does not lose or regain minutes.
+  const [left, setLeft] = useState(approval.expires_in_secs);
+  const [failures, setFailures] = useState(0);
   const [busy, setBusy] = useState(false);
-  const left = useCountdown(shown.state === "waiting" ? wait : null);
   const spinning = useAfter(shown.state === "waiting" || shown.state === "approved");
   const changed = useRef(onChanged);
   changed.current = onChanged;
 
   useEffect(() => {
     if (shown.state !== "waiting") return;
-    const timer = setInterval(() => {
+    const tick = setInterval(() => setLeft((was) => Math.max(0, was - 1)), 1000);
+    const look = setInterval(() => {
       void accountApi
         .pollApproval()
         .then((next) => {
+          setFailures(0);
           if (!next) return changed.current();
           setShown(next);
-          setWait({ seconds: next.expires_in_secs, at: Date.now() });
+          setLeft(next.expires_in_secs);
           if (next.state === "approved") changed.current();
         })
-        .catch(() => undefined);
+        .catch(() => setFailures((count) => count + 1));
     }, POLL_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(tick);
+      clearInterval(look);
+    };
   }, [shown.state]);
 
   const leave = async (to: "sign-in" | "home") => {
@@ -51,7 +62,7 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
 
   if (shown.state === "approved") {
     return (
-      <Card title="Approved" lead="A device you trust allowed this sign-in. Finishing up…" label="Sign in · approve this device">
+      <Card focus title="Approved" lead="A device you trust allowed this sign-in. Finishing up…" label="Sign in · approve this device">
         <p className="ac-wait" role="status">
           <Loader2 size={12} className="spin" aria-hidden />
           Signing you in…
@@ -61,7 +72,7 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
   }
   if (shown.state === "timed_out") {
     return (
-      <Card title="No one approved this sign-in in time" lead="A request expires after 10 minutes. Open Orbyn on one of your trusted devices and try again. The code on this screen changes each time." label="Sign in · approve this device">
+      <Card focus alert title="No one approved this sign-in in time" lead="A request expires after 10 minutes. Open Orbyn on one of your trusted devices and try again. The code on this screen changes each time." label="Sign in · approve this device">
         <div className="ac-acts">
           <Button tone="primary" disabled={busy} onClick={() => void leave("sign-in")}>Try again</Button>
           <Button disabled={busy} onClick={() => void leave("home")}>Back to Account</Button>
@@ -72,7 +83,7 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
   if (shown.state === "denied" || shown.state === "codes_differ") {
     // The Engine says nothing about why a request closed on the other side, so every such close reads the same.
     return (
-      <Card title="Denied or cancelled." lead="A device you trust said no, or the request was cancelled. If this was you, try again, or sign in from a device you already trust." label="Sign in · approve this device">
+      <Card focus alert title="Denied or cancelled." lead="A device you trust said no, or the request was cancelled. If this was you, try again, or sign in from a device you already trust." label="Sign in · approve this device">
         <div className="ac-acts">
           <Button tone="primary" disabled={busy} onClick={() => void leave("sign-in")}>Try again</Button>
           <Button disabled={busy} onClick={() => void leave("home")}>Back to Account</Button>
@@ -80,16 +91,26 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
       </Card>
     );
   }
+  if (failures >= LOOK_FAILURES) {
+    // Looking has failed several times in a row: the request may be lost, so say so instead of waiting for the clock.
+    return (
+      <Card focus title="Couldn’t check this request." lead="Orbyn couldn’t ask whether a trusted device answered. If one already did, cancel and sign in again." label="Sign in · approve this device">
+        <div className="ac-acts">
+          <Button disabled={busy} onClick={() => void leave("sign-in")}>Cancel</Button>
+        </div>
+      </Card>
+    );
+  }
   return (
-    <Card title="Approve this sign-in on another device" lead="We asked your other devices to approve this one. Open Orbyn on a device you trust, compare the codes and allow it." label="Sign in · approve this device">
+    <Card focus title="Approve this sign-in on another device" lead="We asked your other devices to approve this one. Open Orbyn on a device you trust, compare the codes and allow it." label="Sign in · approve this device">
       <div className="ac-digits">
         <small>Check that this code matches</small>
-        <b aria-label={`Code ${shown.digits.replace(" ", " ")}`}>{shown.digits}</b>
+        <b aria-label={spoken(shown.digits)}>{shown.digits}</b>
         <small>Your other device shows the same code. Both screens must match.</small>
       </div>
-      <p className="ac-wait" role="status">
+      <p className="ac-wait">
         {spinning ? <Loader2 size={12} className="spin" aria-hidden /> : null}
-        Waiting for approval · this request expires in {clock(left ?? shown.expires_in_secs)}
+        <span role="status">Waiting for approval</span> · this request expires in {clock(left)}
       </p>
       <div className="ac-acts">
         <Button disabled={busy} onClick={() => void leave("sign-in")}>Cancel</Button>
@@ -102,7 +123,7 @@ export function ApprovalCard({ approval, onChanged, onBack, onMismatch }: { appr
 /** The one closed state the person makes themselves: they saw the two codes differ on this screen. */
 export function MismatchCard({ onBack }: { onBack(to: "sign-in" | "home"): void }) {
   return (
-    <Card title="The codes didn’t match" lead="The code on the other device wasn’t the same as the one on this screen, so this sign-in was closed. No one is signed in." label="Sign in · approve this device">
+    <Card focus alert title="The codes didn’t match" lead="The code on the other device wasn’t the same as the one on this screen, so this sign-in was closed. No one is signed in." label="Sign in · approve this device">
       <p>If you started this sign-in, try again and compare the codes carefully. If you didn’t, you don’t need to do anything.</p>
       <div className="ac-acts">
         <Button tone="primary" onClick={() => onBack("sign-in")}>Try again</Button>

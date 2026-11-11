@@ -55,6 +55,15 @@ pub(super) struct Grant {
     at: Instant,
 }
 
+/// What the person knows about their session having ended.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Ended {
+    /// They were told, or dismissed the notice.
+    seen: bool,
+    /// They ended every session themselves, so there is nothing to tell them.
+    own: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Inner {
     session: Option<SessionInfo>,
@@ -109,6 +118,19 @@ impl AccountCenter {
                 Err(refusal(&error))
             }
         }
+    }
+
+    fn ended_lock(&self) -> std::sync::MutexGuard<'_, Ended> {
+        self.ended
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The person was told, or dismissed it: it is not said again for this ended session.
+    pub async fn ended_seen(&self) -> Result<()> {
+        self.backend()?;
+        self.ended_lock().seen = true;
+        Ok(())
     }
 
     async fn end_session(&self, reason: SignOutReason) {
@@ -185,6 +207,15 @@ impl AccountCenter {
                 .approval
                 .as_ref()
                 .map(|approval| self.approval_view(approval)),
+            ended_notice: matches!(
+                status.state,
+                SyncState::SignedOut {
+                    reason: Some(SignOutReason::SessionEnded)
+                }
+            ) && {
+                let ended = self.ended_lock();
+                !ended.seen && !ended.own
+            },
             connect: match inner.connect {
                 Connect::Connected => AccountConnectState::Connected,
                 Connect::Needed => AccountConnectState::Needed,
@@ -395,6 +426,7 @@ impl AccountCenter {
                 None => self.store.account_claim(zone, &session.email)?,
             }
         }
+        *self.ended_lock() = Ended::default();
         let ask = ask && !self.store.account_known(zone)? && self.has_settings()?;
         if let Some(old) = inner.sync.take() {
             old.stop().await;
@@ -501,6 +533,8 @@ impl AccountCenter {
         }
         let result = self.backend()?.account.sign_out_everywhere().await;
         self.guard(result).await?;
+        // The person did this: no "you were signed out" for it.
+        self.ended_lock().own = true;
         self.end_session(SignOutReason::SessionEnded).await;
         Ok(())
     }

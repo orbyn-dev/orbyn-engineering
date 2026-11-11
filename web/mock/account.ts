@@ -17,9 +17,9 @@ const INVITE = "K7QM2XWH9QXA3C2D";
 const EMAIL_CODE = "ABCDEFGH";
 const PASSWORD = "correct horse battery";
 const SECOND_FACTOR = ["123456", "ABCDEFGH23"];
-const ACCOUNTS = ["dev@example.com", "two@example.com", "slow@example.com", "down@example.com", "approve@example.com", "deny@example.com", "mismatch@example.com", "late@example.com"];
+const ACCOUNTS = ["dev@example.com", "two@example.com", "slow@example.com", "down@example.com", "approve@example.com", "deny@example.com", "mismatch@example.com", "late@example.com", "expired@example.com", "connect@example.com", "removed@example.com"];
 /** What a trusted device answers a new device, by the account that signs in; `late@` is never answered. */
-const CANNED: Record<string, AccountApprovalView["state"] | null> = { "approve@example.com": "approved", "deny@example.com": "denied", "mismatch@example.com": "codes_differ", "late@example.com": null };
+const CANNED: Record<string, AccountApprovalView["state"] | null> = { "approve@example.com": "approved", "deny@example.com": "denied", "mismatch@example.com": "codes_differ", "late@example.com": null, "expired@example.com": "timed_out" };
 
 const fail = (status: number, code: string, message: string, detail?: unknown): MockResponse => ({
   status,
@@ -65,6 +65,9 @@ export function createAccountMock() {
   let connectNeeded = false;
   let connect: AccountView["connect"] = "connected";
   let summaryPending = false;
+  /** The first sync of `connect@` takes a few seconds, so its progress dialog can be seen. */
+  let summaryAt = 0;
+  let endedSeen = false;
 
   const view = () => ({
     available: on,
@@ -73,8 +76,9 @@ export function createAccountMock() {
     ...(session ? { session: { email: session, device_name: "This computer" } } : {}),
     needs_second_factor: pending !== null,
     ...(approval && !session ? { approval: approvalView() } : {}),
+    ended_notice: syncKind === "signed_out" && syncReason === "session_ended" && !endedSeen,
     connect,
-    ...(summaryPending && connect === "connected" && !syncKind ? { connect_summary: { synced: 24 } } : {}),
+    ...(summaryPending && connect === "connected" && !syncKind && Date.now() >= summaryAt ? { connect_summary: { synced: 24 } } : {}),
     deletion_scheduled: deletionScheduled,
     sync: {
       kind: syncKind ?? (session ? (connect !== "connected" ? "not_connected" : paused ? "paused" : "online") : "signed_out"),
@@ -109,7 +113,7 @@ export function createAccountMock() {
     approval = null;
     paused = false;
     // A computer with settings asks once how to join them, when the spec says it has some.
-    connect = connectNeeded ? "needed" : "connected";
+    connect = connectNeeded || email === "connect@example.com" ? "needed" : "connected";
     lastSynced = Math.floor(Date.now() / 1000);
   }
 
@@ -136,6 +140,7 @@ export function createAccountMock() {
       approval = null;
       incoming = freshIncoming();
       connectNeeded = false;
+      endedSeen = false;
       connect = "connected";
       summaryPending = false;
     },
@@ -143,30 +148,34 @@ export function createAccountMock() {
     setWaiting(count: number) {
       waiting = count;
     },
-    /** Sign-up without an invite step. */
-    setInviteRequired(required: boolean) {
-      inviteRequired = required;
-    },
-    /** Forces the sync state the status shows, for the offline and refused wording. */
-    setSync(kind: AccountView["sync"]["kind"] | null, reason: AccountView["sync"]["reason"] | null = null) {
-      syncKind = kind;
-      syncReason = reason;
-    },
-    /** Deletion scheduled, devices that cannot be read, or only this device. */
-    setDevices(knobs: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean }) {
-      if (knobs.syncStuck !== undefined) syncStuck = knobs.syncStuck;
-      if (knobs.deletionScheduled !== undefined) deletionScheduled = knobs.deletionScheduled;
-      if (knobs.down !== undefined) devicesDown = knobs.down;
-      if (knobs.onlyThis) deviceList = deviceList.filter((device) => device.current);
-    },
-    /** The trusted device\'s answer to this computer\'s request, a computer with settings to join. */
-    setApproval(knobs: { answer?: AccountApprovalView["state"]; connectNeeded?: boolean }) {
+    /** One door for every state a spec cannot reach by clicking. */
+    setKnobs(knobs: {
+      inviteRequired?: boolean;
+      sync?: [AccountView["sync"]["kind"] | null, AccountView["sync"]["reason"]?];
+      down?: boolean;
+      devices?: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean };
+      /** What a trusted device answered this computer's request. */
+      answer?: AccountApprovalView["state"];
+      /** The next sign-in is on a computer that has settings to join. */
+      connectNeeded?: boolean;
+      /** A request from another device that has ended since it was listed. */
+      dropIncoming?: string;
+    }) {
+      if (knobs.inviteRequired !== undefined) inviteRequired = knobs.inviteRequired;
+      if (knobs.sync) {
+        syncKind = knobs.sync[0];
+        syncReason = knobs.sync[1] ?? null;
+      }
+      if (knobs.down !== undefined) viewDown = knobs.down;
+      if (knobs.devices) {
+        if (knobs.devices.deletionScheduled !== undefined) deletionScheduled = knobs.devices.deletionScheduled;
+        if (knobs.devices.down !== undefined) devicesDown = knobs.devices.down;
+        if (knobs.devices.syncStuck !== undefined) syncStuck = knobs.devices.syncStuck;
+        if (knobs.devices.onlyThis) deviceList = deviceList.filter((device) => device.current);
+      }
       if (knobs.answer && approval) approval.answer = knobs.answer;
       if (knobs.connectNeeded !== undefined) connectNeeded = knobs.connectNeeded;
-    },
-    /** Makes reading the account fail, for the "couldn't load" page. */
-    setViewDown(down: boolean) {
-      viewDown = down;
+      if (knobs.dropIncoming) incoming = incoming.filter((request) => request.id !== knobs.dropIncoming);
     },
     handle(method: string, path: string, body: unknown): MockResponse {
       const data = (body ?? {}) as Record<string, unknown>;
@@ -204,9 +213,15 @@ export function createAccountMock() {
             pending = { email, wrong: 0 };
             return { status: 200, body: { outcome: "second_factor" } };
           }
+          if (email === "removed@example.com") {
+            // The service ended this computer's session: signed out, with the reason said.
+            syncKind = "signed_out";
+            syncReason = "session_ended";
+            return { status: 200, body: { outcome: "signed" } };
+          }
           if (email in CANNED) {
             const canned = CANNED[email] ?? null;
-            approval = { answer: "waiting", askedAt: Date.now(), autoAt: canned ? Date.now() + 1500 : null, autoAnswer: canned, email };
+            approval = { answer: canned === "timed_out" ? "timed_out" : "waiting", askedAt: Date.now(), autoAt: canned && canned !== "timed_out" ? Date.now() + 1500 : null, autoAnswer: canned, email };
             return { status: 200, body: { outcome: "awaiting_approval" } };
           }
           signedIn(email);
@@ -229,10 +244,14 @@ export function createAccountMock() {
           if (session && connect !== "connected") {
             connect = "connected";
             summaryPending = true;
+            summaryAt = session === "connect@example.com" ? Date.now() + 3000 : 0;
           }
           return { status: 204 };
         case "POST /api/account/connect/later":
           if (session && connect === "needed") connect = "declined";
+          return { status: 204 };
+        case "POST /api/account/ended/seen":
+          endedSeen = true;
           return { status: 204 };
         case "POST /api/account/connect/seen":
           summaryPending = false;
@@ -246,6 +265,7 @@ export function createAccountMock() {
           if (connect !== "connected") {
             connect = "connected";
             summaryPending = true;
+            summaryAt = session === "connect@example.com" ? Date.now() + 3000 : 0;
           }
           return { status: 204 };
         }
