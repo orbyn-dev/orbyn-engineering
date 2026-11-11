@@ -190,6 +190,11 @@ Controls (decision D12 and Engineering 1's answer):
   orbyn-engine#120 and is needed before real-account sign-in (not for the local end-to-end test). The app asks with a
   "Confirm it's you" password prompt on every platform, and the check is in `orbynd`, not only in the page. Approving
   a device keeps its two-sided digits plus the password. Signing out **this device only** stays open.
+  The confirmation is bound to the window that typed the password: `/confirm` answers with a one-time nonce (in
+  memory, single-use, for one action and one device, request or choice) that the action must send back in a header,
+  so an engine holding only the service token cannot run the action first, and cancelling the dialog drops the
+  confirmation. An engine can still read the web page if it drives the browser; that is what the password and the
+  loopback-only rule are for, and the first sync's overwriting choices need the password too.
 - **No native-shell presence option.** It was dropped: an agent's browser or computer tools can drive the web UI, and
   the password is the one thing an engine does not hold.
 - **Autopilot.** The always-denied list in the Crew plan now includes "changing account, device or sign-in state".

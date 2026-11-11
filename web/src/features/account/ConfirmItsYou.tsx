@@ -14,14 +14,17 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
  * "Confirm it's you": the one dialog that asks for the password again before removing a device, signing out
  * everywhere and the other sensitive actions. A confirmation is for this one action (and device) and is used up
  * by it; the service refuses an action without one with `reauth_required`, whatever this dialog did.
- * `onConfirmed` runs the action.
+ * `onConfirmed` runs the action with the nonce the service answered with, which it must send back: only this window
+ * has it. Cancel and Escape give a confirmation up, so an abandoned prompt does not leave one live.
  */
-export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; policy?: AccountConnectPolicy; subject?: string; onConfirmed(): void | Promise<void>; onClose(): void }) {
+export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; policy?: AccountConnectPolicy; subject?: string; onConfirmed(nonce: string): void | Promise<void>; onClose(): void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [wait, setWait] = useState<Wait | null>(null);
   const field = useRef<HTMLInputElement>(null);
+  // The confirmation this dialog made and has not used: dropped if the dialog goes away without using it.
+  const held = useRef<string | null>(null);
   const spinning = useAfter(busy);
   const left = useCountdown(wait);
   const throttled = left !== null && left > 0;
@@ -32,9 +35,11 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
     setBusy(true);
     setProblem(null);
     try {
-      await accountApi.confirm(password, action, deviceId, policy);
+      const { nonce } = await accountApi.confirm(password, action, deviceId, policy);
+      held.current = nonce;
       setPassword("");
-      await onConfirmed();
+      await onConfirmed(nonce);
+      held.current = null;
       onClose();
     } catch (error) {
       const found = problemOf(error);
@@ -49,15 +54,21 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
     }
   };
 
+  const giveUp = () => {
+    const nonce = held.current;
+    held.current = null;
+    if (nonce) void accountApi.cancelConfirmation(nonce).catch(() => undefined);
+    onClose();
+  };
   const network = problem?.kind === "network";
   return (
     <Dialog
       title="Confirm it’s you"
-      onClose={onClose}
+      onClose={giveUp}
       busy={busy}
       footer={
         <>
-          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={giveUp} disabled={busy}>Cancel</Button>
           <Button type="submit" form="confirm-its-you" tone="primary" busy={busy && spinning} disabled={busy || throttled || !password}>
             {busy && spinning ? "Checking…" : network ? "Try again" : "Confirm"}
           </Button>

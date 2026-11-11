@@ -52,14 +52,27 @@ async fn serve(name: &str, gate: AccountGate, remote: bool) -> Served {
 
 impl Served {
     async fn call(&self, method: &str, path: &str, body: Value) -> (u16, Value) {
+        self.call_with(method, path, body, None).await
+    }
+
+    /// As [`Self::call`], sending the nonce a confirmation answered with, as the window that
+    /// typed the password does.
+    async fn call_with(
+        &self,
+        method: &str,
+        path: &str,
+        body: Value,
+        nonce: Option<&str>,
+    ) -> (u16, Value) {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
-        let response = reqwest::Client::new()
+        let mut request = reqwest::Client::new()
             .request(method.parse().unwrap(), url)
             .bearer_auth("token")
-            .json(&body)
-            .send()
-            .await
-            .unwrap();
+            .json(&body);
+        if let Some(nonce) = nonce {
+            request = request.header("x-orbyn-confirm", nonce);
+        }
+        let response = request.send().await.unwrap();
         let status = response.status().as_u16();
         let text = response.text().await.unwrap();
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
@@ -85,6 +98,25 @@ impl Served {
         assert_eq!(status, 200);
     }
 
+    async fn nonce_for_policy(&self, policy: &str) -> String {
+        let (status, body) = self
+            .call(
+                "POST",
+                "/api/account/confirm",
+                json!({ "password": SECRET, "action": "connect_settings", "policy": policy }),
+            )
+            .await;
+        assert_eq!(status, 200);
+        body["nonce"].as_str().unwrap().to_owned()
+    }
+
+    /// The password typed again for one action: the status and the nonce it answers with.
+    async fn nonce_for(&self, action: &str, device: Option<&str>) -> String {
+        let (status, body) = self.confirm(action, device).await;
+        assert_eq!(status, 200);
+        body["nonce"].as_str().unwrap().to_owned()
+    }
+
     async fn confirm(&self, action: &str, device: Option<&str>) -> (u16, Value) {
         self.call(
             "POST",
@@ -105,6 +137,7 @@ fn any_body() -> Value {
         "password": "x",
         "action": "sign_out_everywhere",
         "policy": "combine",
+        "nonce": "0",
         "discard_unsynced": false,
     })
 }
@@ -225,12 +258,14 @@ async fn a_confirmation_is_for_one_action_one_device_and_one_use() {
     let served = serve("one-use", AccountGate::LocalOnly, false).await;
     served.sign_in().await;
     let delete = |id: &'static str| format!("/api/account/devices/{id}");
+    let refused = |(status, body): (u16, Value)| {
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (403, Some("reauth_required"))
+        );
+    };
     // Signing in did not confirm anything.
-    let (status, body) = served.call("DELETE", &delete("dev-mini"), json!({})).await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (403, Some("reauth_required"))
-    );
+    refused(served.call("DELETE", &delete("dev-mini"), json!({})).await);
     // A wrong password confirms nothing and is not echoed.
     let (status, body) = served
         .call(
@@ -245,44 +280,60 @@ async fn a_confirmation_is_for_one_action_one_device_and_one_use() {
     );
     assert!(!body.to_string().contains("wrong-one"));
     // A device needs its id.
-    let (status, _) = served.confirm("remove_device", None).await;
-    assert_eq!(status, 400);
-    assert_eq!(
-        served.confirm("remove_device", Some("dev-mini")).await.0,
-        204
+    assert_eq!(served.confirm("remove_device", None).await.0, 400);
+    let nonce = served.nonce_for("remove_device", Some("dev-mini")).await;
+    // Not for another device, not for the other action, and not without the nonce it answered with.
+    refused(
+        served
+            .call_with("DELETE", &delete("dev-phone"), json!({}), Some(&nonce))
+            .await,
     );
-    // Not for another device, and not for the other action.
-    let (status, body) = served.call("DELETE", &delete("dev-phone"), json!({})).await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (403, Some("reauth_required"))
+    refused(
+        served
+            .call_with(
+                "POST",
+                "/api/account/sign-out-everywhere",
+                json!({}),
+                Some(&nonce),
+            )
+            .await,
     );
-    let (status, _) = served
-        .call("POST", "/api/account/sign-out-everywhere", json!({}))
-        .await;
-    assert_eq!(status, 403);
+    refused(served.call("DELETE", &delete("dev-mini"), json!({})).await);
+    refused(
+        served
+            .call_with(
+                "DELETE",
+                &delete("dev-mini"),
+                json!({}),
+                Some("0".repeat(32).as_str()),
+            )
+            .await,
+    );
     // The device it was for goes, and the confirmation goes with it.
     assert_eq!(
         served
-            .call("DELETE", &delete("dev-mini"), json!({}))
+            .call_with("DELETE", &delete("dev-mini"), json!({}), Some(&nonce))
             .await
             .0,
         204
     );
-    let (status, body) = served.call("DELETE", &delete("dev-mini"), json!({})).await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (403, Some("reauth_required"))
+    refused(
+        served
+            .call_with("DELETE", &delete("dev-mini"), json!({}), Some(&nonce))
+            .await,
     );
     // Signing out everywhere has its own, and ends the session and any other confirmation.
-    assert_eq!(
-        served.confirm("remove_device", Some("dev-phone")).await.0,
-        204
-    );
-    assert_eq!(served.confirm("sign_out_everywhere", None).await.0, 204);
+    let stale = served.nonce_for("remove_device", Some("dev-phone")).await;
+    let nonce = served.nonce_for("sign_out_everywhere", None).await;
+    assert_ne!(stale, nonce);
     assert_eq!(
         served
-            .call("POST", "/api/account/sign-out-everywhere", json!({}))
+            .call_with(
+                "POST",
+                "/api/account/sign-out-everywhere",
+                json!({}),
+                Some(&nonce)
+            )
             .await
             .0,
         204
@@ -294,10 +345,89 @@ async fn a_confirmation_is_for_one_action_one_device_and_one_use() {
         "the view carries no confirmation state"
     );
     served.sign_in().await;
-    let (status, _) = served.call("DELETE", &delete("dev-phone"), json!({})).await;
     assert_eq!(
-        status, 403,
+        served
+            .call_with("DELETE", &delete("dev-phone"), json!({}), Some(&stale))
+            .await
+            .0,
+        403,
         "a confirmation does not outlive the session it was for"
+    );
+}
+
+#[tokio::test]
+async fn a_caller_holding_only_the_service_token_cannot_use_a_confirmation_it_did_not_obtain() {
+    let served = serve("engine", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    // The window types the password and keeps the nonce; an engine with the same token never sees it.
+    let nonce = served.nonce_for("sign_out_everywhere", None).await;
+    let path = "/api/account/sign-out-everywhere";
+    for guess in [
+        None,
+        Some(""),
+        Some("00000000000000000000000000000000"),
+        Some("not a nonce"),
+    ] {
+        let (status, body) = served.call_with("POST", path, json!({}), guess).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (403, Some("reauth_required")),
+            "{guess:?}"
+        );
+    }
+    // The failed guesses did not use the confirmation up.
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert!(!view["session"].is_null());
+    assert_eq!(
+        served
+            .call_with("POST", path, json!({}), Some(&nonce))
+            .await
+            .0,
+        204
+    );
+}
+
+#[tokio::test]
+async fn cancelling_drops_the_confirmation_and_only_its_own_nonce_can() {
+    let served = serve("cancel", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    let path = "/api/account/sign-out-everywhere";
+    let nonce = served.nonce_for("sign_out_everywhere", None).await;
+    // A wrong nonce cancels nothing.
+    let cancel = |nonce: String| {
+        served.call(
+            "POST",
+            "/api/account/confirm/cancel",
+            json!({ "nonce": nonce }),
+        )
+    };
+    assert_eq!(cancel("0".repeat(32)).await.0, 204);
+    let again = served.nonce_for("sign_out_everywhere", None).await;
+    assert_eq!(cancel(again.clone()).await.0, 204);
+    // The abandoned prompt's confirmation is gone, and so is the one it replaced.
+    assert_eq!(
+        served
+            .call_with("POST", path, json!({}), Some(&again))
+            .await
+            .0,
+        403
+    );
+    assert_eq!(
+        served
+            .call_with("POST", path, json!({}), Some(&nonce))
+            .await
+            .0,
+        403
+    );
+    // The wrong cancel left a live one alone.
+    let live = served.nonce_for("sign_out_everywhere", None).await;
+    assert_eq!(cancel("1".repeat(32)).await.0, 204);
+    assert_eq!(
+        served
+            .call_with("POST", path, json!({}), Some(&live))
+            .await
+            .0,
+        204
     );
 }
 
@@ -362,36 +492,46 @@ async fn letting_a_new_device_in_needs_the_password_for_that_request_and_is_used
     assert_eq!(list[0]["digits"], "418 207");
     assert_eq!(list[0]["device_name"], "iPad");
     let approve = "/api/account/approvals/req-ipad/approve";
+    let refused = |(status, body): (u16, Value)| {
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (403, Some("reauth_required"))
+        );
+    };
     // Signing in did not confirm anything.
-    let (status, body) = served.call("POST", approve, json!({})).await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (403, Some("reauth_required"))
+    refused(served.call("POST", approve, json!({})).await);
+    // A confirmation for another action or another request does not count, with its own nonce.
+    let other_action = served.nonce_for("sign_out_everywhere", None).await;
+    refused(
+        served
+            .call_with("POST", approve, json!({}), Some(&other_action))
+            .await,
     );
-    // A confirmation for another action or another request does not count.
-    assert_eq!(served.confirm("sign_out_everywhere", None).await.0, 204);
-    assert_eq!(served.call("POST", approve, json!({})).await.0, 403);
+    let other_request = served.nonce_for("approve_device", Some("req-other")).await;
+    refused(
+        served
+            .call_with("POST", approve, json!({}), Some(&other_request))
+            .await,
+    );
+    assert_eq!(served.confirm("approve_device", None).await.0, 400);
+    let nonce = served.nonce_for("approve_device", Some("req-ipad")).await;
+    refused(served.call("POST", approve, json!({})).await);
     assert_eq!(
-        served.confirm("approve_device", Some("req-other")).await.0,
+        served
+            .call_with("POST", approve, json!({}), Some(&nonce))
+            .await
+            .0,
         204
     );
-    assert_eq!(served.call("POST", approve, json!({})).await.0, 403);
-    let (status, _) = served.confirm("approve_device", None).await;
-    assert_eq!(status, 400);
-    assert_eq!(
-        served.confirm("approve_device", Some("req-ipad")).await.0,
-        204
-    );
-    assert_eq!(served.call("POST", approve, json!({})).await.0, 204);
     let (_, list) = served
         .call("GET", "/api/account/approvals", json!({}))
         .await;
     assert_eq!(list.as_array().map(Vec::len), Some(0));
     // Used up: the same confirmation does not let a second request in.
-    let (status, body) = served.call("POST", approve, json!({})).await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (403, Some("reauth_required"))
+    refused(
+        served
+            .call_with("POST", approve, json!({}), Some(&nonce))
+            .await,
     );
 }
 
@@ -490,18 +630,23 @@ async fn the_choices_that_overwrite_need_the_password_for_that_choice() {
             400
         );
     }
-    let confirm = |policy: &'static str| {
-        served.call(
-            "POST",
-            "/api/account/confirm",
-            json!({ "password": SECRET, "action": "connect_settings", "policy": policy }),
-        )
-    };
-    assert_eq!(confirm("use_account").await.0, 204);
-    // Not for the other choice.
+    let nonce = served.nonce_for_policy("use_account").await;
+    // Not for the other choice, and not without the nonce.
     assert_eq!(
         served
-            .call("POST", "/api/account/connect/use-device", json!({}))
+            .call_with(
+                "POST",
+                "/api/account/connect/use-device",
+                json!({}),
+                Some(&nonce)
+            )
+            .await
+            .0,
+        403
+    );
+    assert_eq!(
+        served
+            .call("POST", "/api/account/connect/use-account", json!({}))
             .await
             .0,
         403
@@ -509,14 +654,24 @@ async fn the_choices_that_overwrite_need_the_password_for_that_choice() {
     // For its own, and used up by it.
     assert_eq!(
         served
-            .call("POST", "/api/account/connect/use-account", json!({}))
+            .call_with(
+                "POST",
+                "/api/account/connect/use-account",
+                json!({}),
+                Some(&nonce)
+            )
             .await
             .0,
         204
     );
     assert_eq!(
         served
-            .call("POST", "/api/account/connect/use-account", json!({}))
+            .call_with(
+                "POST",
+                "/api/account/connect/use-account",
+                json!({}),
+                Some(&nonce)
+            )
             .await
             .0,
         403

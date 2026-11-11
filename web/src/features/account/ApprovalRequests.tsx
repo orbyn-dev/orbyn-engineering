@@ -95,7 +95,7 @@ function ApprovePrompt({ request, ended, onClose }: { request: AccountApprovalRe
         action="approve_device"
         deviceId={request.id}
         subject={`To let ${request.device_name} sign in`}
-        onConfirmed={() => accountApi.approve(request.id)}
+        onConfirmed={(nonce) => accountApi.approve(request.id, nonce)}
         onClose={onClose}
       />
     );

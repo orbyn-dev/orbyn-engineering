@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
@@ -412,5 +412,65 @@ describe("cancelling the wait", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the confirmation's nonce", () => {
+  async function toConfirm() {
+    const user = await signedInPage();
+    await openDevices(user);
+    await removeFrom(user, "Mac mini");
+    await user.click(await screen.findByRole("button", { name: "Remove device" }));
+    return { user, confirm: await screen.findByRole("dialog", { name: "Confirm it’s you" }) };
+  }
+  const callsTo = (path: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === path);
+
+  it("is sent back with the action, in a header, and nowhere else", async () => {
+    const { user, confirm } = await toConfirm();
+    await user.type(within(confirm).getByLabelText("Password"), PASSWORD);
+    await user.click(within(confirm).getByRole("button", { name: "Confirm" }));
+    await screen.findByText("Mac mini was removed.");
+    const answered = callsTo("/api/account/confirm");
+    expect(answered).toHaveLength(1);
+    const [, init] = callsTo("/api/account/devices/dev-mini")[0] ?? [];
+    expect(new Headers(init?.headers).get("x-orbyn-confirm")).toBe("nonce-1");
+    // The nonce is not in the URL or the body of the action.
+    expect(String(init?.body ?? "")).not.toContain("nonce");
+    expect(callsTo("/api/account/confirm/cancel")).toHaveLength(0);
+  });
+
+  it("Cancel before the password was checked has nothing to give up", async () => {
+    const { user, confirm } = await toConfirm();
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(callsTo("/api/account/confirm/cancel")).toHaveLength(0);
+  });
+
+  async function abandoned() {
+    const { user, confirm } = await toConfirm();
+    vi.spyOn(accountApi, "removeDevice").mockRejectedValueOnce(new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0));
+    await user.type(within(confirm).getByLabelText("Password"), PASSWORD);
+    await user.click(within(confirm).getByRole("button", { name: "Confirm" }));
+    await within(confirm).findByText(/Couldn’t reach Orbyn/);
+    return { user, confirm };
+  }
+  const gaveUp = async () => {
+    await waitFor(() => expect(callsTo("/api/account/confirm/cancel")).toHaveLength(1));
+    const [, init] = callsTo("/api/account/confirm/cancel")[0] ?? [];
+    expect(JSON.parse(String(init?.body))).toEqual({ nonce: expect.stringMatching(/^nonce-\d+$/) });
+  };
+
+  it("Cancel gives a confirmation up when the action did not use it", async () => {
+    const { user, confirm } = await abandoned();
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await gaveUp();
+    vi.restoreAllMocks();
+  });
+
+  it("Escape does too", async () => {
+    const { confirm } = await abandoned();
+    // Escape in a native dialog is its `cancel` event.
+    fireEvent(confirm, new Event("cancel", { cancelable: true }));
+    await gaveUp();
+    vi.restoreAllMocks();
   });
 });
