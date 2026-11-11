@@ -136,7 +136,7 @@ How the client's errors become app behaviour:
 | `Server { retryable: false }`, `InvalidKey` | Zone paused with a reason; other zones continue |
 | `Conflict` | Merge and upload again; surface only a lost offline edit |
 | `TooLarge` | The record is not uploaded; the setting stays local and the status says so |
-| `Unauthorized` | Signed out with the reason "session ended". Local data and the outbox stay; sign in again to resume |
+| `Unauthorized` | Signed out with the reason "session ended". **Key material is destroyed** (device keys, token, vault key and the sealed snapshot are deleted); settings and the outbox stay. Sign in again to resume |
 | `RateLimited { retry_after }` | Shown with the wait; no retry before it |
 | `ProtectionAdvanced`, `DeletionScheduled` | Paused with that reason |
 | `AccountGone` | Signed out locally, data kept, the reason stated |
@@ -152,7 +152,7 @@ Secrets live in the OS keychain through the app's `KeyStore`, never in a plain f
 agreement key, the device id, the account id, the session token, and a 32-byte vault key. The client does no IO, so the
 app stores `Engine::snapshot` as a file in the data folder, sealed with XChaCha20-Poly1305 under the vault key. The
 snapshot holds the zone keys (the zone-key cache) and the sync cursors, so **the file is as secret as the keys**. It is
-not a keychain item because it can be larger than one Windows credential (about 2.5 KiB). The [threat model](account-threat-model.md) says what each of these protects against.
+not a keychain item because it can be larger than one Windows credential (2,560 bytes at most). It is sealed with an AEAD that binds the profile id, the purpose and the format version, and the vault-key item also keeps a counter and a hash of the latest snapshot, so an older file put back by an engine is refused. Sign-out, device removal and `Unauthorized` delete the device keys, the token, the vault key and the snapshot; only settings stay, so a removed device does not keep every zone key (D10). The [threat model](account-threat-model.md) says what each of these protects against.
 
 On a platform with no supported keychain (Linux in Phase 1), `KeyStore` reports itself unavailable and sign-in stays
 off. The account never falls back to a plain file.
@@ -162,8 +162,9 @@ off. The account never falls back to a plain file.
 - A built-in default: `https://api-staging.orbyn.dev`.
 - A development override from `ORBYN_ENGINE_URL`, read by `orbynd` into `CoreConfig` the way `ORBYN_ACP_REGISTRY_URL`
   is today (`main.rs:136`). The local Engine stack answers at `http://127.0.0.1:8080`.
-- **Plain `http` is accepted only when the host is a loopback address** (`127.0.0.0/8`, `::1` or `localhost`); every
-  other address must be `https`. The rule is one function in `account::engine_url`, tested with `http://evil.example`,
+- **Plain `http` is accepted only for a parsed IP literal in `127.0.0.0/8` or `::1`**, never the name `localhost`; every
+  other address must be `https`. The check runs on every request, and the client follows **no HTTP redirects**
+  (`reqwest` follows them by default, so the policy is set to none). The rule is one function in `account::engine_url`, tested with `http://evil.example`,
   `http://127.0.0.1.evil.example`, a URL with user info, and IPv6 forms.
 - The address is not a secret and is shown in the status. It is not synced.
 - The Engine address is also a network request Orbyn makes unasked, so it is added to the
@@ -279,6 +280,24 @@ the rule:
    local stack.
 3. This rule is written here, and the gate's code comment points to it.
 
+Further conditions from the security review: `LocalOnly` is not selectable in release builds (compiled out or
+debug-only); the loopback address check above runs on every request, with redirects off; and it uses the in-memory
+`KeyStore` only, never the real keychain. A same-user process could run a fake Engine on the loopback port and get the
+OPAQUE registration record during sign-up, which allows offline password guessing: fine for test accounts, so **never
+use a real password with the local stack**.
+
+## Sensitive account actions
+
+Decision D12 (the Engine side is orbyn-engine#120): removing a device, signing out every session, turning two-factor
+off and changing protection need the password typed again within the last 10 minutes, as account deletion already does.
+The app asks with a "Confirm it's you" password prompt on every platform, enforced in `orbynd`. Approving a device
+keeps its two-sided digits plus the password. Signing out only this device stays open. The Account page also says that
+on Windows any program you run can act as this device. The Designer is drawing the prompt and that note, so **the UI
+for both waits on their frames**.
+
+Autopilot's always-denied list now includes "changing account, device or sign-in state" ([crew.md](crew.md#autopilot)).
+Every account route that changes state must be refusable by that policy (Crew slice 4f).
+
 ## Out of Phase 1
 
 - Account recovery, password change, sharing, connected-app grants, Advanced protection, remote access and pairing.
@@ -304,7 +323,7 @@ The app records them here so the backend carries what the screens will need.
   100 characters.
 - The newer change wins automatically. A conflict shows only for the same setting changed on two devices while offline,
   with "Use the other value" afterwards. First sync of a local-only workspace defaults to "Combine them". Devices show
-  "Trusted since <date>", and one under an hour old is marked "Too new for some actions".
+  "Trusted since <date>"; a device under an hour old marked "Too new for some actions" is **Planned**: the Engine has no such rule yet.
 - The sidebar footer shows avatar, sync status and gear when signed in; signed out it keeps the Settings row; below the
   collapse width the status moves to a title-bar icon. Only zones that exist are listed in the sync popover.
 - Copy says every trusted device can open all of the person's Orbyn data (D10).

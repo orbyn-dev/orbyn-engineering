@@ -13,10 +13,12 @@ check that proves it. Nothing here is a claim that the controls are in place bef
 | Asset | Where it lives | Why it matters |
 | --- | --- | --- |
 | Device signing key (Ed25519) and agreement key (X25519) | OS keychain item | They are this device's identity. With them an attacker signs changes as the device and opens zone-key envelopes sent to it |
-| Session token | OS keychain item, and process memory | It authorises requests to the Engine as this device |
-| Vault key (32 bytes) | OS keychain item | Opens the sealed snapshot |
+| Session token | OS keychain item, and `orbynd` process memory | It authorises requests to the Engine as this device |
+| Vault key (32 bytes), with the snapshot counter and hash | One OS keychain item (a 32-byte key plus a counter and a hash fit well inside a Windows credential) | Opens the sealed snapshot, and lets the app refuse an older one |
 | Sync snapshot (`Engine::snapshot`: the zone-key cache and the cursors) | A file in the data folder, sealed with XChaCha20-Poly1305 under the vault key | It holds zone keys, so it is as secret as the keys. Zone keys open every record in the zone |
 | Password | Typed once; held in memory as a `SecretString` for the length of one call | Never stored. It does not reach the Engine (OPAQUE) |
+| `orbynd`'s memory | The running process | Holds the session token and the loaded device keys and zone keys in the clear while the app runs |
+| The app's own binaries (`orbynd`, the desktop shell, the web assets) | The install folder | Whoever replaces them sees the next password the person types |
 | The data folder (`orbyn.sqlite3`, `service.json`, account files) | The OS app-data folder | Holds all threads, settings, the outbox (private, though not key material) and the per-launch service token handle |
 
 **D10 raises the stakes.** Every trusted device holds every zone key of the account, so a key taken from this app also
@@ -30,7 +32,9 @@ prompt-injected agent can all:
 - read any file the person can read, including the data folder;
 - read the environment of its own process and, on most systems, of other processes of the same user;
 - run commands and open network connections;
-- call the local Orbyn API if it finds the service token in `service.json`.
+- call the local Orbyn API if it finds the service token in `service.json`;
+- read the memory of other processes of the same user, where the OS allows it (control 6);
+- replace programs the person can write to, including the app's own (control 7).
 
 Orbyn can approve or deny only the actions an engine asks it about. It never hears about an engine's own file reads
 (the gate's action kinds are `Command`, `FileChange`, `Tool`, `Computer`, `Browser` and `Network`:
@@ -46,18 +50,43 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
   instead of the secret. The items use a fixed service name and an account name derived from the data folder's profile id.
   - *Check:* on a signed build, `security find-generic-password -s <service> -a <account> -w` run from Terminal must
     raise the system prompt, or fail when run without a user. A unit test covers the access-control construction.
-  - *Limit:* an unsigned development build has no stable identity, so the list protects nothing there. The release
-    build must be signed (the Developer ID work in parity rows P34 and P35).
+  - *Rule and conditions* (Engineering 1): a rule that trusts only `orbynd` works with the desktop shell's sidecar. It
+    names `orbynd`'s designated requirement (team ID plus identifier) and survives updates signed with the same
+    Developer ID and identifier. It needs Developer ID signing with hardened runtime and the entitlements in control 6
+    (the signing work is parity rows P34 and P35).
+  - *Development builds.* An unsigned or ad-hoc build has no stable identity, so the list protects nothing there. Such
+    builds use a different service name or the in-memory `KeyStore`, and never create an item a release build would
+    later trust.
+  - *API.* The old trusted-application ACL API is deprecated. The data-protection keychain needs
+    `keychain-access-groups` on the sidecar, and **the provisioning that needs under Developer ID is not verified**.
+    The implementation PR must settle which API is used and verify it.
+  - *"Always Allow"* on the system prompt widens the rule to that program permanently, for the item. The person must
+    read the prompt, and the Account page should not teach them to click it.
 - **Windows.** Credential Manager encrypts each item for the signed-in user with DPAPI. **It offers no per-program
   rule**: any process running as the same user can read the item. Said plainly, on Windows the keychain defends
-  against another user and against a stolen disk, not against an engine. There the other controls carry the weight,
-  and the residual risk below stays open.
+  against another user and against a stolen disk, not against an engine. **On Windows any program the person runs can act
+  as this device**: it can read the device key and the token (and, per control 6, orbynd's memory). The other controls
+  carry the weight there, and the residual risk below stays open. The Account page says so (a design request, below).
 - **Other platforms.** Phase 1 supports sign-in on macOS and Windows only. Without a keychain the `KeyStore` is
   unavailable and sign-in is off; there is no fallback to a file.
 - **What `KeyStore` holds.** Exactly the device signing key, the agreement key, the device id, the account id, the
   session token and the vault key. The zone-key cache is in the sealed snapshot, not in `KeyStore`.
 - **Size.** Windows limits a credential to about 2.5 KiB, so the snapshot is not a keychain item: it is one file,
   sealed with the vault key (control 3 covers the file). The client does no IO, so the app writes it.
+- **The snapshot needs rollback protection, not only secrecy.** It carries the newest verified protection setting and
+  the removal sequence, which only move forward (Engine `docs/architecture.md`, Keychain: the protection chain and
+  removal sequences). An engine can put an older sealed file back. So:
+  - the vault-key keychain item also holds a counter and a hash of the latest snapshot, and the app refuses a file
+    that is older (lower counter) or does not match;
+  - the snapshot is sealed with an AEAD (XChaCha20-Poly1305) whose associated data binds the profile id, the purpose
+    (`orbyn/engineering/snapshot`) and the format version, so it cannot be moved to another profile or reused as
+    another kind of file.
+  - *Check:* tests that an older snapshot, one from another profile and one with a changed format version are each
+    refused.
+- **Sign-out destroys key material.** After sign-out, device removal or `Unauthorized`, the app deletes the device
+  keys, the token and the vault key from the keychain and the sealed snapshot file; only settings stay. Without the
+  vault key the old file cannot be read. Otherwise a removed device would keep every zone key (D10).
+  - *Check:* after each of the three, the keychain has no item for the profile and the snapshot file is gone.
 
 ### 2. No account material in any process environment (to build)
 
@@ -140,10 +169,60 @@ Controls:
 ### 5. The local API is not a way around the keychain (to build)
 
 An engine that finds `service.json` holds the service token and can call any `/api` route (`docs/architecture.md:2450-2460`,
-`:2516`). So no account route may hand back secret material (control 4). The sign-in and sign-up routes need the
-password, which an engine does not have, and approving a new device needs a pending request that only someone with the
-password can start. Sign-out and removing a device are reachable, and are a denial of service, not a disclosure
-(see the residual risks).
+`:2516`). Two things follow.
+
+- **It cannot read a secret.** No account route may hand back secret material (control 4).
+- **It can make `orbynd` sign.** The engine cannot read the keys, but through the daemon it can, per the Engine's
+  architecture (Accounts and devices, Keychain):
+  - sign out every session (a bearer token is enough);
+  - remove a device;
+  - turn two-factor off (a device signature, no code);
+  - change the protection setting, including to Advanced, which destroys the escrow copy;
+  - record deletes and zone-key rotations.
+
+  That is more than a denial of service. Approving a **new** device is different: it needs the person's digits on both
+  screens, and starting a pending device needs the password, so an engine cannot do it alone.
+
+Controls (decision D12 and Engineering 1's answer):
+
+- **Confirm it's you.** Removing a device, signing out every session, turning two-factor off and changing protection
+  each need the password typed again within the last 10 minutes, as account deletion already does. The Engine side is
+  orbyn-engine#120 and is needed before real-account sign-in (not for the local end-to-end test). The app asks with a
+  "Confirm it's you" password prompt on every platform, and the check is in `orbynd`, not only in the page. Approving
+  a device keeps its two-sided digits plus the password. Signing out **this device only** stays open.
+- **No native-shell presence option.** It was dropped: an agent's browser or computer tools can drive the web UI, and
+  the password is the one thing an engine does not hold.
+- **Autopilot.** The always-denied list in the Crew plan now includes "changing account, device or sign-in state".
+  Every account route that changes state must be refusable by that policy, so slice 4f can deny it with no special
+  case ([crew.md](crew.md#autopilot)).
+- *Check:* tests that each of the four routes fails without a password in the last 10 minutes and that the route table
+  is annotated so a new state-changing route cannot skip the rule.
+
+### 6. Orbynd's memory (to build, as a release check)
+
+A same-user process can read the session token and the loaded device and zone keys out of `orbynd`'s memory. On
+Windows any process of the same user can. On macOS it takes `lldb` or `task_for_pid`, which hardened runtime blocks
+unless the app carries `get-task-allow` or `disable-library-validation`. Controls:
+
+- Release builds use hardened runtime and carry neither entitlement.
+- *Release check:* `codesign -d --entitlements - <orbynd>` on the built sidecar must show neither
+  `com.apple.security.get-task-allow` nor `com.apple.security.cs.disable-library-validation`, and `codesign -dv` must
+  show the `runtime` flag. It runs where the release is verified (parity row P35).
+- Secrets are zeroed on drop (the Engine's secret types) and held only as long as a call needs.
+- **On Windows memory is as open as Credential Manager**: there is no equivalent of hardened runtime that stops a
+  same-user process reading it.
+
+### 7. The app's own binaries (to build; partly the OS)
+
+With a user-owned install, an engine can replace `orbynd` or the web assets and capture the next password the person
+types. A Windows per-user install, or a macOS app the person dragged to a folder they own, is writable by the person.
+
+- **macOS** relies on App Management (an app may not modify another's bundle without permission) and on signature
+  checks at launch, which fail for a replaced binary. These protect an installed, signed `.app`, not a development build.
+- **Windows per-user install is fully exposed** to this, since the install folder belongs to the user. It is fixed
+  only by a machine-wide install (the package's per-machine option, parity row P32), which needs administrator rights.
+- The Account page could say this for Windows; it is a design request.
+- *Check:* the release verification confirms the signature and the install location of the packaged app.
 
 ## What this cannot defend
 
@@ -152,7 +231,8 @@ password can start. Sign-out and removing a device are reachable, and are a deni
 - **An engine with full disk access reading the keychain through the OS prompt.** On macOS, if the person grants
   Orbyn Full Disk Access, the engines it starts inherit it. An engine can then trigger the keychain prompt, and a
   person who clicks Allow hands over the item. The prompt names the requesting program, but the person must read it.
-- **Windows.** No per-program control exists in Credential Manager (control 1).
+- **Windows.** No per-program control exists in Credential Manager (control 1), and none for process memory (control 6) or a user-owned install (control 7).
+- **A fake Engine on the loopback port** (local development only). A same-user process could listen where the local Engine runs and, during sign-up, receive the OPAQUE registration record, which allows offline password guessing. That is fine for throwaway test accounts. **Never use a real password against the local stack.**
 - **A compromised Engine server.** Out of scope here; see the Engine's own threat model. D10 means its failure is
   not isolated per app either.
 
@@ -160,19 +240,25 @@ password can start. Sign-out and removing a device are reachable, and are a deni
 
 1. **One key opens everything.** A device key taken from Engineering opens Planner's zones too (D10), until
    connected-app grants exist. The Account page says every trusted device can open all of the person's Orbyn data.
-2. **Windows has no keychain separation between engine and person.** A coding engine on Windows can read the item.
-   Mitigation is limited to controls 2 to 4 and a short session token.
-3. **The local API token is readable by an engine.** It can sign the device out or remove a device. It cannot read a
-   secret. Whether account-changing routes should demand something an engine cannot supply is an open question.
+2. **Windows has no separation between engine and person.** A coding engine on Windows can read the item and the
+   process memory, and replace a per-user install. Mitigation is controls 2 to 5. **A shorter session token does not
+   help there**: the device key sits beside the token in a readable credential, so an engine can act as the device
+   without the token. The session token is opaque, 32 bytes; each use pushes its expiry 30 days out, capped at one year
+   after sign-in, and there is no refresh token. A device-signed refresh would not help on Windows either. The effort goes
+   into control 5.
+3. **The daemon will sign what the local API asks, until orbyn-engine#120 and the app's password rule are in.**
+   Control 5 lists what an engine can do through it. Real-account sign-in waits for both.
 4. **Browser and computer actions.** An agent with the browser or the computer gateway might click Approve in
    Orbyn's own window. These actions always reach a person or a rule (`approvals.rs:101`, `mode_accepts`), but a
    person who allows them broadly weakens this. Approval also needs the digit comparison on the other device.
 5. **Text matching is evadable** (control 3, last bullet).
 6. **An unsigned or re-signed build** loses the macOS access rule and gets prompts or no protection.
-7. **Backups.** Time Machine and similar copy the data folder, including the sealed cache. The vault key is in the
-   keychain, which is backed up separately; a backup of both opens the cache.
+7. **Backups.** Time Machine and similar copy the data folder, including the sealed snapshot. The vault key is in the
+   keychain, which is backed up separately; a backup of both opens the snapshot, and restoring an old one is caught by
+   the counter only if the keychain item is newer.
 8. **Local Engine for development** runs over plain `http` on loopback (D11): safe on one computer, wrong anywhere
-   else, so the code refuses other `http` addresses.
+   else, so the code refuses other `http` addresses (see the address rule in the design note).
+9. **Memory and binary replacement** (controls 6 and 7) stay open on Windows.
 
 ## Checks
 
@@ -182,17 +268,21 @@ password can start. Sign-out and removing a device are reachable, and are a deni
 | Environment scrub | `child_env` unit tests for every entry point; a spawned child prints its environment; the arch script rule on new spawns |
 | Account files | Mode `0600` and folder `0700` test; write, read and `outside` read refused; an action naming the folder denied in every permission mode; data-folder scan for canary bytes after sign-in |
 | No key in logs | Canary tests over errors, status, TRACE capture and diagnostics events; no request-logging layer; contract field test |
+| Memory | `codesign -d --entitlements` and the `runtime` flag on the release sidecar |
+| Snapshot | Older, foreign-profile and wrong-version files refused; keychain and file empty after sign-out |
+| Sensitive routes | Four routes refuse without a password in the last 10 minutes |
 | Gate | A test that every sign-in route answers `account_disabled` under `Off` and sends no request |
 
 ## Open questions
 
-For Engineering 1, with the lead:
+Answered by Engineering 1 and folded in above: sensitive routes (decision D12), the macOS rule with the sidecar, and the
+session lifetime. Still open, with Engineering 1's security reviewer:
 
-0. `default_permission_mode` is on the agreed synced list. A looser mode set on one device then applies to engines on
+1. `default_permission_mode` is on the agreed synced list. A looser mode set on one device then applies to engines on
    every other device. Is that accepted, or should a raise be held until the person confirms it on the receiving device?
+2. Which macOS keychain API (control 1), and what provisioning it needs under Developer ID: not verified.
 
-1. Should account-changing routes (sign-out, remove device, approve) require something an engine with the service
-   token cannot supply, such as a confirmation from the desktop shell, or is "denial of service only" acceptable?
-2. Is the macOS "trust only `orbynd`" list compatible with the desktop shell starting `orbynd` as a sidecar with its own
-   signature, and with how releases are signed?
-3. Does the Engine want a short session-token lifetime on the desktop client, to reduce the Windows exposure?
+## Design requests (the Designer owns these; nothing is built)
+
+- The "Confirm it's you" password prompt for the four sensitive actions in control 5.
+- Account page copy that says, on Windows, any program you run can act as this device.

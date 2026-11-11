@@ -416,6 +416,7 @@ first, then a person").
      - Writing or deleting outside the worktree
      - Force-push or history rewrite on main
      - Changing branch protection, permissions or settings
+     - Changing account, device or sign-in state (added by decision D12; account routes must be refusable by this rule, see [account.md](account.md#sensitive-account-actions))
      - Editing answer keys, check files or `.orbyn/crew.json`
      - Production deploys
      - Publishing or messaging outside the repository
