@@ -21,6 +21,12 @@ const filterNeedsMyReview = [
   { do: "press", key: "Escape" },
 ];
 
+/** Opens the side panel, then each named tab from the + launcher, the way a person does. */
+const openTabs = (names) => [
+  click("button", "Show side panel"),
+  ...names.flatMap((name) => [click("button", "Open a tab"), click("menuitem", name, { prefix: true })]),
+];
+
 export const FRAMES = {
   // The shell.
   "shell-home": { route: "#/" },
@@ -98,6 +104,15 @@ export const FRAMES = {
   "thread-tools": { route: "#/threads/t-tools" },
   "thread-tools-live": { route: "#/threads/t-tools-live" },
   "thread-details": { route: "#/threads/t-done", steps: [click("button", "Details")] },
+
+  // The side panel: starts with no tab, the + launcher, the tab menu (Engineer Designs v98). panel-tabs-drag is a pointer drag and has no verb here.
+  "panel-empty": { route: "#/threads/t-done", steps: [click("button", "Show side panel")] },
+  "panel-launcher-menu": { route: "#/threads/t-done", steps: [...openTabs(["Changes"]), click("button", "Open a tab")] },
+  "panel-tab-menu": { route: "#/threads/t-done", steps: [...openTabs(["Changes", "Browser", "Tools"]), click("tab", "Changes"), click("button", "Tab menu")] },
+  "panel-tabs-single": { route: "#/threads/t-done", steps: openTabs(["Changes"]) },
+  "panel-browser": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser"]) },
+  "panel-activity": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity"]) },
+  "panel-side": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity", "Side chat"]) },
 
   // Settings: one page for each section.
   "s-general": { route: "#/settings/general" },

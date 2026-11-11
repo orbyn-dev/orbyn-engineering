@@ -11,12 +11,10 @@ export const sideChatsOf = (threads: Record<string, Thread>, parentId: string) =
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 
 export function showSideChat(id: string) {
-  const { setPrefs, setPanelOpen } = useUi.getState();
-  setPrefs({
-    sideChat: id,
-    panelTab: "side",
-  });
-  setPanelOpen(true);
+  const { setPrefs, reopenPanelTab } = useUi.getState();
+  // The panel starts with no tab: the Side chat tab opens, takes focus and shows the panel.
+  setPrefs({ sideChat: id });
+  reopenPanelTab("side");
 }
 
 /** Starts from what the thread knows; the thread itself keeps working. */

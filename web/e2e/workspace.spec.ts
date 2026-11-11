@@ -434,7 +434,8 @@ async function openPanel(page: import("@playwright/test").Page) {
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto("/__mock/scenario/default?to=/%23/threads/t-done");
   await page.getByRole("button", { name: "Show side panel" }).click();
-  await expect(page.getByRole("tablist", { name: "Panel tabs" })).toBeVisible();
+  // The panel has no tab yet, so its strip is the + alone.
+  await expect(page.getByRole("button", { name: "Open a tab" })).toBeVisible();
   // The panel slides in; wait until its left edge stops moving.
   await expect
     .poll(() =>
@@ -472,13 +473,113 @@ const slots = (page: import("@playwright/test").Page) =>
     }),
   );
 
+/** The side panel starts with no tab: opens these from the + launcher, the way a person does. */
+async function openTabs(page: import("@playwright/test").Page, names: string[]) {
+  for (const name of names) {
+    await page.getByRole("button", { name: "Open a tab" }).click();
+    await page.getByRole("menuitem", { name }).click();
+    await expect(page.getByRole("tab", { name, exact: true })).toHaveAttribute("aria-selected", "true");
+  }
+}
+const FIVE = ["Changes", "Files", "Browser", "Activity", "Side chat"];
+
+test("the side panel starts with no tab, offers three choices, and the + opens a tab from the launcher", async ({ page }) => {
+  await openPanel(page);
+  await expect(page.getByRole("tab")).toHaveCount(0);
+  await expect(page.getByText("Nothing open")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Tab menu" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open a tab" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText([/^Changes/, /^Browser/, "Activity", "Side chat", "Tools", "Files"]);
+  await page.getByRole("menuitem", { name: "Browser" }).click();
+  await expect(page.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".ctx-title b")).toHaveText("Browser");
+  // The empty panel's own choices open a tab too, and closing every tab brings the empty panel back.
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await page.getByRole("menuitem", { name: "Maximise panel" }).waitFor();
+  await page.keyboard.press("Escape");
+  await openTabs(page, ["Tools"]);
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await page.getByRole("menuitem", { name: "Close all tabs" }).click();
+  await expect(page.getByText("Nothing open")).toBeVisible();
+  await page.locator(".panel-empty").getByRole("button", { name: "Changes" }).click();
+  await expect(page.getByRole("tab", { name: "Changes" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("a tab dragged along the strip lands where the line shows, and Reset tab order puts the default back", async ({ page }) => {
+  await openPanel(page);
+  await openTabs(page, ["Changes", "Browser", "Tools"]);
+  const slot = (name: string) => page.getByRole("tab", { name, exact: true });
+  const from = (await slot("Tools").boundingBox())!;
+  const to = (await slot("Changes").boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x - 30, from.y + 2, { steps: 6 });
+  await page.mouse.move(to.x + 4, to.y + 2, { steps: 6 });
+  await expect(page.locator(".ctx-ins")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(page.locator(".ctx-ins")).toHaveCount(0);
+  const order = () => page.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label")));
+  expect(await order()).toEqual(["Changes", "Browser", "Tools"]);
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x - 30, from.y + 2, { steps: 6 });
+  await page.mouse.move(to.x + 4, to.y + 2, { steps: 6 });
+  await page.mouse.up();
+  expect(await order()).toEqual(["Tools", "Changes", "Browser"]);
+  await page.getByRole("button", { name: "Open a tab" }).click();
+  await page.getByRole("menuitem", { name: "Reset tab order" }).click();
+  expect(await order()).toEqual(["Changes", "Browser", "Tools"]);
+});
+
+test("the tab menu closes the others or all of them, announces it, and Close all returns to the empty panel", async ({ page }) => {
+  await openPanel(page);
+  await openTabs(page, ["Changes", "Browser", "Tools"]);
+  await page.getByRole("tab", { name: "Browser" }).click();
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]);
+  await page.getByRole("menuitem", { name: "Close other tabs" }).click();
+  await expect(page.getByRole("tab")).toHaveCount(1);
+  await expect(page.getByRole("tab", { name: "Browser" })).toBeFocused();
+  await expect(page.locator(".context [role=status]").last()).toHaveText("Other tabs closed");
+  // One tab left: the menu has Maximise panel only.
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Maximise panel"]);
+  await page.keyboard.press("Escape");
+  await openTabs(page, ["Tools"]);
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await page.getByRole("menuitem", { name: "Close all tabs" }).click();
+  await expect(page.getByText("Nothing open")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open a tab" })).toBeFocused();
+  await expect(page.locator(".context [role=status]").last()).toHaveText("All tabs closed. Nothing is open.");
+});
+
+test("each thread remembers its own tabs, and closing the panel does not forget them", async ({ page }) => {
+  await openPanel(page);
+  await openTabs(page, ["Changes", "Tools"]);
+  await page.getByRole("tab", { name: "Tools" }).click();
+  await page.evaluate(() => { window.location.hash = "#/threads/t-failed"; });
+  await expect(page.getByText("Nothing open")).toBeVisible();
+  await openTabs(page, ["Activity"]);
+  await page.evaluate(() => { window.location.hash = "#/threads/t-done"; });
+  await expect(page.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab")).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
+  // Closing the panel with the × and opening it again brings the tabs back.
+  await page.getByRole("button", { name: "Close side panel" }).click();
+  await expect(page.getByRole("button", { name: "Open a tab" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show side panel" }).click();
+  await expect(page.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Changes" })).toBeVisible();
+});
+
 test("the panel's tabs are icon-only 32px slots that never move when another tab opens, and the arrow keys walk them", async ({ page }) => {
   await openPanel(page);
+  await openTabs(page, FIVE);
   await page.getByRole("tab", { name: "Files" }).click();
   const row = page.getByRole("tablist", { name: "Panel tabs" });
   await expect(row.getByRole("tab")).toHaveText(["", "", "", "", ""]);
   const names = await row.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label")));
-  expect(names).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat"]);
+  expect(names).toEqual(["Changes", "Browser", "Activity", "Side chat", "Files"]);
   await expect(page.getByRole("button", { name: "More tabs" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Open a tab" })).toBeVisible();
   // The name of the open tab is on the line under the strip.
@@ -487,18 +588,19 @@ test("the panel's tabs are icon-only 32px slots that never move when another tab
   const files = page.getByRole("tab", { name: "Files" });
   await expect(files).toHaveAttribute("aria-selected", "true");
   await files.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "Browser" })).toBeFocused();
-  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowLeft");
   await expect(page.getByRole("tab", { name: "Side chat" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Side chat" })).toBeFocused();
   await page.keyboard.press("Home");
-  await expect(page.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Changes" })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("End");
+  await expect(page.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
 });
 
 for (const width of [380, 320]) {
   test(`at ${width}px every slot is 32px and stays put as each tab is opened`, async ({ page }) => {
     await openPanel(page);
+    await openTabs(page, FIVE);
     await resize(page, width);
     const before = await slots(page);
     expect(before.length).toBeGreaterThan(2);
@@ -515,12 +617,13 @@ for (const width of [380, 320]) {
 
 test("with Tools open all six tabs fit at 320px, so there is no ... button", async ({ page }) => {
   await openPanel(page);
+  await openTabs(page, FIVE);
   await resize(page, 320);
   await page.getByRole("button", { name: "Open a tab" }).click();
   await page.getByRole("menuitem", { name: "Tools" }).click();
   await expect(page.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
   const names = await page.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("aria-label")));
-  expect(names).toEqual(["Diff", "Files", "Browser", "Activity", "Side chat", "Tools"]);
+  expect(names).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "Files"]);
   await expect(page.getByRole("button", { name: "More tabs" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Open a tab" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Close side panel" })).toBeVisible();
@@ -528,17 +631,19 @@ test("with Tools open all six tabs fit at 320px, so there is no ... button", asy
 
 test("a tab picked from the ... menu takes the last visible slot, and the open tab always shows", async ({ page }) => {
   await openPanel(page);
+  await openTabs(page, FIVE);
+  await page.getByRole("tab", { name: "Changes" }).click();
   await resize(page, 240);
   const before = await slots(page);
   const visible = before.filter((slot) => !["More tabs", "Open a tab"].includes(slot.name!)).map((slot) => slot.name);
-  expect(visible).toEqual(["Diff", "Files"]);
+  expect(visible).toEqual(["Changes", "Browser"]);
   await page.getByRole("button", { name: "More tabs" }).click();
   const menu = page.getByRole("menu", { name: "More tabs" });
-  await expect(menu.getByRole("menuitem")).toHaveText(["Browser", "Activity", "Side chat"]);
+  await expect(menu.getByRole("menuitem")).toHaveText(["Activity", "Side chat", "Files"]);
   await menu.getByRole("menuitem", { name: "Side chat" }).click();
   await expect(page.getByRole("tab", { name: "Side chat" })).toHaveAttribute("aria-selected", "true");
   const after = await slots(page);
-  expect(after.map((slot) => slot.name)).toEqual(["Diff", "Side chat", "More tabs", "Open a tab"]);
+  expect(after.map((slot) => slot.name)).toEqual(["Changes", "Side chat", "More tabs", "Open a tab"]);
   // Only the last visible slot changed hands; every slot sits where it did.
   expect(after.map((slot) => slot.x)).toEqual(before.map((slot) => slot.x));
   // Escape closes the menu and gives focus back to the "..." button.
@@ -550,6 +655,7 @@ test("a tab picked from the ... menu takes the last visible slot, and the open t
 
 test("the line under the strip names the open tab, and its menu closes the tab", async ({ page }) => {
   await openPanel(page);
+  await openTabs(page, FIVE);
   await page.getByRole("tab", { name: "Browser" }).click();
   await expect(page.locator(".ctx-title b")).toHaveText("Browser");
   await page.getByRole("button", { name: "Tab menu" }).click();
