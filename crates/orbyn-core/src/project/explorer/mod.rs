@@ -10,9 +10,10 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
     ExplorerChange, ExplorerChanges, ExplorerFile, ExplorerFileKind, ExplorerReadOnlyReason,
@@ -37,18 +38,24 @@ pub const STATUS_FRESH: Duration = Duration::from_secs(5);
 pub const STATUS_MAX_AGE: Duration = Duration::from_secs(30);
 /// A folder read with no status kept waits this long for Git, then answers without letters.
 const COLD_WAIT: Duration = Duration::from_millis(400);
-/// Statuses read at once, across every project.
-const STATUS_READS: usize = 3;
 /// Worktrees whose status a listing starts reading; the rest show no summary.
 const WARM_LIMIT: usize = 32;
 /// The text of a file the explorer returns. Larger is reported by size only.
 pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Statuses one project reads at once, so a project whose Git hangs cannot hold the others.
+const STATUS_READS: usize = 2;
+/// After a well-formed id the list did not hold, the list is not read again for this long.
+const MISS_RETRY: Duration = Duration::from_secs(5);
+/// A topic is announced at once, then at most once more per this long.
+const ANNOUNCE_GAP: Duration = Duration::from_millis(200);
+
 /// The kept answers: each project's worktree list and each worktree's status.
 pub struct ExplorerReads {
     lists: Swr<Vec<WorktreeRecord>>,
     statuses: Swr<Arc<Snapshot>>,
-    gate: Arc<Semaphore>,
+    gates: Mutex<HashMap<String, Arc<Semaphore>>>,
+    misses: Mutex<HashMap<String, Instant>>,
 }
 
 impl Default for ExplorerReads {
@@ -56,7 +63,8 @@ impl Default for ExplorerReads {
         Self {
             lists: Swr::new(LIST_FRESH, LIST_MAX_AGE, 32),
             statuses: Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 128),
-            gate: Arc::new(Semaphore::new(STATUS_READS)),
+            gates: Mutex::default(),
+            misses: Mutex::default(),
         }
     }
 }
@@ -65,10 +73,45 @@ fn topic(project_id: &str) -> String {
     format!("explorer:{project_id}")
 }
 
+fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Passes a topic on at once, and folds the ones that follow within `ANNOUNCE_GAP` into one
+/// more, so a listing that starts many status reads sends a handful of messages, not one each.
+fn coalescing(notify: Notify) -> Notify {
+    let held: Arc<Mutex<HashMap<String, bool>>> = Arc::default();
+    Arc::new(move |topic: &str| {
+        {
+            let mut held = locked(&held);
+            if let Some(again) = held.get_mut(topic) {
+                *again = true;
+                return;
+            }
+            held.insert(topic.to_owned(), false);
+        }
+        notify(topic);
+        let (later, notify, name) = (held.clone(), notify.clone(), topic.to_owned());
+        let settle = async move {
+            tokio::time::sleep(ANNOUNCE_GAP).await;
+            if locked(&later).remove(&name) == Some(true) {
+                notify(&name);
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn(settle)),
+            Err(_) => drop(locked(&held).remove(topic)),
+        }
+    })
+}
+
 impl ExplorerReads {
     pub fn set_notify(&self, notify: &Notify) {
+        let notify = coalescing(notify.clone());
         self.lists.set_notify(notify.clone());
-        self.statuses.set_notify(notify.clone());
+        self.statuses.set_notify(notify);
     }
 
     /// Forgets everything kept, without telling the windows: every write request calls
@@ -76,6 +119,7 @@ impl ExplorerReads {
     pub fn invalidate(&self) {
         self.lists.invalidate_all();
         self.statuses.invalidate_all();
+        locked(&self.misses).clear();
     }
 
     /// A run ended or files moved in this project: forgets its answers and tells the
@@ -84,7 +128,15 @@ impl ExplorerReads {
         let prefix = key(&[project_id]);
         self.lists.invalidate(&prefix);
         self.statuses.invalidate(&prefix);
+        locked(&self.misses).remove(project_id);
         self.lists.announce(&topic(project_id));
+    }
+
+    fn gate(&self, project_id: &str) -> Arc<Semaphore> {
+        locked(&self.gates)
+            .entry(project_id.to_owned())
+            .or_insert_with(|| Arc::new(Semaphore::new(STATUS_READS)))
+            .clone()
     }
 }
 
@@ -96,9 +148,34 @@ struct Target {
     is_main: bool,
     path: PathBuf,
     missing: bool,
+    /// Git's own records and the folder agree it is this repository's worktree. A
+    /// redirected `gitdir` file, a bare repository or a prunable entry is not one, and
+    /// is never read.
+    member: bool,
 }
 
 impl Target {
+    fn new(
+        project: &Project,
+        common: Option<&PathBuf>,
+        is_main: bool,
+        record: WorktreeRecord,
+    ) -> Self {
+        let path = plain(&record.path);
+        let member = !record.prunable
+            && !record.bare
+            && (is_main || common.is_none_or(|common| guard::belongs(&path, common)));
+        Self {
+            project: project.clone(),
+            id: worktree_id(&path),
+            is_main,
+            missing: !path.is_dir(),
+            member,
+            path,
+            record,
+        }
+    }
+
     fn reason(&self) -> Option<ExplorerReadOnlyReason> {
         if self.missing || self.record.prunable {
             Some(ExplorerReadOnlyReason::Missing)
@@ -131,6 +208,27 @@ fn plain(path: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|_| strip_verbatim(&path.to_string_lossy()).into())
 }
 
+/// The worktrees a project may show: a bare repository is no checkout and is left out, and
+/// only the first entry that is a checkout is the main one.
+struct Members {
+    /// The repository's common Git directory, when there is one to check against.
+    common: Option<PathBuf>,
+    list: Vec<(bool, WorktreeRecord)>,
+}
+
+fn members(records: Vec<WorktreeRecord>, git: bool) -> Members {
+    let common = git
+        .then(|| records.first().and_then(guard::common_dir))
+        .flatten();
+    let list = records
+        .into_iter()
+        .enumerate()
+        .filter(|(_, record)| !record.bare)
+        .map(|(index, record)| (index == 0, record))
+        .collect();
+    Members { common, list }
+}
+
 impl Core {
     /// Explorer reads are file reads: the folder must be trusted.
     fn explorer_project(&self, project_id: &str) -> Result<Project> {
@@ -141,23 +239,27 @@ impl Core {
         Ok(project)
     }
 
-    async fn explorer_records(
-        &self,
-        project: &Project,
-        refresh: bool,
-    ) -> Result<Vec<WorktreeRecord>> {
+    async fn explorer_members(&self, project: &Project, refresh: bool) -> Result<Members> {
         if !project.is_git {
-            return Ok(vec![WorktreeRecord {
-                path: PathBuf::from(&project.path),
-                branch: None,
-                revision: String::new(),
-                detached: false,
-                locked: false,
-                prunable: false,
-            }]);
+            return Ok(Members {
+                common: None,
+                list: vec![(
+                    true,
+                    WorktreeRecord {
+                        path: PathBuf::from(&project.path),
+                        branch: None,
+                        revision: String::new(),
+                        detached: false,
+                        locked: false,
+                        prunable: false,
+                        bare: false,
+                    },
+                )],
+            });
         }
         let path = PathBuf::from(&project.path);
-        self.explorer
+        let records = self
+            .explorer
             .lists
             .get(
                 &key(&[&project.id, "list"]),
@@ -165,7 +267,8 @@ impl Core {
                 refresh,
                 move || async move { worktree_records(&path).await },
             )
-            .await
+            .await?;
+        Ok(members(records, true))
     }
 
     /// The worktree `worktree_id` of `project_id`, or not found. A name outside the
@@ -175,20 +278,27 @@ impl Core {
         if !well_formed(worktree_id) {
             return Err(CoreError::NotFound("worktree".into()));
         }
-        // A worktree made a moment ago is not in a kept list, so one miss reads again.
+        // A worktree made a moment ago is not in a kept list, so one miss reads again, but
+        // not again for a few seconds, so a made-up id cannot make Git list on every request.
         for refresh in [false, true] {
-            let records = self.explorer_records(&project, refresh).await?;
-            for (index, record) in records.into_iter().enumerate() {
-                let path = plain(&record.path);
-                if worktree_id == self::worktree_id(&path) {
-                    return Ok(Target {
-                        missing: !path.is_dir(),
-                        id: worktree_id.to_owned(),
-                        is_main: index == 0,
-                        path,
-                        record,
-                        project,
-                    });
+            if refresh {
+                let mut misses = locked(&self.explorer.misses);
+                if misses
+                    .get(project_id)
+                    .is_some_and(|at| at.elapsed() < MISS_RETRY)
+                {
+                    break;
+                }
+                if misses.len() >= 256 {
+                    misses.clear();
+                }
+                misses.insert(project_id.to_owned(), Instant::now());
+            }
+            let found = self.explorer_members(&project, refresh).await?;
+            for (is_main, record) in found.list {
+                let target = Target::new(&project, found.common.as_ref(), is_main, record);
+                if target.id == worktree_id {
+                    return Ok(target);
                 }
             }
         }
@@ -196,15 +306,18 @@ impl Core {
     }
 
     fn explorer_guard(&self, target: &Target) -> Result<Guard> {
-        if target.missing {
+        if target.missing || !target.member {
             return Err(CoreError::NotFound("worktree".into()));
         }
-        // The library's own `repo/` holds other projects and is never shown through it.
+        // The library's `repo/` holds other projects and is never shown through a folder that
+        // holds the library, whether that folder is the library or sits above it.
         let library_repo = self
             .workspace
             .root()
             .ok()
-            .filter(|root| crate::util::canonicalize(root).is_ok_and(|root| root == target.path))
+            .filter(|root| {
+                crate::util::canonicalize(root).is_ok_and(|root| root.starts_with(&target.path))
+            })
             .map(|root| root.join("repo"));
         Guard::new(&target.path, &self.config.data_dir, library_repo)
     }
@@ -217,10 +330,10 @@ impl Core {
         refresh: bool,
         wait: Duration,
     ) -> (Option<Arc<Snapshot>>, ExplorerChanges) {
-        if !target.project.is_git || target.missing {
+        if !target.project.is_git || target.missing || !target.member {
             return (None, ExplorerChanges::Unavailable);
         }
-        let (root, gate) = (target.path.clone(), self.explorer.gate.clone());
+        let (root, gate) = (target.path.clone(), self.explorer.gate(&target.project.id));
         let read = move || async move {
             let _turn = gate
                 .acquire_owned()
@@ -263,8 +376,13 @@ impl Core {
         {
             return Err(CoreError::NotFound("thread".into()));
         }
-        let records = self.explorer_records(&project, refresh).await?;
-        let paths: Vec<PathBuf> = records.iter().map(|record| plain(&record.path)).collect();
+        let found = self.explorer_members(&project, refresh).await?;
+        let targets: Vec<Target> = found
+            .list
+            .into_iter()
+            .map(|(is_main, record)| Target::new(&project, found.common.as_ref(), is_main, record))
+            .collect();
+        let paths: Vec<PathBuf> = targets.iter().map(|target| target.path.clone()).collect();
         // A thread belongs to the deepest worktree its folder is in.
         let homes: Vec<Option<usize>> = threads
             .iter()
@@ -275,17 +393,8 @@ impl Core {
                     .max_by_key(|&at| paths[at].components().count())
             })
             .collect();
-        let mut worktrees = Vec::with_capacity(records.len());
-        for (index, record) in records.into_iter().enumerate() {
-            let path = paths[index].clone();
-            let target = Target {
-                missing: !path.is_dir(),
-                id: worktree_id(&path),
-                is_main: index == 0,
-                path,
-                record,
-                project: project.clone(),
-            };
+        let mut worktrees = Vec::with_capacity(targets.len());
+        for (index, target) in targets.into_iter().enumerate() {
             let here: Vec<_> = threads
                 .iter()
                 .zip(&homes)

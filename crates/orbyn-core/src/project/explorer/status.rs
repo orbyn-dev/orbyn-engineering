@@ -3,11 +3,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::time::Duration;
 
 use orbyn_contracts::{ExplorerChange, ExplorerDirty};
 
-use crate::error::Result;
-use crate::source_control::git::git;
+use crate::error::{CoreError, Result};
+use crate::source_control::git::git_hardened;
 
 /// Paths one snapshot keeps. Past it the counts go on and the letters stop, so a
 /// worktree with a vendored tree of untracked files cannot grow the cache without bound.
@@ -33,9 +34,29 @@ pub(super) struct Inherited {
     pub ignored: bool,
 }
 
-/// Reads the status of the worktree at `root` through the shared Git runner.
+/// A status that has not answered by now is given up on; its process is killed when
+/// the read is dropped.
+pub(super) const DEADLINE: Duration = Duration::from_secs(20);
+
+/// Runs `read`, giving up after `limit`.
+pub(super) async fn bounded<T>(
+    limit: Duration,
+    read: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(limit, read)
+        .await
+        .unwrap_or_else(|_| Err(CoreError::Git("Git took too long to answer.".into())))
+}
+
+/// Reads the status of the worktree at `root` through the shared Git runner. Status
+/// runs a repository's clean filters on files whose timestamps moved, so this is the
+/// hardened runner: no repository filter, converter or attribute can start a program.
 pub(super) async fn read(root: &Path) -> Result<Snapshot> {
-    let output = git(
+    bounded(DEADLINE, read_unbounded(root)).await
+}
+
+async fn read_unbounded(root: &Path) -> Result<Snapshot> {
+    let output = git_hardened(
         root,
         &[
             "status",
@@ -227,6 +248,22 @@ mod tests {
         assert_eq!(
             snapshot.deleted_under("src/old"),
             vec![("x.rs".to_owned(), false)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_that_never_answers_is_given_up_on() {
+        let hung = bounded(Duration::from_millis(30), async {
+            std::future::pending::<()>().await;
+            Ok(())
+        })
+        .await;
+        assert!(matches!(hung, Err(CoreError::Git(_))));
+        assert_eq!(
+            bounded(Duration::from_secs(5), async { Ok(7) })
+                .await
+                .unwrap(),
+            7
         );
     }
 

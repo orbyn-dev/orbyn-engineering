@@ -1571,6 +1571,15 @@ still go through a thread's file routes. `orbynd` only routes; Core
   `repo/`. A file opens without following a final link and the path its handle names is
   checked again where the system can say. A folder, device, pipe or socket is never opened, and
   the last two are not listed.
+- **Only real members.** The list leaves out a bare repository. A linked worktree is read only
+  when Git's records and the folder agree: its `.git` is a file pointing into the repository's
+  `worktrees/` folder, and that entry points back at it. A `prunable` entry, or one whose
+  `gitdir` file was redirected at some other folder, is listed read-only as `missing`, never
+  read and never given a status.
+- **Known exposure.** Any worktree of the repository is served to a holder of the service token
+  once the project is trusted, including other sessions' worktrees and ones no thread uses. The
+  thread file routes already reach any thread's folder; the new reach is worktrees with no
+  thread. The trust check on the project is the boundary (tracked in #463).
 - **Secrets.** The app's policy hard-denies Git's folder and Orbyn's data (the service token
   and every thread's records), and the explorer follows it. It adds no name list such as
   `.env`: the checkout routes show those files to the person who trusted the folder, and the
@@ -1583,10 +1592,10 @@ still go through a thread's file routes. `orbynd` only routes; Core
   is listed though it is gone from disk, and a folder of only deleted files is listed from them.
 - **A file** is text up to 4 MiB, `binary` (a NUL byte or bytes that are not UTF-8) with no
   content, or `too_large` with its size and no content. Text carries a digest as `revision`.
-- **Letters come from one `git status` per worktree**, through the shared Git runner
-  (`--porcelain=v1 -z --untracked-files=normal --ignored=matching`), kept for 5 seconds and
+- **Letters come from one `git status` per worktree**, through the shared hardened Git runner
+  (no repository filter, converter or attribute runs; `--porcelain=v1 -z --untracked-files=normal --ignored=matching`), kept for 5 seconds and
   shown for at most 30, with the change letters, ignored paths and dirty summary all read from
-  it. At most three statuses run at once, and a snapshot keeps at most 50,000 paths. A tree read
+  it. A status gives up after 20 seconds, at most two run at once per project, and a snapshot keeps at most 50,000 paths. A folder is opened without following a link and checked again after its entries are read. A tree read
   with nothing kept waits 400 ms for Git, then answers with `changes: "pending"` and no letters,
   and `data_changed` follows when they land. `changes` is `unavailable` outside Git or when Git
   failed. The worktree list is kept 10 seconds and shown for at most 60; a listing never waits

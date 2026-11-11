@@ -42,7 +42,19 @@ pub(super) fn list(
     let wanted = |name: &str| needle.is_empty() || name.to_lowercase().contains(&needle);
     let mut entries: Vec<ExplorerEntry> = Vec::new();
     let mut truncated = false;
-    match std::fs::read_dir(&resolved.real) {
+    // Hold the folder open while it is read, and check it is still the one inside the
+    // worktree afterwards, so a parent swapped for a link in between lists nothing.
+    let held = match guard.open_dir(&resolved.real) {
+        Ok(handle) => Some(handle),
+        Err(CoreError::NotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let reading = if held.is_some() {
+        std::fs::read_dir(&resolved.real)
+    } else {
+        Err(std::io::ErrorKind::NotFound.into())
+    };
+    match reading {
         Ok(reader) => {
             for (seen, entry) in reader.flatten().enumerate() {
                 if seen >= SCAN_LIMIT {
@@ -106,6 +118,9 @@ pub(super) fn list(
             }
         }
         Err(_) => return Err(CoreError::NotFound("folder".into())),
+    }
+    if let Some(handle) = &held {
+        guard.confirm_dir(handle, &resolved.real)?;
     }
     if let Some(status) = snapshot {
         for (name, is_dir) in status.deleted_under(dir) {

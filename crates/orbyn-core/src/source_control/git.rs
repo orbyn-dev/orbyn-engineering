@@ -198,6 +198,8 @@ pub(crate) struct WorktreeRecord {
     pub detached: bool,
     pub locked: bool,
     pub prunable: bool,
+    /// The entry is a bare repository, not a checkout.
+    pub bare: bool,
 }
 
 /// Every worktree of the repository, the primary checkout first.
@@ -216,6 +218,7 @@ pub(crate) async fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>>
                 detached: false,
                 locked: false,
                 prunable: false,
+                bare: false,
             });
         } else if let Some(entry) = current.as_mut() {
             if let Some(head) = line.strip_prefix("HEAD ") {
@@ -224,6 +227,8 @@ pub(crate) async fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>>
                 entry.branch = Some(branch.to_owned());
             } else if line == "detached" {
                 entry.detached = true;
+            } else if line == "bare" {
+                entry.bare = true;
             } else if line == "locked" || line.starts_with("locked ") {
                 entry.locked = true;
             } else if line == "prunable" || line.starts_with("prunable ") {
