@@ -11,15 +11,15 @@ import { navigate, type Route } from "../../../product/state/route";
 import { fileTabId, useUi, type FileTarget } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { copyText } from "../../../product/ui/copyText";
-import { Loading } from "../../../product/ui/states";
+import { ErrorState, Loading } from "../../../product/ui/states";
 import { IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { arrangeThreads, attentionRank } from "../sidebar/groups";
 import { ExplorerRow, type RowHandlers } from "./ExplorerRow";
 import { LeftBarSwitch } from "./LeftBarSwitch";
-import { buildRows, samePath, worktreeLabel, type Row } from "./model";
-import { startThreadIn } from "./startThread";
+import { buildRows, threadPathOf, type Row } from "./model";
+import { canStartThreadIn, startThreadIn } from "./startThread";
 import { levelKey, useExplorer } from "./store";
 
 /** A row's height with the 1px gap under it; rows of a long list are placed by it. */
@@ -27,6 +27,22 @@ const PITCH = 25;
 /** A list this long draws only the rows on screen and a few around them. */
 const VIRTUAL_FROM = 150;
 const OVERSCAN = 8;
+
+/** Position and set size of each row among the rows with the same parent. Status rows (loading, empty, error) take no place. */
+function positions(rows: readonly Row[]): Map<string, { pos: number; size: number }> {
+  const ancestors: Row[] = [];
+  const groups = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.kind === "loading" || row.kind === "empty" || row.kind === "error") continue;
+    while (ancestors.length > 0 && ancestors.at(-1)!.depth >= row.depth) ancestors.pop();
+    const parent = ancestors.at(-1)?.key ?? "";
+    groups.set(parent, [...(groups.get(parent) ?? []), row.key]);
+    ancestors.push(row);
+  }
+  const placed = new Map<string, { pos: number; size: number }>();
+  for (const keys of groups.values()) keys.forEach((key, at) => placed.set(key, { pos: at + 1, size: keys.length }));
+  return placed;
+}
 
 interface MenuState {
   x: number;
@@ -44,6 +60,7 @@ export function Explorer({ route }: { route: Route }) {
   const threads = useWorkspace((state) => state.threads);
   const explorerOpen = useUi((state) => state.explorerOpen);
   const setPrefs = useUi((state) => state.setPrefs);
+  const refreshAll = useWorkspace((state) => state.refreshAll);
   const activeTab = useUi((state) => (state.panelOpen ? state.panelTab : null));
   const preferred = useUi((state) => state.preferredEditor);
   const worktrees = useExplorer((state) => state.worktrees);
@@ -122,6 +139,8 @@ export function Explorer({ route }: { route: Route }) {
   const start = windowed ? Math.max(0, Math.floor(view.top / PITCH) - OVERSCAN) : 0;
   const end = windowed ? Math.min(rows.length, Math.ceil((view.top + view.height) / PITCH) + OVERSCAN) : rows.length;
   const drawn = rows.slice(start, end);
+  // Each row's place among its siblings, over the whole list, since only some rows are drawn.
+  const places = useMemo(() => positions(rows), [rows]);
 
   // The tree is one tab stop: the row last focused, else the open thread, else the first.
   const navigable = useCallback((row: Row) => row.kind !== "loading" && row.kind !== "empty" && row.kind !== "error", []);
@@ -157,26 +176,29 @@ export function Explorer({ route }: { route: Route }) {
 
   /** The target a file row opens as a tab. */
   const targetOf = (row: Row): FileTarget | null => {
-    const project = projects.find((one) => one.id === row.projectId);
-    if (!row.worktree || row.path === undefined || !project) return null;
-    return { kind: "explorer", projectId: row.projectId, worktreeId: row.worktree.id, path: row.path, project: project.name, worktree: worktreeLabel(row.worktree) };
+    if (!row.worktree || row.path === undefined) return null;
+    return { kind: "explorer", projectId: row.projectId, worktreeId: row.worktree.id, path: row.path };
   };
   const openFile = (row: Row) => {
     const target = targetOf(row);
     if (target) useUi.getState().openFileTab(target);
   };
-  /** The file is in the worktree the open thread runs in, so the thread's own actions apply to it. */
-  const ownsFile = (row: Row) => !!(current && row.worktree && samePath(row.worktree.path, current.cwd));
+  /** The file as the open thread names it (relative to its own folder), or null when its routes cannot reach the file. */
+  const threadPath = (row: Row) => (current && row.worktree && row.path !== undefined ? threadPathOf(row.worktree.path, current.cwd, row.path) : null);
+  /** The file is one the open thread's own actions apply to. */
+  const ownsFile = (row: Row) => threadPath(row) !== null;
   const outsideEditor = (row: Row) => {
     const editor = primaryEditor(editors.data ?? [], preferred);
-    if (!editor || !current || row.path === undefined) return;
-    api.openInEditor(current.id, { path: row.path, editor: editor.id }).catch((failure: unknown) => {
+    const path = threadPath(row);
+    if (!editor || !current || path === null) return;
+    api.openInEditor(current.id, { path, editor: editor.id }).catch((failure: unknown) => {
       useUi.getState().pushToast(`Couldn't open it. ${failure instanceof Error ? failure.message : ""}`.trim());
     });
   };
   const addToThread = (row: Row) => {
-    if (!current || row.path === undefined) return;
-    useComposerChips.getState().add(current.id, { id: chipId(), kind: "file", path: row.path, line: null, excerpt: null, language: languageForPath(row.path) });
+    const path = threadPath(row);
+    if (!current || path === null) return;
+    useComposerChips.getState().add(current.id, { id: chipId(), kind: "file", path, line: null, excerpt: null, language: languageForPath(path) });
     useUi.getState().pushToast("File added to your message");
   };
 
@@ -189,7 +211,9 @@ export function Explorer({ route }: { route: Route }) {
         label: "Worktree actions",
         row,
         items: [
-          { label: "New thread here", onSelect: () => startThreadIn(row.projectId, worktree) },
+          ...(canStartThreadIn(worktree, Object.values(threads))
+            ? [{ label: "New thread here", onSelect: () => startThreadIn(row.projectId, worktree) }]
+            : []),
           { label: "Copy path", onSelect: () => void copyText(worktree.path, "Path copied") },
         ],
       });
@@ -213,7 +237,7 @@ export function Explorer({ route }: { route: Route }) {
         { label: "Copy path", separatorBefore: true, onSelect: () => void copyText(`${worktree.path.replace(/[\\/]+$/, "")}${separator}${path.split("/").join(separator)}`, "Path copied") },
         { label: "Copy relative path", onSelect: () => void copyText(path, "Path copied") },
         ...(manager && current
-          ? [{ label: `Reveal in ${manager.name}`, onSelect: () => void api.openInEditor(current.id, { path, editor: manager.id }).catch(() => undefined) }]
+          ? [{ label: `Reveal in ${manager.name}`, onSelect: () => void api.openInEditor(current.id, { path: threadPath(row) ?? path, editor: manager.id }).catch(() => undefined) }]
           : []),
       ],
     });
@@ -268,7 +292,8 @@ export function Explorer({ route }: { route: Route }) {
       }
       case "Enter":
         event.preventDefault();
-        if (event.altKey && row.kind === "file") return outsideEditor(row);
+        // The outside editor is the thread's: it reaches only a file of the thread's own folder.
+        if (event.altKey && row.kind === "file") return ownsFile(row) ? outsideEditor(row) : undefined;
         if (row.kind === "file") {
           openFile(row);
           // Enter takes the person to the tab it opened; Space leaves focus here.
@@ -327,7 +352,9 @@ export function Explorer({ route }: { route: Route }) {
         </span>
       </div>
       <div className="sidebar-scroll x2scroll" ref={scroller} onScroll={measure}>
-        {!projectsState.data ? (
+        {projectsState.error && !projectsState.data ? (
+          <ErrorState compact title="Couldn't load projects" failure={projectsState.error} onRetry={() => void refreshAll()} />
+        ) : !projectsState.data ? (
           <Loading label="Loading projects" rows={5} />
         ) : (
           <div className="x2tree" role="tree" aria-label="Projects, worktrees and files" onKeyDown={onKey}>
@@ -339,7 +366,8 @@ export function Explorer({ route }: { route: Route }) {
                 selected={isSelected(row)}
                 focusable={row.key === stop?.key}
                 menuOpen={menu?.row.key === row.key}
-                draggable={row.kind === "file" && ownsFile(row)}
+                dragPath={row.kind === "file" ? threadPath(row) : null}
+                place={places.get(row.key)}
                 handlers={handlers}
               />
             ))}

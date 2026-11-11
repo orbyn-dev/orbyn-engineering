@@ -38,37 +38,38 @@ interface ExplorerStore {
   reset(): void;
 }
 
-/** Reads running now, by key, so a row asking twice reads once. */
+/** Reads running now, by what they ask (slot, thread, refresh), so a row asking twice reads once and a different question is not answered by it. */
 const running = new Map<string, Promise<void>>();
-/** The newest read of each key owns its answer. */
+/** The newest read of each slot owns its answer, whatever it asked. */
 const generation = new Map<string, number>();
 
 async function keep<T>(
-  key: string,
+  slot: string,
+  asked: string,
   read: () => Promise<T>,
   current: () => Kept<T> | undefined,
   put: (next: Kept<T>) => void,
   quiet: boolean,
 ): Promise<void> {
-  const held = running.get(key);
+  const held = running.get(asked);
   if (held) return held;
-  const id = (generation.get(key) ?? 0) + 1;
-  generation.set(key, id);
+  const id = (generation.get(slot) ?? 0) + 1;
+  generation.set(slot, id);
   const before = current();
   // A quiet read (an event) shows nothing while it runs, and never replaces data with an error.
   if (!quiet) put({ data: before?.data ?? null, loading: true, error: null });
   const started = (quiet ? asBackground(read) : read()).then(
     (data) => {
-      if (generation.get(key) === id) put({ data, loading: false, error: null });
+      if (generation.get(slot) === id) put({ data, loading: false, error: null });
     },
     (error: unknown) => {
-      if (generation.get(key) !== id) return;
+      if (generation.get(slot) !== id) return;
       const held = current()?.data ?? null;
       if (quiet && held) put({ data: held, loading: false, error: null });
       else put({ data: held, loading: false, error: toFailure(error) });
     },
-  ).finally(() => running.delete(key));
-  running.set(key, started);
+  ).finally(() => running.delete(asked));
+  running.set(asked, started);
   return started;
 }
 
@@ -79,6 +80,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
   loadWorktrees: (projectId, { thread, quiet = false, refresh = false }) =>
     keep(
       `w:${projectId}`,
+      `w:${projectId}:${thread ?? ""}:${refresh}`,
       () => readWorktrees(projectId, { thread, refresh }),
       () => get().worktrees[projectId],
       (next) => set((state) => ({ worktrees: { ...state.worktrees, [projectId]: next } })),
@@ -88,6 +90,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
     const key = levelKey(projectId, worktreeId, path);
     return keep(
       `l:${key}`,
+      `l:${key}:${refresh}`,
       () => readTree(projectId, worktreeId, path, { refresh }),
       () => get().levels[key],
       (next) => set((state) => ({ levels: { ...state.levels, [key]: next } })),

@@ -10,9 +10,9 @@ const handlers = { onActivate: () => undefined, onMenu: () => undefined, onFocus
 
 it("shows nothing for a read that finishes within 400 ms, then quiet placeholder rows with no motion", () => {
   vi.useFakeTimers();
-  const { container } = render(<ExplorerRow row={loading} selected={false} focusable={false} menuOpen={false} draggable={false} handlers={handlers} />);
+  const { container } = render(<ExplorerRow row={loading} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
   // The label is read at once; nothing is drawn yet.
-  expect(screen.getByRole("status", { name: "Loading files" })).toBeInTheDocument();
+  expect(screen.getByRole("treeitem", { name: "Loading files" })).toBeInTheDocument();
   expect(container.querySelector(".x2sk")).toBeNull();
   act(() => void vi.advanceTimersByTime(399));
   expect(container.querySelector(".x2sk")).toBeNull();

@@ -4,7 +4,7 @@ import type { ExplorerEntry } from "../../../generated/ExplorerEntry";
 import type { ExplorerTree } from "../../../generated/ExplorerTree";
 import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import { ApiFailure } from "../../../api/client";
-import { buildRows, crumb, folderKey, groupKey, projectKey, readOnlyOf, readOnlyWhy, samePath, worktreeKey, type ExplorerInput } from "./model";
+import { buildRows, crumb, folderKey, groupKey, insidePath, projectKey, readOnlyOf, readOnlyWhy, samePath, threadPathOf, worktreeKey, type ExplorerInput } from "./model";
 import { PAGE, levelKey, type Kept } from "./store";
 
 const project = { id: "p", name: "app" } as Project;
@@ -32,7 +32,7 @@ describe("explorer rows", () => {
   it("unfolds the open thread's project and worktree, and folds everything else", () => {
     const rows = buildRows(base({ threads: { p: [thread("t")] } }));
     expect(keys(rows)).toEqual([
-      "project:0:app", "group:1:Threads", "thread:1:t", "group:1:Worktrees",
+      "project:0:app", "group:1:Threads", "thread:2:t", "group:1:Worktrees",
       "worktree:2:main", "loading:3:Loading files", "worktree:2:feat/x", "project:0:other",
     ]);
     expect(rows.find((row) => row.kind === "worktree" && row.current)?.label).toBe("main");
@@ -108,5 +108,23 @@ describe("read-only worktrees", () => {
   it("compares folders by what they name, not how they are written", () => {
     expect(samePath("C:\\code\\app\\", "C:/code/app")).toBe(true);
     expect(samePath("/a/b", "/a/c")).toBe(false);
+    // macOS names a temporary folder two ways.
+    expect(samePath("/var/folders/x/repo", "/private/var/folders/x/repo")).toBe(true);
+    expect(samePath("/privateer/a", "/a")).toBe(false);
+  });
+
+  it("finds a folder inside a worktree, and names a file as a thread in that folder does", () => {
+    expect(insidePath("/r", "/r")).toBe("");
+    expect(insidePath("/r", "/r/packages/web")).toBe("packages/web");
+    expect(insidePath("/r", "/rx/web")).toBeNull();
+    expect(insidePath("/private/var/r", "/var/r/web")).toBe("web");
+    // The thread runs at the worktree's root: paths are the same.
+    expect(threadPathOf("/r", "/r", "src/a.ts")).toBe("src/a.ts");
+    // It runs in a subfolder: a file below it is named from there, one beside or above it is out of its reach.
+    expect(threadPathOf("/r", "/r/packages/web", "packages/web/links.md")).toBe("links.md");
+    expect(threadPathOf("/r", "/r/packages/web", "README.md")).toBeNull();
+    expect(threadPathOf("/r", "/r/packages/web", "packages/webby/a.md")).toBeNull();
+    // Not in this worktree at all.
+    expect(threadPathOf("/other", "/r/packages/web", "a.md")).toBeNull();
   });
 });

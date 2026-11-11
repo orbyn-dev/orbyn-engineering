@@ -170,7 +170,7 @@ describe("panel tab row", () => {
 
   it("opens a file from the left bar as a tab, once, and a closed file is gone", () => {
     ui().setLayoutKey("files");
-    const target = { kind: "explorer", projectId: "p", worktreeId: "w", path: "auth/redirect.ts", project: "orbyn", worktree: "main" } as const;
+    const target = { kind: "explorer", projectId: "p", worktreeId: "w", path: "auth/redirect.ts" } as const;
     ui().openFileTab(target);
     ui().openFileTab(target);
     const id = fileTabId(target);
@@ -201,6 +201,19 @@ describe("panel tab row", () => {
     ui().closeOtherPanelTabs("diff");
     expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
     expect(ui().panelTab).toBe("diff");
+  });
+
+  it("keeps a file tab saved with names in its id as the same tab as a new one", async () => {
+    const old = `file:${encodeURIComponent(JSON.stringify(["x", "p", "w", "a.ts", "orbyn", "main"]))}`;
+    const now = fileTabId({ kind: "explorer", projectId: "p", worktreeId: "w", path: "a.ts" });
+    expect(old).not.toBe(now);
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ panelTab: old, panelTabOrder: [old, "diff"], panelTabsClosed: [], layouts: { a: { panelTab: old, panelTabOrder: [old], panelTabsClosed: [] } } }));
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(fresh.panelTab).toBe(now);
+    expect(fresh.panelTabOrder.slice(0, 2)).toEqual([now, "diff"]);
+    expect(fresh.layouts["a"]?.panelTab).toBe(now);
+    expect(parseFileTab(old)).toEqual({ kind: "explorer", projectId: "p", worktreeId: "w", path: "a.ts" });
   });
 
   it("loads a saved file tab, and drops a saved id that names nothing we know", async () => {

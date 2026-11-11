@@ -1,3 +1,4 @@
+import { canonicalFileTab } from "./fileTab";
 import { readJson } from "../../../lib/storage";
 import { DEFAULT_SIDEBAR_WIDTH, LAYOUT_CHOICES, cleanTabs, isPanelTab, type LayoutChoice, type Prefs, type ThreadLayout } from "./types";
 import { PREFS_KEY, defaults } from "./defaults";
@@ -110,6 +111,9 @@ function migratePrefs(saved: Partial<Prefs>): Partial<Prefs> {
   return next;
 }
 
+/** A saved tab row with its file tabs under today's ids. */
+const canonicalList = (list: unknown) => (Array.isArray(list) ? list.map(canonicalFileTab) : list);
+
 /** Each thread's saved layout may predate the tab fields or name the removed Pull requests tab. */
 function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
   if (!isPlainObject(layouts)) return {};
@@ -118,8 +122,8 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
       // A damaged entry is dropped; the thread starts from the defaults.
       .filter((entry): entry is [string, ThreadLayout] => isPlainObject(entry[1]))
       .map(([key, layout]) => {
-        const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
-        const panelTab = isPanelTab(layout.panelTab) ? layout.panelTab : null;
+        const tabs = cleanTabs(canonicalList(layout.panelTabOrder), layout.panelTabsClosed);
+        const panelTab = isPanelTab(canonicalFileTab(layout.panelTab)) ? (canonicalFileTab(layout.panelTab) as ThreadLayout["panelTab"]) : null;
         // Open or closed is one global choice now; an older per-thread value must not override it.
         const { panelOpen: _global, ...rest } = layout as ThreadLayout & { panelOpen?: unknown };
         return [key, { ...rest, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
@@ -133,8 +137,8 @@ export function savedPrefs(): Partial<Prefs> {
   const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
   // The favourites list was removed; an old save still carries it.
   delete (saved as Record<string, unknown>).modelFavorites;
-  const panelTab = isPanelTab(saved.panelTab) ? saved.panelTab : null;
-  const tabs = cleanTabs(saved.panelTabOrder, saved.panelTabsClosed);
+  const panelTab = isPanelTab(canonicalFileTab(saved.panelTab)) ? (canonicalFileTab(saved.panelTab) as Prefs["panelTab"]) : null;
+  const tabs = cleanTabs(canonicalList(saved.panelTabOrder), saved.panelTabsClosed);
   const grouping = saved.projectGrouping;
   const projectGrouping =
     grouping === "repository" || grouping === "repository_path" || grouping === "separate"

@@ -1,3 +1,8 @@
+import { ApiFailure, api } from "../../../api/client";
+import { Explorer } from "./Explorer";
+import { FileTab } from "../../panels/files/FileTab";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { useWorkspace } from "../../../product/state/workspace";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -22,7 +27,8 @@ const folderReads = (path: string) => reads().filter((url) => url.includes(`/tre
 beforeEach(() => {
   useExplorer.getState().reset();
   installMockFetch();
-  useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
+  useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
+  useComposerChips.setState({ chips: {} });
   useUi.getState().setPrefs({ welcomeDone: true });
   window.location.hash = "#/threads/t-done";
 });
@@ -87,7 +93,7 @@ it("opens a file as a tab in the side panel and marks its row", async () => {
   const user = userEvent.setup();
   render(<App />);
   await user.click(await findRow(/^README\.md/));
-  const id = fileTabId({ kind: "explorer", projectId: "p-app", worktreeId: "p-app-main", path: "README.md", project: "orbyn-engineering-app", worktree: "main" });
+  const id = fileTabId({ kind: "explorer", projectId: "p-app", worktreeId: "p-app-main", path: "README.md" });
   expect(useUi.getState()).toMatchObject({ panelOpen: true, panelTab: id });
   expect(await screen.findByRole("tab", { name: "README.md" })).toHaveAttribute("aria-selected", "true");
   await waitFor(() => expect(row(/^README\.md/)).toHaveAttribute("aria-selected", "true"));
@@ -116,7 +122,7 @@ it("shows a worktree whose folder is gone as one error row with Try again, and k
   const user = userEvent.setup();
   render(<App />);
   await user.click(await findRow("feat/gone"));
-  const alert = await screen.findByRole("alert");
+  const alert = await screen.findByRole("treeitem", { name: "Couldn’t read this folder." });
   expect(alert).toHaveTextContent("Couldn’t read this folder.");
   expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
   expect(row("main")).toBeInTheDocument();
@@ -144,7 +150,7 @@ it("says a folder with nothing in it is empty, not an error", async () => {
   render(<App />);
   await user.click(await findRow("empty"));
   expect(await screen.findByText("This folder is empty.")).toBeInTheDocument();
-  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("treeitem", { name: "Couldn’t read this folder." })).toBeNull();
 });
 
 it("shows a large folder 200 children at a time", async () => {
@@ -260,4 +266,119 @@ it("switches between Threads and Files, remembers the choice, and shortens the s
   expect(screen.queryByRole("tree", { name: "Projects, worktrees and files" })).toBeNull();
   act(() => useUi.setState({ sidebarWidth: 180 }));
   expect(screen.getByRole("tab", { name: "Files" })).toHaveTextContent("");
+});
+
+/** The thread runs in a subfolder of the worktree, as one in a subfolder project does: the service roots a worktree at the Git root. */
+function setSubfolder() {
+  act(() => {
+    const threads = useWorkspace.getState().threads;
+    const done = threads["t-done"]!;
+    useWorkspace.setState({ threads: { ...threads, "t-done": { ...done, cwd: done.cwd.replace(/\/src$/, "") + "/src" } } });
+  });
+}
+async function inSubfolder() {
+  render(<App />);
+  await screen.findByText("README.md");
+  await userEvent.setup().click(await findRow("src"));
+  await screen.findByText("main.rs");
+  setSubfolder();
+}
+
+it("names a file as a thread in a subfolder does, and only offers the thread's actions for what is inside its folder", async () => {
+  const user = userEvent.setup();
+  await inSubfolder();
+  const setData = vi.fn();
+  // The service's own refresh puts the thread back at the project's folder, so each step says where the thread is first.
+  setSubfolder();
+  fireEvent.dragStart(await findRow(/^main\.rs/), { dataTransfer: { setData } });
+  expect(setData).toHaveBeenCalledWith(expect.stringContaining("file"), "main.rs");
+  // README.md is in the worktree but above the thread's folder: no drag, no thread actions.
+  setSubfolder();
+  expect(row(/^README\.md/)).not.toHaveAttribute("draggable");
+  await user.pointer({ keys: "[MouseRight]", target: row(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).queryByRole("menuitem", { name: /Add to this thread/ })).toBeNull();
+  await user.keyboard("{Escape}");
+  setSubfolder();
+  row(/^main\.rs/).focus();
+  await user.keyboard("@");
+  expect(useComposerChips.getState().chips["t-done"]?.[0]).toMatchObject({ kind: "file", path: "main.rs" });
+});
+
+it("opens a file below the thread's folder as the thread's own file, by the path the thread names", async () => {
+  const thread = { id: "t", project_id: "p", cwd: "/repo/packages/web", worktree: null } as never;
+  window.location.hash = "#/threads/t";
+  useWorkspace.setState({ threads: { t: thread } });
+  const wt = { id: "w", path: "/repo", name: "repo", branch: "main", detached: false, head: "a", is_main: true, read_only: false, read_only_reason: null, threads: [{ id: "t", title: "", running: false }], dirty: null };
+  useExplorer.setState({ worktrees: { p: { data: { project_id: "p", git: true, worktrees: [wt] }, loading: false, error: null } } });
+  const urls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    urls.push(`${init?.method ?? "GET"} ${url}`);
+    if (String(url).endsWith("/paths/resolve")) {
+      const body = JSON.parse(String(init?.body)) as { path: string };
+      return new Response(JSON.stringify({ cwd: "/repo/packages/web", checkout_path: body.path, repository_path: null }));
+    }
+    return new Response(JSON.stringify({ path: "links.md", revision: "r", content: "[move link](kept.txt)\n", size: 21, binary: false, truncated: false }));
+  }));
+  render(<FileTab id={fileTabId({ kind: "explorer", projectId: "p", worktreeId: "w", path: "packages/web/links.md" })} threadId="t" />);
+  // The thread's own viewer: it can be edited, and its markdown links work.
+  expect(await screen.findByRole("radio", { name: "Edit" })).toBeInTheDocument();
+  expect(screen.queryByText(/Read-only/)).toBeNull();
+  const resolved = urls.find((url) => url.endsWith("/paths/resolve"))!;
+  expect(resolved).toContain("/api/threads/t/paths/resolve");
+  expect(urls.some((url) => url.includes("/files/content?path=links.md"))).toBe(true);
+  // A file above the thread's folder, in the same worktree, reads through the explorer.
+  urls.length = 0;
+  render(<FileTab id={fileTabId({ kind: "explorer", projectId: "p", worktreeId: "w", path: "README.md" })} threadId="t" />);
+  await waitFor(() => expect(urls.some((url) => url.includes("/api/projects/p/worktrees/w/file?path=README.md"))).toBe(true));
+});
+
+it("keeps Alt+Enter, like the menu, to files the thread's own folder holds", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "editors").mockResolvedValue([{ id: "code", name: "VS Code", launch_style: "x", file_manager: false }]);
+  const open = vi.spyOn(api, "openInEditor").mockResolvedValue(undefined as never);
+  await inSubfolder();
+  await waitFor(() => expect(api.editors).toHaveBeenCalled());
+  setSubfolder();
+  row(/^README\.md/).focus();
+  await user.keyboard("{Alt>}{Enter}{/Alt}");
+  expect(open).not.toHaveBeenCalled();
+  setSubfolder();
+  row(/^main\.rs/).focus();
+  await user.keyboard("{Alt>}{Enter}{/Alt}");
+  await waitFor(() => expect(open).toHaveBeenCalledWith("t-done", { path: "main.rs", editor: "code" }));
+});
+
+it("offers New thread here on the primary checkout, and on a linked worktree only when Orbyn made it", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow("main") });
+  const main = await screen.findByRole("menu", { name: "Worktree actions" });
+  expect(within(main).getByRole("menuitem", { name: "New thread here" })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  // approval-timeout belongs to a thread of ours; locked is not one Orbyn knows.
+  await user.pointer({ keys: "[MouseRight]", target: row("approval-timeout") });
+  expect(within(await screen.findByRole("menu", { name: "Worktree actions" })).getByRole("menuitem", { name: "New thread here" })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.pointer({ keys: "[MouseRight]", target: row("feat/locked") });
+  expect(within(await screen.findByRole("menu", { name: "Worktree actions" })).queryByRole("menuitem", { name: "New thread here" })).toBeNull();
+});
+
+it("says a projects list that could not be read, instead of waiting for it", () => {
+  useWorkspace.setState({ projects: { data: null, error: new ApiFailure("internal", "Nope.", 500), loading: false } });
+  render(<Explorer route={{ name: "home" }} />);
+  expect(screen.getByText("Couldn't load projects")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+it("gives each row its place among its siblings, and a thread one level below its Threads group", async () => {
+  render(<App />);
+  await screen.findByText("README.md");
+  const group = row("Threads");
+  expect(group).toHaveAttribute("aria-level", "2");
+  expect(row("Upgrade tokio and fix the fallout")).toHaveAttribute("aria-level", "3");
+  // Five entries in the worktree's root, folders first; the list may be long, so the place is stated.
+  expect(row("src")).toHaveAttribute("aria-setsize", "5");
+  expect(row("src")).toHaveAttribute("aria-posinset", "3");
+  expect(row(/^README\.md/)).toHaveAttribute("aria-posinset", "5");
 });

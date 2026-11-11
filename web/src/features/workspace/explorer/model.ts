@@ -157,7 +157,7 @@ export function buildRows(input: ExplorerInput): Row[] {
       const threadsOpen = isOpen(groupKey(project.id, "threads"), true);
       rows.push({ key: groupKey(project.id, "threads"), kind: "group", depth: 1, projectId: project.id, label: "Threads", open: threadsOpen });
       if (threadsOpen) {
-        for (const thread of threads) rows.push({ key: `t:${thread.id}`, kind: "thread", depth: 1, projectId: project.id, label: thread.title, thread });
+        for (const thread of threads) rows.push({ key: `t:${thread.id}`, kind: "thread", depth: 2, projectId: project.id, label: thread.title, thread });
       }
     }
 
@@ -206,11 +206,36 @@ export const CHANGE: Record<ExplorerChange, { letter: string; label: string }> =
   conflicted: { letter: "!", label: "Conflict" },
 };
 
-/** Whether two paths name the same folder, ignoring the separator and a trailing one. */
-export const samePath = (a: string, b: string) => {
-  const clean = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-  return clean(a) === clean(b);
+/** A folder path as it is compared: one separator, no trailing one, macOS's /private prefix of /var, /tmp and /etc dropped, and no case on a drive. */
+const clean = (path: string) => {
+  const slashed = path.replace(/\\/g, "/").replace(/\/+$/, "").replace(/^\/private(?=\/(var|tmp|etc)(\/|$))/, "");
+  return /^[A-Za-z]:/.test(slashed) ? slashed.toLowerCase() : slashed;
 };
+
+/** Whether two paths name the same folder, ignoring the separator and a trailing one. */
+export const samePath = (a: string, b: string) => clean(a) === clean(b);
+
+/**
+ * Where `folder` is below `root`: "" for the root itself, a relative `/` path inside it, or null when it is
+ * not inside. A thread's folder can be a subfolder of its worktree, since the service roots a worktree at the Git root.
+ */
+export function insidePath(root: string, folder: string): string | null {
+  const [r, f] = [clean(root), clean(folder)];
+  if (f === r) return "";
+  return f.startsWith(`${r}/`) ? f.slice(r.length + 1) : null;
+}
+
+/**
+ * A file of a worktree (`path`, relative to the worktree) as the thread that works in `cwd` names it: relative to
+ * `cwd`. Null when the thread's folder is not in that worktree, or the file is outside the thread's folder, so the
+ * thread's own file routes cannot reach it.
+ */
+export function threadPathOf(worktreePath: string, cwd: string, path: string): string | null {
+  const base = insidePath(worktreePath, cwd);
+  if (base === null) return null;
+  if (base === "") return path;
+  return path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null;
+}
 
 /** The last parts of a folder path, for a deep row's tooltip. */
 export const crumb = (path: string) => path.split("/").filter(Boolean).join(" › ");

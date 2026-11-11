@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { type Service, libraryReady, openExplorer, openPanelTab, startService } from "./service";
+import { type Service, libraryReady, openPanelTab, startService } from "./service";
 
 
 interface Thread {
@@ -270,8 +270,10 @@ test("the terminal drawer opens tabs, and files and diff sources read the checko
   await expect(drawer.getByRole("tab")).toHaveCount(2);
   await drawer.getByRole("button", { name: /^Close Terminal|^Close [^t]/ }).first().click();
 
-  const tree = await openExplorer(page);
-  await expect(tree.locator('[data-key^="f:"]').first()).toBeVisible({ timeout: 10_000 });
+  // This thread is in the skills library, which is no project of the explorer's; files open from a thread's links and the
+  // palette, covered by the file specs.
+  // The terminal keeps the keys while it has focus; take focus back to the page first.
+  await page.mouse.click(860, 250);
   await page.keyboard.press("ControlOrMeta+f");
   await expect(page.getByRole("textbox", { name: "Find in thread" })).toBeFocused();
   await page.keyboard.press("Escape");

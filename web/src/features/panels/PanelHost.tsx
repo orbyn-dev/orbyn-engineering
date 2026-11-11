@@ -10,6 +10,7 @@ import { ActivityPanel } from "./activity/ActivityPanel";
 import { BrowserPanel } from "./browser/BrowserPanel";
 import { DiffPanel } from "./diff/DiffPanel";
 import { FileTab } from "./files/FileTab";
+import { useFileTabNames } from "../workspace";
 import { ToolsTab } from "../tools";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
@@ -226,7 +227,12 @@ export function PanelHost({
   const count = rowIds.length;
   // The line beside the open file's name: the worktree it is in, and for another project's, which project.
   const target = tab ? parseFileTab(tab) : null;
-  const subtitle = target === null ? null : target.kind === "explorer" ? (target.projectId === thread.project_id ? target.worktree : `${target.project} · ${target.worktree}`) : (thread.worktree?.branch ?? null);
+  const names = useFileTabNames(target?.kind === "explorer" ? target.projectId : "", target?.kind === "explorer" ? target.worktreeId : "", thread.id);
+  const subtitle =
+    target === null ? null
+    : target.kind === "thread" ? (thread.worktree?.branch ?? null)
+    : !names.worktree ? null
+    : target.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
   latest.current = { count };
   const refit = useCallback(() => {

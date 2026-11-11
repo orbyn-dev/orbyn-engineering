@@ -57,7 +57,7 @@ test("another worktree is read-only: its row says so and its file opens with a b
 
 test("a worktree whose folder is gone is one error row with Try again, and a locked one still reads", async ({ page }) => {
   await row(page, /^feat\/gone/).click();
-  const alert = tree(page).getByRole("alert");
+  const alert = tree(page).getByRole("treeitem", { name: "Couldn’t read this folder." });
   await expect(alert).toContainText("Couldn’t read this folder.");
   await expect(alert.getByRole("button", { name: "Try again" })).toBeVisible();
   await row(page, /^feat\/locked/).click();

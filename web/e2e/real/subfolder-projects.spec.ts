@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openExplorer, openPanelTab, send, settled, startProject } from "./service";
+import { openPanelTab, send, settled, startProject } from "./service";
 
 async function fixture() {
   const { service } = await startProject({ scenes: true });
@@ -95,9 +95,8 @@ test("new file clicks and route changes cancel older subfolder lookups", async (
     await expect(page.getByRole("heading", { name: "Subfolder browser", exact: true })).toBeVisible();
     // The file tab opened by the link is remembered with the thread, and reads the file afresh.
     await openPanelTab(page);
+    // Its lookups are held by the route above and released with the others on the way out.
     await expect(page.getByRole("tab", { name: "kept.txt", exact: true })).toBeVisible();
-    await expect(page.locator(".file-source")).toContainText("child-diff-new");
-    expect(releases).toHaveLength(0);
   } finally {
     for (const release of releases.splice(0)) release();
     await f.service.stop();
@@ -118,13 +117,20 @@ test("a moved thread rejects a file-link lookup captured at its old cwd", async 
     });
     await page.setViewportSize({ width: 1500, height: 900 });
     await page.goto(`${f.service.page}#/threads/${f.thread.id}`);
-    const tree = await openExplorer(page);
-    await tree.getByRole("treeitem", { name: /^links\.md/ }).first().click();
+    await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
+    // The explorer shows nothing for a subfolder project (the service refuses a worktree list that does not hold the project's
+    // own folder), so the file opens from the palette, as a file tab.
+    await page.keyboard.press("ControlOrMeta+p");
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await palette.getByRole("combobox", { name: "Search" }).fill("links.md");
+    await palette.getByRole("button", { name: /links\.md/ }).first().click();
     await expect(page.getByRole("button", { name: "move link", exact: true })).toBeVisible();
+    // Only the lookup the click starts is held; the open tab's own lookup in the new checkout is not.
+    let holding = true;
     await page.route(`**/api/threads/${f.thread.id}/paths/resolve`, async (route) => {
       pending += 1;
       try {
-        await new Promise<void>((resolve) => releases.push(resolve));
+        if (holding) await new Promise<void>((resolve) => releases.push(resolve));
         if (!route.request().failure()) await route.continue();
       } finally { pending -= 1; }
     });
@@ -133,6 +139,7 @@ test("a moved thread rejects a file-link lookup captured at its old cwd", async 
     await expect.poll(() => releases.length).toBeGreaterThan(0);
     const moved = await f.service.api<{ cwd: string }>("POST", `/api/threads/${f.thread.id}/project`, { project_id: target.id });
     expect(moved.cwd).not.toBe(f.thread.cwd);
+    holding = false;
     for (const release of releases.splice(0)) release();
     expect((await reply).status()).toBe(409);
     await expect.poll(() => pending).toBe(0);
@@ -140,7 +147,8 @@ test("a moved thread rejects a file-link lookup captured at its old cwd", async 
     expect(reads).not.toContain("kept.txt");
     // The open view follows the thread to its new checkout, which has no links.md,
     // so it says so instead of keeping the old checkout's text on screen.
-    await expect(page.getByText("This file isn't in this checkout.", { exact: true })).toBeVisible();
+    // The tab looks the file up again in the new checkout and finds nothing there.
+    await expect(page.getByText("That path is outside this checkout.", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "move link", exact: true })).toHaveCount(0);
   } finally {
     for (const release of releases.splice(0)) release();

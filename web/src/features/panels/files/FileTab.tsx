@@ -8,7 +8,7 @@ import { parseFileTab, useUi, type FileTabId, type FileTarget } from "../../../p
 import { useWorkspace } from "../../../product/state/workspace";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
-import { readExplorerFile, readOnlyWhy, samePath, startThreadIn, useExplorer } from "../../workspace";
+import { canStartThreadIn, readExplorerFile, readOnlyWhy, startThreadIn, threadPathOf, useExplorer, useFileTabNames } from "../../workspace";
 import { Viewer } from "./FileViewer";
 import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
 
@@ -58,6 +58,8 @@ function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target
   );
   const file = read.status === "ready" ? read.data : null;
   const why = worktree ? readOnlyWhy(worktree, threadId) : file?.read_only ? "other_session" : null;
+  const names = useFileTabNames(target.projectId, target.worktreeId, threadId);
+  const threads = useWorkspace((state) => state.threads);
   const folders = target.path.split("/").slice(0, -1);
   const name = target.path.split("/").at(-1) ?? target.path;
   return (
@@ -65,16 +67,16 @@ function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target
       {why ? (
         <div className="x2banner" role="status">
           <Lock size={14} aria-hidden />
-          <span>{why === "not_this_thread" || why === "other_session" ? "Read-only · not this thread’s worktree" : "Read-only"}</span>
+          <span>{why === "not_this_thread" ? "Read-only · not this thread’s worktree" : "Read-only"}</span>
           <span className="sp" />
-          {(why === "not_this_thread" || why === "other_session") && worktree ? (
+          {why === "not_this_thread" && worktree && canStartThreadIn(worktree, Object.values(threads)) ? (
             <Button small tone="quiet" onClick={() => startThreadIn(target.projectId, worktree)}>
               Start a thread here
             </Button>
           ) : null}
         </div>
       ) : null}
-      <div className="x2crumb" title={`${target.project} · ${target.worktree}`}>
+      <div className="x2crumb" title={names.project && names.worktree ? `${names.project} · ${names.worktree}` : undefined}>
         <Folder size={14} aria-hidden />
         {folders.length > 0 ? folders.map((part, at) => (
           <span key={at} className="x2crumb-part">
@@ -110,7 +112,10 @@ function ExplorerFile({ threadId, target }: { threadId: string; target: Explorer
   }, [kept, target.projectId, threadId]);
   const worktree = kept?.data?.worktrees.find((one) => one.id === target.worktreeId);
   if (!kept || (kept.loading && !kept.data)) return <Loading label="Loading file" rows={6} />;
-  if (worktree && cwd && samePath(worktree.path, cwd)) return <ThreadFile threadId={threadId} path={target.path} />;
+  // The thread's folder may be a subfolder of the worktree (the service roots a worktree at the Git root): the thread names
+  // a file relative to its own folder, and reads only what is inside it.
+  const own = worktree && cwd ? threadPathOf(worktree.path, cwd, target.path) : null;
+  if (own !== null) return <ThreadFile threadId={threadId} path={own} />;
   return <ReadOnlyFile threadId={threadId} target={target} worktree={worktree} />;
 }
 

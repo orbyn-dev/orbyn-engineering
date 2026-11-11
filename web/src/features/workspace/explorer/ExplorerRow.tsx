@@ -29,7 +29,7 @@ function ThreadStatus({ thread }: { thread: NonNullable<Row["thread"]> }) {
 function LoadingRow({ label, common }: { label: string; common: object }) {
   const slow = useWaited(true);
   return (
-    <div {...common} role="status" aria-label={label} tabIndex={-1}>
+    <div {...common} role="treeitem" aria-disabled="true" aria-label={label} tabIndex={-1}>
       {slow ? (
         <>
           <div className="x2sk" />
@@ -52,15 +52,18 @@ export const ExplorerRow = memo(function ExplorerRow({
   selected,
   focusable,
   menuOpen,
-  draggable,
+  dragPath,
+  place,
   handlers,
 }: {
   row: Row;
   selected: boolean;
   focusable: boolean;
   menuOpen: boolean;
-  /** A file of the open thread's own worktree can be dragged into its message. */
-  draggable: boolean;
+  /** A file of the open thread's own folder can be dragged into its message, by this path. */
+  dragPath: string | null;
+  /** Its place among its siblings, for a list that draws only some of its rows. */
+  place?: { pos: number; size: number };
   handlers: RowHandlers;
 }) {
   const style = { "--d": Math.min(row.depth, MAX_DEPTH) } as CSSProperties;
@@ -69,14 +72,14 @@ export const ExplorerRow = memo(function ExplorerRow({
   if (row.kind === "loading") return <LoadingRow label={row.label} common={common} />;
   if (row.kind === "empty") {
     return (
-      <div {...common} className="x2r x2note" tabIndex={-1}>
+      <div {...common} className="x2r x2note" role="treeitem" aria-disabled="true" aria-level={row.depth + 1} tabIndex={-1}>
         <span className="nm">{row.label}</span>
       </div>
     );
   }
   if (row.kind === "error") {
     return (
-      <div {...common} className="x2banner err" role="alert" tabIndex={-1}>
+      <div {...common} className="x2banner err" role="treeitem" aria-disabled="true" aria-level={row.depth + 1} aria-label={row.label} tabIndex={-1}>
         <span className="berr">{row.label}</span>
         <Button small tone="quiet" title={row.title} onClick={(event) => handlers.onActivate(row, event)}>
           Try again
@@ -109,8 +112,10 @@ export const ExplorerRow = memo(function ExplorerRow({
       // A name split for the narrow bar is read whole, with its change.
       aria-label={row.kind === "file" ? `${row.label}${row.change ? `, ${CHANGE[row.change].label}` : ""}` : undefined}
       title={title}
-      draggable={draggable || undefined}
-      onDragStart={draggable ? (event) => event.dataTransfer.setData(FILE_MENTION_TYPE, row.path ?? "") : undefined}
+      aria-posinset={place?.pos}
+      aria-setsize={place?.size}
+      draggable={dragPath !== null || undefined}
+      onDragStart={dragPath !== null ? (event) => event.dataTransfer.setData(FILE_MENTION_TYPE, dragPath) : undefined}
       onClick={(event) => handlers.onActivate(row, event)}
       onContextMenu={(event) => {
         if (row.kind !== "file" && row.kind !== "worktree") return;

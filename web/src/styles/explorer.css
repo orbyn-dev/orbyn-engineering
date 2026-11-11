@@ -140,7 +140,7 @@
   color: var(--color-danger);
 }
 .x2t {
-  padding-left: calc(32px + (var(--d) - 1) * 13px);
+  padding-left: calc(32px + (var(--d) - 2) * 13px);
 }
 .x2g .nm {
   color: var(--color-textSoft);
