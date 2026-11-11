@@ -54,7 +54,8 @@ pub fn specs() -> Vec<Value> {
             "name": REVIEW_TOOL,
             "description": "Preview: review finished work. `task` is a task that has passed; `lanes` names the \
                 reviewer lanes to run (lowercase words such as correctness, security, performance, accessibility, design, \
-                licence, docs, or one you name). There is no limit on lanes, and a lane can be added after a pass. Lanes \
+                licence, docs, or one you name). The merge queue waits for a lane named `correctness` (and `security` for a high-risk diff) \
+        before it merges a task, so name them for work you mean to merge. There is no limit on lanes, and a lane can be added after a pass. Lanes \
                 the repo's rules (`.orbyn/crew.json`) ask for run as well. Every lane is a separate read-only run, \
                 routed to another vendor than the builder where one is configured. A lane named again runs again, as the \
                 next round.",

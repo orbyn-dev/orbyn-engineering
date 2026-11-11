@@ -81,8 +81,7 @@ impl Core {
         let tip = gitops::rev(&target.repo, &target.branch).await?;
         // The repository's checks and its files come from the branch's tip, a commit the crew did not write.
         let checks = self.merge_checks(task_id, &target.repo, &tip).await.ok();
-        let tree = gitops::tree_files(&target.repo, &tip).await?;
-        let mut held = sensitive(paths, &protected, checks.as_deref().unwrap_or(&[]), &tree);
+        let mut held = sensitive(paths, &protected, checks.as_deref().unwrap_or(&[]));
         if checks.is_none() {
             held.push("the repository's checks could not be read".to_owned());
         }
@@ -131,10 +130,9 @@ impl Core {
             .clone()
             .unwrap_or_else(|| owed_lanes(Risk::parse(&entry.risk).unwrap_or(Risk::High)));
         let ran = |lane: &str| lane_ran(&status, lane);
-        Ok(owed
-            .iter()
-            .find(|lane| !ran(lane))
-            .map(|lane| format!("the {lane} review has not run")))
+        Ok(owed.iter().find(|lane| !ran(lane)).map(|lane| {
+            format!("the {lane} review has not run: the merge queue waits for a lane named {lane}")
+        }))
     }
 
     /// The reason a queued entry must wait for a person now: the mode as it is now (the person may have turned Autopilot off since),

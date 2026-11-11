@@ -36,7 +36,29 @@ pub fn check_words(commands: &[String]) -> Vec<String> {
 const RUNNER_CONFIGS: &[(&[&str], &[&str])] = &[
     (
         &["npm", "yarn", "pnpm", "npx", "bun"],
-        &["package.json", ".npmrc"],
+        &[
+            "package.json",
+            ".npmrc",
+            "pnpm-workspace.yaml",
+            ".yarnrc.yml",
+            "tsconfig.json",
+        ],
+    ),
+    (
+        &["eslint"],
+        &[
+            "eslint.config.*",
+            ".eslintrc*",
+            "package.json",
+            "tsconfig.json",
+        ],
+    ),
+    (&["tsc"], &["tsconfig*.json"]),
+    (&["ruff"], &["ruff.toml", ".ruff.toml", "pyproject.toml"]),
+    (&["deno"], &["deno.json", "deno.jsonc"]),
+    (
+        &["golangci-lint"],
+        &[".golangci.yml", ".golangci.yaml", "go.mod"],
     ),
     (
         &["make", "gmake"],
@@ -53,8 +75,12 @@ const RUNNER_CONFIGS: &[(&[&str], &[&str])] = &[
         ],
     ),
     (
-        &["cargo", "rustc"],
+        &["cargo", "rustc", "clippy-driver"],
         &[
+            "clippy.toml",
+            ".clippy.toml",
+            "rustfmt.toml",
+            ".rustfmt.toml",
             ".cargo/config.toml",
             ".cargo/config",
             "Cargo.toml",
@@ -102,26 +128,26 @@ fn config_matches(path: &str, pattern: &str) -> bool {
 }
 
 /// Whether a word of a check command covers `path`: the same file, a folder it names (with or without a trailing slash), or a glob
-/// expanded against the tree at the trusted commit.
-fn word_covers(word: &str, path: &str, tree: &[String]) -> bool {
+/// matched as a pattern.
+fn word_covers(word: &str, path: &str) -> bool {
     if word.contains(['*', '?', '[']) {
         // `*` here matches across folders, so this holds more, never less. `?` and `[..]` are read as `*`.
         let pattern: String = word
             .chars()
             .map(|c| if matches!(c, '?' | '[') { '*' } else { c })
             .collect();
-        return tree.iter().any(|f| f == path) && glob_match(&pattern, path);
+        // No test that the file exists: a new file that matches is one the check's loop will run.
+        return glob_match(&pattern, path);
     }
     let folder = word.trim_end_matches('/');
     !folder.is_empty() && (path == folder || path.starts_with(&format!("{folder}/")))
 }
 
-/// Why a diff is held, in words; empty when nothing sensitive is touched. `tree` is every file at the trusted commit.
+/// Why a diff is held, in words; empty when nothing sensitive is touched.
 pub fn sensitive(
     paths: &[String],
     protected: &[CrewPathPattern],
     checks: &[String],
-    tree: &[String],
 ) -> Vec<String> {
     let mut why: Vec<String> = Vec::new();
     let mut note = |text: &str| {
@@ -141,7 +167,7 @@ pub fn sensitive(
         if is_ci(path) {
             note("it changes CI config");
         }
-        if named.iter().any(|w| word_covers(w, path, tree)) {
+        if named.iter().any(|w| word_covers(w, path)) {
             note("it changes a file one of the repository's checks runs or reads");
         }
         if configs.iter().any(|c| config_matches(path, c)) {

@@ -490,7 +490,6 @@ async fn ci_config_and_protected_files_are_held_by_the_guard() {
                 "sh scripts/check.sh".to_owned(),
                 "git grep -q x -- docs/".to_owned(),
             ],
-            &[],
         )
     };
     assert!(
@@ -603,11 +602,10 @@ async fn the_lanes_owed_must_have_run_unless_a_person_released_it_and_a_release_
 #[tokio::test]
 async fn a_checks_runner_config_a_bare_folder_and_a_glob_are_held_too() {
     use crate::crew::sensitive;
-    let held = |checks: &[&str], paths: &[&str], tree: &[&str]| {
+    let held = |checks: &[&str], paths: &[&str], _tree: &[&str]| {
         let checks: Vec<String> = checks.iter().map(|c| (*c).to_owned()).collect();
         let paths: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
-        let tree: Vec<String> = tree.iter().map(|p| (*p).to_owned()).collect();
-        !sensitive(&paths, &[], &checks, &tree).is_empty()
+        !sensitive(&paths, &[], &checks).is_empty()
     };
     // The script a runner calls lives in the runner's config.
     assert!(held(&["npm test"], &["package.json"], &[]));
@@ -623,6 +621,22 @@ async fn a_checks_runner_config_a_bare_folder_and_a_glob_are_held_too() {
     assert!(held(&["vitest run"], &["vitest.config.ts"], &[]));
     // A bare word is a folder, and a glob is expanded against the tree.
     assert!(held(&["pytest tests"], &["tests/test_a.py"], &[]));
+    // A new file that matches a glob is held too: the check's loop will run it.
+    assert!(held(
+        &["shellcheck scripts/*.sh"],
+        &["scripts/brand_new.sh"],
+        &[]
+    ));
+    assert!(held(&["eslint src"], &["eslint.config.js"], &[]));
+    assert!(held(&["eslint src"], &[".eslintrc.json"], &[]));
+    assert!(held(&["tsc --noEmit"], &["tsconfig.build.json"], &[]));
+    assert!(held(&["ruff check"], &["ruff.toml"], &[]));
+    assert!(held(&["cargo clippy"], &["clippy.toml"], &[]));
+    assert!(held(&["cargo fmt --check"], &["rustfmt.toml"], &[]));
+    assert!(held(&["golangci-lint run"], &[".golangci.yml"], &[]));
+    assert!(held(&["deno test"], &["deno.json"], &[]));
+    assert!(held(&["pnpm test"], &["pnpm-workspace.yaml"], &[]));
+    assert!(held(&["yarn test"], &[".yarnrc.yml"], &[]));
     assert!(held(
         &["shellcheck scripts/*.sh"],
         &["scripts/a.sh"],

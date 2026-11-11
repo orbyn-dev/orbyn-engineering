@@ -84,12 +84,12 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
   last 5 merges within a day, so splitting a change does not help (60 files or 1200 lines in all is large). Every score carries the
   sample sizes it read. An area is the first two folders of a path.
 - **Held for a person, whatever the mode.** A diff that touches `.orbyn/`, a file the answer key protects, CI config, or a file one of
-  the repository's checks name (a bare word is a folder, a glob is expanded against the tree at the branch's tip), or a config file of a runner the
+  the repository's checks name (a bare word is a folder, a glob is matched as a pattern, a file that does not exist yet included), or a config file of a runner the
   checks use (`package.json` for npm, `Makefile` for make, `conftest.py` and `pyproject.toml` for pytest, `.cargo/config.toml` and `build.rs` for
-  cargo, `go.mod`, `justfile`, the jest and vitest configs), waits, at the queue and again when it merges. This is
+  cargo, `go.mod`, `justfile`, the jest, vitest, eslint, tsc, ruff, clippy, rustfmt and golangci configs), waits, at the queue and again when it merges. This is
   the backstop the always-denied list cannot be: a patch applied by `git apply` or `patch` gets past N7, and a merge that
   rewrote `.orbyn/crew.json` (the allowed hosts, the checks) or the script a check calls would stay green. A check's text is read
-  from a trusted commit, but the file it runs comes from the merged tree. Not caught: a runner this list does not know, and a check that
+  from a trusted commit, but the file it runs comes from the merged tree. Not caught: a runner this list does not know, a script that calls a runner from inside itself (the script is named, its runner's config is not), and a check that
   reaches a file only through something another file says (an include, an import). The watch reads its checks from a trusted commit too. If the repository's checks cannot be read, the diff is held.
 - **Mode.** `off`: every merge waits for a person. `on`: a high-risk diff waits. `full`: everything merges, and a high-risk
   one goes to the top of the Review queue. A person's release counts as the review and lasts for the entry: it skips the owed lanes as well as the holds below (by design: the person is the review), and a later block or retry keeps it.
