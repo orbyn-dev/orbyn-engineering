@@ -31,6 +31,7 @@ impl Core {
             .iter()
             .find(|tool| tool.name == name)
             .ok_or_else(|| CoreError::NotFound(format!("tool {name}")))?;
+        self.refuse_for_crew_worker(binding, name, args)?;
         let preview = self.project_tool_preview(binding, name, args).await?;
         let args = preview.as_ref().unwrap_or(args);
         if tool.effect {

@@ -1,4 +1,4 @@
-//! `crew_route`: the dry run of the router. It answers which engine a brief would go to and
+//! The Crew tools. `crew_route` is the dry run of the router. It answers which engine a brief would go to and
 //! why, and starts nothing: no thread, no run, no worktree, no engine started for limits
 //! (they are read from the cache only), and nothing is stored. It is
 //! behind the Crew Preview flag (`CoreConfig::crew_preview`, off by default), so with the
@@ -18,13 +18,56 @@ use crate::app::Core;
 use crate::tools::mcp::McpBinding;
 
 pub const ROUTE_TOOL: &str = "crew_route";
+pub const START_TOOL: &str = "crew_start";
+pub const REPORT_TOOL: &str = "crew_report";
+
+/// Whether `name` is a Crew tool.
+pub fn is_tool(name: &str) -> bool {
+    [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name)
+}
 
 /// The member id the lead thread has in a crew (the conformance fixtures call it `lead-01`).
-const LEAD_MEMBER: &str = "lead-01";
+pub(super) const LEAD_MEMBER: &str = "lead-01";
 
 /// The tool as `tools/list` shows it.
 pub fn tool_specs() -> Vec<Value> {
-    vec![json!({
+    vec![
+        route_spec(),
+        json!({
+            "name": START_TOOL,
+            "description": "Preview: start a Crew task. `brief` is the brief draft the worker reads \
+                (kind, outcome, inputs, files, allowed_effects, stop_when, budget, optionally needs and engine); \
+                `answer_key` is what the core checks, as a draft (checks, protected_paths). The core routes the \
+                brief, grants the files and runs a worker; the worker never sees the answer key. \
+                Only the lead calls this.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "brief": { "type": "object" }, "answer_key": { "type": "object" } },
+                "required": ["brief", "answer_key"],
+            },
+        }),
+        json!({
+            "name": REPORT_TOOL,
+            "description": "Preview: a Crew worker's result at the end of an attempt. `summary` is required; \
+                `branch`, `commit`, `claims` and `not_verified` (what no check covers) are optional. \
+                The core then checks the work and tells you the reason if a check fails.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string" },
+                    "branch": { "type": "string" },
+                    "commit": { "type": "string" },
+                    "claims": { "type": "array" },
+                    "not_verified": { "type": "array" },
+                },
+                "required": ["summary"],
+            },
+        }),
+    ]
+}
+
+fn route_spec() -> Value {
+    json!({
         "name": ROUTE_TOOL,
         "description": "Preview: which engine a brief would be routed to and why, without starting anything. \
             `brief` is a Crew brief draft (kind, outcome, inputs, files, allowed_effects, stop_when, budget, \
@@ -41,10 +84,10 @@ pub fn tool_specs() -> Vec<Value> {
             },
             "required": ["brief"],
         },
-    })]
+    })
 }
 
-fn invalid(message: impl Into<String>) -> CrewError {
+pub(super) fn invalid(message: impl Into<String>) -> CrewError {
     CrewError::new(ErrorCode::InvalidObject, message)
 }
 
@@ -70,6 +113,28 @@ pub(super) fn stamp_now() -> Result<CrewTimestamp, CrewError> {
 }
 
 impl Core {
+    /// Runs a Crew tool for the MCP service. A refusal is the protocol's error object, so the
+    /// caller reads its code. The text and whether it is an error.
+    pub async fn crew_tool_text(
+        self: &std::sync::Arc<Self>,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> (String, bool) {
+        if let Err(error) = self.note_tool(binding, tool) {
+            tracing::warn!(%error, "could not record a tool call");
+        }
+        let answer = match tool {
+            START_TOOL => self.crew_start_tool(binding, args).await,
+            REPORT_TOOL => self.crew_report_tool(binding, args).await,
+            _ => self.crew_route_tool(binding, args).await,
+        };
+        match answer {
+            Ok(answer) => (answer.to_string(), false),
+            Err(error) => (json!(error).to_string(), true),
+        }
+    }
+
     /// Whether the Crew tools are on. Off, `crew_route` does not exist for any caller.
     pub fn crew_enabled(&self) -> bool {
         self.config.crew_preview
@@ -84,6 +149,13 @@ impl Core {
     ) -> Result<Value, CrewError> {
         if !self.crew_enabled() {
             return Err(CrewError::new(ErrorCode::UnknownTool, "crew_route"));
+        }
+        // The router's view is the lead's: a worker's binding cannot ask it.
+        if !matches!(self.crew_caller(binding)?, super::start::Caller::Lead) {
+            return Err(CrewError::new(
+                ErrorCode::NotAuthorized,
+                "only the lead routes a brief",
+            ));
         }
         let Some(fields) = args.as_object() else {
             return Err(invalid("arguments: an object"));

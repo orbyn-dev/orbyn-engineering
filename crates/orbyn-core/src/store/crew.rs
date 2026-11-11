@@ -5,7 +5,7 @@
 
 use orbyn_contracts::{
     AnswerKey, Brief, CrewError, CrewMessage, CrewObject, CrewResult, Evidence, Gate, Lease,
-    RouteDecision, WorkerObject, canonical_json,
+    Report, RouteDecision, WorkerObject, canonical_json,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
@@ -25,7 +25,7 @@ pub struct CrewTask {
     pub updated_at: String,
 }
 
-fn task_row(row: &Row<'_>) -> rusqlite::Result<CrewTask> {
+pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<CrewTask> {
     Ok(CrewTask {
         id: row.get("id")?,
         crew_id: row.get("crew_id")?,
@@ -37,12 +37,12 @@ fn task_row(row: &Row<'_>) -> rusqlite::Result<CrewTask> {
     })
 }
 
-fn refuse(error: CrewError) -> CoreError {
+pub(super) fn refuse(error: CrewError) -> CoreError {
     CoreError::Invalid(format!("crew object refused: {error}"))
 }
 
 /// Reads a stored body back as the object it must be.
-fn read_object(text: &str) -> Result<CrewObject> {
+pub(super) fn read_object(text: &str) -> Result<CrewObject> {
     let value = serde_json::from_str(text)?;
     CrewObject::parse(&value).map_err(|error| {
         CoreError::Internal(format!("a stored crew object no longer verifies: {error}"))
@@ -50,7 +50,7 @@ fn read_object(text: &str) -> Result<CrewObject> {
 }
 
 /// The object as stored: checked, then written as canonical JSON.
-fn checked(object: &CrewObject) -> Result<String> {
+pub(super) fn checked(object: &CrewObject) -> Result<String> {
     object.validate().map_err(refuse)?;
     let computed = object.computed_id().map_err(refuse)?;
     if &computed != object.id() {
@@ -62,7 +62,7 @@ fn checked(object: &CrewObject) -> Result<String> {
     canonical_json(&object.to_value()).map_err(refuse)
 }
 
-fn find_task(tx: &Transaction<'_>, id: &str) -> Result<CrewTask> {
+pub(super) fn find_task(tx: &Transaction<'_>, id: &str) -> Result<CrewTask> {
     tx.query_row("SELECT * FROM crew_tasks WHERE id = ?1", [id], task_row)
         .optional()?
         .ok_or_else(|| CoreError::NotFound(format!("crew task {id}")))
@@ -85,6 +85,88 @@ fn belongs_to(task: &CrewTask, object: &CrewObject) -> Result<()> {
             task.id
         )));
     }
+    Ok(())
+}
+
+/// Writes an already checked object to its table, inside the caller's transaction. The
+/// object must belong to the task's crew and run. Adding the same object again changes nothing.
+pub(super) fn insert_object(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    object: &CrewObject,
+    body: &str,
+) -> Result<()> {
+    let task = find_task(tx, task_id)?;
+    belongs_to(&task, object)?;
+    let id = object.id().as_str();
+    match object {
+        CrewObject::Message(o) => tx.execute(
+            "INSERT INTO crew_messages (id, task_id, recipient, kind, body)
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
+            params![id, task_id, o.to.as_str(), super::wire_name(o.kind)?, body],
+        )?,
+        CrewObject::Lease(o) => tx.execute(
+            "INSERT INTO crew_leases (id, task_id, holder, state, expires_at, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                task_id,
+                o.holder.as_str(),
+                super::wire_name(o.state)?,
+                o.expires_at.as_str(),
+                body
+            ],
+        )?,
+        CrewObject::Evidence(o) => tx.execute(
+            "INSERT INTO crew_evidence (id, task_id, check_id, outcome, body)
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                task_id,
+                o.check.as_str(),
+                super::wire_name(o.outcome)?,
+                body
+            ],
+        )?,
+        CrewObject::Gate(o) => tx.execute(
+            "INSERT INTO crew_gates (id, task_id, stage, decision, body)
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                task_id,
+                super::wire_name(o.stage)?,
+                super::wire_name(o.decision)?,
+                body
+            ],
+        )?,
+        CrewObject::Result(o) => tx.execute(
+            "INSERT INTO crew_results (id, task_id, state, final, body)
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
+            params![id, task_id, super::wire_name(o.state)?, o.r#final, body],
+        )?,
+        CrewObject::RouteDecision(o) => tx.execute(
+            "INSERT INTO crew_route_decisions (id, task_id, engine, assigned_by, body)
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                task_id,
+                o.engine.as_str(),
+                super::wire_name(o.assigned_by)?,
+                body
+            ],
+        )?,
+        CrewObject::Report(_) => tx.execute(
+            "INSERT INTO crew_reports (id, task_id, body) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO NOTHING",
+            params![id, task_id, body],
+        )?,
+        other => {
+            return Err(CoreError::Invalid(format!(
+                "a {} has no crew table yet",
+                other.type_name()
+            )));
+        }
+    };
     Ok(())
 }
 
@@ -205,78 +287,14 @@ impl Store {
     /// object again changes nothing.
     pub fn add_crew_object(&self, task_id: &str, object: &CrewObject) -> Result<()> {
         let body = checked(object)?;
-        self.commit(|tx, _| {
-            let task = find_task(tx, task_id)?;
-            belongs_to(&task, object)?;
-            let id = object.id().as_str();
-            match object {
-                CrewObject::Message(o) => tx.execute(
-                    "INSERT INTO crew_messages (id, task_id, recipient, kind, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
-                    params![id, task_id, o.to.as_str(), super::wire_name(o.kind)?, body],
-                )?,
-                CrewObject::Lease(o) => tx.execute(
-                    "INSERT INTO crew_leases (id, task_id, holder, state, expires_at, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO NOTHING",
-                    params![
-                        id,
-                        task_id,
-                        o.holder.as_str(),
-                        super::wire_name(o.state)?,
-                        o.expires_at.as_str(),
-                        body
-                    ],
-                )?,
-                CrewObject::Evidence(o) => tx.execute(
-                    "INSERT INTO crew_evidence (id, task_id, check_id, outcome, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
-                    params![
-                        id,
-                        task_id,
-                        o.check.as_str(),
-                        super::wire_name(o.outcome)?,
-                        body
-                    ],
-                )?,
-                CrewObject::Gate(o) => tx.execute(
-                    "INSERT INTO crew_gates (id, task_id, stage, decision, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
-                    params![
-                        id,
-                        task_id,
-                        super::wire_name(o.stage)?,
-                        super::wire_name(o.decision)?,
-                        body
-                    ],
-                )?,
-                CrewObject::Result(o) => tx.execute(
-                    "INSERT INTO crew_results (id, task_id, state, final, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
-                    params![id, task_id, super::wire_name(o.state)?, o.r#final, body],
-                )?,
-                CrewObject::RouteDecision(o) => tx.execute(
-                    "INSERT INTO crew_route_decisions (id, task_id, engine, assigned_by, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO NOTHING",
-                    params![
-                        id,
-                        task_id,
-                        o.engine.as_str(),
-                        super::wire_name(o.assigned_by)?,
-                        body
-                    ],
-                )?,
-                other => {
-                    return Err(CoreError::Invalid(format!(
-                        "a {} has no crew table yet",
-                        other.type_name()
-                    )));
-                }
-            };
-            Ok(())
-        })
+        self.commit(|tx, _| insert_object(tx, task_id, object, &body))
     }
 
-    fn crew_objects(&self, table: &'static str, task_id: &str) -> Result<Vec<CrewObject>> {
+    pub(super) fn crew_objects(
+        &self,
+        table: &'static str,
+        task_id: &str,
+    ) -> Result<Vec<CrewObject>> {
         let conn = self.reader();
         let mut statement = conn.prepare(&format!(
             "SELECT body FROM {table} WHERE task_id = ?1 ORDER BY rowid"
@@ -378,6 +396,20 @@ impl Store {
             .filter_map(|o| {
                 if let CrewObject::RouteDecision(d) = o {
                     Some(d)
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+
+    pub fn crew_reports(&self, task_id: &str) -> Result<Vec<Report>> {
+        Ok(self
+            .crew_objects("crew_reports", task_id)?
+            .into_iter()
+            .filter_map(|o| {
+                if let CrewObject::Report(r) = o {
+                    Some(r)
                 } else {
                     None
                 }

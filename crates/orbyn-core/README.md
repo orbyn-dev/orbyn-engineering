@@ -23,7 +23,7 @@ group; a new group adds its own `README.md` and a row here.
 | --- | --- |
 | [agents](src/agents/README.md) | Engine registry, drivers, engine sessions and history, model selection, usage |
 | [conversation](src/conversation/README.md) | Threads and runs: admission, composer, questions, checkpoints, changes, automations, published pages, search |
-| [crew](src/crew/README.md) | Crew (Preview, off by default): the router and its dry-run tool; the protocol's objects live in contracts and the store |
+| [crew](src/crew/README.md) | Crew (Preview, off by default): the router, `crew_start`, `crew_report`, the verifier and the loop guard; the protocol's objects live in contracts and the store |
 | [governance](src/governance/README.md) | Policy, the approval gate, the computer gateway and the outbound request list |
 | [project](src/project/README.md) | Projects, the managed workspace, project files, icons and images, setup, checkout files |
 | [source_control](src/source_control/README.md) | Git, Jujutsu, forge CLIs, commit text and review guides |

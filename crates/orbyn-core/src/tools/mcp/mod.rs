@@ -89,9 +89,10 @@ impl McpService {
         }
     }
 
-    /// Connects Orbyn's own tools. Until then they refuse rather than guess.
+    /// Connects Orbyn's own tools and Crew. Until then they refuse rather than guess.
     pub fn bind_host(&self, core: &Arc<Core>) {
         let _ = self.host.set(Arc::downgrade(core));
+        core.runs.bind_crew(core);
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {
@@ -216,18 +217,12 @@ impl McpService {
                     Err(error) => Ok(text_result(&error.public_message(), true)),
                 }
             }
-            crate::crew::ROUTE_TOOL if self.crew_enabled() => {
+            tool if crate::crew::is_tool(tool) && self.crew_enabled() => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {
                     return Ok(text_result("This service is not ready.", true));
                 };
-                if let Err(error) = core.note_tool(binding, crate::crew::ROUTE_TOOL) {
-                    tracing::warn!(%error, "could not record a tool call");
-                }
-                // A Crew refusal is the protocol's error object, so the lead reads its code.
-                Ok(match core.crew_route_tool(binding, &args).await {
-                    Ok(answer) => text_result(&answer.to_string(), false),
-                    Err(error) => text_result(&json!(error).to_string(), true),
-                })
+                let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
+                Ok(text_result(&text, failed))
             }
             other if crate::tools::mcp_tools::is_tool(other) => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {
@@ -242,6 +237,11 @@ impl McpService {
                 }
             }
             other if other.starts_with("computer_") => {
+                if let Some(why) = (self.host.get().and_then(Weak::upgrade))
+                    .and_then(|core| core.crew_worker_refusal(binding, other, &args))
+                {
+                    return Ok(text_result(&why, true));
+                }
                 let Some(action) = computer_action(other, &args) else {
                     return Err((METHOD_NOT_FOUND, format!("Unknown tool {other}.")));
                 };

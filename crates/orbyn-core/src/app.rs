@@ -148,6 +148,8 @@ pub struct Core {
     pub(crate) tool_probes:
         Mutex<std::collections::HashMap<String, Arc<crate::agents::tools_report::ToolsProbe>>>,
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
+    /// Crew Preview: one `crew_start` at a time, so two briefs cannot both be granted a path.
+    pub(crate) crew_starts: tokio::sync::Mutex<()>,
     _lock: File,
 }
 
@@ -288,8 +290,12 @@ impl Core {
             tool_lists: Mutex::new(Default::default()),
             tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
+            crew_starts: tokio::sync::Mutex::new(()),
             _lock: lock,
         };
+        // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
+        // here, before any run can end and claim another.
+        core.store.clear_crew_claims()?;
         core.apply_login_preference()?;
         core.wire_changes();
         Ok(core)

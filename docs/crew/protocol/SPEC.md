@@ -402,6 +402,10 @@ These are named so nobody assumes them. They arrive in later versions of this pr
   and never grants a permission (H6).
 - The key and its check files are out of the worker's reach (H1, H11). The core runs the
   checks, so a worker cannot mark its own work as verified (H9).
+- The tools keep the key from a member; they do not sandbox it. A member that runs as the same
+  operating-system user as the core can read the core's own store or call its CLI. An implementation
+  that needs H1 to hold against such a member runs it in a sandbox that blocks those reads, and a
+  process a member leaves running can outlive its turn.
 - Evidence is meant to be checked: it names the command, the commit and a log hash, so a
   reader can re-run it and see what it does and does not prove.
 
