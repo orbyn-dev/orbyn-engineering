@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { useUi } from "../../../product/state/ui";
@@ -15,6 +15,9 @@ import { PullsRow } from "../PullChip";
 import { ThreadAutomations } from "../ThreadAutomations";
 import { DetailsDismiss } from "./DetailsDismiss";
 import { ChangesRow, LimitsRow, ScriptsRow, ServersRow, UsageRow, useDetailsLoads } from "./DetailsRows";
+
+/** How far down the grabber or header is dragged, in px, to dismiss the sheet. */
+const DRAG_DISMISS = 64;
 
 /** The one trigger the popover opens from, and the button it returns focus to. */
 const trigger = () => document.querySelector<HTMLElement>("[data-details-toggle]");
@@ -60,6 +63,32 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
     else element.style.removeProperty("right");
   }, [layout]);
 
+  // The sheet is dragged down by its grabber or its header to put it away; Escape and a press outside still do.
+  const dragFrom = useRef<number | null>(null);
+  const sheet = layout === "phone";
+  const dragHandlers = sheet
+    ? {
+        onPointerDown: (event: PointerEvent) => {
+          dragFrom.current = event.clientY;
+          (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+        },
+        onPointerMove: (event: PointerEvent) => {
+          if (dragFrom.current === null || !root.current) return;
+          root.current.style.transform = `translateY(${Math.max(0, event.clientY - dragFrom.current)}px)`;
+        },
+        onPointerUp: (event: PointerEvent) => {
+          const from = dragFrom.current;
+          dragFrom.current = null;
+          root.current?.style.removeProperty("transform");
+          if (from !== null && event.clientY - from >= DRAG_DISMISS) dismiss("escape");
+        },
+        onPointerCancel: () => {
+          dragFrom.current = null;
+          root.current?.style.removeProperty("transform");
+        },
+      }
+    : {};
+
   /** The error row takes the place of the first row that failed; the rest of what failed goes with it. */
   const read = (row: string, node: ReactNode) => {
     if (!loads.failed.includes(row)) return shows(row) ? node : null;
@@ -67,8 +96,8 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
   };
 
   return (
-    <div ref={root} className="details-popover" role="dialog" aria-label="Thread details" data-sheet={layout === "phone" || undefined}>
-      <span className="details-grab" aria-hidden />
+    <div ref={root} className="details-popover" role="dialog" aria-label="Thread details" data-sheet={sheet || undefined}>
+      <span className="details-grab" aria-hidden {...dragHandlers} />
       <DetailsDismiss.Provider value={() => dismiss("select")}>
         <div
           className="dcard"
@@ -80,7 +109,9 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           }}
         >
           <Presence>{menu ? <Menu {...menu} label="Thread details rows" items={detailsMenuItems()} onClose={() => setMenu(null)} /> : null}</Presence>
-          <div className="dh">Details</div>
+          <div className="dh" {...dragHandlers}>
+            Details
+          </div>
           {branch && shows("branch") ? <BranchRow thread={thread} branch={branch} /> : null}
           {read("changes", <ChangesRow diff={loads.diff} />)}
           {shows("pulls") ? <PullsRow thread={thread} /> : null}

@@ -109,3 +109,24 @@ it("a server outside the checkout can be opened and copied but not stopped", asy
   await user.click(await screen.findByRole("menuitem", { name: "localhost:4001" }));
   expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).not.toContain("Stop");
 });
+
+it("while loading, Local servers shows a still bar after 400 ms but Changes keeps its label and shows none", async () => {
+  vi.useFakeTimers();
+  try {
+    const wait = { status: "loading" as const, data: null, error: null, refreshing: true, reload: () => Promise.resolve() };
+    const { container } = render(
+      <>
+        <ChangesRow diff={wait} />
+        <ServersRow threadId="t" servers={wait} />
+      </>,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(container.querySelector(".sk")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(container.querySelectorAll(".sk")).toHaveLength(1);
+    expect(screen.getByText("Changes")).toBeInTheDocument();
+    expect(screen.getByText("Local servers")).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});

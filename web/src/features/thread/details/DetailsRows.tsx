@@ -66,7 +66,6 @@ export function ChangesRow({ diff }: { diff: Read<DiffFile[]> }) {
   const togglePanel = useUi((state) => state.togglePanel);
   const showing = useUi((state) => state.panelOpen === true && state.panelTab === "diff");
   const dismiss = useDismiss();
-  const waited = useWaitedFor(diff.status === "loading");
   const files = diff.data ?? [];
   const added = files.reduce((sum, file) => sum + file.additions, 0);
   const removed = files.reduce((sum, file) => sum + file.deletions, 0);
@@ -75,7 +74,6 @@ export function ChangesRow({ diff }: { diff: Read<DiffFile[]> }) {
       icon={<FileDiff size={16} aria-hidden />}
       label="Changes"
       loading={diff.status === "loading"}
-      waited={waited}
       value={
         files.length === 0 ? (
           <span className="t3">No changes</span>
@@ -209,7 +207,6 @@ export function ScriptsRow({ threadId, scripts }: { threadId: string; scripts: R
   const pushToast = useUi((state) => state.pushToast);
   const dismiss = useDismiss();
   const [expanded, setExpanded] = useState(false);
-  const waited = useWaitedFor(scripts.status === "loading");
   const list = scripts.data?.scripts ?? [];
   const run = (script: ProjectScript) => {
     void runProjectAction(threadId, script).then(dismiss, (failure: unknown) => pushToast(`Couldn't run ${script.name}. ${toFailure(failure).message}`));
@@ -219,7 +216,6 @@ export function ScriptsRow({ threadId, scripts }: { threadId: string; scripts: R
       icon={<SquareTerminal size={16} aria-hidden />}
       label="Scripts"
       loading={scripts.status === "loading"}
-      waited={waited}
       expanded={list.length > 0 ? expanded : undefined}
       chevron={false}
       onClick={list.length > 0 ? () => setExpanded(!expanded) : undefined}

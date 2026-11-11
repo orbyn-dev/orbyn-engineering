@@ -355,7 +355,6 @@ export function ThreadView({ id }: { id: string }) {
   const phone = layout === "phone";
   const overlays = panelOverlays(layout);
   const [detailsPopover, setDetailsPopover] = useState(false);
-  useCommand("threadPanel.toggle", () => setDetailsPopover((open) => !open));
   const [finding, setFinding] = useState(false);
   useCommand("chat.find", () => setFinding(true));
   const maximized = useUi((state) => state.panelMaximized);

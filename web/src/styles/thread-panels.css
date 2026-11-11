@@ -67,9 +67,17 @@
   flex: none;
   width: 36px;
   height: 4px;
-  margin: 8px auto 2px;
+  /* A taller hit area than the bar itself, for a thumb. */
+  box-sizing: content-box;
+  margin: 0 auto;
+  padding: 8px 40px 6px;
+  background: var(--color-borderStrong) content-box;
   border-radius: var(--radius-pill);
-  background: var(--color-borderStrong);
+  background-clip: content-box;
+  touch-action: none;
+}
+.details-popover[data-sheet] .dcard .dh {
+  touch-action: none;
 }
 .details-head {
   display: flex;

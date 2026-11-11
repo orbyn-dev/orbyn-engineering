@@ -137,6 +137,9 @@ export function runShellCommand(command: string, route: Route): boolean {
       if (ui.panelOpen !== true) return false;
       ui.closePanel();
       return true;
+    case "threadPanel.toggle":
+      ui.setPanelOpen(ui.panelOpen !== true);
+      return true;
     case "thread.stop":
       if (!thread?.active_run) return false;
       void api.cancelRun(thread.active_run.id);

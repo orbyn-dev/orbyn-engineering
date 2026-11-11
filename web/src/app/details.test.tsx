@@ -1,11 +1,12 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { api } from "../api/client";
 import { useWorkspace } from "../product/state/workspace";
 import { useUi } from "../product/state/ui";
-import { runHandlers } from "../product/shell/shortcuts";
+import { runShellCommand } from "./shell/commands";
+import { parseRoute } from "../product/state/route";
 import { App } from "./App";
 import * as threadApi from "../features/thread/api";
 
@@ -133,13 +134,31 @@ describe("the Details button and the Details popover", () => {
     expect(within(card()!).queryByRole("button", { name: /Collapse card|Expand card/ })).toBeNull();
   });
 
-  it("toggles from the command that used to toggle the card", async () => {
+  it("opens only from the Details button: the side panel shortcut leaves the popover alone and toggles the panel", async () => {
     setViewportWidth(1400);
     render(<App />);
     await details();
-    act(() => void runHandlers("threadPanel.toggle"));
+    act(() => void runShellCommand("threadPanel.toggle", parseRoute(window.location.hash)));
+    expect(popover()).toBeNull();
+    await waitFor(() => expect(panel()).not.toBeNull());
+  });
+
+  it("puts the sheet away when its grabber or header is dragged down, and not for a short drag", async () => {
+    setViewportWidth(500);
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await user.click(await details());
+    const grab = container.querySelector(".details-grab")!;
+    fireEvent.pointerDown(grab, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(grab, { clientY: 130, pointerId: 1 });
     expect(popover()).toBeInTheDocument();
-    act(() => void runHandlers("threadPanel.toggle"));
+    fireEvent.pointerDown(grab, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(grab, { clientY: 200, pointerId: 1 });
+    await waitFor(() => expect(popover()).toBeNull());
+    await user.click(await details());
+    const head = within(card()!).getByText("Details");
+    fireEvent.pointerDown(head, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(head, { clientY: 180, pointerId: 1 });
     await waitFor(() => expect(popover()).toBeNull());
   });
 

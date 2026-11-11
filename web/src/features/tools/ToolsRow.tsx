@@ -3,7 +3,6 @@ import type { Thread } from "../../api/types";
 import { api } from "./api";
 import { topics } from "../../lib/dataRefresh";
 import { useAsync } from "../../lib/useAsync";
-import { useWaited as useWaitedFor } from "../../lib/motion";
 import { engineById, useWorkspace } from "../../product/state/workspace";
 import { useUi } from "../../product/state/ui";
 import { DRow } from "../../product/ui/DetailRows";
@@ -19,7 +18,6 @@ export function ToolsRow({ thread, onOpen }: { thread: Thread; onOpen?(): void }
   const engines = useWorkspace((state) => state.engines.data);
   const engineName = engineById(engines, thread.engine)?.name ?? thread.engine;
   const tools = useAsync(`thread-tools:${thread.id}`, (signal) => api.threadTools(thread.id, false, signal), { refreshOn: topics(`tools:${thread.id}`) });
-  const waited = useWaitedFor(tools.status === "loading");
   const reopen = useUi((state) => state.reopenPanelTab);
   const open = () => {
     reopen("tools");
@@ -36,8 +34,6 @@ export function ToolsRow({ thread, onOpen }: { thread: Thread; onOpen?(): void }
       icon={<Plug size={16} aria-hidden />}
       label="Tools"
       loading={tools.status === "loading"}
-      waited={waited}
-      skeleton={54}
       onClick={open}
       ariaLabel="Tools"
       chevron
