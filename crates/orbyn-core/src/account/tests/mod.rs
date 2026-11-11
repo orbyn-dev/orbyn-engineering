@@ -12,6 +12,7 @@ mod allowlist;
 mod approval;
 mod flow;
 mod limits;
+mod nonce;
 
 use super::fake::FakeDeviceApi;
 use super::settings_record::{self as record, ZONE};

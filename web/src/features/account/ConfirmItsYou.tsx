@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
@@ -54,6 +54,15 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
     }
   };
 
+  // The page took the dialog away (the session ended, a navigation): the confirmation it made and did not use is dropped too.
+  useEffect(
+    () => () => {
+      const nonce = held.current;
+      held.current = null;
+      if (nonce) void accountApi.cancelConfirmation(nonce).catch(() => undefined);
+    },
+    [],
+  );
   const giveUp = () => {
     const nonce = held.current;
     held.current = null;

@@ -33,6 +33,8 @@ pub mod usage;
 mod workspace;
 
 #[cfg(test)]
+mod account_approval_tests;
+#[cfg(test)]
 mod account_tests;
 #[cfg(test)]
 mod tests;

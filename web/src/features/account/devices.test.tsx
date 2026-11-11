@@ -466,6 +466,13 @@ describe("the confirmation's nonce", () => {
     vi.restoreAllMocks();
   });
 
+  it("a dialog the page takes away gives it up too", async () => {
+    await abandoned();
+    cleanup();
+    await gaveUp();
+    vi.restoreAllMocks();
+  });
+
   it("Escape does too", async () => {
     const { confirm } = await abandoned();
     // Escape in a native dialog is its `cancel` event.
