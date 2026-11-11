@@ -230,7 +230,10 @@ export function PanelHost({
   const target = tab ? parseFileTab(tab) : null;
   const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
   // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
-  const gitless = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
+  // A Jujutsu checkout is no Git repository either, but has changes to show: only a folder with neither is gitless.
+  const notGit = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
+  const jj = useAsync(`jj-gate:${thread.id}:${notGit}`, (signal) => (notGit ? api.jjStatus(thread.id, signal) : Promise.resolve(null)));
+  const gitless = notGit && jj.status === "ready" && jj.data === null;
   const subtitle =
     target === null ? null
     : target.kind === "thread" ? (thread.worktree?.branch ?? null)

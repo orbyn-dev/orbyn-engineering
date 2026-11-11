@@ -1,5 +1,5 @@
 import { ChevronRight, Folder, Lock } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import { formatBytes } from "../../../lib/format";
 import { useAsync } from "../../../lib/useAsync";
@@ -23,10 +23,12 @@ function ThreadFile({ threadId, path }: { threadId: string; path: string }) {
   const reveal = useUi((state) => state.fileReveal);
   const consume = useUi((state) => state.consumeFileReveal);
   // A link that named a line says it once; the line stays for this open.
+  const [line, setLine] = useState<number | null>(null);
   useEffect(() => {
-    if (reveal && reveal.threadId === threadId && reveal.path === path) consume(reveal.nonce);
+    if (!reveal || reveal.threadId !== threadId || reveal.path !== path) return;
+    setLine(reveal.line);
+    consume(reveal.nonce);
   }, [reveal, threadId, path, consume]);
-  const line = reveal && reveal.threadId === threadId && reveal.path === path ? reveal.line : null;
   const resolved = useResolvedThreadPath(threadId, cwd ? { threadId, cwd, path, basis: "thread", nonce: 0 } : null);
   const full = fullPathOf(path);
   if (resolved.value?.checkout_path) return <Viewer threadId={threadId} path={resolved.value.checkout_path} line={line} />;

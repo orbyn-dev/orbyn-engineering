@@ -223,7 +223,7 @@ test.describe("selection dismissal", () => {
 
   test("a click on the sidebar's own header clears it", async ({ page }) => {
     await select(page, "Tool call states", "Explain how the event log resumes");
-    await page.locator(".side-label", { hasText: /^Projects/ }).click({ position: { x: 4, y: 4 } });
+    await page.locator(".side-label", { hasText: /^Threads/ }).click({ position: { x: 4, y: 4 } });
     await expect(picked(page)).toHaveCount(0);
   });
 

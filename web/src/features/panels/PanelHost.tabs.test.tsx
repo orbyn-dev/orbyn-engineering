@@ -214,10 +214,22 @@ describe("surface tabs", () => {
   it("greys out Changes in the launcher for a folder outside Git", async () => {
     const user = userEvent.setup();
     useWorkspace.setState({ projects: { data: [{ id: "p", is_git: false } as never], error: null, loading: false } });
+    vi.spyOn(api, "jjStatus").mockResolvedValue(null);
     render(<PanelHost thread={{ id: "thread-1", project_id: "p" } as Thread} mode="docked" closing={false} moves={false} maximized={false} onToggleMaximize={() => undefined} onReturn={() => undefined} />);
+    await waitFor(() => expect(api.jjStatus).toHaveBeenCalled());
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    expect(screen.getByRole("menuitem", { name: /^Changes/ })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: /^Changes/ })).toBeDisabled());
     expect(screen.getByRole("menuitem", { name: /^Browser/ })).toBeEnabled();
+  });
+
+  it("keeps Changes for a Jujutsu checkout, which is no Git repository but has changes", async () => {
+    const user = userEvent.setup();
+    useWorkspace.setState({ projects: { data: [{ id: "p", is_git: false } as never], error: null, loading: false } });
+    vi.spyOn(api, "jjStatus").mockResolvedValue({ change_id: "kxq" } as never);
+    render(<PanelHost thread={{ id: "thread-1", project_id: "p" } as Thread} mode="docked" closing={false} moves={false} maximized={false} onToggleMaximize={() => undefined} onReturn={() => undefined} />);
+    await waitFor(() => expect(api.jjStatus).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    expect(screen.getByRole("menuitem", { name: /^Changes/ })).toBeEnabled();
   });
 
   it("with one tab left, the tab menu has only Maximise panel, Delete keeps the tab, and the × closes the panel without forgetting it", async () => {
