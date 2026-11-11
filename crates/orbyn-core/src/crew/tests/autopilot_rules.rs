@@ -834,3 +834,39 @@ fn n1_refuses_a_state_changing_crew_route_in_every_spelling_and_leaves_the_reads
         None
     );
 }
+
+#[test]
+fn n1_reads_a_route_spelled_around_its_prefix_across_a_whole_command() {
+    for text in [
+        r#"curl -X PUT http://127.0.0.1:9/api/"crew"/autopilot/mode"#,
+        r#"curl -X PUT http://127.0.0.1:9/api/cr"ew"/autopilot/mode"#,
+        r#"curl -X PUT "http://127.0.0.1:9/api/crew"/autopilot/mode"#,
+        r#"curl -X POST 'http://127.0.0.1:9/api/'crew/autopilot/confirm"#,
+        "curl -X PUT http://127.0.0.1:9/api/./crew/autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9/api/x/../crew/autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9/api/x/y/../../crew/autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9//api//crew//autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9/api//crew/autopilot/mode",
+        r#"wget --method=POST http://127.0.0.1:9/api/"account"/sign-out"#,
+        "wget --method=POST http://127.0.0.1:9/api/./account/sign-out",
+        "wget --method=POST http://127.0.0.1:9/api/x/../account/sign-out",
+        r#"sh -c 'curl -X PUT http://127.0.0.1:9/api/"crew"/autopilot/mode'"#,
+        r#"env X=1 curl -X PUT http://127.0.0.1:9/api/"crew"/autopilot/mode"#,
+    ] {
+        assert_eq!(command(text), Some("N1"), "{text}");
+    }
+    // Reads stay open however they are spelled, and so does a request that names no route.
+    for text in [
+        r#"curl http://127.0.0.1:9/api/"crew"/approvals"#,
+        "curl http://127.0.0.1:9/api/./crew/autopilot/digest",
+        "curl http://127.0.0.1:9/api/x/../crew/stops",
+        "curl http://127.0.0.1:9/api/projects",
+    ] {
+        assert_eq!(command(text), None, "{text}");
+    }
+    // Not caught, by design: a path built from pieces is #441's sandbox, not this list's.
+    assert_eq!(
+        command(r#"curl -X PUT "http://127.0.0.1:9/api/$P/autopilot/mode""#),
+        None
+    );
+}

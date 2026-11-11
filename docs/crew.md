@@ -538,7 +538,7 @@ reverted stays reverted. Every free-text field and stored JSON value is redacted
 
 The marker `crew::changes` lists the Crew routes that change state, as `account::changes` does for the account, and N1 refuses an agent's
 request to any of them (or to any path under `/api/crew` that is not a listed read) in every mode. The route-table test checks the list
-against the router. A confirmation nonce for these routes is a follow-up ([#486](https://github.com/orbyn-dev/orbyn-engineering/issues/486)).
+against the router. N1 reads a command word by word with the quotes off, and undoes `//`, `/./` and `/x/../` first; it does not see a path built from a variable, string pieces or a script the agent wrote, which is the sandbox's work (#441). A confirmation nonce for these routes is a follow-up ([#486](https://github.com/orbyn-dev/orbyn-engineering/issues/486)).
 
 Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
 ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its

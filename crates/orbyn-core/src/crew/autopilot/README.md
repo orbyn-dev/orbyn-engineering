@@ -47,10 +47,10 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
 
-Outside a Crew task only N1 (the account) is enforced, so an ordinary thread cannot call a state-changing account route. N1 looks
+Outside a Crew task only N1 (the account, and the Crew routes that change state) is enforced, so an ordinary thread cannot call a state-changing account or Crew route. N1 looks
 at requests, not at files: a network, browser or tool action that names a route, or a command run by a connecting program
 (curl, wget, an interpreter) that does. A file change, a search or a read of a document that merely names `/api/account/...`
-is not refused, so ordinary work does not trip the wires.
+is not refused, so ordinary work does not trip the wires. N1 reads spelling only: `//`, `/./`, `/x/../` and quotes inside a word are undone, but a path built from a variable, string pieces or a script the agent wrote is not seen; that is the sandbox's work (#441).
 
 Under `off` every request goes to a person, always-allowed reads and leased writes included: that is "every request", and the hard
 rules still refuse first.

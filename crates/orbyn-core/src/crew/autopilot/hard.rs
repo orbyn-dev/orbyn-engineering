@@ -163,11 +163,19 @@ pub fn account_refused(kind: ActionKind, target: &str, paths: &[String]) -> bool
         ActionKind::FileChange => false,
         // A connecting program anywhere makes the whole text a request: the route can come through a variable
         // (`U=http://.../api/account/sign-out; curl -X POST $U`) or a pipe (`printf 'POST /api/... ' | nc ...`).
+        // The text is read raw and again word by word with the quotes taken off, so `/api/"crew"/...` is seen.
         ActionKind::Command => {
-            shell::simple_commands(target)
+            let commands = shell::simple_commands(target);
+            commands
                 .iter()
                 .any(|command| CONNECTING.contains(&command.program.as_str()))
-                && account_change(target)
+                && (account_change(target)
+                    || commands.iter().any(|command| {
+                        std::iter::once(&command.raw)
+                            .chain(&command.args)
+                            .chain(&command.redirects)
+                            .any(|word| account_change(word))
+                    }))
         }
         _ => {
             let text = std::iter::once(target)
@@ -179,13 +187,35 @@ pub fn account_refused(kind: ActionKind, target: &str, paths: &[String]) -> bool
     }
 }
 
+/// `text` with `//`, `/./` and `/x/../` squashed, so a path that is spelled around its prefix is still found. Spelling is all it
+/// reads: a path built from variables, string pieces or a written script is not seen (see the README).
+fn squash(text: &str) -> String {
+    static UP: OnceLock<Regex> = OnceLock::new();
+    let up = UP.get_or_init(|| Regex::new(r"/[^/\s]+/\.\./").expect("a fixed pattern"));
+    let mut text = text.to_owned();
+    for _ in 0..8 {
+        let next = up
+            .replace_all(&text, "/")
+            .replace("/./", "/")
+            .replace("//", "/");
+        if next == text {
+            break;
+        }
+        text = next;
+    }
+    text
+}
+
 /// Whether text names a state-changing account route, or a Crew route that changes state: the person's answers are not an
 /// agent's to give (`crew::changes`).
 pub fn account_change(text: &str) -> bool {
-    account_paths_in(text)
-        .iter()
-        .any(|path| changes_account_state(path))
-        || crew_change(text)
+    let named = |text: &str| {
+        account_paths_in(text)
+            .iter()
+            .any(|path| changes_account_state(path))
+            || crew_change(text)
+    };
+    named(text) || named(&squash(text))
 }
 
 /// N1: a request to a state-changing account route, or to one this module does not know, and likewise a state-changing Crew

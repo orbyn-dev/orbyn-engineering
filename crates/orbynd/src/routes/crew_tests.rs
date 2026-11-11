@@ -176,9 +176,22 @@ async fn with_the_flag_off_every_crew_route_is_not_found() {
             path.starts_with("/api/crew"),
             "a Crew route sits under /api/crew"
         );
-        let (status, body) = app.call(method, &concrete(path), Some(json!({}))).await;
-        assert_eq!(status, 404, "route {method} is hidden");
-        assert_eq!(body, unknown, "it answers as an absent route does");
+        // The route's own method and every other: a wrong method must not tell a viewer the route exists.
+        for tried in [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "HEAD",
+            method.as_str(),
+        ] {
+            let (status, body) = app.call(tried, &concrete(path), Some(json!({}))).await;
+            assert_eq!(status, 404, "{tried} on the {method} route is hidden");
+            if tried != "HEAD" {
+                assert_eq!(body, unknown, "it answers as an absent route does");
+            }
+        }
     }
     let (status, info) = app.call("GET", "/api/info", None).await;
     assert_eq!(status, 200);
