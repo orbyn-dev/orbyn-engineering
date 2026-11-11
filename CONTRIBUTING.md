@@ -207,6 +207,10 @@ usage section. Never
 weaken a check or merge red. Do not turn on auto-merge until E2E has passed on that
 exact commit.
 
+On a pull request the unsigned desktop build uses the `ci-release` Cargo profile (no link-time
+optimisation, so it builds faster). Main, the nightly run and releases build the real `release`
+profile; `ORBYN_CARGO_PROFILE` selects it for `scripts/prepare-bundle.mjs` and defaults to `release`.
+
 The end-to-end suite runs in Playwright's headless shell, never your installed
 Chrome. Launch the packaged app after changes to the desktop shell; a passing build
 has hidden a crash on startup before.

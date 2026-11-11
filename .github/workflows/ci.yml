@@ -359,6 +359,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUN: ${{ needs.changes.outputs.desktop == 'true' && (matrix.os != 'windows-2022' || needs.changes.outputs.windows == 'true') }}
+      # A pull request builds the faster `ci-release` profile (no link-time optimisation); main,
+      # nightly and manual runs build the real `release` profile. Read by prepare-bundle and smoke-app.
+      ORBYN_CARGO_PROFILE: ${{ github.event_name == 'pull_request' && 'ci-release' || 'release' }}
     strategy:
       fail-fast: false
       matrix:
@@ -389,6 +392,7 @@ jobs:
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          key: ${{ env.ORBYN_CARGO_PROFILE }}
           workspaces: |
             .
             desktop/src-tauri
@@ -405,8 +409,15 @@ jobs:
       - if: env.RUN == 'true'
         run: npm run prepare-bundle
         working-directory: desktop
-      - if: env.RUN == 'true'
-        run: npx tauri build --bundles ${{ matrix.bundles }}
+      - name: Build the app
+        if: env.RUN == 'true'
+        shell: bash
+        run: |
+          if [ "$ORBYN_CARGO_PROFILE" = release ]; then
+            npx tauri build --bundles ${{ matrix.bundles }}
+          else
+            npx tauri build --bundles ${{ matrix.bundles }} -- --profile "$ORBYN_CARGO_PROFILE"
+          fi
         working-directory: desktop
       - name: Release script tests
         if: env.RUN == 'true'
@@ -429,7 +440,7 @@ jobs:
         if: env.RUN == 'true'
         shell: bash
         # Relative paths: Windows tar reads a drive letter as a remote host.
-        working-directory: desktop/src-tauri/target/release
+        working-directory: desktop/src-tauri/target/${{ env.ORBYN_CARGO_PROFILE }}
         run: tar -cf ../../../../bundle.tar bundle/${{ matrix.bundles == 'app' && 'macos' || 'nsis' }}
       - if: env.RUN == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

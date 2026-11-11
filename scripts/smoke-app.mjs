@@ -44,7 +44,7 @@ function bundleRoot() {
   const candidates = [
     process.argv[2],
     process.env.CARGO_TARGET_DIR && join(process.env.CARGO_TARGET_DIR, "release/bundle"),
-    join(root, "desktop/src-tauri/target/release/bundle"),
+    join(root, "desktop/src-tauri/target", process.env.ORBYN_CARGO_PROFILE ?? "release", "bundle"),
   ].filter(Boolean);
   const found = candidates.find(existsSync);
   if (!found) throw new Error(`No bundle in ${candidates.join(", ")}`);
