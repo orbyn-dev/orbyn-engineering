@@ -1,0 +1,133 @@
+/* Settings > Account, the sync line and its popover. Shapes follow the Engineer Designs frames
+   (acct-*, sync-*); every colour is an app token, so Light, Dark and Dim come with the theme. */
+.account-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ac-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 1px var(--color-borderStrong);
+}
+.ac-card[data-wide] { max-width: 520px; }
+.ac-card[data-full] { max-width: none; }
+.ac-card h2 { margin: 0; font-size: 16px; font-weight: 500; color: var(--color-text); }
+.ac-card p, .ac-sub { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--color-muted); }
+.ac-form { display: flex; flex-direction: column; gap: 12px; }
+.ac-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ac-lnks { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; font-size: 12.5px; color: var(--color-muted); }
+.ac-lnk {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--color-textSoft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  text-align: left;
+}
+.ac-lnk:disabled { opacity: 0.45; cursor: default; }
+.ac-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--color-sunken);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-textSoft);
+}
+.ac-note svg { flex: none; margin-top: 2px; color: var(--color-muted); }
+.ac-note b { font-weight: 500; color: var(--color-text); }
+.ac-err { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--color-danger); }
+.ac-err svg { flex: none; margin-top: 1px; }
+.ac-steps { font-size: 12px; color: var(--color-muted); }
+.ac-code { height: 44px; font: 500 19px var(--font-mono, ui-monospace, monospace); letter-spacing: 0.14em; text-align: center; width: 100%; }
+.ac-back { align-self: flex-start; padding: 0; border: 0; background: none; font-size: 12.5px; color: var(--color-muted); cursor: pointer; }
+.ac-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ac-two > div { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--color-sunken); font-size: 12.5px; color: var(--color-textSoft); }
+.ac-two b { font-weight: 500; color: var(--color-text); }
+.ac-two ul { list-style: disc; margin: 0; padding: 0 0 0 16px; display: flex; flex-direction: column; gap: 2px; line-height: 1.45; }
+.ac-id { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.ac-id > div { display: flex; flex-direction: column; min-width: 0; }
+.ac-id b { font-weight: 500; color: var(--color-text); }
+.ac-id span { font-size: 12.5px; color: var(--color-muted); }
+.ac-avb, .ac-avs { border-radius: 50%; background: var(--color-borderStrong); color: var(--color-text); display: grid; place-items: center; font-weight: 500; flex: none; }
+.ac-avb { width: 40px; height: 40px; font-size: 14px; }
+.ac-avs {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.ac-grp { margin: 0; padding: 18px 0 4px; font-size: 12px; font-weight: 500; color: var(--color-muted); }
+.ac-row { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.ac-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ac-row b { font-weight: 500; color: var(--color-text); }
+.ac-row small { font-size: 12px; line-height: 1.4; color: var(--color-muted); }
+.ac-aside { font-size: 12px; color: var(--color-muted); }
+.ac-loadfail { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ac-loadfail small { color: var(--color-muted); font-size: 12px; }
+.ac-sk { display: flex; flex-direction: column; gap: 14px; padding: 6px 0; }
+.ac-skr { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; }
+.ac-skr i { display: block; height: 10px; width: 60%; border-radius: 5px; background: var(--color-selected); }
+.ac-skr i + i { width: 35%; }
+.ac-last[data-stale] { opacity: 0.55; pointer-events: none; }
+
+/* Sidebar footer: avatar and sync status, then the Settings gear. */
+.ac-foot { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 4px; }
+.ac-me {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--color-textSoft);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ac-me:hover, .ac-me[data-on] { background: var(--color-selected); color: var(--color-text); }
+.ac-st { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ac-st[data-tone="bad"] { color: var(--color-text); }
+.ac-d { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; background: var(--color-danger); }
+.ac-tbi[data-tone="bad"] { color: var(--color-text); }
+.ac-spin { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; opacity: 0.6; }
+
+.ac-pop {
+  position: fixed;
+  z-index: 60;
+  width: 304px;
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: 0 12px 36px var(--color-shadow), 0 0 0 1px var(--color-borderStrong);
+  font-size: 12.5px;
+  color: var(--color-textSoft);
+}
+.ac-pop h2 { margin: 0; font-size: 13.5px; font-weight: 500; color: var(--color-text); }
+.ac-big { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--color-text); }
+.ac-zone { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.ac-zone b { font-weight: 500; color: var(--color-text); }
+.ac-zone span { font-size: 12px; color: var(--color-muted); }
+.ac-zone small { grid-column: 1 / -1; font-size: 12px; line-height: 1.4; color: var(--color-muted); }
+
+.ac-wait { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--color-muted); }

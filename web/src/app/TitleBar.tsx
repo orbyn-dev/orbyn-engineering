@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
+import { SyncTitleButton, useSignedInAccount } from "../features/account";
 import { attentionRank, EnvironmentIdentity } from "../features/workspace";
 import { useAsync } from "../lib/useAsync";
 import { navigate } from "../product/state/route";
@@ -111,6 +112,7 @@ export function TitleBar({ layout }: { layout: LayoutWidth }) {
   const toggleReadingNav = useReadingNav((state) => state.toggle);
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
   const waiting = useWaitingCount();
+  const account = useSignedInAccount();
 
   const shown = small ? drawerOpen : reading ? readingNav : !collapsed;
   // Folding the sidebar away must not strand focus on a row that no longer exists; a docked sidebar
@@ -174,6 +176,7 @@ export function TitleBar({ layout }: { layout: LayoutWidth }) {
         <ChevronRight size={16} aria-hidden />
       </button>
       <span ref={end} className="titlebar-end">
+        {account && (small || phone) ? <SyncTitleButton view={account.view} reload={account.reload} /> : null}
         <EnvironmentIdentity />
         {ledger && waiting > 0 ? (
           <span className="titlebar-waiting" role="status">

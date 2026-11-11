@@ -34,6 +34,7 @@ const GLYPH_SIZES: Record<string, string> = {
   ".pull-av": "avatar initials, 20 px circle",
   ".welcome-avatar": "project letter tile, 18 px",
   ".set-mark": "project letter tile, 18 px",
+  ".ac-avs": "account initial in the sidebar footer, 22 px circle",
 };
 
 /** The font-size declarations the scale applies to: those outside the allow-listed glyph selectors. */

@@ -422,8 +422,9 @@ The app records them here so the backend carries what the screens will need.
 - Sign-in takes an authenticator code (six digits) or a two-factor recovery code in the form `XXXXX-XXXXX`: ten codes,
   shown once, plain base32, input ignores case, the hyphen and spaces. **Five wrong codes close the sign-in.**
 - New-device approval is a two-way code comparison on a trusted device. **The approval expires after 10 minutes.**
-- Turning two-factor on or off lives on orbyn.dev for the beta. **Password change and account recovery are Planned,
-  not built.**
+- Turning two-factor on or off is not in Orbyn Engineering, and the account-site page for it will not exist in the beta
+  (Planner work is paused); signing in with an authenticator or recovery code still works. **Password change and account
+  recovery are Planned, not built.**
 - There are three code formats: the 8-character email code (a 30-symbol alphabet with no 0, O, 1, I, L or U), the
   six-digit authenticator code, and the recovery code above.
 - An account has only an email address: no name field and no "Edit name". Devices have names the person chooses, 1 to
@@ -438,9 +439,19 @@ The app records them here so the backend carries what the screens will need.
 ## UI waiting for the designs
 
 **Status.** The sign-in routes, the gate and the "Confirm it's you" guard are built
-(`account::flow`, `routes/account.rs`); the screens follow in the next pull request. The designs
-decided that with the gate `Off` Settings > Account is hidden and the sidebar footer shows no sync
-status. The sections below are the plan as written before that work.
+(`account::flow`, `routes/account.rs`, pull request 428). The first screens are built from designs v91
+(pull request 429): Settings > Account signed out, sign in with two-factor, sign up (with or without an
+invite, the device check, the emailed code), the signed-in page with Sync now, Pause and Resume sync, the sync
+line and popover with the title-bar icon, and the "Confirm it's you" dialog (wired to no action yet). The
+second pull request adds devices, sign-out, the connect step, the paused-reason popovers, the code-age
+hint and the "Remove this device" name line. The designs decided that with the gate `Off` Settings > Account is hidden, the
+palette has no Account entry, and the sidebar footer shows no sync status. The sections below are the plan as
+written before that work.
+
+**Planned is design-time only.** In the beta a Planned row or label is communication in the frames and nothing
+the product shows, unless the owner says otherwise: no Security group (password, two-factor, passkeys), no "Forgot
+your password?", no passkey sign-in row. Two-factor sign-in with an authenticator or recovery code works;
+enrolling or turning it off is not in Orbyn Engineering.
 
 **No UI is built in the design pull request.** The Designer merged the frames in orbyn-designs pull request #155
 (`engineer-designs.html`). A full-size check of those frames is still to come in a separate pull request, and

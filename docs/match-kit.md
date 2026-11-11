@@ -48,6 +48,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Settings, one page for each section.** `s-general`, `s-appearance`, `s-chat`, `s-diffs`, `s-keybindings`, `s-providers`, `s-threads`, `s-tasks`, `s-projects`, `s-source-control`, `s-worktrees`, `s-maintenance`, `s-labs`, `s-about`, `s-archive`
 
+**Account and sync.** `settings-account-gate-off`, `acct-settings-signed-out`, `acct-signin`, `acct-signin-wrong-password`, `acct-signin-network`, `acct-signup-invite`, `acct-signup-email-code`, `acct-2fa-code`, `acct-settings-signed-in`, `acct-settings-paused`, `acct-settings-loading`, `acct-settings-error`, `acct-settings-offline`, `acct-signup-check`, `acct-signup-code-wrong`, `acct-2fa-closed`, `acct-reauth`, `sync-line`, `sync-popover`, `sync-popover-offline`, `sync-popover-failed`
+
 ## Add a screen
 
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
