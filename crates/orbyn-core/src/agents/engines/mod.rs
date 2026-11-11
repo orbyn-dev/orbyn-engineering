@@ -43,6 +43,11 @@ pub const UPDATE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MODELS_TTL: Duration = Duration::from_secs(5 * 60);
 /// How often an engine's catalog key is compared. Reading it starts processes.
 const MODELS_KEY_CHECK: Duration = Duration::from_secs(60);
+/// A model list is served without a refresh for this long; after it, the next call
+/// answers from the kept list and has the engine's catalog key checked in the background.
+const MODELS_FRESH: Duration = Duration::from_secs(30);
+/// Past this, a kept list is no longer shown without a read.
+const MODELS_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 /// A stand-in list is kept only long enough not to start a process per read.
 const MODELS_RETRY: Duration = Duration::from_secs(30);
 const MODELS_TIMEOUT: Duration = Duration::from_secs(20);
@@ -92,6 +97,12 @@ pub struct EngineManager {
     installer_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     statuses: tokio::sync::Mutex<Option<Vec<EngineStatus>>>,
     models: tokio::sync::Mutex<HashMap<String, CachedModels>>,
+    /// What `models` answers from while a fresher list is read in the background, so a
+    /// screen or a turn never waits on an engine's process.
+    model_reads: crate::util::swr::Swr<EngineModels>,
+    /// Counts what changes an engine's status: an update starting or ending, a changed
+    /// engine set. What shows engine status (the update status) follows it.
+    changes: tokio::sync::watch::Sender<u64>,
     /// The last good list of each engine, for checks that cannot wait for an engine.
     known_models: Mutex<HashMap<String, EngineModels>>,
     /// The same lists on disk, so a restart keeps what the engine last said.
@@ -150,7 +161,19 @@ impl EngineManager {
             progress: tokio::sync::broadcast::channel(256).0,
             statuses: tokio::sync::Mutex::new(None),
             models: tokio::sync::Mutex::new(HashMap::new()),
+            model_reads: crate::util::swr::Swr::<EngineModels>::new(
+                MODELS_FRESH,
+                MODELS_MAX_AGE,
+                64,
+            )
+            .keeping(|models| models.error.is_none() || models.fallback)
+            .same_as(|old, new| {
+                let mut new = new.clone();
+                new.checked_at.clone_from(&old.checked_at);
+                *old == new
+            }),
             known_models: Mutex::new(HashMap::new()),
+            changes: tokio::sync::watch::channel(0).0,
         }
     }
 
@@ -446,10 +469,25 @@ impl EngineManager {
     /// Drops the cached list so the next read sees a changed engine set.
     pub async fn invalidate(&self) {
         *self.statuses.lock().await = None;
+        // An engine added, removed or updated: its old model list no longer holds.
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
+        self.changes.send_modify(|count| *count += 1);
+    }
+
+    /// The number of changes to engine status so far.
+    pub fn change_epoch(&self) -> u64 {
+        *self.changes.borrow()
+    }
+
+    pub fn subscribe_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
     }
 
     /// An instance id can now launch another driver, whose old models cannot apply.
     pub async fn instances_changed(&self) {
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
         self.invalidate().await;
         // Keep the catalog lock until both caches are cleared: an in-flight read
         // must not restore the old driver's validation after this returns.
@@ -469,7 +507,28 @@ impl EngineManager {
 
     /// What the engine says it offers. A failure is reported with the list empty,
     /// so custom models still work, and only a good answer is kept for long.
-    pub async fn models(&self, id: &str, refresh: bool) -> Result<EngineModels> {
+    /// The last list answers at once and is checked again in the background after
+    /// 30 seconds, announcing `models:<engine>` when it changed. `refresh` reads now.
+    pub async fn models(self: &Arc<Self>, id: &str, refresh: bool) -> Result<EngineModels> {
+        // A removed engine must not answer with the list it had.
+        self.driver(id)?;
+        let manager = self.clone();
+        let engine = id.to_owned();
+        self.model_reads
+            .get(
+                &crate::util::swr::key(&[id]),
+                &format!("models:{id}"),
+                refresh,
+                move || async move { manager.read_models(&engine, refresh).await },
+            )
+            .await
+    }
+
+    pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
+        self.model_reads.set_notify(notify.clone());
+    }
+
+    async fn read_models(&self, id: &str, refresh: bool) -> Result<EngineModels> {
         let mut cache = self.models.lock().await;
         let driver = self.driver(id)?;
         if !refresh
@@ -843,6 +902,9 @@ impl EngineManager {
             )));
         }
         self.invalidate().await;
+        // Instances may share the installation, so every engine's list is read again.
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
         self.status(id).await
     }
 
@@ -862,8 +924,10 @@ impl EngineManager {
         // Instances can share the binary, and Windows cannot replace a running one.
         let warm = std::mem::take(&mut *lock(&self.warm));
         drop(warm);
+        self.changes.send_modify(|count| *count += 1);
         Ok(UpdateMarker {
             set: &self.updating,
+            changes: &self.changes,
             id: id.to_owned(),
         })
     }
@@ -1082,12 +1146,14 @@ impl Drop for Finish<'_> {
 
 struct UpdateMarker<'a> {
     set: &'a Mutex<HashSet<String>>,
+    changes: &'a tokio::sync::watch::Sender<u64>,
     id: String,
 }
 
 impl Drop for UpdateMarker<'_> {
     fn drop(&mut self) {
         lock(self.set).remove(&self.id);
+        self.changes.send_modify(|count| *count += 1);
     }
 }
 

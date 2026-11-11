@@ -7,6 +7,7 @@ use crate::error::{CoreError, Result};
 use sha2::{Digest, Sha256};
 
 pub(crate) mod json;
+pub mod swr;
 
 /// The current user's home folder: `HOME`, else `USERPROFILE` (checked on every OS).
 /// An empty `HOME` is still returned.

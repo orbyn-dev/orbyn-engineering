@@ -148,8 +148,13 @@ async fn storage_cleanup(
     Ok(Json(state.core.storage_cleanup(dry_run).await?))
 }
 
-async fn dependency_health(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.dependency_health().await?))
+/// The last check at once; `?refresh=1` checks now.
+async fn dependency_health(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    let refresh = matches!(query.get("refresh").map(String::as_str), Some("1" | "true"));
+    Ok(Json(state.core.dependency_health(refresh).await?))
 }
 
 async fn storage_preview(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {

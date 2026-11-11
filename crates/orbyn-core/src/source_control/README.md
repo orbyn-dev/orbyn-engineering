@@ -4,7 +4,7 @@ Source control on a thread's checkout, always through the person's own installed
 
 | Module | Owns |
 | --- | --- |
-| `scm` | Source control actions on a thread's checkout: git actions and branches (`mod.rs`), pull request reads and linking (`pulls`), comments, reviews and merges (`review`), stacks and checkouts (`stack`), pull request watching (`watch`), forge status and publishing (`forges`) |
+| `scm` | Source control actions on a thread's checkout: git actions and branches (`mod.rs`), pull request reads and linking (`pulls`), comments, reviews and merges (`review`), stacks and checkouts (`stack`), pull request watching (`watch`), forge status and publishing (`forges`), the kept answers pull request and forge reads come from (`read_cache`) |
 | `scm::writing` | Diff-derived text for a confirmed Git action: the writing request (`mod.rs`), the bounded checkout reads (`candidate`) and the writing style (`style`) |
 | `git` | Git through the installed CLI, worktrees in the sibling `<repo>-wt` root |
 | `jj` | Non-colocated Jujutsu checkouts, read through the installed `jj` |

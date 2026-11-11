@@ -52,6 +52,8 @@ pub struct Store {
     read: Mutex<Connection>,
     epoch: String,
     hub: EventHub,
+    /// Counts runs starting and ending, for what shows whether a run is active.
+    run_changes: tokio::sync::watch::Sender<u64>,
     upgrade: Option<orbyn_contracts::DatabaseUpgrade>,
 }
 
@@ -118,6 +120,7 @@ impl Store {
             read: Mutex::new(read),
             epoch: epoch.into(),
             hub: EventHub::default(),
+            run_changes: tokio::sync::watch::channel(0).0,
             upgrade,
         })
     }
@@ -126,6 +129,19 @@ impl Store {
     /// A new database is created, not upgraded, so it reports nothing.
     pub fn upgrade(&self) -> Option<orbyn_contracts::DatabaseUpgrade> {
         self.upgrade.clone()
+    }
+
+    /// Wakes on any run starting or ending.
+    pub fn subscribe_run_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.run_changes.subscribe()
+    }
+
+    /// Passes `outcome` on, counting a run start or end when it succeeded.
+    fn run_changed<T>(&self, outcome: Result<T>) -> Result<T> {
+        if outcome.is_ok() {
+            self.run_changes.send_modify(|count| *count += 1);
+        }
+        outcome
     }
 
     pub fn epoch(&self) -> &str {

@@ -181,6 +181,69 @@ impl CoreError {
         }
     }
 
+    /// A second copy of this error, for callers that shared one read. Variants that hold a
+    /// source error (storage, i/o, encoding) become `Internal` with the same text, which
+    /// clients see the same way.
+    pub(crate) fn duplicate(&self) -> Self {
+        match self {
+            Self::NotFound(s) => Self::NotFound(s.clone()),
+            Self::Invalid(s) => Self::Invalid(s.clone()),
+            Self::SettingsConflict => Self::SettingsConflict,
+            Self::SettingsScopeUnavailable => Self::SettingsScopeUnavailable,
+            Self::ThreadBusy => Self::ThreadBusy,
+            Self::ConsoleOpen => Self::ConsoleOpen,
+            Self::FolderUntrusted => Self::FolderUntrusted,
+            Self::AlreadyDecided(a) => Self::AlreadyDecided(a.clone()),
+            Self::ProjectExists(p) => Self::ProjectExists(p.clone()),
+            Self::QuestionClosed(q) => Self::QuestionClosed(q.clone()),
+            Self::EngineBusy(s) => Self::EngineBusy(s.clone()),
+            Self::EngineUnavailable(s) => Self::EngineUnavailable(s.clone()),
+            Self::ThreadArchived => Self::ThreadArchived,
+            Self::ProjectRemoved(s) => Self::ProjectRemoved(s.clone()),
+            Self::WorkspaceRequired => Self::WorkspaceRequired,
+            Self::WorkspaceRefused(s) => Self::WorkspaceRefused(s.clone()),
+            Self::LibraryDirty(s) => Self::LibraryDirty(s.clone()),
+            Self::NotFastForward(s) => Self::NotFastForward(s.clone()),
+            Self::FileConflict { revision } => Self::FileConflict {
+                revision: revision.clone(),
+            },
+            Self::FileTooLarge { size, limit } => Self::FileTooLarge {
+                size: *size,
+                limit: *limit,
+            },
+            Self::SharedDirectory(n) => Self::SharedDirectory(*n),
+            Self::RunsActive => Self::RunsActive,
+            Self::Updating => Self::Updating,
+            Self::ProjectHasWork { message, detail } => Self::ProjectHasWork {
+                message: message.clone(),
+                detail: detail.clone(),
+            },
+            Self::PullHeadChanged => Self::PullHeadChanged,
+            Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::UnsupportedOption(s) => Self::UnsupportedOption(s.clone()),
+            Self::UpdateUnavailable(s) => Self::UpdateUnavailable(s.clone()),
+            Self::UpdateFailed(s) => Self::UpdateFailed(s.clone()),
+            Self::PolicyDenied(s) => Self::PolicyDenied(s.clone()),
+            Self::SessionLost => Self::SessionLost,
+            Self::StaleOwner => Self::StaleOwner,
+            Self::RunClosed => Self::RunClosed,
+            Self::InvalidTransition { from, to } => Self::InvalidTransition {
+                from: from.clone(),
+                to: to.clone(),
+            },
+            Self::DatabaseTooNew { found, supported } => Self::DatabaseTooNew {
+                found: *found,
+                supported: *supported,
+            },
+            Self::DataDirLocked => Self::DataDirLocked,
+            Self::PackTampered(s) => Self::PackTampered(s.clone()),
+            Self::Computer(s) => Self::Computer(s.clone()),
+            Self::Git(s) => Self::Git(s.clone()),
+            Self::Internal(s) => Self::Internal(s.clone()),
+            Self::Store(_) | Self::Io(_) | Self::Json(_) => Self::Internal(self.to_string()),
+        }
+    }
+
     /// Message safe to show a client. Storage and I/O detail stays in the log.
     pub fn public_message(&self) -> String {
         match self {

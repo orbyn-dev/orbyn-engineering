@@ -27,6 +27,12 @@ const IDLE_BEFORE_INSTALL: Duration = Duration::from_secs(2 * 60);
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(8);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// How long `GET /api/updates` is answered without a refresh. A status reads Git and
+/// the engines, which the poll behind it asks for every few seconds.
+const STATUS_FRESH: Duration = Duration::from_secs(20);
+/// Past this, an earlier status is no longer shown without waiting for a new one. The web
+/// does not yet re-read on `data_changed`, so it stays short.
+const STATUS_MAX_AGE: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 struct Known {
@@ -41,6 +47,26 @@ struct Known {
     error: Option<String>,
 }
 
+/// Follows every source of a change to the update status.
+pub struct UpdateWatch {
+    updates: watch::Receiver<u64>,
+    engines: watch::Receiver<u64>,
+    library: watch::Receiver<u64>,
+    runs: watch::Receiver<u64>,
+}
+
+impl UpdateWatch {
+    /// Waits for the next change; false once the service is shutting down.
+    pub async fn changed(&mut self) -> bool {
+        tokio::select! {
+            changed = self.updates.changed() => changed.is_ok(),
+            changed = self.engines.changed() => changed.is_ok(),
+            changed = self.library.changed() => changed.is_ok(),
+            changed = self.runs.changed() => changed.is_ok(),
+        }
+    }
+}
+
 pub struct UpdateCenter {
     store: Arc<Store>,
     workspace: Arc<Workspace>,
@@ -53,6 +79,8 @@ pub struct UpdateCenter {
     changes: watch::Sender<u64>,
     /// When someone last did something through a client.
     last_activity: Mutex<Instant>,
+    /// The last status, for the polled read; dropped whenever `changed` fires.
+    status_reads: crate::util::swr::Swr<UpdateStatus>,
 }
 
 #[derive(Deserialize)]
@@ -80,7 +108,12 @@ impl UpdateCenter {
             shell: Mutex::new(None),
             changes: watch::channel(0).0,
             last_activity: Mutex::new(Instant::now()),
+            status_reads: crate::util::swr::Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 4),
         }
+    }
+
+    pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
+        self.status_reads.set_notify(notify.clone());
     }
 
     /// Marks a person as present, which puts off an automatic install.
@@ -130,7 +163,20 @@ impl UpdateCenter {
         self.changes.subscribe()
     }
 
+    /// Wakes on anything that changes the status: this centre's own changes, an engine
+    /// update or a changed engine set, and a change to the library.
+    pub fn watch(&self) -> UpdateWatch {
+        UpdateWatch {
+            updates: self.changes.subscribe(),
+            engines: self.engines.subscribe_changes(),
+            library: self.workspace.subscribe_library(),
+            runs: self.store.subscribe_run_changes(),
+        }
+    }
+
     fn changed(&self) {
+        self.status_reads.invalidate_all();
+        self.status_reads.announce("updates");
         self.changes.send_modify(|version| *version += 1);
     }
 
@@ -255,10 +301,51 @@ impl UpdateCenter {
         Ok(())
     }
 
+    /// What the status is read from: engine updates and changes to the engine set, changes
+    /// to the library, and whether a run is active. A change to any of them is a new key, so
+    /// progress shows at once and never waits for a fresh time to pass.
+    fn status_key(&self, runs_active: bool) -> String {
+        crate::util::swr::key(&[
+            "status",
+            &self.engines.change_epoch().to_string(),
+            &self.workspace.library_epoch().to_string(),
+            if runs_active { "runs" } else { "idle" },
+        ])
+    }
+
+    /// The last status at once, read again in the background after 20 seconds and
+    /// announced as `updates` when it changed; for the polled read, which must not wait
+    /// on Git and the engines. `refresh` reads now and keeps the answer.
+    pub async fn cached_status(self: &Arc<Self>, refresh: bool) -> UpdateStatus {
+        let center = self.clone();
+        // Asked once: the key and the status it reads agree on whether a run is active.
+        let runs_active = self.runs_active();
+        let kept = self
+            .status_reads
+            .get(
+                &self.status_key(runs_active),
+                "updates",
+                refresh,
+                move || async move { Ok(center.status_given(runs_active).await) },
+            )
+            .await;
+        match kept {
+            Ok(status) => status,
+            Err(_) => self.status().await,
+        }
+    }
+
     /// The current picture: local Git state and run activity are read fresh, and
     /// the network's answers come from the last check.
     pub async fn status(&self) -> UpdateStatus {
-        let runs_active = self.store.active_runs().is_ok_and(|runs| !runs.is_empty());
+        self.status_given(self.runs_active()).await
+    }
+
+    fn runs_active(&self) -> bool {
+        self.store.active_runs().is_ok_and(|runs| !runs.is_empty())
+    }
+
+    async fn status_given(&self, runs_active: bool) -> UpdateStatus {
         let library = self.library_status(runs_active).await;
         let engines = self.engine_statuses().await;
         let known = lock(&self.known);
@@ -401,13 +488,18 @@ impl UpdateCenter {
         let mut steps = Vec::new();
         for engine in status.engines.iter().filter(|engine| engine.can_apply) {
             let outcome = self.engines.update(&engine.id, actor).await.map(|_| ());
-            if !record(&mut steps, format!("engine:{}", engine.id), outcome) {
+            let went_on = record(&mut steps, format!("engine:{}", engine.id), outcome);
+            // Each step moves what the update screen shows.
+            self.changed();
+            if !went_on {
                 return Ok(self.finish(steps));
             }
         }
         if status.library.can_apply {
             let outcome = self.workspace.update(true).await.map(|_| ());
-            if !record(&mut steps, "library".to_owned(), outcome) {
+            let went_on = record(&mut steps, "library".to_owned(), outcome);
+            self.changed();
+            if !went_on {
                 return Ok(self.finish(steps));
             }
         }

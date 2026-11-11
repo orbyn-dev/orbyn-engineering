@@ -24,7 +24,9 @@ impl Core {
         }
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.pull_comment", &number.to_string(), None)?;
-        forge::add_comment(forge, Path::new(&project.path), number, request).await
+        let outcome = forge::add_comment(forge, Path::new(&project.path), number, request).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn edit_pull_comment(
@@ -39,7 +41,10 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.pull_comment_edit", comment, None)?;
         let cwd = Path::new(&project.path);
-        forge::edit_comment(forge, cwd, number, comment, &request.kind, &request.body).await
+        let outcome =
+            forge::edit_comment(forge, cwd, number, comment, &request.kind, &request.body).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn react_pull_comment(
@@ -52,7 +57,10 @@ impl Core {
         check_opaque(comment)?;
         let (project, forge) = self.pull_site(project_id).await?;
         let cwd = Path::new(&project.path);
-        forge::react(forge, cwd, number, comment, &request.kind, &request.content).await
+        let outcome =
+            forge::react(forge, cwd, number, comment, &request.kind, &request.content).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn resolve_pull_thread(
@@ -67,7 +75,9 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.pull_thread_resolve", thread, None)?;
         let cwd = Path::new(&project.path);
-        forge::set_thread_resolved(forge, cwd, number, thread, resolved).await
+        let outcome = forge::set_thread_resolved(forge, cwd, number, thread, resolved).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn submit_pull_review(
@@ -79,17 +89,21 @@ impl Core {
     ) -> Result<()> {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.review", &number.to_string(), None)?;
-        forge::submit_review(forge, Path::new(&project.path), number, review).await
+        let outcome = forge::submit_review(forge, Path::new(&project.path), number, review).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
-    pub async fn pull_reviewers(&self, project_id: &str) -> Result<Vec<PullCandidate>> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::reviewer_candidates(forge, Path::new(&project.path)).await
+    pub async fn pull_reviewers(
+        &self,
+        project_id: &str,
+        refresh: bool,
+    ) -> Result<Vec<PullCandidate>> {
+        self.cached_candidates(project_id, false, refresh).await
     }
 
-    pub async fn pull_labels(&self, project_id: &str) -> Result<Vec<PullCandidate>> {
-        let (project, forge) = self.pull_site(project_id).await?;
-        forge::label_candidates(forge, Path::new(&project.path)).await
+    pub async fn pull_labels(&self, project_id: &str, refresh: bool) -> Result<Vec<PullCandidate>> {
+        self.cached_candidates(project_id, true, refresh).await
     }
 
     pub async fn set_pull_reviewers(
@@ -101,7 +115,9 @@ impl Core {
     ) -> Result<()> {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.pull_reviewers", &number.to_string(), None)?;
-        forge::set_reviewers(forge, Path::new(&project.path), number, change).await
+        let outcome = forge::set_reviewers(forge, Path::new(&project.path), number, change).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn set_pull_labels(
@@ -113,7 +129,9 @@ impl Core {
     ) -> Result<()> {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.pull_labels", &number.to_string(), None)?;
-        forge::set_labels(forge, Path::new(&project.path), number, change).await
+        let outcome = forge::set_labels(forge, Path::new(&project.path), number, change).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn update_pull(
@@ -126,8 +144,12 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         let cwd = Path::new(&project.path);
         self.scm_audit(actor, "git.pull_update", &number.to_string(), None)?;
-        forge::update_pull(forge, cwd, number, update).await?;
-        forge::pull_detail(forge, cwd, number).await
+        let outcome = match forge::update_pull(forge, cwd, number, update).await {
+            Ok(()) => forge::pull_detail(forge, cwd, number).await,
+            Err(error) => Err(error),
+        };
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn merge_project_pull(
@@ -142,7 +164,9 @@ impl Core {
         let mut options = options.clone();
         options.strip_credits |=
             self.preference("remove_agent_credits_on_merge", Some(project_id))? == json!(true);
-        forge::merge(forge, Path::new(&project.path), number, &options).await
+        let outcome = forge::merge(forge, Path::new(&project.path), number, &options).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     pub async fn pull_action(
@@ -166,7 +190,9 @@ impl Core {
             &number.to_string(),
             None,
         )?;
-        forge::pull_action(forge, cwd, number, action, &head).await
+        let outcome = forge::pull_action(forge, cwd, number, action, &head).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
     }
 
     /// Closes each in turn. One refusal does not stop the rest.

@@ -68,7 +68,7 @@ impl Default for ShellBridge {
             web_links,
             waiting_web_links: Mutex::new(Some(waiting)),
             lines: Mutex::new(None),
-            events: broadcast::channel(32).0,
+            events: broadcast::channel(256).0,
             held: Mutex::new(VecDeque::new()),
             windows: Arc::default(),
             facts: Mutex::default(),
@@ -176,6 +176,17 @@ impl ShellBridge {
             held: held.drain(..).collect(),
             windows: self.windows.clone(),
         }
+    }
+
+    /// Announces that data changed. Windows reread what they show on connecting, so
+    /// nothing is held for one that is not there.
+    pub fn notifier(&self) -> crate::util::swr::Notify {
+        let events = self.events.clone();
+        std::sync::Arc::new(move |what| {
+            let _ = events.send(ShellEvent::DataChanged {
+                what: what.to_owned(),
+            });
+        })
     }
 
     fn publish(&self, event: ShellEvent) {

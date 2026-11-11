@@ -92,7 +92,9 @@ impl Store {
     /// Makes the run durable before any process exists. The partial unique
     /// index, not a prior read, is what makes the second admission lose.
     pub fn admit_run(&self, admission: Admission<'_>) -> Result<Run> {
-        self.commit(|tx, appended| admit_in(tx, appended, &self.epoch, &admission))
+        self.run_changed(
+            self.commit(|tx, appended| admit_in(tx, appended, &self.epoch, &admission)),
+        )
     }
 
     pub fn run(&self, id: &str) -> Result<Run> {
@@ -334,6 +336,16 @@ impl Store {
     /// Failure guidance is committed with the terminal result, and omitted when
     /// a saved stop makes that result cancellation instead.
     pub(crate) fn finish_run_with_sign_in(
+        &self,
+        run_id: &str,
+        to: RunState,
+        error: Option<&str>,
+        sign_in_note: Option<&Value>,
+    ) -> Result<(Run, Vec<Approval>)> {
+        self.run_changed(self.finish_run_unannounced(run_id, to, error, sign_in_note))
+    }
+
+    fn finish_run_unannounced(
         &self,
         run_id: &str,
         to: RunState,
