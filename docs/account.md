@@ -20,12 +20,12 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 | D3 | Corrected | The device is **one data folder of `orbynd`**, not one machine. The D11 test runs two data folders on one computer, and `ORBYN_DATA_DIR` already lets a person run several, so each data folder registers as its own device with its own keychain items (see [The device and its keys](#the-device-and-its-keys)). Clarified: the password does leave the web page once, as a field in a request to `orbynd` on loopback (behind the per-launch service token); it never reaches the Engine (OPAQUE) and `orbynd` never stores it. The web UI holds no account key, token or zone key at any time |
 | D4 | Corrected | "Project defaults" means the **person-level value** of a key a project may override. Per-project overrides are not synced: project ids and paths are local to a computer. The project file's own layer is never read for sync. Execution profiles, workflows and the rest stay "Next", as planned |
 | D5 | Confirmed, extended | The never-sync list also holds what is machine-specific or names a program, path or endpoint, and 26 more keys are held back from v1. See [Never synced](#never-synced) and [Not in v1](#not-in-v1-may-sync-later) |
-| D6 | Clarified | Two crates are called `orbyn-contracts`: the Engine's (wire for the Engine's HTTP API) and this repository's (wire between the web UI and `orbynd`). The app never names the Engine's. Engineering's record fields live in the Engine's `orbyn-engineering` crate, so the app depends on that crate as well as on `orbyn-device-client` unless the device client re-exports it (open question 2). Nothing about a record is copied into this repository's contracts |
+| D6 | Clarified | Two crates are called `orbyn-contracts`: the Engine's (wire for the Engine's HTTP API) and this repository's (wire between the web UI and `orbynd`). The app never names the Engine's. Engineering's record fields live in the Engine's `orbyn-engineering` crate, and the app depends on that crate directly, next to `orbyn-device-client`, both pinned to the same tag (agreed with Engineering 1). The device client re-exports only `orbyn-sync`'s merge. Nothing about a record is copied into this repository's contracts |
 | D7 | Confirmed | Connected apps stay after the beta. The L52 to L55 screens stay `preview-only`, behind `__ORBYN_PREVIEWS__` ([design.md](design.md#planned-with-the-orbyn-platform)) |
 | D8 | Confirmed | Crew proof signing uses a local keychain key until after the beta. That key is another asset for the threat model when it lands; it is not part of Phase 1 |
 | D9 | Confirmed | The Engine is MIT or Apache-2.0, so the app may depend on it. The wiring pull request adds the dependency to [UPSTREAM.md](../UPSTREAM.md) with its notices. The Engine never depends on app code |
 | D10 | Corrected | Confirmed: every trusted device holds every zone key, and no copy may suggest per-app isolation. Corrected: "reading credentials is already on the Autopilot hard-denied list" is **Planned** (slice 4f), not built. Today Orbyn hard-denies only writes outside the checkout, and the person's file viewer refuses the data folder. Orbyn never hears about an engine's own file reads, so it cannot deny them. The threat model therefore rests on keeping secrets out of files and out of the environment, with the hard-deny code as defence in depth |
-| D11 | Clarified | See [The Engine address](#the-engine-address) and [Testing](#testing). Added: the end-to-end test needs two helpers from the Engine owner (create an invite, read the latest email code), and in CI a skipped test must fail |
+| D11 | Clarified | See [The Engine address](#the-engine-address) and [Testing](#testing). Added: the end-to-end test drives the Engine's `scripts/local.sh` (see [Testing](#testing)), and in CI a skipped test must fail |
 
 ## Dependency on the Engine
 
@@ -33,7 +33,11 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 
 ```toml
 orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.1.0" }
+orbyn-engineering = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.1.0" }
 ```
+
+Both name the same tag, so one revision is locked for both. `orbyn-device-client` re-exports only `orbyn-sync`'s merge;
+the record schema comes from `orbyn-engineering`.
 
 - **Pin.** Cargo allows only one of `tag` or `rev` per dependency (it rejects both). The manifest names the tag and the
   committed `Cargo.lock` records the exact revision, so the build is reproducible and a moved tag changes nothing
@@ -45,8 +49,10 @@ orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag =
   - `DeviceApi`, an object-safe `Send + Sync` trait. The app and its tests hold `Arc<dyn DeviceApi>`.
   - `DeviceClient`, the real implementation over `reqwest` (rustls with ring and webpki roots, an optional platform
     verifier, an injectable client).
-  - `KeyStore`, which the app implements. It holds the device keys, device id, account id, session token and the
-    zone-key cache.
+  - `KeyStore`, which the app implements. It holds exactly: the device signing key, the agreement key, the device id,
+    the account id, the session token and the vault key. The zone-key cache is not in it; it lives in the sealed
+    snapshot (see [The device and its keys](#the-device-and-its-keys)).
+  - The client does no IO, so the app stores `Engine::snapshot` itself.
   - `Clock`, so tests control time.
   - Sign-up: `check_invite`, `start_sign_up(invite, email)`, `resend_code`, `verify_email_code` (eight characters,
     normalised by the client), `register(password: SecretString)`. Proof of work is solved inside the client, and
@@ -143,9 +149,10 @@ are named from it, so two data folders on one computer never share keys. The dev
 `engineering` (Engine issue #73). Its name is chosen by the person.
 
 Secrets live in the OS keychain through the app's `KeyStore`, never in a plain file: the Ed25519 signing key, the X25519
-agreement key, the session token, and a 32-byte vault key. The zone-key cache and the client's sync snapshot hold
-zone keys and can be larger than one Windows credential (about 2.5 KiB), so they are sealed with the vault key and
-kept as a file in the data folder. The [threat model](account-threat-model.md) says what each of these protects against.
+agreement key, the device id, the account id, the session token, and a 32-byte vault key. The client does no IO, so the
+app stores `Engine::snapshot` as a file in the data folder, sealed with XChaCha20-Poly1305 under the vault key. The
+snapshot holds the zone keys (the zone-key cache) and the sync cursors, so **the file is as secret as the keys**. It is
+not a keychain item because it can be larger than one Windows credential (about 2.5 KiB). The [threat model](account-threat-model.md) says what each of these protects against.
 
 On a platform with no supported keychain (Linux in Phase 1), `KeyStore` reports itself unavailable and sign-in stays
 off. The account never falls back to a plain file.
@@ -240,6 +247,10 @@ provider keys, join tokens and any secret (D5).
   sign-in outcomes, approvals, the outbox surviving a restart, merge of two devices' edits, set semantics with
   tombstones, limits, unknown keys, every row of the error table, and that no password or key appears in any request
   the fake receives, in a log line, or in a status or error value.
+- **Local stack.** The Engine's `scripts/local.sh` (Engine pull request #118) runs the stack at
+  `http://127.0.0.1:8080`: `setup`, `up`, `invite create --count 1 --label e2e` (prints the invite code once),
+  `codes [since]` (log lines `code XXXX-XXXX for <email>`) and `reset` (drops only the `orbyn_local` database). Two
+  more helpers are coming, `invite-code` and `latest-code <email>`; until then the test parses the printed lines.
 - **Cross-repository end-to-end test**, against the Engine's local compose stack (D11), with two data folders (two
   devices): sign in on A, change a setting on A, see it on B; change offline on both, reconnect, check the merge and the
   surfaced conflict. Test devices use an in-memory `KeyStore`, never the real keychain. A separate macOS-only manual
@@ -258,6 +269,15 @@ provider keys, join tokens and any secret (D5).
 `account_disabled` and no request goes to any Engine), `LocalOnly` (only a loopback Engine address, for D11) and `On`.
 The wiring pull request ships `Off` and `LocalOnly`. `On` is a separate small change that links the Engine owner's
 written review of the threat model.
+
+`LocalOnly` is provisionally accepted by Engineering 1 for the local end-to-end test, on three conditions, which are
+the rule:
+
+1. **No non-loopback Engine in any release build.** `LocalOnly` accepts loopback hosts only and refuses every other
+   address, whatever the build. A test covers refusal of a non-loopback address under `LocalOnly`.
+2. **Real sign-in still waits** for approval of the threat model. `LocalOnly` is for throwaway test accounts on the
+   local stack.
+3. This rule is written here, and the gate's code comment points to it.
 
 ## Out of Phase 1
 
@@ -318,12 +338,9 @@ Two places where the frames and the decisions differ, for the Designer to settle
 
 ## Open questions for Engineering 1
 
-1. Where does the client's `Engine::snapshot` persist? This note assumes the app seals it with the vault key through
-   `KeyStore`. Is that the intended contract?
-2. Does `orbyn-device-client` re-export `orbyn-engineering` (the record schema), or does the app depend on both?
-3. Is `LocalOnly` (sign-in against a loopback Engine) acceptable before review? It is how the end-to-end test runs.
-4. How does CI get the Engine stack: build from the pinned tag with compose, or a published image? And which two helpers
-   (create an invite, read the latest email code) will the recipe provide?
-5. `default_permission_mode` syncs by the agreed list. Is that intended, given a permission raised on one computer
+Questions about the snapshot, the dependencies, `LocalOnly`, the local stack and the settings list are answered and
+folded in above. These remain, with Engineering 1's security reviewer:
+
+1. `default_permission_mode` syncs by the agreed list. Is that intended, given a permission raised on one computer
    would apply on another? The threat model asks the same.
-6. The threat model's [open questions](account-threat-model.md#open-questions).
+2. The threat model's [open questions](account-threat-model.md#open-questions).

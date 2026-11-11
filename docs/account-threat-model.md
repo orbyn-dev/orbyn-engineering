@@ -14,8 +14,8 @@ check that proves it. Nothing here is a claim that the controls are in place bef
 | --- | --- | --- |
 | Device signing key (Ed25519) and agreement key (X25519) | OS keychain item | They are this device's identity. With them an attacker signs changes as the device and opens zone-key envelopes sent to it |
 | Session token | OS keychain item, and process memory | It authorises requests to the Engine as this device |
-| Vault key (32 bytes) | OS keychain item | Opens the sealed zone-key cache and sync snapshot |
-| Zone-key cache and the client's sync snapshot | A file in the data folder, sealed with the vault key | Zone keys open every record in the zone |
+| Vault key (32 bytes) | OS keychain item | Opens the sealed snapshot |
+| Sync snapshot (`Engine::snapshot`: the zone-key cache and the cursors) | A file in the data folder, sealed with XChaCha20-Poly1305 under the vault key | It holds zone keys, so it is as secret as the keys. Zone keys open every record in the zone |
 | Password | Typed once; held in memory as a `SecretString` for the length of one call | Never stored. It does not reach the Engine (OPAQUE) |
 | The data folder (`orbyn.sqlite3`, `service.json`, account files) | The OS app-data folder | Holds all threads, settings, the outbox (private, though not key material) and the per-launch service token handle |
 
@@ -54,8 +54,10 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
   and the residual risk below stays open.
 - **Other platforms.** Phase 1 supports sign-in on macOS and Windows only. Without a keychain the `KeyStore` is
   unavailable and sign-in is off; there is no fallback to a file.
-- **Size.** Windows limits a credential to about 2.5 KiB, so the zone-key cache and sync snapshot are not keychain
-  items: they are one file sealed with the vault key, which is a keychain item (control 3 covers the file).
+- **What `KeyStore` holds.** Exactly the device signing key, the agreement key, the device id, the account id, the
+  session token and the vault key. The zone-key cache is in the sealed snapshot, not in `KeyStore`.
+- **Size.** Windows limits a credential to about 2.5 KiB, so the snapshot is not a keychain item: it is one file,
+  sealed with the vault key (control 3 covers the file). The client does no IO, so the app writes it.
 
 ### 2. No account material in any process environment (to build)
 
@@ -191,8 +193,6 @@ For Engineering 1, with the lead:
 
 1. Should account-changing routes (sign-out, remove device, approve) require something an engine with the service
    token cannot supply, such as a confirmation from the desktop shell, or is "denial of service only" acceptable?
-2. Is `KeyStore` meant to keep the zone-key cache and sync snapshot as a sealed file with a keychain vault key, given
-   the Windows size limit?
-3. Is the macOS "trust only `orbynd`" list compatible with the desktop shell starting `orbynd` as a sidecar with its own
+2. Is the macOS "trust only `orbynd`" list compatible with the desktop shell starting `orbynd` as a sidecar with its own
    signature, and with how releases are signed?
-4. Does the Engine want a short session-token lifetime on the desktop client, to reduce the Windows exposure?
+3. Does the Engine want a short session-token lifetime on the desktop client, to reduce the Windows exposure?
