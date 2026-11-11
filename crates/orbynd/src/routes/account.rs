@@ -25,7 +25,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post};
 use orbyn_contracts as wire;
 use orbyn_core::CoreError;
-use orbyn_core::account::{ConfirmFor, Password};
+use orbyn_core::account::{ConfirmFor, FirstSync, Password};
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState};
 
@@ -76,6 +76,23 @@ pub const OPEN: &[(&str, &str)] = &[
         "POST /api/account/sign-out",
         "signs out of this computer only",
     ),
+    (
+        "POST /api/account/approvals/{id}/deny",
+        "only ever closes a request; it lets nobody in",
+    ),
+    (
+        "POST /api/account/connect",
+        "combines the settings: where the account has a value it replaces this computer's, and settings only this computer has start to upload",
+    ),
+    (
+        "POST /api/account/sign-in/approval",
+        "asks how this computer's own request stands; allowed signs in, which the password already proved",
+    ),
+    (
+        "POST /api/account/connect/later",
+        "leaves this computer's settings where they are",
+    ),
+    ("POST /api/account/connect/seen", "closes a summary"),
 ];
 
 /// Reads under `/api/account`: they change nothing.
@@ -83,6 +100,10 @@ pub const OPEN: &[(&str, &str)] = &[
 pub const READS: &[(&str, &str)] = &[
     ("GET /api/account", "the status"),
     ("GET /api/account/devices", "the device list"),
+    (
+        "GET /api/account/approvals",
+        "the new devices waiting for this one",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -96,6 +117,12 @@ fn open_routes() -> Router<AppState> {
     Router::new()
         .route("/api/account", get(view))
         .route("/api/account/devices", get(devices))
+        .route("/api/account/approvals", get(approvals))
+        .route("/api/account/approvals/{id}/deny", post(deny_approval))
+        .route("/api/account/sign-in/approval", post(sign_in_approval))
+        .route("/api/account/connect", post(connect))
+        .route("/api/account/connect/later", post(connect_later))
+        .route("/api/account/connect/seen", post(connect_seen))
         .route("/api/account/sign-up/invite", post(check_invite))
         .route("/api/account/sign-up/start", post(start_sign_up))
         .route("/api/account/sign-up/resend", post(resend_code))
@@ -118,6 +145,24 @@ fn confirmed_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/account/devices/{id}",
             delete(remove_device).route_layer(from_fn_with_state(state.clone(), confirmed_device)),
+        )
+        .route(
+            "/api/account/approvals/{id}/approve",
+            post(approve).route_layer(from_fn_with_state(state.clone(), confirmed_approval)),
+        )
+        .route(
+            "/api/account/connect/use-device",
+            post(connect_use_device).route_layer(from_fn_with_state(
+                (state.clone(), FirstSync::UseDevice),
+                confirmed_connect,
+            )),
+        )
+        .route(
+            "/api/account/connect/use-account",
+            post(connect_use_account).route_layer(from_fn_with_state(
+                (state.clone(), FirstSync::UseAccount),
+                confirmed_connect,
+            )),
         )
         .route(
             "/api/account/sign-out-everywhere",
@@ -153,6 +198,43 @@ async fn confirmed_device(
         .core
         .account
         .confirmed_for(&ConfirmFor::RemoveDevice(id))
+    {
+        return Err(CoreError::ReauthRequired.into());
+    }
+    Ok(next.run(request).await)
+}
+
+async fn confirmed_approval(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiFailure> {
+    if !state.core.account.available() {
+        return Err(CoreError::AccountDisabled.into());
+    }
+    if !state
+        .core
+        .account
+        .confirmed_for(&ConfirmFor::ApproveDevice(id))
+    {
+        return Err(CoreError::ReauthRequired.into());
+    }
+    Ok(next.run(request).await)
+}
+
+async fn confirmed_connect(
+    State((state, first)): State<(AppState, FirstSync)>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiFailure> {
+    if !state.core.account.available() {
+        return Err(CoreError::AccountDisabled.into());
+    }
+    if !state
+        .core
+        .account
+        .confirmed_for(&ConfirmFor::ConnectSettings(first))
     {
         return Err(CoreError::ReauthRequired.into());
     }
@@ -269,6 +351,26 @@ async fn confirm(
         (wire::AccountConfirmAction::RemoveDevice, _) => {
             return Err(CoreError::Invalid("Say which device.".into()).into());
         }
+        (wire::AccountConfirmAction::ApproveDevice, Some(id)) if !id.is_empty() => {
+            ConfirmFor::ApproveDevice(id)
+        }
+        (wire::AccountConfirmAction::ApproveDevice, _) => {
+            return Err(CoreError::Invalid("Say which request.".into()).into());
+        }
+        (wire::AccountConfirmAction::ConnectSettings, _) => match body.policy {
+            Some(wire::AccountConnectPolicy::UseDevice) => {
+                ConfirmFor::ConnectSettings(FirstSync::UseDevice)
+            }
+            Some(wire::AccountConnectPolicy::UseAccount) => {
+                ConfirmFor::ConnectSettings(FirstSync::UseAccount)
+            }
+            _ => {
+                return Err(CoreError::Invalid(
+                    "Say which choice: use this computer's settings or the account's.".into(),
+                )
+                .into());
+            }
+        },
         (wire::AccountConfirmAction::SignOutEverywhere, _) => ConfirmFor::SignOutEverywhere,
     };
     state
@@ -299,6 +401,73 @@ async fn sign_out(
     ApiJson(body): ApiJson<wire::AccountSignOut>,
 ) -> ApiResult<StatusCode> {
     state.core.account.sign_out(body.discard_unsynced).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn approvals(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<wire::AccountApprovalRequest>>> {
+    Ok(Json(state.core.account.approval_requests().await?))
+}
+
+async fn sign_in_approval(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Option<wire::AccountApprovalView>>> {
+    Ok(Json(state.core.account.poll_approval().await?))
+}
+
+async fn approve(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    let confirmed = state
+        .core
+        .account
+        .require_confirmed(ConfirmFor::ApproveDevice(id.clone()))
+        .await?;
+    state.core.account.approve(confirmed, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn deny_approval(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::AccountDeny>,
+) -> ApiResult<StatusCode> {
+    state.core.account.deny(&id, body.codes_differ).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Combine: the account's newer value wins and nothing is overwritten, so no password.
+async fn connect(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    state.core.account.connect(FirstSync::Combine, None).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn connect_with(state: &AppState, first: FirstSync) -> ApiResult<StatusCode> {
+    let confirmed = state
+        .core
+        .account
+        .require_confirmed(ConfirmFor::ConnectSettings(first))
+        .await?;
+    state.core.account.connect(first, Some(confirmed)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// This computer's settings win on every device: needs the password for this choice.
+async fn connect_use_device(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    connect_with(&state, FirstSync::UseDevice).await
+}
+
+/// The account's settings replace this computer's: needs the password for this choice.
+async fn connect_use_account(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    connect_with(&state, FirstSync::UseAccount).await
+}
+
+async fn connect_later(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    state.core.account.connect_later().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn connect_seen(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    state.core.account.connect_summary_seen().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

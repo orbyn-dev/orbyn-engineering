@@ -3,4 +3,4 @@
 /**
  * What the sync line shows.
  */
-export type AccountSyncKind = "signed_out" | "signing_in" | "online" | "syncing" | "offline" | "throttled" | "paused";
+export type AccountSyncKind = "signed_out" | "signing_in" | "not_connected" | "online" | "syncing" | "offline" | "throttled" | "paused";

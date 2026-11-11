@@ -9,6 +9,7 @@ use orbyn_contracts::{KeybindingRule, ShellEvent};
 use serde_json::{Value, json};
 
 mod allowlist;
+mod approval;
 mod flow;
 mod limits;
 

@@ -38,6 +38,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (32, CREW_RUNS),
     (33, CREW_PROTECTED),
     (34, CREW_BUS),
+    (35, ACCOUNT_OWNER),
 ];
 
 // The account's settings sync, per zone: the cursor and the capture switch, the local copy
@@ -578,3 +579,7 @@ CREATE TABLE settings (
     value TEXT NOT NULL
 );
 "#;
+
+// Which account the zone's local record belongs to, so a different account signing in on the same
+// data folder starts from nothing instead of inheriting the first one's changes.
+const ACCOUNT_OWNER: &str = "ALTER TABLE account_sync ADD COLUMN account TEXT;";
