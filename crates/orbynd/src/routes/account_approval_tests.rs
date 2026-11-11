@@ -4,7 +4,7 @@
 use orbyn_core::account::AccountGate;
 use serde_json::{Value, json};
 
-use super::account_tests::{SECRET, serve};
+use super::account_tests::{SECRET, not_the_nonce, serve};
 
 #[tokio::test]
 async fn a_caller_holding_only_the_service_token_cannot_use_a_confirmation_it_did_not_obtain() {
@@ -13,13 +13,11 @@ async fn a_caller_holding_only_the_service_token_cannot_use_a_confirmation_it_di
     // The window types the password and keeps the nonce; an engine with the same token never sees it.
     let nonce = served.nonce_for("sign_out_everywhere", None).await;
     let path = "/api/account/sign-out-everywhere";
-    for guess in [
-        None,
-        Some(""),
-        Some("00000000000000000000000000000000"),
-        Some("not a nonce"),
-    ] {
-        let (status, body) = served.call_with("POST", path, json!({}), guess).await;
+    let guesses = std::iter::once(None).chain(not_the_nonce(&nonce).into_iter().map(Some));
+    for guess in guesses {
+        let (status, body) = served
+            .call_with("POST", path, json!({}), guess.as_deref())
+            .await;
         assert_eq!(
             (status, body["code"].as_str()),
             (403, Some("reauth_required")),
@@ -52,7 +50,9 @@ async fn cancelling_drops_the_confirmation_and_only_its_own_nonce_can() {
             json!({ "nonce": nonce }),
         )
     };
-    assert_eq!(cancel("0".repeat(32)).await.0, 204);
+    for wrong in not_the_nonce(&nonce) {
+        assert_eq!(cancel(wrong).await.0, 204);
+    }
     let again = served.nonce_for("sign_out_everywhere", None).await;
     assert_eq!(cancel(again.clone()).await.0, 204);
     // The abandoned prompt's confirmation is gone, and so is the one it replaced.
@@ -72,7 +72,9 @@ async fn cancelling_drops_the_confirmation_and_only_its_own_nonce_can() {
     );
     // The wrong cancel left a live one alone.
     let live = served.nonce_for("sign_out_everywhere", None).await;
-    assert_eq!(cancel("1".repeat(32)).await.0, 204);
+    for wrong in not_the_nonce(&live) {
+        assert_eq!(cancel(wrong).await.0, 204);
+    }
     assert_eq!(
         served
             .call_with("POST", path, json!({}), Some(&live))

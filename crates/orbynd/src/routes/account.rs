@@ -198,13 +198,13 @@ async fn local_only(
 /// that typed the password has it, so a caller holding only the service token cannot send it.
 const CONFIRM_HEADER: &str = "x-orbyn-confirm";
 
-fn nonce_of(headers: &HeaderMap) -> &str {
+fn nonce_of(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(CONFIRM_HEADER)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
 }
 
+/// Looks for a confirmation for this device without using it up; the handler uses it.
 async fn confirmed_device(
     State(state): State<AppState>,
     Path(id): Path<String>,

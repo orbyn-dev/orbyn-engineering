@@ -36,21 +36,25 @@ impl AccountCenter {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Whether a fresh confirmation for exactly this action is waiting, and `nonce` is the one
+    /// Whether a fresh confirmation for exactly this action is waiting, and the nonce sent (when one was) is the one
     /// that made it. It does not use it up: the route layer asks this before the handler runs,
     /// and the handler uses it.
-    pub fn confirmed_for(&self, action: &ConfirmFor, nonce: &str) -> bool {
+    pub fn confirmed_for(&self, action: &ConfirmFor, nonce: Option<&str>) -> bool {
         self.grant().as_ref().is_some_and(|grant| {
             grant.action == *action
                 && grant.at.elapsed() < CONFIRM_WINDOW
-                && same_secret(&grant.nonce, nonce)
+                && nonce.is_some_and(|sent| same_secret(&grant.nonce, sent))
         })
     }
 
     /// The only way to get a [`Confirmed`]. Needs a signed-in account and a fresh confirmation
     /// for this action, and the nonce that made it, which it uses up: the next action asks again,
     /// even if this one fails. Whoever holds only the service token never saw the nonce.
-    pub async fn require_confirmed(&self, action: ConfirmFor, nonce: &str) -> Result<Confirmed> {
+    pub async fn require_confirmed(
+        &self,
+        action: ConfirmFor,
+        nonce: Option<&str>,
+    ) -> Result<Confirmed> {
         self.backend()?;
         if self.inner.lock().await.session.is_none() {
             return Err(CoreError::ReauthRequired);
@@ -59,7 +63,7 @@ impl AccountCenter {
         let fresh = waiting.as_ref().is_some_and(|grant| {
             grant.action == action
                 && grant.at.elapsed() < CONFIRM_WINDOW
-                && same_secret(&grant.nonce, nonce)
+                && nonce.is_some_and(|sent| same_secret(&grant.nonce, sent))
         });
         if fresh {
             *waiting = None;
@@ -111,12 +115,12 @@ impl AccountCenter {
     #[cfg(test)]
     pub(crate) async fn require_confirmed_last(&self, action: ConfirmFor) -> Result<Confirmed> {
         let nonce = self.last_nonce();
-        self.require_confirmed(action, &nonce).await
+        self.require_confirmed(action, Some(&nonce)).await
     }
 
     #[cfg(test)]
     pub(crate) fn confirmed_for_last(&self, action: &ConfirmFor) -> bool {
-        self.confirmed_for(action, &self.last_nonce())
+        self.confirmed_for(action, Some(&self.last_nonce()))
     }
 
     /// The dialog was cancelled: the confirmation it made does not stay live. Only its own nonce

@@ -160,6 +160,20 @@ fn any_body() -> Value {
     })
 }
 
+/// Values that are not the nonce, made from it and never written out as literals: one character
+/// flipped, shorter, longer and empty.
+pub(super) fn not_the_nonce(nonce: &str) -> Vec<String> {
+    let mut flipped = nonce.to_owned();
+    let first = flipped.remove(0);
+    flipped.insert(0, if first == 'a' { 'b' } else { 'a' });
+    vec![
+        flipped,
+        nonce[..nonce.len() - 1].to_owned(),
+        format!("{nonce}{}", &nonce[..1]),
+        nonce[..0].to_owned(),
+    ]
+}
+
 /// What a guarded route's confirmation is for: the action, the device or request id, and the choice.
 fn confirmation_for(path: &str) -> (&'static str, Option<&'static str>, Option<&'static str>) {
     match path {
@@ -274,14 +288,16 @@ async fn every_account_route_is_a_read_open_for_a_reason_or_needs_a_confirmation
             (403, Some("reauth_required")),
             "account route {index} accepted a confirmation without its nonce"
         );
-        let (status, body) = served
-            .call_with(method, &concrete(path), any_body(), Some("not-the-nonce"))
-            .await;
-        assert_eq!(
-            (status, body["code"].as_str()),
-            (403, Some("reauth_required")),
-            "account route {index} accepted a wrong nonce"
-        );
+        for wrong in not_the_nonce(&nonce) {
+            let (status, body) = served
+                .call_with(method, &concrete(path), any_body(), Some(&wrong))
+                .await;
+            assert_eq!(
+                (status, body["code"].as_str()),
+                (403, Some("reauth_required")),
+                "account route {index} accepted a wrong nonce"
+            );
+        }
         served
             .call(
                 "POST",
@@ -356,16 +372,13 @@ async fn a_confirmation_is_for_one_action_one_device_and_one_use() {
             .await,
     );
     refused(served.call("DELETE", &delete("dev-mini"), json!({})).await);
-    refused(
-        served
-            .call_with(
-                "DELETE",
-                &delete("dev-mini"),
-                json!({}),
-                Some("0".repeat(32).as_str()),
-            )
-            .await,
-    );
+    for wrong in not_the_nonce(&nonce) {
+        refused(
+            served
+                .call_with("DELETE", &delete("dev-mini"), json!({}), Some(&wrong))
+                .await,
+        );
+    }
     // The device it was for goes, and the confirmation goes with it.
     assert_eq!(
         served
