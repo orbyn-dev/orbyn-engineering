@@ -62,12 +62,12 @@ fn the_secret_scan_names_a_class_and_never_the_match() {
         "password = hunter2hunter2",
         "-----BEGIN RSA PRIVATE KEY-----",
     ];
-    for secret in secrets {
+    for (number, secret) in secrets.into_iter().enumerate() {
         let value = json!({ "outcome": format!("use {secret} to log in") });
-        assert!(find_secret(&value).is_some(), "{secret}");
+        assert!(find_secret(&value).is_some(), "secret number {number}");
         let error = refuse_secret(&value).unwrap_err();
         assert_eq!(error.code, ErrorCode::SecretDetected);
-        assert!(!error.message.contains(secret), "{secret}");
+        assert!(!error.message.contains(secret), "secret number {number}");
     }
     // A key counts too, and plain text does not.
     assert!(find_secret(&json!({ "api_key": "abcdefgh1234" })).is_some());
