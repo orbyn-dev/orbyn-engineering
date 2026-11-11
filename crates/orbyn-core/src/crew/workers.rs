@@ -22,12 +22,14 @@ pub(crate) const ALLOWED: [&str; 7] = [
 ];
 
 /// A worker also talks to its crew through the bus tools (`crew_post`, `crew_ask`,
-/// `crew_board_read`, `crew_board_write`) and reports through `crew_report`. It never calls
+/// `crew_board_read`, `crew_board_write`), reports through `crew_report` and, for a reviewer, files findings
+/// through `crew_finding` (the tool itself refuses anyone who is not a reviewer). It never calls
 /// `crew_start` (H3) or `crew_route`, so those are not here.
 pub(crate) fn allowed(tool: &str) -> bool {
     ALLOWED.contains(&tool)
         || tool.starts_with("orbyn_preview_")
         || super::BUS_TOOLS.contains(&tool)
+        || tool == super::FINDING_TOOL
 }
 
 impl Core {

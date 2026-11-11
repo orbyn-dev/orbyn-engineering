@@ -214,7 +214,7 @@ pub fn covers(pattern: &CrewPathPattern, path: &str) -> bool {
 
 /// Every path that differs from the starting commit: changed tracked files and new ones.
 pub(super) async fn changed(site: &Site<'_>) -> Result<Vec<String>, CoreError> {
-    use crate::source_control::git::git;
+    use crate::source_control::git::git_hardened as git;
     let base = site.base.unwrap_or("HEAD");
     let tracked = git(
         site.worktree,
@@ -296,7 +296,7 @@ async fn diff_size(
     let counted = async {
         let files = changed(site).await?;
         let base = site.base.unwrap_or("HEAD");
-        let numstat = crate::source_control::git::git(
+        let numstat = crate::source_control::git::git_hardened(
             site.worktree,
             &[
                 "diff",
@@ -318,7 +318,7 @@ async fn diff_size(
                 Some(added + removed)
             })
             .sum();
-        let fresh = crate::source_control::git::git(
+        let fresh = crate::source_control::git::git_hardened(
             site.worktree,
             &["ls-files", "--others", "--exclude-standard", "-z"],
         )

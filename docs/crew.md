@@ -406,6 +406,21 @@ merge).
   always visible. Full Autopilot is the default, so high-risk changes also merge and go to the top of the person's
   queue. They can switch to On (high risk waits for them) or Off per repository or crew.
 
+**As built (slice 4b):**
+
+- The tools are `crew_review` (lanes, no cap, also after a pass), `crew_finding` (a reviewer files a finding),
+  `crew_check_finding` and `crew_review_status`, behind the Preview flag. See the
+  [review README](../crates/orbyn-core/src/crew/review/README.md).
+- A finding is confirmed by code: a repro check the lead supplies that fails, or an independent second review on the
+  other vendor that reports the same file within 3 lines. Otherwise it is unconfirmed and blocks nothing. Both
+  decisions are Gates at `finding_check` with Evidence the core wrote.
+- A confirmed finding sends a fix brief to a builder (its key includes a check that the file changed), the lanes run again on
+  the fix, and a finding shows as fixed only after such a fix passed and a repro has proved it: a finding confirmed by agreement has no repro, so it keeps
+  blocking until the lead supplies one that passes after the fix (or a person clears it). A reviewer's silence clears nothing. One fix per lane and file,
+  at most three per task. Reviewers are read-only by bytes, and the second review needs another vendor than the first.
+- Not yet: PR review on the forge, the same-engine badge, a per-lane `review` Gate, locked-lane removal by a person.
+  `crew_finding` refuses after the reviewer's run has ended (H7); the Gates are core writes and do not.
+
 **Review decisions** (2026-11-11, Designer part 2, frames in `crew-designs.html`):
 
 - **Required before merge by default:**

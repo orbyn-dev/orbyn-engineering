@@ -63,6 +63,60 @@ pub(crate) async fn git_raw(cwd: &Path, args: &[&str]) -> Result<std::process::O
     output.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))
 }
 
+/// The `-c name=` overrides that switch off every filter and diff converter the repository's own config names: a clean filter
+/// can make an edit read as the original bytes, and each of them runs a program the worker chose.
+async fn converter_overrides(cwd: &Path) -> Vec<String> {
+    let Ok(out) = git_raw(
+        cwd,
+        &[
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^(filter\..*\.(clean|smudge|process)|diff\..*\.(textconv|command))$",
+        ],
+    )
+    .await
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .flat_map(|name| ["-c".to_owned(), format!("{name}=")])
+        .collect()
+}
+
+/// Git for the checks that read what a worker changed. Anything the worker could set in the repository to hide an edit, or to
+/// make the core run a program of its choosing, is off: repository filters and diff converters, attributes (from the tree, the
+/// global file and the system), and replace refs. A caller that relies on a changed file showing in a diff uses this.
+pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let overrides = converter_overrides(cwd).await;
+    let attributes = no_attributes(cwd).await?;
+    let mut command = command(cwd);
+    command
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_ATTR_SOURCE", &attributes)
+        .args(SAFE_CONFIG)
+        .args(["-c", "core.attributesFile="])
+        .args(&overrides)
+        .args(args);
+    let output = async {
+        crate::host::process::ManagedChild::spawn(command)?
+            .output()
+            .await
+    }
+    .await
+    .map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    if !output.status.success() {
+        return Err(CoreError::Git(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(output.stdout)
+}
+
 pub(crate) fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_owned()
 }

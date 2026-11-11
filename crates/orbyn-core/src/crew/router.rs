@@ -186,7 +186,8 @@ pub fn route(
     if reviews(role)
         && let Some(family) = &author_family
     {
-        let require = role == RouteRole::SecondKey;
+        // A second key and the independent run that confirms a finding are never on the same vendor.
+        let require = matches!(role, RouteRole::SecondKey | RouteRole::FindingCheck);
         match request {
             None if require || admitted.iter().any(|a| a.view.family != *family) => {
                 refuse_same_vendor(&mut admitted, &mut rejected, family);

@@ -2266,6 +2266,16 @@ After a run ends, member tools refuse (H7), but the core can verify again and ad
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
 
+`crew_review` (the lead only) runs finished work through any number of reviewer lanes, also after the task has passed and
+without reopening it. Each lane is a task of its own through the same start path as `crew_start`: a read-only reviewer, routed by
+role `review` and its lane at the lead tier to another vendor than the builder where one is configured, told the work's purpose
+and the commit and never a check. A reviewer files typed findings with `crew_finding` (stamped by the core; refused once its run
+has ended, H7). A finding has no state and blocks nothing until the core confirms it at a `finding_check` Gate, decided by code and
+citing Evidence: a repro check the lead states that fails, or an independent second review that reports the same file within 3 lines.
+A confirmed finding sends the core's own fix brief to a builder, checked like `crew_start`'s, and the lanes then run again; the same
+finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
+([review group](../crates/orbyn-core/src/crew/review/README.md)).
+
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
 sets is the project's, never a global one. The owner authorized a narrow exception

@@ -174,7 +174,7 @@ impl Core {
     /// The task ends: its leases are released, the worker's run is stopped, a final result is
     /// written and the lead is told. Safe to call on a task already moved to its final state.
     pub(super) fn end_crew_task(
-        &self,
+        self: &Arc<Self>,
         task: &CrewTask,
         state: ResultState,
         stop: Option<StopReason>,
@@ -204,6 +204,10 @@ impl Core {
             }
             Err(error) => tracing::warn!(%error, "could not write a crew task's result"),
         }
+        // A fix that ends without passing may be the last one a deferred rerun of the lanes was waiting for.
+        if state != ResultState::Passed {
+            self.spawn_review_unpassed(&task.id);
+        }
     }
 
     /// Moves a task one step and swallows an invalid move: someone else (a cancel) got there.
@@ -219,7 +223,7 @@ impl Core {
 
     /// The task waits for a person. `tell` queues the result for the lead; a caller that is
     /// answering the lead in the same call passes false.
-    pub(super) fn crew_needs_person(&self, task_id: &str, why: &str, tell: bool) {
+    pub(super) fn crew_needs_person(self: &Arc<Self>, task_id: &str, why: &str, tell: bool) {
         if let Some(task) = self.step_crew_task(task_id, "needs_person", None) {
             let run = self.store.crew_run(task_id).ok().flatten();
             match self.record_result(&task, ResultState::NeedsPerson, None, why, None) {
@@ -230,6 +234,7 @@ impl Core {
                 }
                 Err(error) => tracing::warn!(%error, "could not write a crew task's result"),
             }
+            self.spawn_review_unpassed(&task.id);
         }
     }
 
@@ -247,6 +252,9 @@ impl Core {
             if let Ok(task) = self.store.pass_crew_task(task_id, &ids) {
                 let summary = format!("{} checks passed.", judged.passes);
                 self.end_crew_task(&task, ResultState::Passed, None, &summary, Some(judged));
+                // A review lane, a second review or a fix that passed has more to do (see `review`).
+                let (core, id) = (self.clone(), task_id.to_owned());
+                tokio::spawn(async move { core.review_task_passed(&id).await });
             }
         } else if judged.undecided() {
             self.crew_needs_person(
@@ -432,7 +440,7 @@ impl Core {
     }
 
     /// The worker's run was cancelled or failed: the task ends with it.
-    pub(super) fn end_for_run(&self, task_id: &str, state: RunState) {
+    pub(super) fn end_for_run(self: &Arc<Self>, task_id: &str, state: RunState) {
         if state == RunState::Cancelled {
             if let Some(task) = self.step_crew_task(task_id, "cancelled", None) {
                 self.end_crew_task(
@@ -458,7 +466,7 @@ impl Core {
 
     /// The task's time budget ended while it was running: it stops, and the worker's run with
     /// it. A task already past `running` or `verifying`, or ended, is left alone.
-    pub(crate) fn crew_budget_ended(&self, task_id: &str) {
+    pub(crate) fn crew_budget_ended(self: &Arc<Self>, task_id: &str) {
         if let Some(task) = self.step_crew_task(task_id, "stopped", Some("budget")) {
             self.end_crew_task(
                 &task,

@@ -83,12 +83,17 @@ pub fn refuse_secret(value: &Value) -> Result<(), CrewError> {
 /// What the key must never share: its id and every check command of 8 or more characters.
 pub fn key_needles(key: &AnswerKey) -> Vec<String> {
     std::iter::once(key.id.as_str().to_owned())
-        .chain(
-            key.checks
-                .iter()
-                .filter_map(orbyn_contracts::CrewCheck::command)
-                .filter(|run| run.len() >= 8),
-        )
+        .chain(check_needles(&key.checks))
+        .collect()
+}
+
+/// The command of every check of 8 or more characters: what a repro check, kept apart from any key, must never share
+/// with a worker either.
+pub fn check_needles(checks: &[orbyn_contracts::CrewCheck]) -> Vec<String> {
+    checks
+        .iter()
+        .filter_map(orbyn_contracts::CrewCheck::command)
+        .filter(|run| run.len() >= 8)
         .collect()
 }
 

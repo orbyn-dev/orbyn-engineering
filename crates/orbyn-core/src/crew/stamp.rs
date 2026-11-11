@@ -4,7 +4,7 @@
 
 use orbyn_contracts::{
     AnswerKey, Brief, CrewAuthor, CrewError, CrewHash, CrewId, CrewMember, CrewMessage, CrewObject,
-    CrewRole, CrewTimestamp, CrewToken, ErrorCode, Fact, Report, reject_floats,
+    CrewRole, CrewTimestamp, CrewToken, ErrorCode, Fact, Finding, Report, reject_floats,
 };
 use serde_json::{Value, json};
 
@@ -156,5 +156,26 @@ impl Stamper {
         fact.validate()?;
         fact.id = CrewObject::Fact(fact.clone()).computed_id()?;
         Ok(fact)
+    }
+
+    /// A reviewer's finding in `run`. The lane and the reviewed commit come from the run's review row,
+    /// so a draft that names them, the author, an id or a run is refused.
+    pub fn finding(
+        &self,
+        draft: &Value,
+        run: &CrewId,
+        lane: &CrewToken,
+        commit: &str,
+    ) -> Result<Finding, CrewError> {
+        let own = [
+            ("run_id", json!(run)),
+            ("lane", json!(lane)),
+            ("commit", json!(commit)),
+        ];
+        let full = self.envelope("finding", draft, CrewRole::Reviewer, &own)?;
+        let mut finding: Finding = Self::read(full)?;
+        finding.validate()?;
+        finding.id = CrewObject::Finding(finding.clone()).computed_id()?;
+        Ok(finding)
     }
 }
