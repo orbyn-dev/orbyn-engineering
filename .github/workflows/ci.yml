@@ -205,18 +205,15 @@ jobs:
         run: npm run build
         working-directory: web
 
-  # The browser suite, split by file across eight runners.
-  e2e-shard:
-    name: E2E shard ${{ matrix.shard }}/8
+  # The browser suite's service, built once. Every shard downloads these two binaries
+  # instead of compiling them again (about a minute each, twelve times over).
+  e2e-build:
+    name: E2E service build
     needs: [changes, lint]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     env:
       RUN: ${{ needs.changes.outputs.e2e }}
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Cheap checks passed
         shell: bash
@@ -236,8 +233,64 @@ jobs:
           persist-credentials: false
       - if: env.RUN == 'true'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      # Same cache the shards used before, so the first build on a branch still restores it.
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: e2e-shard
+      - if: env.RUN == 'true'
+        run: cargo build -p orbynd --bin orbynd --bin orbyn-fake-engine
+      - if: env.RUN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-service
+          path: |
+            target/debug/orbynd
+            target/debug/orbyn-fake-engine
+          compression-level: 1
+          if-no-files-found: error
+          retention-days: 7
+
+  # The browser suite, split by file across twelve runners. web/scripts/e2e-shards.mjs
+  # gives each shard the files that balance the measured durations in
+  # web/e2e/shard-durations.json (refresh steps at the top of that script).
+  e2e-shard:
+    name: E2E shard ${{ matrix.shard }}/12
+    needs: [changes, lint, e2e-build]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    env:
+      RUN: ${{ needs.changes.outputs.e2e }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - name: Earlier jobs passed
+        shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+          BUILD: ${{ needs.e2e-build.result }}
+        run: |
+          if [ "$CHANGES" != success ] || [ "$LINT" != success ] || [ "$BUILD" != success ]; then
+            echo "changes=$CHANGES lint=$LINT build=$BUILD"
+            exit 1
+          fi
+      - if: env.RUN != 'true'
+        run: echo "No change the browser suite covers."
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.RUN == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-service
+          path: target/debug
+      # The artifact does not keep the executable bit; the specs find both binaries here.
+      - if: env.RUN == 'true'
+        run: chmod +x target/debug/orbynd target/debug/orbyn-fake-engine
       - if: env.RUN == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -248,16 +301,32 @@ jobs:
         run: npm ci
         working-directory: web
       - if: env.RUN == 'true'
-        run: cargo build -p orbynd --bin orbynd --bin orbyn-fake-engine
-      - if: env.RUN == 'true'
         run: npm run test:e2e:install
         working-directory: web
       # No apt step: the runner image already carries Chrome's libraries, and
       # `playwright install-deps` took from 10 seconds to over 8 minutes on the apt
       # mirrors. If the headless shell ever lacks a library, it fails at launch.
       - if: env.RUN == 'true'
-        run: npm run test:e2e -- --shard=${{ matrix.shard }}/8
+        shell: bash
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ github.workspace }}/e2e-timing/shard-${{ matrix.shard }}.json
+        run: |
+          files=$(node scripts/e2e-shards.mjs ${{ matrix.shard }} 12)
+          # An empty list would run the whole suite.
+          [ -n "$files" ] || { echo "no spec files for this shard"; exit 1; }
+          echo "$files"
+          # shellcheck disable=SC2086
+          npm run test:e2e -- --reporter=dot,json $files
         working-directory: web
+      # Per-spec durations, the input for refreshing web/e2e/shard-durations.json.
+      - name: Keep timings
+        if: always() && env.RUN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-timing-${{ matrix.shard }}
+          path: e2e-timing
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Keep failure traces
         if: failure() && env.RUN == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -269,7 +338,7 @@ jobs:
   # The required "E2E" check: green only when every shard passed or had nothing to do.
   e2e:
     name: E2E
-    needs: [changes, lint, e2e-shard]
+    needs: [changes, lint, e2e-build, e2e-shard]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -277,10 +346,11 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           LINT: ${{ needs.lint.result }}
+          BUILD: ${{ needs.e2e-build.result }}
           SHARDS: ${{ needs.e2e-shard.result }}
         run: |
-          echo "changes=$CHANGES lint=$LINT shards=$SHARDS"
-          [ "$CHANGES" = success ] && [ "$LINT" = success ] && [ "$SHARDS" = success ]
+          echo "changes=$CHANGES lint=$LINT build=$BUILD shards=$SHARDS"
+          [ "$CHANGES" = success ] && [ "$LINT" = success ] && [ "$BUILD" = success ] && [ "$SHARDS" = success ]
 
   desktop:
     name: Unsigned desktop build (${{ matrix.os }})
