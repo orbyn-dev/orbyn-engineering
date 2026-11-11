@@ -137,12 +137,12 @@ pub enum CheckParams {
 fn read<T: serde::de::DeserializeOwned>(kind: CheckKind, params: &Value) -> Result<T, CrewError> {
     if !params.is_object() {
         return Err(CrewError::invalid(format!(
-            "params of a {kind:?} check must be an object"
+            "params: a {kind:?} check takes an object"
         )));
     }
     serde_path_to_error::deserialize(params).map_err(|e| {
         CrewError::invalid(format!(
-            "params of a {kind:?} check, {}: {}",
+            "params: {kind:?} check, {}: {}",
             e.path(),
             e.inner()
         ))
@@ -184,7 +184,7 @@ impl CrewCheck {
             CheckParams::FileScope(p) => super::common::count("only", p.only.len(), 1, 256)?,
             CheckParams::DiffSize(p) if p.max_files.is_none() && p.max_lines.is_none() => {
                 return Err(CrewError::invalid(
-                    "a diff_size check sets max_files or max_lines",
+                    "params: a diff_size check sets max_files or max_lines",
                 ));
             }
             CheckParams::HttpProbe(p) => within("expect_status", p.expect_status.into(), 100, 599)?,

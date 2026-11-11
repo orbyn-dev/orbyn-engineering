@@ -67,7 +67,7 @@ impl Evidence {
         written_by("evidence", &self.author, &[CrewRole::Core])?;
         if self.excerpt.chars().count() > 4000 {
             return Err(super::common::CrewError::invalid(
-                "excerpt is at most 4000 characters",
+                "excerpt: at most 4000 characters",
             ));
         }
         count("artifacts", self.artifacts.len(), 0, 64)

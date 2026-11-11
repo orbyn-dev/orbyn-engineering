@@ -83,50 +83,37 @@ pub enum CrewObject {
 }
 
 wire! {
-/// Any v0 object a worker may see: every [`CrewObject`] except the answer key (H1).
-/// The type itself cannot hold a key.
+/// The objects a worker is meant to see: the brief, facts and messages. Nothing that
+/// carries the answer key's checks (evidence, gates, results, findings) is in it, so a
+/// reader that returns it cannot leak them (H1). The H1 string check still runs on every
+/// object before it reaches a worker, because a lead's message or a fact can quote a check.
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerObject {
     Brief(Brief),
-    Lease(Lease),
     Message(CrewMessage),
     Fact(Fact),
-    Claim(Claim),
-    Report(Report),
-    Evidence(Evidence),
-    Finding(Finding),
-    Disagreement(Disagreement),
-    Gate(Gate),
-    Result(CrewResult),
-    RouteDecision(RouteDecision),
 }
 }
 
 impl TryFrom<CrewObject> for WorkerObject {
     type Error = CrewError;
 
-    /// Refuses the answer key with `answer_key_forbidden`.
+    /// Refuses the answer key with `answer_key_forbidden` and any other type a worker is
+    /// not shown with `not_authorized`.
     fn try_from(object: CrewObject) -> Result<Self, CrewError> {
-        Ok(match object {
-            CrewObject::AnswerKey(_) => {
-                return Err(CrewError::new(
-                    ErrorCode::AnswerKeyForbidden,
-                    "the answer key is never shown to a worker",
-                ));
-            }
-            CrewObject::Brief(o) => Self::Brief(o),
-            CrewObject::Lease(o) => Self::Lease(o),
-            CrewObject::Message(o) => Self::Message(o),
-            CrewObject::Fact(o) => Self::Fact(o),
-            CrewObject::Claim(o) => Self::Claim(o),
-            CrewObject::Report(o) => Self::Report(o),
-            CrewObject::Evidence(o) => Self::Evidence(o),
-            CrewObject::Finding(o) => Self::Finding(o),
-            CrewObject::Disagreement(o) => Self::Disagreement(o),
-            CrewObject::Gate(o) => Self::Gate(o),
-            CrewObject::Result(o) => Self::Result(o),
-            CrewObject::RouteDecision(o) => Self::RouteDecision(o),
-        })
+        match object {
+            CrewObject::Brief(o) => Ok(Self::Brief(o)),
+            CrewObject::Message(o) => Ok(Self::Message(o)),
+            CrewObject::Fact(o) => Ok(Self::Fact(o)),
+            CrewObject::AnswerKey(_) => Err(CrewError::new(
+                ErrorCode::AnswerKeyForbidden,
+                "the answer key is never shown to a worker",
+            )),
+            other => Err(CrewError::new(
+                ErrorCode::NotAuthorized,
+                format!("a {} is not shown to a worker", other.type_name()),
+            )),
+        }
     }
 }
 
@@ -134,17 +121,8 @@ impl From<WorkerObject> for CrewObject {
     fn from(object: WorkerObject) -> Self {
         match object {
             WorkerObject::Brief(o) => Self::Brief(o),
-            WorkerObject::Lease(o) => Self::Lease(o),
             WorkerObject::Message(o) => Self::Message(o),
             WorkerObject::Fact(o) => Self::Fact(o),
-            WorkerObject::Claim(o) => Self::Claim(o),
-            WorkerObject::Report(o) => Self::Report(o),
-            WorkerObject::Evidence(o) => Self::Evidence(o),
-            WorkerObject::Finding(o) => Self::Finding(o),
-            WorkerObject::Disagreement(o) => Self::Disagreement(o),
-            WorkerObject::Gate(o) => Self::Gate(o),
-            WorkerObject::Result(o) => Self::Result(o),
-            WorkerObject::RouteDecision(o) => Self::RouteDecision(o),
         }
     }
 }
@@ -281,7 +259,7 @@ impl CrewObject {
         if let Some(v) = value.get("v").and_then(Value::as_u64).filter(|v| *v != 0) {
             return Err(CrewError::new(
                 ErrorCode::UnsupportedVersion,
-                format!("protocol version {v} is not supported; this is v0"),
+                format!("v: protocol version {v} is not supported; this is v0"),
             ));
         }
         reject_floats(value)?;

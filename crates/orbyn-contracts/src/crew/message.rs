@@ -49,15 +49,13 @@ impl CrewMessage {
         }
         if self.kind == MessageKind::Answer && self.in_reply_to.is_none() {
             return Err(CrewError::invalid(
-                "an answer names its question in `in_reply_to`",
+                "in_reply_to: an answer names its question",
             ));
         }
         if let Some(wait) = self.wait_seconds {
             within("wait_seconds", wait.into(), 0, 40)?;
             if self.kind != MessageKind::Question {
-                return Err(CrewError::invalid(
-                    "only a question has `wait_seconds`, and `kind` is not question",
-                ));
+                return Err(CrewError::invalid("kind: only a question has wait_seconds"));
             }
         }
         Ok(())

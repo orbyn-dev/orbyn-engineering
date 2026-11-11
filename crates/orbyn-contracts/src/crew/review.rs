@@ -42,7 +42,7 @@ impl Finding {
     pub fn validate(&self) -> Verdict {
         envelope(self.v, &self.author)?;
         if self.line < 1 {
-            return Err(CrewError::invalid("line is 1-based"));
+            return Err(CrewError::invalid("line: is 1-based"));
         }
         Ok(())
     }
@@ -138,9 +138,9 @@ impl Gate {
         );
         if finding_check != confirms {
             return Err(CrewError::invalid(if finding_check {
-                "`decision` of a finding_check gate is confirmed or unconfirmed"
+                "decision: a finding_check gate is confirmed or unconfirmed"
             } else {
-                "`decision` is pass or fail; only a finding_check gate confirms or does not"
+                "decision: pass or fail; only a finding_check gate confirms or does not"
             }));
         }
         if self.decided_by == GateDecider::Person {
@@ -149,13 +149,13 @@ impl Gate {
             written_by("a gate decided by code", &self.author, &[CrewRole::Core])?;
             if self.evidence.is_empty() {
                 return Err(CrewError::invalid(
-                    "a gate not decided by a person needs evidence",
+                    "evidence: a gate not decided by a person needs it",
                 ));
             }
         }
         match (self.stage == GateStage::Review, self.lane.is_some()) {
-            (true, false) => Err(CrewError::invalid("a review gate names its lane")),
-            (false, true) => Err(CrewError::invalid("only a review gate has a lane")),
+            (true, false) => Err(CrewError::invalid("lane: a review gate names it")),
+            (false, true) => Err(CrewError::invalid("lane: only a review gate has one")),
             _ => Ok(()),
         }
     }

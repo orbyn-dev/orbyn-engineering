@@ -370,21 +370,40 @@ fn creating_a_task_again_needs_the_same_key_and_run() {
 }
 
 #[test]
-fn a_worker_reads_every_object_but_the_key() {
+fn a_worker_reads_the_brief_and_messages_but_nothing_with_the_checks() {
     let (_dir, store) = open();
     let id = task(&store);
-    store
-        .add_crew_object(&id, &object(example!("message.valid.question")))
-        .unwrap();
-    store
-        .add_crew_object(&id, &object(example!("result.valid.passed")))
-        .unwrap();
+    for text in [
+        example!("message.valid.question"),
+        example!("message.valid.blocker-to-lead"),
+        example!("evidence.valid.test-pass"),
+        example!("gate.valid.checks-by-code"),
+        example!("result.valid.passed"),
+    ] {
+        store.add_crew_object(&id, &object(text)).unwrap();
+    }
+    let evidence = store.crew_evidence(&id).unwrap();
+    assert!(
+        evidence[0].command.as_str().contains("cargo test"),
+        "the stored evidence names the command"
+    );
     let shown = store.crew_worker_objects(&id).unwrap();
     let kinds: Vec<_> = shown
         .iter()
         .map(|o| CrewObject::from(o.clone()).type_name())
         .collect();
-    assert_eq!(kinds, ["brief", "message", "result"]);
+    assert_eq!(
+        kinds,
+        ["brief", "message"],
+        "no evidence, gate, result or message to the lead"
+    );
     let wire = serde_json::to_string(&shown).unwrap();
-    assert!(!wire.contains(key().id.as_str()) && !wire.contains("protected_paths"));
+    for secret in [
+        evidence[0].command.as_str(),
+        key().id.as_str(),
+        "protected_paths",
+        "chk-tests",
+    ] {
+        assert!(!wire.contains(secret), "a worker was shown {secret}");
+    }
 }

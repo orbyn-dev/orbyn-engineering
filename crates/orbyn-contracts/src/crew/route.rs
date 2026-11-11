@@ -151,12 +151,12 @@ impl RouteDecision {
         }
         if self.assigned_by != RouteAssigner::Router && self.requested.is_none() {
             return Err(CrewError::invalid(
-                "a decision assigned by a person or the lead names what was requested",
+                "requested: a decision assigned by a person or the lead names it",
             ));
         }
         match (self.role == RouteRole::Review, self.lane.is_some()) {
-            (true, false) => Err(CrewError::invalid("a review decision names its lane")),
-            (false, true) => Err(CrewError::invalid("only a review decision has a lane")),
+            (true, false) => Err(CrewError::invalid("lane: a review decision names it")),
+            (false, true) => Err(CrewError::invalid("lane: only a review decision has one")),
             _ => Ok(()),
         }
     }

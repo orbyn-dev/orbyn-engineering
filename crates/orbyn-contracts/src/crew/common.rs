@@ -132,7 +132,7 @@ pub(super) fn version(v: u8) -> Verdict {
     }
     Err(CrewError::new(
         ErrorCode::UnsupportedVersion,
-        format!("protocol version {v} is not supported; this is v0"),
+        format!("v: protocol version {v} is not supported; this is v0"),
     ))
 }
 
@@ -142,7 +142,7 @@ pub(super) fn text(what: &str, value: &str, max: usize) -> Verdict {
         return Ok(());
     }
     Err(CrewError::invalid(format!(
-        "{what} must be 1 to {max} characters, not {length}"
+        "{what}: must be 1 to {max} characters, not {length}"
     )))
 }
 
@@ -151,7 +151,7 @@ pub(super) fn count(what: &str, items: usize, min: usize, max: usize) -> Verdict
         return Ok(());
     }
     Err(CrewError::invalid(format!(
-        "{what} must have {min} to {max} items, not {items}"
+        "{what}: must have {min} to {max} items, not {items}"
     )))
 }
 
@@ -160,7 +160,7 @@ pub(super) fn within(what: &str, value: u64, min: u64, max: u64) -> Verdict {
         return Ok(());
     }
     Err(CrewError::invalid(format!(
-        "{what} must be {min} to {max}, not {value}"
+        "{what}: must be {min} to {max}, not {value}"
     )))
 }
 
@@ -173,7 +173,7 @@ pub(super) fn unique<T: PartialEq>(what: &str, items: &[T]) -> Verdict {
         return Ok(());
     }
     Err(CrewError::invalid(format!(
-        "{what} must not repeat an item"
+        "{what}: must not repeat an item"
     )))
 }
 

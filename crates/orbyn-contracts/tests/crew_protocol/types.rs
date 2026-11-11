@@ -131,7 +131,10 @@ fn every_invalid_example_is_refused_for_its_own_field() {
                 "{name}: code {:?}: {}",
                 refusal.code, refusal.message
             ));
-        } else if !refusal.message.contains(&field) {
+        } else if !refusal.message.contains(&format!("{field}:"))
+            && !refusal.message.contains(&format!("{field}["))
+            && !refusal.message.contains(&format!("`{field}`"))
+        {
             wrong.push(format!(
                 "{name}: should name `{field}`: {}",
                 refusal.message
@@ -223,20 +226,42 @@ fn the_brief_has_no_place_for_the_answer_key() {
     assert!(CrewObject::parse(&smuggled).is_err());
 }
 
-/// H1 in the types: the union a worker reads has no answer key variant.
+/// H1 in the types: the union a worker reads has no answer key variant, and none that
+/// carries the key's checks.
 #[test]
-fn the_worker_union_cannot_hold_an_answer_key() {
+fn the_worker_union_holds_only_what_a_worker_is_shown() {
     use orbyn_contracts::WorkerObject;
     let dir = protocol_dir().join("schemas/examples");
-    let key = read_json(&dir.join("answer-key.valid.basic.json"));
-    assert!(serde_json::from_value::<WorkerObject>(key.clone()).is_err());
-    let key = CrewObject::parse(&key).unwrap();
+    let read = |name: &str| CrewObject::parse(&read_json(&dir.join(name))).unwrap();
+    let key = read("answer-key.valid.basic.json");
+    assert!(serde_json::from_value::<WorkerObject>(key.to_value()).is_err());
     assert_eq!(
         WorkerObject::try_from(key).unwrap_err().code,
         ErrorCode::AnswerKeyForbidden
     );
-    let brief = CrewObject::parse(&read_json(&dir.join("brief.valid.basic.json"))).unwrap();
-    let worker = WorkerObject::try_from(brief.clone()).unwrap();
-    assert_eq!(CrewObject::from(worker.clone()), brief);
-    assert_eq!(serde_json::to_value(&worker).unwrap(), brief.to_value());
+    for name in [
+        "evidence.valid.test-pass.json",
+        "gate.valid.checks-by-code.json",
+        "result.valid.passed.json",
+    ] {
+        let object = read(name);
+        assert!(
+            serde_json::from_value::<WorkerObject>(object.to_value()).is_err(),
+            "{name}"
+        );
+        assert_eq!(
+            WorkerObject::try_from(object).unwrap_err().code,
+            ErrorCode::NotAuthorized
+        );
+    }
+    for name in [
+        "brief.valid.basic.json",
+        "message.valid.question.json",
+        "fact.valid.contract.json",
+    ] {
+        let object = read(name);
+        let worker = WorkerObject::try_from(object.clone()).unwrap();
+        assert_eq!(CrewObject::from(worker.clone()), object);
+        assert_eq!(serde_json::to_value(&worker).unwrap(), object.to_value());
+    }
 }

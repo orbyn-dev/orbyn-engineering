@@ -42,17 +42,17 @@ impl Fact {
         envelope(self.v, &self.author)?;
         if self.value.is_null() || self.value.is_f64() {
             return Err(CrewError::invalid(
-                "a fact value is a string, integer, boolean, object or array",
+                "value: a fact value is a string, integer, boolean, object or array",
             ));
         }
         reject_floats(&self.value)?;
         if self.rev < 1 {
-            return Err(CrewError::invalid("rev starts at 1"));
+            return Err(CrewError::invalid("rev: starts at 1"));
         }
         count("evidence", self.evidence.len(), 0, 32)?;
         match (&self.check, self.class == FactClass::Contract) {
             (None, true) => Err(CrewError::invalid(
-                "a contract fact carries the check its consumers get",
+                "check: a contract fact carries the check its consumers get",
             )),
             (Some(check), _) => check.validate(),
             _ => Ok(()),

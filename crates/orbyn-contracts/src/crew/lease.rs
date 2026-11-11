@@ -49,9 +49,9 @@ impl Lease {
         count("paths", self.paths.len(), 1, 256)?;
         match (self.state == LeaseState::Transferred, self.to.is_some()) {
             (true, false) => Err(CrewError::invalid(
-                "a transferred lease names its new holder in `to`",
+                "to: a transferred lease names its new holder",
             )),
-            (false, true) => Err(CrewError::invalid("only a transferred lease has `to`")),
+            (false, true) => Err(CrewError::invalid("to: only a transferred lease has one")),
             _ => Ok(()),
         }
     }

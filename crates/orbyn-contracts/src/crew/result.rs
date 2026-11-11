@@ -103,16 +103,16 @@ impl CrewResult {
         count("not_verified", self.not_verified.len(), 0, 64)?;
         if self.r#final != self.state.is_final() {
             return Err(CrewError::invalid(
-                "`final` is true exactly for passed, stopped and cancelled",
+                "final: true exactly for passed, stopped and cancelled",
             ));
         }
         match (
             self.state == ResultState::Stopped,
             self.stop_reason.is_some(),
         ) {
-            (true, false) => Err(CrewError::invalid("a stopped result names its stop_reason")),
+            (true, false) => Err(CrewError::invalid("stop_reason: a stopped result names it")),
             (false, true) => Err(CrewError::invalid(
-                "only a stopped result has a stop_reason",
+                "stop_reason: only a stopped result has one",
             )),
             _ => Ok(()),
         }

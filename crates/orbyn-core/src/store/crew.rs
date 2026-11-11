@@ -272,26 +272,29 @@ impl Store {
         bodies.iter().map(|text| read_object(text)).collect()
     }
 
-    /// Everything a worker may be shown about a task: the brief and what the run produced.
-    /// The answer key is not a `WorkerObject`, so it cannot be in the result.
+    /// What a worker may be shown about a task: the brief and the messages not addressed
+    /// to the lead. Evidence, gates and results are left out, since they carry the answer
+    /// key's check ids and commands. The H1 leak check must still run on each object
+    /// before it reaches a worker: a message can quote a check.
     pub fn crew_worker_objects(&self, task_id: &str) -> Result<Vec<WorkerObject>> {
-        let mut all: Vec<CrewObject> = self
+        let mut shown: Vec<WorkerObject> = self
             .crew_brief(task_id)?
             .into_iter()
-            .map(CrewObject::Brief)
+            .map(WorkerObject::Brief)
             .collect();
-        for table in [
-            "crew_messages",
-            "crew_leases",
-            "crew_evidence",
-            "crew_gates",
-            "crew_results",
-        ] {
-            all.extend(self.crew_objects(table, task_id)?);
+        let bodies = {
+            let conn = self.reader();
+            let mut statement = conn.prepare(
+                "SELECT body FROM crew_messages WHERE task_id = ?1 AND recipient != 'lead' ORDER BY rowid",
+            )?;
+            statement
+                .query_map([task_id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for body in bodies {
+            shown.push(WorkerObject::try_from(read_object(&body)?).map_err(refuse)?);
         }
-        all.into_iter()
-            .map(|object| WorkerObject::try_from(object).map_err(refuse))
-            .collect()
+        Ok(shown)
     }
 
     pub fn crew_messages(&self, task_id: &str) -> Result<Vec<CrewMessage>> {
