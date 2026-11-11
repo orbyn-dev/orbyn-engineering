@@ -1,9 +1,9 @@
-// Fails the build if a platform design screen (src/features/platform) reached the output.
+// Fails the build if a platform design screen (src/features/platform) or a Crew preview screen (src/features/crew) reached the output.
 // Those screens exist only behind the dev-only __ORBYN_PREVIEWS__ flag, which is false here.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const markers = ["Available with Orbyn accounts", "platform-notice", "Sign in to Orbyn", "sam@example.com"];
+const markers = ["Available with Orbyn accounts", "platform-notice", "Sign in to Orbyn", "sam@example.com", "Crew is not connected to this app yet"];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>
   readdirSync(path).flatMap((name) => {

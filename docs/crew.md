@@ -518,6 +518,13 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
+v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by
+`#/preview/crew/<frame>` in dev builds only. They run on sample data: no HTTP route or generated binding exists for the
+Autopilot group yet, so every action that would merge, revert, send a brief or approve is disabled and says why, and each
+takes a backend-guarded handler when the routes land. Per-merge money figures are left out until the Designer settles
+per-engine units.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with
