@@ -177,7 +177,9 @@ impl Core {
             .start_crew_worker(&thread, &brief, &decision, &member)
             .await
         {
-            Ok(worker) => Ok(json!({
+            Ok(worker) => {
+                self.watch_crew_budget(&task.id, brief.budget.minutes);
+                Ok(json!({
                 "task": task.id,
                 "run": task.run_id,
                 "state": "running",
@@ -189,13 +191,26 @@ impl Core {
                     "effort": decision.effort,
                     "reasons": decision.reasons,
                 },
-            })),
+                }))
+            }
             Err(error) => {
                 let _ = self.release_crew_leases(&task.id);
                 self.crew_needs_person(&task.id, &error.message, false);
                 Err(error)
             }
         }
+    }
+
+    /// Ends the task when its time budget runs out, even in the middle of a turn. The timer
+    /// holds the core weakly, so it keeps nothing alive.
+    fn watch_crew_budget(self: &Arc<Self>, task_id: &str, minutes: u32) {
+        let (core, id) = (Arc::downgrade(self), task_id.to_owned());
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(u64::from(minutes) * 60)).await;
+            if let Some(core) = core.upgrade() {
+                core.crew_budget_ended(&id);
+            }
+        });
     }
 
     /// Stores a decision with its task and moves the task `briefed` (or `needs_person`) to

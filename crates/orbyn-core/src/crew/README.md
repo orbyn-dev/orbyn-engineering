@@ -25,6 +25,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
+| `workers` | The Orbyn tools a Crew worker is refused: anything that makes a thread or schedule, and reading or writing other threads |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
 ## Rules to keep
@@ -40,18 +41,25 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   `EvalHistory` is the one place they will feed in.
 - Only the lead starts a task or routes (H3). A worker's thread is found by `crew_runs`, and its
   tools refuse once the run ends (H7); the core's own verification still adds Evidence and a Gate.
+- The checks run when the worker's turn has ended, never during it, so the worker cannot change files
+  while they run. Before any check, a change to a file in the key's protected paths fails the attempt
+  with a reason that names no file (N7, H9, H11).
 - The verifier is code. A worker is told why a check failed (redacted, with the key's text
   withheld, then proven free of both) and never the check, its id or any other part of the key (H1).
 - `failed` is never at rest: a failed verification goes through it to the state the loop guard
   names in one transaction. `final` is true only for `passed`, `stopped` and `cancelled`.
-- The guard compares fingerprints: the failing checks and their output with timings, colour
-  codes and temporary paths dropped. The same failure twice gives one change of approach; the same
+- The guard compares fingerprints: the failing checks, how each ended and the names of what
+  failed (tests, or files outside the lease), never the output, which changes between runs. The same failure twice gives one change of approach; the same
   failure after that stops the run (`repeated_failure`).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
 
 ## Follow-ups
 
+- Known gap: Evidence keeps the output's hash and a 4000-character redacted excerpt, not the full log.
+- Evidence names HEAD as its commit; when the checkout had uncommitted changes, `does_not_prove` says so.
+- `budget.minutes` also ends a task in the middle of a turn, through a timer that holds the core weakly.
+  An overall deadline from the budget caps the checks too. Turn limits are #438.
 - The worker runs in the lead's checkout, as `delegate` does. A writing worker's own worktree
   (docs/crew.md, "Isolation") is not created yet, so the diff checks see the lead's changes too.
 - `budget.turns` is not enforced (no turn count reaches the core); `budget.minutes` ends a task at

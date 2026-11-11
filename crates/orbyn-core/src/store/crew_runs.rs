@@ -63,6 +63,7 @@ fn step(
     task: &CrewTask,
     to: &str,
     stop_reason: Option<&str>,
+    evidence: &[String],
 ) -> Result<CrewTask> {
     if !allowed(&task.state, to) {
         return Err(CoreError::InvalidTransition {
@@ -76,12 +77,16 @@ fn step(
         ));
     }
     if to == "passed" {
-        let evidence: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM crew_evidence WHERE task_id = ?1",
-            [&task.id],
-            |row| row.get(0),
-        )?;
-        if evidence == 0 {
+        // The Evidence is the attempt's own: every id named is the task's, and there is one.
+        let mut found = 0;
+        for id in evidence {
+            found += tx.query_row(
+                "SELECT COUNT(*) FROM crew_evidence WHERE task_id = ?1 AND id = ?2",
+                params![task.id, id],
+                |row| row.get::<_, i64>(0),
+            )?;
+        }
+        if evidence.is_empty() || found < i64::try_from(evidence.len()).unwrap_or(i64::MAX) {
             return Err(CoreError::Invalid(
                 "gate_needs_evidence: a task passes only with Evidence".into(),
             ));
@@ -165,7 +170,15 @@ impl Store {
     ) -> Result<CrewTask> {
         self.commit(|tx, _| {
             let task = find_task(tx, task_id)?;
-            step(tx, &task, to, stop_reason)
+            step(tx, &task, to, stop_reason, &[])
+        })
+    }
+
+    /// `verifying` to `passed`, with the ids of the Evidence this attempt made (H8).
+    pub fn pass_crew_task(&self, task_id: &str, evidence: &[String]) -> Result<CrewTask> {
+        self.commit(|tx, _| {
+            let task = find_task(tx, task_id)?;
+            step(tx, &task, "passed", None, evidence)
         })
     }
 
@@ -182,7 +195,7 @@ impl Store {
             .transpose()?;
         self.commit(|tx, _| {
             let task = find_task(tx, task_id)?;
-            let moved = step(tx, &task, "verifying", None)?;
+            let moved = step(tx, &task, "verifying", None, &[])?;
             if let Some((report, body)) = &stored {
                 insert_object(tx, task_id, &CrewObject::Report((*report).clone()), body)?;
             }
@@ -205,7 +218,7 @@ impl Store {
         self.commit(|tx, _| {
             let task = find_task(tx, task_id)?;
             let run = find_run(tx, task_id)?;
-            let failed = step(tx, &task, "failed", None)?;
+            let failed = step(tx, &task, "failed", None, &[])?;
             let (guard, next) = run.guard.after_failure(fingerprint);
             tx.execute(
                 "UPDATE crew_runs SET failures = failures + 1, streak = ?2, fingerprint = ?3,
@@ -218,7 +231,7 @@ impl Store {
                 ],
             )?;
             let reason = (next == Next::Stop).then_some("repeated_failure");
-            let moved = step(tx, &failed, next.state(), reason)?;
+            let moved = step(tx, &failed, next.state(), reason, &[])?;
             Ok((moved, next))
         })
     }

@@ -305,8 +305,8 @@ Workers report through a `crew_report` tool. The verifier runs after every repor
 retries with the reason. The same failure twice means one change of approach, and then the run stops.
 
 - **As built (slice 3, differs from the plan):**
-  - The failure fingerprint is the failing checks and their output with timings, colour codes and temporary paths
-    dropped. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
+  - The failure fingerprint is the failing checks, how each ended and the names of what failed; the output is
+    left out, since it changes between runs. The checks run after the worker's turn has ended. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
   - A turn that ends with no `crew_report` is a failed attempt with its own fingerprint. An engine that fails ends the
     task (`engine_error`). `budget.minutes` ends a task at its next failed attempt; `budget.turns` is not enforced yet.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.

@@ -113,6 +113,28 @@ pub(super) fn stamp_now() -> Result<CrewTimestamp, CrewError> {
 }
 
 impl Core {
+    /// Runs a Crew tool for the MCP service. A refusal is the protocol's error object, so the
+    /// caller reads its code. The text and whether it is an error.
+    pub async fn crew_tool_text(
+        self: &std::sync::Arc<Self>,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> (String, bool) {
+        if let Err(error) = self.note_tool(binding, tool) {
+            tracing::warn!(%error, "could not record a tool call");
+        }
+        let answer = match tool {
+            START_TOOL => self.crew_start_tool(binding, args).await,
+            REPORT_TOOL => self.crew_report_tool(binding, args).await,
+            _ => self.crew_route_tool(binding, args).await,
+        };
+        match answer {
+            Ok(answer) => (answer.to_string(), false),
+            Err(error) => (json!(error).to_string(), true),
+        }
+    }
+
     /// Whether the Crew tools are on. Off, `crew_route` does not exist for any caller.
     pub fn crew_enabled(&self) -> bool {
         self.config.crew_preview

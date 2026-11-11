@@ -229,7 +229,12 @@ impl Core {
             return;
         };
         if judged.passed() {
-            if let Some(task) = self.step_crew_task(task_id, "passed", None) {
+            let ids: Vec<String> = judged
+                .evidence
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect();
+            if let Ok(task) = self.store.pass_crew_task(task_id, &ids) {
                 let summary = format!("{} checks passed.", judged.passes);
                 self.end_crew_task(&task, ResultState::Passed, None, &summary, Some(judged));
             }
@@ -360,62 +365,83 @@ impl Core {
             .map_err(internal)
     }
 
-    /// A worker's run ended. If it never reported, that is a failed attempt; if the run itself
-    /// failed or was cancelled, the task ends.
+    /// A worker's run ended. A report made in it is verified now, and not before: the worker
+    /// cannot change files while the checks run. If it never reported, that is a failed
+    /// attempt; if the run itself failed or was cancelled, the task ends.
     pub(crate) async fn crew_worker_run_ended(self: Arc<Self>, thread_id: String, run_id: String) {
         let Ok(Some((task, run))) = self.store.crew_task_for_worker(&thread_id) else {
             return;
         };
-        // Only a task still waiting on this run's report is affected; a report already made
-        // for it is judged by its own verification.
-        if task.state != "running" || run.last_report_run.as_deref() == Some(run_id.as_str()) {
-            return;
-        }
         let Ok(ended) = self.store.run(&run_id) else {
             return;
         };
-        match ended.state {
-            RunState::Completed => {
-                if self
-                    .store
-                    .begin_crew_verification(&task.id, &run_id, None)
-                    .is_err()
-                {
-                    return;
-                }
-                let Ok(Some(task)) = self.store.crew_task(&task.id) else {
-                    return;
-                };
-                let reason = "You ended your turn without calling crew_report. Report your \
-                              result with crew_report when you finish.";
-                self.settle_failure(&task, reason, "no_report", None);
+        let reported = run.last_report_run.as_deref() == Some(run_id.as_str());
+        if task.state == "verifying" && reported {
+            match ended.state {
+                RunState::Completed => self.verify_crew_task(&task.id).await,
+                _ => self.end_for_run(&task.id, ended.state),
             }
-            RunState::Cancelled => {
-                if let Some(task) = self.step_crew_task(&task.id, "cancelled", None) {
-                    self.end_crew_task(
-                        &task,
-                        ResultState::Cancelled,
-                        None,
-                        "The worker's run was cancelled.",
-                        None,
-                    );
-                }
+            return;
+        }
+        // Only a task still waiting on this run's report is affected.
+        if task.state != "running" || reported {
+            return;
+        }
+        if ended.state != RunState::Completed {
+            self.end_for_run(&task.id, ended.state);
+            return;
+        }
+        if self
+            .store
+            .begin_crew_verification(&task.id, &run_id, None)
+            .is_err()
+        {
+            return;
+        }
+        let Ok(Some(task)) = self.store.crew_task(&task.id) else {
+            return;
+        };
+        let reason = "You ended your turn without calling crew_report. Report your \
+                      result with crew_report when you finish.";
+        self.settle_failure(&task, reason, "no_report", None);
+    }
+
+    /// The worker's run was cancelled or failed: the task ends with it.
+    fn end_for_run(&self, task_id: &str, state: RunState) {
+        if state == RunState::Cancelled {
+            if let Some(task) = self.step_crew_task(task_id, "cancelled", None) {
+                self.end_crew_task(
+                    &task,
+                    ResultState::Cancelled,
+                    None,
+                    "The worker's run was cancelled.",
+                    None,
+                );
             }
-            _ => {
-                if let Some(task) = self.step_crew_task(
-                    &task.id,
-                    "stopped",
-                    Some(stop_name(StopReason::EngineError)),
-                ) {
-                    self.end_crew_task(
-                        &task,
-                        ResultState::Stopped,
-                        Some(StopReason::EngineError),
-                        "The worker's engine stopped with an error.",
-                        None,
-                    );
-                }
-            }
+        } else if let Some(task) =
+            self.step_crew_task(task_id, "stopped", Some(stop_name(StopReason::EngineError)))
+        {
+            self.end_crew_task(
+                &task,
+                ResultState::Stopped,
+                Some(StopReason::EngineError),
+                "The worker's engine stopped with an error.",
+                None,
+            );
+        }
+    }
+
+    /// The task's time budget ended while it was running: it stops, and the worker's run with
+    /// it. A task already past `running` or `verifying`, or ended, is left alone.
+    pub(crate) fn crew_budget_ended(&self, task_id: &str) {
+        if let Some(task) = self.step_crew_task(task_id, "stopped", Some("budget")) {
+            self.end_crew_task(
+                &task,
+                ResultState::Stopped,
+                Some(StopReason::Budget),
+                "The task ran past its time budget.",
+                None,
+            );
         }
     }
 }

@@ -222,19 +222,8 @@ impl McpService {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {
                     return Ok(text_result("This service is not ready.", true));
                 };
-                if let Err(error) = core.note_tool(binding, tool) {
-                    tracing::warn!(%error, "could not record a tool call");
-                }
-                // A Crew refusal is the protocol's error object, so the caller reads its code.
-                let answer = match tool {
-                    crate::crew::START_TOOL => core.crew_start_tool(binding, &args).await,
-                    crate::crew::REPORT_TOOL => core.crew_report_tool(binding, &args).await,
-                    _ => core.crew_route_tool(binding, &args).await,
-                };
-                Ok(match answer {
-                    Ok(answer) => text_result(&answer.to_string(), false),
-                    Err(error) => text_result(&json!(error).to_string(), true),
-                })
+                let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
+                Ok(text_result(&text, failed))
             }
             other if crate::tools::mcp_tools::is_tool(other) => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {

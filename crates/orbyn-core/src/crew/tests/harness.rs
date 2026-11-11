@@ -36,6 +36,8 @@ pub enum Turn {
     Crash,
     /// Never ends, so the task stays `running` and keeps its lease.
     Hang,
+    /// Reports, then keeps its turn open until told, as a worker that goes on working would.
+    Linger(Value, Arc<tokio::sync::Notify>),
 }
 
 /// The worker's work: given the turn's number (from 0) and the checkout, do it and say what
@@ -48,6 +50,8 @@ pub struct Fake {
     turns: Arc<AtomicUsize>,
     /// Every prompt any thread was sent: `(thread, text)`.
     pub prompts: Arc<Mutex<Vec<(String, String)>>>,
+    /// What `crew_report` answered each time.
+    pub answers: Arc<Mutex<Vec<String>>>,
 }
 
 #[async_trait]
@@ -92,6 +96,7 @@ impl EngineDriver for Fake {
             .is_some();
         let turn = worker.then(|| self.turns.fetch_add(1, Ordering::SeqCst));
         let script = self.script.clone();
+        let answers = self.answers.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let stop = cancel.clone();
         let task = tokio::spawn(async move {
@@ -105,11 +110,12 @@ impl EngineDriver for Fake {
                     Turn::Crash => EngineOutcome::Failed("the engine crashed".into()),
                     Turn::Silent => EngineOutcome::Completed,
                     Turn::Report(args) => {
-                        let token = spec.mcp_url.as_deref().and_then(|u| u.rsplit('/').next());
-                        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                            "params": { "name": "crew_report", "arguments": args } });
-                        let sent = core.mcp.handle(token.expect("an mcp url"), &message).await;
-                        assert!(sent.is_ok(), "the worker's token is valid");
+                        send_report(&core, &spec, args, &answers).await;
+                        EngineOutcome::Completed
+                    }
+                    Turn::Linger(args, release) => {
+                        send_report(&core, &spec, args, &answers).await;
+                        release.notified().await;
                         EngineOutcome::Completed
                     }
                 },
@@ -125,6 +131,15 @@ impl EngineDriver for Fake {
     }
 }
 
+async fn send_report(core: &Core, spec: &RunSpec, args: Value, answers: &Mutex<Vec<String>>) {
+    let token = spec.mcp_url.as_deref().and_then(|u| u.rsplit('/').next());
+    let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "crew_report", "arguments": args } });
+    let sent = core.mcp.handle(token.expect("an mcp url"), &message).await;
+    assert!(sent.is_ok(), "the worker's token is valid");
+    answers.lock().unwrap().push(format!("{sent:?}"));
+}
+
 pub struct World {
     pub _dir: TempDir,
     pub core: Arc<Core>,
@@ -132,6 +147,7 @@ pub struct World {
     pub lead: String,
     pub lead_token: String,
     pub prompts: Arc<Mutex<Vec<(String, String)>>>,
+    pub answers: Arc<Mutex<Vec<String>>>,
 }
 
 /// A core with the Crew Preview flag as asked, one git project with a first commit, a lead
@@ -149,11 +165,13 @@ pub async fn world(preview: bool, script: Script) -> World {
     core.mcp.bind_host(&core);
     let cell = Arc::new(OnceLock::new());
     let prompts = Arc::new(Mutex::new(Vec::new()));
+    let answers = Arc::new(Mutex::new(Vec::new()));
     core.engines.register(Arc::new(Fake {
         core: cell.clone(),
         script,
         turns: Arc::default(),
         prompts: prompts.clone(),
+        answers: answers.clone(),
     }));
     cell.set(Arc::downgrade(&core)).unwrap();
     core.workspace
@@ -204,6 +222,7 @@ pub async fn world(preview: bool, script: Script) -> World {
         lead: lead.id,
         lead_token,
         prompts,
+        answers,
     }
 }
 
@@ -227,6 +246,25 @@ pub fn bind(core: &Core, thread: &str, run: &str) -> String {
 }
 
 impl World {
+    /// One tool call with `token`; the tool result's text and whether it is an error.
+    pub async fn raw(&self, token: &str, tool: &str, arguments: Value) -> (String, bool) {
+        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": tool, "arguments": arguments } });
+        let reply = self
+            .core
+            .mcp
+            .handle(token, &message)
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .map_or_else(|| reply.to_string(), str::to_owned),
+            reply["result"]["isError"] == json!(true) || reply.get("error").is_some(),
+        )
+    }
+
     /// One tool call with `token`; the tool result's JSON and whether it is an error.
     pub async fn call(&self, token: &str, tool: &str, arguments: Value) -> (Value, bool) {
         let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",

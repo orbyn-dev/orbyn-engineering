@@ -572,3 +572,29 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
     let again = store.create_crew_task(&brief(), &key(), "run-02");
     assert!(again.is_err(), "the same brief is one task with one run");
 }
+
+/// H8: a pass names the Evidence this attempt made, and each id must be the task's.
+#[test]
+fn a_pass_needs_the_attempts_own_evidence() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    store.add_crew_run(&id, "lead-thread", "worker-1").unwrap();
+    store.move_crew_task(&id, "routed", None).unwrap();
+    store.move_crew_task(&id, "running", None).unwrap();
+    store
+        .begin_crew_verification(&id, "engine-run-1", None)
+        .unwrap();
+    let evidence = object(example!("evidence.valid.test-pass"));
+    store.add_crew_object(&id, &evidence).unwrap();
+    // Evidence from nowhere, or none, is not enough, and neither is any move to `passed`.
+    assert!(store.pass_crew_task(&id, &[]).is_err());
+    assert!(
+        store
+            .pass_crew_task(&id, &[format!("sha256:{}", "1".repeat(64))])
+            .is_err()
+    );
+    assert!(store.move_crew_task(&id, "passed", None).is_err());
+    assert_eq!(store.crew_task(&id).unwrap().unwrap().state, "verifying");
+    let ids = [evidence.id().as_str().to_owned()];
+    assert_eq!(store.pass_crew_task(&id, &ids).unwrap().state, "passed");
+}

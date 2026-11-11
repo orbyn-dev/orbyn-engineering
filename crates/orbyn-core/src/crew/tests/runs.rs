@@ -177,6 +177,12 @@ async fn a_pass_carries_its_evidence_and_what_was_not_verified() {
         ]
     );
     assert_eq!(w.core.store.crew_gates(&id).unwrap().len(), 1);
+    // The checkout had uncommitted work when the checks ran, and the Evidence says so.
+    assert!(
+        evidence
+            .iter()
+            .all(|e| e.does_not_prove.as_str().contains("uncommitted"))
+    );
     let result = w.core.store.crew_results(&id).unwrap().pop().unwrap();
     assert_eq!(result.state, ResultState::Passed);
     assert!(result.r#final && result.stop_reason.is_none());

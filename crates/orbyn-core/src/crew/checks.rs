@@ -30,11 +30,16 @@ pub struct Ran {
     pub duration_ms: u64,
     /// Why it failed, in words a worker may read. It never holds the check itself.
     pub reason: Option<String>,
+    /// What failed, by name: the failing tests, or the files outside the lease. The loop guard
+    /// compares these, not the output, which changes between runs.
+    pub names: Vec<String>,
 }
 
 /// Where the checks run.
 pub struct Site<'a> {
     pub worktree: &'a Path,
+    /// When the task's time budget ends: no check runs past it.
+    pub deadline: Instant,
     /// The commit the worker started from, for the diff checks.
     pub base: Option<&'a str>,
 }
@@ -47,6 +52,7 @@ fn ran(outcome: CheckOutcome, command: String, log: String, started: Instant) ->
         log,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         reason: None,
+        names: Vec::new(),
     }
 }
 
@@ -66,13 +72,7 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     let description = format!("{}: {}", kind_name(check), check.id);
     match check.typed_params() {
         Ok(CheckParams::Run(params)) => {
-            run_command(
-                &params.run,
-                params.expect_exit.unwrap_or(0),
-                site.worktree,
-                started,
-            )
-            .await
+            run_command(&params.run, params.expect_exit.unwrap_or(0), site, started).await
         }
         Ok(CheckParams::FileScope(params)) => {
             file_scope(&params.only, site, description, started).await
@@ -97,7 +97,16 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     }
 }
 
-async fn run_command(run: &str, expect: u32, cwd: &Path, started: Instant) -> Ran {
+async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) -> Ran {
+    let cwd = site.worktree;
+    let allowed = TIMEOUT.min(site.deadline.saturating_duration_since(Instant::now()));
+    if allowed.is_zero() {
+        return error(
+            run.to_owned(),
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
     let (program, args) = crate::host::terminal::shell_command(run);
     let mut command = Command::new(program);
     command
@@ -113,7 +122,7 @@ async fn run_command(run: &str, expect: u32, cwd: &Path, started: Instant) -> Ra
             .output()
             .await
     };
-    let output = match tokio::time::timeout(TIMEOUT, output).await {
+    let output = match tokio::time::timeout(allowed, output).await {
         Ok(Ok(output)) => output,
         Ok(Err(why)) => {
             return error(
@@ -149,6 +158,7 @@ async fn run_command(run: &str, expect: u32, cwd: &Path, started: Instant) -> Ra
     );
     result.exit_code = code;
     if !passed {
+        result.names = failing_names(&result.log);
         let ended = code.map_or_else(
             || "was stopped by a signal".to_owned(),
             |c| format!("exited with {c}"),
@@ -159,6 +169,31 @@ async fn run_command(run: &str, expect: u32, cwd: &Path, started: Instant) -> Ra
         ));
     }
     result
+}
+
+fn failure_patterns() -> &'static [regex::Regex; 4] {
+    static PATTERNS: std::sync::OnceLock<[regex::Regex; 4]> = std::sync::OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        [
+            r"(?m)^test (\S+) \.\.\. FAILED",
+            r"(?m)^\s*--- FAIL: (\S+)",
+            r"(?m)^\s*FAILED (\S+)",
+            r"(?m)^\s*(?:\u{2715}|\u{2717}|\u{00d7}) (.+?)(?: \(\d+ ?ms\))?\s*$",
+        ]
+        .map(|p| regex::Regex::new(p).expect("a fixed pattern"))
+    })
+}
+
+/// The names of the tests a log says failed, sorted and without repeats.
+pub fn failing_names(log: &str) -> Vec<String> {
+    let mut names: Vec<String> = failure_patterns()
+        .iter()
+        .flat_map(|p| p.captures_iter(log))
+        .map(|c| c[1].to_owned())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 /// The last `max` characters of `text`, cut at a line.
@@ -178,7 +213,7 @@ pub fn covers(pattern: &CrewPathPattern, path: &str) -> bool {
 }
 
 /// Every path that differs from the starting commit: changed tracked files and new ones.
-async fn changed(site: &Site<'_>) -> Result<Vec<String>, CoreError> {
+pub(super) async fn changed(site: &Site<'_>) -> Result<Vec<String>, CoreError> {
     use crate::source_control::git::git;
     let base = site.base.unwrap_or("HEAD");
     let tracked = git(site.worktree, &["diff", "--name-only", "-z", base]).await?;
@@ -224,6 +259,7 @@ async fn file_scope(
         started,
     );
     if !outside.is_empty() {
+        result.names = outside.iter().map(|f| (*f).clone()).collect();
         let shown: Vec<&str> = outside.iter().take(10).map(|f| f.as_str()).collect();
         let more = outside.len().saturating_sub(shown.len());
         result.reason = Some(format!(

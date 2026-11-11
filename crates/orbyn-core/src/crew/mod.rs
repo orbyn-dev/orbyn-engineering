@@ -19,6 +19,7 @@ mod tiers;
 mod tool;
 mod verify;
 mod view;
+mod workers;
 
 #[cfg(test)]
 mod tests;

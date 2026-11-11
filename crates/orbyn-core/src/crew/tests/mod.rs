@@ -6,6 +6,7 @@
 mod core;
 mod fake;
 mod filters;
+mod hardening;
 mod harness;
 mod lifecycle;
 mod overrides;

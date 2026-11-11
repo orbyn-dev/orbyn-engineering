@@ -2251,8 +2251,10 @@ write lease for a reviewer and a lease that overlaps one another member holds no
 routes it (a decision stored with its task takes it to `routed`; a brief no engine can take goes to `needs_person` with
 the reasons), grants the brief's files and runs the worker through `delegate`, which takes it to `running`. The worker
 is sent the brief as data and nothing the `WorkerObject` type does not allow. One start runs at a time.
+A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
 `crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
-the task `running` to `verifying`. The verifier is code: it runs every check of the key in the task's checkout, writes
+the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the
+attempt, without naming the file, if a protected path changed, then runs every check of the key in the task's checkout, writes
 one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. A pass needs
 Evidence (H8). A failure goes through `failed` to the state the loop guard names, in one transaction: a different failure
 retries with the reason, the same failure twice changes approach once, and the same failure after that stops the run

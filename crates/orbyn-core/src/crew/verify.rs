@@ -7,16 +7,14 @@
 //! withheld, and is proven free of both before it is used.
 
 use std::path::Path;
-use std::sync::OnceLock;
 
 use orbyn_contracts::{
     AnswerKey, CheckOutcome, CrewAuthor, CrewCommit, CrewError, CrewHash, CrewId, CrewObject,
     CrewShortText, ErrorCode, Evidence, Gate, GateDecider, GateDecision, GateStage, ResultCheck,
 };
-use regex::Regex;
 use sha2::{Digest, Sha256};
 
-use super::checks::{Ran, Site, run_check, tail};
+use super::checks::{Ran, Site, changed, covers, run_check, tail};
 use super::guard::{key_needles, redact, refuse_leak, refuse_secret, withhold};
 use super::leases::{core_author, internal, timestamp};
 use crate::app::Core;
@@ -24,6 +22,7 @@ use crate::store::{CrewRun, CrewTask};
 
 const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
 const NOT_PROVEN: &str = "Anything this check does not run.";
+const DIRTY: &str = "The checkout had uncommitted changes, so this commit is not exactly what ran.";
 
 /// One check that did not pass.
 #[derive(Clone, Debug)]
@@ -31,6 +30,8 @@ pub struct Failed {
     pub id: String,
     pub outcome: CheckOutcome,
     pub exit_code: Option<u32>,
+    /// What failed, by name. The fingerprint is made of these and not of the output.
+    pub names: Vec<String>,
     /// Safe for a worker to read.
     pub reason: String,
 }
@@ -57,43 +58,28 @@ impl Judgement {
         self.failures.is_empty() && self.passes == 0
     }
 
-    /// A hash of the failures, so the loop guard can tell the same failure from another.
-    /// Timings, colour codes and temporary paths are dropped first, since they differ between
-    /// two runs of one failure.
+    /// A hash of the failures, so the loop guard can tell the same failure from another: the
+    /// check, how it ended and the names of what failed. The output is left out, since it
+    /// changes between two runs of one failure.
     pub fn fingerprint(&self) -> String {
         let mut lines: Vec<String> = self
             .failures
             .iter()
             .map(|f| {
+                let mut names = f.names.clone();
+                names.sort();
                 format!(
                     "{}|{:?}|{:?}|{}",
                     f.id,
                     f.outcome,
                     f.exit_code,
-                    normalize(&f.reason)
+                    names.join(",")
                 )
             })
             .collect();
         lines.sort();
         crate::util::hex(&Sha256::digest(lines.join("\n").as_bytes()))
     }
-}
-
-fn noise() -> &'static [Regex; 3] {
-    static NOISE: OnceLock<[Regex; 3]> = OnceLock::new();
-    NOISE.get_or_init(|| {
-        [
-            Regex::new("\u{1b}\\[[0-9;]*[A-Za-z]").expect("a fixed pattern"),
-            Regex::new(r"(?i)\b\d+(\.\d+)?\s*(ms|secs?|seconds?|s|m)\b").expect("a fixed pattern"),
-            Regex::new(r"(?i)(/tmp|/var/folders|\\temp)[^\s]*").expect("a fixed pattern"),
-        ]
-    })
-}
-
-fn normalize(text: &str) -> String {
-    noise().iter().fold(text.to_owned(), |text, pattern| {
-        pattern.replace_all(&text, "").into_owned()
-    })
 }
 
 fn short(text: &str) -> Result<CrewShortText, CrewError> {
@@ -155,10 +141,19 @@ impl Core {
         key: &AnswerKey,
         worktree: &Path,
     ) -> Result<Judgement, CrewError> {
+        let minutes = self
+            .store
+            .crew_brief(&task.id)
+            .map_err(internal)?
+            .map_or(30, |brief| u64::from(brief.budget.minutes));
         let site = Site {
             worktree,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(minutes * 60),
             base: run.base_commit.as_deref(),
         };
+        let dirty = crate::source_control::git::git(worktree, &["status", "--porcelain"])
+            .await
+            .is_ok_and(|out| !out.is_empty());
         let commit = head(worktree)
             .await
             .unwrap_or_else(|| CrewCommit::new(ZERO_COMMIT).expect("a fixed commit"));
@@ -174,6 +169,26 @@ impl Core {
             not_verified: Vec::new(),
             passes: 0,
         };
+        // N7, H9 and H11: if the worker changed a file the checks use, nothing is run. The
+        // checks would be the worker's own. The reason does not name the file.
+        if let Ok(files) = changed(&site).await {
+            let touched: Vec<String> = files
+                .into_iter()
+                .filter(|f| key.protected_paths.iter().any(|p| covers(p, f)))
+                .collect();
+            if !touched.is_empty() {
+                verdict.failures.push(Failed {
+                    id: "protected_paths".to_owned(),
+                    outcome: CheckOutcome::Fail,
+                    exit_code: None,
+                    names: touched,
+                    reason: "Your changes include files you may not modify. Revert them, and \
+                             change only the paths you were given."
+                        .to_owned(),
+                });
+                return Ok(verdict);
+            }
+        }
         for check in &key.checks {
             let ran = run_check(check, &site).await;
             let mut evidence = Evidence {
@@ -199,9 +214,17 @@ impl Core {
                 excerpt: redact(&tail(&ran.log, 4000)),
                 artifacts: Vec::new(),
                 proves: check.proves.clone(),
-                does_not_prove: match &check.does_not_prove {
-                    Some(text) => text.clone(),
-                    None => short(NOT_PROVEN)?,
+                does_not_prove: {
+                    let own = check
+                        .does_not_prove
+                        .as_ref()
+                        .map_or(NOT_PROVEN, CrewShortText::as_str);
+                    // The commit is HEAD, but the checks ran on the checkout as it was.
+                    if dirty {
+                        short(&format!("{own} {DIRTY}"))?
+                    } else {
+                        short(own)?
+                    }
                 },
             };
             evidence.validate()?;
@@ -224,11 +247,12 @@ impl Core {
                     id: check.id.as_str().to_owned(),
                     outcome: ran.outcome,
                     exit_code: ran.exit_code,
+                    names: ran.names.clone(),
                     reason: worker_reason(&ran, &needles),
                 }),
             }
         }
-        if !verdict.undecided() {
+        if !verdict.undecided() && !verdict.evidence.is_empty() {
             self.store_checks_gate(task, key, &run_id, &verdict)?;
         }
         Ok(verdict)

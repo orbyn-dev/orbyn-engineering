@@ -37,6 +37,7 @@ fn a_reason_never_carries_the_check_or_a_secret() {
         reason: Some(format!(
             "The check exited with 101.\nran: {command}\nkey: {secret}"
         )),
+        names: Vec::new(),
     };
     let reason = crate::crew::verify::worker_reason(&ran, std::slice::from_ref(&command));
     assert!(reason.contains("101") && reason.contains("[check]"));
@@ -60,6 +61,7 @@ async fn command_checks_pass_on_the_expected_exit_and_fail_with_the_output() {
     let dir = crate::testing::TempDir::new();
     let site = Site {
         worktree: dir.path(),
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
         base: None,
     };
     let one = |run: &str, expect: u32| {
@@ -81,4 +83,70 @@ async fn command_checks_pass_on_the_expected_exit_and_fail_with_the_output() {
     let page = check(json!({ "id": "c2", "kind": "preview", "proves": "p",
         "params": { "url": "http://127.0.0.1:1/" } }));
     assert_eq!(run_check(&page, &site).await.outcome, CheckOutcome::Skipped);
+}
+
+fn failed(reason: &str, names: &[&str]) -> crate::crew::verify::Failed {
+    crate::crew::verify::Failed {
+        id: "chk-a".into(),
+        outcome: CheckOutcome::Fail,
+        exit_code: Some(101),
+        names: names.iter().map(|n| (*n).to_owned()).collect(),
+        reason: reason.into(),
+    }
+}
+
+fn judged(failures: Vec<crate::crew::verify::Failed>) -> crate::crew::Judgement {
+    crate::crew::Judgement {
+        commit: orbyn_contracts::CrewCommit::new("0".repeat(40)).unwrap(),
+        checks: Vec::new(),
+        evidence: Vec::new(),
+        failures,
+        not_verified: Vec::new(),
+        passes: 0,
+    }
+}
+
+/// The guard compares what failed, not the output: output that changes between runs must not
+/// make every failure look new.
+#[test]
+fn the_fingerprint_is_the_check_the_exit_and_the_names_and_not_the_output() {
+    let a = judged(vec![failed(
+        "ran 12 tests in 0.31s, then 5 lines of noise",
+        &["m::t1", "m::t2"],
+    )]);
+    let b = judged(vec![failed(
+        "took 0.97s; a different log entirely",
+        &["m::t2", "m::t1"],
+    )]);
+    assert_eq!(a.fingerprint(), b.fingerprint());
+    let other_test = judged(vec![failed("same", &["m::t3"])]);
+    assert_ne!(a.fingerprint(), other_test.fingerprint());
+    let mut other_exit = failed("same", &["m::t1", "m::t2"]);
+    other_exit.exit_code = Some(1);
+    assert_ne!(a.fingerprint(), judged(vec![other_exit]).fingerprint());
+}
+
+#[test]
+fn failing_tests_are_named_from_common_runners() {
+    let log = "test a::b ... FAILED\ntest a::c ... ok\n--- FAIL: TestX (0.01s)\nFAILED tests/t.py::test_y - boom\n";
+    assert_eq!(
+        crate::crew::checks::failing_names(log),
+        ["TestX", "a::b", "tests/t.py::test_y"]
+    );
+    assert!(crate::crew::checks::failing_names("all fine").is_empty());
+}
+
+#[tokio::test]
+async fn no_check_runs_past_the_tasks_time_budget() {
+    let dir = crate::testing::TempDir::new();
+    let site = Site {
+        worktree: dir.path(),
+        deadline: std::time::Instant::now(),
+        base: None,
+    };
+    let run = check(json!({ "id": "c1", "kind": "command", "proves": "p",
+        "params": { "run": "exit 0" } }));
+    let ran = run_check(&run, &site).await;
+    assert_eq!(ran.outcome, CheckOutcome::Error);
+    assert!(ran.reason.unwrap().contains("time budget"));
 }

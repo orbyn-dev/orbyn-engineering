@@ -16,7 +16,7 @@ use crate::app::Core;
 use crate::tools::mcp::McpBinding;
 
 impl Core {
-    /// `crew_report`. The arguments are the report's draft: `summary`, and optionally
+    /// `crew_report`. The checks run when the worker's turn has ended, never during it. The arguments are the report's draft: `summary`, and optionally
     /// `branch`, `commit`, `claims` and `not_verified`.
     pub async fn crew_report_tool(
         self: &Arc<Self>,
@@ -60,13 +60,10 @@ impl Core {
         self.store
             .begin_crew_verification(&task.id, &binding.scope.run_id, Some(&report))
             .map_err(|e| CrewError::new(ErrorCode::InvalidTransition, e.public_message()))?;
-        let core = self.clone();
-        let task_id = task.id.clone();
-        tokio::spawn(async move { core.verify_crew_task(&task_id).await });
         Ok(json!({
             "report": report.id,
             "state": "verifying",
-            "note": "The core is checking your work. If a check fails, the reason arrives as your next message.",
+            "note": "Finish your turn. The core checks your work once it ends; if a check fails, the reason arrives as your next message.",
         }))
     }
 
