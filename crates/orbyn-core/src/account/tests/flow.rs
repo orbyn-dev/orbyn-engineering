@@ -50,7 +50,7 @@ async fn the_off_gate_keeps_every_action_shut() {
     );
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+            a.require_confirmed_last(ConfirmFor::SignOutEverywhere)
                 .await
                 .unwrap_err()
         ),
@@ -189,7 +189,7 @@ async fn signing_in_is_not_a_confirmation() {
     signed_in(&core, "dev@example.com").await;
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+            a.require_confirmed_last(ConfirmFor::SignOutEverywhere)
                 .await
                 .unwrap_err()
         ),
@@ -197,7 +197,7 @@ async fn signing_in_is_not_a_confirmation() {
     );
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+            a.require_confirmed_last(ConfirmFor::RemoveDevice("dev-mini".into()))
                 .await
                 .unwrap_err()
         ),
@@ -225,7 +225,7 @@ async fn a_confirmation_is_for_one_action_and_one_device_and_is_used_up() {
     // Not for the other device, and not for the other action; asking does not use it up.
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::RemoveDevice("dev-phone".into()))
+            a.require_confirmed_last(ConfirmFor::RemoveDevice("dev-phone".into()))
                 .await
                 .unwrap_err()
         ),
@@ -233,14 +233,14 @@ async fn a_confirmation_is_for_one_action_and_one_device_and_is_used_up() {
     );
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+            a.require_confirmed_last(ConfirmFor::SignOutEverywhere)
                 .await
                 .unwrap_err()
         ),
         "reauth_required"
     );
     let token = a
-        .require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+        .require_confirmed_last(ConfirmFor::RemoveDevice("dev-mini".into()))
         .await
         .unwrap();
     // A token for one device cannot remove another.
@@ -251,7 +251,7 @@ async fn a_confirmation_is_for_one_action_and_one_device_and_is_used_up() {
     // Used up on first use: the same confirmation does not work twice, even for the same device.
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+            a.require_confirmed_last(ConfirmFor::RemoveDevice("dev-mini".into()))
                 .await
                 .unwrap_err()
         ),
@@ -261,7 +261,7 @@ async fn a_confirmation_is_for_one_action_and_one_device_and_is_used_up() {
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+        .require_confirmed_last(ConfirmFor::RemoveDevice("dev-mini".into()))
         .await
         .unwrap();
     a.remove_device(token, "dev-mini").await.unwrap();
@@ -277,14 +277,14 @@ async fn a_confirmation_ends_after_ten_minutes_and_is_peeked_without_being_used(
     a.confirm(ConfirmFor::SignOutEverywhere, pw(PASSWORD))
         .await
         .unwrap();
-    assert!(a.confirmed_for(&ConfirmFor::SignOutEverywhere));
+    assert!(a.confirmed_for_last(&ConfirmFor::SignOutEverywhere));
     assert!(
-        a.confirmed_for(&ConfirmFor::SignOutEverywhere),
+        a.confirmed_for_last(&ConfirmFor::SignOutEverywhere),
         "peeking does not use it up"
     );
-    assert!(!a.confirmed_for(&ConfirmFor::RemoveDevice("dev-mini".into())));
+    assert!(!a.confirmed_for_last(&ConfirmFor::RemoveDevice("dev-mini".into())));
     a.forget_confirmation();
-    assert!(!a.confirmed_for(&ConfirmFor::SignOutEverywhere));
+    assert!(!a.confirmed_for_last(&ConfirmFor::SignOutEverywhere));
 }
 
 #[tokio::test]
@@ -297,11 +297,11 @@ async fn a_confirmation_is_cleared_by_sign_out_and_does_not_survive_a_restart() 
         .await
         .unwrap();
     a.sign_out(false).await.unwrap();
-    assert!(!a.confirmed_for(&ConfirmFor::SignOutEverywhere));
+    assert!(!a.confirmed_for_last(&ConfirmFor::SignOutEverywhere));
     signed_in(&core, "dev@example.com").await;
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+            a.require_confirmed_last(ConfirmFor::SignOutEverywhere)
                 .await
                 .unwrap_err()
         ),
@@ -314,7 +314,11 @@ async fn a_confirmation_is_cleared_by_sign_out_and_does_not_survive_a_restart() 
     drop(core);
     let again = dev(&dir, "cleared");
     signed_in(&again, "dev@example.com").await;
-    assert!(!again.account.confirmed_for(&ConfirmFor::SignOutEverywhere));
+    assert!(
+        !again
+            .account
+            .confirmed_for_last(&ConfirmFor::SignOutEverywhere)
+    );
 }
 
 #[tokio::test]
@@ -330,7 +334,7 @@ async fn a_confirmation_is_cleared_by_signing_out_everywhere() {
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::RemoveDevice("dev-mini".into()))
+        .require_confirmed_last(ConfirmFor::RemoveDevice("dev-mini".into()))
         .await
         .unwrap();
     a.remove_device(token, "dev-mini").await.unwrap();
@@ -338,14 +342,14 @@ async fn a_confirmation_is_cleared_by_signing_out_everywhere() {
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .require_confirmed_last(ConfirmFor::SignOutEverywhere)
         .await
         .unwrap();
     a.confirm(ConfirmFor::RemoveDevice("dev-phone".into()), pw(PASSWORD))
         .await
         .unwrap();
     a.sign_out_everywhere(token).await.unwrap();
-    assert!(!a.confirmed_for(&ConfirmFor::RemoveDevice("dev-phone".into())));
+    assert!(!a.confirmed_for_last(&ConfirmFor::RemoveDevice("dev-phone".into())));
 }
 
 #[tokio::test]
@@ -378,7 +382,7 @@ async fn too_many_wrong_confirmations_are_rate_limited_and_the_action_is_not_don
     ));
     assert_eq!(
         code(
-            a.require_confirmed(ConfirmFor::SignOutEverywhere)
+            a.require_confirmed_last(ConfirmFor::SignOutEverywhere)
                 .await
                 .unwrap_err()
         ),
@@ -398,7 +402,7 @@ async fn devices_list_and_removal_hide_the_removed_device() {
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::RemoveDevice("dev-phone".into()))
+        .require_confirmed_last(ConfirmFor::RemoveDevice("dev-phone".into()))
         .await
         .unwrap();
     a.remove_device(token, "dev-phone").await.unwrap();
@@ -417,7 +421,7 @@ async fn sign_out_everywhere_is_blocked_while_deletion_is_scheduled() {
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .require_confirmed_last(ConfirmFor::SignOutEverywhere)
         .await
         .unwrap();
     assert_eq!(
@@ -441,7 +445,7 @@ async fn sign_out_everywhere_lands_signed_out() {
         .await
         .unwrap();
     let token = a
-        .require_confirmed(ConfirmFor::SignOutEverywhere)
+        .require_confirmed_last(ConfirmFor::SignOutEverywhere)
         .await
         .unwrap();
     a.sign_out_everywhere(token).await.unwrap();

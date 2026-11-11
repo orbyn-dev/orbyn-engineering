@@ -215,8 +215,10 @@ pub async fn guard_origin(
     Ok(response)
 }
 
-const NATIVE_HEADERS: &str =
-    "authorization, content-type, accept, last-event-id, range, if-range, if-none-match";
+/// The headers a desktop page may send across origins. `x-orbyn-confirm` carries the nonce a
+/// confirmed account action sends back; allowing the header grants nothing alone, the nonce is
+/// still checked by the account guard.
+const NATIVE_HEADERS: &str = "authorization, content-type, accept, last-event-id, range, if-range, if-none-match, x-orbyn-confirm";
 
 fn native_preflight(request: &Request<Body>) -> bool {
     let path = request.uri().path();

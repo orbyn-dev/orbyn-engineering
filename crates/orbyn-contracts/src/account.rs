@@ -294,6 +294,20 @@ pub enum AccountConfirmAction {
 }
 }
 
+wire! {
+/// What "Confirm it's you" answers with. The nonce goes back with the action, in a header, so only
+/// the window that typed the password can use the confirmation. It is single-use and in memory only.
+pub struct AccountConfirmed {
+    pub nonce: String,
+}
+}
+
+/// Gives a confirmation up (the dialog was cancelled): only the nonce that made it can.
+#[derive(Debug, Deserialize)]
+pub struct AccountConfirmCancel {
+    pub nonce: SecretText,
+}
+
 /// "Confirm it's you": the password again, for one sensitive action. `device_id` names the
 /// device for `remove_device`, and the request for `approve_device`.
 #[derive(Debug, Deserialize)]

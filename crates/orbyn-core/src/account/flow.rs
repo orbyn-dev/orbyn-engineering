@@ -18,9 +18,11 @@ use super::sync::{SyncHandle, SyncTiming};
 use super::{AccountCenter, AccountGate, FirstSync, settings_record};
 
 mod approval;
+mod confirm;
 use crate::error::{CoreError, Result};
 pub use approval::APPROVAL_LIFETIME;
 use approval::{Approval, Connect};
+pub(in crate::account) use confirm::Grant;
 
 /// How long a typed password counts for the sensitive actions.
 pub const CONFIRM_WINDOW: Duration = Duration::from_secs(10 * 60);
@@ -47,12 +49,6 @@ pub enum ConfirmFor {
 #[derive(Debug)]
 pub struct Confirmed {
     action: ConfirmFor,
-}
-
-/// A confirmation waiting to be used. In memory only, never stored.
-pub(super) struct Grant {
-    action: ConfirmFor,
-    at: Instant,
 }
 
 /// What the person knows about their session having ended.
@@ -456,64 +452,6 @@ impl AccountCenter {
             self.store.account_claim(zone, &email)?;
         }
         Ok(())
-    }
-
-    // Confirm it's you
-
-    fn grant(&self) -> std::sync::MutexGuard<'_, Option<Grant>> {
-        self.confirmed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Whether a fresh confirmation for exactly this action is waiting. It does not use it up:
-    /// the route layer asks this before the handler runs, and the handler uses it.
-    pub fn confirmed_for(&self, action: &ConfirmFor) -> bool {
-        self.grant()
-            .as_ref()
-            .is_some_and(|grant| grant.action == *action && grant.at.elapsed() < CONFIRM_WINDOW)
-    }
-
-    /// The only way to get a [`Confirmed`]. Needs a signed-in account and a fresh confirmation
-    /// for this action, which it uses up: the next action asks again, even if this one fails.
-    pub async fn require_confirmed(&self, action: ConfirmFor) -> Result<Confirmed> {
-        self.backend()?;
-        if self.inner.lock().await.session.is_none() {
-            return Err(CoreError::ReauthRequired);
-        }
-        let mut waiting = self.grant();
-        let fresh = waiting
-            .as_ref()
-            .is_some_and(|grant| grant.action == action && grant.at.elapsed() < CONFIRM_WINDOW);
-        if fresh {
-            *waiting = None;
-            Ok(Confirmed { action })
-        } else {
-            Err(CoreError::ReauthRequired)
-        }
-    }
-
-    /// Checks the password with the Engine and, when it is right, keeps one confirmation for
-    /// `action` for ten minutes. A later confirmation replaces it. The Engine applies its own
-    /// recent-password rule to the action too (orbyn-engine#120); this check is the re-login it
-    /// counts.
-    pub async fn confirm(&self, action: ConfirmFor, password: Password) -> Result<()> {
-        let backend = self.backend()?;
-        if self.inner.lock().await.session.is_none() {
-            return Err(CoreError::ReauthRequired);
-        }
-        let checked = backend.account.verify_password(&password).await;
-        self.guard(checked).await?;
-        *self.grant() = Some(Grant {
-            action,
-            at: Instant::now(),
-        });
-        Ok(())
-    }
-
-    /// Drops any waiting confirmation, as a restart, a sign-out and a sign-out everywhere do.
-    pub fn forget_confirmation(&self) {
-        *self.grant() = None;
     }
 
     // Devices

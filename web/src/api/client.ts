@@ -129,6 +129,7 @@ async function send<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  extra?: Record<string, string>,
 ): Promise<T> {
   let response: Response;
   try {
@@ -138,6 +139,7 @@ async function send<T>(
       signal,
       headers: {
         ...authHeaders(),
+        ...extra,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -159,6 +161,8 @@ async function send<T>(
 /** `foreground`: the visible screen's own read, which never waits in the slow lane. */
 export interface RequestOptions {
   priority?: "foreground";
+  /** Extra headers, such as the nonce a confirmed account action sends back. */
+  headers?: Record<string, string>;
 }
 
 const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
@@ -176,7 +180,7 @@ export function request<T>(
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned), unreachable, inBackground());
+  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, inBackground());
   return sent.finally(() => clearTimeout(slow));
 }
 
