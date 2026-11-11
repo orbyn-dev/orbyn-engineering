@@ -1,4 +1,5 @@
 import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from "../../features/onboarding";
+import { CrewSurface } from "../../features/crew";
 import { PullsPage } from "../../features/pulls";
 import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills";
@@ -32,6 +33,8 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
       return <SkillsPage skill={route.skill} />;
     case "tasks":
       return <ScheduledTasksPage />;
+    case "crew":
+      return <CrewSurface tab={route.tab} />;
     case "thread":
       return <ThreadView key={route.id} id={route.id} />;
     case "new":

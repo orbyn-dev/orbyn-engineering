@@ -15,12 +15,17 @@ export const SETTINGS_SECTIONS = [
   "projects",
   "source-control",
   "worktrees",
+  "crew",
   "maintenance",
   "labs",
   "about",
   "archive",
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+/** The Crew screens built so far; the rest join as they land. */
+export const CREW_TABS = ["approvals", "trust", "background"] as const;
+export type CrewTab = (typeof CREW_TABS)[number];
 
 export type Route =
   | { name: "home" }
@@ -41,6 +46,8 @@ export type Route =
   | { name: "usage" }
   | { name: "skills"; skill?: string }
   | { name: "tasks" }
+  /** Crew Preview: drawn only while the service says Crew is on. */
+  | { name: "crew"; tab: CrewTab }
   /** The list, or one pull request of one project. */
   | { name: "pulls"; project?: string; number?: number };
 
@@ -64,6 +71,8 @@ export function routeHref(route: Route): string {
       return route.skill === undefined ? "#/skills" : `#/skills/${enc(route.skill)}`;
     case "tasks":
       return "#/tasks";
+    case "crew":
+      return `#/crew/${route.tab}`;
     case "pulls":
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "settings": {
@@ -111,6 +120,8 @@ export function parseRoute(hash: string): Route {
       return first ? { name: "skills", skill: first } : { name: "skills" };
     case "tasks":
       return { name: "tasks" };
+    case "crew":
+      return { name: "crew", tab: CREW_TABS.find((tab) => tab === first) ?? "approvals" };
     case "pulls": {
       const number = Number(second);
       return first && Number.isInteger(number) && number > 0 ? { name: "pulls", project: first, number } : { name: "pulls" };
