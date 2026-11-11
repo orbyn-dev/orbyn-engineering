@@ -1,23 +1,20 @@
 import { Activity, FileDiff, Files, Globe, MessagesSquare, Plug } from "lucide-react";
-import { CLOSED_AT_FIRST, RIGHT_TAB_IDS, type RightTab } from "../../../product/state/ui";
+import { RIGHT_TAB_IDS, type RightTab } from "../../../product/state/ui";
 
-/** The panel's six surfaces. `label` is the tab's name and what it reads. */
+/** The panel's six surfaces, in the launcher's order. `label` is the tab's name and what it reads. */
 export const RIGHT_TABS: { id: RightTab; label: string; icon: typeof FileDiff }[] = [
-  { id: "diff", label: "Diff", icon: FileDiff },
-  { id: "files", label: "Files", icon: Files },
+  { id: "diff", label: "Changes", icon: FileDiff },
   { id: "browser", label: "Browser", icon: Globe },
   { id: "activity", label: "Activity", icon: Activity },
   { id: "side", label: "Side chat", icon: MessagesSquare },
   { id: "tools", label: "Tools", icon: Plug },
+  { id: "files", label: "Files", icon: Files },
 ];
 
 export const tabOf = (id: RightTab) => RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
 
-/** True when the row is not the default: a tab was closed or opened against its default, or the order changed. */
-export const tabsChanged = (order: readonly RightTab[], closed: readonly RightTab[]) =>
-  closed.length !== CLOSED_AT_FIRST.length ||
-  closed.some((id) => !CLOSED_AT_FIRST.includes(id)) ||
-  order.some((id, at) => id !== RIGHT_TAB_IDS[at]);
+/** True when the row is not in its default order: "Reset tab order" shows only then. */
+export const orderChanged = (order: readonly RightTab[]) => order.some((id, at) => id !== RIGHT_TAB_IDS[at]);
 
 /** A slot and the gap after it. */
 export const SLOT_PITCH = 34;

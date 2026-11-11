@@ -18,7 +18,7 @@ async function openThread(page: Page, layout: Layout, chatWidth: Width) {
   }, { layout, chatWidth });
   await page.goto("/__mock/scenario/default?to=/%23/threads/t-done");
   await expect(page.locator(".transcript-inner")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Diff", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Changes", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("separator", { name: "Resize panel" })).toBeVisible();
 }
 
@@ -81,7 +81,7 @@ for (const width of ["wide", "full"] as const) {
     await openThread(page, "ledger", width);
     await expectColumn(page, true);
     await dragToWidth(page, 720);
-    await page.getByRole("tab", { name: "Diff", exact: true }).click();
+    await page.getByRole("tab", { name: "Changes", exact: true }).click();
     await expectColumn(page, true);
     await page.reload();
     await expect.poll(async () => Math.round((await page.locator(".context").boundingBox())!.width)).toBe(720);
