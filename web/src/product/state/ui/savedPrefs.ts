@@ -1,5 +1,5 @@
 import { readJson } from "../../../lib/storage";
-import { DEFAULT_SIDEBAR_WIDTH, LAYOUT_CHOICES, RIGHT_TAB_IDS, cleanTabs, type LayoutChoice, type Prefs, type RightTab, type ThreadLayout } from "./types";
+import { DEFAULT_SIDEBAR_WIDTH, LAYOUT_CHOICES, cleanTabs, isPanelTab, type LayoutChoice, type Prefs, type ThreadLayout } from "./types";
 import { PREFS_KEY, defaults } from "./defaults";
 
 const MIGRATED_KEY = "orbyn.prefs.migrated";
@@ -25,6 +25,8 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   sidebarCollapsed: state.sidebarCollapsed,
   sidebarWidth: state.sidebarWidth,
   groups: state.groups,
+  leftBarView: state.leftBarView,
+  explorerOpen: state.explorerOpen,
   projectFilter: state.projectFilter,
   projectFolders: state.projectFolders,
   projectGrouping: state.projectGrouping,
@@ -117,7 +119,7 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
       .filter((entry): entry is [string, ThreadLayout] => isPlainObject(entry[1]))
       .map(([key, layout]) => {
         const tabs = cleanTabs(layout.panelTabOrder, layout.panelTabsClosed);
-        const panelTab = RIGHT_TAB_IDS.includes(layout.panelTab as RightTab) ? layout.panelTab : null;
+        const panelTab = isPanelTab(layout.panelTab) ? layout.panelTab : null;
         // Open or closed is one global choice now; an older per-thread value must not override it.
         const { panelOpen: _global, ...rest } = layout as ThreadLayout & { panelOpen?: unknown };
         return [key, { ...rest, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
@@ -131,7 +133,7 @@ export function savedPrefs(): Partial<Prefs> {
   const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
   // The favourites list was removed; an old save still carries it.
   delete (saved as Record<string, unknown>).modelFavorites;
-  const panelTab = RIGHT_TAB_IDS.includes(saved.panelTab as RightTab) ? (saved.panelTab as RightTab) : null;
+  const panelTab = isPanelTab(saved.panelTab) ? saved.panelTab : null;
   const tabs = cleanTabs(saved.panelTabOrder, saved.panelTabsClosed);
   const grouping = saved.projectGrouping;
   const projectGrouping =
@@ -143,6 +145,10 @@ export function savedPrefs(): Partial<Prefs> {
       ([, mode]) => mode === "repository" || mode === "repository_path" || mode === "separate",
     ),
   );
+  const leftBarView = saved.leftBarView === "files" ? "files" : "threads";
+  const explorerOpen = Object.fromEntries(
+    Object.entries(isPlainObject(saved.explorerOpen) ? saved.explorerOpen : {}).filter(([, open]) => typeof open === "boolean"),
+  );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout };
+  return { ...saved, panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout, leftBarView, explorerOpen };
 }

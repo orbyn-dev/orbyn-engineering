@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openPanelTab, send, settled, startProject } from "./service";
+import { openExplorer, openPanelTab, send, settled, startProject } from "./service";
 
 async function fixture() {
   const { service } = await startProject({ scenes: true });
@@ -93,9 +93,10 @@ test("new file clicks and route changes cancel older subfolder lookups", async (
     await expect(page).toHaveURL(/#\/settings/);
     await page.goBack();
     await expect(page.getByRole("heading", { name: "Subfolder browser", exact: true })).toBeVisible();
-    await openPanelTab(page, "Files");
-    await expect(page.getByRole("textbox", { name: "Search files", exact: true })).toBeVisible();
-    await expect(page.locator(".file-source")).toHaveCount(0);
+    // The file tab opened by the link is remembered with the thread, and reads the file afresh.
+    await openPanelTab(page);
+    await expect(page.getByRole("tab", { name: "kept.txt", exact: true })).toBeVisible();
+    await expect(page.locator(".file-source")).toContainText("child-diff-new");
     expect(releases).toHaveLength(0);
   } finally {
     for (const release of releases.splice(0)) release();
@@ -117,8 +118,8 @@ test("a moved thread rejects a file-link lookup captured at its old cwd", async 
     });
     await page.setViewportSize({ width: 1500, height: 900 });
     await page.goto(`${f.service.page}#/threads/${f.thread.id}`);
-    await openPanelTab(page, "Files");
-    await page.locator(".file-tree button").filter({ hasText: "links.md" }).first().click();
+    const tree = await openExplorer(page);
+    await tree.getByRole("treeitem", { name: /^links\.md/ }).first().click();
     await expect(page.getByRole("button", { name: "move link", exact: true })).toBeVisible();
     await page.route(`**/api/threads/${f.thread.id}/paths/resolve`, async (route) => {
       pending += 1;

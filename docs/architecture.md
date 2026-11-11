@@ -1612,6 +1612,17 @@ still go through a thread's file routes. `orbynd` only routes; Core
 - **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
   the project's and announces `explorer:<project>`.
 
+**The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
+the saved prefs as `leftBarView`; `explorerOpen` holds the rows a person unfolded or folded). The
+rows are one flat list (project, Threads and Worktrees, worktree, folders and files); a folder is read
+when it is unfolded and kept, shows 200 children and a "Show more" row for the rest, and a list over 150
+rows draws only what is on screen. Ignored files are not drawn. Nothing is polled: a `data_changed` for
+`explorer:<project>` reads again, quietly, what that project has loaded. A file opens as a **file tab** in
+the side panel; there is no Files tab. A tab's id is `file:` and its encoded target (`product/state/ui/fileTab.ts`),
+so it is saved with the thread's tab row, and a closed file tab is gone rather than listed. A file in the worktree
+the open thread runs in is read through the thread's own file routes (everything the old Files tab did);
+any other worktree's file is read through the explorer, read-only, with a banner.
+
 ## Renders
 
 An agent's page is stored in app data, never in the checkout:

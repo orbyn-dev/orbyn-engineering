@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DRAFT_LAYOUT, useUi } from "./ui";
+import { DRAFT_LAYOUT, fileTabId, parseFileTab, useUi } from "./ui";
 
 const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"] });
+  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"] });
 });
 
 describe("thread layouts", () => {
@@ -78,7 +78,7 @@ describe("thread layouts", () => {
     ui().setPanelOpen(true);
     ui().setPanelNarrow(true);
     expect(ui().panelOpen).toBe(false);
-    ui().togglePanel("files");
+    ui().togglePanel("activity");
     expect(ui().panelOpen).toBe(true);
     // What was saved is still the choice made on the wide window.
     expect(JSON.parse(localStorage.getItem("orbyn.prefs.v1") ?? "{}").panelOpen).toBe(true);
@@ -92,14 +92,14 @@ describe("thread layouts", () => {
   it("ignores an older saved per-thread open state and a saved null", async () => {
     localStorage.setItem(
       "orbyn.prefs.v1",
-      JSON.stringify({ panelOpen: null, layouts: { a: { panelOpen: true, panelTab: "files" } } }),
+      JSON.stringify({ panelOpen: null, layouts: { a: { panelOpen: true, panelTab: "activity" } } }),
     );
     vi.resetModules();
     const fresh = (await import("./ui")).useUi;
     expect(fresh.getState().panelOpen).toBe(false);
     fresh.getState().setLayoutKey("a");
     expect(fresh.getState().panelOpen).toBe(false);
-    expect(fresh.getState().panelTab).toBe("files");
+    expect(fresh.getState().panelTab).toBe("activity");
   });
 });
 
@@ -118,16 +118,16 @@ describe("saved preferences", () => {
 describe("panel tab row", () => {
   it("remembers each thread's order and closed set", () => {
     ui().setLayoutKey("a");
-    ui().reopenPanelTab("files");
+    ui().reopenPanelTab("activity");
     ui().reopenPanelTab("side");
     ui().movePanelTab("side", 0);
-    ui().closePanelTab("files");
+    ui().closePanelTab("activity");
     ui().setLayoutKey("b");
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools"]);
     ui().setLayoutKey("a");
-    expect(ui().panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "files"]);
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "tools", "files"]);
+    expect(ui().panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "tools", "activity"]);
     expect(ui().panelTab).toBe("side");
   });
 
@@ -139,19 +139,19 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBeNull();
-    expect(fresh.panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "files"]);
-    expect(fresh.panelTabsClosed).toEqual(["diff", "files", "browser", "activity", "side", "tools"]);
+    expect(fresh.panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools"]);
+    expect(fresh.panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools"]);
   });
 
   it("starts every thread's side panel with no tab open, and the order and closed set are per thread", () => {
     ui().setLayoutKey("fresh");
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools"]);
     ui().reopenPanelTab("browser");
     expect(ui().panelTabsClosed).not.toContain("browser");
     ui().closeAllPanelTabs();
     expect(ui().panelTab).toBeNull();
     expect(ui().panelOpen).toBe(true);
-    expect(ui().panelTabsClosed).toHaveLength(6);
+    expect(ui().panelTabsClosed).toHaveLength(5);
   });
 
   it("closes the other tabs and keeps the one chosen, and Reset tab order leaves the open tabs alone", () => {
@@ -161,11 +161,60 @@ describe("panel tab row", () => {
     ui().reopenPanelTab("side");
     ui().movePanelTab("side", 0);
     ui().resetPanelTabs();
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
-    expect(ui().panelTabsClosed).toEqual(["activity", "tools", "files"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["activity", "tools"]);
     ui().closeOtherPanelTabs("browser");
-    expect(ui().panelTabsClosed).toEqual(["diff", "activity", "side", "tools", "files"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "activity", "side", "tools"]);
     expect(ui().panelTab).toBe("browser");
+  });
+
+  it("opens a file from the left bar as a tab, once, and a closed file is gone", () => {
+    ui().setLayoutKey("files");
+    const target = { kind: "explorer", projectId: "p", worktreeId: "w", path: "auth/redirect.ts", project: "orbyn", worktree: "main" } as const;
+    ui().openFileTab(target);
+    ui().openFileTab(target);
+    const id = fileTabId(target);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", id]);
+    expect(ui().panelTab).toBe(id);
+    expect(ui().panelOpen).toBe(true);
+    expect(parseFileTab(id)).toEqual(target);
+    ui().closePanelTab(id);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTab).toBeNull();
+  });
+
+  it("keeps open files per thread, behind Reset tab order and out of Close other tabs", () => {
+    ui().setLayoutKey("a");
+    const one = fileTabId({ kind: "thread", path: "a.ts" });
+    const two = fileTabId({ kind: "thread", path: "b.ts" });
+    ui().openFileTab({ kind: "thread", path: "a.ts" });
+    ui().openFileTab({ kind: "thread", path: "b.ts" });
+    ui().reopenPanelTab("diff");
+    ui().movePanelTab(two, 0);
+    ui().setLayoutKey("b");
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
+    ui().setLayoutKey("a");
+    expect(ui().panelTabOrder).toEqual([two, "diff", "browser", "activity", "side", "tools", one]);
+    ui().resetPanelTabs();
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", two, one]);
+    ui().closeOtherPanelTabs("diff");
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
+    expect(ui().panelTab).toBe("diff");
+  });
+
+  it("loads a saved file tab, and drops a saved id that names nothing we know", async () => {
+    const id = fileTabId({ kind: "thread", path: "a.ts" });
+    localStorage.setItem(
+      "orbyn.prefs.v1",
+      JSON.stringify({ panelTab: id, panelTabOrder: ["diff", id, id, "files", 7], panelTabsClosed: [] }),
+    );
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi.getState();
+    expect(fresh.panelTab).toBe(id);
+    expect(fresh.panelTabOrder).toEqual(["diff", id, "browser", "activity", "side", "tools"]);
+    // A surface the saved row never listed starts closed.
+    expect(fresh.panelTabsClosed).toEqual(["browser", "activity", "side", "tools"]);
   });
 
   it("gives a saved row from before the Tools tab existed that tab, closed, whatever its closed list was", async () => {
@@ -179,7 +228,7 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTabsClosed).toEqual(["tools"]);
-    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
     expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools"]);
   });
 
@@ -197,18 +246,19 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     // Nobody reordered these, so "Reset tab order" must not show for them.
-    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
     expect(fresh.panelTabsClosed).toEqual(["tools"]);
-    expect(fresh.layouts["a"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "files"]);
+    expect(fresh.layouts["a"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
     expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools"]);
-    expect(fresh.layouts["b"]?.panelTabOrder).toEqual(["files", "diff", "browser", "activity", "side", "tools"]);
+    // The order a person changed is kept, less the Files tab the explorer replaced.
+    expect(fresh.layouts["b"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools"]);
   });
 
   it("skips a saved layout that is not an object instead of failing to load", async () => {
-    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ layouts: { a: null, b: 7, c: "x", d: { panelTab: "files" } } }));
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ layouts: { a: null, b: 7, c: "x", d: { panelTab: "activity" } } }));
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(Object.keys(fresh.layouts)).toEqual(["d"]);
-    expect(fresh.layouts["d"]?.panelTab).toBe("files");
+    expect(fresh.layouts["d"]?.panelTab).toBe("activity");
   });
 });

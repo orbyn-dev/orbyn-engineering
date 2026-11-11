@@ -1,0 +1,293 @@
+/* The left bar's explorer (Engineer Designs: explorer-*): Threads | Files switch, project > worktree > file
+   tree, rows 24px high with 13px of indent per level. Design variables map to the app's tokens:
+   t1 text, t2 textSoft, t3 muted, sel selected, raise rowHover, line border. */
+.lbsw {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 22px;
+  padding: 1px;
+  border-radius: var(--radius-md);
+  background: var(--color-selected);
+  color: var(--color-text);
+  font-size: var(--text-meta);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  flex: none;
+}
+.lbsw .lbt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-7);
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lbsw .lbt[aria-selected="true"] {
+  background: var(--color-background);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+.lbsw .lbt:hover:not([aria-selected="true"]) {
+  background: var(--color-rowHover);
+  color: var(--color-text);
+}
+.lbsw .lbt:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+.lbsw[data-narrow] .lbt {
+  width: 26px;
+  padding: 0;
+}
+.x2scroll {
+  padding: 0 4px 4px;
+}
+.x2tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.x2tree > * {
+  flex: none;
+}
+.x2r {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 calc(8px + var(--d) * 13px);
+  border-radius: var(--radius-7);
+  color: var(--color-textSoft);
+  font-size: var(--text-nav);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+.x2r:hover,
+.x2r.mopen {
+  background: var(--color-rowHover);
+}
+.x2r.mopen {
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+.x2r.on {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.x2r:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--color-text);
+}
+.x2r .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.x2r.cur .nm {
+  flex: 0 1 auto;
+  color: var(--color-text);
+  font-weight: 500;
+}
+.x2r .xs {
+  flex: none;
+  color: var(--color-muted);
+}
+.x2r .ic {
+  flex: none;
+  color: var(--color-muted);
+}
+/* A file name gives way in the middle: its ending is the part that tells two files apart. */
+.x2r .nm-mid {
+  display: flex;
+  overflow: hidden;
+  text-overflow: clip;
+}
+.x2r .nm-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.x2r .nm-tail {
+  flex: none;
+}
+.x2r .n {
+  flex: none;
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
+.x2r .n.amber {
+  color: var(--color-warnText);
+}
+.x2r.on .n.amber {
+  color: var(--color-warnText);
+}
+.x2r .x2ro {
+  font-size: var(--text-caption);
+}
+.x2r .x2failed {
+  color: var(--color-danger);
+}
+.x2t {
+  padding-left: calc(32px + (var(--d) - 1) * 13px);
+}
+.x2g .nm {
+  color: var(--color-textSoft);
+}
+.x2r.x2more .nm,
+.x2r.x2note .nm {
+  color: var(--color-muted);
+}
+.x2r.x2more {
+  cursor: pointer;
+}
+.xm {
+  min-width: 12px;
+  flex: none;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-kbd);
+  text-align: center;
+}
+.xm.m,
+.xm.a,
+.xm.r,
+.xm.u {
+  color: var(--color-textSoft);
+}
+.xdot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--color-textSoft);
+}
+.x2sk {
+  height: 10px;
+  margin: 7px 8px;
+  border-radius: 5px;
+  background: var(--color-selected);
+}
+/* A worktree's own menu button shows on hover or when its row has focus. */
+.x2more-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.x2r:hover .x2more-btn,
+.x2r:focus-within .x2more-btn,
+.x2r.mopen .x2more-btn {
+  display: inline-flex;
+}
+.x2more-btn:hover {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+/* One compact error row where a folder's files would be; nothing else in the bar changes. */
+.x2tree > .x2banner.err {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 2px 8px 4px calc(8px + var(--d) * 13px + 15px);
+  padding: 6px 8px 7px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-danger) 4%, transparent);
+  color: var(--color-danger);
+  font-size: var(--text-meta);
+}
+.x2banner .berr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* A file read in a tab: a banner when read-only, the folders it is in, then its lines. */
+.explorer-file {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.x2banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-10);
+  background: var(--color-rowHover);
+  color: var(--color-textSoft);
+  font-size: var(--text-nav);
+}
+.x2banner .sp {
+  flex: 1;
+}
+.x2crumb {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.x2crumb b {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.x2crumb-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.x2code {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 19px;
+}
+.x2code .l {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+.x2code .l i {
+  padding-right: 8px;
+  color: var(--color-muted);
+  font-style: normal;
+  text-align: right;
+  user-select: none;
+}
+.x2code .l code {
+  font: inherit;
+  white-space: pre;
+}
+.ctx-sub {
+  margin-left: 8px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}

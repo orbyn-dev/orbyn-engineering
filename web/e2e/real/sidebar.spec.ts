@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { type Service, libraryReady, openPanelTab, startService } from "./service";
+import { type Service, libraryReady, openExplorer, openPanelTab, startService } from "./service";
 
 
 interface Thread {
@@ -270,8 +270,8 @@ test("the terminal drawer opens tabs, and files and diff sources read the checko
   await expect(drawer.getByRole("tab")).toHaveCount(2);
   await drawer.getByRole("button", { name: /^Close Terminal|^Close [^t]/ }).first().click();
 
-  const panel = await openPanelTab(page, "Files");
-  await expect(panel.locator(".file-tree button").first()).toBeVisible({ timeout: 10_000 });
+  const tree = await openExplorer(page);
+  await expect(tree.locator('[data-key^="f:"]').first()).toBeVisible({ timeout: 10_000 });
   await page.keyboard.press("ControlOrMeta+f");
   await expect(page.getByRole("textbox", { name: "Find in thread" })).toBeFocused();
   await page.keyboard.press("Escape");

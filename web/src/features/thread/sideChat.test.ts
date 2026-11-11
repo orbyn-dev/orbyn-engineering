@@ -3,7 +3,7 @@ import { useUi } from "../../product/state/ui";
 import { showSideChat } from "./sideChat";
 
 beforeEach(() => {
-  useUi.setState({ panelOpen: false, panelTab: null, sideChat: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools", "files"] });
+  useUi.setState({ panelOpen: false, panelTab: null, sideChat: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"] });
 });
 
 it("opens the Side chat tab, focuses it and shows the panel, when the panel starts with no tab", () => {

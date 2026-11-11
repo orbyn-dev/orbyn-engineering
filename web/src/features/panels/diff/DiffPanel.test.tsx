@@ -81,7 +81,7 @@ it("shows the designed empty state, with Open Files and no Create pull request",
   await waitFor(() => expect(api.branches).toHaveBeenCalled());
   expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Open Files" }));
-  expect(useUi.getState().panelTab).toBe("files");
+  expect(useUi.getState().leftBarView).toBe("files");
 });
 
 it("offers Create pull request from the branch once the working tree is clean after a commit", async () => {
