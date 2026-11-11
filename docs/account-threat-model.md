@@ -186,6 +186,9 @@ password can start. Sign-out and removing a device are reachable, and are a deni
 
 For Engineering 1, with the lead:
 
+0. `default_permission_mode` is on the agreed synced list. A looser mode set on one device then applies to engines on
+   every other device. Is that accepted, or should a raise be held until the person confirms it on the receiving device?
+
 1. Should account-changing routes (sign-out, remove device, approve) require something an engine with the service
    token cannot supply, such as a confirmation from the desktop shell, or is "denial of service only" acceptable?
 2. Is `KeyStore` meant to keep the zone-key cache and sync snapshot as a sealed file with a keychain vault key, given

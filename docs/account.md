@@ -19,7 +19,7 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 | D2 | Confirmed | Staging by default, invite-only. The built-in address is the staging one; production is not compiled in until sign-up opens (Engine issue #42, then recovery). Staging is not deployed yet, so no real sign-in can succeed before the owner deploys it |
 | D3 | Corrected | The device is **one data folder of `orbynd`**, not one machine. The D11 test runs two data folders on one computer, and `ORBYN_DATA_DIR` already lets a person run several, so each data folder registers as its own device with its own keychain items (see [The device and its keys](#the-device-and-its-keys)). Clarified: the password does leave the web page once, as a field in a request to `orbynd` on loopback (behind the per-launch service token); it never reaches the Engine (OPAQUE) and `orbynd` never stores it. The web UI holds no account key, token or zone key at any time |
 | D4 | Corrected | "Project defaults" means the **person-level value** of a key a project may override. Per-project overrides are not synced: project ids and paths are local to a computer. The project file's own layer is never read for sync. Execution profiles, workflows and the rest stay "Next", as planned |
-| D5 | Confirmed, extended | The never-sync list also holds everything that is machine-specific, executes commands, names a path or an endpoint, or changes what an agent may do. See [Never synced](#never-synced) |
+| D5 | Confirmed, extended | The never-sync list also holds what is machine-specific or names a program, path or endpoint, and 26 more keys are held back from v1. See [Never synced](#never-synced) and [Not in v1](#not-in-v1-may-sync-later) |
 | D6 | Clarified | Two crates are called `orbyn-contracts`: the Engine's (wire for the Engine's HTTP API) and this repository's (wire between the web UI and `orbynd`). The app never names the Engine's. Engineering's record fields live in the Engine's `orbyn-engineering` crate, so the app depends on that crate as well as on `orbyn-device-client` unless the device client re-exports it (open question 2). Nothing about a record is copied into this repository's contracts |
 | D7 | Confirmed | Connected apps stay after the beta. The L52 to L55 screens stay `preview-only`, behind `__ORBYN_PREVIEWS__` ([design.md](design.md#planned-with-the-orbyn-platform)) |
 | D8 | Confirmed | Crew proof signing uses a local keychain key until after the beta. That key is another asset for the threat model when it lands; it is not part of Phase 1 |
@@ -187,31 +187,47 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (33 of the 62 in the catalog in `preferences.rs`, plus keybindings). The rule: a person-level
-preference that is harmless on another computer and holds no path, command, endpoint or secret.
+**Synced keys** (21 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+Engineering 1. Only the person-level value of a key syncs.
 
 | Group | Keys |
 | --- | --- |
-| Appearance and reading | `default_theme`, `response_streaming_mode`, `preview_appearance`, `open_web_links_in_app` |
-| Composer defaults | `default_engine`, `default_model`, `default_effort`, `default_model_options`, `fallback_model`, `text_generation_model`, `default_thread_env_mode` |
+| Appearance and reading | `default_theme`, `response_streaming_mode`, `preview_appearance`, `preview_zoom`, `open_web_links_in_app`, `quit_confirmation` |
+| Engine and model defaults | `default_engine`, `default_model`, `default_effort`, `default_model_options`, `fallback_model`, `text_generation_model` |
 | Model lists | `favorite_models` and `hidden_models` (sets), `model_order` (one field) |
-| Project defaults (person-level value only) | `auto_settle_after_days`, `auto_settle_on_merge`, `auto_settle_keep_pull_requests`, `auto_pull`, `new_worktrees_start_from_origin`, `worktree_submodules`, `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `remove_agent_credits_on_merge`, `review_guides_enabled`, `review_guide_model`, `pull_request_merge_method` |
-| Thread behaviour | `compact_idle_threads`, `idle_compaction`, `snooze_limited_threads`, `auto_resume_limited_threads`, `task_skip_near_limit`, `poll_pull_requests` |
-| Keybindings | One field per (key, `when`) rule |
+| Thread and branch defaults | `default_permission_mode`, `default_thread_env_mode`, `auto_thread_titles`, `branch_naming_mode`, `branch_name_prefix`, `branch_name_instructions` |
+| Keybindings | One field per (key, `when`) pair |
 
 A synced `default_engine` or `default_model` may name an engine or model this computer does not have. The existing
-fallback behaviour applies; the value is kept as set.
+fallback behaviour applies; the value is kept as set. A synced `default_permission_mode` changes what agents may do
+on the receiving computer without a prompt there; the threat model lists this as an open question.
 
 ### Never synced
 
+Fifteen keys, by decision:
+
 | Why | Keys |
 | --- | --- |
-| Runs commands or edits what runs | `default_project_scripts` (a synced command would run on another computer), `provider_instances` (programs, config folders, environment) |
-| Changes what an agent may do | `default_permission_mode`, `enable_agent_browser_access`, `enable_agent_device_access`, `prefer_saved_login` |
-| Names a path, endpoint or machine | `add_project_base_directory`, `observability` (endpoints and headers), `environment_icon`, `storage_cleanup`, `worktree_cleanup`, `preview_profiles`, `disabled_engines`, `custom_models` |
-| Free-text prompts (a later record, with review) | `project_title_instructions`, `branch_name_instructions`, `review_guide_instructions`, `source_control_writing_style` |
-| Per-computer behaviour | `enable_provider_update_checks`, `continue_threads_after_update`, `app_update_mode`, `keep_awake_during_runs`, `quit_confirmation`, `warm_next_turn`, `preview_zoom`, `background_activity_profile`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
+| Describes this computer | `environment_icon`, `keep_awake_during_runs`, `background_activity_profile`, `add_project_base_directory` |
+| Programs, paths, endpoints | `provider_instances`, `custom_models`, `observability`, `storage_cleanup`, `worktree_cleanup` |
+| Per-computer update and polling | `app_update_mode`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
+| Login and engine availability | `prefer_saved_login`, `disabled_engines` |
 | Service-owned stamp | `default_theme_set_at` |
+
+### Not in v1, may sync later
+
+The other 26 keys are not synced in v1, so 21 + 15 + 26 = 62:
+
+| Key | Reason |
+| --- | --- |
+| `default_project_scripts` | A synced command would run on another computer |
+| `auto_settle_after_days`, `auto_settle_on_merge`, `auto_settle_keep_pull_requests` | Project lifecycle defaults; held back until project defaults sync |
+| `auto_pull`, `new_worktrees_start_from_origin`, `worktree_submodules` | Change what git does on each computer; held back with project defaults |
+| `remove_agent_credits_on_merge`, `pull_request_merge_method`, `review_guides_enabled`, `review_guide_model` | Project and forge defaults; held back with project defaults |
+| `project_title_instructions`, `review_guide_instructions`, `source_control_writing_style` | Free-text prompts; wait for the prompts record |
+| `enable_agent_browser_access`, `enable_agent_device_access` | Grant agents access to this computer's browser and devices |
+| `enable_provider_update_checks`, `continue_threads_after_update`, `warm_next_turn`, `preview_profiles` | Per-computer behaviour or local browser data |
+| `compact_idle_threads`, `idle_compaction`, `snooze_limited_threads`, `auto_resume_limited_threads`, `task_skip_near_limit`, `poll_pull_requests` | Thread and polling behaviour; not requested for v1 |
 
 Also never synced in Phase 1: `ServerSettings` (service-wide: auto-settle, snooze presets, model prices and aliases,
 title instructions), every per-project override, the Crew ledger, transcripts, diffs, environment-set values,
@@ -308,6 +324,6 @@ Two places where the frames and the decisions differ, for the Designer to settle
 3. Is `LocalOnly` (sign-in against a loopback Engine) acceptable before review? It is how the end-to-end test runs.
 4. How does CI get the Engine stack: build from the pinned tag with compose, or a published image? And which two helpers
    (create an invite, read the latest email code) will the recipe provide?
-5. Please review the synced and never-synced lists above. The list the plan references is in a session transcript the
-   app side cannot read, so this one was derived from the catalog by the stated rule.
+5. `default_permission_mode` syncs by the agreed list. Is that intended, given a permission raised on one computer
+   would apply on another? The threat model asks the same.
 6. The threat model's [open questions](account-threat-model.md#open-questions).
