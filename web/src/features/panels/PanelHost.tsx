@@ -4,12 +4,14 @@ import { flushSync } from "react-dom";
 import { captureFocusReturn } from "../../ui/focusReturn";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Thread } from "../../api/types";
-import { useUi, type RightTab } from "../../product/state/ui";
+import { isFileTab, parseFileTab, useUi, type BuiltinTab, type RightTab } from "../../product/state/ui";
 import { Button, IconButton } from "../../ui/controls";
 import { ActivityPanel } from "./activity/ActivityPanel";
 import { BrowserPanel } from "./browser/BrowserPanel";
 import { DiffPanel } from "./diff/DiffPanel";
-import { FilesPanel } from "./files/FilesPanel";
+import { FileTab } from "./files/FileTab";
+import { useFileTabNames } from "../workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ToolsTab } from "../tools";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
@@ -23,14 +25,13 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
-const LAUNCHER_COMMANDS: Partial<Record<RightTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
+const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
 const STRIP_PAD = 16;
 const MORE_MENU_WIDTH = 190;
 /** The one line under "Waiting for the Orbyn service", by tab. The Browser is not here: it stays usable. */
-const WAITING_LINE: Partial<Record<RightTab, string>> = {
+const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
   diff: "The diff comes back when the service does.",
-  files: "Files open again as soon as it is back.",
   activity: "Activity shows again as soon as it is back.",
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
   tools: "The tools list comes back when the service does.",
@@ -167,6 +168,9 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
 export type PanelMode = "docked" | "overlay" | "sheet";
 
 const TAB_ID = "context-tab-";
+/** A tab's DOM id: a file tab's own id holds a path, which an id (and a selector) cannot. */
+const domId = (id: RightTab) => (isFileTab(id) ? `f${[...id].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 7).toString(36)}` : id);
+const tabSelector = (id: RightTab) => `[data-tab="${CSS.escape(id)}"]`;
 
 export function PanelHost({
   thread,
@@ -194,7 +198,7 @@ export function PanelHost({
 }) {
   const order = useUi((state) => state.panelTabOrder);
   const closedTabs = useUi((state) => state.panelTabsClosed);
-  const rowIds = order.filter((id) => !closedTabs.includes(id));
+  const rowIds = order.filter((id) => isFileTab(id) || !closedTabs.includes(id));
   // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row; with none open, it is empty.
   const chosen = useUi((state) => state.panelTab);
   const tab: RightTab | null = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? null);
@@ -222,6 +226,19 @@ export function PanelHost({
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
   const count = rowIds.length;
+  // The line beside the open file's name: the worktree it is in, and for another project's, which project.
+  const target = tab ? parseFileTab(tab) : null;
+  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
+  // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
+  // A Jujutsu checkout is no Git repository either, but has changes to show: only a folder with neither is gitless.
+  const notGit = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
+  const jj = useAsync(`jj-gate:${thread.id}:${notGit}`, (signal) => (notGit ? api.jjStatus(thread.id, signal) : Promise.resolve(null)));
+  const gitless = notGit && jj.status === "ready" && jj.data === null;
+  const subtitle =
+    target === null ? null
+    : target.kind === "thread" ? (thread.worktree?.branch ?? null)
+    : !names.worktree ? null
+    : target.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
   latest.current = { count };
   const refit = useCallback(() => {
@@ -275,13 +292,13 @@ export function PanelHost({
   const launcher: MenuItem[] = [
     ...RIGHT_TABS.map(({ id, label, icon: Icon }) => {
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
-      return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, onSelect: () => reopenTab(id) };
+      return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
     }),
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
   const plusButton = useRef<HTMLButtonElement>(null);
   const focusTab = (id: RightTab) =>
-    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`#${TAB_ID}${id}`)?.focus());
+    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(tabSelector(id))?.focus());
   /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
   const closeWithFocus = (id: RightTab) => {
     const at = rowIds.indexOf(id);
@@ -289,7 +306,7 @@ export function PanelHost({
     // A neighbour folded into "..." has no slot to hold focus: the tab that opens takes the last slot.
     const hiddenNext = neighbour !== undefined && !shown.includes(neighbour);
     const target =
-      (neighbour ? list.current?.querySelector<HTMLElement>(`#${TAB_ID}${neighbour}`) : null) ?? plusButton.current ?? list.current;
+      (neighbour ? list.current?.querySelector<HTMLElement>(tabSelector(neighbour)) : null) ?? plusButton.current ?? list.current;
     const back = captureFocusReturn(target);
     flushSync(() => closeTab(id));
     back.restore();
@@ -385,7 +402,7 @@ export function PanelHost({
                 type="button"
                 role="tab"
                 className="ctx-slot"
-                id={`${TAB_ID}${id}`}
+                id={`${TAB_ID}${domId(id)}`}
                 data-tab={id}
                 data-tip={label}
                 data-selected={tab === id || undefined}
@@ -400,7 +417,7 @@ export function PanelHost({
                 }
                 aria-label={label}
                 aria-selected={tab === id}
-                aria-controls={tab === id ? `context-${id}` : undefined}
+                aria-controls={tab === id ? `context-${domId(id)}` : undefined}
                 tabIndex={tab === id ? 0 : -1}
                 onPointerDown={startDrag(id)}
                 onClick={() => {
@@ -462,6 +479,7 @@ export function PanelHost({
       {tab === null ? null : (
         <div className="ctx-title">
           <b>{tabOf(tab).label}</b>
+          {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
           <IconButton
             label="Tab menu"
             pressed={tabMenu !== null}
@@ -502,20 +520,20 @@ export function PanelHost({
           </p>
         ) : null}
         {tab === null ? (
-          <PanelEmpty onOpen={reopenTab} />
+          <PanelEmpty onOpen={reopenTab} gitless={gitless} />
         ) : kind === "service-down" && tab !== "browser" ? (
           <div className="conn-wait">
             <b>Waiting for the Orbyn service</b>
-            {WAITING_LINE[tab] ? <span>{WAITING_LINE[tab]}</span> : null}
+            {isFileTab(tab) ? <span>Files open again as soon as it is back.</span> : WAITING_LINE[tab] ? <span>{WAITING_LINE[tab]}</span> : null}
           </div>
         ) : (
-          <div id={`context-${tab}`} role="tabpanel" aria-labelledby={`${TAB_ID}${tab}`} className="tabpanel">
+          <div id={`context-${domId(tab)}`} role="tabpanel" aria-labelledby={`${TAB_ID}${domId(tab)}`} className="tabpanel">
             {tab === "browser" ? (
               <BrowserPanel threadId={thread.id} />
             ) : tab === "diff" ? (
               <DiffPanel threadId={thread.id} />
-            ) : tab === "files" ? (
-              <FilesPanel threadId={thread.id} />
+            ) : isFileTab(tab) ? (
+              <FileTab key={tab} id={tab} threadId={thread.id} />
             ) : tab === "activity" ? (
               <ActivityPanel key={thread.id} threadId={thread.id} />
             ) : tab === "tools" ? (

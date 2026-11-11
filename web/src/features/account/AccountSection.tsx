@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/controls";
 import { accountApi } from "./api";
+import { clearConnectRequest } from "./changes";
 import { Dialog } from "../../ui/Dialog";
 import { BackLink, Failure } from "./Card";
-import { ApprovalCard, MismatchCard } from "./ApprovalCard";
+import { ApprovalCard, ClosedCard } from "./ApprovalCard";
 import { SignedInSection } from "./SignedInSection";
 import { SignedOutHome } from "./SignedOutPage";
 import { SignInCard } from "./SignInCard";
@@ -25,7 +26,10 @@ export function AccountSection() {
   const [codeStep, setCodeStep] = useState(false);
   const asking = view?.needs_second_factor === true;
   useEffect(() => { if (asking) setCodeStep(true); }, [asking]);
-  // The person saw the codes differ on this screen: the one closed state they make themselves.
+  // An ask to connect settings is only for a signed-in page: once the account is read without a session, it is dropped.
+  const signedOut = view !== null && view !== undefined && !view.session;
+  useEffect(() => { if (signedOut) clearConnectRequest(); }, [signedOut]);
+  // The person tapped They don’t match on this screen: it closes like any other request, with the same words.
   const [mismatch, setMismatch] = useState(false);
   const waiting = account.status === "loading";
   const skeleton = useAfter(waiting);
@@ -46,7 +50,7 @@ export function AccountSection() {
       )
       : skeleton ? <Loading /> : null;
   } else if (mismatch && !view.session) {
-    body = <MismatchCard onBack={(to) => { setMismatch(false); setMode(to); reload(); }} />;
+    body = <ClosedCard onLeave={(to) => { setMismatch(false); setMode(to); reload(); }} />;
   } else if (view.approval && !view.session) {
     body = <ApprovalCard approval={view.approval} onChanged={reload} onBack={(to) => { setMode(to); reload(); }} onMismatch={() => { setMismatch(true); reload(); }} />;
   } else if (asking || codeStep) {
@@ -68,7 +72,7 @@ export function AccountSection() {
             </div>
           </div>
         ) : null}
-        <SignedInSection view={view} stale={stale} reload={reload} onSignedOut={(text) => { setNotice(text); setMode("home"); reload(); }} />
+        <SignedInSection view={view} stale={stale} reload={reload} onSignedOut={(text) => { clearConnectRequest(); setNotice(text); setMode("home"); reload(); }} />
       </>
     );
   } else if (mode === "sign-in") {

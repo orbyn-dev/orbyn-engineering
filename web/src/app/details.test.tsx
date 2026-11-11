@@ -51,6 +51,15 @@ describe("the Details button and the details card", () => {
     expect(button).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("reads Not reported on the Limits row for a Claude thread, which has no window of its own", async () => {
+    setViewportWidth(1400);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await details());
+    const label = within(card()!).getByText("Limits");
+    expect(label.closest(".drow")).toHaveTextContent("Not reported");
+  });
+
   it("closes the popover on a press outside it", async () => {
     setViewportWidth(1400);
     const user = userEvent.setup();

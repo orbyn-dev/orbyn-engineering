@@ -24,6 +24,7 @@ import type {
   WorkspaceStatus,
 } from "../src/api/types.ts";
 import { createAccountMock } from "./account.ts";
+import { createExplorerMock } from "./explorer.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
@@ -88,6 +89,7 @@ export function createMockApi(options: MockOptions = {}) {
   let signedIn = false;
   let projects: Project[] = [];
   let threads: Thread[] = [];
+  const explorerRoute = createExplorerMock(() => projects, () => threads);
   let approvals: Approval[] = [];
   let logs: Record<string, WireThreadEvent[]> = {};
   let engines: EngineStatus[] = [];
@@ -425,6 +427,9 @@ export function createMockApi(options: MockOptions = {}) {
     if (scenario === "remote" && !signedIn && !path.startsWith("/auth")) {
       return err(401, "unauthorized", "Sign in with the access key.");
     }
+
+    const explored = explorerRoute(method, seg, query);
+    if (explored) return explored;
 
     if (method === "GET" && seg[1] === "projects" && seg[3] === "pulls" && seg[4] && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
       const state = fixtures.pageStates[Number(seg[4])]!;
@@ -862,6 +867,14 @@ export function createMockApi(options: MockOptions = {}) {
         if (!project) return err(404, "not_found", "Project not found.");
         project.trusted = true;
         return { status: 200, body: project };
+      }
+      // A path a message names: inside the thread's checkout it is that file; a full path outside is not.
+      if (seg[1] === "threads" && seg[3] === "paths" && seg[4] === "resolve") {
+        const thread = threads.find((t) => t.id === seg[2]);
+        if (!thread) return err(404, "not_found", "Thread not found.");
+        const path = String(data.path ?? "");
+        const inside = !path.startsWith("/") || path.startsWith(`${thread.cwd}/`);
+        return { status: 200, body: { cwd: thread.cwd, checkout_path: inside ? path.replace(`${thread.cwd}/`, "") : null, repository_path: null } };
       }
       if (seg[1] === "threads" && !seg[2]) {
         const engine = engines.find((e) => e.id === data.engine);

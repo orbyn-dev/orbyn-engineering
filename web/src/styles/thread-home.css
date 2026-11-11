@@ -145,7 +145,6 @@
 .terminal-splits > .terminal-panel + .terminal-panel {
   border-left: 1px solid var(--color-divider);
 }
-.files-panel,
 .files-viewer {
   display: flex;
   flex-direction: column;
@@ -153,19 +152,9 @@
   min-height: 0;
   overflow: hidden;
 }
-/* It borrows the pull request search, whose `flex: 1` loads later and would fill the column. */
-.files-panel > .files-search {
-  flex: none;
-  margin: 8px;
-}
 .file-tree {
   overflow-y: auto;
   font-size: var(--text-small);
-}
-.files-panel > .file-tree {
-  flex: 1;
-  min-height: 0;
-  padding: 0 4px 8px;
 }
 .file-tree button {
   display: flex;

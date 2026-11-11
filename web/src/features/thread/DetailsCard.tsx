@@ -169,8 +169,16 @@ const LIMIT_WARN_AT = 20;
 const LIMITS_CHECK_MS = 5 * 60 * 1000;
 const lastLimits = new Map<string, { at: number; limits: Promise<EngineLimits> }>();
 
+/** The Limits row: a window only for Codex, which reports one. Claude, OpenCode and any custom engine read "Not reported". */
+export function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
+  if (engine !== "codex") {
+    return <DRow icon={<Activity size={16} aria-hidden />} label="Limits" value={<span className="t3">Not reported</span>} />;
+  }
+  return <ReportedLimitsRow threadId={threadId} engine={engine} />;
+}
+
 /** What's left of each limit window for this thread's engine, when it reports one. */
-function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
+function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   const limits = useAsync(`details-limits:${engine}`, (_signal, how) => {
     const kept = lastLimits.get(engine);
     // A change the service announced reads again whatever this card kept.

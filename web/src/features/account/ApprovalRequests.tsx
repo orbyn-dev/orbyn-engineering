@@ -117,7 +117,7 @@ function ApprovePrompt({ request, ended, onClose }: { request: AccountApprovalRe
       onClose={onClose}
       footer={
         <>
-          <Button disabled={refusing} onClick={() => void refuse()}>Codes don’t match</Button>
+          <Button disabled={refusing} onClick={() => void refuse()}>Don’t allow</Button>
           <Button tone="primary" disabled={refusing} onClick={() => setConfirming(true)}>Codes match · Allow</Button>
         </>
       }

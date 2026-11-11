@@ -4,12 +4,10 @@ import { request, request as clientRequest } from "../../api/client";
 import type {
   BrowserProfile,
   FileContent,
-  FileEntry,
   LocalServer,
   PickedElement,
   PreviewTab,
   ProjectFileView,
-  SearchHit,
   TerminalInfo,
 } from "../../api/types";
 import type { PreviewCopy } from "../../generated/PreviewCopy";
@@ -108,14 +106,6 @@ export function readThreadFile(threadId: string, path: string, signal?: AbortSig
 
 export function saveThreadFile(threadId: string, body: { path: string; content: string; base_revision: string | null }) {
   return request("PUT", `${thread(threadId)}/files/content`, body);
-}
-
-export function listThreadFiles(threadId: string, path: string, signal?: AbortSignal) {
-  return request<FileEntry[]>("GET", `${thread(threadId)}/files?path=${q(path)}`, undefined, signal);
-}
-
-export function searchThreadFiles(threadId: string, query: string, signal?: AbortSignal) {
-  return request<SearchHit[]>("GET", `${thread(threadId)}/files/search?q=${q(query)}&content=true`, undefined, signal);
 }
 
 export function openThreadFileInBrowser(threadId: string, path: string) {

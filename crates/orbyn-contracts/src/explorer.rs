@@ -145,6 +145,11 @@ pub struct ExplorerTree {
     pub entries: Vec<ExplorerEntry>,
     /// More entries matched than one answer carries. Narrow with `filter`.
     pub truncated: bool,
+    /// Entries in this folder that match `filter`, counted before the cut to one answer.
+    /// With `total_at_least` it is a floor: the folder was too large to count whole.
+    pub total: u32,
+    /// The read stopped counting at its scan limit, so `total` may be higher.
+    pub total_at_least: bool,
     pub changes: ExplorerChanges,
     pub read_only: bool,
 }

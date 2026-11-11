@@ -246,6 +246,11 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
   person who clicks Allow hands over the item. The prompt names the requesting program, but the person must read it.
 - **Windows.** No per-program control exists in Credential Manager (control 1), and none for process memory (control 6) or a user-owned install (control 7).
 - **A fake Engine on the loopback port** (local development only). A same-user process could listen where the local Engine runs and, during sign-up, receive the OPAQUE registration record, which allows offline password guessing. That is fine for throwaway test accounts. **Never use a real password against the local stack.**
+- **The device's `app` label.** A device names itself `planner` or `engineering` when it signs in, and the v3 approval
+  binds its name, platform and that label. It is the device's own signed claim, so a malicious or modified client can
+  claim either one. It says what the device asserted, never which app is running. It is a hint for the person
+  approving a device and is never proof: no code or copy treats it as an identity check, and the approve prompt shows it
+  as a hint at most. What protects the account is the digits comparison and the person's own judgement of the device.
 - **A compromised Engine server.** Out of scope here; see the Engine's own threat model. D10 means its failure is
   not isolated per app either.
 

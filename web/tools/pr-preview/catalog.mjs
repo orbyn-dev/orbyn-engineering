@@ -10,6 +10,7 @@
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
 //               { do: "offline" }                             the device loses its network
+//               { do: "wait", ms }                            let time pass here, for a state that arrives after a step
 //   width     the window width in px when the screen is drawn narrow (default 1400)
 //   wait      ms to wait after load, for states that show only after a delay (default 1500)
 // Only data and a few verbs: nothing here imports the app. Add a screen by adding an entry, and its id to docs/match-kit.md.
@@ -335,6 +336,41 @@ export const FRAMES = {
       click("button", "They don’t match"),
     ],
   },
+  "acct-device-check-failed": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "late@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      { do: "route", route: "**/api/account/sign-in/approval", status: 502 },
+      click("button", "Sign in"),
+      { do: "wait", ms: 7500 },
+    ],
+  },
+  "acct-settings-not-connected": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Not now"),
+    ],
+  },
+  "sync-popover-not-connected": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Not now"),
+      click("button", "Account and sync", { prefix: true }),
+    ],
+  },
   "acct-connect-workspace": {
     route: "#/settings/account",
     scenario: "account",
@@ -353,7 +389,7 @@ export const FRAMES = {
       { do: "fill", label: "Email", value: "connect@example.com" },
       { do: "fill", label: "Password", value: "correct horse battery" },
       click("button", "Sign in"),
-      click("button", "Connect"),
+      click("button", "Connect", { exact: true }),
     ],
   },
   "acct-connect-done": {
@@ -365,7 +401,7 @@ export const FRAMES = {
       { do: "fill", label: "Email", value: "connect@example.com" },
       { do: "fill", label: "Password", value: "correct horse battery" },
       click("button", "Sign in"),
-      click("button", "Connect"),
+      click("button", "Connect", { exact: true }),
     ],
   },
   "signout-other-device-removed": {

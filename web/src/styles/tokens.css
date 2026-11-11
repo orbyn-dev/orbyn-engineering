@@ -35,7 +35,7 @@
   --color-outline: rgb(0 0 0 / 9%);
   --color-text: rgb(0 0 0 / 92%);
   --color-textSoft: rgb(0 0 0 / 74%);
-  --color-muted: rgb(0 0 0 / 56%);
+  --color-muted: rgb(0 0 0 / 60%);
   --color-faint: rgb(0 0 0 / 44%);
   /* Text of the design's Planned and Not available yet: the third text step, never the faint one. */
   --planned-text: var(--color-muted);
@@ -54,7 +54,7 @@
   --color-accentText: rgb(0 0 0 / 92%);
   --color-message: rgb(0 0 0 / 3.5%);
   --color-sendIdle: rgb(0 0 0 / 12%);
-  --color-danger: #d42a2a;
+  --color-danger: #c22020;
   --color-onDanger: #ffffff;
   --color-dangerSoft: rgb(239 68 68 / 7%);
   --color-dangerBorder: rgb(220 38 38 / 25%);
@@ -172,7 +172,7 @@
   --details-w: 280px;
   --rail-w: 300px;
   --details-gap: 12px;
-  --color-warnText: #9a5705;
+  --color-warnText: #8f5004;
   --color-green: #047857;
   --color-greenSoft: rgb(16 185 129 / 9%);
   --color-blue: #1d4ed8;
@@ -235,7 +235,7 @@
   --color-outline: rgb(255 255 255 / 12%);
   --color-text: rgb(255 255 255 / 94%);
   --color-textSoft: rgb(255 255 255 / 74%);
-  --color-muted: rgb(255 255 255 / 56%);
+  --color-muted: rgb(255 255 255 / 58%);
   --color-faint: rgb(255 255 255 / 42%);
   --color-primary: #ffffff;
   --color-primaryHover: #e3e3e3;
@@ -313,7 +313,7 @@
   --color-outline: rgb(255 255 255 / 12%);
   --color-text: rgb(255 255 255 / 92%);
   --color-textSoft: rgb(255 255 255 / 78%);
-  --color-muted: rgb(255 255 255 / 62%);
+  --color-muted: rgb(255 255 255 / 64%);
   --color-faint: rgb(255 255 255 / 48%);
   --color-primary: #f2f2f2;
   --color-primaryHover: #dcdcdc;

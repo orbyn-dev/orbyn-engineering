@@ -1619,6 +1619,17 @@ still go through a thread's file routes. `orbynd` only routes; Core
 - **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
   the project's and announces `explorer:<project>`.
 
+**The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
+the saved prefs as `leftBarView`; `explorerOpen` holds the rows a person unfolded or folded). The
+rows are one flat list (project, Threads and Worktrees, worktree, folders and files); a folder is read
+when it is unfolded and kept, shows 200 children and a "Show more" row for the rest, and a list over 150
+rows draws only what is on screen. Ignored files are not drawn. Nothing is polled: a `data_changed` for
+`explorer:<project>` reads again, quietly, what that project has loaded. A file opens as a **file tab** in
+the side panel; there is no Files tab. A tab's id is `file:` and its encoded target (`product/state/ui/fileTab.ts`),
+so it is saved with the thread's tab row, and a closed file tab is gone rather than listed. A file in the worktree
+the open thread runs in is read through the thread's own file routes (everything the old Files tab did);
+any other worktree's file is read through the explorer, read-only, with a banner.
+
 ## Renders
 
 An agent's page is stored in app data, never in the checkout:
@@ -2855,7 +2866,7 @@ every method, path and which routes need a credential.
 | `GET /api/projects`, `POST /api/projects/:id/trust` | Projects and folder trust |
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
 | `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
-| `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters; `400 invalid_input` for a refused path, `404` |
+| `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only, no write route exists |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
