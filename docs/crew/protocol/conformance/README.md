@@ -59,7 +59,8 @@ rest of this folder. The Rust runner is
 
 ## Fake secrets
 
-A string may hold `{{fake:github_token}}`, `{{fake:aws_key}}`, `{{fake:private_key}}`,
+A string may hold `{{fake:github_token}}`, `{{fake:github_pat}}`, `{{fake:api_key}}`,
+`{{fake:slack_token}}`, `{{fake:jwt}}`, `{{fake:aws_key}}`, `{{fake:private_key}}`,
 `{{fake:bearer}}` or `{{fake:assignment}}`. The runner expands it to a value of that class
 at run time, so no secret-shaped literal sits in the repository.
 

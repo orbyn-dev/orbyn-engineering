@@ -193,6 +193,46 @@ pub fn overlaps(a: &str, b: &str) -> bool {
     }
 }
 
+/// Strings the answer key must never share with a worker: its id and any check command of
+/// 8 or more characters.
+fn leak_needles(key: &Value) -> Vec<String> {
+    let mut needles = vec![key["id"].as_str().unwrap().to_owned()];
+    for check in key["checks"].as_array().unwrap() {
+        if let Some(run) = check["params"]["run"].as_str().filter(|r| r.len() >= 8) {
+            needles.push(run.to_owned());
+        }
+    }
+    needles
+}
+
+fn leaked_from(object: &Value, needles: &[String]) -> Option<String> {
+    let mut leaked = None;
+    walk_strings(object, &mut |s| {
+        leaked = leaked
+            .take()
+            .or_else(|| needles.iter().find(|n| s.contains(n.as_str())).cloned());
+    });
+    leaked
+}
+
+/// Replaces every secret-shaped match, so a check's output can be stored.
+fn redact(text: &str) -> String {
+    secret_patterns()
+        .iter()
+        .fold(text.to_owned(), |t, (_, re)| {
+            re.replace_all(&t, "[redacted]").into_owned()
+        })
+}
+
+/// Whether a granted pattern covers everything the requested one can name.
+fn covers(grant: &str, request: &str) -> bool {
+    match (split_pattern(grant), split_pattern(request)) {
+        ((g, true), (r, _)) => g == r || inside(g, r),
+        ((g, false), (r, false)) => g == r,
+        ((_, false), (_, true)) => false,
+    }
+}
+
 struct Held {
     holder: String,
     paths: Vec<String>,
@@ -279,6 +319,12 @@ impl<'a> Model<'a> {
 
     pub fn ended(&self) -> bool {
         self.ended
+    }
+
+    /// The first answer-key string found in an object that is about to reach a worker.
+    fn leak(&self, object: &Value) -> Option<String> {
+        let task = self.task.as_ref()?;
+        leaked_from(object, &leak_needles(&task.key))
     }
 
     pub fn end_run(&mut self) {
@@ -372,7 +418,9 @@ impl<'a> Model<'a> {
         if !MEMBER_TOOLS.contains(&tool) && !CORE_TOOLS.contains(&tool) {
             return fail("unknown_tool", tool);
         }
-        if self.ended {
+        // Only member tools stop at the end of a run. The core keeps writing Evidence and
+        // Gates, so a check can run again and a lane can be added after a pass.
+        if self.ended && MEMBER_TOOLS.contains(&tool) {
             return fail("run_ended", "the run has ended");
         }
         let is_member = matches!(role, "lead" | "worker" | "reviewer");
@@ -400,10 +448,16 @@ impl<'a> Model<'a> {
             "crew.post" | "crew.ask" => self.post(tool, caller, &member, args),
             "crew.lease.request" => self.lease_request(caller, &member, args),
             "crew.lease.release" => self.lease_release(&member, args),
-            "crew.fact.read" => Ok(self
-                .board
-                .get(args["key"].as_str().unwrap_or(""))
-                .map_or(Value::Null, |(_, f)| f.clone())),
+            "crew.fact.read" => {
+                let fact = self
+                    .board
+                    .get(args["key"].as_str().unwrap_or(""))
+                    .map_or(Value::Null, |(_, f)| f.clone());
+                match self.leak(&fact) {
+                    Some(n) => fail("answer_key_forbidden", format!("the fact repeats {n}")),
+                    None => Ok(fact),
+                }
+            }
             "crew.fact.write" => self.fact_write(caller, &member, args),
             "crew.claim" => self
                 .stamp("claim", caller, args, &[], true)
@@ -420,9 +474,16 @@ impl<'a> Model<'a> {
                 self.stamp("report", caller, args, &[("brief", json!(brief))], true)
                     .map(|o| json!({ "id": o["id"] }))
             }
-            "crew.evidence.write" => self
-                .stamp("evidence", caller, args, &[], true)
-                .map(|o| json!({ "id": o["id"] })),
+            "crew.evidence.write" => {
+                // Output can hold a secret the check never meant to print: redact the
+                // excerpt first, then the H2 scan runs on what is stored.
+                let mut draft = args.clone();
+                if let Some(excerpt) = args["excerpt"].as_str() {
+                    draft["excerpt"] = json!(redact(excerpt));
+                }
+                self.stamp("evidence", caller, &draft, &[], true)
+                    .map(|o| json!({ "id": o["id"], "excerpt": o["excerpt"] }))
+            }
             "crew.gate.write" => {
                 if args["decided_by"] != json!("person")
                     && args["evidence"].as_array().is_none_or(|e| e.is_empty())
@@ -452,6 +513,9 @@ impl<'a> Model<'a> {
             &[("brief", json!(brief_id))],
             false,
         )?;
+        if let Some(n) = leaked_from(&brief, &leak_needles(&key)) {
+            return fail("answer_key_forbidden", format!("the brief repeats {n}"));
+        }
         let protected: Vec<&str> = key["protected_paths"]
             .as_array()
             .unwrap()
@@ -489,19 +553,7 @@ impl<'a> Model<'a> {
             .task
             .as_ref()
             .ok_or(("invalid_object", "no task".to_owned()))?;
-        let mut needles = vec![task.key["id"].as_str().unwrap().to_owned()];
-        for check in task.key["checks"].as_array().unwrap() {
-            if let Some(run) = check["params"]["run"].as_str().filter(|r| r.len() >= 8) {
-                needles.push(run.to_owned());
-            }
-        }
-        let mut leaked = None;
-        walk_strings(&task.brief, &mut |s| {
-            leaked = leaked
-                .take()
-                .or_else(|| needles.iter().find(|n| s.contains(n.as_str())).cloned());
-        });
-        if let Some(n) = leaked {
+        if let Some(n) = self.leak(&task.brief) {
             return fail("answer_key_forbidden", format!("the brief repeats {n}"));
         }
         Ok(task.brief.clone())
@@ -512,7 +564,8 @@ impl<'a> Model<'a> {
             return fail("invalid_object", "crew.ask sends a question");
         }
         let posted = self.posts.get(member).copied().unwrap_or(0);
-        if posted >= self.max_posts {
+        // The cap is per worker: the lead is not counted.
+        if caller["role"] != "lead" && posted >= self.max_posts {
             return self.lead_told(
                 "post_limit_exceeded",
                 format!("{member} reached {} posts", self.max_posts),
@@ -521,6 +574,11 @@ impl<'a> Model<'a> {
         let message = self.stamp("message", caller, args, &[], true)?;
         let to = message["to"].as_str().unwrap();
         let role = caller["role"].as_str().unwrap();
+        if to != "lead"
+            && let Some(n) = self.leak(&message)
+        {
+            return fail("answer_key_forbidden", format!("the message repeats {n}"));
+        }
         if !matches!(to, "lead" | "all") && role != "lead" {
             let pair = if member < to {
                 (member.to_owned(), to.to_owned())
@@ -538,10 +596,9 @@ impl<'a> Model<'a> {
             }
             *self.hops.entry(pair).or_insert(0) += 1;
         }
-        if role == "lead" {
-            // The lead stepped in: the pairs it addressed start counting again.
-            self.hops
-                .retain(|(a, b), _| to != "all" && a != to && b != to);
+        if role == "lead" && !matches!(to, "lead" | "all") {
+            // The lead stepped in with one member: that member's pairs start counting again.
+            self.hops.retain(|(a, b), _| a != to && b != to);
         }
         *self.posts.entry(member.to_owned()).or_insert(0) += 1;
         Ok(json!({ "id": message["id"], "delivered_as": wrap_message(&message) }))
@@ -562,6 +619,40 @@ impl<'a> Model<'a> {
             .map(|p| p.as_str().unwrap().to_owned())
             .collect();
         let write = lease["mode"] == "write";
+        if lease["expires_at"].as_str() <= lease["created_at"].as_str() {
+            return fail("lease_expired", "expires_at is not in the future");
+        }
+        if write {
+            if caller["role"] == "reviewer" {
+                return fail("not_authorized", "a reviewer never takes a write lease");
+            }
+            let task = self.task.as_ref();
+            let protected = task
+                .and_then(|t| t.key["protected_paths"].as_array())
+                .map(|p| p.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if let Some((a, b)) = paths
+                .iter()
+                .find_map(|a| protected.iter().find(|b| overlaps(a, b)).map(|b| (a, b)))
+            {
+                return fail("protected_path_conflict", format!("{a} overlaps {b}"));
+            }
+            let granted: Vec<&str> = task
+                .and_then(|t| t.brief["files"].as_array())
+                .map(|f| {
+                    f.iter()
+                        .filter(|f| f["mode"] == "write")
+                        .filter_map(|f| f["path"].as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(p) = paths.iter().find(|p| !granted.iter().any(|g| covers(g, p))) {
+                return fail(
+                    "not_authorized",
+                    format!("{p} is outside the brief's write files"),
+                );
+            }
+        }
         let clash = self.leases.iter().find(|held| {
             held.holder != member
                 && (held.write || write)
@@ -604,6 +695,9 @@ impl<'a> Model<'a> {
         let key = args["key"].as_str().unwrap_or("").to_owned();
         let current = self.board.get(&key).map_or(0, |(rev, _)| *rev);
         let fact = self.stamp("fact", caller, args, &[("rev", json!(base + 1))], true)?;
+        if let Some(n) = self.leak(&fact) {
+            return fail("answer_key_forbidden", format!("the fact repeats {n}"));
+        }
         if base != current {
             return self.lead_told(
                 "board_conflict",

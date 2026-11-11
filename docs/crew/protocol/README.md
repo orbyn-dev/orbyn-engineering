@@ -23,7 +23,7 @@ repository is a separate decision by the owner; until then it lives here.
 | --- | --- |
 | [SPEC.md](SPEC.md) | Objects, messages, tools, lifecycle, hard rules, error codes |
 | [schemas/](schemas/) | JSON Schema draft 2020-12, one file per object, plus `common`, `check`, `error` and an `object` union |
-| [schemas/examples/](schemas/examples/) | `<schema>.valid.<name>.json` and `<schema>.invalid.<name>.json` |
+| [schemas/examples/](schemas/examples/) | `<schema>.valid.<name>.json` and `<schema>.invalid.<name>.json`; `schemas/invalid-examples.json` records where each invalid one must fail |
 | [conformance/](conformance/) | Data-driven cases and how to read them |
 | [tools/stamp_ids.py](tools/stamp_ids.py) | Recomputes the content-address ids in the examples |
 
@@ -60,7 +60,7 @@ Slice 1 adds the Rust wire types `Brief`, `AnswerKey`, `CrewResult`, `RouteDecis
   language. Rates travel as permille.
 - **Validate, do not generate, in v0.** The types stay hand-written with the contract
   macros, and ts-rs still writes the TypeScript. The schema is the check: slice 1 extends
-  `crew_protocol.rs` so that every valid example deserialises into its Rust type and
+  `crates/orbyn-contracts/tests/crew_protocol/` so that every valid example deserialises into its Rust type and
   serialises back to the same JSON, every invalid example is refused by the schema, and a
   sample of each type validates against its schema. A field added to a Rust type without
   the schema (or the reverse) then fails the test.

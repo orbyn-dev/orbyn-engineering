@@ -78,7 +78,10 @@
       ]
     },
     "expires_at": {
-      "$ref": "common.schema.json#/$defs/timestamp"
+      "description": "UTC, whole seconds, so two values compare as text.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "format": "date-time"
     },
     "to": {
       "description": "The new holder, when state is transferred.",

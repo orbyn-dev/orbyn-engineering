@@ -75,6 +75,71 @@
         ]
       }
     },
+    "start-wide": {
+      "brief": {
+        "kind": "implement",
+        "outcome": "Work across the crates, the docs and the web app.",
+        "inputs": [],
+        "files": [
+          {
+            "path": "crates/a/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/b/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/crew/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/crew-demo/src/**",
+            "mode": "write"
+          },
+          {
+            "path": "docs/**",
+            "mode": "write"
+          },
+          {
+            "path": "web/app/**",
+            "mode": "write"
+          },
+          {
+            "path": "crates/crew-demo/tests/**",
+            "mode": "read"
+          }
+        ],
+        "allowed_effects": [
+          "read_repo",
+          "write_leased",
+          "run_checks"
+        ],
+        "stop_when": [
+          "Done."
+        ],
+        "budget": {
+          "turns": 20,
+          "minutes": 30
+        }
+      },
+      "answer_key": {
+        "checks": [
+          {
+            "id": "chk-tests",
+            "kind": "test",
+            "params": {
+              "run": "cargo test -p crew-demo"
+            },
+            "proves": "The unit tests pass."
+          }
+        ],
+        "protected_paths": [
+          "crates/crew-demo/tests/**",
+          "scripts/check.sh"
+        ]
+      }
+    },
     "evidence": {
       "check": "chk-tests",
       "command": "cargo test -p crew-demo",

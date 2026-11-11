@@ -209,7 +209,15 @@
       }
     },
     "route": {
-      "$ref": "common.schema.json#/$defs/hash"
+      "description": "Null when the task ended before it was routed.",
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "report": {
       "oneOf": [

@@ -57,6 +57,46 @@
       ]
     },
     {
+      "id": "obj-integral-float-refused",
+      "title": "1.0 passes the schema's integer type, but the model refuses it",
+      "rules": [
+        "H14"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "brief.valid.basic",
+            "mutate": {
+              "budget": {
+                "turns": 5,
+                "minutes": 30.0
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "obj-result-before-routing",
+      "title": "A result for a task cancelled before routing has a null route",
+      "rules": [
+        "H14"
+      ],
+      "steps": [
+        {
+          "op": "validate",
+          "object": {
+            "$example": "result.valid.cancelled-before-routing"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
       "id": "obj-unsupported-version",
       "title": "An object with another version is refused",
       "rules": [

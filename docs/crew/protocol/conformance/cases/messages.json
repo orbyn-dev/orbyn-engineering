@@ -331,6 +331,158 @@
       ]
     },
     {
+      "id": "msg-lead-to-all-does-not-reset",
+      "title": "A lead message to everyone does not reset any pair",
+      "rules": [
+        "H4"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-01",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "all",
+            "kind": "question",
+            "body": "Status please."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-01",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        }
+      ]
+    },
+    {
+      "id": "msg-lead-to-other-member-does-not-reset",
+      "title": "A lead message to a member outside the pair does not reset it",
+      "rules": [
+        "H4"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-01",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "handoff",
+            "body": "Carry on."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-01",
+            "kind": "fact",
+            "body": "Here is a fact."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        }
+      ]
+    },
+    {
       "id": "msg-hop-limit-can-be-lowered",
       "title": "A repo rule can lower the hop limit",
       "rules": [
@@ -419,6 +571,29 @@
             "body": "Here is a fact."
           },
           "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "msg-post-limit-is-per-worker",
+      "title": "The cap counts workers, not the lead",
+      "rules": [
+        "H5"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "lead",
+            "kind": "fact",
+            "body": "Note to self."
+          },
+          "expect": {},
+          "repeat": 40
         }
       ]
     },

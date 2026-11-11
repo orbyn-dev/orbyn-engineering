@@ -28,6 +28,30 @@
           "requested"
         ]
       }
+    },
+    {
+      "if": {
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "const": "review"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "lane"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "lane"
+          ]
+        }
+      }
     }
   ],
   "required": [
@@ -68,10 +92,10 @@
       "$ref": "common.schema.json#/$defs/text_short"
     },
     "effort": {
+      "description": "Never above medium in v0.",
       "enum": [
         "low",
-        "medium",
-        "high"
+        "medium"
       ]
     },
     "tier": {
@@ -88,7 +112,8 @@
         "security_review",
         "finding_check",
         "second_key",
-        "scout"
+        "scout",
+        "review"
       ]
     },
     "assigned_by": {
@@ -215,6 +240,10 @@
           }
         }
       }
+    },
+    "lane": {
+      "description": "The reviewer lane when role is review, for example accessibility, performance, design, licence, docs or a custom lane.",
+      "$ref": "common.schema.json#/$defs/token"
     }
   }
 }

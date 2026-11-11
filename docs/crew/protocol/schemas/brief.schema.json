@@ -5,21 +5,94 @@
   "title": "Brief",
   "description": "What the worker sees: the outcome wanted and the limits it works inside. It never carries the answer key.",
   "type": "object",
-  "allOf": [{ "$ref": "common.schema.json#/$defs/envelope" }],
-  "required": ["kind", "outcome", "inputs", "files", "allowed_effects", "stop_when", "budget"],
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    }
+  ],
+  "required": [
+    "kind",
+    "outcome",
+    "inputs",
+    "files",
+    "allowed_effects",
+    "stop_when",
+    "budget"
+  ],
   "unevaluatedProperties": false,
   "properties": {
-    "type": { "const": "brief" },
-    "kind": { "enum": ["plan", "implement", "review", "test", "research", "ui", "docs"] },
-    "outcome": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "type": {
+      "const": "brief"
+    },
+    "kind": {
+      "enum": [
+        "plan",
+        "implement",
+        "review",
+        "test",
+        "research",
+        "ui",
+        "docs"
+      ]
+    },
+    "outcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
     "inputs": {
       "type": "array",
       "maxItems": 64,
       "items": {
         "oneOf": [
-          { "type": "object", "required": ["kind", "text"], "additionalProperties": false, "properties": { "kind": { "const": "text" }, "text": { "$ref": "common.schema.json#/$defs/text_long" } } },
-          { "type": "object", "required": ["kind", "path"], "additionalProperties": false, "properties": { "kind": { "const": "path" }, "path": { "$ref": "common.schema.json#/$defs/rel_path" } } },
-          { "type": "object", "required": ["kind", "ref"], "additionalProperties": false, "properties": { "kind": { "const": "ref" }, "ref": { "$ref": "common.schema.json#/$defs/hash" } } }
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "text"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "text"
+              },
+              "text": {
+                "$ref": "common.schema.json#/$defs/text_long"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "path"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "path"
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/rel_path"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "ref"
+              },
+              "ref": {
+                "$ref": "common.schema.json#/$defs/hash"
+              }
+            }
+          }
         ]
       }
     },
@@ -29,40 +102,109 @@
       "maxItems": 256,
       "items": {
         "type": "object",
-        "required": ["path", "mode"],
+        "required": [
+          "path",
+          "mode"
+        ],
         "additionalProperties": false,
-        "properties": { "path": { "$ref": "common.schema.json#/$defs/path_pattern" }, "mode": { "enum": ["read", "write"] } }
+        "properties": {
+          "path": {
+            "$ref": "common.schema.json#/$defs/path_pattern"
+          },
+          "mode": {
+            "enum": [
+              "read",
+              "write"
+            ]
+          }
+        }
       }
     },
     "allowed_effects": {
-      "description": "A closed set. Reading secrets, writing outside the worktree, force-push, settings changes, deploys, publishing and payments cannot be expressed, so no brief can allow them.",
+      "description": "A closed set of what the brief asks for. It never overrides the never-allowed list (SPEC.md section 7): network means repo-allowed hosts only, and network and install_dependencies still need the second key.",
       "type": "array",
       "uniqueItems": true,
-      "items": { "enum": ["read_repo", "write_leased", "run_checks", "run_commands", "network", "install_dependencies"] }
-    },
-    "stop_when": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "common.schema.json#/$defs/text_short" } },
-    "budget": {
-      "type": "object",
-      "required": ["turns", "minutes"],
-      "additionalProperties": false,
-      "properties": {
-        "turns": { "type": "integer", "minimum": 1, "maximum": 1000 },
-        "minutes": { "type": "integer", "minimum": 1, "maximum": 1440 }
+      "items": {
+        "enum": [
+          "read_repo",
+          "write_leased",
+          "run_checks",
+          "run_commands",
+          "network",
+          "install_dependencies"
+        ]
       }
     },
-    "needs": { "description": "Capabilities the engine must have, for example image or mcp.", "type": "array", "uniqueItems": true, "maxItems": 16, "items": { "$ref": "common.schema.json#/$defs/token" } },
+    "stop_when": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "$ref": "common.schema.json#/$defs/text_short"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "turns",
+        "minutes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "turns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        }
+      }
+    },
+    "needs": {
+      "description": "Capabilities the engine must have, for example image or mcp.",
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 16,
+      "items": {
+        "$ref": "common.schema.json#/$defs/token"
+      }
+    },
     "engine": {
       "description": "An explicit assignment. It still passes the router's hard filters.",
       "type": "object",
-      "required": ["id", "assigned_by"],
+      "required": [
+        "id",
+        "assigned_by"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "common.schema.json#/$defs/token" },
-        "model": { "$ref": "common.schema.json#/$defs/token" },
-        "assigned_by": { "enum": ["person", "lead"] },
-        "tag": { "$ref": "common.schema.json#/$defs/text_short" }
+        "id": {
+          "$ref": "common.schema.json#/$defs/token"
+        },
+        "model": {
+          "$ref": "common.schema.json#/$defs/token"
+        },
+        "assigned_by": {
+          "enum": [
+            "person",
+            "lead"
+          ]
+        },
+        "tag": {
+          "$ref": "common.schema.json#/$defs/text_short"
+        }
       }
     },
-    "refs": { "description": "Objects this brief builds on, such as the findings a fix brief answers.", "type": "array", "maxItems": 64, "items": { "$ref": "common.schema.json#/$defs/hash" } }
+    "refs": {
+      "description": "Objects this brief builds on, such as the findings a fix brief answers.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "common.schema.json#/$defs/hash"
+      }
+    }
   }
 }

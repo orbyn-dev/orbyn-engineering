@@ -78,6 +78,29 @@ impl Validator {
         self.index.contains_key(stem)
     }
 
+    /// Every failure as (instance location, keyword location), from boon's basic output.
+    pub fn failures(&self, stem: &str, value: &Value) -> Vec<(String, String)> {
+        let idx = self.index[stem];
+        let Err(error) = self.schemas.validate(value, idx) else {
+            return Vec::new();
+        };
+        let output = serde_json::to_value(error.basic_output()).unwrap();
+        let mut found = Vec::new();
+        let mut units = vec![&output];
+        while let Some(unit) = units.pop() {
+            if let Some(children) = unit["errors"].as_array() {
+                units.extend(children);
+            }
+            if let (Some(at), Some(kw)) = (
+                unit["instanceLocation"].as_str(),
+                unit["keywordLocation"].as_str(),
+            ) {
+                found.push((at.to_owned(), kw.to_owned()));
+            }
+        }
+        found
+    }
+
     pub fn check(&self, stem: &str, value: &Value) -> Result<(), String> {
         let idx = *self.index.get(stem).ok_or(format!("no schema {stem}"))?;
         self.schemas
@@ -131,6 +154,7 @@ fn example_parts(path: &Path) -> (String, bool) {
 #[test]
 fn examples_validate_or_fail_as_named() {
     let v = validator();
+    let expected = read_json(&protocol_dir().join("schemas/invalid-examples.json"));
     let mut covered: BTreeMap<String, (u32, u32)> = BTreeMap::new();
     for path in files(&protocol_dir().join("schemas/examples"), ".json") {
         let (schema, valid) = example_parts(&path);
@@ -162,6 +186,20 @@ fn examples_validate_or_fail_as_named() {
         } else {
             entry.1 += 1;
             assert!(result.is_err(), "{name} should be invalid");
+            let want = &expected["expected"][name.as_str()];
+            assert!(
+                want.is_object(),
+                "{name}: record where it must fail in schemas/invalid-examples.json"
+            );
+            let at = want["at"].as_str().unwrap();
+            let keyword = want["keyword"].as_str().unwrap();
+            let failures = v.failures(&schema, &object);
+            assert!(
+                failures
+                    .iter()
+                    .any(|(i, k)| i == at && k.rsplit('/').next() == Some(keyword)),
+                "{name} should fail with {keyword} at '{at}', but failed with {failures:?}"
+            );
         }
     }
     let objects = [
@@ -180,6 +218,15 @@ fn examples_validate_or_fail_as_named() {
         "result",
         "route-decision",
     ];
+    let invalid_files = files(&protocol_dir().join("schemas/examples"), ".json")
+        .iter()
+        .filter(|p| !example_parts(p).1)
+        .count();
+    assert_eq!(
+        expected["expected"].as_object().unwrap().len(),
+        invalid_files,
+        "invalid-examples.json lists a different set of files"
+    );
     for schema in objects {
         let (valid, invalid) = covered.get(schema).copied().unwrap_or_default();
         assert!(
@@ -195,6 +242,10 @@ fn expand(value: &mut Value) {
             // Fake secrets are built here so no secret-shaped literal sits in the repository.
             for (name, fake) in [
                 ("github_token", format!("ghp_{}", "a".repeat(36))),
+                ("github_pat", format!("github_pat_{}", "A".repeat(30))),
+                ("api_key", format!("sk-{}", "a".repeat(24))),
+                ("slack_token", format!("xoxb-{}", "1234567890123")),
+                ("jwt", format!("eyJ{0}.{0}.{0}", "a".repeat(12))),
                 ("aws_key", format!("AKIA{}", "ABCDEFGHIJKLMNOP")),
                 (
                     "private_key",

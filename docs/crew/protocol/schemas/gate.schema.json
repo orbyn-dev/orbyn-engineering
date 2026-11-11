@@ -77,6 +77,30 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "required": [
+          "stage"
+        ],
+        "properties": {
+          "stage": {
+            "const": "review"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "lane"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "lane"
+          ]
+        }
+      }
     }
   ],
   "required": [
@@ -111,6 +135,7 @@
         "checks",
         "code_review",
         "security_review",
+        "review",
         "finding_check",
         "pr_review",
         "disagreement",
@@ -144,6 +169,10 @@
     },
     "reason": {
       "$ref": "common.schema.json#/$defs/text_short"
+    },
+    "lane": {
+      "description": "The reviewer lane when stage is review.",
+      "$ref": "common.schema.json#/$defs/token"
     }
   }
 }

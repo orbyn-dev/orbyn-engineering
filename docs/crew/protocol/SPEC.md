@@ -71,7 +71,10 @@ hex SHA-256 of the *canonical form* of the object without its `id`. The canonica
 UTF-8 JSON with no insignificant whitespace, object keys sorted by UTF-16 code unit,
 strings escaped as RFC 8785 requires, and **integers only**. A floating-point number
 anywhere in an object makes it invalid (`invalid_object`), so every implementation
-computes the same id. Rates and scores travel as integers in permille. A change is a new
+computes the same id. JSON Schema alone does not catch every case: it treats `1.0` as
+an integer, so a schema check accepts `"minutes": 30.0`. The core refuses it anyway, because
+`30.0` is written as a float and would hash differently in other languages. A validator
+that stops at the schema is not conformant (`obj-integral-float-refused`). Rates and scores travel as integers in permille. A change is a new
 object, which names the old one in `refs`.
 
 ### 2.4 Text, paths and time
@@ -115,10 +118,11 @@ The `Error` schema describes a tool refusal. It is a tool result, not a ledger o
 has no id.
 
 **Brief.** `kind` is one of `plan`, `implement`, `review`, `test`, `research`, `ui`,
-`docs`. `allowed_effects` is a closed set: `read_repo`, `write_leased`, `run_checks`,
-`run_commands`, `network`, `install_dependencies`. Reading secrets, writing outside the
-worktree, force-push, settings changes, deploys, publishing and payments are not in the
-set, so no brief can allow them. A brief has no field for the answer key.
+`docs`. `allowed_effects` is a closed set of what a brief asks for: `read_repo`,
+`write_leased`, `run_checks`, `run_commands`, `network`, `install_dependencies`. It never
+overrides the never-allowed list (section 7.1): `network` means hosts the repo has allowed,
+nothing else, and `network` and `install_dependencies` still need the second key.
+A brief has no field for the answer key.
 
 **AnswerKey.** A check has `id`, `kind`, `params`, `proves` and optionally `does_not_prove`.
 Kinds: `command`, `test`, `lint`, `typecheck`, `custom_script`, `file_scope`, `diff_size`,
@@ -132,14 +136,21 @@ stage `finding_check` says `confirmed`, decided by a code repro or an independen
 run. A model's review is a finding, never the pass/fail gate. Gate decisions are `pass`
 or `fail`, except at `finding_check`, where they are `confirmed` or `unconfirmed`.
 
+**Gate stages** are `checks`, `code_review`, `security_review`, `review`, `finding_check`,
+`pr_review`, `disagreement` and `merge`. The generic `review` stage carries a `lane` (the same
+lowercase token a Finding uses), so performance, accessibility, design match, licence,
+docs and custom lanes all fit without a new stage. A RouteDecision for a reviewer lane has
+role `review` and the same `lane`.
+
 **CrewResult.** `state` is `passed`, `failed`, `stopped`, `cancelled` or `needs_person`.
 `final` is true exactly for `passed`, `stopped` and `cancelled`; `failed` and
 `needs_person` are interim reports. `stop_reason` is present exactly when `state` is
 `stopped`: `repeated_failure`, `budget`, `too_many_denials`, `injection_suspected`,
-`engine_error` or `lead_stopped`. `not_verified` lists what no check covered, so a pass
+`engine_error` or `lead_stopped`. `route` is null when the task ended before it was routed
+(for example cancelled or needing a person while `briefed`). `not_verified` lists what no check covered, so a pass
 never implies more than was checked.
 
-**RouteDecision.** A decision assigned by a person or the lead names what was
+**RouteDecision.** `effort` is `low` or `medium`; v0 never goes above medium. A decision assigned by a person or the lead names what was
 `requested`, and the engine MUST be that engine: a failed filter is reported, never
 swapped for another engine. A pass rate always travels with its sample size.
 
@@ -172,27 +183,29 @@ credential.
 
 ## 5. Tools
 
-Names are protocol names. A binding may map them; Orbyn's own MCP server exposes them with
-underscores, as in `crew_post`.
+Names are protocol names. A binding may map them. Orbyn's own MCP server exposes the
+member tools with underscores, listed in the second column. The board tools keep the plan's
+`board` name, so `crew.fact.read` and `crew.fact.write` are `crew_board_read` and
+`crew_board_write`. The core-only tools are not exposed over MCP at all.
 
-| Tool | Caller | Takes (a draft of) | Returns |
-| --- | --- | --- | --- |
-| `crew.join` | L0 harness | A join token | Reserved, not in the v0 cases |
-| `crew.brief.read` | worker, reviewer | Nothing | The Brief, never the key (H1) |
-| `crew.lease.request` | member | Lease: `paths`, `mode`, `expires_at` | The lease id and its state |
-| `crew.lease.release` | member | `paths` | `ok` |
-| `crew.lease.transfer` | member | Reserved | Reserved, not in the v0 cases |
-| `crew.post` | member | Message | The message id |
-| `crew.ask` | member | Message of kind `question`, optional `wait_seconds` up to 40 | An answer, or `pending` |
-| `crew.fact.read` | member | `key` | The Fact, or null |
-| `crew.fact.write` | member | Fact: `key`, `class`, `value`, `base_rev`, `evidence`, optional `check` | The id and the new `rev` |
-| `crew.claim` | member | Claim | The claim id |
-| `crew.finding` | member | Finding | The finding id |
-| `crew.report` | worker | Report without `brief` | The report id |
-| `crew.start` | lead (also core, person) | A Brief draft and an AnswerKey draft | The task id (the brief's id) |
-| `crew.verify` | core only | The task | Runs the answer key |
-| `crew.evidence.write` | core only | Evidence | The evidence id |
-| `crew.gate.write` | core, or person for a person's gate | Gate | The gate id |
+| Tool | MCP alias | Caller | Takes (a draft of) | Returns |
+| --- | --- | --- | --- | --- |
+| `crew.join` | `crew_join` | L0 harness | A join token | Reserved, not in the v0 cases |
+| `crew.brief.read` | `crew_brief_read` | worker, reviewer | Nothing | The Brief, never the key (H1) |
+| `crew.lease.request` | `crew_lease_request` | member | Lease: `paths`, `mode`, `expires_at` | The lease id and its state |
+| `crew.lease.release` | `crew_lease_release` | member | `paths` | `ok` |
+| `crew.lease.transfer` | `crew_lease_transfer` | member | Reserved | Reserved, not in the v0 cases |
+| `crew.post` | `crew_post` | member | Message | The message id |
+| `crew.ask` | `crew_ask` | member | Message of kind `question`, optional `wait_seconds` up to 40 | An answer, or `pending` |
+| `crew.fact.read` | `crew_board_read` | member | `key` | The Fact, or null |
+| `crew.fact.write` | `crew_board_write` | member | Fact: `key`, `class`, `value`, `base_rev`, `evidence`, optional `check` | The id and the new `rev` |
+| `crew.claim` | `crew_claim` | member | Claim | The claim id |
+| `crew.finding` | `crew_finding` | member | Finding | The finding id |
+| `crew.report` | `crew_report` | worker | Report without `brief` | The report id |
+| `crew.start` | `crew_start` | lead (also core, person) | A Brief draft and an AnswerKey draft | The task id (the brief's id) |
+| `crew.verify` | none | core only | The task | Runs the answer key |
+| `crew.evidence.write` | none | core only | Evidence | The evidence id and the stored excerpt |
+| `crew.gate.write` | none | core, or person for a person's gate | Gate | The gate id |
 
 A member cannot call a core-only tool (`not_authorized`). Only the core writes Evidence,
 Gate, CrewResult and RouteDecision.
@@ -241,7 +254,12 @@ The next state is required: a task in `failed` can only move to the state the gu
 **run**. A task in `needs_person` has not.
 
 The guard limits worker retries only. It never limits verification: any check can run
-again at any time.
+again at any time, and the core can add Evidence and Gates to a run that has ended.
+
+**For slice 3 (the verifier and retries).** A failed check tells the worker the *reason* it
+failed, such as the failing test's name and message. It never tells the worker the check's
+command or any other part of the answer key (H1). The retry reason goes through the same
+leak check as every other object that reaches a worker.
 
 ## 7. Hard rules
 
@@ -250,21 +268,50 @@ each one.
 
 | ID | Rule | Error |
 | --- | --- | --- |
-| H1 | The answer key is never sent to a worker. No tool returns it to a member, and the core MUST NOT deliver a brief that repeats the key's id or any check command of 8 or more characters | `answer_key_forbidden` |
+| H1 | The answer key is never sent to a worker. No tool returns it to a member. The leak check of section 8 applies to every object that leaves the core for a worker: a brief (refused at `crew.start`), a message from anyone to a worker or to `all` (including the lead's), and a board fact | `answer_key_forbidden` |
 | H2 | No object holds a secret. The core scans every string and key (section 8) | `secret_detected` |
 | H3 | Depth is 1: only the lead, the core or a person starts a task. A worker or reviewer cannot | `depth_exceeded` |
-| H4 | At most 3 messages between two members before the lead is told. The next is refused. A message from the lead to either member starts the count again. Messages to `lead` or `all` do not count. A repo rule may lower the limit | `hop_limit_exceeded` |
-| H5 | At most 30 posts by one member per run. A repo rule may lower the limit | `post_limit_exceeded` |
+| H4 | At most 3 messages between two members before the lead is told. The next is refused. A message from the lead to one member starts the count again for every pair that member is in; a message to `all` resets nothing. Messages to `lead` or `all` do not count. A repo rule may lower the limit | `hop_limit_exceeded` |
+| H5 | At most 30 posts by one worker per run. The lead is not counted. A repo rule may lower the limit | `post_limit_exceeded` |
 | H6 | A message body is data, delivered in the wrapper of section 4. A reply names its question | `invalid_object` |
-| H7 | Every tool refuses after the run ends | `run_ended` |
+| H7 | Every member tool refuses after the run ends, `crew.start` included. The core's own tools (`crew.verify`, `crew.evidence.write`, `crew.gate.write`) keep working, so a check can run again and a lane can be added after a pass. They never reopen the run | `run_ended` |
 | H8 | Every Gate needs Evidence, or a person. A task passes only with Evidence or a person | `gate_needs_evidence` |
 | H9 | The core stamps author, id, run and crew. A member cannot write Evidence, Gate, CrewResult or RouteDecision, or call a core-only tool | `not_authorized`, `invalid_object`, `unknown_tool` |
-| H10 | One writer per path. Overlapping leases conflict unless both are `read`, or the same member holds both. A conflict goes to the lead | `lease_conflict`, `lease_not_held` |
-| H11 | A brief's write paths never overlap the answer key's `protected_paths` | `protected_path_conflict` |
+| H10 | One writer per path. Overlapping leases conflict unless both are `read`, or the same member holds both; a conflict goes to the lead. A write lease must lie inside the brief's write files, is never granted to a reviewer, and `expires_at` (UTC, whole seconds) must be later than the request | `lease_conflict`, `lease_not_held`, `lease_expired`, `not_authorized` |
+| H11 | Nothing writable overlaps the answer key's `protected_paths`: not a brief's write files at `crew.start`, and not a write lease at `crew.lease.request`. Reading them is allowed | `protected_path_conflict` |
 | H12 | A board write names the revision it read. A stale write is refused and the conflict goes to the lead | `board_conflict` |
 | H13 | A task moves only along the transitions of section 6, and the loop guard decides after a failure | `invalid_transition` |
 | H14 | An id is the hash of the canonical object, and an object holds integers only | `id_mismatch`, `invalid_object` |
 | H15 | An object of another version is refused | `unsupported_version` |
+
+### 7.1 Never allowed
+
+These actions are never allowed, in any mode, for any brief, member or lead. `allowed_effects`
+never overrides this list, and neither does an approval. It is the hard-rule layer of the
+approval chain that slice 4f builds; v0 fixes only the list.
+
+| ID | Never allowed |
+| --- | --- |
+| N1 | Changing account, device or sign-in state |
+| N2 | Reading or sending secrets and credentials |
+| N3 | Network access to a host the repo has not allowed |
+| N4 | Writing or deleting outside the worktree |
+| N5 | Force-push or history rewrite on main |
+| N6 | Changing branch protection, permissions or settings |
+| N7 | Editing answer keys, check files or `.orbyn/crew.json` |
+| N8 | Production deploys |
+| N9 | Publishing or messaging outside the repo |
+| N10 | Payments |
+
+Always allowed: reads and writes inside the worker's leased paths, and running the brief's
+checks. Everything between is for the lead to decide, with a reason.
+`network` in `allowed_effects` therefore means hosts the repo has allowed (N3), and nothing
+else. A request for `network` or `install_dependencies`, like running generated scripts or
+touching CI files, also needs a second approval from an approver on a different vendor.
+The closed set of `allowed_effects` is not what keeps N1 to N10 out: the core refuses them
+whatever a brief says. The v0 cases reach only two of them, and only in part: N7 as far as H11 (no
+write lease on a check file) and N4 as far as path patterns (no path that leaves the
+worktree). The rest are enforced and tested with slice 4f.
 
 ## 8. Minimum checks
 
@@ -284,9 +331,16 @@ assignment.
 | JWT | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}` |
 | Assignment | `(?i)\b(password\|passwd\|secret\|api[_-]?key\|token)["']?\s*[:=]\s*["']?[^\s"']{8,}` |
 
+**Redaction.** A check's output can contain a secret the check never meant to print. Before
+the H2 scan, the core redacts an Evidence `excerpt`: every match of the patterns above
+becomes `[redacted]`. Only the excerpt is redacted. A secret in any other field, the
+command included, is still refused.
+
 **Answer-key leak (H1).** Before any object leaves the core for a worker, the core checks
 that none of its strings contains the answer key's `id` or the `run` of any check whose
-`run` is 8 or more characters.
+`run` is 8 or more characters. That covers a brief at `crew.start`, a message from anyone
+to a worker or to `all`, and every board fact. A message addressed to the lead stays with
+the lead and is not checked.
 
 ## 9. Errors
 
@@ -302,7 +356,7 @@ in this order, so a case has one expected answer:
 6. `unsupported_version`, `invalid_object`
 7. `secret_detected`
 8. `id_mismatch`
-9. The rule's own refusal: `hop_limit_exceeded`, `lease_conflict`, `lease_not_held`,
+9. The rule's own refusal: `hop_limit_exceeded`, `lease_expired`, `lease_conflict`, `lease_not_held`,
    `board_conflict`, `protected_path_conflict`, `answer_key_forbidden`,
    `invalid_transition`
 
@@ -315,13 +369,14 @@ in this order, so a case has one expected answer:
 | `answer_key_forbidden` | An outbound object would reveal the answer key (H1) |
 | `protected_path_conflict` | A brief's write paths overlap the key's protected paths (H11) |
 | `unknown_tool` | The tool does not exist |
-| `not_authorized` | The caller's role may not call this tool |
+| `not_authorized` | The caller's role may not call this tool, or may not take this lease (a reviewer's write, or a write outside the brief's write files) |
 | `depth_exceeded` | A worker or reviewer tried to start a task (H3) |
 | `run_ended` | The run has ended (H7) |
 | `hop_limit_exceeded` | Two members reached the hop limit (H4). The lead is told |
 | `post_limit_exceeded` | A member reached the post limit (H5). The lead is told |
 | `lease_conflict` | The paths overlap a lease another member holds (H10). The lead is told |
 | `lease_not_held` | The caller holds no such lease |
+| `lease_expired` | The lease's `expires_at` is not later than the request |
 | `board_conflict` | The write is stale (H12). The lead is told |
 | `gate_needs_evidence` | A gate or a pass has neither Evidence nor a person (H8) |
 | `invalid_transition` | The lifecycle does not allow this move (H13) |

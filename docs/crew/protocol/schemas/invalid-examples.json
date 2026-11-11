@@ -1,0 +1,245 @@
+{
+  "description": "Where each invalid example must fail: the instance location (a JSON pointer) and the schema keyword that rejects it. The test asserts both.",
+  "expected": {
+    "answer-key.invalid.command-without-run.json": {
+      "at": "/checks/0/params",
+      "keyword": "required"
+    },
+    "answer-key.invalid.no-checks.json": {
+      "at": "/checks",
+      "keyword": "minItems"
+    },
+    "answer-key.invalid.no-protected-paths.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "answer-key.invalid.probe-leaves-machine.json": {
+      "at": "/checks/3/params/url",
+      "keyword": "pattern"
+    },
+    "answer-key.invalid.unknown-check-kind.json": {
+      "at": "/checks/0/kind",
+      "keyword": "enum"
+    },
+    "brief.invalid.absolute-path.json": {
+      "at": "/files/0/path",
+      "keyword": "pattern"
+    },
+    "brief.invalid.answer-key-field.json": {
+      "at": "/answer_key",
+      "keyword": "unevaluatedProperties"
+    },
+    "brief.invalid.dotdot-path.json": {
+      "at": "/files/0/path",
+      "keyword": "not"
+    },
+    "brief.invalid.float-minutes.json": {
+      "at": "/budget/minutes",
+      "keyword": "type"
+    },
+    "brief.invalid.forbidden-effect.json": {
+      "at": "/allowed_effects/1",
+      "keyword": "enum"
+    },
+    "brief.invalid.no-budget.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "brief.invalid.unknown-kind.json": {
+      "at": "/kind",
+      "keyword": "enum"
+    },
+    "brief.invalid.wrong-version.json": {
+      "at": "/v",
+      "keyword": "const"
+    },
+    "brief.invalid.zero-turns.json": {
+      "at": "/budget/turns",
+      "keyword": "minimum"
+    },
+    "claim.invalid.empty-statement.json": {
+      "at": "/statement",
+      "keyword": "minLength"
+    },
+    "disagreement.invalid.one-position.json": {
+      "at": "/positions",
+      "keyword": "minItems"
+    },
+    "error.invalid.unknown-code.json": {
+      "at": "/code",
+      "keyword": "enum"
+    },
+    "evidence.invalid.authored-by-worker.json": {
+      "at": "/author/role",
+      "keyword": "const"
+    },
+    "evidence.invalid.no-does-not-prove.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "evidence.invalid.unknown-outcome.json": {
+      "at": "/outcome",
+      "keyword": "enum"
+    },
+    "fact.invalid.contract-without-check.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "fact.invalid.null-value.json": {
+      "at": "/value",
+      "keyword": "type"
+    },
+    "fact.invalid.revision-zero.json": {
+      "at": "/rev",
+      "keyword": "minimum"
+    },
+    "finding.invalid.line-zero.json": {
+      "at": "/line",
+      "keyword": "minimum"
+    },
+    "finding.invalid.no-commit.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "finding.invalid.unknown-severity.json": {
+      "at": "/severity",
+      "keyword": "enum"
+    },
+    "gate.invalid.authored-by-lead.json": {
+      "at": "/author/role",
+      "keyword": "const"
+    },
+    "gate.invalid.code-without-evidence.json": {
+      "at": "/evidence",
+      "keyword": "minItems"
+    },
+    "gate.invalid.finding-check-pass.json": {
+      "at": "/decision",
+      "keyword": "enum"
+    },
+    "gate.invalid.lane-on-checks.json": {
+      "at": "",
+      "keyword": "not"
+    },
+    "gate.invalid.person-gate-by-core.json": {
+      "at": "/author/role",
+      "keyword": "const"
+    },
+    "gate.invalid.review-confirmed.json": {
+      "at": "/decision",
+      "keyword": "enum"
+    },
+    "gate.invalid.review-without-lane.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "lease.invalid.empty-paths.json": {
+      "at": "/paths",
+      "keyword": "minItems"
+    },
+    "lease.invalid.reserved-holder.json": {
+      "at": "/holder",
+      "keyword": "not"
+    },
+    "lease.invalid.target-without-transfer.json": {
+      "at": "",
+      "keyword": "not"
+    },
+    "lease.invalid.transfer-without-target.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "message.invalid.answer-without-reply.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "message.invalid.author-member-on-core.json": {
+      "at": "/author",
+      "keyword": "not"
+    },
+    "message.invalid.empty-body.json": {
+      "at": "/body",
+      "keyword": "minLength"
+    },
+    "message.invalid.unknown-kind.json": {
+      "at": "/kind",
+      "keyword": "enum"
+    },
+    "message.invalid.wait-on-non-question.json": {
+      "at": "/kind",
+      "keyword": "const"
+    },
+    "message.invalid.wait-too-long.json": {
+      "at": "/wait_seconds",
+      "keyword": "maximum"
+    },
+    "report.invalid.no-not-verified.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "report.invalid.short-commit.json": {
+      "at": "/commit",
+      "keyword": "pattern"
+    },
+    "result.invalid.authored-by-lead.json": {
+      "at": "/author/role",
+      "keyword": "const"
+    },
+    "result.invalid.failed-final.json": {
+      "at": "/final",
+      "keyword": "const"
+    },
+    "result.invalid.no-not-verified.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "result.invalid.passed-not-final.json": {
+      "at": "/final",
+      "keyword": "const"
+    },
+    "result.invalid.reason-on-passed.json": {
+      "at": "",
+      "keyword": "not"
+    },
+    "result.invalid.route-missing.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "result.invalid.stopped-without-reason.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "route-decision.invalid.assigned-without-request.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "route-decision.invalid.high-effort.json": {
+      "at": "/effort",
+      "keyword": "enum"
+    },
+    "route-decision.invalid.lane-on-builder.json": {
+      "at": "",
+      "keyword": "not"
+    },
+    "route-decision.invalid.no-reasons.json": {
+      "at": "/reasons",
+      "keyword": "minItems"
+    },
+    "route-decision.invalid.rate-without-samples.json": {
+      "at": "/scores/0/pass_rate",
+      "keyword": "required"
+    },
+    "route-decision.invalid.rejection-without-reason.json": {
+      "at": "/rejected/0",
+      "keyword": "required"
+    },
+    "route-decision.invalid.review-without-lane.json": {
+      "at": "",
+      "keyword": "required"
+    },
+    "route-decision.invalid.score-above-1000.json": {
+      "at": "/scores/0/score",
+      "keyword": "maximum"
+    }
+  }
+}

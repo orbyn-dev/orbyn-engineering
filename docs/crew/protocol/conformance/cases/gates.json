@@ -127,6 +127,71 @@
       ]
     },
     {
+      "id": "gate-review-lane",
+      "title": "A review stage names its lane, so any lane fits",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "review",
+              "lane": "design_match"
+            }
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "review"
+            }
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "gate-lane-only-on-review",
+      "title": "A lane belongs to the review stage only",
+      "rules": [
+        "H8"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "lane": "design_match"
+            }
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
       "id": "gate-finding-check-vocabulary",
       "title": "A finding check says confirmed or unconfirmed, never pass",
       "rules": [

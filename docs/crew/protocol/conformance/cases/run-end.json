@@ -32,8 +32,8 @@
       ]
     },
     {
-      "id": "end-every-tool-refused",
-      "title": "Every crew tool refuses after the run ends",
+      "id": "end-every-member-tool-refused",
+      "title": "Every member tool refuses after the run ends",
       "rules": [
         "H7"
       ],
@@ -76,6 +76,34 @@
         },
         {
           "op": "call",
+          "tool": "crew.lease.release",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ]
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.read",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.a"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
           "tool": "crew.fact.write",
           "caller": {
             "$use": "worker1"
@@ -106,6 +134,25 @@
         },
         {
           "op": "call",
+          "tool": "crew.finding",
+          "caller": {
+            "$use": "reviewer"
+          },
+          "args": {
+            "lane": "correctness",
+            "severity": "low",
+            "path": "docs/a.md",
+            "line": 1,
+            "claim": "x",
+            "evidence": "y",
+            "commit": "0123456789abcdef0123456789abcdef01234567"
+          },
+          "expect": {
+            "error": "run_ended"
+          }
+        },
+        {
+          "op": "call",
           "tool": "crew.report",
           "caller": {
             "$use": "worker1"
@@ -121,13 +168,11 @@
         },
         {
           "op": "call",
-          "tool": "crew.evidence.write",
+          "tool": "crew.brief.read",
           "caller": {
-            "$use": "core"
+            "$use": "worker1"
           },
-          "args": {
-            "$use": "evidence"
-          },
+          "args": {},
           "expect": {
             "error": "run_ended"
           }
@@ -143,6 +188,168 @@
           },
           "expect": {
             "error": "run_ended"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-core-writes-evidence-after-end",
+      "title": "The core can still add Evidence to an ended run: a check can run again",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "routed",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "verifying",
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "passed",
+          "evidence": 1,
+          "expect": {
+            "run_ended": true
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {}
+        },
+        {
+          "op": "transition",
+          "to": "running",
+          "expect": {
+            "error": "invalid_transition"
+          }
+        }
+      ]
+    },
+    {
+      "id": "end-core-writes-gate-after-end",
+      "title": "The core can add a Gate after a pass: a lane added later still runs",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {
+            "$use": "gate"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.verify",
+          "caller": {
+            "$use": "core"
+          },
+          "args": {},
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "end-person-gate-after-end",
+      "title": "A person can still decide after the run ended",
+      "rules": [
+        "H7"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.gate.write",
+          "caller": {
+            "$use": "person"
+          },
+          "args": {
+            "$use": "gate",
+            "set": {
+              "stage": "merge",
+              "decided_by": "person",
+              "evidence": [],
+              "reason": "Reviewed the diff."
+            }
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "end-member-cannot-write-core-tools",
+      "title": "A member still cannot call a core tool after the run ended",
+      "rules": [
+        "H7",
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "end_run",
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.evidence.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "$use": "evidence"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.verify",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {},
+          "expect": {
+            "error": "not_authorized"
           }
         }
       ]

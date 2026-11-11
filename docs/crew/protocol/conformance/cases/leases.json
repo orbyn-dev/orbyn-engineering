@@ -1,13 +1,24 @@
 {
-  "suite": "Leases: one writer per path",
+  "suite": "Leases: one writer per path, inside the brief, never on a check file",
   "cases": [
     {
       "id": "lease-grant",
-      "title": "A free path is granted",
+      "title": "A free path inside the brief is granted",
       "rules": [
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -36,6 +47,17 @@
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -80,13 +102,24 @@
       "steps": [
         {
           "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
           "tool": "crew.lease.request",
           "caller": {
             "$use": "worker1"
           },
           "args": {
             "paths": [
-              "crates/**"
+              "web/app/**"
             ],
             "mode": "write",
             "expires_at": "2026-11-12T10:00:00Z"
@@ -101,7 +134,7 @@
           },
           "args": {
             "paths": [
-              "crates/crew-demo/src/**"
+              "web/app/ui/**"
             ],
             "mode": "write",
             "expires_at": "2026-11-12T10:00:00Z"
@@ -119,6 +152,17 @@
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -155,11 +199,22 @@
     },
     {
       "id": "lease-disjoint-ok",
-      "title": "Disjoint paths are both granted",
+      "title": "Disjoint paths are all granted",
       "rules": [
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -216,6 +271,17 @@
       "steps": [
         {
           "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
           "tool": "crew.lease.request",
           "caller": {
             "$use": "worker1"
@@ -237,7 +303,7 @@
           },
           "args": {
             "paths": [
-              "crates/crew-demo/**"
+              "crates/crew-demo/src/**"
             ],
             "mode": "write",
             "expires_at": "2026-11-12T10:00:00Z"
@@ -253,6 +319,17 @@
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -292,6 +369,17 @@
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -335,6 +423,17 @@
       "steps": [
         {
           "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
           "tool": "crew.lease.request",
           "caller": {
             "$use": "worker1"
@@ -372,6 +471,17 @@
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -426,6 +536,17 @@
       "steps": [
         {
           "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
           "tool": "crew.lease.release",
           "caller": {
             "$use": "worker1"
@@ -448,6 +569,17 @@
         "H10"
       ],
       "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
         {
           "op": "call",
           "tool": "crew.lease.request",
@@ -476,6 +608,17 @@
       "steps": [
         {
           "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
           "tool": "crew.lease.request",
           "caller": {
             "$use": "worker1"
@@ -488,6 +631,470 @@
             "expires_at": "2026-11-12T10:00:00Z",
             "holder": "worker-02",
             "state": "granted"
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-protected-file",
+      "title": "A write lease on a check file is refused",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "scripts/check.sh"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "protected_path_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-protected-tree",
+      "title": "A write lease on the tests the checks run is refused",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/tests/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "protected_path_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-protected-file-inside-tree",
+      "title": "A write lease on one file in a protected tree is refused",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/tests/it.rs"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "protected_path_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-protected-read-ok",
+      "title": "A read lease on a protected path is allowed",
+      "rules": [
+        "H11"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/tests/**"
+            ],
+            "mode": "read",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-write-outside-brief",
+      "title": "A write lease outside the brief's write files is refused",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/zzz/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-write-wider-than-brief",
+      "title": "A lease wider than the brief's write files is refused",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "web/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-write-on-read-only-file",
+      "title": "A brief's read-only path cannot be written",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/tests/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "protected_path_conflict"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-write-inside-brief-tree",
+      "title": "A lease inside a brief tree is granted",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "crates/crew-demo/src/parse/mod.rs"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-write-without-task",
+      "title": "With no task there is no brief, so no write lease",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-reviewer-write-refused",
+      "title": "A reviewer never takes a write lease",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "reviewer"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {
+            "error": "not_authorized"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-reviewer-read-ok",
+      "title": "A reviewer may read",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "reviewer"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "read",
+            "expires_at": "2026-11-12T10:00:00Z"
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "lease-expired",
+      "title": "A lease that expires in the past is refused",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T08:00:00Z"
+          },
+          "expect": {
+            "error": "lease_expired"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lease-expires-with-offset",
+      "title": "A lease time must be UTC to the second",
+      "rules": [
+        "H10"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.start",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "$use": "start-wide"
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.lease.request",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "paths": [
+              "docs/**"
+            ],
+            "mode": "write",
+            "expires_at": "2026-11-12T11:00:00+01:00"
           },
           "expect": {
             "error": "invalid_object"
