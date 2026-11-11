@@ -202,8 +202,8 @@ async fn every_account_route_is_a_read_open_for_a_reason_or_needs_a_confirmation
         guarded += 1;
     }
     assert_eq!(
-        guarded, 3,
-        "removing a device, signing out everywhere and letting a device in"
+        guarded, 5,
+        "removing a device, signing out everywhere, letting a device in and the two choices that overwrite"
     );
     // The lists hold no route that no longer exists.
     for (listed, _) in OPEN {
@@ -432,7 +432,7 @@ async fn a_new_device_waits_for_a_trusted_one_and_can_give_up() {
     assert_eq!(view["approval"]["digits"], "418 207");
     assert!(view["session"].is_null());
     let (status, polled) = served
-        .call("GET", "/api/account/sign-in/approval", json!({}))
+        .call("POST", "/api/account/sign-in/approval", json!({}))
         .await;
     assert_eq!((status, polled["state"].as_str()), (200, Some("waiting")));
     assert_eq!(
@@ -457,14 +457,68 @@ async fn the_first_sync_asks_how_to_join_the_settings_once() {
     );
     assert_eq!(
         served
-            .call(
-                "POST",
-                "/api/account/connect",
-                json!({ "policy": "combine" })
-            )
+            .call("POST", "/api/account/connect", json!({}))
             .await
             .0,
         204,
         "connecting when already connected changes nothing"
+    );
+}
+
+#[tokio::test]
+async fn the_choices_that_overwrite_need_the_password_for_that_choice() {
+    let served = serve("overwrite", AccountGate::LocalOnly, false).await;
+    served.sign_in().await;
+    for path in [
+        "/api/account/connect/use-device",
+        "/api/account/connect/use-account",
+    ] {
+        let (status, body) = served.call("POST", path, json!({})).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (403, Some("reauth_required")),
+            "{path}"
+        );
+    }
+    // Combine needs no password, so a confirmation for it, or for nothing, is refused.
+    for body in [
+        json!({ "password": SECRET, "action": "connect_settings", "policy": "combine" }),
+        json!({ "password": SECRET, "action": "connect_settings" }),
+    ] {
+        assert_eq!(
+            served.call("POST", "/api/account/confirm", body).await.0,
+            400
+        );
+    }
+    let confirm = |policy: &'static str| {
+        served.call(
+            "POST",
+            "/api/account/confirm",
+            json!({ "password": SECRET, "action": "connect_settings", "policy": policy }),
+        )
+    };
+    assert_eq!(confirm("use_account").await.0, 204);
+    // Not for the other choice.
+    assert_eq!(
+        served
+            .call("POST", "/api/account/connect/use-device", json!({}))
+            .await
+            .0,
+        403
+    );
+    // For its own, and used up by it.
+    assert_eq!(
+        served
+            .call("POST", "/api/account/connect/use-account", json!({}))
+            .await
+            .0,
+        204
+    );
+    assert_eq!(
+        served
+            .call("POST", "/api/account/connect/use-account", json!({}))
+            .await
+            .0,
+        403
     );
 }

@@ -19,9 +19,10 @@ request goes anywhere. `LocalOnly` exists only in test and debug builds. The des
 | `apply` | The allowlist-only apply plan. Every other field is kept and passed on, never applied |
 | `sync` | One worker per zone: pull, merge, apply, upload, backoff and the error table |
 | `status` | Status values and their `DataChanged` events (`account`, `account:conflicts`) |
-| `api` | `AccountApi` (sign-up, sign-in, devices, sign-out), the redacting `Password`, and the client-error to wire-code table |
+| `api` | `AccountApi` (sign-up, sign-in with the new-device approval calls, devices, sign-out), the redacting `Password`, and the client-error to wire-code table |
 | `codes` | The invite and emailed-code alphabet (30 symbols, no `0 O 1 I L U`) and input normalisation |
-| `flow` | `AccountCenter`'s actions, the session, the ten-minute "Confirm it's you" window and its `Confirmed` token |
+| `flow` | `AccountCenter`'s actions, the session, the one-use "Confirm it's you" confirmations (within ten minutes) and their `Confirmed` token |
+| `flow/approval` | A new device waiting for a trusted one (ten minutes on its own clock), the trusted side (list, refuse, let in), and the first-sync choice (combine, this computer's, the account's) |
 | `dev` | An in-memory stand-in for the Engine with throwaway accounts (debug and test builds only) |
 | `fake` | A fake `DeviceApi` (debug and test builds only) |
 

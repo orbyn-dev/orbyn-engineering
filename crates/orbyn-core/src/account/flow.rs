@@ -6,18 +6,21 @@
 use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
-    AccountApprovalRequest, AccountApprovalState, AccountApprovalView, AccountConnectState,
-    AccountConnectSummary, AccountDevice, AccountReason, AccountSessionView, AccountSignInOutcome,
-    AccountSyncKind, AccountSyncView, AccountView,
+    AccountConnectState, AccountConnectSummary, AccountDevice, AccountReason, AccountSessionView,
+    AccountSignInOutcome, AccountSyncKind, AccountSyncView, AccountView,
 };
 
-use super::api::{ApprovalStatus, Backend, Password, SessionInfo, SignInOutcome, refusal};
+use super::api::{Backend, Password, SessionInfo, SignInOutcome, refusal};
 use super::codes::{normalize_email_code, normalize_invite};
 use super::device_api::DeviceError;
 use super::status::{PauseReason, SignOutReason, SyncState};
 use super::sync::{SyncHandle, SyncTiming};
 use super::{AccountCenter, AccountGate, FirstSync, settings_record};
+
+mod approval;
 use crate::error::{CoreError, Result};
+pub use approval::APPROVAL_LIFETIME;
+use approval::{Approval, Connect};
 
 /// How long a typed password counts for the sensitive actions.
 pub const CONFIRM_WINDOW: Duration = Duration::from_secs(10 * 60);
@@ -32,6 +35,9 @@ pub enum ConfirmFor {
     SignOutEverywhere,
     /// Let the new device with this request id sign in.
     ApproveDevice(String),
+    /// Join this computer's settings to the account's by this choice (never `Combine`, which
+    /// needs no password).
+    ConnectSettings(FirstSync),
 }
 
 /// Proof that the password was typed again, in the last ten minutes, for this one action.
@@ -47,27 +53,6 @@ pub struct Confirmed {
 pub(super) struct Grant {
     action: ConfirmFor,
     at: Instant,
-}
-
-/// How long a request to sign in waits for a trusted device, counted on this computer's clock.
-pub const APPROVAL_LIFETIME: Duration = Duration::from_secs(10 * 60);
-
-/// This computer's own request to sign in, while a trusted device decides.
-pub(super) struct Approval {
-    request_id: String,
-    digits: String,
-    asked: Instant,
-    /// Set once the request has an answer; a request that is waiting has none.
-    answer: Option<AccountApprovalState>,
-}
-
-/// Whether this computer's settings are joined to the account's.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum Connect {
-    #[default]
-    Connected,
-    Needed,
-    Declined,
 }
 
 #[derive(Default)]
@@ -379,194 +364,6 @@ impl AccountCenter {
         Ok(())
     }
 
-    // A new device waiting for a trusted one
-
-    fn approval_life(&self) -> Duration {
-        *self
-            .approval_life
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn approval_view(&self, approval: &Approval) -> AccountApprovalView {
-        let digits = if approval.digits.len() == 6 {
-            format!("{} {}", &approval.digits[..3], &approval.digits[3..])
-        } else {
-            approval.digits.clone()
-        };
-        let left = self
-            .approval_life()
-            .saturating_sub(approval.asked.elapsed());
-        AccountApprovalView {
-            state: approval.answer.unwrap_or(AccountApprovalState::Waiting),
-            digits,
-            expires_in_secs: if approval.answer.is_none() {
-                left.as_secs()
-            } else {
-                0
-            },
-        }
-    }
-
-    /// Asks how this computer's request stands. A trusted device's answer ends it; nobody
-    /// answering for ten minutes, on this computer's clock, ends it too. Allowed signs in.
-    pub async fn poll_approval(&self) -> Result<Option<AccountApprovalView>> {
-        let backend = self.backend()?.clone();
-        let (id, expired) = {
-            let inner = self.inner.lock().await;
-            let Some(approval) = &inner.approval else {
-                return Ok(None);
-            };
-            if approval.answer.is_some() {
-                return Ok(Some(self.approval_view(approval)));
-            }
-            (
-                approval.request_id.clone(),
-                approval.asked.elapsed() >= self.approval_life(),
-            )
-        };
-        if expired {
-            let _ = backend.account.cancel_approval(&id).await;
-            return Ok(self
-                .close_approval(&id, AccountApprovalState::TimedOut)
-                .await);
-        }
-        match backend.account.approval_status(&id).await {
-            Ok(ApprovalStatus::Waiting) => {}
-            Ok(ApprovalStatus::Denied) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
-            }
-            Ok(ApprovalStatus::CodesDiffer) => {
-                return Ok(self
-                    .close_approval(&id, AccountApprovalState::CodesDiffer)
-                    .await);
-            }
-            Ok(ApprovalStatus::Approved(session)) => {
-                let mut shown = {
-                    let mut inner = self.inner.lock().await;
-                    match inner.approval.as_mut() {
-                        Some(approval) if approval.request_id == id => {
-                            approval.answer = Some(AccountApprovalState::Approved);
-                            self.approval_view(approval)
-                        }
-                        _ => return Ok(None),
-                    }
-                };
-                self.established(session, true).await?;
-                shown.state = AccountApprovalState::Approved;
-                return Ok(Some(shown));
-            }
-            Err(error) => return Err(refusal(&error)),
-        }
-        Ok(self
-            .inner
-            .lock()
-            .await
-            .approval
-            .as_ref()
-            .map(|approval| self.approval_view(approval)))
-    }
-
-    /// The request ended without signing in: this computer is signed out, and the screen
-    /// keeps saying why until the person leaves it.
-    async fn close_approval(
-        &self,
-        id: &str,
-        state: AccountApprovalState,
-    ) -> Option<AccountApprovalView> {
-        let shown = {
-            let mut inner = self.inner.lock().await;
-            let approval = inner.approval.as_mut().filter(|a| a.request_id == id)?;
-            approval.answer = Some(state);
-            self.approval_view(approval)
-        };
-        self.status
-            .update(|s| s.state = SyncState::SignedOut { reason: None });
-        Some(shown)
-    }
-
-    // On a trusted device
-
-    /// The new devices waiting for this one to let them in.
-    pub async fn approval_requests(&self) -> Result<Vec<AccountApprovalRequest>> {
-        let backend = self.backend()?;
-        if self.inner.lock().await.session.is_none() {
-            return Err(CoreError::ReauthRequired);
-        }
-        let list = backend.account.approval_requests().await;
-        let list = self.guard(list).await?;
-        Ok(list
-            .into_iter()
-            .map(|request| AccountApprovalRequest {
-                id: request.id,
-                device_name: request.device_name,
-                app: request.app,
-                near: request.near,
-                asked_at: request.asked_at,
-                digits: if request.digits.len() == 6 {
-                    format!("{} {}", &request.digits[..3], &request.digits[3..])
-                } else {
-                    request.digits
-                },
-                expires_in_secs: request.expires_in_secs,
-            })
-            .collect())
-    }
-
-    /// Lets the new device in. Needs a confirmation for exactly this request.
-    pub async fn approve(&self, confirmed: Confirmed, id: &str) -> Result<()> {
-        if confirmed.action != ConfirmFor::ApproveDevice(id.to_owned()) {
-            return Err(CoreError::ReauthRequired);
-        }
-        let result = self.backend()?.account.approve(id).await;
-        self.guard(result).await
-    }
-
-    /// Refuses the new device. This only ever closes a request, so it needs no confirmation.
-    pub async fn deny(&self, id: &str, codes_differ: bool) -> Result<()> {
-        let backend = self.backend()?;
-        if self.inner.lock().await.session.is_none() {
-            return Err(CoreError::ReauthRequired);
-        }
-        let result = backend.account.deny(id, codes_differ).await;
-        self.guard(result).await
-    }
-
-    // Joining this computer's settings to the account's
-
-    /// Joins this computer's settings to the account's the way the person chose.
-    pub async fn connect(&self, first: FirstSync) -> Result<()> {
-        let backend = self.backend()?.clone();
-        let mut inner = self.inner.lock().await;
-        if inner.session.is_none() {
-            return Err(CoreError::ReauthRequired);
-        }
-        if inner.connect == Connect::Connected {
-            return Ok(());
-        }
-        inner.sync = Some(self.start_first_sync(backend.device, SyncTiming::default(), first)?);
-        inner.connect = Connect::Connected;
-        inner.summary_pending = true;
-        Ok(())
-    }
-
-    /// "Not now": the settings stay on this computer until the person connects them.
-    pub async fn connect_later(&self) -> Result<()> {
-        self.backend()?;
-        let mut inner = self.inner.lock().await;
-        if inner.session.is_some() && inner.connect == Connect::Needed {
-            inner.connect = Connect::Declined;
-        }
-        Ok(())
-    }
-
-    /// The person closed the summary of the first sync.
-    pub async fn connect_summary_seen(&self) -> Result<()> {
-        self.backend()?;
-        self.inner.lock().await.summary_pending = false;
-        Ok(())
-    }
-
     /// Signed in: keep what the session knows and start the settings worker. Signing in is
     /// not a confirmation: each sensitive action asks for the password on its own.
     ///
@@ -574,13 +371,30 @@ impl AccountCenter {
     /// before, sync waits until the person says how to join them. A new account has nothing to
     /// join, and a computer that joined before simply carries on.
     async fn established(&self, session: SessionInfo, ask: bool) -> Result<()> {
-        let backend = self.backend()?.clone();
-        let ask =
-            ask && !self.store.account_known(settings_record::ZONE)? && self.has_settings()?;
         let mut inner = self.inner.lock().await;
+        self.established_in(&mut inner, session, ask).await
+    }
+
+    async fn established_in(
+        &self,
+        inner: &mut Inner,
+        session: SessionInfo,
+        ask: bool,
+    ) -> Result<()> {
+        let backend = self.backend()?.clone();
+        let zone = settings_record::ZONE;
+        // This data folder joined another account before: that account's record and unsent
+        // changes must not follow the person into this one.
+        if self.store.account_known(zone)?
+            && self.store.account_owner(zone)?.as_deref() != Some(session.email.as_str())
+        {
+            self.store.account_reset(zone)?;
+        }
+        let ask = ask && !self.store.account_known(zone)? && self.has_settings()?;
         if let Some(old) = inner.sync.take() {
             old.stop().await;
         }
+        let email = session.email.clone();
         inner.session = Some(session);
         inner.second_factor = None;
         inner.approval = None;
@@ -592,6 +406,7 @@ impl AccountCenter {
         } else {
             inner.connect = Connect::Connected;
             inner.sync = Some(self.start_settings_sync(backend.device, SyncTiming::default())?);
+            self.store.account_claim(zone, &email)?;
         }
         Ok(())
     }

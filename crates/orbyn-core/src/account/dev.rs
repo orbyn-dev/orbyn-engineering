@@ -68,7 +68,7 @@ struct Mine {
 struct State {
     mine: Option<Mine>,
     /// Requests from other devices, waiting for this one (as a trusted device) to answer.
-    incoming: Vec<IncomingApproval>,
+    incoming: Vec<(IncomingApproval, Instant)>,
     /// What this device answered, newest last: the request id and whether it allowed it.
     decided: Vec<(String, Option<bool>)>,
     cancelled: Vec<String>,
@@ -85,6 +85,8 @@ pub struct DevAccount {
     state: Mutex<State>,
     /// How long a canned answer takes to arrive.
     auto_delay: Mutex<Duration>,
+    /// How long a request from another device waits for an answer: ten minutes, as the Engine's.
+    incoming_life: Mutex<Duration>,
     #[cfg(test)]
     zones: Arc<FakeDeviceApi>,
 }
@@ -110,18 +112,22 @@ pub fn handle() -> (Backend, Arc<DevAccount>) {
     let account = Arc::new(DevAccount {
         state: Mutex::new(State {
             accounts: accounts.into(),
-            incoming: vec![IncomingApproval {
-                id: "req-ipad".to_owned(),
-                device_name: "iPad".to_owned(),
-                app: "planner".to_owned(),
-                near: Some("Near Melbourne".to_owned()),
-                asked_at: "2026-11-11T09:40:00Z".to_owned(),
-                digits: "418207".to_owned(),
-                expires_in_secs: 540,
-            }],
+            incoming: vec![(
+                IncomingApproval {
+                    id: "req-ipad".to_owned(),
+                    device_name: "iPad".to_owned(),
+                    app: "planner".to_owned(),
+                    near: Some("Near Melbourne".to_owned()),
+                    asked_at: "2026-11-11T09:40:00Z".to_owned(),
+                    digits: "418207".to_owned(),
+                    expires_in_secs: 0,
+                },
+                Instant::now(),
+            )],
             ..State::default()
         }),
         auto_delay: Mutex::new(Duration::from_secs(3)),
+        incoming_life: Mutex::new(Duration::from_secs(10 * 60)),
         #[cfg(test)]
         zones: zones.clone(),
     });
@@ -163,6 +169,21 @@ fn device(
 }
 
 impl DevAccount {
+    /// Makes a request from another device last only this long.
+    #[cfg(test)]
+    pub fn set_incoming_life(&self, life: Duration) {
+        *self
+            .incoming_life
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = life;
+    }
+
+    /// The other device gave its request up.
+    #[cfg(test)]
+    pub fn cancel_incoming(&self, id: &str) {
+        self.lock().incoming.retain(|(request, _)| request.id != id);
+    }
+
     #[cfg(test)]
     pub fn zones(&self) -> Arc<FakeDeviceApi> {
         self.zones.clone()
@@ -187,6 +208,29 @@ impl DevAccount {
     #[cfg(test)]
     pub fn decided(&self) -> Vec<(String, Option<bool>)> {
         self.lock().decided.clone()
+    }
+
+    fn incoming_life(&self) -> Duration {
+        *self
+            .incoming_life
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A request is answered once, while it lasts: an expired, answered or given-up one is gone.
+    fn answer_incoming(&self, id: &str, decision: Option<bool>) -> Result<(), DeviceError> {
+        let life = self.incoming_life();
+        let mut state = self.lock();
+        let live = state
+            .incoming
+            .iter()
+            .any(|(request, asked)| request.id == id && asked.elapsed() < life);
+        if !live {
+            return Err(DeviceError::RequestGone);
+        }
+        state.incoming.retain(|(request, _)| request.id != id);
+        state.decided.push((id.to_owned(), decision));
+        Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -364,34 +408,27 @@ impl AccountApi for DevAccount {
 
     async fn approval_requests(&self) -> Result<Vec<IncomingApproval>, DeviceError> {
         self.email()?;
-        Ok(self.lock().incoming.clone())
+        let life = self.incoming_life();
+        Ok(self
+            .lock()
+            .incoming
+            .iter()
+            .filter(|(_, asked)| asked.elapsed() < life)
+            .map(|(request, asked)| IncomingApproval {
+                expires_in_secs: life.saturating_sub(asked.elapsed()).as_secs(),
+                ..request.clone()
+            })
+            .collect())
     }
 
     async fn approve(&self, request_id: &str) -> Result<(), DeviceError> {
         self.email()?;
-        let mut state = self.lock();
-        let before = state.incoming.len();
-        state.incoming.retain(|request| request.id != request_id);
-        if state.incoming.len() == before {
-            return Err(DeviceError::InvalidCode);
-        }
-        state.decided.push((request_id.to_owned(), Some(true)));
-        Ok(())
+        self.answer_incoming(request_id, Some(true))
     }
 
     async fn deny(&self, request_id: &str, codes_differ: bool) -> Result<(), DeviceError> {
         self.email()?;
-        let mut state = self.lock();
-        let before = state.incoming.len();
-        state.incoming.retain(|request| request.id != request_id);
-        if state.incoming.len() == before {
-            return Err(DeviceError::InvalidCode);
-        }
-        state.decided.push((
-            request_id.to_owned(),
-            if codes_differ { Some(false) } else { None },
-        ));
-        Ok(())
+        self.answer_incoming(request_id, if codes_differ { Some(false) } else { None })
     }
 
     async fn verify_password(&self, password: &Password) -> Result<(), DeviceError> {

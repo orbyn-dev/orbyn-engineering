@@ -26,6 +26,18 @@ fn pref(key: &str, value: serde_json::Value) -> (String, serde_json::Value) {
     (name, value)
 }
 
+async fn confirmed(
+    a: &crate::account::AccountCenter,
+    first: FirstSync,
+) -> crate::account::Confirmed {
+    a.confirm(ConfirmFor::ConnectSettings(first), pw(PASSWORD))
+        .await
+        .unwrap();
+    a.require_confirmed(ConfirmFor::ConnectSettings(first))
+        .await
+        .unwrap()
+}
+
 fn code(error: CoreError) -> &'static str {
     error.code()
 }
@@ -245,7 +257,7 @@ async fn a_computer_with_settings_asks_once_before_anything_is_sent() {
     a.connect_later().await.unwrap();
     assert_eq!(a.view("macos").await.connect, AccountConnectState::Declined);
     assert_eq!(a.stand_in().zones().pulls(), 0);
-    a.connect(FirstSync::Combine).await.unwrap();
+    a.connect(FirstSync::Combine, None).await.unwrap();
     assert_eq!(
         a.view("macos").await.connect,
         AccountConnectState::Connected
@@ -282,7 +294,7 @@ async fn a_computer_that_joined_before_does_not_ask_again() {
     let core = with_settings(&dir, "again").await;
     let a = &core.account;
     a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
-    a.connect(FirstSync::Combine).await.unwrap();
+    a.connect(FirstSync::Combine, None).await.unwrap();
     until(&core, |c| {
         matches!(c.account.status().state, SyncState::Online)
     })
@@ -307,7 +319,7 @@ async fn combining_keeps_the_accounts_value_where_it_has_one() {
         vec![pref("preview_appearance", json!("light"))],
     );
     a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
-    a.connect(FirstSync::Combine).await.unwrap();
+    a.connect(FirstSync::Combine, None).await.unwrap();
     until(&core, |c| {
         matches!(c.account.status().state, SyncState::Online)
     })
@@ -327,7 +339,12 @@ async fn using_this_computers_settings_wins_everywhere() {
         vec![pref("preview_appearance", json!("light"))],
     );
     a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
-    a.connect(FirstSync::UseDevice).await.unwrap();
+    a.connect(
+        FirstSync::UseDevice,
+        Some(confirmed(a, FirstSync::UseDevice).await),
+    )
+    .await
+    .unwrap();
     until(&core, |c| {
         matches!(c.account.status().state, SyncState::Online)
     })
@@ -352,7 +369,12 @@ async fn using_the_accounts_settings_uploads_nothing_of_this_computers() {
         vec![pref("preview_appearance", json!("light"))],
     );
     a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
-    a.connect(FirstSync::UseAccount).await.unwrap();
+    a.connect(
+        FirstSync::UseAccount,
+        Some(confirmed(a, FirstSync::UseAccount).await),
+    )
+    .await
+    .unwrap();
     until(&core, |c| {
         matches!(c.account.status().state, SyncState::Online)
     })
@@ -360,4 +382,157 @@ async fn using_the_accounts_settings_uploads_nothing_of_this_computers() {
     assert_eq!(stored(&core, "preview_appearance"), json!("light"));
     let zone = a.stand_in().zones().zone(ZONE).unwrap();
     assert_eq!(zone.record.len(), 1, "only what the account already held");
+}
+
+#[tokio::test]
+async fn the_choices_that_overwrite_need_a_confirmation_for_that_choice() {
+    let dir = TempDir::new();
+    let core = with_settings(&dir, "guarded").await;
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    for first in [FirstSync::UseDevice, FirstSync::UseAccount] {
+        assert_eq!(
+            code(a.connect(first, None).await.unwrap_err()),
+            "reauth_required"
+        );
+    }
+    // A confirmation for the other choice, or for another action, is no good.
+    let token = confirmed(a, FirstSync::UseAccount).await;
+    assert_eq!(
+        code(
+            a.connect(FirstSync::UseDevice, Some(token))
+                .await
+                .unwrap_err()
+        ),
+        "reauth_required"
+    );
+    assert_eq!(a.view("macos").await.connect, AccountConnectState::Needed);
+    assert_eq!(a.stand_in().zones().pulls(), 0);
+    // Used up by the choice it was for.
+    let token = confirmed(a, FirstSync::UseDevice).await;
+    a.connect(FirstSync::UseDevice, Some(token)).await.unwrap();
+    assert_eq!(
+        a.view("macos").await.connect,
+        AccountConnectState::Connected
+    );
+}
+
+#[tokio::test]
+async fn a_second_account_on_the_same_data_folder_starts_from_nothing() {
+    let dir = TempDir::new();
+    let core = with_settings(&dir, "two-accounts").await;
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.connect(FirstSync::Combine, None).await.unwrap();
+    until(&core, |c| {
+        matches!(c.account.status().state, SyncState::Online)
+    })
+    .await;
+    assert_eq!(
+        core.store.account_owner(ZONE).unwrap().as_deref(),
+        Some("dev@example.com")
+    );
+    // A change the first account never received, kept when signing out.
+    a.stand_in().zones().set_online(false);
+    set(&core, "preview_appearance", json!("light"));
+    a.sign_out(false).await.unwrap();
+    assert!(core.store.account_outbox_len(ZONE).unwrap() > 0);
+    let pushes = a.stand_in().zones().pushes().len();
+    a.stand_in().zones().set_online(true);
+    a.sign_in("delete@example.com", pw(PASSWORD)).await.unwrap();
+    assert_eq!(
+        a.view("macos").await.connect,
+        AccountConnectState::Needed,
+        "a new account asks"
+    );
+    assert_eq!(
+        core.store.account_outbox_len(ZONE).unwrap(),
+        0,
+        "the first account\'s changes are gone"
+    );
+    assert!(core.store.account_record(ZONE).unwrap().is_empty());
+    assert_eq!(
+        a.stand_in().zones().pushes().len(),
+        pushes,
+        "nothing was sent to the second account"
+    );
+    a.connect(FirstSync::Combine, None).await.unwrap();
+    assert_eq!(
+        core.store.account_owner(ZONE).unwrap().as_deref(),
+        Some("delete@example.com")
+    );
+    // The person's own settings are untouched.
+    assert_eq!(stored(&core, "preview_appearance"), json!("light"));
+}
+
+#[tokio::test]
+async fn an_allowed_request_that_was_given_up_signs_nobody_in() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "race");
+    asking(&core, "late@example.com").await;
+    let session = crate::account::SessionInfo {
+        email: "late@example.com".into(),
+        device_id: "dev-this".into(),
+        device_name: "This computer".into(),
+    };
+    // The person cancelled just as the answer arrived.
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(
+        core.account
+            .finish_approval("req-mine", session)
+            .await
+            .unwrap(),
+        None
+    );
+    let view = core.account.view("macos").await;
+    assert!(view.session.is_none());
+    assert_eq!(
+        core.account.status().state,
+        SyncState::SignedOut { reason: None }
+    );
+}
+
+#[tokio::test]
+async fn a_request_that_expired_was_answered_or_was_given_up_cannot_be_answered() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "gone");
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    let ask = || ConfirmFor::ApproveDevice("req-ipad".into());
+    let token = || async {
+        a.confirm(ask(), pw(PASSWORD)).await.unwrap();
+        a.require_confirmed(ask()).await.unwrap()
+    };
+    // Answered once, it is gone.
+    a.deny("req-ipad", false).await.unwrap();
+    assert_eq!(
+        code(a.approve(token().await, "req-ipad").await.unwrap_err()),
+        "request_gone"
+    );
+    assert_eq!(
+        code(a.deny("req-ipad", false).await.unwrap_err()),
+        "request_gone"
+    );
+    // Given up by the other device.
+    let (_, stand_in) = (0, a.stand_in());
+    stand_in.cancel_incoming("req-ipad");
+    assert_eq!(
+        code(a.approve(token().await, "req-ipad").await.unwrap_err()),
+        "request_gone"
+    );
+    // Left for too long.
+    let dir = TempDir::new();
+    let core = dev(&dir, "gone-late");
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.stand_in().set_incoming_life(Duration::from_millis(20));
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert!(a.approval_requests().await.unwrap().is_empty());
+    a.confirm(ask(), pw(PASSWORD)).await.unwrap();
+    let late = a.require_confirmed(ask()).await.unwrap();
+    assert_eq!(
+        code(a.approve(late, "req-ipad").await.unwrap_err()),
+        "request_gone"
+    );
+    assert!(a.stand_in().decided().is_empty(), "nothing was approved");
 }

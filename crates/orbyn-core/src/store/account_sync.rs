@@ -315,6 +315,48 @@ impl Store {
         Ok(clock(&self.reader(), zone)?.is_some())
     }
 
+    /// The account the zone's local record belongs to, when one was recorded.
+    pub(crate) fn account_owner(&self, zone: &str) -> Result<Option<String>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT account FROM account_sync WHERE zone = ?1",
+                [zone],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Records which account the zone's local record belongs to.
+    pub(crate) fn account_claim(&self, zone: &str, account: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE account_sync SET account = ?2 WHERE zone = ?1",
+                params![zone, account],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Forgets the zone's local record, outbox and conflicts, as if it had never joined: the
+    /// settings themselves stay. A different account is signing in; the first one's unsent
+    /// changes must never go to it.
+    pub(crate) fn account_reset(&self, zone: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            for table in [
+                "account_sync",
+                "account_fields",
+                "account_outbox",
+                "account_conflicts",
+                "account_skipped",
+            ] {
+                tx.execute(&format!("DELETE FROM {table} WHERE zone = ?1"), [zone])?;
+            }
+            Ok(())
+        })
+    }
+
     /// How many settings the zone's local record holds.
     pub(crate) fn account_field_count(&self, zone: &str) -> Result<usize> {
         Ok(load_record(&self.reader(), zone)?.len())

@@ -240,13 +240,13 @@ impl AccountCenter {
         }))
     }
 
-    /// What the person has set so far, as first-sync fields: only person-level values of
-    /// the allowlisted keys, and their own keybindings.
     /// Whether this computer has settings of its own to join to the account's.
     pub(crate) fn has_settings(&self) -> Result<bool> {
         Ok(!self.seed()?.is_empty())
     }
 
+    /// What the person has set so far, as first-sync fields: only person-level values of
+    /// the allowlisted keys, and their own keybindings.
     fn seed(&self) -> Result<Vec<settings_record::Staged>> {
         let snapshot = self.store.settings_snapshot()?;
         let mut staged = Vec::new();

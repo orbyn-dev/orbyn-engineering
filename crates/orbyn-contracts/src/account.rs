@@ -194,12 +194,6 @@ pub struct AccountConnectSummary {
 }
 
 wire! {
-pub struct AccountConnectRequest {
-    pub policy: AccountConnectPolicy,
-}
-}
-
-wire! {
 pub struct AccountSignInResult {
     pub outcome: AccountSignInOutcome,
 }
@@ -290,6 +284,8 @@ pub enum AccountConfirmAction {
     SignOutEverywhere,
     /// Let a new device sign in; `device_id` is the request's id.
     ApproveDevice,
+    /// Join the settings by `use_device` or `use_account`; `policy` says which.
+    ConnectSettings,
 }
 }
 
@@ -301,4 +297,7 @@ pub struct AccountConfirm {
     pub action: AccountConfirmAction,
     #[serde(default)]
     pub device_id: Option<String>,
+    /// For `connect_settings`: the choice this confirmation is for.
+    #[serde(default)]
+    pub policy: Option<AccountConnectPolicy>,
 }

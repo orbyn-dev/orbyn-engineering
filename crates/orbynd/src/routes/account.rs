@@ -82,7 +82,11 @@ pub const OPEN: &[(&str, &str)] = &[
     ),
     (
         "POST /api/account/connect",
-        "chooses how this computer's own settings join the account's; the account is already signed in",
+        "joins the settings by combining them: the account's newer value wins and nothing is overwritten",
+    ),
+    (
+        "POST /api/account/sign-in/approval",
+        "asks how this computer's own request stands; allowed signs in, which the password already proved",
     ),
     (
         "POST /api/account/connect/later",
@@ -100,10 +104,6 @@ pub const READS: &[(&str, &str)] = &[
         "GET /api/account/approvals",
         "the new devices waiting for this one",
     ),
-    (
-        "GET /api/account/sign-in/approval",
-        "asks how this computer's own request stands",
-    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -119,7 +119,7 @@ fn open_routes() -> Router<AppState> {
         .route("/api/account/devices", get(devices))
         .route("/api/account/approvals", get(approvals))
         .route("/api/account/approvals/{id}/deny", post(deny_approval))
-        .route("/api/account/sign-in/approval", get(sign_in_approval))
+        .route("/api/account/sign-in/approval", post(sign_in_approval))
         .route("/api/account/connect", post(connect))
         .route("/api/account/connect/later", post(connect_later))
         .route("/api/account/connect/seen", post(connect_seen))
@@ -149,6 +149,20 @@ fn confirmed_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/account/approvals/{id}/approve",
             post(approve).route_layer(from_fn_with_state(state.clone(), confirmed_approval)),
+        )
+        .route(
+            "/api/account/connect/use-device",
+            post(connect_use_device).route_layer(from_fn_with_state(
+                (state.clone(), FirstSync::UseDevice),
+                confirmed_connect,
+            )),
+        )
+        .route(
+            "/api/account/connect/use-account",
+            post(connect_use_account).route_layer(from_fn_with_state(
+                (state.clone(), FirstSync::UseAccount),
+                confirmed_connect,
+            )),
         )
         .route(
             "/api/account/sign-out-everywhere",
@@ -203,6 +217,24 @@ async fn confirmed_approval(
         .core
         .account
         .confirmed_for(&ConfirmFor::ApproveDevice(id))
+    {
+        return Err(CoreError::ReauthRequired.into());
+    }
+    Ok(next.run(request).await)
+}
+
+async fn confirmed_connect(
+    State((state, first)): State<(AppState, FirstSync)>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiFailure> {
+    if !state.core.account.available() {
+        return Err(CoreError::AccountDisabled.into());
+    }
+    if !state
+        .core
+        .account
+        .confirmed_for(&ConfirmFor::ConnectSettings(first))
     {
         return Err(CoreError::ReauthRequired.into());
     }
@@ -325,6 +357,20 @@ async fn confirm(
         (wire::AccountConfirmAction::ApproveDevice, _) => {
             return Err(CoreError::Invalid("Say which request.".into()).into());
         }
+        (wire::AccountConfirmAction::ConnectSettings, _) => match body.policy {
+            Some(wire::AccountConnectPolicy::UseDevice) => {
+                ConfirmFor::ConnectSettings(FirstSync::UseDevice)
+            }
+            Some(wire::AccountConnectPolicy::UseAccount) => {
+                ConfirmFor::ConnectSettings(FirstSync::UseAccount)
+            }
+            _ => {
+                return Err(CoreError::Invalid(
+                    "Say which choice: use this computer's settings or the account's.".into(),
+                )
+                .into());
+            }
+        },
         (wire::AccountConfirmAction::SignOutEverywhere, _) => ConfirmFor::SignOutEverywhere,
     };
     state
@@ -389,17 +435,30 @@ async fn deny_approval(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn connect(
-    State(state): State<AppState>,
-    ApiJson(body): ApiJson<wire::AccountConnectRequest>,
-) -> ApiResult<StatusCode> {
-    let first = match body.policy {
-        wire::AccountConnectPolicy::Combine => FirstSync::Combine,
-        wire::AccountConnectPolicy::UseDevice => FirstSync::UseDevice,
-        wire::AccountConnectPolicy::UseAccount => FirstSync::UseAccount,
-    };
-    state.core.account.connect(first).await?;
+/// Combine: the account's newer value wins and nothing is overwritten, so no password.
+async fn connect(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    state.core.account.connect(FirstSync::Combine, None).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn connect_with(state: &AppState, first: FirstSync) -> ApiResult<StatusCode> {
+    let confirmed = state
+        .core
+        .account
+        .require_confirmed(ConfirmFor::ConnectSettings(first))
+        .await?;
+    state.core.account.connect(first, Some(confirmed)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// This computer's settings win on every device: needs the password for this choice.
+async fn connect_use_device(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    connect_with(&state, FirstSync::UseDevice).await
+}
+
+/// The account's settings replace this computer's: needs the password for this choice.
+async fn connect_use_account(State(state): State<AppState>) -> ApiResult<StatusCode> {
+    connect_with(&state, FirstSync::UseAccount).await
 }
 
 async fn connect_later(State(state): State<AppState>) -> ApiResult<StatusCode> {

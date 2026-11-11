@@ -373,7 +373,17 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
 10. A test that request-body logging stays off the account routes, so no password reaches a log.
 11. A runtime "changes account state" marker on these routes, so Autopilot's always-denied rule (Crew slice 4f) can
     refuse them by policy. Today governance sees only a generic command or network action.
-12. Bind the "Confirm it's you" confirmation to the caller (issue #435). Today a confirmation is tied to the action
+    Every state-changing account route must be refusable by that policy, so the list includes the new ones:
+    `approvals/:id/approve`, `approvals/:id/deny`, `sign-in/approval`, `connect`, `connect/use-device`,
+    `connect/use-account`, `connect/later` and `connect/seen`. A later "Refused on this computer" activity item for
+    them is out of scope.
+12. Contract for engine-v0.2.0, on the trusted side. The app cannot enforce these, so the Engine must: a request that
+    expired (ten minutes), was answered, or was given up by the new device is gone, and `approve(id)` and `deny(id)` on
+    it answer an error and never approve (the stand-in answers `RequestGone`); `approval_requests()` lists only live
+    requests with the time they have left. `deny(id)` carries no reason in the agreed trait, so "Codes don't match"
+    cannot reach the new device and a real mismatch will show there as "This sign-in wasn't allowed" until the Engine
+    adds one.
+13. Bind the "Confirm it's you" confirmation to the caller (issue #435). Today a confirmation is tied to the action
     and the device but not to who typed the password, so after the person confirms, any holder of the service token can
     run that exact action first, and an abandoned prompt leaves the confirmation live for ten minutes because there is no
     cancel route. The fix is a one-time nonce that `/confirm` returns and the action request sends back, plus a cancel
