@@ -155,6 +155,8 @@ impl Guard {
         {
             return Err(refused());
         }
+        #[cfg(not(unix))]
+        let _ = real;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

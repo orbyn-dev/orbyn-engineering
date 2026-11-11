@@ -160,11 +160,18 @@ async fn a_missing_worktree_is_listed_read_only_and_cannot_be_browsed() {
         ],
     );
     run_git(&root, &["worktree", "lock", &locked.to_string_lossy()]);
+    // Gone before anything lists it: a status read running in a worktree would hold the
+    // folder open on Windows.
+    let gone_id = worktree_id(&plain(&gone));
+    std::fs::remove_dir_all(&gone).unwrap();
     let listed = core
         .explorer_worktrees(&project.id, None, false)
         .await
         .unwrap();
     let id_of = |name: &str| {
+        if name == "gone" {
+            return gone_id.clone();
+        }
         listed
             .worktrees
             .iter()
@@ -173,7 +180,12 @@ async fn a_missing_worktree_is_listed_read_only_and_cannot_be_browsed() {
             .id
             .clone()
     };
-    std::fs::remove_dir_all(&gone).unwrap();
+    assert!(
+        listed
+            .worktrees
+            .iter()
+            .any(|w| w.id == gone_id && w.read_only_reason == Some(ExplorerReadOnlyReason::Missing))
+    );
     assert!(matches!(
         core.explorer_tree(&project.id, &id_of("gone"), "", "", false)
             .await,
