@@ -7,7 +7,6 @@ import type { BatchData } from "./model";
 /** Many Low risk changes reviewed together. A batch never holds a Medium or High change. */
 export function BatchReview({ data, onLooksGood }: { data: BatchData; onLooksGood?(ticked: number): void | Promise<void> }) {
   const [off, setOff] = useState<ReadonlySet<string>>(new Set());
-  const shown = data.rows.length;
   const ticked = data.total - off.size;
   const toggle = (title: string) =>
     setOff((current) => {
@@ -49,7 +48,6 @@ export function BatchReview({ data, onLooksGood }: { data: BatchData; onLooksGoo
             ))}
           </ul>
         </section>
-        <p className="crew-count-note">{`${shown} of ${data.total} shown`}</p>
       </div>
     </>
   );

@@ -112,7 +112,7 @@ function RevertDialog({ item, actions, onClose }: { item: MergeItem; actions: It
     >
       <p>Crew opens a revert task, verifies it, and merges it through the queue. Main isn’t changed until the revert passes its checks on the combined state.</p>
       <Box>
-        <Facts rows={[["Reverts", item.revert.commit], ["Later merges on top", item.revert.later], ["Time", item.revert.spent]]} />
+        <Facts rows={[["Reverts", item.revert.commit], ["Later merges on top", item.revert.later], ["Cost", item.revert.spent]]} />
       </Box>
       <label className="crew-field" htmlFor={field}>
         <span>
@@ -125,7 +125,7 @@ function RevertDialog({ item, actions, onClose }: { item: MergeItem; actions: It
 }
 
 /** One merge opened: the sentence, the diff, the claims with their checks, what was not verified. */
-export function ReviewItem({ item, initialDialog = null, actions = {}, onBack }: { item: MergeItem; initialDialog?: Open; actions?: ItemActions; onBack?(): void }) {
+export function ReviewItem({ item, initialDialog = null, actions = {} }: { item: MergeItem; initialDialog?: Open; actions?: ItemActions }) {
   const [open, setOpen] = useState<Open>(initialDialog);
   return (
     <>
@@ -143,7 +143,7 @@ export function ReviewItem({ item, initialDialog = null, actions = {}, onBack }:
                 rows={[
                   ["Built by", item.builtBy],
                   ["Merged", item.mergedAt],
-                  ["Time", item.spent],
+                  ["Cost", item.spent],
                   ["Review by", item.reviewBy],
                 ]}
               />
@@ -199,11 +199,6 @@ export function ReviewItem({ item, initialDialog = null, actions = {}, onBack }:
             <Button small onClick={() => setOpen("revert")}>
               Revert
             </Button>
-            {onBack ? (
-              <Button small tone="quiet" onClick={onBack}>
-                Back to the queue
-              </Button>
-            ) : null}
           </div>
         </div>
       </div>
@@ -228,7 +223,7 @@ export function ReviewItemScreen({ item, initialDialog, reviewCount, onBack }: {
         </>
       }
     >
-      <ReviewItem item={item} initialDialog={initialDialog} onBack={onBack} />
+      <ReviewItem item={item} initialDialog={initialDialog} />
     </CrewFrame>
   );
 }

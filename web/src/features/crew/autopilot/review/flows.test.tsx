@@ -182,7 +182,7 @@ describe("keyboard and roles", () => {
     await userEvent.click(screen.getByRole("button", { name: "Use next in the auth redirect" }));
     expect(window.location.hash).toBe("#/preview/crew/review-item");
     await act(async () => {});
-    await userEvent.click(await screen.findByRole("button", { name: "Back to the queue" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review queue" }));
     expect(window.location.hash).toBe("#/preview/crew/review-queue");
   });
 });
