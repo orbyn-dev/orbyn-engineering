@@ -6,15 +6,18 @@
 //! for a route that is not there, and the core's own functions check the flag again. `routes/crew_tests.rs` walks the whole
 //! route table, so a `/api/crew` route registered without the gate fails there.
 //!
-//! **Writes only through the core's guards.** The only routes that change anything are in [`CHANGES`], each with the guard it
-//! relies on. None merges, pushes, approves a request or runs a command: a revert is `crew_answer_review`'s (made and checked in a
-//! scratch checkout, refused when a later merge needs it, never on a checked-out branch, nothing pushed). The repository and branch
-//! come from the stored merge, never from the request, and the request must name the merge commit it was shown. Writes are
-//! refused for a remote viewer, as the account's are. The Preview flag is never settable from here.
+//! **Writes only through the core's guards.** The only routes that change anything are in `orbyn_core::crew::changes::STATE_CHANGING`
+//! (the marker Autopilot's N1 refuses by path), each with its guard in [`GUARDS`]. No route takes a command from the client or runs
+//! one, and no route pushes or merges. A revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
+//! merge, a commit the crew did not write) in a scratch checkout under the data folder, which is always removed, and then moves the
+//! local branch by compare-and-swap; it is refused when a later merge needs the merge, when the branch is checked out anywhere or
+//! no longer holds the merge, and nothing reaches a remote. The repository and branch come from the stored merge, never from the
+//! request, and the request must name the whole merge commit it was shown. Writes are refused for a remote viewer, as the account's
+//! are. The Preview flag is never settable from here.
 //!
-//! Autopilot's own always-denied rule for a state-changing route (N1) covers the account only, so an agent holding the service
-//! token could call these routes. The core has no confirmation nonce for Crew to bind them to (the account's is its own); see
-//! `docs/crew.md`.
+//! The same marker makes Autopilot refuse an agent's request to any of these paths (N1), so a worker cannot answer for the person.
+//! There is no confirmation nonce for Crew yet (the account's is its own): a follow-up in #486. Until #441 (workers can read the
+//! service token and the data folder) is fixed, the Preview flag stays for development only.
 
 use axum::Json;
 use axum::Router;
@@ -30,27 +33,10 @@ use orbyn_core::util::unix_now;
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, QueryMap};
 
-/// Reads under `/api/crew`: they change nothing.
+/// The guard of each state-changing route, as `(method, path, guard)`. The paths are `orbyn_core::crew::changes::STATE_CHANGING`
+/// with `{id}` for the task; the route-table test checks the two agree and that every route is listed there or in `READS`.
 #[cfg(test)]
-pub const READS: &[(&str, &str)] = &[
-    ("GET", "/api/crew/preview"),
-    ("GET", "/api/crew/autopilot"),
-    ("GET", "/api/crew/autopilot/guards"),
-    ("GET", "/api/crew/autopilot/risk/{task_id}"),
-    ("GET", "/api/crew/autopilot/review"),
-    ("GET", "/api/crew/autopilot/review/{task_id}/revert-check"),
-    ("GET", "/api/crew/autopilot/merge-queue"),
-    ("GET", "/api/crew/autopilot/watch"),
-    ("GET", "/api/crew/autopilot/digest"),
-    ("GET", "/api/crew/approvals"),
-    ("GET", "/api/crew/stops"),
-    ("GET", "/api/crew/trust"),
-];
-
-/// Routes that change state, as `(method, path, guard)`: the guard is what stands between the request and the change. A route
-/// is listed here or in [`READS`], and the route-table test refuses any other under `/api/crew`.
-#[cfg(test)]
-pub const CHANGES: &[(&str, &str, &str)] = &[
+pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "PUT",
         "/api/crew/autopilot/mode",
@@ -63,18 +49,18 @@ pub const CHANGES: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
-        "/api/crew/autopilot/review/{task_id}/looks-good",
-        "core crew_answer_review: the stored merge, the commit the person saw; local only",
+        "/api/crew/autopilot/review/{id}/looks-good",
+        "core crew_answer_review: the stored merge, the whole commit the person saw, one answer at a time; local only",
     ),
     (
         "POST",
-        "/api/crew/autopilot/review/{task_id}/comment",
-        "core crew_answer_review: the stored merge, the commit the person saw, 1 to 2000 characters, redacted; local only",
+        "/api/crew/autopilot/review/{id}/comment",
+        "core crew_answer_review: the stored merge, the whole commit the person saw, 1 to 2000 characters, redacted; local only",
     ),
     (
         "POST",
-        "/api/crew/autopilot/review/{task_id}/revert",
-        "core crew_answer_review revert: scratch checkout, repository checks, later merges, branch not checked out, compare-and-swap, nothing pushed; local only",
+        "/api/crew/autopilot/review/{id}/revert",
+        "core crew_answer_review revert: scratch checkout removed after, the repository's own checks, later merges, branch held and not checked out, compare-and-swap, nothing pushed; local only",
     ),
 ];
 
@@ -109,10 +95,11 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
         .merge(writes)
-        .route_layer(from_fn_with_state(state, preview_gate))
+        .layer(from_fn_with_state(state, preview_gate))
 }
 
-/// With the flag off the route is not there: the same answer as any other path nothing serves.
+/// With the flag off the route is not there: the same answer as any other path nothing serves, for every method (a wrong one
+/// included, which is why this is a `layer` and not a `route_layer`).
 async fn preview_gate(
     State(state): State<AppState>,
     request: Request,

@@ -13,11 +13,12 @@ use orbyn_core::{Core, CoreConfig};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use super::crew::{CHANGES, READS};
+use super::crew::GUARDS;
 use super::router;
 use super::tests::registered;
 use crate::http::AppState;
 use crate::http::access::Access;
+use orbyn_core::crew::changes::{READS, STATE_CHANGING, changes_crew_state};
 
 struct Served {
     port: u16,
@@ -95,6 +96,7 @@ impl Drop for Served {
 
 fn concrete(path: &str) -> String {
     path.replace("{task_id}", "task-1")
+        .replace("{id}", "task-1")
 }
 
 /// A task with a stored brief and key, and the text of one of the key's checks.
@@ -184,34 +186,44 @@ async fn with_the_flag_off_every_crew_route_is_not_found() {
 }
 
 #[tokio::test]
-async fn the_route_table_lists_every_crew_route_once_as_a_read_or_a_guarded_change() {
+async fn the_route_table_agrees_with_the_core_marker_and_every_change_names_its_guard() {
     let app = serve("table", true, false).await;
-    let found: BTreeSet<(String, String)> = app.crew_routes().into_iter().collect();
-    let mut listed: BTreeSet<(String, String)> = BTreeSet::new();
-    for (method, path) in READS {
-        assert!(
-            listed.insert(((*method).to_owned(), (*path).to_owned())),
-            "a route is listed once"
-        );
-    }
-    for (method, path, guard) in CHANGES {
-        assert!(guard.len() > 20, "a change route names its guard");
-        assert!(guard.contains("local only"), "a change route is local only");
-        assert!(
-            listed.insert(((*method).to_owned(), (*path).to_owned())),
-            "a route is listed once"
-        );
-    }
+    let found: BTreeSet<(String, String)> = app
+        .crew_routes()
+        .into_iter()
+        .map(|(method, path)| (method, path.replace("{task_id}", "{id}")))
+        .collect();
+    let owned = |list: &[(&str, &str)]| -> BTreeSet<(String, String)> {
+        list.iter()
+            .map(|(m, p)| ((*m).to_owned(), (*p).to_owned()))
+            .collect()
+    };
+    let (reads, changes) = (owned(READS), owned(STATE_CHANGING));
+    assert!(reads.is_disjoint(&changes), "a route is a read or a change");
+    let listed: BTreeSet<_> = reads.union(&changes).cloned().collect();
     assert_eq!(
         found, listed,
-        "every Crew route is a listed read or a guarded change"
+        "every Crew route is a read or a change the core marks, and every marked route exists"
     );
-    // No read route answers to a method that changes state.
-    for (method, _) in &found {
-        assert!(matches!(method.as_str(), "GET" | "POST" | "PUT"));
+    // The marker the core refuses by path agrees with the methods: nothing but a GET is a read.
+    for (method, path) in &found {
+        let marked = changes_crew_state(&path.replace("{id}", "task-1"));
+        assert_eq!(
+            marked,
+            method != "GET",
+            "{method} is marked as the core marks it"
+        );
     }
-    let writes: Vec<_> = found.iter().filter(|(m, _)| m != "GET").collect();
-    assert_eq!(writes.len(), CHANGES.len());
+    // Every change names a guard, and every guard is for a marked change.
+    let guarded: BTreeSet<(String, String)> = GUARDS
+        .iter()
+        .map(|(m, p, _)| ((*m).to_owned(), (*p).to_owned()))
+        .collect();
+    assert_eq!(guarded, changes, "each change has exactly one guard");
+    for (_, _, guard) in GUARDS {
+        assert!(guard.len() > 20, "a change route names its guard");
+        assert!(guard.contains("local only"), "a change route is local only");
+    }
 }
 
 #[tokio::test]
@@ -232,7 +244,7 @@ async fn every_crew_route_needs_the_credential() {
 #[tokio::test]
 async fn a_remote_viewer_reads_and_cannot_change_anything() {
     let app = serve("remote", true, true).await;
-    for (method, path, _) in CHANGES {
+    for (method, path) in STATE_CHANGING {
         let (status, body) = app.call(method, &concrete(path), Some(json!({}))).await;
         assert_eq!(status, 403, "a remote viewer cannot change state");
         assert_eq!(body["code"], "local_only");
@@ -459,11 +471,19 @@ async fn an_answer_to_a_merge_refuses_what_it_should_before_the_core_acts() {
     let stored = app.core.store.crew_merge(&task).unwrap().unwrap();
     assert!(!stored.comment.unwrap().contains(&secret_label));
     // A short prefix of the commit the person saw is enough; the answer is recorded.
-    let (status, body) = app
+    let (status, _) = app
         .call(
             "POST",
             &format!("{base}/looks-good"),
             Some(json!({ "merge_commit": &seen[..12] })),
+        )
+        .await;
+    assert_eq!(status, 400, "a prefix is not the commit the person saw");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{base}/looks-good"),
+            Some(json!({ "merge_commit": seen })),
         )
         .await;
     assert_eq!(

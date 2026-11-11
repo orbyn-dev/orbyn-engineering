@@ -4,6 +4,7 @@
 
 mod autopilot;
 mod bus;
+pub mod changes;
 mod checks;
 mod filters;
 mod gather;

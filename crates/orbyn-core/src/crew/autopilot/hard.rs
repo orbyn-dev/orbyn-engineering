@@ -12,6 +12,7 @@ use serde_json::json;
 
 use super::shell::{self, Simple, host_allowed, hosts, outside, outside_from, relative};
 use crate::account::changes::{account_paths_in, changes_account_state};
+use crate::crew::changes::crew_change;
 use crate::crew::checks::covers;
 use crate::crew::find_secret;
 
@@ -178,14 +179,17 @@ pub fn account_refused(kind: ActionKind, target: &str, paths: &[String]) -> bool
     }
 }
 
-/// Whether text names a state-changing account route.
+/// Whether text names a state-changing account route, or a Crew route that changes state: the person's answers are not an
+/// agent's to give (`crew::changes`).
 pub fn account_change(text: &str) -> bool {
     account_paths_in(text)
         .iter()
         .any(|path| changes_account_state(path))
+        || crew_change(text)
 }
 
-/// N1: a request to a state-changing account route, or to one this module does not know.
+/// N1: a request to a state-changing account route, or to one this module does not know, and likewise a state-changing Crew
+/// route.
 fn n1(ctx: &Ctx<'_>) -> bool {
     account_refused(ctx.kind, &ctx.target, ctx.paths)
 }

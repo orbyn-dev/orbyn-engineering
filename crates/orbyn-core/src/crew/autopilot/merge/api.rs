@@ -86,9 +86,9 @@ pub fn valid_id(id: &str) -> Result<()> {
     }
 }
 
-/// A commit as a client names it: 7 to 64 hex digits.
+/// A commit as a client names it: the whole object id, 40 or 64 hex digits, never a prefix.
 fn valid_commit(commit: &str) -> Result<()> {
-    if (7..=64).contains(&commit.len()) && commit.chars().all(|c| c.is_ascii_hexdigit()) {
+    if matches!(commit.len(), 40 | 64) && commit.chars().all(|c| c.is_ascii_hexdigit()) {
         Ok(())
     } else {
         Err(CoreError::Invalid("that commit is not valid".into()))
@@ -541,10 +541,7 @@ impl Core {
             .store
             .crew_merge(task_id)?
             .ok_or_else(|| CoreError::NotFound("merge".into()))?;
-        if !record
-            .merge_commit
-            .starts_with(&body.merge_commit.to_ascii_lowercase())
-        {
+        if !record.merge_commit.eq_ignore_ascii_case(&body.merge_commit) {
             return Err(CoreError::Invalid(
                 "This merge changed since it was shown. Reload the Review queue.".into(),
             ));
@@ -907,8 +904,9 @@ mod tests {
         for bad in ["", "../x", "a/b", "a b", ".hidden", "a\\b", &"x".repeat(97)] {
             assert!(valid_id(bad).is_err(), "{bad}");
         }
-        assert!(valid_commit("abc1234").is_ok());
-        assert!(valid_commit("abc").is_err());
+        assert!(valid_commit(&"a".repeat(40)).is_ok());
+        assert!(valid_commit(&"a".repeat(64)).is_ok());
+        assert!(valid_commit("abc1234").is_err(), "a prefix is not a commit");
         assert!(valid_commit("xyz1234").is_err());
     }
 

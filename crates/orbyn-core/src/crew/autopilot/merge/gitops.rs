@@ -23,6 +23,26 @@ const IDENTITY: [&str; 4] = [
 pub struct Scratch {
     pub dir: PathBuf,
     repo: PathBuf,
+    removed: bool,
+}
+
+/// A scratch checkout is removed on every path: `finish` on the normal ones, and this when the owner is dropped without it,
+/// as when a task panics or is cancelled. Removal here is synchronous and best effort.
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if self.removed {
+            return;
+        }
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&self.dir)
+            .current_dir(&self.repo)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 impl Scratch {
@@ -38,10 +58,12 @@ impl Scratch {
         Ok(Self {
             dir,
             repo: repo.to_owned(),
+            removed: false,
         })
     }
 
-    pub async fn finish(self) {
+    pub async fn finish(mut self) {
+        self.removed = true;
         let _ = git(
             &self.repo,
             &["worktree", "remove", "--force", &self.dir.to_string_lossy()],
@@ -70,6 +92,21 @@ pub async fn rev(repo: &Path, name: &str) -> Result<String> {
         )
         .await?,
     ))
+}
+
+/// Whether `commit` is part of `branch`'s history now.
+pub async fn contains(repo: &Path, branch: &str, commit: &str) -> Result<bool> {
+    let out = git_raw(
+        repo,
+        &[
+            "merge-base",
+            "--is-ancestor",
+            commit,
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .await?;
+    Ok(out.status.success())
 }
 
 /// The folder that has `branch` checked out, if any.
@@ -236,4 +273,63 @@ pub async fn repo_checks(repo: &Path, commit: &str) -> Result<Vec<String>> {
     let rules: Rules = serde_json::from_str(&text(&shown))
         .map_err(|e| CoreError::Invalid(format!("{file} is not valid: {e}")))?;
     Ok(rules.checks.into_iter().map(|c| c.run).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::run_git;
+
+    fn repo(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("orbyn-scratch-{name}-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        run_git(&dir, &["init", "-q"]);
+        run_git(
+            &dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "first",
+            ],
+        );
+        dir
+    }
+
+    #[tokio::test]
+    async fn a_scratch_checkout_is_removed_by_finish_and_when_its_owner_panics() {
+        let repo = repo("drop");
+        let root = repo.join("scratch-root");
+        let scratch = Scratch::at(&repo, &root, "HEAD").await.unwrap();
+        let dir = scratch.dir.clone();
+        assert!(dir.exists());
+        scratch.finish().await;
+        assert!(!dir.exists());
+        // An owner that panics, as a task that is torn down would.
+        let (r, root2) = (repo.clone(), root.clone());
+        let held = tokio::spawn(async move {
+            let scratch = Scratch::at(&r, &root2, "HEAD").await.unwrap();
+            let dir = scratch.dir.clone();
+            assert!(dir.exists());
+            let _ = std::fs::write(root2.join("held"), dir.to_string_lossy().as_bytes());
+            let _keep = &scratch;
+            panic!("the operation failed");
+        })
+        .await;
+        assert!(held.is_err(), "the task panicked");
+        let held_dir = std::fs::read_to_string(root.join("held")).unwrap();
+        assert!(!Path::new(&held_dir).exists(), "the panic left no checkout");
+        let listing = text(
+            &git(&repo, &["worktree", "list", "--porcelain"])
+                .await
+                .unwrap(),
+        );
+        assert!(!listing.contains(&held_dir), "git forgot it");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
 }

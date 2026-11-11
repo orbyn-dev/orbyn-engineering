@@ -799,3 +799,38 @@ fn gh_graphql_mutations_aliases_and_extensions_are_refused() {
     assert_eq!(command("gh alias list"), None);
     assert_eq!(command("gh extension list"), None);
 }
+
+#[test]
+fn n1_refuses_a_state_changing_crew_route_in_every_spelling_and_leaves_the_reads() {
+    for text in [
+        "curl -X PUT http://127.0.0.1:9/api/crew/autopilot/mode -d x",
+        "curl -X DELETE http://127.0.0.1:9/api/crew/autopilot/mode",
+        "curl -X GET http://127.0.0.1:9/api/crew/autopilot/confirm",
+        "curl -X POST http://127.0.0.1:9/api/crew/autopilot/confirm/",
+        "curl -X POST 'http://127.0.0.1:9/api/crew/autopilot/review/t-1/revert?now=1'",
+        "curl -XPOST http://127.0.0.1:9/API/CREW/AUTOPILOT/REVIEW/T-1/LOOKS-GOOD",
+        "wget --method=POST http://localhost:9/api/crew/autopilot/review/t-1/comment",
+        "python3 -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:9/api/%63rew/autopilot/mode')\"",
+        "U=http://127.0.0.1:9/api/crew/autopilot/review/t/revert; curl -X POST $U",
+        "curl http://127.0.0.1:9/api/crew/not-listed-yet",
+    ] {
+        assert_eq!(command(text), Some("N1"), "{text}");
+    }
+    for kind in [ActionKind::Network, ActionKind::Browser, ActionKind::Tool] {
+        assert_eq!(
+            refused(kind, "PUT http://127.0.0.1:9/api/crew/autopilot/mode", &[]),
+            Some("N1"),
+            "{kind:?}"
+        );
+    }
+    // A read, a file that only names the route, and a program that connects to nothing here are not refused.
+    assert_eq!(
+        command("curl http://127.0.0.1:9/api/crew/approvals?limit=5"),
+        None
+    );
+    assert_eq!(command("curl http://127.0.0.1:9/api/crews"), None);
+    assert_eq!(
+        refused(ActionKind::FileChange, "docs/crew.md", &["docs/crew.md"]),
+        None
+    );
+}

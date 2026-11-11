@@ -334,7 +334,7 @@ impl Store {
             .optional()?)
     }
 
-    /// The person's answer to a merge in the Review queue.
+    /// The person's answer to a merge in the Review queue. A merge that was reverted keeps that: the answer is refused.
     pub fn set_merge_review(
         &self,
         task_id: &str,
@@ -343,11 +343,21 @@ impl Store {
     ) -> Result<()> {
         self.commit(|tx, _| {
             let changed = tx.execute(
-                "UPDATE crew_merges SET review_state = ?2, comment = COALESCE(?3, comment), reviewed_unix = ?4 WHERE task_id = ?1",
+                "UPDATE crew_merges SET review_state = ?2, comment = COALESCE(?3, comment), reviewed_unix = ?4
+                 WHERE task_id = ?1 AND review_state != 'reverted'",
                 params![task_id, state, comment, unix_now()],
             )?;
             if changed == 0 {
-                return Err(CoreError::NotFound(format!("merge of task {task_id}")));
+                let exists: bool = tx.query_row(
+                    "SELECT COUNT(*) FROM crew_merges WHERE task_id = ?1",
+                    [task_id],
+                    |row| row.get::<_, i64>(0).map(|n| n > 0),
+                )?;
+                return Err(if exists {
+                    CoreError::Invalid("this merge was already reverted".into())
+                } else {
+                    CoreError::NotFound(format!("merge of task {task_id}"))
+                });
             }
             Ok(())
         })

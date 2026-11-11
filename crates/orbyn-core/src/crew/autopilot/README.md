@@ -24,6 +24,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
 | `merge/gitops` | The git behind them: scratch checkouts, merge, revert, compare-and-swap of the branch |
 
+The Crew marker is [`crew::changes`](../changes.rs): the Crew routes that change state, which N1 refuses by path too (any path under `/api/crew` that is not a listed read).
 The account marker is [`account::changes`](../../account/changes.rs): the list of account routes that change state,
 which N1 refuses by path. `orbynd`'s route-table test fails when a route under `/api/account` is in neither list.
 
