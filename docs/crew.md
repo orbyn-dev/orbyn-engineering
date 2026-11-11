@@ -518,6 +518,22 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
+flag (with it off every route answers 404 like a route that is not there, and `/api/info` omits `crew_preview`). The flag is read, never set,
+over HTTP. Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards` (the always-denied list, trip wire limits,
+review windows, risk limits, who answers for the lead and as a second key), `/autopilot/risk/{task}`, `/autopilot/review`,
+`/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
+`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires) and `/trust` (revert rates by area and engine).
+Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule, local only and listed with its guard
+in `routes/crew.rs`: `PUT /autopilot/mode`, `POST /autopilot/confirm`, and `POST /autopilot/review/{task}/{looks-good,comment,revert}`.
+The merge's repository and branch come from the stored merge, and the request names the merge commit it was shown. No route merges, pushes,
+approves a request or runs a command. Every free-text field and stored JSON value is redacted and has the task's key withheld on the way out.
+
+Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
+conflict forecast, bisect progress, production-linked target rules (4i), background crews (they write `.orbyn/crew.json`), the person's once-approval
+of a held command, the fix brief from a comment, and the digest's send time. The always-denied rule N1 covers account routes only, so the
+Crew change routes have no Autopilot refusal by path and no confirmation nonce yet.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with

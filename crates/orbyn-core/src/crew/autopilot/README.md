@@ -21,6 +21,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
 | `merge/review_queue` | The after-merge Review queue and the person's answers |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
+| `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
 | `merge/gitops` | The git behind them: scratch checkouts, merge, revert, compare-and-swap of the branch |
 
 The account marker is [`account::changes`](../../account/changes.rs): the list of account routes that change state,
