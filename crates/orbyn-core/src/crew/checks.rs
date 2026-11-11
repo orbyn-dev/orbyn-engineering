@@ -216,7 +216,18 @@ pub fn covers(pattern: &CrewPathPattern, path: &str) -> bool {
 pub(super) async fn changed(site: &Site<'_>) -> Result<Vec<String>, CoreError> {
     use crate::source_control::git::git;
     let base = site.base.unwrap_or("HEAD");
-    let tracked = git(site.worktree, &["diff", "--name-only", "-z", base]).await?;
+    let tracked = git(
+        site.worktree,
+        &[
+            "diff",
+            "--no-renames",
+            "--no-ext-diff",
+            "--name-only",
+            "-z",
+            base,
+        ],
+    )
+    .await?;
     let fresh = git(
         site.worktree,
         &["ls-files", "--others", "--exclude-standard", "-z"],
@@ -285,9 +296,18 @@ async fn diff_size(
     let counted = async {
         let files = changed(site).await?;
         let base = site.base.unwrap_or("HEAD");
-        let numstat =
-            crate::source_control::git::git(site.worktree, &["diff", "--numstat", "-z", base])
-                .await?;
+        let numstat = crate::source_control::git::git(
+            site.worktree,
+            &[
+                "diff",
+                "--no-renames",
+                "--no-ext-diff",
+                "--numstat",
+                "-z",
+                base,
+            ],
+        )
+        .await?;
         let text = String::from_utf8_lossy(&numstat).into_owned();
         let mut lines: u64 = text
             .split('\0')

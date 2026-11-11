@@ -261,4 +261,25 @@ impl Store {
             })
             .collect()
     }
+
+    /// Tasks a worker is on or that are being verified, for a restart to pick up.
+    pub fn crew_tasks_in_flight(&self) -> Result<Vec<(CrewTask, CrewRun)>> {
+        let ids: Vec<String> = {
+            let conn = self.reader();
+            let mut statement = conn.prepare(
+                "SELECT t.id FROM crew_tasks t JOIN crew_runs r ON r.task_id = t.id
+                 WHERE t.state IN ('running', 'verifying', 'changed_approach')",
+            )?;
+            statement
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let mut found = Vec::new();
+        for id in ids {
+            if let (Some(task), Some(run)) = (self.crew_task(&id)?, self.crew_run(&id)?) {
+                found.push((task, run));
+            }
+        }
+        Ok(found)
+    }
 }

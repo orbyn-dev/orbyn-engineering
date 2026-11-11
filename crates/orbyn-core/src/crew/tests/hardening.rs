@@ -197,3 +197,174 @@ async fn a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker
         );
     }
 }
+
+/// The refusal is an allow list driven from the tool registry, so a tool added later is
+/// refused to a worker until someone allows it.
+#[tokio::test]
+async fn every_orbyn_tool_off_the_allow_list_is_refused_to_a_worker() {
+    use crate::crew::workers::{ALLOWED, allowed};
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, _) = w.start(brief(json!({})), key()).await;
+    let id = started["task"].as_str().unwrap().to_owned();
+    let worker = crate::tools::mcp::McpBinding {
+        scope: crate::governance::approvals::RunScope {
+            run_id: "run-w".into(),
+            thread_id: w.worker(&id),
+            engine: "alpha".into(),
+            family: "alpha".into(),
+            write_scope: None,
+            mode: orbyn_contracts::PermissionMode::Supervised,
+            plan: false,
+        },
+        permission_prompt: false,
+        skills: Vec::new(),
+    };
+    let lead = crate::tools::mcp::McpBinding {
+        scope: crate::governance::approvals::RunScope {
+            thread_id: w.lead.clone(),
+            ..worker.scope.clone()
+        },
+        ..worker.clone()
+    };
+    let names: Vec<String> = crate::tools::mcp_tools::tool_specs()
+        .map(|spec| spec["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.len() > 40, "the registry is read");
+    for name in ALLOWED {
+        assert!(
+            names.iter().any(|n| n == name),
+            "{name} is no longer a tool"
+        );
+    }
+    let mut refused = 0;
+    for name in &names {
+        // The lead is never limited by this list.
+        assert!(w.core.refuse_for_crew_worker(&lead, name).is_ok(), "{name}");
+        let result = w.core.refuse_for_crew_worker(&worker, name);
+        assert_eq!(result.is_ok(), allowed(name), "{name}");
+        refused += usize::from(result.is_err());
+    }
+    assert!(refused > 30, "most tools are refused: {refused}");
+    // The tools named in the review are among them.
+    for name in [
+        "orbyn_pending_requests",
+        "orbyn_queue_list",
+        "orbyn_thread_configure",
+        "orbyn_thread_interrupt",
+        "orbyn_task_cancel",
+        "orbyn_environment_preferences_update",
+        "orbyn_project_update",
+        "orbyn_thread_organize",
+        "orbyn_thread_update",
+    ] {
+        assert!(
+            w.core.refuse_for_crew_worker(&worker, name).is_err(),
+            "{name}"
+        );
+    }
+}
+
+/// After the budget timer stops a task, its checks stop too: nothing more is run or written.
+#[tokio::test]
+async fn a_verification_stops_when_the_task_has_been_stopped() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    let id = answer["task"].as_str().unwrap().to_owned();
+    w.core.crew_budget_ended(&id);
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    let error = w
+        .core
+        .crew_verify_live(&w.task(&id), &run)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, orbyn_contracts::ErrorCode::RunEnded);
+    assert!(w.core.store.crew_evidence(&id).unwrap().is_empty());
+}
+
+#[test]
+fn a_verification_gets_what_is_left_of_the_budget() {
+    use crate::crew::verify::budget_left;
+    let start = "2026-11-12T09:00:00Z";
+    let at = crate::util::parse_time(start).unwrap();
+    assert_eq!(budget_left(start, 30, at + 60).as_secs(), 29 * 60);
+    assert_eq!(budget_left(start, 30, at + 30 * 60 + 5).as_secs(), 0);
+}
+
+/// A restart leaves tasks `running` or `verifying` with nothing driving them. The next start
+/// verifies the one that was being checked and stops the one whose worker is gone.
+#[tokio::test]
+async fn a_restart_picks_up_tasks_left_running_or_verifying() {
+    use crate::crew::tests::fake::stamper;
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let worker_thread = |title: &str| {
+        let core = w.core.clone();
+        let (project, title) = (
+            w.core.store.thread(&w.lead).unwrap().project_id,
+            title.to_owned(),
+        );
+        async move {
+            core.create_thread(orbyn_contracts::CreateThread {
+                project_id: Some(project),
+                engine: "alpha".into(),
+                model: None,
+                title: Some(title),
+                worktree: None,
+                skill_profile: None,
+                base_branch: None,
+                effort: None,
+                options: Default::default(),
+            })
+            .await
+            .unwrap()
+        }
+    };
+    let mut made = Vec::new();
+    for (n, state) in [(1, "verifying"), (2, "running")] {
+        let s = stamper();
+        let brief = s
+            .brief(&super::harness::brief(
+                json!({ "outcome": format!("Task {n}."), "files": [] }),
+            ))
+            .unwrap();
+        let key = s.answer_key(&key(), &brief.id).unwrap();
+        let task = w
+            .core
+            .store
+            .create_crew_task(&brief, &key, &format!("run-{n}"))
+            .unwrap();
+        w.core
+            .store
+            .add_crew_run(&task.id, &w.lead, &format!("worker-r{n}"))
+            .unwrap();
+        let thread = worker_thread(&format!("w{n}")).await;
+        let base = {
+            let out = std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&w.repo)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        };
+        w.core
+            .store
+            .set_crew_worker(&task.id, &thread.id, w.repo.to_str().unwrap(), Some(&base))
+            .unwrap();
+        for step in ["routed", "running"] {
+            w.core.store.move_crew_task(&task.id, step, None).unwrap();
+        }
+        if state == "verifying" {
+            w.core
+                .store
+                .begin_crew_verification(&task.id, "gone", None)
+                .unwrap();
+        }
+        made.push(task.id);
+    }
+    w.core.recover_crew_tasks().await;
+    w.until_state(&made[0], "passed").await;
+    w.until_state(&made[1], "stopped").await;
+    assert_eq!(
+        w.task(&made[1]).stop_reason.as_deref(),
+        Some("engine_error")
+    );
+}

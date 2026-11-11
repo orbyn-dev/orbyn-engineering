@@ -407,7 +407,7 @@ impl Core {
     }
 
     /// The worker's run was cancelled or failed: the task ends with it.
-    fn end_for_run(&self, task_id: &str, state: RunState) {
+    pub(super) fn end_for_run(&self, task_id: &str, state: RunState) {
         if state == RunState::Cancelled {
             if let Some(task) = self.step_crew_task(task_id, "cancelled", None) {
                 self.end_crew_task(

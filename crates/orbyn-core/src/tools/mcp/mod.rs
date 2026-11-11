@@ -94,6 +94,7 @@ impl McpService {
     pub fn bind_host(&self, core: &Arc<Core>) {
         let _ = self.host.set(Arc::downgrade(core));
         core.runs.bind_crew(core);
+        core.recover_crew_tasks_soon();
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {

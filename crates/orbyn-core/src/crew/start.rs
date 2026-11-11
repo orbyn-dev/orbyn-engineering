@@ -178,7 +178,7 @@ impl Core {
             .await
         {
             Ok(worker) => {
-                self.watch_crew_budget(&task.id, brief.budget.minutes);
+                self.watch_crew_budget(&task.id, super::recover::timer(brief.budget.minutes));
                 Ok(json!({
                 "task": task.id,
                 "run": task.run_id,
@@ -203,10 +203,10 @@ impl Core {
 
     /// Ends the task when its time budget runs out, even in the middle of a turn. The timer
     /// holds the core weakly, so it keeps nothing alive.
-    fn watch_crew_budget(self: &Arc<Self>, task_id: &str, minutes: u32) {
+    pub(super) fn watch_crew_budget(self: &Arc<Self>, task_id: &str, wait: std::time::Duration) {
         let (core, id) = (Arc::downgrade(self), task_id.to_owned());
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(u64::from(minutes) * 60)).await;
+            tokio::time::sleep(wait).await;
             if let Some(core) = core.upgrade() {
                 core.crew_budget_ended(&id);
             }

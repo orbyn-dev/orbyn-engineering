@@ -14,9 +14,10 @@ use orbyn_contracts::{
 };
 use sha2::{Digest, Sha256};
 
-use super::checks::{Ran, Site, changed, covers, run_check, tail};
+use super::checks::{Ran, Site, run_check, tail};
 use super::guard::{key_needles, redact, refuse_leak, refuse_secret, withhold};
 use super::leases::{core_author, internal, timestamp};
+use super::protect::protected_changes;
 use crate::app::Core;
 use crate::store::{CrewRun, CrewTask};
 
@@ -82,6 +83,13 @@ impl Judgement {
     }
 }
 
+/// What is left of a task's time budget: its start plus its minutes, less `now`.
+pub(super) fn budget_left(created_at: &str, minutes: u64, now: i64) -> std::time::Duration {
+    let start = crate::util::parse_time(created_at).unwrap_or(now);
+    let end = start.saturating_add(i64::try_from(minutes * 60).unwrap_or(i64::MAX));
+    std::time::Duration::from_secs(u64::try_from(end - now).unwrap_or(0))
+}
+
 fn short(text: &str) -> Result<CrewShortText, CrewError> {
     let cut: String = text.chars().take(1000).collect();
     let cut = if cut.trim().is_empty() {
@@ -131,7 +139,28 @@ impl Core {
             .worktree
             .as_deref()
             .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no checkout"))?;
-        self.judge(task, run, &key, Path::new(worktree)).await
+        self.judge(task, run, &key, Path::new(worktree), false)
+            .await
+    }
+
+    /// The verification of a task that is `verifying` now: it runs inside what is left of the
+    /// task's time budget, and stops as soon as the task is no longer `verifying`, such as when
+    /// the budget timer stopped it.
+    pub(super) async fn crew_verify_live(
+        &self,
+        task: &CrewTask,
+        run: &CrewRun,
+    ) -> Result<Judgement, CrewError> {
+        let key = self
+            .store
+            .crew_answer_key(&task.id)
+            .map_err(internal)?
+            .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no key"))?;
+        let worktree = run
+            .worktree
+            .as_deref()
+            .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no checkout"))?;
+        self.judge(task, run, &key, Path::new(worktree), true).await
     }
 
     async fn judge(
@@ -140,15 +169,23 @@ impl Core {
         run: &CrewRun,
         key: &AnswerKey,
         worktree: &Path,
+        live: bool,
     ) -> Result<Judgement, CrewError> {
         let minutes = self
             .store
             .crew_brief(&task.id)
             .map_err(internal)?
             .map_or(30, |brief| u64::from(brief.budget.minutes));
+        // A verification inside the task gets what is left of its budget; one the core runs
+        // again after the run has ended gets a fresh one.
+        let left = if live {
+            budget_left(&task.created_at, minutes, crate::util::unix_now())
+        } else {
+            std::time::Duration::from_secs(minutes * 60)
+        };
         let site = Site {
             worktree,
-            deadline: std::time::Instant::now() + std::time::Duration::from_secs(minutes * 60),
+            deadline: std::time::Instant::now() + left,
             base: run.base_commit.as_deref(),
         };
         let dirty = crate::source_control::git::git(worktree, &["status", "--porcelain"])
@@ -171,11 +208,10 @@ impl Core {
         };
         // N7, H9 and H11: if the worker changed a file the checks use, nothing is run. The
         // checks would be the worker's own. The reason does not name the file.
-        if let Ok(files) = changed(&site).await {
-            let touched: Vec<String> = files
-                .into_iter()
-                .filter(|f| key.protected_paths.iter().any(|p| covers(p, f)))
-                .collect();
+        if let (Some(base), false) = (run.base_commit.as_deref(), key.protected_paths.is_empty()) {
+            let touched = protected_changes(worktree, base, &key.protected_paths)
+                .await
+                .map_err(internal)?;
             if !touched.is_empty() {
                 verdict.failures.push(Failed {
                     id: "protected_paths".to_owned(),
@@ -190,6 +226,18 @@ impl Core {
             }
         }
         for check in &key.checks {
+            if live
+                && self
+                    .store
+                    .crew_task(&task.id)
+                    .map_err(internal)?
+                    .is_none_or(|t| t.state != "verifying")
+            {
+                return Err(CrewError::new(
+                    ErrorCode::RunEnded,
+                    "the task is no longer being verified",
+                ));
+            }
             let ran = run_check(check, &site).await;
             let mut evidence = Evidence {
                 v: 0,

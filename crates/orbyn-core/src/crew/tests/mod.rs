@@ -10,6 +10,7 @@ mod hardening;
 mod harness;
 mod lifecycle;
 mod overrides;
+mod protect;
 mod runs;
 mod scoring;
 mod stamp;

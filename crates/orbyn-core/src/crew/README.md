@@ -25,7 +25,9 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
-| `workers` | The Orbyn tools a Crew worker is refused: anything that makes a thread or schedule, and reading or writing other threads |
+| `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
+| `protect` | Compares the key's protected paths with the starting commit by reading both directly: a new, missing, changed or renamed file counts, whatever git is told to ignore |
+| `recover` | After a restart: verifies a task left `verifying`, stops one whose worker is gone, sets the budget timers again |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
 ## Rules to keep
@@ -43,7 +45,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   tools refuse once the run ends (H7); the core's own verification still adds Evidence and a Gate.
 - The checks run when the worker's turn has ended, never during it, so the worker cannot change files
   while they run. Before any check, a change to a file in the key's protected paths fails the attempt
-  with a reason that names no file (N7, H9, H11).
+  with a reason that names no file (N7, H9, H11). The files are compared directly, not through
+  `git status`, so `.gitignore`, `update-index` flags and `.git/config` cannot hide an edit.
 - The verifier is code. A worker is told why a check failed (redacted, with the key's text
   withheld, then proven free of both) and never the check, its id or any other part of the key (H1).
 - `failed` is never at rest: a failed verification goes through it to the state the loop guard
@@ -58,12 +61,15 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 
 - Known gap: Evidence keeps the output's hash and a 4000-character redacted excerpt, not the full log.
 - Evidence names HEAD as its commit; when the checkout had uncommitted changes, `does_not_prove` says so.
-- `budget.minutes` also ends a task in the middle of a turn, through a timer that holds the core weakly.
-  An overall deadline from the budget caps the checks too. Turn limits are #438.
+- `budget.minutes` ends a task even in the middle of a turn, through a timer that holds the core weakly and
+  is set again after a restart. A verification gets what is left of the budget and stops once the task has
+  been stopped. Turn limits are #438.
+- Windows: the leak test (`a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker`) is
+  Unix-only. On Windows a command's echo can differ in quotes and line endings, so the withholding needs its
+  own test there, and a check's deadline must kill every process the check started (the process owner does;
+  no Windows test shows it yet).
 - The worker runs in the lead's checkout, as `delegate` does. A writing worker's own worktree
   (docs/crew.md, "Isolation") is not created yet, so the diff checks see the lead's changes too.
-- `budget.turns` is not enforced (no turn count reaches the core); `budget.minutes` ends a task at
-  its next failed attempt with `stop_reason: budget`.
 - The check kinds `schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`, `manual`,
   `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan` and
   `licence_scan` report `skipped` and are listed as not verified.

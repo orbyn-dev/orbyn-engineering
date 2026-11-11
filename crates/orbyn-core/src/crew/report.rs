@@ -75,8 +75,10 @@ impl Core {
         else {
             return;
         };
-        match self.crew_verify(&task, &run).await {
+        match self.crew_verify_live(&task, &run).await {
             Ok(judged) => self.settle_crew_task(task_id, &judged),
+            // Stopped meanwhile, by the budget timer or a cancel: nothing more to decide.
+            Err(error) if error.code == ErrorCode::RunEnded => {}
             Err(error) => {
                 tracing::warn!(%error, "a crew task could not be verified");
                 self.crew_needs_person(task_id, "The checks could not be run.", true);
