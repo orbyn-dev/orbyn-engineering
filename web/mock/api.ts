@@ -115,7 +115,7 @@ export function createMockApi(options: MockOptions = {}) {
   let preferenceValues: Record<string, JsonValue> = {};
   let preferenceOverrides: Record<string, Record<string, JsonValue>> = {};
   const preferenceDefaults: Record<string, JsonValue> = { ...preferenceCatalog, default_thread_env_mode: "local", branch_name_prefix: "feat",
-    default_engine: "", default_model: "", default_effort: "", default_model_options: {}, fallback_model: "", disabled_engines: [],
+    default_engine: "", default_model: "", default_effort: "", default_model_options: {}, fallback_model: "", disabled_engines: ["cursor", "kimi"],
     auto_thread_titles: true, default_permission_mode: "supervised", response_streaming_mode: "paragraph", pull_request_merge_method: "squash",
     source_control_writing_style: { mode: "conventional_commits", custom_instructions: "", follow_templates: true } };
   const subscribers = new Map<string, Set<Subscriber>>();

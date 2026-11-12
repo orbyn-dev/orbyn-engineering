@@ -473,6 +473,7 @@ impl EngineManager {
         Ok(crate::agents::provider_list::list(
             &statuses,
             &crate::agents::provider_list::installed_apps(),
+            &crate::agents::provider_list::refused_programs(),
         ))
     }
 

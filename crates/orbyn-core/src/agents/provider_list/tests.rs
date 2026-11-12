@@ -3,7 +3,11 @@ use orbyn_contracts::{
 };
 use serde_json::json;
 
-use super::{apps_found, list};
+use super::{Refused, apps_found};
+
+fn list(statuses: &[EngineStatus], apps: &[&str]) -> orbyn_contracts::ProviderList {
+    super::list(statuses, apps, &[])
+}
 
 fn caps() -> EngineCapabilities {
     EngineCapabilities {
@@ -95,9 +99,10 @@ fn cline_is_not_verified_and_partly_planned() {
         cline.labels,
         [ProviderLabel::NotVerified, ProviderLabel::Planned]
     );
+    assert_eq!(cline.group, ProviderGroup::More);
     assert_eq!(
         cline.note.as_deref(),
-        Some("Starts over ACP. Its effort flag is not built.")
+        Some("cline · its effort flag is not built")
     );
 }
 
@@ -118,15 +123,79 @@ fn an_older_version_is_limited_support_and_a_broken_one_cannot_start() {
 }
 
 #[test]
-fn an_engine_that_is_not_found_does_not_appear() {
-    let mut gone = status("codex", "Codex", "native", true, None);
+fn an_engine_that_is_not_found_stays_listed_so_it_can_be_edited_or_removed() {
+    let mut gone = status("mine", "Mine", "acp", true, None);
     gone.installed = false;
-    assert!(
-        list(&[gone], &[])
-            .providers
-            .iter()
-            .all(|entry| entry.id != "codex")
+    let found = list(&[gone], &[]);
+    let mine = row(&found, "mine");
+    assert_eq!(mine.group, ProviderGroup::NotFound);
+    assert_eq!(mine.labels, [ProviderLabel::NotFound]);
+    assert!(mine.registered && mine.openable);
+}
+
+#[test]
+fn the_other_unverified_engines_read_as_their_program() {
+    let found = list(
+        &[
+            status("kimi", "Kimi Code", "acp", true, None),
+            status("deepseek", "DeepSeek", "acp", false, None),
+        ],
+        &[],
     );
+    assert_eq!(row(&found, "kimi").group, ProviderGroup::More);
+    assert_eq!(row(&found, "kimi").note.as_deref(), Some("kimi"));
+    let deepseek = row(&found, "deepseek");
+    assert_eq!(
+        deepseek.labels,
+        [ProviderLabel::Unmanaged, ProviderLabel::NotVerified]
+    );
+    assert_eq!(deepseek.note.as_deref(), Some("dsh"));
+}
+
+#[test]
+fn cursor_and_fx_have_no_detail_page_yet_and_the_others_do() {
+    let found = list(
+        &[
+            status("cursor", "Cursor", "acp", true, None),
+            status("kimi", "Kimi Code", "acp", true, None),
+            status("opencode", "OpenCode", "acp", true, None),
+        ],
+        &[],
+    );
+    assert!(!row(&found, "cursor").openable);
+    assert!(row(&found, "kimi").openable);
+    assert!(row(&found, "opencode").openable);
+    assert!(!row(&found, "pi").openable);
+}
+
+#[test]
+fn a_program_that_is_another_cli_is_a_card_that_says_so() {
+    let refused = [Refused {
+        id: "grok",
+        path: "/usr/local/bin/grok".into(),
+    }];
+    let found = super::list(&[], &[], &refused);
+    let grok = row(&found, "grok");
+    assert_eq!(grok.group, ProviderGroup::CantStart);
+    assert_eq!(grok.labels, [ProviderLabel::NotFound]);
+    assert!(!grok.registered && !grok.openable);
+    assert!(grok.note.as_deref().unwrap().starts_with(
+        "Found a program named grok at /usr/local/bin/grok, but it is not xAI’s Grok CLI. Orbyn does not use it."
+    ));
+    // A real Grok that was found wins.
+    let real = super::list(
+        &[status("grok", "Grok Build", "acp", true, None)],
+        &[],
+        &refused,
+    );
+    assert_eq!(
+        real.providers
+            .iter()
+            .filter(|entry| entry.id == "grok")
+            .count(),
+        1
+    );
+    assert!(row(&real, "grok").registered);
 }
 
 #[test]
@@ -148,7 +217,7 @@ fn an_installed_app_without_an_acp_server_cannot_start_and_a_found_program_wins(
             .count(),
         1
     );
-    assert_eq!(row(&both, "antigravity").group, ProviderGroup::Found);
+    assert_eq!(row(&both, "antigravity").group, ProviderGroup::More);
     assert!(
         list(&[], &[])
             .providers

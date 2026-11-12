@@ -28,7 +28,7 @@ it("returns typed model defaults and the same scoped override sources to the dra
   expect(read()).toEqual(expect.arrayContaining([
     expect.objectContaining({ key: "default_engine", value: "", default: "", source: "default" }),
     expect.objectContaining({ key: "default_model", value: "", default: "", source: "default" }),
-    expect.objectContaining({ key: "disabled_engines", value: [], default: [], source: "default" }),
+    expect.objectContaining({ key: "disabled_engines", value: ["cursor", "kimi"], default: ["cursor", "kimi"], source: "default" }),
   ]));
   const keys = ["default_engine", "default_model"];
   const query = api.handle("POST", "/api/settings/preferences/query", { scope: {}, keys }).body as ScopedPreferencesResult;

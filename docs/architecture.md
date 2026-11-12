@@ -1916,13 +1916,16 @@ until a run shows the mode it starts in, since its automatic mode writes without
 own login, and only the launch has been tested, with the fake agent under those names, except
 OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
 
-`GET /api/providers` is the grouped Providers list: In use, Found on this computer, Found but can't
-start, and Not built yet. Its labels are Not verified (a known ACP engine that has not run on a real
-install; today only OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask),
-Limited support (the signed manifest's `Unsupported` or `Graceful` version), Can't start (a `Broken`
-version, or an installed app such as Antigravity with no ACP server) and Planned (Pi, Muse Code,
-ZCode, and Cline's effort flag). Unmanaged and a `Broken` Can't start come from the same
-`ProviderFacts` the crew router's hard filters read, so the list and the router cannot disagree.
+`GET /api/providers` is the Providers list: every registered engine (a missing program stays listed, so an
+instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
+program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
+More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
+OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+`Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
+and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
+from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
+for are not verified on a real install.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as

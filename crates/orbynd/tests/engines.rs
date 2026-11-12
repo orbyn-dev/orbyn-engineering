@@ -485,6 +485,8 @@ async fn the_provider_list_labels_what_was_found_and_lists_what_is_not_built() {
     assert_eq!(row("fx")["group"], "found");
     assert_eq!(row("fx")["labels"], json!(["unmanaged", "not_verified"]));
     assert_eq!(row("kimi")["labels"], json!(["not_verified"]));
+    assert_eq!(row("kimi")["group"], "more");
+    assert_eq!(row("fx")["openable"], false);
     assert_eq!(row("pi")["group"], "planned");
     assert_eq!(row("pi")["registered"], false);
     assert_eq!(row("pi")["name"], "Pi");

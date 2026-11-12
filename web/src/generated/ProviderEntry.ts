@@ -23,6 +23,10 @@ labels: Array<ProviderLabel>,
  */
 note?: string, 
 /**
- * True when an engine of this id is registered, so its detail can open.
+ * True when an engine of this id is registered: it has a switch and, for an instance, Edit.
  */
-registered: boolean, };
+registered: boolean, 
+/**
+ * True when a detail page exists for it.
+ */
+openable: boolean, };

@@ -1,7 +1,8 @@
 //! The state facts of one provider, read from its status in one place. The router's hard
-//! filters (docs/crew.md, Router v0 step 1) and the Providers list both ask this type, so
-//! a provider cannot read "Ready" in Settings while the router refuses it, or the reverse.
-//! Nothing here starts a process or reads a file.
+//! filters (docs/crew.md, Router v0 step 1) and the Providers list both ask this type for
+//! not found, signed out, Can't start (a broken version) and Unmanaged. A sign-in that could
+//! not be confirmed has no label among the designed states, so the list shows none for it
+//! while the router still refuses. Nothing here starts a process or reads a file.
 
 use orbyn_contracts::{
     AuthState, CompatibilityStatus, EngineCapabilities, EngineStatus, ProviderLabel,
@@ -114,6 +115,9 @@ impl ProviderFacts {
     /// needs more than a status, such as Not verified, is added by the list.
     pub fn labels(&self) -> Vec<ProviderLabel> {
         let mut labels = Vec::new();
+        if !self.installed {
+            labels.push(ProviderLabel::NotFound);
+        }
         if self.installed && self.broken.is_some() {
             labels.push(ProviderLabel::CantStart);
         }

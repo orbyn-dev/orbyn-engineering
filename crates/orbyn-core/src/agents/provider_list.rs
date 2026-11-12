@@ -15,8 +15,14 @@ use super::provider_facts::ProviderFacts;
 /// OpenCode 2.2.5 ran real turns through `orbynd` (docs/architecture.md, engines).
 const SEEN_ON_REAL_INSTALL: &[&str] = &["opencode"];
 
+/// Engines whose detail page is not built yet: their rows carry no Open.
+const NO_DETAIL: &[&str] = &["cursor", "fx"];
+
+/// Known ACP engines with a frame of their own. The other unverified ones are listed together.
+const OWN_ROW: &[&str] = &["cursor", "fx"];
+
 /// What is not built of an engine that otherwise starts, by engine id.
-const PARTLY_NOT_BUILT: &[(&str, &str)] = &[("cline", "Its effort flag is not built.")];
+const PARTLY_NOT_BUILT: &[(&str, &str)] = &[("cline", "its effort flag is not built")];
 
 /// An engine Orbyn has no driver for. Shown so the gap is visible.
 struct Planned {
@@ -66,10 +72,14 @@ fn app_folders() -> Vec<PathBuf> {
             folders.push(PathBuf::from(home).join("Applications"));
         }
     }
-    if cfg!(windows)
-        && let Some(local) = std::env::var_os("LOCALAPPDATA")
-    {
-        folders.push(PathBuf::from(local).join("Programs"));
+    if cfg!(windows) {
+        // Per-user and machine-wide installs. These Windows paths are not verified on a real install.
+        for (variable, below) in [("LOCALAPPDATA", Some("Programs")), ("ProgramFiles", None)] {
+            if let Some(root) = std::env::var_os(variable) {
+                let root = PathBuf::from(root);
+                folders.push(below.map_or(root.clone(), |below| root.join(below)));
+            }
+        }
     }
     folders
 }
@@ -116,52 +126,101 @@ fn note(status: &EngineStatus, facts: &ProviderFacts, labels: &[ProviderLabel]) 
         return None;
     }
     let family = family(status);
-    let detail = if let Some((_, part)) = PARTLY_NOT_BUILT.iter().find(|(id, _)| *id == family) {
-        format!(" {part}")
-    } else if family == "fx" {
-        " Its Auto mode is described as writing without asking.".to_owned()
-    } else if labels.contains(&ProviderLabel::Unmanaged) {
-        " It cannot ask before it edits.".to_owned()
-    } else {
-        " Not verified on a real install.".to_owned()
-    };
-    Some(format!("Starts over ACP.{detail}"))
+    if OWN_ROW.contains(&family) {
+        return Some(if family == "fx" {
+            "Starts over ACP. Its Auto mode is described as writing without asking.".to_owned()
+        } else {
+            "Starts over ACP. Not verified on a real install.".to_owned()
+        });
+    }
+    // The rest read as their program, and what is not built of it.
+    let program = known_engine(family).map_or(family, |known| known.programs[0]);
+    Some(
+        match PARTLY_NOT_BUILT.iter().find(|(id, _)| *id == family) {
+            Some((_, part)) => format!("{program} · {part}"),
+            None => program.to_owned(),
+        },
+    )
 }
 
-fn entry_of(status: &EngineStatus) -> Option<ProviderEntry> {
+fn entry_of(status: &EngineStatus) -> ProviderEntry {
     let facts = ProviderFacts::of(status);
-    // An engine that is not found does not appear.
-    if !facts.installed() {
-        return None;
-    }
     let mut labels = facts.labels();
-    if not_verified(status) {
-        labels.push(ProviderLabel::NotVerified);
+    // Only an engine that can start is verified or not; a missing or broken one says that alone.
+    if facts.installed() && !labels.contains(&ProviderLabel::CantStart) {
+        if not_verified(status) {
+            labels.push(ProviderLabel::NotVerified);
+        }
+        if PARTLY_NOT_BUILT.iter().any(|(id, _)| *id == family(status)) {
+            labels.push(ProviderLabel::Planned);
+        }
     }
-    if PARTLY_NOT_BUILT.iter().any(|(id, _)| *id == family(status)) {
-        labels.push(ProviderLabel::Planned);
-    }
-    let group = if labels.contains(&ProviderLabel::CantStart) {
+    let group = if labels.contains(&ProviderLabel::NotFound) {
+        ProviderGroup::NotFound
+    } else if labels.contains(&ProviderLabel::CantStart) {
         ProviderGroup::CantStart
     } else if labels.contains(&ProviderLabel::NotVerified) {
-        ProviderGroup::Found
+        if OWN_ROW.contains(&family(status)) {
+            ProviderGroup::Found
+        } else {
+            ProviderGroup::More
+        }
     } else {
         ProviderGroup::InUse
     };
     let note = note(status, &facts, &labels);
-    Some(ProviderEntry {
+    ProviderEntry {
         id: status.id.clone(),
         name: status.name.clone(),
         group,
         labels,
         note,
         registered: true,
-    })
+        openable: !NO_DETAIL.contains(&family(status)),
+    }
+}
+
+/// A program found under an engine's name that is another CLI: Orbyn refuses it.
+pub struct Refused {
+    pub id: &'static str,
+    pub path: String,
+}
+
+/// The refused programs on this machine, read from disk.
+pub fn refused_programs() -> Vec<Refused> {
+    super::engines::known::KNOWN_ENGINES
+        .iter()
+        .filter(|known| known.id == "grok")
+        .filter_map(|known| {
+            known.refused().map(|path| Refused {
+                id: known.id,
+                path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect()
 }
 
 /// The list for these statuses, and the app-only engines found on this machine.
-pub fn list(statuses: &[EngineStatus], apps: &[&str]) -> ProviderList {
-    let mut providers: Vec<ProviderEntry> = statuses.iter().filter_map(entry_of).collect();
+pub fn list(statuses: &[EngineStatus], apps: &[&str], refused: &[Refused]) -> ProviderList {
+    let mut providers: Vec<ProviderEntry> = statuses.iter().map(entry_of).collect();
+    for one in refused {
+        if let Some(known) = known_engine(one.id)
+            && !statuses.iter().any(|status| status.id == one.id)
+        {
+            providers.push(ProviderEntry {
+                id: one.id.to_owned(),
+                name: known.name.to_owned(),
+                group: ProviderGroup::CantStart,
+                labels: vec![ProviderLabel::NotFound],
+                note: Some(format!(
+                    "Found a program named {} at {}, but it is not xAI’s Grok CLI. Orbyn does not use it. Get xAI’s own Grok Build from xAI’s official page.",
+                    known.programs[0], one.path
+                )),
+                registered: false,
+                openable: false,
+                })
+        }
+    }
     for app in APP_ONLY {
         if apps.contains(&app.id) && !statuses.iter().any(|status| status.id == app.id) {
             providers.push(ProviderEntry {
@@ -178,6 +237,7 @@ pub fn list(statuses: &[EngineStatus], apps: &[&str]) -> ProviderList {
                     }
                 )),
                 registered: false,
+                openable: false,
             });
         }
     }
@@ -189,14 +249,17 @@ pub fn list(statuses: &[EngineStatus], apps: &[&str]) -> ProviderList {
             labels: vec![ProviderLabel::Planned],
             note: Some(planned.note.to_owned()),
             registered: false,
+            openable: false,
         });
     }
     // Stable by group, keeping the registry's own order inside each.
     providers.sort_by_key(|entry| match entry.group {
         ProviderGroup::InUse => 0,
         ProviderGroup::Found => 1,
-        ProviderGroup::CantStart => 2,
-        ProviderGroup::Planned => 3,
+        ProviderGroup::More => 2,
+        ProviderGroup::CantStart => 3,
+        ProviderGroup::NotFound => 4,
+        ProviderGroup::Planned => 5,
     });
     ProviderList { providers }
 }

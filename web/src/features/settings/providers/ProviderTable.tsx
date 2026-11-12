@@ -1,9 +1,9 @@
 import { Check, Plus, RefreshCw } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { listProviders, queryPreferences, updatePreferences } from "../api";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
 import type { ProviderList } from "../../../generated/ProviderList";
-import { GROUPS, LABEL_TEXT } from "./providerLabels";
+import { GROUPS, LABEL_TEXT, type PlaceKey } from "./providerLabels";
 import type { EngineStatus } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -44,10 +44,12 @@ function useProvidersInUse() {
   return { row, off, blocked, error, set, reset: (ids: string[]) => write({ op: "reset_overrides", project_ids: ids }), reload: list.reload, scope };
 }
 
-/** The status cell: what the person has to do, else that the provider is ready. */
-function Status({ engine }: { engine: EngineStatus }) {
-  if (!engine.installed) return <span className="set-pill warn">Not installed</span>;
-  if (engine.auth === "logged_out" && engine.sign_in_command) return <span className="mono t3">{engine.sign_in_command}</span>;
+/** The status cell: what the person has to do, else that the provider is ready. A listed engine that was not found says so through its label. */
+function Status({ engine, labelled }: { engine: EngineStatus; labelled: boolean }) {
+  if (!engine.installed) return labelled ? null : <span className="set-pill warn">Not found</span>;
+  if (engine.auth === "logged_out") {
+    return <><span className="set-pill dot">Signed out</span>{engine.sign_in_command ? <span className="mono t3">{engine.sign_in_command}</span> : null}</>;
+  }
   if (engine.latest && engine.version && engine.latest !== engine.version) return <span className="set-pill">Update {engine.latest}</span>;
   return <span className="set-pill"><Check size={13} aria-hidden />Ready</span>;
 }
@@ -58,10 +60,11 @@ function rowNames(engine: EngineStatus): { title: string; label: string | null }
   return at < 0 ? { title: engine.name, label: null } : { title: engine.name.slice(0, at), label: engine.name.slice(at + 3) };
 }
 
-/** The line under a provider's name: which instance, and who is signed in. */
-const subtitle = (engine: EngineStatus) => {
-  const status = engine.tier === "acp" ? "via ACP" : engine.auth === "logged_out" ? "Not signed in" : engine.auth === "logged_in" ? engine.account ?? "Signed in" : null;
-  return [rowNames(engine).label, status].filter(Boolean).join(" · ") || null;
+/** The line under a provider's name: which instance, who is signed in, and what the service says about its state. */
+const subtitle = (engine: EngineStatus, note?: string | null) => {
+  const via = engine.tier === "acp" && !note ? "via ACP" : null;
+  const who = engine.auth === "logged_out" ? "Not signed in" : engine.auth === "logged_in" ? engine.account ?? "Signed in" : null;
+  return [rowNames(engine).label, via ?? (engine.tier === "acp" ? null : who), note].filter(Boolean).join(" · ") || null;
 };
 
 /** The labels the service gives a provider: what Orbyn has not seen or cannot control. */
@@ -71,7 +74,8 @@ function Labels({ entry }: { entry: ProviderEntry | undefined }) {
 
 /** The grouped list, read again whenever the engines change. `null` until the service answers or when it cannot. */
 export function useProviderList(engines: EngineStatus[]): ProviderList | null {
-  const key = engines.map((engine) => `${engine.id}:${engine.installed}:${engine.auth}:${engine.version ?? ""}`).join();
+  const key = engines.map((engine) => [engine.id, engine.installed, engine.auth, engine.version ?? "", engine.instance_of ?? "", engine.compatibility?.status ?? "",
+    engine.capabilities.managed, engine.capabilities.approvals].join(":")).join();
   const list = useAsync(`provider-list:${key}`, (signal) => listProviders(signal), { keep: true });
   return list.data;
 }
@@ -105,17 +109,20 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
     </div>
   );
   const engineRow = (engine: EngineStatus, entry?: ProviderEntry) => {
-    const note = entry?.note ?? subtitle(engine);
+    const note = subtitle(engine, entry?.note);
     const instance = store.instances.find((candidate) => candidate.id === engine.id);
+    const openable = entry?.openable ?? true;
     return (
-      <div key={engine.id} role="row" className="set-tr set-tr-open" style={{ gridTemplateColumns: COLUMNS }} onClick={() => onOpen(engine.id)}>
+      <div key={engine.id} role="row" className={openable ? "set-tr set-tr-open" : "set-tr"} style={{ gridTemplateColumns: COLUMNS }} onClick={openable ? () => onOpen(engine.id) : undefined}>
         <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
         <span role="cell">
-          <button type="button" className="set-row-open name" aria-label={engine.name} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{rowNames(engine).title}</button>
+          {openable
+            ? <button type="button" className="set-row-open name" aria-label={engine.name} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{rowNames(engine).title}</button>
+            : <span className="name">{rowNames(engine).title}</span>}
           {note ? <><br /><span className="sub">{note}</span></> : null}
         </span>
         <span role="cell" className="t3">{engine.version ?? ""}</span>
-        <span role="cell" className="set-states"><Status engine={engine} /><Labels entry={entry} /></span>
+        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} /><Labels entry={entry} /></span>
         <span role="cell">{instance ? <Button small aria-label={`Edit ${engine.name}`} onClick={(event) => { event.stopPropagation(); onEdit(engine.id); }}>Edit</Button> : null}</span>
         <span role="cell" onClick={(event) => event.stopPropagation()}>
           {row ? <input type="checkbox" role="switch" aria-label={`Use ${engine.name}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}
@@ -133,21 +140,30 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
       <span role="cell" /><span role="cell" className="set-states"><Labels entry={entry} /></span><span role="cell" /><span role="cell" />
     </div>
   );
-  // A real list always ends with the engines not built, so an empty one means the service gave none.
-  const grouped = catalog && catalog.providers.length > 0
-    ? GROUPS.map(({ group, heading }) => ({ heading, entries: catalog.providers.filter((entry) => entry.group === group) })).filter((part) => part.entries.length > 0)
-    : null;
+  // Every registered engine has a row, whether or not the list has heard of it yet: a newly added or
+  // misconfigured one must stay reachable. The list adds its labels and the rows that are not engines.
+  const places = (() => {
+    if (!catalog || catalog.providers.length === 0) return null;
+    const rows: { place: PlaceKey; node: ReactNode }[] = [];
+    for (const engine of engines) {
+      const entry = catalog.providers.find((candidate) => candidate.id === engine.id && candidate.registered)
+        ?? { id: engine.id, name: engine.name, group: engine.installed ? "in_use" : "not_found", labels: engine.installed ? [] : ["not_found"], registered: true, openable: true } satisfies ProviderEntry;
+      const startable = entry.group === "in_use" || entry.group === "found" || entry.group === "more";
+      const place: PlaceKey = startable ? (!row?.mixed && inUse.off.includes(engine.id) ? (entry.group === "more" ? "more" : "found") : "in_use") : entry.group;
+      rows.push({ place, node: engineRow(engine, entry) });
+    }
+    for (const entry of catalog.providers.filter((candidate) => !candidate.registered)) rows.push({ place: entry.group === "in_use" ? "found" : entry.group, node: plainRow(entry) });
+    return rows;
+  })();
   return (
     <>
-      {grouped ? grouped.map(({ heading, entries }, at) => (
+      {places ? GROUPS.map(({ place, heading, note }) => ({ heading, note, nodes: places.filter((one) => one.place === place).map((one) => one.node) })).filter((part) => part.nodes.length > 0).map(({ heading, note, nodes }) => (
         <div key={heading}>
           <p className="set-grp">{heading}</p>
+          {note ? <p className="setting-line-desc">{note}</p> : null}
           <div className="set-tbl" role="table" aria-label={heading}>
-            {at === 0 ? head : null}
-            {entries.map((entry) => {
-              const engine = entry.registered ? engines.find((candidate) => candidate.id === entry.id) : undefined;
-              return engine ? engineRow(engine, entry) : entry.registered ? null : plainRow(entry);
-            })}
+            {head}
+            {nodes}
           </div>
         </div>
       )) : (

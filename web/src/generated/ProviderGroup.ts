@@ -3,4 +3,4 @@
 /**
  * The list's groups, in the order the Providers page shows them.
  */
-export type ProviderGroup = "in_use" | "found" | "cant_start" | "planned";
+export type ProviderGroup = "in_use" | "found" | "more" | "cant_start" | "not_found" | "planned";

@@ -4,4 +4,4 @@
  * What a provider row says beside its ready, update or sign-in state: what Orbyn has
  * not seen or cannot control. Each is a fact about the provider, never a promise.
  */
-export type ProviderLabel = "not_verified" | "unmanaged" | "limited_support" | "cant_start" | "planned";
+export type ProviderLabel = "not_verified" | "unmanaged" | "limited_support" | "cant_start" | "planned" | "not_found";

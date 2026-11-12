@@ -309,6 +309,8 @@ pub enum ProviderLabel {
     CantStart,
     /// Not built. Shown so the gap is visible.
     Planned,
+    /// No program was found, or the program found is a different one with the same name.
+    NotFound,
 }
 }
 
@@ -319,8 +321,12 @@ pub enum ProviderGroup {
     InUse,
     /// Found on this computer and startable, but not seen working on a real install.
     Found,
+    /// The other engines that start over ACP and were only tried with a test agent.
+    More,
     /// Found, and not startable as an agent.
     CantStart,
+    /// Registered, but its program was not found. It stays so it can be edited or removed.
+    NotFound,
     /// Not built.
     Planned,
 }
@@ -340,8 +346,10 @@ pub struct ProviderEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub note: Option<String>,
-    /// True when an engine of this id is registered, so its detail can open.
+    /// True when an engine of this id is registered: it has a switch and, for an instance, Edit.
     pub registered: bool,
+    /// True when a detail page exists for it.
+    pub openable: bool,
 }
 }
 
