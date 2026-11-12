@@ -621,9 +621,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
 ] } }
 ```
 
-- **Read at the base commit, never from the checkout.** The commit the worker starts from is read once, before routing, and the file is read
-  at it through hardened git (`ls-tree` then `cat-file`). The decision and the ledger row record the commit and the file's blob id. A change
-  made after the start has no effect on that task, and a worker's edit of its own copy is not read. The `.orbyn` entry must be a tree or
+- **Read at the commit the task starts from, not from the checkout's files.** The commit is the lead checkout's HEAD, read once before
+  routing, and the file is read at it through hardened git (`ls-tree` then `cat-file`). The decision and the ledger row record the commit and
+  the file's blob id. A change made after the start has no effect on that task, and an uncommitted edit of the file is not read. The `.orbyn` entry must be a tree or
   absent (a symlink there would read as a missing file), the file must be a plain blob (mode 100644: a symlink or submodule is invalid), and its
   size (64 KiB at most) is read before its content. No file, or none with `classes`, means one class, "Everything else": any signed-in engine.
 - **Strict inside `classes`.** `version` must be 1; at most 64 rules, 32 paths and 16 engines per rule; `name` 1 to 40 characters of `a-z`, `0-9`,
@@ -638,7 +638,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
 - **Grammar (v1).** `/`-separated parts. `*` matches any run of characters inside one part; a part that is exactly `**` matches any number of
   parts, none included. `?`, `[`, `]`, `{` and `}` are refused so a pattern means one thing everywhere. A pattern with a backslash, a leading
   `/`, a drive letter, an empty part or a `.` or `..` part is invalid. Matching ignores case and Unicode normalisation (NFC, lowercase, NFC):
-  on a case-folding file system two spellings are one file, and folding can only widen a match, which tightens the rule.
+  on a case-folding file system two spellings are one file, so a pattern matches the spellings the file system would, which tightens the rule.
+  It is not the file system's own table: a final sigma is a sigma, but `ss` and the sharp s stay different names (as on APFS), and Turkish dotted and
+  dotless i are lowercased only, so a name that is one file only under some locale or file system can be missed.
 - **Which classes a brief is in.** Every pattern of `brief.files` counts, read and write alike; a brief with no files is unknown and is checked
   against every class. For a lease (`dir/**`) the glob is walked against the directory (a worker with the lease may create a matching path, so
   `**/auth/**` may match under `src/**`: narrow the lease to avoid it), and the tracked files under it, listed from git at the same commit
@@ -656,13 +658,21 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   message, which is where the Needs you item reads its structured rows. A routing whose row cannot be written does not go on.
 - **Routes** (Preview, 404 with the flag off, reads only, listed in `crew::changes` `READS`): `GET /api/crew/classes?thread=` (commit, blob,
   rules, problems, notes, the worktree label, and whether the checkout's copy differs: "not in force until committed"),
-  `GET /api/crew/classes/test?thread=&path=` (1 to 10 paths, one per line, each validated: classes, matched pattern, allowed engines, the
+  `GET /api/crew/classes/test?thread=&path=` (1 to 10 paths, `path` repeated or one per line, each validated: classes, matched pattern, allowed engines, the
   route-card sentence), `GET /api/crew/route/{task}` (the decision or the refusal, and the `route_class` rows).
 
 What is not built: the guard that watches a worker against its classes (PR B); the Settings screens, the route card and Needs you screens
 (PR C); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
 until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
-(ruling pending). Known limits: the class set is whatever the committed file says, so a person who edits it uncommitted sees "not in force until
+(ruling pending). Known limits: **the rules are read at the checkout's HEAD; an agent that can run git can move HEAD to a commit without the file** (the N7 check only
+blocks a git command whose path argument is `.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot
+move, such as the default branch, is a later change. A lease spelled in a different case from the folder (`Docs/**` for `docs`) lists nothing, so it
+counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
+that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
+async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) used to start with no base commit; it is now
+refused with "no commit to read it at", because the rules cannot be read and not knowing is never a reason to allow. Review briefs always have
+`files: []`, so they count as every class: a rule with `engines: []` blocks every review in the repository, and a class that allows one engine plus
+"the reviewer differs from the builder" means no reviewer can start. The class set is whatever the committed file says, so a person who edits it uncommitted sees "not in force until
 committed" and nothing else changes; the lease walk widens on purpose, so a broad lease can be tied to a class it never touches; a class names
 engines by id only (an instance of an engine is its own id); the tracked-file listing is read whole before the 50,000 cap is applied.
 

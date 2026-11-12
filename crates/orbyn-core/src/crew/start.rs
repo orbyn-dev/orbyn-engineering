@@ -276,7 +276,9 @@ impl Core {
                 }));
             }
         };
-        // A decision with no record is not one: if the row cannot be written, the task waits for a person.
+        self.route_crew_task(&task.id, &decision)?;
+        // The row names the engine only once the decision is stored, so a failed route leaves no row that says one was chosen. A
+        // decision with no record is not one: if the row cannot be written, the task waits for a person.
         if let Err(error) = self.record_route_class(
             &task.id,
             &task.crew_id,
@@ -291,7 +293,6 @@ impl Core {
             );
             return Err(internal(error));
         }
-        self.route_crew_task(&task.id, &decision)?;
         for lease in (Grant {
             brief: &brief,
             run_id: &run_id,

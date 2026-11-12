@@ -3,19 +3,26 @@
 //! `?`, `[`, `]`, `{` and `}` are refused, so a pattern means one thing to every reader. A pattern with a backslash, a leading
 //! slash, a drive letter, an empty segment or a `.` or `..` segment is invalid.
 //!
-//! Matching ignores case and Unicode normalisation: both sides are put in NFC, lowercased and put in NFC again. On a case-folding
-//! file system (APFS, NTFS) two spellings are one file, and folding can only make a pattern match more, which tightens a rule.
+//! Matching ignores case and Unicode normalisation: both sides are put in NFC, lowercased, given a final sigma as a plain one
+//! and put in NFC again. On a case-folding file system (APFS, NTFS) two spellings are one file, so a pattern matches the spellings
+//! the file system would, which tightens a rule. This is not the file system's own table: `ss` and `\u{df}` are different names on
+//! APFS and stay different here, and the few other special cases (Turkish dotted and dotless i, for one) are lowercased only,
+//! so a name that is one file only under some locale or file system can be missed.
 
 use icu_normalizer::ComposingNormalizerBorrowed;
 
 /// Longest pattern, in characters.
 pub const GLOB_MAX: usize = 200;
 
-/// NFC, lowercase, NFC.
+/// NFC, lowercase, final sigma to sigma, NFC.
 pub fn fold(text: &str) -> String {
     let nfc = ComposingNormalizerBorrowed::new_nfc();
-    nfc.normalize(&nfc.normalize(text).to_lowercase())
-        .into_owned()
+    nfc.normalize(
+        &nfc.normalize(text)
+            .to_lowercase()
+            .replace('\u{3c2}', "\u{3c3}"),
+    )
+    .into_owned()
 }
 
 /// Why a repository path is not usable as one (a path a person types into the tester, or a symlink's target).
@@ -104,14 +111,23 @@ impl Glob {
 
     /// Whether the repository path matches.
     pub fn matches(&self, path: &str) -> bool {
-        self.walk(&fold(path))[self.segments.len()]
+        self.matches_folded(&fold(path))
+    }
+
+    /// `matches` for a path already put through [`fold`], so a caller testing many patterns folds once.
+    pub fn matches_folded(&self, folded: &str) -> bool {
+        self.walk(folded)[self.segments.len()]
     }
 
     /// Whether some path under the directory `dir` (or `dir` itself) could match: the pattern's parts are walked against the
     /// directory's, and whatever the pattern still asks for after them is something the lease lets a worker create. This
     /// widens on purpose: a lease on `src/**` can make `src/auth/x`, so `**/auth/**` may match under it.
     pub fn may_match_under(&self, dir: &str) -> bool {
-        self.walk(&fold(dir)).iter().any(|on| *on)
+        self.may_match_under_folded(&fold(dir))
+    }
+
+    pub fn may_match_under_folded(&self, folded: &str) -> bool {
+        self.walk(folded).iter().any(|on| *on)
     }
 
     /// Which prefixes of the pattern the folded path's parts have matched: entry `i` says the first `i` segments have.
@@ -208,6 +224,11 @@ mod tests {
         // "e" + combining acute is the same name as the precomposed letter.
         assert!(g("docs/caf\u{e9}/**").matches("docs/cafe\u{301}/x"));
         assert!(g("docs/cafe\u{301}/**").matches("DOCS/CAF\u{c9}/x"));
+        // A capital sigma at the end of a name lowercases to the final form, which is the same letter.
+        assert!(g("docs/\u{391}\u{3a3}/**").matches("docs/\u{3b1}\u{3c2}/x"));
+        assert!(g("docs/\u{3b1}\u{3c2}/**").matches("docs/\u{3b1}\u{3c3}/x"));
+        // `ss` is not a fold of the sharp s on APFS, so it is not one here.
+        assert!(!g("docs/stra\u{df}e/**").matches("docs/strasse/x"));
     }
 
     #[test]

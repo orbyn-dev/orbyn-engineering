@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 
 use orbyn_contracts::CrewToken;
 
@@ -16,6 +17,10 @@ use crate::source_control::git::{git_hardened as git, text};
 
 /// Listed tracked files under one lease, at the most.
 pub const TRACKED_MAX: usize = 50_000;
+/// Paths examined for one brief, in all its leases, at the most. More counts as unknown: every class.
+pub const BRIEF_PATHS_MAX: usize = 100_000;
+/// Glob tests for one brief, charged at every pattern for every path. More counts as unknown: every class.
+pub const BRIEF_TESTS_MAX: usize = 2_000_000;
 /// Paths shown per class.
 pub const SAMPLES_MAX: usize = 20;
 /// Symlinks followed for one brief, at the most.
@@ -131,14 +136,94 @@ struct Probe {
     via_link: bool,
 }
 
+/// How much work one classification may do before it gives up and says unknown.
+#[derive(Clone, Copy)]
+struct Limits {
+    /// Tracked files listed under one lease.
+    tracked: usize,
+    /// Paths examined in all.
+    paths: usize,
+    /// Glob tests in all.
+    tests: usize,
+}
+
+const BRIEF: Limits = Limits {
+    tracked: TRACKED_MAX,
+    paths: BRIEF_PATHS_MAX,
+    tests: BRIEF_TESTS_MAX,
+};
+
+/// The tester checks a person's few paths, so it does a tenth of the work.
+const TESTER: Limits = Limits {
+    tracked: TRACKED_MAX / 10,
+    paths: BRIEF_PATHS_MAX / 10,
+    tests: BRIEF_TESTS_MAX / 10,
+};
+
 struct Walk<'a> {
     root: &'a Path,
     base: &'a str,
-    file: &'a ClassFile,
+    file: Arc<ClassFile>,
+    limits: Limits,
+    /// Every pattern of every rule: what one path costs.
+    globs: usize,
+    paths_done: usize,
+    tests_done: usize,
     hits: Vec<Hit>,
     unknown: Option<String>,
     seen: BTreeSet<String>,
     links: usize,
+}
+
+/// What one batch of paths matched in one rule.
+struct Matched {
+    rule: usize,
+    pattern: String,
+    samples: Vec<String>,
+}
+
+/// Matches `paths` (and, for a lease, its directory) against every rule. Each path is folded once and the folded form is
+/// reused for every pattern. This is the CPU work of a classification, so it runs off the async runtime.
+fn match_batch(file: &ClassFile, dir: Option<&str>, paths: &[String]) -> Vec<Matched> {
+    let mut found: Vec<Matched> = Vec::new();
+    let mut add = |rule: usize, pattern: &str, sample: &str| {
+        let at = match found.iter().position(|m| m.rule == rule) {
+            Some(at) => at,
+            None => {
+                found.push(Matched {
+                    rule,
+                    pattern: pattern.to_owned(),
+                    samples: Vec::new(),
+                });
+                found.len() - 1
+            }
+        };
+        let samples = &mut found[at].samples;
+        if samples.len() < SAMPLES_MAX && !samples.iter().any(|s| s == sample) {
+            samples.push(sample.to_owned());
+        }
+    };
+    if let Some(dir) = dir {
+        let folded = fold(dir);
+        for (at, rule) in file.rules.iter().enumerate() {
+            if let Some(glob) = rule
+                .globs
+                .iter()
+                .find(|g| g.may_match_under_folded(&folded))
+            {
+                add(at, glob.text(), &format!("{dir}/**"));
+            }
+        }
+    }
+    for path in paths {
+        let folded = fold(path);
+        for (at, rule) in file.rules.iter().enumerate() {
+            if let Some(glob) = rule.globs.iter().find(|g| g.matches_folded(&folded)) {
+                add(at, glob.text(), path);
+            }
+        }
+    }
+    found
 }
 
 /// Classifies the patterns of a brief's `files` (each `path` or `dir/**`) against `file`, using git at `base` for the lease
@@ -167,7 +252,7 @@ pub async fn classify(
             },
         });
     }
-    classify_probes(root, base, file, probes, patterns.is_empty()).await
+    classify_probes(root, base, file, probes, patterns.is_empty(), BRIEF).await
 }
 
 /// Classifies exact paths, such as the ones a person types into the tester.
@@ -188,7 +273,7 @@ pub async fn classify_paths(
             via_link: false,
         })
         .collect();
-    classify_probes(root, base, file, probes, paths.is_empty()).await
+    classify_probes(root, base, file, probes, paths.is_empty(), TESTER).await
 }
 
 async fn classify_probes(
@@ -197,6 +282,7 @@ async fn classify_probes(
     file: ClassFile,
     probes: Vec<Probe>,
     no_files: bool,
+    limits: Limits,
 ) -> PathClasses {
     let Some(base) = base.map(str::to_owned) else {
         let why = "no commit to list the files at".to_owned();
@@ -205,10 +291,15 @@ async fn classify_probes(
     if no_files {
         return every_class(file, "the brief names no files".to_owned());
     }
+    let file = Arc::new(file);
     let mut walk = Walk {
         root,
         base: &base,
-        file: &file,
+        file: file.clone(),
+        limits,
+        globs: file.rules.iter().map(|r| r.globs.len()).sum(),
+        paths_done: 0,
+        tests_done: 0,
         hits: Vec::new(),
         unknown: None,
         seen: BTreeSet::new(),
@@ -221,7 +312,10 @@ async fn classify_probes(
         }
         walk.probe(&probe, &mut queue).await;
     }
-    let (hits, unknown) = (walk.hits, walk.unknown);
+    let hits = std::mem::take(&mut walk.hits);
+    let unknown = walk.unknown.take();
+    drop(walk);
+    let file = Arc::try_unwrap(file).unwrap_or_else(|shared| (*shared).clone());
     match unknown {
         Some(why) => every_class(file, why),
         None => {
@@ -273,7 +367,8 @@ impl Walk<'_> {
     }
 
     async fn probe(&mut self, probe: &Probe, queue: &mut Vec<Probe>) {
-        let key = format!("{}|{}", probe.tree, fold(&probe.path));
+        // Keyed on the literal path: two spellings are two listings, and a spelling that lists nothing says so below.
+        let key = format!("{}|{}", probe.tree, probe.path);
         if !self.seen.insert(key) {
             return;
         }
@@ -293,7 +388,7 @@ impl Walk<'_> {
         }
         let mut found_any = false;
         let mut links: Vec<(String, String)> = Vec::new();
-        match self.list(&ancestors, false).await {
+        match self.list(&ancestors, false, usize::MAX).await {
             Some(listed) => {
                 for entry in listed {
                     found_any |= entry.path == probe.path;
@@ -318,33 +413,35 @@ impl Walk<'_> {
             }
         }
         if !probe.tree {
-            self.exact(&probe.path);
+            self.match_paths(None, vec![probe.path.clone()]).await;
             return;
         }
-        // The lease itself: a glob that can match under the directory may match a file a worker adds.
-        let mut pending: Vec<(usize, String)> = Vec::new();
-        for (rule_at, rule) in self.file.rules.iter().enumerate() {
-            for glob in &rule.globs {
-                if glob.may_match_under(&probe.path) {
-                    pending.push((rule_at, glob.text().to_owned()));
-                    break;
-                }
+        // A lease spelled in another case lists nothing here but names a folder on a case-folding file system: what is under
+        // it cannot be listed, so every class counts.
+        if !found_any && let Some(real) = self.case_variant(&probe.path).await {
+            if self.unknown.is_none() {
+                self.unknown = Some(format!(
+                    "the lease `{}/**` names `{real}` only when case is ignored",
+                    probe.path
+                ));
             }
-        }
-        for (rule_at, pattern) in pending {
-            self.add(rule_at, &pattern, &format!("{}/**", probe.path));
+            return;
         }
         // The files tracked under it: each is matched, and each symlink is followed.
-        let Some(tracked) = self.list(std::slice::from_ref(&probe.path), true).await else {
+        let Some(tracked) = self
+            .list(std::slice::from_ref(&probe.path), true, self.limits.tracked)
+            .await
+        else {
             return;
         };
-        if tracked.len() > TRACKED_MAX {
+        if tracked.len() > self.limits.tracked {
             self.unknown = Some(format!(
-                "more than {TRACKED_MAX} files are tracked under `{}/**`",
-                probe.path
+                "more than {} files are tracked under `{}/**`",
+                self.limits.tracked, probe.path
             ));
             return;
         }
+        let mut names = Vec::with_capacity(tracked.len());
         for entry in tracked {
             if entry.mode == "120000" {
                 self.follow(&entry.path, &entry.sha, queue).await;
@@ -352,21 +449,68 @@ impl Walk<'_> {
                     return;
                 }
             }
-            self.exact(&entry.path);
+            names.push(entry.path);
+        }
+        // The lease itself too: a glob that can match under the directory may match a file a worker adds.
+        self.match_paths(Some(probe.path.clone()), names).await;
+    }
+
+    /// Charges the work of `paths` to the brief's budget, then matches them off the async runtime. Over the budget the brief
+    /// is unknown: slow work ends as every class, never as none.
+    async fn match_paths(&mut self, dir: Option<String>, paths: Vec<String>) {
+        self.paths_done += paths.len().max(1);
+        self.tests_done += (paths.len() + 1) * self.globs.max(1);
+        if self.paths_done > self.limits.paths || self.tests_done > self.limits.tests {
+            self.unknown = Some(format!(
+                "the brief's files are too many to check against {} patterns",
+                self.globs
+            ));
+            return;
+        }
+        let file = self.file.clone();
+        let done =
+            tokio::task::spawn_blocking(move || match_batch(&file, dir.as_deref(), &paths)).await;
+        match done {
+            Ok(found) => {
+                for one in found {
+                    for sample in &one.samples {
+                        self.add(one.rule, &one.pattern, sample);
+                    }
+                }
+            }
+            Err(_) => self.unknown = Some("the classes could not be checked".to_owned()),
         }
     }
 
-    /// Matches one path against every rule.
-    fn exact(&mut self, path: &str) {
-        let mut found: Vec<(usize, String)> = Vec::new();
-        for (rule_at, rule) in self.file.rules.iter().enumerate() {
-            if let Some(glob) = rule.globs.iter().find(|g| g.matches(path)) {
-                found.push((rule_at, glob.text().to_owned()));
+    /// The name a folder really has when `path` only matches it with case or normalisation ignored. `None` when the path names
+    /// nothing at all (a folder the worker would create) or is spelled as it is.
+    async fn case_variant(&mut self, path: &str) -> Option<String> {
+        let mut prefix = String::new();
+        for part in path.split('/') {
+            let at = if prefix.is_empty() {
+                Vec::new()
+            } else {
+                vec![format!("{prefix}/")]
+            };
+            let children = self.list(&at, false, usize::MAX).await?;
+            let names: Vec<&str> = children
+                .iter()
+                .map(|e| e.path.rsplit('/').next().unwrap_or(&e.path))
+                .collect();
+            if names.contains(&part) {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(part);
+                continue;
             }
+            let want = fold(part);
+            return names
+                .iter()
+                .find(|name| fold(name) == want)
+                .map(|name| (*name).to_owned());
         }
-        for (rule_at, pattern) in found {
-            self.add(rule_at, &pattern, path);
-        }
+        None
     }
 
     /// Reads a symlink's target and queues what it reaches.
@@ -403,7 +547,12 @@ impl Walk<'_> {
 
     /// `ls-tree -z` of these paths at the base commit, literal. `recursive` lists the files under a directory. `None` when git
     /// cannot say (every class then counts, through `unknown`).
-    async fn list(&mut self, paths: &[String], recursive: bool) -> Option<Vec<Listed>> {
+    async fn list(
+        &mut self,
+        paths: &[String],
+        recursive: bool,
+        most: usize,
+    ) -> Option<Vec<Listed>> {
         let mut args: Vec<&str> = vec!["--literal-pathspecs", "ls-tree", "-z"];
         if recursive {
             args.push("-r");
@@ -442,7 +591,7 @@ impl Walk<'_> {
                     return None;
                 }
             }
-            if listed.len() > TRACKED_MAX {
+            if listed.len() > most {
                 break;
             }
         }

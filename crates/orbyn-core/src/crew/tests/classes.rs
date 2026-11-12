@@ -806,3 +806,123 @@ async fn the_views_exist_only_with_the_preview_flag() {
     );
     assert!(w.core.crew_route_view("t").is_err());
 }
+
+#[tokio::test]
+async fn a_lease_is_keyed_on_its_literal_spelling_and_a_case_variant_counts_as_every_class() {
+    let w = two().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![
+            rule("keys", &["crates/keys/**"], &["bravo"]),
+            rule("secret", &["crates/secret/**"], &[]),
+        ]),
+    );
+    stage(&w.repo, "100644", "crates/keys/k.txt", "k\n");
+    stage(&w.repo, "100644", "docs/a.md", "a\n");
+    stage(&w.repo, "120000", "docs/link", "../crates/keys");
+    commit(&w.repo, "docs and a link");
+    // The lease spelled as the folder is: the link under it is followed, and nothing else is pulled in.
+    let plain = classes_of(&w, &["docs/**"]).await;
+    assert!(plain.unknown.is_none(), "{:?}", plain.unknown);
+    assert_eq!(names(&plain), ["keys"]);
+    // Spelled in another case it lists nothing, yet names the folder on a case-folding file system: every class.
+    for spelled in [
+        &["DOCS/**"][..],
+        &["Docs/**"],
+        &["Docs/**", "docs/**"],
+        &["docs/**", "Docs/**"],
+    ] {
+        let out = classes_of(&w, spelled).await;
+        assert!(
+            out.unknown
+                .as_deref()
+                .unwrap()
+                .contains("only when case is ignored"),
+            "{spelled:?}: {:?}",
+            out.unknown
+        );
+        assert_eq!(names(&out), ["keys", "secret"], "{spelled:?}");
+    }
+    // A folder that exists under no spelling is one the worker would create: not unknown.
+    let fresh = classes_of(&w, &["Newdir/**"]).await;
+    assert!(fresh.unknown.is_none() && fresh.hits.is_empty());
+}
+
+#[tokio::test]
+async fn a_huge_tree_or_many_patterns_end_as_every_class_never_as_none() {
+    let w = two().await;
+    // 64 rules of 32 patterns each: every path costs 2,048 glob tests, so a few hundred files are over the brief's budget.
+    let rules: Vec<Value> = (0..64)
+        .map(|r| {
+            let paths: Vec<String> = (0..32).map(|p| format!("zz{r}-{p}/**")).collect();
+            let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+            rule(&format!("r{r}"), &paths, &[])
+        })
+        .collect();
+    commit_crew(&w.repo, &file(rules));
+    std::fs::create_dir_all(w.repo.join("big")).unwrap();
+    for n in 0..1100 {
+        std::fs::write(w.repo.join(format!("big/f{n}.txt")), "x\n").unwrap();
+    }
+    std::fs::create_dir_all(w.repo.join("small")).unwrap();
+    std::fs::write(w.repo.join("small/a.txt"), "x\n").unwrap();
+    run_git(&w.repo, &["add", "big", "small"]);
+    commit(&w.repo, "files");
+    let started = std::time::Instant::now();
+    let big = classes_of(&w, &["big/**"]).await;
+    assert!(
+        big.unknown.as_deref().unwrap().contains("too many"),
+        "{:?}",
+        big.unknown
+    );
+    assert_eq!(big.hits.len(), 64, "over the budget, every class counts");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "bounded work"
+    );
+    // A small lease under the same rules is told as usual: in none of them.
+    let small = classes_of(&w, &["small/**"]).await;
+    assert!(
+        small.unknown.is_none() && small.hits.is_empty(),
+        "{:?}",
+        small.unknown
+    );
+    // Many leases add up: the budget is per brief, not per lease.
+    let many: Vec<String> = (0..600).map(|n| format!("big/f{n}.txt")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    let all = classes_of(&w, &many).await;
+    assert!(
+        all.unknown.as_deref().unwrap().contains("too many"),
+        "{:?}",
+        all.unknown
+    );
+}
+
+#[tokio::test]
+async fn a_routing_that_fails_leaves_no_row_naming_an_engine() {
+    let w = two().await;
+    // A class named like the answer key's text makes the stored decision refuse itself (H1), after routing and before the row.
+    commit_crew(
+        &w.repo,
+        &file(vec![rule(
+            &super::harness::KEY_MARKER.to_lowercase(),
+            &["src/**"],
+            &["alpha", "bravo"],
+        )]),
+    );
+    let mut leaky = key();
+    leaky["checks"][1]["params"]["run"] = json!(super::harness::KEY_MARKER);
+    let (answer, error) = w.start(brief(json!({})), leaky).await;
+    assert!(error, "{answer}");
+    let chosen: i64 = w
+        .core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM crew_autopilot_events WHERE kind = 'route_class'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(chosen, 0);
+}

@@ -221,23 +221,24 @@ async fn classes(State(state): State<AppState>, query: QueryMap) -> ApiResult<im
     Ok(Json(state.core.crew_classes_view(&thread).await?))
 }
 
-/// Up to 10 paths against those rules. `path` holds them, one per line (a new line is `%0A`).
+/// Up to 10 paths against those rules. `path` may be repeated, and each value may hold several paths, one per line.
 async fn classes_test(
     State(state): State<AppState>,
-    query: QueryMap,
+    axum::extract::Query(pairs): axum::extract::Query<Vec<(String, String)>>,
 ) -> ApiResult<impl IntoResponse> {
-    let thread = thread_of(&query)?;
-    let paths: Vec<String> = query
-        .0
-        .get("path")
-        .map(|text| {
-            text.lines()
-                .map(|line| line.trim_end_matches('\r'))
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
+    let thread = pairs
+        .iter()
+        .find(|(name, _)| name == "thread")
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| CoreError::Invalid("thread is required".into()))?;
+    let paths: Vec<String> = pairs
+        .iter()
+        .filter(|(name, _)| name == "path")
+        .flat_map(|(_, value)| value.lines())
+        .map(|line| line.trim_end_matches('\r'))
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
     Ok(Json(state.core.crew_class_test(&thread, &paths).await?))
 }
 
