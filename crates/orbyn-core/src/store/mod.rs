@@ -28,6 +28,7 @@ mod questions;
 mod queue;
 mod runs;
 pub(crate) mod scoped_settings;
+#[cfg(feature = "engine-client")]
 pub(crate) use account_sync::is_old_tombstone;
 pub use account_sync::{MergeReport, SyncConflict};
 mod setup;

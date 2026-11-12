@@ -17,6 +17,7 @@ pub mod changes;
 pub mod codes;
 pub mod device_api;
 pub mod digits;
+#[cfg(all(feature = "engine-client", any(test, debug_assertions)))]
 pub mod engine;
 pub mod flow;
 pub mod merge;
@@ -78,7 +79,7 @@ pub enum AccountBackendKind {
     None,
     #[cfg(any(test, debug_assertions))]
     Development,
-    #[cfg(any(test, debug_assertions))]
+    #[cfg(all(feature = "engine-client", any(test, debug_assertions)))]
     Engine { address: String },
 }
 
@@ -142,7 +143,7 @@ impl AccountCenter {
         let backend = match (gate, kind) {
             // The real client is built only when the gate lets anything happen at all, and only
             // for a loopback address; under `Off` this arm is never reached.
-            #[cfg(any(test, debug_assertions))]
+            #[cfg(all(feature = "engine-client", any(test, debug_assertions)))]
             (AccountGate::LocalOnly, AccountBackendKind::Engine { address }) => {
                 engine::connect(&address, "This computer").ok()
             }

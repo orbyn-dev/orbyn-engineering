@@ -594,7 +594,8 @@ folded in above. These remain, with Engineering 1's security reviewer:
 ## The adapter as built
 
 `account::engine` puts one `DeviceClient` behind both app traits: `EngineAccount` answers `AccountApi` and `EngineZones`
-answers `DeviceApi`. Nothing selects it yet. The gate must be `LocalOnly` (debug and test builds only),
+answers `DeviceApi`. Nothing selects it yet, and it is behind the cargo feature `engine-client`, which no normal build (release included)
+enables; the tests switch it on, so a release has neither the adapter nor the dependency. The gate must be `LocalOnly` (debug and test builds only),
 `AccountBackendKind::Engine` exists only there, and `connect` accepts a loopback IP literal only (the client's
 `is_loopback_literal`) with an in-memory key store, never the keychain. Under `Off` nothing is constructed or called
 (tests: `under_the_off_gate_nothing_builds_or_calls_the_real_client`, `only_a_loopback_address_builds_the_real_client`).
@@ -633,10 +634,12 @@ Where the Engine's API differs from the traits the screens and the worker were w
   retried on the next pass) and answers with the digits, which reach the screen only through the approve answer.
   Confirming comes at Allow, not after the new device types, because the new device's `finish_approval` needs the
   approver's signature before it can accept anything; the typed digits are the check.
-- **Don't allow** before an approval exists only hides the request here: the Engine has nothing to refuse until one
-  starts, so the new device keeps waiting until its ten minutes end (a gap). **Cancel on the digits** removes the new
-  device from the account (`remove_device`, within the recent sign-in the Allow just made), the only way to close a
-  confirmed approval; the new device then sees "Denied or cancelled."
+- **Don't allow** starts an approval and denies it at once (`start_approval`, `deny_approval`), which closes it on the new
+  device immediately and needs no recent sign-in; if one cannot be started the device is removed (`remove_device`). A
+  Don't allow that arrives while an Allow is running wins: it is checked before the signature is made (the approval is
+  denied) and again after (the device is removed). **Cancel on the digits** removes the new device from the account, the
+  only way to close a confirmed approval; the new device then sees "Denied or cancelled." What is kept for a device
+  (hidden, confirmed, time left) is dropped once the Engine no longer lists it as waiting.
 - **New device.** `NeedsApproval` waits with its own device id as the request id. Each look runs `pending_approval`,
   `join_approval` and `device_digits`; it shows the digits step only once the approver has revealed and signed. The typed
   digits are compared in the app first, with the three tries and a constant-time compare, because the Engine cancels an

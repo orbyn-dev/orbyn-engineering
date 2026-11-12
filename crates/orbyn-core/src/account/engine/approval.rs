@@ -195,7 +195,21 @@ where
     pub(super) async fn pending_requests(&self) -> Result<Vec<IncomingApproval>, DeviceError> {
         let list = self.shared.client.devices().await.map_err(map)?;
         let now = crate::util::unix_now();
-        let trusted = self.trusted();
+        let mut trusted = self.trusted();
+        // An approval that ended leaves nothing behind: what is kept for a device is dropped once
+        // the Engine no longer lists it as waiting (trusted, removed or gone).
+        let waiting: std::collections::HashSet<&str> = list
+            .devices
+            .iter()
+            .filter(|device| device.state == dc::DeviceState::Pending)
+            .map(|device| device.id.as_str())
+            .collect();
+        let in_flight = trusted.approving.clone();
+        trusted
+            .dismissed
+            .retain(|id| waiting.contains(id.as_str()) || in_flight.contains(id));
+        trusted.confirmed.retain(|id| waiting.contains(id.as_str()));
+        trusted.left.retain(|id, _| waiting.contains(id.as_str()));
         Ok(list
             .devices
             .iter()
@@ -217,13 +231,27 @@ where
     }
 
     /// Allow: start, wait for the digits, confirm, hand the zone keys over, answer with the digits.
+    /// A Don't allow that arrives at any point wins: it is checked before the signature is made and
+    /// again after it, and either undoes what was done.
     pub(super) async fn allow(&self, id: &str) -> Result<ApprovalDigits, DeviceError> {
-        if !self.trusted().approving.insert(id.to_owned()) {
-            return Err(DeviceError::RequestGone);
+        {
+            let mut trusted = self.trusted();
+            if trusted.dismissed.contains(id) || !trusted.approving.insert(id.to_owned()) {
+                return Err(DeviceError::RequestGone);
+            }
         }
         let result = self.allow_inner(id).await;
-        self.trusted().approving.remove(id);
+        let mut trusted = self.trusted();
+        trusted.approving.remove(id);
+        if result.is_err() {
+            trusted.left.remove(id);
+            trusted.confirmed.remove(id);
+        }
         result
+    }
+
+    fn refused(&self, id: &str) -> bool {
+        self.trusted().dismissed.contains(id)
     }
 
     async fn allow_inner(&self, id: &str) -> Result<ApprovalDigits, DeviceError> {
@@ -247,8 +275,7 @@ where
             match client.approval_state(&mut approval).await {
                 Ok(dc::ApproverState::Digits { digits, .. }) => break digits,
                 Ok(dc::ApproverState::Waiting) => {
-                    let refused = self.trusted().dismissed.contains(id);
-                    if refused || tokio::time::Instant::now() >= deadline {
+                    if self.refused(id) || tokio::time::Instant::now() >= deadline {
                         let _ = client.deny_approval(approval).await;
                         return Err(DeviceError::RequestGone);
                     }
@@ -257,6 +284,13 @@ where
                 Err(error) => return Err(map(error)),
             }
         };
+        #[cfg(test)]
+        self.run_hook(0);
+        // Right before signing: a Don't allow that came while the digits were being fetched wins.
+        if self.refused(id) {
+            let _ = client.deny_approval(approval).await;
+            return Err(DeviceError::RequestGone);
+        }
         let mut guard = self.shared.engine().await?;
         let Some(engine) = guard.as_mut() else {
             return Err(DeviceError::Unauthorized);
@@ -269,6 +303,14 @@ where
             .confirm_approval(engine, approval)
             .await
             .map_err(map)?;
+        #[cfg(test)]
+        self.run_hook(1);
+        // And right after: one that came while the signature was going out removes the device,
+        // the only way left to close a confirmed approval.
+        if self.refused(id) {
+            let _ = client.remove_device(&*engine, id).await;
+            return Err(DeviceError::RequestGone);
+        }
         {
             let mut trusted = self.trusted();
             trusted.confirmed.insert(id.to_owned());
@@ -285,32 +327,60 @@ where
         Ok(ApprovalDigits::new(digits))
     }
 
-    /// Don't allow. Before an approval is confirmed the Engine has nothing to refuse, so the
-    /// request is hidden here and an approval being started is given up. After it, Cancel removes
-    /// the new device from the account, so the digits cannot finish anything.
+    /// Don't allow. An approval being started is given up by the Allow that runs it. Otherwise the
+    /// approver starts one and denies it at once, which closes it on the new device immediately
+    /// and needs no recent sign-in; if that cannot be started the device is removed, which does.
+    /// After an Allow was confirmed, Cancel removes the device, so the digits finish nothing.
     pub(super) async fn refuse(&self, id: &str) -> Result<(), DeviceError> {
-        let confirmed = {
+        let (running, confirmed) = {
             let mut trusted = self.trusted();
             trusted.dismissed.insert(id.to_owned());
-            trusted.confirmed.contains(id)
+            (
+                trusted.approving.contains(id),
+                trusted.confirmed.contains(id),
+            )
         };
-        if !confirmed {
+        if running {
             return Ok(());
         }
+        let client = &self.shared.client;
         let guard = self.shared.engine().await?;
         let Some(engine) = guard.as_ref() else {
             return Err(DeviceError::Unauthorized);
         };
-        self.shared
-            .client
-            .remove_device(engine, id)
-            .await
-            .map_err(|error| match error {
-                dc::DeviceError::InvalidInput(_) => DeviceError::RequestGone,
-                other => map(other),
-            })?;
-        self.trusted().confirmed.remove(id);
-        Ok(())
+        let gone = |error| match error {
+            dc::DeviceError::InvalidInput(_) | dc::DeviceError::ApprovalExpired => {
+                DeviceError::RequestGone
+            }
+            other => map(other),
+        };
+        let result = if confirmed {
+            client.remove_device(engine, id).await.map_err(gone)
+        } else {
+            match client.start_approval(engine, id).await {
+                Ok(approval) => client.deny_approval(approval).await.map_err(gone),
+                // Nothing to close: the device is not in the account any more.
+                Err(dc::DeviceError::InvalidInput(_)) => Ok(()),
+                Err(_) => client.remove_device(engine, id).await.map_err(gone),
+            }
+        };
+        let mut trusted = self.trusted();
+        trusted.confirmed.remove(id);
+        trusted.left.remove(id);
+        result
+    }
+
+    /// A test plays a Don't allow arriving at a chosen point of an Allow.
+    #[cfg(test)]
+    fn run_hook(&self, at: usize) {
+        let hook = self
+            .hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[at]
+            .take();
+        if let Some(hook) = hook {
+            hook(&mut self.trusted());
+        }
     }
 }
 

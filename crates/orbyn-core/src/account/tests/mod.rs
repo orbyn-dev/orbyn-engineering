@@ -10,8 +10,10 @@ use serde_json::{Value, json};
 
 mod allowlist;
 mod approval;
+#[cfg(feature = "engine-client")]
 mod engine;
 mod engine_scan;
+#[cfg(feature = "engine-client")]
 mod engine_server;
 mod flow;
 mod limits;

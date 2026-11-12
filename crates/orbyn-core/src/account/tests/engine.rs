@@ -216,8 +216,9 @@ async fn cancel_on_the_digits_removes_the_device_and_the_new_device_sees_it_ende
 }
 
 #[tokio::test]
-async fn refusing_before_an_approval_exists_hides_the_request_and_sends_nothing() {
-    let (server, approver, _newcomer) = pair();
+async fn dont_allow_starts_an_approval_and_denies_it_so_the_new_device_sees_it_end() {
+    let (server, approver, newcomer) = pair();
+    newcomer.account.expect_approval(NEWCOMER).await;
     approver.account.deny(NEWCOMER).await.unwrap();
     assert!(
         approver
@@ -227,8 +228,88 @@ async fn refusing_before_an_approval_exists_hides_the_request_and_sends_nothing(
             .unwrap()
             .is_empty()
     );
-    assert_eq!(server.calls("/approvals"), 0);
-    assert!(!server.was_removed(NEWCOMER));
+    assert_eq!(server.calls("/approvals"), 3, "started, read, cancelled");
+    assert!(!server.approval_open());
+    assert!(
+        !server.was_removed(NEWCOMER),
+        "no sign-in was needed to close it"
+    );
+    assert!(!server.is_trusted(NEWCOMER));
+    // Hidden, and a later Allow on it is refused.
+    assert_eq!(
+        approver.account.approve(NEWCOMER).await.err(),
+        Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
+async fn dont_allow_falls_back_to_removing_the_device_when_an_approval_cannot_start() {
+    let (server, approver, _newcomer) = pair();
+    server.refuse("/v1/devices/approvals", 500, "server_error");
+    approver.account.deny(NEWCOMER).await.unwrap();
+    assert!(server.was_removed(NEWCOMER));
+}
+
+#[tokio::test]
+async fn a_dont_allow_that_arrives_before_the_signature_wins() {
+    let (server, approver, newcomer) = pair();
+    newcomer.account.expect_approval(NEWCOMER).await;
+    approver.account.hook_at(0, |trusted| {
+        trusted.dismissed.insert(NEWCOMER.to_owned());
+    });
+    let (outcome, ()) = tokio::join!(approver.account.approve(NEWCOMER), async {
+        // The new device joins and reveals, as its screen would.
+        for _ in 0..100 {
+            let _ = newcomer.account.approval_status(NEWCOMER).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    assert_eq!(outcome.err(), Some(DeviceError::RequestGone));
+    assert_eq!(server.calls("/confirm"), 0, "nothing was signed");
+    assert!(!server.approval_open(), "the approval was denied");
+    assert!(!server.is_trusted(NEWCOMER) && !server.was_removed(NEWCOMER));
+}
+
+#[tokio::test]
+async fn a_dont_allow_that_arrives_while_the_signature_goes_out_removes_the_device() {
+    let (server, approver, newcomer) = pair();
+    newcomer.account.expect_approval(NEWCOMER).await;
+    approver.account.hook_at(1, |trusted| {
+        trusted.dismissed.insert(NEWCOMER.to_owned());
+    });
+    let (outcome, ()) = tokio::join!(approver.account.approve(NEWCOMER), async {
+        for _ in 0..100 {
+            let _ = newcomer.account.approval_status(NEWCOMER).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    assert_eq!(outcome.err(), Some(DeviceError::RequestGone));
+    assert!(server.was_removed(NEWCOMER));
+    assert!(
+        !approver
+            .account
+            .approval_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.allowed)
+    );
+}
+
+#[tokio::test]
+async fn what_is_kept_for_an_approval_is_dropped_once_it_ends() {
+    let (_server, approver, newcomer) = pair();
+    let digits = allow(&approver, &newcomer).await;
+    assert!(approver.account.time_left(NEWCOMER).is_some());
+    newcomer
+        .account
+        .finish_approval(NEWCOMER, &digits)
+        .await
+        .unwrap();
+    // The device is trusted now: the next look at the list sweeps its entries.
+    approver.account.approval_requests().await.unwrap();
+    assert!(approver.account.time_left(NEWCOMER).is_none());
+    approver.account.hook_at(0, |_| {});
 }
 
 #[tokio::test]

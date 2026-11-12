@@ -17,6 +17,9 @@ use crate::account::api::{
 };
 use crate::account::device_api::DeviceError;
 
+#[cfg(test)]
+pub(crate) type Hook = Box<dyn FnOnce(&mut Trusted) + Send>;
+
 /// A sign-up that waits for its emailed code.
 #[derive(Default)]
 pub(super) struct SignUp {
@@ -27,10 +30,10 @@ pub(super) struct SignUp {
 
 /// What the trusted side remembers between calls. Ids are device ids.
 #[derive(Default)]
-pub(super) struct Trusted {
+pub(crate) struct Trusted {
     /// Requests the person refused before they were allowed: hidden here, because the Engine has
     /// nothing to refuse until an approval starts.
-    pub(super) dismissed: HashSet<String>,
+    pub(crate) dismissed: HashSet<String>,
     /// Approvals this device confirmed: the new device has the digits to type.
     pub(super) confirmed: HashSet<String>,
     /// Approvals being started right now.
@@ -46,6 +49,8 @@ pub struct EngineAccount<T, S, C> {
     pub(super) factor: tokio::sync::Mutex<Option<Box<dc::SecondFactorChallenge>>>,
     pub(super) joining: tokio::sync::Mutex<Option<super::approval::Joining>>,
     pub(super) trusted: Mutex<Trusted>,
+    #[cfg(test)]
+    pub(super) hooks: Mutex<[Option<Hook>; 2]>,
     pub(super) wait: Duration,
     pub(super) step: Duration,
 }
@@ -64,9 +69,19 @@ where
             factor: tokio::sync::Mutex::default(),
             joining: tokio::sync::Mutex::default(),
             trusted: Mutex::default(),
+            #[cfg(test)]
+            hooks: Mutex::default(),
             wait,
             step,
         }
+    }
+
+    /// A test sets what runs at a chosen point of an Allow: 0 before the signature, 1 after.
+    #[cfg(test)]
+    pub(crate) fn hook_at(&self, at: usize, hook: impl FnOnce(&mut Trusted) + Send + 'static) {
+        self.hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[at] = Some(Box::new(hook));
     }
 
     pub(super) fn trusted(&self) -> std::sync::MutexGuard<'_, Trusted> {

@@ -1694,6 +1694,7 @@ dependencies = [
  "image",
  "libc",
  "orbyn-contracts 0.1.0",
+ "orbyn-core",
  "orbyn-device-client",
  "portable-pty",
  "regex",
