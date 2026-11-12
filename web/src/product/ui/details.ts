@@ -11,7 +11,7 @@ export const DETAIL_ROWS: { id: string; label: string }[] = [
   { id: "limits", label: "Limits" },
   { id: "usage", label: "Usage" },
   { id: "scripts", label: "Scripts" },
-  { id: "editor", label: "Open in editor" },
+  { id: "editor", label: "Open in an outside editor" },
 ];
 
 /** The rows as a checklist, for the card's menu and for Settings. */
