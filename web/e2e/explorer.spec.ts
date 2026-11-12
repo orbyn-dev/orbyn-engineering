@@ -102,6 +102,42 @@ test("a large folder shows 200 children and a row for the rest", async ({ page }
   await expect(tree(page).getByText(/Show \d+ more/)).toHaveCount(0);
 });
 
+test("a folder the service cut ends in one quiet row, 1,000 of 3,482 shown, with no filter hint", async ({ page }) => {
+  await row(page, /^src/).click();
+  await row(page, /^renders/).click();
+  const scroll = () => tree(page).evaluate((element) => { element.parentElement!.scrollTop = element.parentElement!.scrollHeight; });
+  for (let page_ = 0; page_ < 4; page_ += 1) {
+    await scroll();
+    await tree(page).getByText(/Show \d+ more/).click();
+  }
+  await scroll();
+  const capped = tree(page).getByRole("treeitem", { name: "1,000 of 3,482 shown" });
+  await expect(capped).toBeVisible();
+  await expect(capped).toHaveAttribute("aria-disabled", "true");
+});
+
+test("with no thread open a file opens as a read-only tab beside the new-thread composer, and the page is the composer", async ({ page }) => {
+  await page.goto("/#/");
+  await expect(tree(page)).toBeVisible();
+  await row(page, /^orbyn-engineering-app/).click();
+  // No worktree is marked as the thread's.
+  await expect(tree(page).getByRole("img", { name: "Current worktree" })).toHaveCount(0);
+  await row(page, /^main/).click();
+  await row(page, /^README\.md/).click();
+  const panel = page.getByRole("complementary", { name: "Files" });
+  await expect(panel.getByText("Read-only · no thread is open")).toBeVisible();
+  await expect(panel.getByText("// main")).toBeVisible();
+  await expect(panel.getByRole("tab")).toHaveCount(1);
+  await expect(panel.getByRole("tab", { name: "README.md" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".ctx-title b")).toHaveText("README.md");
+  await expect(panel.getByRole("textbox")).toHaveCount(0);
+  // The page beside it is still the composer for a thread that does not exist yet, and the route has not changed.
+  await expect(page.getByRole("textbox").first()).toBeVisible();
+  await expect(page).toHaveURL(/#\/$/);
+  await panel.getByRole("button", { name: "Close side panel" }).click();
+  await expect(panel).toHaveCount(0);
+});
+
 test("the arrow keys walk the tree, and the last view is remembered across a reload", async ({ page }) => {
   await row(page, /^docs/).focus();
   await page.keyboard.press("ArrowRight");

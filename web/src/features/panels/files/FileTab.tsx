@@ -54,14 +54,14 @@ function Code({ text }: { text: string }) {
 }
 
 /** A file of any worktree, read through the explorer and never written. */
-function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target: ExplorerTarget; worktree: ExplorerWorktree | undefined }) {
+function ReadOnlyFile({ threadId, target, worktree }: { threadId: string | null; target: ExplorerTarget; worktree: ExplorerWorktree | undefined }) {
   const read = useAsync(`explorer-file:${JSON.stringify([target.projectId, target.worktreeId, target.path])}`, (signal) =>
     readExplorerFile(target.projectId, target.worktreeId, target.path, signal),
   );
   const file = read.status === "ready" ? read.data : null;
   // Only the drawn banner: this is not the worktree the thread runs in.
   const locked = worktree?.read_only_reason === "locked";
-  const notMine = !!worktree && !worktree.is_subfolder && !locked && !worktree.threads.some((one) => one.id === threadId);
+  const notMine = !!worktree && !worktree.is_subfolder && !locked && (threadId === null || !worktree.threads.some((one) => one.id === threadId));
   const names = useFileTabNames(target.projectId, target.worktreeId, threadId);
   const threads = useWorkspace((state) => state.threads);
   const folders = target.path.split("/").slice(0, -1);
@@ -77,7 +77,7 @@ function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target
       {notMine ? (
         <div className="x2banner" role="status">
           <Lock size={14} aria-hidden />
-          <span>Read-only · not this thread’s worktree</span>
+          <span>{threadId === null ? "Read-only · no thread is open" : "Read-only · not this thread’s worktree"}</span>
           <span className="sp" />
           {worktree && canStartThreadIn(worktree, Object.values(threads)) ? (
             <Button small tone="quiet" onClick={() => startThreadIn(target.projectId, worktree)}>
@@ -114,9 +114,9 @@ function ReadOnlyFile({ threadId, target, worktree }: { threadId: string; target
 }
 
 /** A file of the explorer's tree. In the worktree this thread runs in it is the thread's own file, with everything that has. */
-function ExplorerFile({ threadId, target }: { threadId: string; target: ExplorerTarget }) {
+function ExplorerFile({ threadId, target }: { threadId: string | null; target: ExplorerTarget }) {
   const kept = useExplorer((state) => state.worktrees[target.projectId]);
-  const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
+  const cwd = useWorkspace((state) => (threadId ? state.threads[threadId]?.cwd : undefined));
   useEffect(() => {
     if (!kept) void useExplorer.getState().loadWorktrees(target.projectId, { thread: threadId });
   }, [kept, target.projectId, threadId]);
@@ -124,13 +124,13 @@ function ExplorerFile({ threadId, target }: { threadId: string; target: Explorer
   if (!kept || (kept.loading && !kept.data)) return <Loading label="Loading file" rows={6} />;
   // The thread's folder may be a subfolder of the worktree (the service roots a worktree at the Git root): the thread names
   // a file relative to its own folder, and reads only what is inside it.
-  const own = worktree && cwd ? threadPathOf(worktree.path, cwd, target.path) : null;
-  if (own !== null) return <ThreadFile threadId={threadId} path={own} />;
+  const own = threadId && worktree && cwd ? threadPathOf(worktree.path, cwd, target.path) : null;
+  if (threadId && own !== null) return <ThreadFile threadId={threadId} path={own} />;
   return <ReadOnlyFile threadId={threadId} target={target} worktree={worktree} />;
 }
 
 /** A worktree whose folder is gone: nothing to browse, and a way to read the list again. */
-function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { kind: "worktree" }>; threadId: string }) {
+function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { kind: "worktree" }>; threadId: string | null }) {
   return (
     <div className="explorer-file">
       <div className="x2banner" role="status">
@@ -147,10 +147,11 @@ function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { k
   );
 }
 
-/** What a file tab shows. */
-export function FileTab({ id, threadId }: { id: FileTabId; threadId: string }) {
+/** What a file tab shows. With no thread open only the explorer's own tabs can show: a thread file has no thread to name it. */
+export function FileTab({ id, threadId }: { id: FileTabId; threadId: string | null }) {
   const target = parseFileTab(id);
   if (!target) return null;
   if (target.kind === "worktree") return <MissingWorktree target={target} threadId={threadId} />;
-  return target.kind === "thread" ? <ThreadFile threadId={threadId} path={target.path} /> : <ExplorerFile threadId={threadId} target={target} />;
+  if (target.kind === "thread") return threadId === null ? null : <ThreadFile threadId={threadId} path={target.path} />;
+  return <ExplorerFile threadId={threadId} target={target} />;
 }

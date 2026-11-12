@@ -152,6 +152,7 @@ fn any_body() -> Value {
         "invite": "K7QM-2XWH-9QXA-3C2D",
         "email": "dev@example.com",
         "code": "ABCD-EFGH",
+        "digits": "123456",
         "password": "x",
         "action": "sign_out_everywhere",
         "policy": "combine",

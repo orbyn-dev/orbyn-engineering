@@ -10,7 +10,7 @@ import type { ExplorerWorktrees } from "../../../generated/ExplorerWorktrees";
 /** The deepest level that still indents; below it a row keeps its place and its tooltip names the folder. */
 export const MAX_DEPTH = 8;
 
-type RowKind = "project" | "group" | "thread" | "worktree" | "dir" | "file" | "empty" | "error" | "loading" | "more";
+type RowKind = "project" | "group" | "thread" | "worktree" | "dir" | "file" | "empty" | "error" | "loading" | "more" | "capped";
 
 /** One line of the tree. Only what a row draws or acts on is here; data stays in the store. */
 export interface Row {
@@ -83,6 +83,12 @@ export function readOnlyWhy(worktree: ExplorerWorktree, currentThreadId: string 
   return readOnlyOf(worktree, currentThreadId) ? "not_this_thread" : null;
 }
 
+/** The closing line of a folder the service cut: what is listed, of how many it holds. A floor reads "20,000+". */
+export function cappedLabel(tree: Pick<ExplorerTree, "entries" | "total" | "total_at_least">): string {
+  const count = (n: number) => n.toLocaleString("en-US");
+  return `${count(tree.entries.length)} of ${count(tree.total)}${tree.total_at_least ? "+" : ""} shown`;
+}
+
 /** Folders first, as the service sends them; ignored files stay out of sight. */
 const shownEntries = (entries: readonly ExplorerEntry[]) => entries.filter((entry) => !entry.ignored);
 
@@ -134,6 +140,9 @@ export function buildRows(input: ExplorerInput): Row[] {
     }
     if (entries.length > limit) {
       rows.push({ key: `more:${key}`, kind: "more", depth, projectId, label: `Show ${entries.length - limit} more`, remaining: entries.length - limit, level: at });
+    } else if (level.data?.truncated) {
+      // All the service sent is on screen and it held more: say how many, quietly. Nothing is waiting.
+      rows.push({ key: `capped:${key}`, kind: "capped", depth, projectId, label: cappedLabel(level.data), level: at });
     }
   };
 

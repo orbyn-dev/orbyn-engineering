@@ -33,7 +33,7 @@ function positions(rows: readonly Row[]): Map<string, { pos: number; size: numbe
   const ancestors: Row[] = [];
   const groups = new Map<string, string[]>();
   for (const row of rows) {
-    if (row.kind === "loading" || row.kind === "empty" || row.kind === "error") continue;
+    if (row.kind === "loading" || row.kind === "empty" || row.kind === "capped" || row.kind === "error") continue;
     while (ancestors.length > 0 && ancestors.at(-1)!.depth >= row.depth) ancestors.pop();
     const parent = ancestors.at(-1)?.key ?? "";
     groups.set(parent, [...(groups.get(parent) ?? []), row.key]);
@@ -143,7 +143,7 @@ export function Explorer({ route }: { route: Route }) {
   const places = useMemo(() => positions(rows), [rows]);
 
   // The tree is one tab stop: the row last focused, else the open thread, else the first.
-  const navigable = useCallback((row: Row) => row.kind !== "loading" && row.kind !== "empty" && row.kind !== "error", []);
+  const navigable = useCallback((row: Row) => row.kind !== "loading" && row.kind !== "empty" && row.kind !== "capped" && row.kind !== "error", []);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const wantFocus = useRef(false);
   const stop =

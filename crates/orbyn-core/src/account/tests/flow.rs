@@ -67,13 +67,18 @@ async fn local_only_without_a_backend_is_unavailable() {
     assert!(!core.account.available());
 }
 
+/// A password a new account takes: twelve characters or more, nothing else checked.
+fn new_password() -> Password {
+    pw("a fresh throwaway phrase")
+}
+
 #[tokio::test]
-async fn sign_up_runs_invite_email_code_and_password_then_signs_in() {
+async fn sign_up_runs_invite_email_password_and_code_in_that_order_then_signs_in() {
     let dir = TempDir::new();
     let core = dev(&dir, "up");
     let a = &core.account;
     assert!(a.view("macos").await.invite_required);
-    // Input ignores case, hyphens and spaces.
+    // Step 1: the invite is checked alone; input ignores case, hyphens and spaces.
     a.check_invite("k7qm 2xwh-9qxa 3c2d").await.unwrap();
     assert_eq!(
         code(a.check_invite("ABCD-EFGH-JKMN-PQRS").await.unwrap_err()),
@@ -83,18 +88,111 @@ async fn sign_up_runs_invite_email_code_and_password_then_signs_in() {
         code(a.check_invite("OOOO-OOOO-OOOO-OOOO").await.unwrap_err()),
         "invalid_invite"
     );
-    a.start_sign_up(INVITE, "new@example.com").await.unwrap();
+    // The email step sends nothing, so a code cannot be verified before the password step.
+    assert_eq!(
+        code(a.verify_email_code(EMAIL_CODE).await.unwrap_err()),
+        "invalid_code"
+    );
+    assert!(a.view("macos").await.session.is_none());
+    // Step 3: the password creates the account and emails the code; nobody is signed in yet.
+    a.start_sign_up(INVITE, "new@example.com", new_password())
+        .await
+        .unwrap();
+    assert!(a.view("macos").await.session.is_none());
+    // Step 4: a wrong code is refused, the right one signs in.
     assert_eq!(
         code(a.verify_email_code("ZZZZ-ZZZZ").await.unwrap_err()),
         "invalid_code"
     );
-    assert_eq!(code(a.register(pw("x")).await.unwrap_err()), "invalid_code");
+    assert!(a.view("macos").await.session.is_none());
     a.verify_email_code(&EMAIL_CODE.to_lowercase())
         .await
         .unwrap();
-    a.register(pw("a fresh throwaway phrase")).await.unwrap();
     let view = a.view("macos").await;
     assert_eq!(view.session.unwrap().email, "new@example.com");
+    // The password given at step 3 is the account's: it signs in again.
+    a.sign_out(false).await.unwrap();
+    assert_eq!(
+        a.sign_in("new@example.com", new_password()).await.unwrap(),
+        AccountSignInOutcome::Signed
+    );
+}
+
+#[tokio::test]
+async fn the_password_step_takes_twelve_characters_and_checks_nothing_else() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "short");
+    let a = &core.account;
+    let short = a
+        .start_sign_up(INVITE, "new@example.com", pw("eleven char"))
+        .await
+        .unwrap_err();
+    assert_eq!(code(short), "weak_password");
+    // Nothing was sent: no code can be verified.
+    assert_eq!(
+        code(a.verify_email_code(EMAIL_CODE).await.unwrap_err()),
+        "invalid_code"
+    );
+    // Exactly twelve characters is enough, with no mix of kinds required.
+    a.start_sign_up(INVITE, "new@example.com", pw("aaaaaaaaaaaa"))
+        .await
+        .unwrap();
+    // The invite and the email are still checked at this step.
+    assert_eq!(
+        code(
+            a.start_sign_up("ABCD-EFGH-JKMN-PQRS", "new@example.com", new_password())
+                .await
+                .unwrap_err()
+        ),
+        "invite_required"
+    );
+    assert!(
+        a.start_sign_up(INVITE, "not an email", new_password())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn five_wrong_emailed_codes_refuse_every_code_until_a_new_one_is_sent() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "tries");
+    let a = &core.account;
+    a.start_sign_up(INVITE, "new@example.com", new_password())
+        .await
+        .unwrap();
+    for _ in 0..crate::account::flow::EMAIL_CODE_TRIES {
+        assert_eq!(
+            code(a.verify_email_code("ZZZZ-ZZZZ").await.unwrap_err()),
+            "invalid_code"
+        );
+    }
+    // The right code is refused now, with the same answer: the screen never says why.
+    let refused = a.verify_email_code(EMAIL_CODE).await.unwrap_err();
+    assert_eq!(code(refused), "invalid_code");
+    assert!(a.view("macos").await.session.is_none());
+    // A new code starts the count again.
+    a.resend_code().await.unwrap();
+    a.verify_email_code(EMAIL_CODE).await.unwrap();
+    assert!(a.view("macos").await.session.is_some());
+}
+
+#[tokio::test]
+async fn an_unreachable_service_does_not_count_as_a_wrong_code() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "no-count");
+    let a = &core.account;
+    a.start_sign_up(INVITE, "new@example.com", new_password())
+        .await
+        .unwrap();
+    // A malformed code is refused before it is sent and uses no try either.
+    for _ in 0..10 {
+        assert_eq!(
+            code(a.verify_email_code("short").await.unwrap_err()),
+            "invalid_code"
+        );
+    }
+    a.verify_email_code(EMAIL_CODE).await.unwrap();
 }
 
 #[tokio::test]
@@ -521,7 +619,7 @@ async fn a_busy_network_gets_a_visible_check_and_a_failed_check_sends_nothing() 
     let core = dev(&dir, "check");
     let a = &core.account;
     let failed = a
-        .start_sign_up(INVITE, "hard@example.com")
+        .start_sign_up(INVITE, "hard@example.com", new_password())
         .await
         .unwrap_err();
     assert_eq!(failed.code(), "check_failed");
@@ -531,7 +629,48 @@ async fn a_busy_network_gets_a_visible_check_and_a_failed_check_sends_nothing() 
         "invalid_code"
     );
     let started = std::time::Instant::now();
-    a.start_sign_up(INVITE, "busy@example.com").await.unwrap();
+    a.start_sign_up(INVITE, "busy@example.com", new_password())
+        .await
+        .unwrap();
     assert!(started.elapsed() >= std::time::Duration::from_millis(1400));
     a.verify_email_code("ABCD-EFGH").await.unwrap();
+}
+
+/// A value named by its label, so a test can look for it without a literal that stands in for a secret.
+fn labelled(label: &str) -> String {
+    format!("{label}-made-for-this-test")
+}
+
+#[tokio::test]
+async fn sign_up_never_shows_the_password_or_the_code_in_debug_or_error_text() {
+    let password_text = labelled("sign-up-password");
+    let wrong_code = "ZZZZ-ZZZZ";
+    let body: orbyn_contracts::AccountSignUp = serde_json::from_str(&format!(
+        r#"{{"invite":"x","email":"a@b.co","password":"{password_text}"}}"#
+    ))
+    .unwrap();
+    assert!(!format!("{body:?}").contains(&password_text));
+    let dir = TempDir::new();
+    let core = dev(&dir, "signup-leak");
+    let a = &core.account;
+    let mut seen = String::new();
+    let refused = a
+        .start_sign_up(INVITE, "hard@example.com", pw(&password_text))
+        .await
+        .unwrap_err();
+    seen.push_str(&format!("{refused:?} {refused} "));
+    a.start_sign_up(INVITE, "new@example.com", pw(&password_text))
+        .await
+        .unwrap();
+    let wrong = a.verify_email_code(wrong_code).await.unwrap_err();
+    seen.push_str(&format!("{wrong:?} {wrong} "));
+    seen.push_str(&format!("{:?}", a.view("macos").await));
+    assert!(!seen.contains(&password_text));
+    assert!(!seen.contains(wrong_code));
+    assert!(!seen.contains("ZZZZZZZZ"));
+    let accepted = a.verify_email_code(EMAIL_CODE).await;
+    assert!(accepted.is_ok());
+    let after = format!("{:?}", a.view("macos").await);
+    assert!(!after.contains(&password_text));
+    assert!(!after.contains(EMAIL_CODE));
 }

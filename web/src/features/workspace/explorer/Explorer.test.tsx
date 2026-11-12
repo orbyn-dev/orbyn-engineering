@@ -187,6 +187,53 @@ it("shows a large folder 200 children at a time", async () => {
   expect(screen.queryByText(/Show \d+ more/)).toBeNull();
 });
 
+it("closes a folder the service cut with one quiet row naming what is shown of how many, once all of it is on screen", async () => {
+  const user = userEvent.setup();
+  const dir = (path: string) => folderKey("p-app", "p-app-main", path);
+  useUi.setState({ explorerOpen: { [projectKey("p-app")]: true, [worktreeKey("p-app", "p-app-main")]: true, [dir("src")]: true, [dir("src/renders")]: true } });
+  render(<App />);
+  expect(await screen.findByText("Show 800 more")).toBeInTheDocument();
+  // No count row while the list still pages: the paging row says what is left.
+  expect(screen.queryByText(/of 3,482 shown/)).toBeNull();
+  for (let page = 0; page < 4; page += 1) await user.click(screen.getByText(/Show \d+ more/));
+  const capped = await screen.findByRole("treeitem", { name: "1,000 of 3,482 shown" });
+  // Plain muted text: nothing to press, no bar or spinner, and it takes no place among the entries.
+  expect(capped).toHaveAttribute("aria-disabled", "true");
+  expect(capped).not.toHaveAttribute("aria-posinset");
+  expect(within(capped).queryByRole("button")).toBeNull();
+  expect(screen.queryByText(/Filter to narrow/)).toBeNull();
+  // A folder the service did not cut has none.
+  expect(screen.queryAllByText(/ shown$/)).toHaveLength(1);
+});
+
+it("opens a file with no thread open as a read-only tab beside the new-thread composer, with no thread's tabs", async () => {
+  const user = userEvent.setup();
+  window.location.hash = "#/";
+  useUi.setState({ explorerOpen: { [projectKey("p-app")]: true, [worktreeKey("p-app", "p-app-main")]: true } });
+  render(<App />);
+  // No worktree is the thread's, and none says Read-only: there is no thread to be read-only for.
+  const readme = await findRow("README.md");
+  expect(within(treeOf()).queryByRole("img", { name: "Current worktree" })).toBeNull();
+  expect(within(row("main")).queryByText("Read-only")).toBeNull();
+  expect(screen.queryByRole("complementary", { name: "Files" })).toBeNull();
+  await user.click(readme);
+  const panel = await screen.findByRole("complementary", { name: "Files" });
+  expect(await within(panel).findByText("Read-only · no thread is open")).toBeInTheDocument();
+  expect(await within(panel).findByText("// main")).toBeInTheDocument();
+  // Only the file's own tab, closable; none of a thread's surfaces, and no composer in the panel.
+  expect(within(panel).getAllByRole("tab")).toHaveLength(1);
+  expect(within(panel).getByRole("tab", { name: "README.md" })).toHaveAttribute("aria-selected", "true");
+  expect(within(panel).queryByRole("button", { name: "Open a tab" })).toBeNull();
+  expect(within(panel).queryByRole("textbox")).toBeNull();
+  expect(window.location.hash).toBe("#/");
+  // The way to a thread stays: it opens the new-thread composer for that worktree.
+  await user.click(within(panel).getByRole("button", { name: "Start a thread here" }));
+  expect(window.location.hash).toBe("#/new/p-app");
+  // Closing the panel gives the page back.
+  await user.click(within(await screen.findByRole("complementary", { name: "Files" })).getByRole("button", { name: "Close side panel" }));
+  expect(screen.queryByRole("complementary", { name: "Files" })).toBeNull();
+});
+
 it("draws only the rows on screen in a long list", async () => {
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
   const dir = (path: string) => folderKey("p-app", "p-app-main", path);
