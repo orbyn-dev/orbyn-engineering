@@ -9,6 +9,9 @@ license-file.workspace = true
 [features]
 # Rows and a repository for the HTTP tests of orbynd.
 test-support = []
+# The Engine adapter and its dependency. Off in every normal build, release included, because
+# nothing calls it while sign-in is off; the tests switch it on through the dev-dependency below.
+engine-client = ["dep:orbyn-device-client"]
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
@@ -41,11 +44,6 @@ tracing.workspace = true
 ulid.workspace = true
 unicode-segmentation = "=1.13.3"
 tar = { version = "0.4", default-features = false }
-
-[features]
-# The Engine adapter and its dependency. Off in every normal build, release included, because
-# nothing calls it while sign-in is off; the tests switch it on through the dev-dependency below.
-engine-client = ["dep:orbyn-device-client"]
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
