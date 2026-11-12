@@ -17,6 +17,7 @@ import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilit
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
+import type { RedactionPatternDetail } from "../../generated/RedactionPatternDetail";
 import type { RedactionPatternInput } from "../../generated/RedactionPatternInput";
 import type { RedactionPatternTest } from "../../generated/RedactionPatternTest";
 import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
@@ -168,4 +169,9 @@ export function deleteSecretPattern(id: string) {
 
 export function trySecretPattern(input: RedactionPatternTestInput, signal?: AbortSignal) {
   return request<RedactionPatternTest>("POST", "/api/settings/secrets/patterns/test", input, signal);
+}
+
+/** One pattern with its text: only the edit dialog the person opens reads it. */
+export function readSecretPattern(id: string, signal?: AbortSignal) {
+  return request<RedactionPatternDetail>("GET", `/api/settings/secrets/patterns/${q(id)}`, undefined, signal);
 }

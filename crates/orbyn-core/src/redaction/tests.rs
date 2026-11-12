@@ -272,6 +272,24 @@ fn each_masked_example_matches_no_detector() {
 }
 
 #[test]
+fn the_mock_lists_the_same_formats_in_the_same_order() {
+    let mock = include_str!("../../../../web/mock/secrets.ts");
+    let row = regex::Regex::new(r#"\["([a-z_]+)", "([^"]+)", "([^"]+)"\],"#).unwrap();
+    let seen: Vec<(String, String, String)> = row
+        .captures_iter(mock)
+        .map(|c| (c[1].to_owned(), c[2].to_owned(), c[3].to_owned()))
+        .collect();
+    let core: Vec<(String, String, String)> = BUILTINS
+        .iter()
+        .map(|b| (b.id.to_owned(), b.label.to_owned(), b.example.to_owned()))
+        .collect();
+    assert_eq!(
+        seen, core,
+        "web/mock/secrets.ts and the core's format list differ"
+    );
+}
+
+#[test]
 fn text_over_the_window_is_read_whole_and_a_value_on_the_edge_is_still_hidden() {
     let token = sample("github_token");
     let filler = "x ".repeat(custom::MAX_APPLY_BYTES / 2);

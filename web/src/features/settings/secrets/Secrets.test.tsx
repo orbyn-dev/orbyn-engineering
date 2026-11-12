@@ -27,11 +27,18 @@ describe("Settings › Secrets", () => {
   it("lists where values are hidden, the formats and the patterns, with the ledger locked on", async () => {
     await open();
     expect(row("Terminal blocks")).toBeChecked();
-    expect(row("What agents read")).toBeChecked();
+    // No switch for what agents read: it is per project, through Manage.
+    expect(screen.queryByRole("switch", { name: "What agents read" })).toBeNull();
+    expect(screen.getByText("What agents read")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2);
     expect(screen.getByText("Crew ledger and Crew objects")).toBeVisible();
     expect(screen.getByText("Always on")).toBeVisible();
     expect(screen.queryByRole("switch", { name: /Crew ledger/ })).toBeNull();
     expect(screen.getByText("None. Redaction is on in every project.")).toBeVisible();
+    // What is not built is said so, not promised.
+    expect(screen.getByRole("status")).toHaveTextContent("not applied yet");
+    expect(screen.getAllByText("Not applied yet")).toHaveLength(2);
+    expect(screen.getAllByText(/Not applied yet to terminal blocks/)).toHaveLength(1);
     for (const format of view().formats) expect(row(format.label)).toBeChecked();
     expect(screen.getByText("Environment values named like a secret", { selector: ".setting-line-title" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add pattern" })).toBeVisible();
@@ -88,47 +95,30 @@ describe("Settings › Secrets", () => {
     expect(within(dialog).getByText(/Environment values named like a secret will be shown/)).toBeVisible();
   });
 
-  it("warns before agents read real values everywhere, with Cancel as the default", async () => {
+  it("lists projects with their state, warns before turning one off and turns it back on plainly", async () => {
     const user = userEvent.setup();
     await open();
-    await user.click(row("What agents read"));
-    const dialog = await screen.findByRole("dialog", { name: "Turn off redaction for what agents read?" });
-    expect(within(dialog).getByText("Agents will see real secrets in every project.")).toBeVisible();
-    expect(within(dialog).getByText(/Crew objects are not affected/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    await user.click(within(dialog).getByRole("button", { name: "Turn off redaction" }));
-    await waitFor(() => expect(row("What agents read")).not.toBeChecked());
-    expect(view().agents).toBe(false);
-    expect(view().crew_locked).toBe(true);
-  });
-
-  it("turns redaction off for one project with a warning, lists it and turns it back on", async () => {
-    const user = userEvent.setup();
-    await open();
-    await user.click(screen.getByRole("button", { name: "Manage" }));
-    const dialog = await screen.findByRole("dialog", { name: /^Turn off redaction for / });
-    expect(within(dialog).getByText("Agents will see real secrets in this project.")).toBeVisible();
-    expect(within(dialog).getByText("Only this project is affected. You can turn it back on at any time.")).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    const project = await within(dialog).findByRole("combobox", { name: "Project" });
-    await waitFor(() => expect(within(project).getAllByRole("option").length).toBeGreaterThan(0));
-    const name = (project as HTMLSelectElement).selectedOptions[0]!.textContent!;
-    await user.click(within(dialog).getByRole("button", { name: "Turn off redaction" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText(new RegExp(`${name}\\. Agents read their real values`))).toBeVisible();
-    expect(view().projects_off.map((entry) => entry.name)).toEqual([name]);
-
-    await user.click(screen.getByRole("button", { name: "Manage" }));
-    await user.click(await screen.findByRole("button", { name: `Turn redaction back on for ${name}` }));
-    await waitFor(() => expect(view().projects_off).toEqual([]));
-  });
-
-  it("changes nothing for a project when the dialog is cancelled", async () => {
-    const user = userEvent.setup();
-    await open();
-    await user.click(screen.getByRole("button", { name: "Manage" }));
-    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getAllByRole("button", { name: "Manage" })[1]!);
+    const list = await screen.findByRole("dialog", { name: "Projects with redaction off" });
+    const buttons = await within(list).findAllByRole("button", { name: /^Turn off redaction for / });
+    expect(within(list).getAllByText(/Redaction on/).length).toBe(buttons.length);
+    const name = buttons[0]!.getAttribute("aria-label")!.replace("Turn off redaction for ", "");
+    await user.click(buttons[0]!);
+    const warning = await screen.findByRole("dialog", { name: `Turn off redaction for ${name}?` });
+    expect(within(warning).getByText("Agents will see real secrets in this project.")).toBeVisible();
+    expect(within(warning).getByText("Only this project is affected. You can turn it back on at any time.")).toBeVisible();
+    expect(within(warning).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.click(within(warning).getByRole("button", { name: "Cancel" }));
     expect(view().projects_off).toEqual([]);
+    await user.click(within(await screen.findByRole("dialog", { name: "Projects with redaction off" })).getAllByRole("button", { name: /^Turn off redaction for / })[0]!);
+    await user.click(within(await screen.findByRole("dialog", { name: `Turn off redaction for ${name}?` })).getByRole("button", { name: "Turn off redaction" }));
+    await waitFor(() => expect(view().projects_off.map((entry) => entry.name)).toEqual([name]));
+    const again = await screen.findByRole("dialog", { name: "Projects with redaction off" });
+    expect(await within(again).findByText(/Redaction off/)).toBeVisible();
+    // Turn on has no confirm.
+    await user.click(within(again).getByRole("button", { name: `Turn on redaction for ${name}` }));
+    await waitFor(() => expect(view().projects_off).toEqual([]));
+    expect(screen.queryByRole("dialog", { name: /^Turn off redaction/ })).toBeNull();
   });
 
   it("says when the settings cannot be read and reads again", async () => {
@@ -165,6 +155,8 @@ describe("Settings › Secrets › patterns", () => {
   it("starts empty with Add pattern disabled until the pattern matches the sample", async () => {
     const user = userEvent.setup();
     const dialog = await openDialog(user);
+    expect(within(dialog).getByText(/Orbyn tests a new pattern on a sample of ordinary text/)).toBeVisible();
+    expect(within(dialog).getByText(/Describe the shape of the value rather than pasting the value/)).toBeVisible();
     expect(within(dialog).getByText("Nothing to test yet")).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Add pattern" })).toBeDisabled();
     expect(within(dialog).getByRole("radio", { name: "Regular expression" })).toBeChecked();
@@ -185,6 +177,10 @@ describe("Settings › Secrets › patterns", () => {
     const table = screen.getByRole("table", { name: "Your patterns" });
     expect(within(table).getByText("Acme key")).toBeVisible();
     expect(within(table).getByText("Anywhere")).toBeVisible();
+    expect(within(table).getByText("Regular expression")).toBeVisible();
+    // The list names the pattern and its type, and never carries its text.
+    expect(table).not.toHaveTextContent("_[a-z]{8}");
+    expect(JSON.stringify(view())).not.toContain("[a-z]{8}");
     expect(view().patterns).toHaveLength(1);
   });
 
@@ -206,8 +202,8 @@ describe("Settings › Secrets › patterns", () => {
     const dialog = await openDialog(user);
     await fill(user, dialog, "Everything", ".*", "npm run build");
     expect(await within(dialog).findByText(/This pattern is very broad\./)).toBeVisible();
-    expect(within(dialog).getByText(/It would hide 12 of 12 lines of ordinary text/)).toBeVisible();
-    expect(within(dialog).getByText("Matched 12 of 12 lines")).toBeVisible();
+    expect(within(dialog).getByText(/This would hide \d+ of \d+ characters of the sample/)).toBeVisible();
+    expect(within(dialog).getByText(/Hides \d+ of \d+ characters/)).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Add anyway" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(view().patterns.map((entry) => entry.name)).toEqual(["Everything"]);
@@ -244,6 +240,7 @@ describe("Settings › Secrets › patterns", () => {
     await user.click(screen.getByRole("button", { name: "Menu for Acme key" }));
     await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit pattern" });
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Pattern" })).toHaveValue("acme-token"));
     const name = within(dialog).getByRole("textbox", { name: "Name" });
     await user.clear(name);
     await user.type(name, "Acme token");
@@ -255,6 +252,7 @@ describe("Settings › Secrets › patterns", () => {
     await user.click(screen.getByRole("button", { name: "Menu for Acme token" }));
     await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
     const confirm = await screen.findByRole("dialog", { name: "Remove Acme token?" });
+    expect(within(confirm).getByText("Values that match it will no longer be hidden.")).toBeVisible();
     expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
     await user.click(within(confirm).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(screen.queryByRole("table", { name: "Your patterns" })).toBeNull());

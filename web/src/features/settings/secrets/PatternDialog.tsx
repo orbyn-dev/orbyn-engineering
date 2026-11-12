@@ -11,7 +11,7 @@ import { toFailure } from "../../../lib/useAsync";
 import { Dialog } from "../../../ui/Dialog";
 import { Segmented } from "../../../ui/Segmented";
 import { Button, Field } from "../../../ui/controls";
-import { saveSecretPattern, trySecretPattern } from "../api";
+import { readSecretPattern, saveSecretPattern, trySecretPattern } from "../api";
 
 const TRY_AFTER_MS = 250;
 const KINDS: { value: PatternKind; label: string }[] = [{ value: "text", label: "Text" }, { value: "regex", label: "Regular expression" }];
@@ -48,13 +48,24 @@ export function PatternDialog({
   onClose(): void;
 }) {
   const [name, setName] = useState(pattern?.name ?? "");
-  const [text, setText] = useState(pattern?.pattern ?? "");
+  const [text, setText] = useState("");
+  // An existing pattern's text is read when the person opens it, and is not in the list.
+  const [loaded, setLoaded] = useState(!pattern);
   const [kind, setKind] = useState<PatternKind>(pattern?.kind ?? "regex");
   const [scope, setScope] = useState<PatternScope>(pattern?.applies_to ?? "anywhere");
   const [sample, setSample] = useState("");
   const [test, setTest] = useState<RedactionPatternTest | null>(null);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pattern) return;
+    const controller = new AbortController();
+    readSecretPattern(pattern.id, controller.signal)
+      .then((detail) => { setText(detail.pattern); setLoaded(true); })
+      .catch((failure) => { if (!controller.signal.aborted) setRefused(toFailure(failure).message); });
+    return () => controller.abort();
+  }, [pattern]);
 
   useEffect(() => {
     setTest(null);
@@ -72,7 +83,7 @@ export function PatternDialog({
   const problem = test?.problem ?? null;
   const matched = test && !problem ? test.matches.length : 0;
   const broad = Boolean(test && !problem && test.broad);
-  const ready = name.trim() !== "" && test !== null && !problem && matched > 0;
+  const ready = loaded && name.trim() !== "" && test !== null && !problem && matched > 0;
 
   const save = async (acceptBroad: boolean) => {
     setBusy(true);
@@ -104,12 +115,13 @@ export function PatternDialog({
       }
     >
       <div className="form">
+        <p className="field-hint">Orbyn tests a new pattern on a sample of ordinary text. A pattern that would hide nearly all of it gets a note with the numbers; you can still add it.</p>
         <Field label="Name">
           {(props) => <input {...props} data-dialog-focus type="text" value={name} maxLength={limits.max_name_chars} onChange={(event) => setName(event.target.value)} />}
         </Field>
-        <Field label="Pattern" error={problem?.message ?? null} hint={kind === "text" ? "Plain text. * stands for any run of characters that are not spaces." : undefined}>
+        <Field label="Pattern" error={problem?.message ?? null} hint={<>{kind === "text" ? "Plain text. * stands for any run of characters that are not spaces. " : ""}Describe the shape of the value rather than pasting the value: a pattern is kept as written.</>}>
           {(props) => (
-            <input {...props} className="mono" type="text" value={text} maxLength={limits.max_pattern_chars} spellCheck={false} autoCapitalize="off" autoCorrect="off" onChange={(event) => setText(event.target.value)} />
+            <input {...props} className="mono" type="text" value={text} disabled={!loaded} maxLength={limits.max_pattern_chars} spellCheck={false} autoCapitalize="off" autoCorrect="off" onChange={(event) => setText(event.target.value)} />
           )}
         </Field>
         <div className="secrets-two">
@@ -133,7 +145,7 @@ export function PatternDialog({
           ) : !test ? (
             <b>Trying the pattern…</b>
           ) : broad ? (
-            <><b>Matched {test.lines_matched} of {test.lines_total} lines</b>Of the ordinary text Orbyn tried it on</>
+            <><b>Hides {test.hidden_chars} of {test.total_chars} characters</b>Of a sample of ordinary text</>
           ) : matched > 0 ? (
             <><b>Matched {matched} {matched === 1 ? "value" : "values"}</b><Masked sample={sample} test={test} /></>
           ) : (
@@ -143,7 +155,7 @@ export function PatternDialog({
         {broad ? (
           <div className="secrets-warn" role="note">
             <TriangleAlert size={15} aria-hidden />
-            <div><b>This pattern is very broad.</b> It would hide {test?.lines_matched} of {test?.lines_total} lines of ordinary text. Check the pattern, or add it anyway.</div>
+            <div><b>This pattern is very broad.</b> This would hide {test?.hidden_chars} of {test?.total_chars} characters of the sample. Check the pattern, or add it anyway.</div>
           </div>
         ) : null}
         {refused ? <p className="field-error" role="alert">{refused}</p> : null}

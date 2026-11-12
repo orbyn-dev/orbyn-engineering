@@ -14,12 +14,12 @@ import type { MockResponse } from "./api.ts";
 
 const FORMATS = [
   ["private_key", "Private key block", "-----BEGIN … PRIVATE KEY-----"],
-  ["api_key", "API key", "sk-••••••••••••••••••••"],
-  ["github_token", "GitHub token", "ghp_•••••••••••••"],
-  ["aws_access_key", "AWS access key", "AKIA••••••••••••••••"],
+  ["api_key", "API key", "sk-••••••••"],
+  ["github_token", "GitHub token", "ghp_••••••••"],
+  ["aws_access_key", "AWS access key", "AKIA••••••••"],
   ["aws_secret_key", "AWS secret key", "40 characters after an access key"],
-  ["slack_token", "Slack token", "xoxb-•••••••••"],
-  ["bearer_token", "Bearer token", "Bearer ••••••••••••••••••••"],
+  ["slack_token", "Slack token", "xoxb-••••••••"],
+  ["bearer_token", "Bearer token", "Bearer ••••••••"],
   ["jwt", "JSON Web Token", "eyJ•••••.•••••.•••••"],
   ["named_value", "Environment values named like a secret", "KEY, TOKEN, SECRET, PASSWORD"],
 ] as const;
@@ -62,7 +62,11 @@ function compile(kind: PatternKind, pattern: string): RegExp | Problem {
 
 const isProblem = (value: RegExp | Problem): value is Problem => !(value instanceof RegExp);
 const spans = (regex: RegExp, text: string) => [...text.matchAll(regex)].filter((hit) => hit[0].length > 0).map((hit) => ({ start: hit.index, end: hit.index + hit[0].length }));
-const hitLines = (regex: RegExp, lines: string[]) => lines.filter((line) => spans(regex, line).length > 0).length;
+/** Characters of `lines` the pattern hides, and how many there are. */
+const hidden = (regex: RegExp, lines: string[]): [number, number] => [
+  lines.reduce((sum, line) => sum + spans(regex, line).reduce((n, span) => n + span.end - span.start, 0), 0),
+  lines.reduce((sum, line) => sum + line.length, 0),
+];
 
 export function createSecretsMock(projects: () => { id: string; name: string }[]) {
   let terminal = true;
@@ -77,7 +81,8 @@ export function createSecretsMock(projects: () => { id: string; name: string }[]
   const view = (): RedactionSettings => ({
     terminal, agents, crew_locked: true,
     formats: FORMATS.map(([id, label, example]) => ({ id, label, example, enabled: !formatsOff.has(id) })),
-    patterns: patterns.map((entry) => ({ ...entry })),
+    // The list never carries a pattern's text: a pattern can be a secret itself.
+    patterns: patterns.map(({ id, name, kind, applies_to }) => ({ id, name, kind, applies_to })),
     projects_off: projects().filter((project) => off.has(project.id)),
     limits: LIMITS,
   });
@@ -91,9 +96,9 @@ export function createSecretsMock(projects: () => { id: string; name: string }[]
     if (!name) return refuse("invalid_pattern", "Give the pattern a name.");
     if (patterns.some((entry) => entry.id !== editing && entry.name.toLowerCase() === name.toLowerCase())) return refuse("invalid_pattern", "A pattern with this name is already in the list.");
     if (!editing && patterns.length >= LIMITS.max_patterns) return refuse("invalid_pattern", `Orbyn keeps at most ${LIMITS.max_patterns} patterns. Remove one first.`);
-    const hit = hitLines(regex, ORDINARY);
-    if (input.accept_broad !== true && hit * 100 >= ORDINARY.length * 90) {
-      return refuse("pattern_too_broad", `This pattern is very broad. It would hide ${hit} of ${ORDINARY.length} lines of ordinary text.`, { lines_matched: hit, lines_total: ORDINARY.length });
+    const [hit, total] = hidden(regex, ORDINARY);
+    if (input.accept_broad !== true && hit * 100 >= total * 90) {
+      return refuse("pattern_too_broad", `This would hide ${hit} of ${total} characters of the sample.`, { hidden_chars: hit, total_chars: total });
     }
     if (editing) {
       if (!patterns.some((entry) => entry.id === editing)) return notFound("pattern");
@@ -107,14 +112,14 @@ export function createSecretsMock(projects: () => { id: string; name: string }[]
 
   function test(input: RedactionPatternTestInput): RedactionPatternTest {
     const regex = compile(input.kind, input.pattern);
-    if (isProblem(regex)) return { problem: regex, matches: [], masked: "", lines_matched: 0, lines_total: 0, broad: false };
+    if (isProblem(regex)) return { problem: regex, matches: [], masked: "", hidden_chars: 0, total_chars: 0, broad: false };
     const sample = input.sample.slice(0, LIMITS.max_sample_chars);
     const found = spans(regex, sample);
     const context = (input.lines ?? []).slice(0, LIMITS.max_context_lines);
     const lines = context.length >= 10 ? context : ORDINARY;
-    const hit = hitLines(regex, lines);
+    const [hit, total] = hidden(regex, lines);
     const masked = [...sample].map((char, at) => (found.some((span) => at >= span.start && at < span.end) ? "•" : char)).join("");
-    return { problem: null, matches: found, masked, lines_matched: hit, lines_total: lines.length, broad: hit * 100 >= lines.length * 90 };
+    return { problem: null, matches: found, masked, hidden_chars: hit, total_chars: total, broad: hit * 100 >= total * 90 };
   }
 
   function handle(method: string, path: string, body: unknown): MockResponse {
@@ -138,6 +143,10 @@ export function createSecretsMock(projects: () => { id: string; name: string }[]
     }
     if (head === "patterns" && id === "test" && method === "POST") return { status: 200, body: test(body as RedactionPatternTestInput) };
     if (head === "patterns" && !id && method === "POST") return save(body as RedactionPatternInput, null);
+    if (head === "patterns" && id && !extra && method === "GET") {
+      const found = patterns.find((entry) => entry.id === id);
+      return found ? { status: 200, body: { ...found } } : notFound("pattern");
+    }
     if (head === "patterns" && id && !extra && method === "PUT") return save(body as RedactionPatternInput, id);
     if (head === "patterns" && id && method === "DELETE") {
       if (!patterns.some((entry) => entry.id === id)) return notFound("pattern");
