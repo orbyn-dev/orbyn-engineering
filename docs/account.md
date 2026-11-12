@@ -428,6 +428,15 @@ now and does not wait for them.
    `default_engine` picks.
 8. The Engine reviewer approves these documents once more, this time against the built code.
 
+**Distributed builds are unsigned for now, so the gate stays `Off`.** There is no Apple Developer account, so no build we
+distribute is signed with a Developer ID or notarized. Item 5 is therefore not met and stays a hard condition: real
+sign-in stays `Off` in every build we distribute, `Settings > Account` stays hidden as this design says, and the beta
+ships with the gate `Off` for downloads. We do not weaken item 5 and we do not swap the Keychain for a file store to get
+around it. Development builds against the local loopback stack keep `LocalOnly`. What turns real sign-in on: a Developer
+ID, notarization of the release build, and the release check showing hardened runtime without `get-task-allow` or
+`disable-library-validation`, verified on that signed build, together with the other seven conditions. Items 4, 6, 7, 9
+and 10 and the loopback two-machine test need no signing and proceed now.
+
 Follow-ups before the gate can be turned on (tracked, not built in the wiring pull requests):
 
 9. When the real client lands: a test that only a loopback address is accepted under `LocalOnly`, and a test that

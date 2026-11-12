@@ -13,6 +13,7 @@ import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { NativeSessions } from "../maintenance/NativeSessions";
 import { SettingsBanner } from "../rows/SettingsBanner";
+import { InstallBanner, InstallBody, InstallLog, useInstallView, VendorInstall } from "./InstallPanel";
 import { FeedbackAction, hasFeedback, UpdateAction, useCustomModels } from "./ProviderParts";
 import type { InstanceStore } from "./ProviderInstances";
 import { patchInstance } from "./providerInstanceData";
@@ -110,6 +111,8 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
     setFailure(null);
     try { await api.refreshEngines(); await refreshEngines(); } catch (reason) { setFailure(toFailure(reason).message); } finally { setChecking(false); }
   };
+  const install = useInstallView(engine);
+  const failed = install.shown !== null && !install.shown.ok;
   const signIn = engine.sign_in_command && (engine.auth === "logged_out" || engine.tier === "acp");
   return (
     <>
@@ -122,11 +125,15 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
         {engine.path ? `Couldn’t run ${engine.path}. ` : ""}{engine.problem}
       </SettingsBanner> : null}
       {failure ? <p className="field-error" role="alert">{failure}</p> : null}
+      {!engine.installed ? <VendorInstall engine={engine} view={install} checking={checking} onCheck={() => void recheck()} /> : null}
+      <InstallBanner engine={engine} view={install} />
+      {failed && install.shown ? <InstallLog command={install.shown.command ?? null} lines={install.shown.output} failed /> : null}
       <SettingGroup>
-        <SettingRow title="Version" description={engine.version === null ? "Unknown" : hasNewer ? `${engine.version} · ${engine.latest} is available` : engine.version}>
+        <SettingRow title="Version" description={engine.version === null ? "Unknown" : install.running && engine.latest ? `${engine.version} · updating to ${engine.latest}` : hasNewer ? `${engine.version} · ${engine.latest} is available` : engine.version}>
           <UpdateAction engine={engine} />
-          {hasNewer ? null : <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button>}
+          {hasNewer || install.running ? null : <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button>}
         </SettingRow>
+        {failed ? null : <InstallBody view={install} />}
         <SettingRow title="Login" description={engine.auth === "logged_out" ? "Not signed in" : engine.auth === "logged_in" && engine.account ? `Signed in as ${engine.account}` : authLabels[engine.auth]}>
           {signIn && engine.sign_in_command ? <CopyCommand command={engine.sign_in_command} label="Copy sign-in command" /> : null}
           {engine.auth === "logged_out" ? <Button small busy={checking} onClick={() => void recheck()}>Check again</Button> : null}
@@ -141,7 +148,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       <SettingGroup>
         {hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
         {removable ? (
-          <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this instance from Orbyn. Its sign-in and sessions stay with the CLI."}>
+          <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this engine from Orbyn. Its sign-in and sessions stay with the engine."}>
             <Button small tone="quiet" className="set-remove" aria-label={`Remove ${engine.name}`} disabled={running !== undefined} onClick={() => setRemoving(true)}>Remove…</Button>
             {running ? <Button small onClick={() => navigate({ name: "thread", id: running.id })}>Open thread</Button> : null}
           </SettingRow>

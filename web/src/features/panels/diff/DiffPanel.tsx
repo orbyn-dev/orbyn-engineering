@@ -1,4 +1,4 @@
-import { FileDiff as DiffIcon, GitPullRequest, Undo2 } from "lucide-react";
+import { CircleAlert, FileDiff as DiffIcon, GitPullRequest, Undo2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { FileDiff } from "../../../api/types";
@@ -17,7 +17,8 @@ import { createPullRequestPlan } from "../../../product/git/plans";
 import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
 import { openInEditor } from "../files/openInEditor";
 import { ChangedFiles } from "./ChangedFiles";
-import { ChangesHeader, DIFF_SOURCES, WIDE, type ComparePair, type DiffSource } from "./ChangesHeader";
+import { useHunkActions } from "./useHunkActions";
+import { ChangesHeader, DIFF_SOURCES, NARROW, WIDE, type ComparePair, type DiffSource } from "./ChangesHeader";
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
 import { commitItems, turnItems, type TurnTotals } from "./pickers";
@@ -177,6 +178,8 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     return () => observer.disconnect();
   }, []);
   const wide = width >= WIDE;
+  const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
+  const hunkActions = useHunkActions(threadId, cwd);
 
   const files = useMemo(() => {
     const every = diff.data ?? [];
@@ -290,6 +293,8 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       onShowAll={() => setShownFully(new Set(shownFully).add(selected.path))}
       canRender={source === "worktree" || source === "thread"}
       bar={bar}
+      edits={source === "worktree" && !ignoreSpace ? { revert: hunkActions.revert, saveLine: hunkActions.saveLine } : undefined}
+      narrow={width > 0 && width < NARROW}
     />
   ) : null;
   // The list draws its first 50 rows, and always the one on show (a picked file or a find match opens past the cap).
@@ -328,6 +333,22 @@ export function DiffPanel({ threadId }: { threadId: string }) {
         refreshing={diff.refreshing}
         onRefresh={reload}
       />
+      {hunkActions.notice ? (
+        <div className="hunk-banner" role="alert">
+          <CircleAlert size={14} aria-hidden />
+          <span><b>{hunkActions.notice.title}</b> {hunkActions.notice.detail}</span>
+          <Button small onClick={() => { hunkActions.clearNotice(); reload(); }}>{hunkActions.notice.action}</Button>
+        </div>
+      ) : null}
+      {hunkActions.reverted ? (
+        <div className="hunk-toast" role="status">
+          <span>Hunk reverted in {hunkActions.reverted.path}.</span>
+          <span className="ta">
+            <Button small tone="quiet" onClick={() => void hunkActions.undo()}>Undo · {hunkActions.reverted.seconds} s</Button>
+            <Button small tone="quiet" onClick={hunkActions.dismissReverted}>Dismiss</Button>
+          </span>
+        </div>
+      ) : null}
       <Presence>
         {pickerAt && pickerItems.length > 0 && (source === "turn" || source === "commit") ? (
           <Menu

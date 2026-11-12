@@ -3,6 +3,7 @@ import type { ProjectScopeCatalog } from "../src/generated/ProjectScopeCatalog.t
 import type { ScopedPreferencesResult } from "../src/generated/ScopedPreferencesResult.ts";
 import type { ScopedPreferencesChange } from "../src/generated/ScopedPreferencesChange.ts";
 import type { JsonValue } from "../src/api/types.ts";
+import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
 /**
  * createMockApi: an in-memory service with the architecture's HTTP contract.
  * The dev-server plugin and the tests both drive it through `handle`.
@@ -26,6 +27,7 @@ import type {
 import { createAccountMock } from "./account.ts";
 import { createCrewMock } from "./crew.ts";
 import { createExplorerMock } from "./explorer.ts";
+import { createSecretsMock } from "./secrets.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
@@ -96,6 +98,11 @@ export function createMockApi(options: MockOptions = {}) {
   let approvals: Approval[] = [];
   let logs: Record<string, WireThreadEvent[]> = {};
   let engines: EngineStatus[] = [];
+  /** What the service keeps of each install, update and removal, newest first, twenty at most. */
+  const installs: Record<string, InstallOutcome[]> = {};
+  const keepInstall = (outcome: InstallOutcome) => {
+    installs[outcome.engine] = [outcome, ...(installs[outcome.engine] ?? [])].slice(0, 20);
+  };
   let managed: WorkspaceStatus = fixtures.workspaceStatus([]);
   let failNextSetup = false;
   let updates: UpdateStatus = fixtures.updateStatus(2);
@@ -126,6 +133,7 @@ export function createMockApi(options: MockOptions = {}) {
 
   const accountMock = createAccountMock();
   const crewMock = createCrewMock();
+  const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
@@ -133,6 +141,7 @@ export function createMockApi(options: MockOptions = {}) {
     scenario = next;
     accountMock.reset(next === "account");
     crewMock.reset(next);
+    secretsMock.reset();
     signedIn = false;
     idCounter = 0;
     preferenceValues = {};
@@ -878,6 +887,11 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
         }
+        if (seg[3] === "installs") {
+          // Only an engine that is not installed has the vendor's page.
+          const missing = engines.find((e) => e.id === seg[2])?.installed === false;
+          return { status: 200, body: { engine: seg[2], ...(missing ? { vendor_page: { url: `https://${seg[2]}.example/install`, domain: `${seg[2]}.example` } } : {}), outcomes: installs[seg[2] ?? ""] ?? [] } };
+        }
         if (seg[3] === "limits") return err(502, "engine_unreachable", "The engine did not answer.");
         if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(seg[2] ?? "claude") };
         if (seg[3] === "models") {
@@ -1046,10 +1060,17 @@ export function createMockApi(options: MockOptions = {}) {
           return err(409, "engine_busy", `${engine.name} has an active run. Finish or cancel it first.`);
         }
         engine.updating = true;
+        const started = now();
+        const from = engine.version;
+        const command = engine.update_command ?? "";
         const timer = setTimeout(() => {
           engine.updating = false;
           finishStep(`engine:${engine.id}`);
           engine.version = engine.latest;
+          keepInstall({
+            id: `${engine.id}-${started}`, engine: engine.id, kind: "update", started_at: started, finished_at: now(), ok: true,
+            command, exit_status: 0, from_version: from ?? undefined, to_version: engine.latest ?? undefined, output: ["added 1 package"],
+          });
         }, stepMs * 20);
         timers.add(timer);
         return { status: 202 };
@@ -1058,7 +1079,12 @@ export function createMockApi(options: MockOptions = {}) {
 
     if (method === "DELETE" && seg[0] === "api") {
       if (seg[1] === "engines" && seg[2] === "custom") {
+        if (threads.some((t) => t.engine === seg[3] && t.active_run)) {
+          return err(409, "engine_busy", `${seg[3]} has an active run or update`);
+        }
         engines = engines.filter((e) => e.id !== seg[3]);
+        const at = now();
+        keepInstall({ id: `${seg[3]}-${at}`, engine: seg[3] ?? "", kind: "remove", started_at: at, finished_at: at, ok: true, output: [] });
         return { status: 204 };
       }
     }
@@ -1094,6 +1120,7 @@ export function createMockApi(options: MockOptions = {}) {
         return err(failure.status, failure.code, failure.message);
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
+      if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/crew")) return crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },

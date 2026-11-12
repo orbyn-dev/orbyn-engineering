@@ -22,6 +22,9 @@ const KEYED: &[&str] = &[
     "secret=",
     "secret:",
     "token=",
+    "_auth=",
+    "_authtoken=",
+    "_password=",
     "token:",
 ];
 

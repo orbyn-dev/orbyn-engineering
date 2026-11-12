@@ -562,6 +562,9 @@
 .set-banner.err {
   background: var(--color-dangerSoft);
 }
+.set-banner.info {
+  background: var(--color-blueSoft);
+}
 .set-banner > svg {
   flex: none;
 }
@@ -854,4 +857,29 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* An installer's command and last lines, in the provider page (pa-log, pa-cap in the install-* frames). */
+.pa-log {
+  display: flex;
+  flex-direction: column;
+  margin: 8px 0 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+  font: 11.5px/1.65 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.pa-log b {
+  font-weight: 400;
+  color: var(--color-text);
+}
+.pa-log .bad {
+  color: var(--color-danger);
+}
+.pa-cap {
+  padding: 8px 0 2px;
+  color: var(--color-muted);
+  font-size: 11.5px;
 }
