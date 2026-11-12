@@ -1,6 +1,6 @@
 //! The app's side of the Engine's `DeviceApi`: push and pull per zone, and status.
 //! It is shaped like the contract in [docs/account.md](../../../../docs/account.md#dependency-on-the-engine)
-//! so the real `orbyn-device-client` can sit behind it (`account::engine`, tag `engine-v0.2.3`,
+//! so the real `orbyn-device-client` can sit behind it (`account::engine`, tag `engine-v0.2.4`,
 //! docs/account.md "Engine pin"). This file names no Engine crate. The client does no sealing
 //! here; a record crosses this trait as plain fields.
 

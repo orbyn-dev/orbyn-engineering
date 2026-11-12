@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-const TAG: &str = "engine-v0.2.3";
-const REVISION: &str = "ace5e23874935c2db512106270e4a8c08cc720dc";
+const TAG: &str = "engine-v0.2.4";
+const REVISION: &str = "db006e3bdf4e5dc411af1464665f63c8679172ce";
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

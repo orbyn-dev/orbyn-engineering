@@ -1625,7 +1625,7 @@ dependencies = [
 [[package]]
 name = "orbyn-auth-client"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "argon2 0.5.3",
  "getrandom 0.2.17",
@@ -1641,12 +1641,12 @@ dependencies = [
 [[package]]
 name = "orbyn-client"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.4.3",
  "orbyn-auth-client",
- "orbyn-contracts 0.1.0 (git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3)",
+ "orbyn-contracts 0.1.0 (git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4)",
  "orbyn-crypto",
  "orbyn-planner",
  "orbyn-sync",
@@ -1674,7 +1674,7 @@ dependencies = [
 [[package]]
 name = "orbyn-contracts"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "serde",
  "ts-rs",
@@ -1722,7 +1722,7 @@ dependencies = [
 [[package]]
 name = "orbyn-crypto"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "argon2 0.6.0",
  "chacha20poly1305",
@@ -1740,14 +1740,14 @@ dependencies = [
 [[package]]
 name = "orbyn-device-client"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
  "getrandom 0.4.3",
  "orbyn-auth-client",
  "orbyn-client",
- "orbyn-contracts 0.1.0 (git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3)",
+ "orbyn-contracts 0.1.0 (git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4)",
  "orbyn-crypto",
  "orbyn-engineering",
  "orbyn-sync",
@@ -1764,7 +1764,7 @@ dependencies = [
 [[package]]
 name = "orbyn-engineering"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "orbyn-sync",
  "serde",
@@ -1776,7 +1776,7 @@ dependencies = [
 [[package]]
 name = "orbyn-planner"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "jiff",
  "orbyn-sync",
@@ -1788,7 +1788,7 @@ dependencies = [
 [[package]]
 name = "orbyn-sync"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "serde",
  "serde_json",
@@ -1797,7 +1797,7 @@ dependencies = [
 [[package]]
 name = "orbyn-translog"
 version = "0.1.0"
-source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.3#ace5e23874935c2db512106270e4a8c08cc720dc"
+source = "git+https://github.com/orbyn-dev/orbyn-engine?tag=engine-v0.2.4#db006e3bdf4e5dc411af1464665f63c8679172ce"
 dependencies = [
  "ed25519-dalek",
  "sha2 0.11.1",
