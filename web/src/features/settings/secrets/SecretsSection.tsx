@@ -86,7 +86,7 @@ export function SecretsSection() {
       <SettingGroup title="Where values are hidden">
         <SettingRow
           title="Terminal blocks"
-          description="Replaced by a grey mask. Reveal here shows the value on this screen only."
+          description="Replaced by a grey mask."
         >
           <Pending />
           <input
