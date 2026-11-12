@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
@@ -104,16 +104,52 @@ describe("Settings › Crew › Autopilot", () => {
     expect((await crewApi.modes()).effective_default).toBe("on");
   });
 
-  it("moves the choice with the arrow keys, and Off says agents will ask you", async () => {
+  it("moves the choice with the arrow keys and stops at Off and at Full", async () => {
     on("crew");
     const user = userEvent.setup();
     render(<AutopilotSettings />);
     (await screen.findByRole("radio", { name: /^Full/ })).focus();
     await user.keyboard("{ArrowRight}");
-    expect(radio(/^Off/)).toBeChecked();
+    expect(radio(/^Full/)).toBeChecked();
+    await user.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(radio(/^On/)).toBeChecked());
+    await waitFor(() => expect(radio(/^On/)).not.toHaveAttribute("aria-disabled"));
+    await user.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(radio(/^Off/)).toBeChecked());
     expect(screen.getByText("Off: agents will ask you")).toBeVisible();
     expect(screen.getByText(/Every request an agent makes, and every merge, waits for you/)).toBeVisible();
-    await waitFor(() => expect(radio(/^Off/)).toHaveFocus());
+    await waitFor(() => expect(radio(/^Off/)).not.toHaveAttribute("aria-disabled"));
+    await user.keyboard("{ArrowLeft}");
+    expect(radio(/^Off/)).toBeChecked();
+    expect((await crewApi.modes()).effective_default).toBe("off");
+  });
+
+  it("rolls a refused change back to the server's state and says so", async () => {
+    on("crew");
+    mock.fail("/api/crew/autopilot/mode", 1);
+    const user = userEvent.setup();
+    render(<AutopilotSettings />);
+    await user.click(await screen.findByRole("radio", { name: /^On/ }));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    await waitFor(() => expect(radio(/^Full/)).toBeChecked());
+    expect(radio(/^On/)).not.toBeChecked();
+    expect((await crewApi.modes()).effective_default).toBe("full");
+    // The picker is usable again.
+    await user.click(radio(/^On/));
+    await waitFor(() => expect(radio(/^On/)).toBeChecked());
+  });
+
+  it("ignores a second choice while one is in flight, so rapid changes end in the server's state", async () => {
+    on("crew");
+    render(<AutopilotSettings />);
+    const off = await screen.findByRole("radio", { name: /^Off/ });
+    // Both clicks land in the same tick, before the first answer.
+    fireEvent.click(radio(/^On/));
+    fireEvent.click(off);
+    await waitFor(() => expect(radio(/^On/)).toBeChecked());
+    await waitFor(() => expect(radio(/^On/)).not.toHaveAttribute("aria-disabled"));
+    expect((await crewApi.modes()).effective_default).toBe("on");
+    expect(radio(/^Off/)).not.toBeChecked();
   });
 
   it("tells which crews differ from the repo and why, and folds the list away", async () => {

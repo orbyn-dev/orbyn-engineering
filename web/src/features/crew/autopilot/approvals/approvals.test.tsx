@@ -33,7 +33,8 @@ describe("the approval log", () => {
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Time", "Request", "Hard rule (code)", "The lead", "Second key", "Result"]);
     const read = rowOf2(/Read auth\/redirect\.ts/);
     expect(read).toHaveTextContent("14:12");
-    expect(read).toHaveTextContent("Task task-redirect · inside its lease");
+    expect(read).toHaveTextContent("Task task-redirect");
+    expect(read).not.toHaveTextContent("lease");
     expect(read).toHaveTextContent("Always allowedNot askedNot neededAllowed");
     expect(rowOf2(/Install zod/)).toHaveTextContent("PassedYes: it’s pinned to one version and the brief asks for schema testsopencode · yesAllowed");
     expect(rowOf2(/Write \.\.\/shared/)).toHaveTextContent("DeniedNot askedNot askedDenied by rule");
@@ -61,6 +62,29 @@ describe("the approval log", () => {
     await user.click(screen.getByRole("button", { name: /^All 18/ }));
     await user.type(screen.getByRole("searchbox", { name: "Find a request" }), "publish");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Showing 1 to 3 of the 18 loaded requests"));
+  });
+
+  it("keeps reading a ledger that is mostly merge rows until a page of requests can be drawn", async () => {
+    await open("crew-many");
+    // Every other ledger row is a merge row: 18 requests took two reads of 18.
+    expect(await screen.findByRole("button", { name: "Load more" })).toBeVisible();
+    expect(within(screen.getByRole("table", { name: "Approval log" })).getAllByRole("row")).toHaveLength(19);
+    expect(screen.queryByText(/Merged|merge_/)).toBeNull();
+  });
+
+  it("loads more on the button, and shows the drawn error with a retry when a page cannot be read", async () => {
+    const user = await open("crew-many-fails");
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("Can't read more requests")).toBeVisible();
+    expect(within(screen.getByRole("table", { name: "Approval log" })).getAllByRole("row")).toHaveLength(19);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("loads more on the button until the ledger ends", async () => {
+    const user = await open("crew-many");
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("of the 36 loaded requests"));
   });
 
   it("reads the next page of the ledger when the list is scrolled to its end", async () => {

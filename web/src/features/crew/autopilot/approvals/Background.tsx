@@ -125,7 +125,7 @@ function Triggers() {
         {TRIGGERS.map((trigger) => (
           <div key={trigger.id} className="ap-bg-row" role="row">
             <span role="cell"><b>{trigger.name}</b></span>
-            <span role="cell">{trigger.configured}</span>
+            <span role="cell" className="ap-muted">Not set</span>
             <span role="cell">{trigger.repeats}</span>
           </div>
         ))}

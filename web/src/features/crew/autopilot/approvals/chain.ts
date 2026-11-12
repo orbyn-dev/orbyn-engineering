@@ -31,7 +31,8 @@ function leadStep(row: ApprovalRow): Step | null {
   if (lead.state === "yes") return { tone: "ok", title: `${key}${key ? "the lead said yes" : "The lead said yes"}`, text: lead.reason };
   if (lead.state === "no") return { tone: "no", title: `${key}${key ? "the lead said no" : "The lead said no"}`, text: lead.reason };
   if (lead.state === "not_asked") {
-    return { tone: "skip", title: "Not asked", text: row.hard === "person_only" ? "The lead can’t approve it." : "A rule decided. The lead can’t overrule it." };
+    const text = row.hard === "person_only" ? "The lead can’t approve it." : row.tier === "always_allowed" ? "This kind of action is always allowed." : "A rule decided. The lead can’t overrule it.";
+    return { tone: "skip", title: "Not asked", text };
   }
   return null;
 }
@@ -58,7 +59,7 @@ function secondStep(row: ApprovalRow): Step | null {
         title: `${label}: not available`,
         text: guard
           ? `A second key needs a different vendor from the lead. ${row.asker?.engine ?? "One engine"} is the one vendor signed in.`
-          : "Medium risk needs an approver on a different vendor, and no second vendor is signed in.",
+          : `${row.tier === "medium" ? "Medium risk needs" : "This request needs"} an approver on a different vendor, and no second vendor is signed in.`,
       };
     case "not_asked":
       return {
@@ -76,13 +77,21 @@ export function chainOf(row: ApprovalRow): Step[] {
 }
 
 /** What comes after the steps: the verdict boxes and the closing sentence. */
+const NAME = { off: "Off", on: "On", full: "Full" } as const;
+
+/** What comes after the steps: the verdict boxes and the closing sentence, from what the row itself says. */
 export function verdictOf(row: ApprovalRow): { steps: Step[]; foot: string | null } {
   switch (row.result) {
     case "allowed":
-      return { steps: [], foot: "Medium risk needs both keys. The lead saw a structured summary of the action: its kind, target and the brief it serves. It never saw raw page or tool text." };
+      // Nobody is asked for an always-allowed action, so nothing is said about the lead or a second key.
+      if (row.tier === "always_allowed") return { steps: [], foot: row.note };
+      return {
+        steps: [],
+        foot: `${row.tier === "medium" ? "Medium risk needs both keys. " : ""}The lead saw a structured summary of the action: its kind, target and the brief it serves. It never saw raw page or tool text.`,
+      };
     case "keys_disagree":
       return {
-        steps: [{ tone: "no", title: "Denied, because the keys disagree", text: "Medium risk needs both keys. When they disagree, the action is denied, the disagreement is logged with both reasons, and nobody is asked to break the tie unless the task needs this action to go on." }],
+        steps: [{ tone: "no", title: "Denied, because the keys disagree", text: "Both keys are needed. When they disagree, the action is denied, the disagreement is logged with both reasons, and nobody is asked to break the tie unless the task needs this action to go on." }],
         foot: null,
       };
     case "person_only":
@@ -90,20 +99,27 @@ export function verdictOf(row: ApprovalRow): { steps: Step[]; foot: string | nul
         steps: [{ tone: "am", title: "Waiting for your review, not blocking anything", text: "In Autopilot a person-only request is denied and the work continues. It sits in Needs you so you can do it yourself when you choose." }],
         foot: null,
       };
-    case "no_second_key":
+    case "no_second_key": {
       if (guarded(row)) {
         return {
           steps: [{ tone: "no", title: "Denied for now, and you can approve it yourself", text: "Under Full a guarded command needs the lead and a second vendor. With no second vendor signed in it is denied for now and the worker takes another approach. A Needs you item says “Sign in to a second engine to allow this”, and you can approve the command yourself, as one deliberate action that names it. That doesn’t make you a second key: you are the final authority, and it is logged." }],
           foot: null,
         };
       }
+      const name = row.mode ? NAME[row.mode] : null;
+      const carry = "The worker is told to take another approach, and the rest of the crew carries on.";
       return {
         steps: [
-          { tone: "no", title: "Denied under Full, not asked", text: "Autopilot Full doesn’t stop to ask you. The worker is told to take another approach, and the rest of the crew carries on. Under On or Off, Crew would ask you instead." },
+          {
+            tone: "no",
+            title: name ? `Denied under ${name}, not asked` : "Denied, not asked",
+            text: row.mode === "full" ? `Autopilot Full doesn’t stop to ask you. ${carry} Under On or Off, Crew would ask you instead.` : carry,
+          },
           ...(row.needsYou ? [{ tone: "plain" as const, title: "A Needs you item, not blocking anything", text: `“${row.needsYou}”. It stays in your Needs you list until you sign in or dismiss it.` }] : []),
         ],
         foot: null,
       };
+    }
     case "denied_second_key":
       return {
         steps: [{ tone: "no", title: "Denied, because one key said no", text: `Both keys are needed. ${row.note ?? "The worker was told the second key’s reason."} The decision and both reasons are in the ledger.` }],

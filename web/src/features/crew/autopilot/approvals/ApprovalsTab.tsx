@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { navigate } from "../../../../product/state/route";
+import { useWorkspace } from "../../../../product/state/workspace";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { toFailure } from "../../../../lib/useAsync";
 import type { ApiFailure } from "../../../../api/client";
 import type { AutopilotRule } from "../../../../generated/AutopilotRule";
-import { crewApi } from "./api";
+import { crewApi, PAGE } from "./api";
 import { ApproveMyself } from "./ApproveMyself";
 import { ApprovalTable } from "./ApprovalRows";
 import { DecisionDrawer, type DrawerActions } from "./DecisionDrawer";
@@ -28,26 +29,44 @@ const FILTERS: { id: ApprovalFilter; label: string }[] = [
 interface Loaded {
   rows: ApprovalRow[];
   total: number;
+  /** Where the next read starts; null once the ledger is read to its end. */
   next: number | null;
-  /** How many ledger rows were read, merge rows included: the next page starts here. */
-  read: number;
 }
 
-/** The ledger as pages: the first read, then more as the list is scrolled. */
-function useApprovalLog(rules: AutopilotRule[] | null) {
+/**
+ * Reads the ledger until `PAGE` more rows can be drawn or it ends: the ledger also holds merge rows and trip
+ * wires that this log leaves out, so one page of it may show few rows or none.
+ */
+async function fill(from: number, rules: AutopilotRule[], roots: string[], signal?: AbortSignal): Promise<Loaded> {
+  const rows: ApprovalRow[] = [];
+  let next: number | null = from;
+  let total = 0;
+  while (next !== null && rows.length < PAGE) {
+    const page = await crewApi.approvals({ offset: next }, signal);
+    rows.push(...page.rows.flatMap((row) => rowOf(row, rules, roots) ?? []));
+    total = page.total;
+    next = page.next_offset ?? null;
+  }
+  return { rows, total, next };
+}
+
+function useApprovalLog(rules: AutopilotRule[] | null, roots: string[]) {
   const [state, setState] = useState<{ status: "loading" } | { status: "error"; failure: ApiFailure } | ({ status: "ready" } & Loaded)>({ status: "loading" });
+  const [more, setMore] = useState<{ busy: boolean; failure: ApiFailure | null }>({ busy: false, failure: null });
   const [tick, setTick] = useState(0);
-  const more = useRef(false);
+  const busy = useRef(false);
   const rulesRef = useRef<AutopilotRule[]>(rules ?? []);
+  const rootsRef = useRef(roots);
   useEffect(() => {
     rulesRef.current = rules ?? [];
+    rootsRef.current = roots;
   });
   const waiting = rules === null;
   useEffect(() => {
     if (waiting) return;
     const abort = new AbortController();
-    void crewApi.approvals({ offset: 0 }, abort.signal).then(
-      (page) => setState({ status: "ready", rows: page.rows.flatMap((row) => rowOf(row, rulesRef.current) ?? []), total: page.total, next: page.next_offset ?? null, read: page.rows.length }),
+    void fill(0, rulesRef.current, rootsRef.current, abort.signal).then(
+      (loaded) => setState({ status: "ready", ...loaded }),
       (error: unknown) => {
         if (!abort.signal.aborted) setState({ status: "error", failure: toFailure(error) });
       },
@@ -55,19 +74,20 @@ function useApprovalLog(rules: AutopilotRule[] | null) {
     return () => abort.abort();
   }, [tick, waiting]);
   const loadMore = useCallback(() => {
-    if (state.status !== "ready" || more.current || state.next === null) return;
-    more.current = true;
-    void crewApi.approvals({ offset: state.next }).then(
-      (page) =>
-        setState((now) =>
-          now.status === "ready" ? { status: "ready", rows: [...now.rows, ...page.rows.flatMap((row) => rowOf(row, rulesRef.current) ?? [])], total: page.total, next: page.next_offset ?? null, read: now.read + page.rows.length } : now,
-        ),
-      () => undefined,
+    if (state.status !== "ready" || busy.current || state.next === null) return;
+    busy.current = true;
+    setMore({ busy: true, failure: null });
+    void fill(state.next, rulesRef.current, rootsRef.current).then(
+      (loaded) => {
+        setState((now) => (now.status === "ready" ? { status: "ready", rows: [...now.rows, ...loaded.rows], total: loaded.total, next: loaded.next } : now));
+        setMore({ busy: false, failure: null });
+      },
+      (error: unknown) => setMore({ busy: false, failure: toFailure(error) }),
     ).finally(() => {
-      more.current = false;
+      busy.current = false;
     });
   }, [state]);
-  return { state, loadMore, reload: () => setTick((n) => n + 1) };
+  return { state, more, loadMore, reload: () => setTick((n) => n + 1) };
 }
 
 const matches = (row: ApprovalRow, filter: ApprovalFilter, q: string) => {
@@ -78,7 +98,9 @@ const matches = (row: ApprovalRow, filter: ApprovalFilter, q: string) => {
 export function ApprovalsTab() {
   const guards = useAutopilotGuards();
   const modes = useAutopilotModes();
-  const { state, loadMore, reload } = useApprovalLog(guards.status === "loading" ? null : (guards.data?.always_denied ?? []));
+  const projects = useWorkspace((now) => now.projects.data);
+  const roots = useMemo(() => (projects ?? []).map((project) => project.path), [projects]);
+  const { state, more, loadMore, reload } = useApprovalLog(guards.status === "loading" ? null : (guards.data?.always_denied ?? []), roots);
   const [filter, setFilter] = useState<ApprovalFilter>("all");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -108,7 +130,7 @@ export function ApprovalsTab() {
   const mode = modes.data?.effective_default ?? "full";
   const guarded = rows.some((one) => one.hard === "guard" || one.hard === "guard_two_keys");
   const line = (rows.some((one) => one.result === "held_you") ? GUARD_LINE : MODE_LINE)[mode];
-  const long = state.total > rows.length || rows.length > 18;
+  const long = state.next !== null || rows.length > PAGE;
 
   return (
     <section className="ap-page" aria-label="Approvals">
@@ -149,10 +171,14 @@ export function ApprovalsTab() {
               aria-label="Requests"
               onScroll={(event) => {
                 const el = event.currentTarget;
-                if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) loadMore();
+                if (!more.failure && el.scrollTop + el.clientHeight >= el.scrollHeight - 80) loadMore();
               }}
             >
               <ApprovalTable rows={shown} selected={selected} onSelect={setSelected} />
+              {more.failure ? <ErrorState title="Can't read more requests" failure={more.failure} onRetry={loadMore} /> : null}
+              {state.next !== null && !more.failure ? (
+                <button type="button" className="ap-more" disabled={more.busy} onClick={loadMore}>{more.busy ? "Loading" : "Load more"}</button>
+              ) : null}
             </div>
             <div className="ap-legend">
               <span>Result:</span>

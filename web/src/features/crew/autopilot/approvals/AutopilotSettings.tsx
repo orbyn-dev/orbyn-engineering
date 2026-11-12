@@ -13,8 +13,8 @@ import { useAutopilotGuards, useAutopilotModes } from "./useCrew";
 
 const HIGH_RISK = "Auth, keys, crypto, migrations, CI, dependency changes, large diffs, and areas or engines with a high revert rate. The risk of each task is shown with its reasons.";
 
-/** Three cards, one choice: Off, On or Full. Arrow keys move the choice. */
-export function ModePicker({ mode, onChange }: { mode: Mode; onChange(mode: Mode): void }) {
+/** Three cards, one choice: Off, On or Full. Arrow keys move the choice and stop at the ends. */
+export function ModePicker({ mode, onChange, disabled = false }: { mode: Mode; onChange(mode: Mode): void; disabled?: boolean }) {
   const group = useRef<HTMLDivElement>(null);
   return (
     <div
@@ -26,14 +26,14 @@ export function ModePicker({ mode, onChange }: { mode: Mode; onChange(mode: Mode
         const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
         if (!step) return;
         event.preventDefault();
-        const next = MODES[(MODES.indexOf(mode) + step + MODES.length) % MODES.length];
-        if (!next) return;
+        const next = MODES[MODES.indexOf(mode) + step];
+        if (!next || disabled) return;
         onChange(next);
         requestAnimationFrame(() => group.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
       }}
     >
       {MODES.map((one) => (
-        <button key={one} type="button" role="radio" aria-checked={one === mode} tabIndex={one === mode ? 0 : -1} className="ap-mode" onClick={() => onChange(one)}>
+        <button key={one} type="button" role="radio" aria-checked={one === mode} aria-disabled={disabled || undefined} tabIndex={one === mode ? 0 : -1} className="ap-mode" onClick={() => !disabled && onChange(one)}>
           <b>
             {MODE_COPY[one].name}
             {one === "full" ? <span className="ap-default">Default</span> : null}
@@ -97,20 +97,34 @@ export function AutopilotSettings() {
   const modes = useAutopilotModes();
   const guards = useAutopilotGuards();
   const [failed, setFailed] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const latest = useRef(0);
+  const inflight = useRef(false);
   if (modes.status === "loading" || guards.status === "loading") return <Loading label="Reading Autopilot" rows={3} />;
   if (modes.status === "error") return <ErrorState title="Can't read Autopilot" failure={modes.error} onRetry={modes.reload} />;
   if (guards.status === "error") return <ErrorState title="Can't read Autopilot" failure={guards.error} onRetry={guards.reload} />;
   const mode = modes.data.entries.find((entry) => entry.scope === "default")?.mode ?? modes.data.effective_default;
   const overrides = modes.data.entries.filter((entry) => entry.scope !== "default");
   const choose = (next: Mode) => {
-    if (next === mode) return;
+    if (next === mode || inflight.current) return;
+    inflight.current = true;
     setFailed(null);
-    const before = modes.data;
-    // The new choice shows at once; the service's answer replaces it, and a refusal puts the old one back.
-    modes.setData({ ...before, effective_default: next, confirmed: true, entries: [{ scope: "default", mode: next, updated_at: new Date().toISOString() }, ...before.entries.filter((entry) => entry.scope !== "default")] });
-    crewApi.setMode(next).then(modes.setData, (error: unknown) => {
-      modes.setData(before);
-      setFailed(toFailure(error).message);
+    setBusy(true);
+    const mine = ++latest.current;
+    // The new choice shows at once. Only the newest answer is applied; a refusal shows the server's own state again.
+    modes.setData({ ...modes.data, effective_default: next, confirmed: true, entries: [{ scope: "default", mode: next, updated_at: new Date().toISOString() }, ...modes.data.entries.filter((entry) => entry.scope !== "default")] });
+    crewApi.setMode(next).then(
+      (reply) => {
+        if (mine === latest.current) modes.setData(reply);
+      },
+      (error: unknown) => {
+        if (mine !== latest.current) return;
+        setFailed(toFailure(error).message);
+        void modes.reloadNow();
+      },
+    ).finally(() => {
+      inflight.current = false;
+      if (mine === latest.current) setBusy(false);
     });
   };
   return (
@@ -123,7 +137,7 @@ export function AutopilotSettings() {
         Who answers agents’ requests, and what merges without waiting for you. Applies to every repo
         {overrides.length ? " · all crews; a crew can override the repo." : "; a crew can override the repo."}
       </p>
-      <ModePicker mode={mode} onChange={choose} />
+      <ModePicker mode={mode} onChange={choose} disabled={busy} />
       {failed ? <p role="alert" className="ap-error">{failed}</p> : null}
       <ModeNotes mode={mode} guards={guards.data} />
       {overrides.length ? (

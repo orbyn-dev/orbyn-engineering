@@ -22,6 +22,7 @@ const row = (id: number, time: string, kind: string, over: Partial<AutopilotLogR
   kind,
   at: `2026-11-07T${time}:00`,
   paths: [],
+  mode: "full",
   needs_second_engine: false,
   body: {},
   ...over,
@@ -30,34 +31,43 @@ const row = (id: number, time: string, kind: string, over: Partial<AutopilotLogR
 const sample = (): AutopilotLogRow[] => [
   row(6, "14:45", "person", { rule: "N9", action_kind: "publish", target: "the package to the registry", decided_by: "hard_rule" }),
   row(5, "14:37", "disagreement", {
-    tier: "two_keys",
+    tier: "medium",
     action_kind: "run",
     target: "node db/gen-migration.js",
     lead: { approve: true, reason: "It matches the brief’s migration test." },
     second: { engine: "opencode", approve: false, reason: "it writes to a table outside the brief." },
   }),
-  row(4, "14:33", "denied", { decided_by: "lead", tier: "lead", action_kind: "run", target: "scripts/gen.sh", lead: { approve: false, reason: "The script isn’t in the brief, and the worker didn’t say what it changes." } }),
+  // A disagreement is stored twice: its own row, then the denial it caused.
+  row(55, "14:37", "denied", {
+    decided_by: "two_keys",
+    tier: "medium",
+    action_kind: "run",
+    target: "node db/gen-migration.js",
+    lead: { approve: true, reason: "It matches the brief’s migration test." },
+    second: { engine: "opencode", approve: false, reason: "it writes to a table outside the brief." },
+  }),
+  row(4, "14:33", "denied", { decided_by: "lead", tier: "low", action_kind: "run", target: "scripts/gen.sh", lead: { approve: false, reason: "The script isn’t in the brief, and the worker didn’t say what it changes." } }),
   row(3, "14:26", "denied", { decided_by: "hard_rule", rule: "N4", action_kind: "write", target: "../shared/config.json" }),
   row(2, "14:19", "allowed", {
-    tier: "two_keys",
+    tier: "medium",
     decided_by: "two_keys",
     action_kind: "install",
     target: "zod@3.24.1",
     lead: { approve: true, reason: "It’s pinned to one version and the brief asks for schema tests." },
     second: { engine: "opencode", approve: true, reason: "It’s pinned." },
   }),
-  row(1, "14:12", "allowed", { tier: "nobody", decided_by: "tier", action_kind: "read", target: "auth/redirect.ts" }),
+  row(1, "14:12", "allowed", { tier: "always_allowed", decided_by: "tier", action_kind: "read", target: "auth/redirect.ts" }),
 ];
 
-/** 214 requests, newest first, with a merge row now and then that the log leaves out. */
+/** 214 requests, newest first, each after a merge row that the log leaves out. */
 const many = (): AutopilotLogRow[] => {
-  const base = sample();
+  const base = sample().filter((one) => one.id !== 55);
   return Array.from({ length: 214 }, (_, i) => {
     const one = base[i % base.length] as AutopilotLogRow;
     const minutes = 15 * 60 + 2 + (213 - i) * 3;
     const time = `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-    return { ...one, id: 1000 - i, at: `2026-11-07T${time}:00` };
-  });
+    return [row(5000 - i, time, "merged", { task_id: "task-merge" }), { ...one, id: 1000 - i, at: `2026-11-07T${time}:00` }];
+  }).flat();
 };
 
 const GUARDS: AutopilotGuards = {
@@ -104,6 +114,7 @@ const trust = (young: boolean): AutopilotTrust =>
 
 export function createCrewMock() {
   let on = false;
+  let failPaging = false;
   let mode: AutopilotMode = "full";
   let confirmed = true;
   let entries: AutopilotModeEntry[] = [];
@@ -121,7 +132,8 @@ export function createCrewMock() {
       ? [{ scope: "crew", id: "login-redirect", mode: "on", updated_at: "2026-11-07T10:00:00" }, { scope: "crew", id: "dependency-bump", mode: "full", updated_at: "2026-11-06T10:00:00" }]
       : [];
     young = scenario === "crew-young";
-    all = scenario === "crew-empty" ? [] : scenario === "crew-many" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
+    failPaging = scenario === "crew-many-fails";
+    all = scenario === "crew-empty" ? [] : scenario === "crew-many" || scenario === "crew-many-fails" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
     const wire: Record<string, string | number> = scenario === "crew-injected" ? { wire: "injection", class: "instructions" } : { wire: "denials", in_a_row: 3, in_a_run: 3 };
     tripwire = scenario === "crew-tripwire" || scenario === "crew-injected" ? [row(90, "14:27", "tripwire", { task_id: "task-client", body: wire })] : [];
     if (tripwire.length) {
@@ -149,6 +161,7 @@ export function createCrewMock() {
     const seg = path.split("/").filter(Boolean); // api crew ...
     const [, , head, id] = seg;
     if (method === "GET" && head === "preview") return { status: 200, body: { enabled: true } };
+    if (method === "GET" && head === "approvals" && failPaging && Number(query.get("offset") ?? 0) > 18) return { status: 500, body: { code: "internal", message: "The ledger could not be read." } };
     if (method === "GET" && head === "approvals") return { status: 200, body: approvals(query) };
     if (method === "GET" && head === "stops") {
       const out: AutopilotTripwires = { in_a_row_limit: 3, in_a_run_limit: 20, running: [], recent: tripwire };

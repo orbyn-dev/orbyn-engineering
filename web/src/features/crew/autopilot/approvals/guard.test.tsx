@@ -19,7 +19,7 @@ const target = (name: string, kind: string, at: string, short: string, exit: num
 
 const base: ApprovalRow = {
   id: "g", time: "15:02", at: null, title: "", asker: CODEX, taskId: null, branch: null, risk: null, notes: [], facts: [], block: null, note: null, needsYou: null,
-  hard: "guard_two_keys", rule: null, lead: { state: "not_asked" }, leadBy: LEAD, second: { state: "not_asked" }, result: "held_second_key", decidedInMs: null, guard: null,
+  mode: null, tier: null, hard: "guard_two_keys", rule: null, lead: { state: "not_asked" }, leadBy: LEAD, second: { state: "not_asked" }, result: "held_second_key", decidedInMs: null, guard: null,
 };
 const held: ApprovalRow = { ...base, title: "Delete test orders in prod-db-1", hard: "guard", notes: ["remote database", "guarded"], block: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM orders WHERE is_test = true"', lead: { state: "yes", reason: "It matches the brief’s cleanup of test orders.", short: "it matches the brief’s cleanup of test orders" }, second: { state: "yours" }, result: "held_you", guard: target("prod-db-1", "remote database", "15:02", "DELETE FROM orders WHERE is_test = true", null, null) };
 const secondKey: ApprovalRow = { ...base, title: "Delete test orders in prod-db-1", block: held.block, lead: { state: "yes", reason: "It matches the brief’s cleanup of test orders, and the filter names test rows.", short: "it matches the brief’s cleanup of test orders" }, second: { state: "reviewing", by: OPENCODE }, guard: target("prod-db-1", "production-linked", "15:02", "DELETE FROM orders WHERE is_test = true") };

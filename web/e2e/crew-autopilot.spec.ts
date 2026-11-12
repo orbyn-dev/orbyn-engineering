@@ -69,6 +69,11 @@ test("changes Autopilot in Settings with the keyboard and the setting sticks", a
   await expect(full).toBeChecked();
   await full.focus();
   await page.keyboard.press("ArrowRight");
+  await expect(full).toBeChecked();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("radio", { name: /^On/ })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /^On/ })).not.toHaveAttribute("aria-disabled");
+  await page.keyboard.press("ArrowLeft");
   await expect(page.getByRole("radio", { name: /^Off/ })).toBeChecked();
   await expect(page.getByText("Off: agents will ask you")).toBeVisible();
   await page.reload();

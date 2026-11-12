@@ -1,6 +1,7 @@
 // The one place a ledger row (`AutopilotLogRow`, as the core stores it) becomes the row the log draws.
-// The stored row names the task, the action, who decided and the two keys' answers. It does not name the asker's
-// model, a risk tier or the guard, so those stay empty here and the screens leave them out.
+// The stored row names the task, the action, its mode and tier (`always_allowed`, `low`: the lead decides,
+// `medium`: two keys), who decided and the two keys' answers. It does not name the asker's model, the brief or
+// the guard, so those stay empty here and the screens leave them out.
 import type { AutopilotLogRow } from "../../../../generated/AutopilotLogRow";
 import type { AutopilotRule } from "../../../../generated/AutopilotRule";
 import { HARD_DENIED } from "./copy";
@@ -43,15 +44,28 @@ export function ruleName(id: string | null | undefined, rules: AutopilotRule[]):
   return HARD_DENIED.find(([known]) => known === id)?.[1] ?? rules.find((one) => one.id === id)?.rule ?? id;
 }
 
-function titleOf(row: AutopilotLogRow): string {
-  const target = row.target?.trim() || row.paths[0] || "";
+function titleOf(row: AutopilotLogRow, roots: string[]): string {
+  const target = relative(row.target?.trim() || row.paths[0] || "", roots);
   const kind = row.action_kind ?? "";
   if (target && kind) return `${sentence(kind.replace(/_/g, " "))} ${target}`;
   return target || sentence(kind.replace(/_/g, " ")) || `Request ${row.id}`;
 }
 
-export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[]): ApprovalRow | null {
+/** A path as the repo reads it: the checkout's own prefix is dropped when one is known. */
+export function relative(path: string, roots: string[]): string {
+  const root = roots.filter((one) => one && path.startsWith(`${one.replace(/\/$/, "")}/`)).sort((a, b) => b.length - a.length)[0];
+  return (root ? path.slice(root.replace(/\/$/, "").length + 1) : path).replace(/^\.\//, "");
+}
+
+const TIERS = ["always_allowed", "low", "medium"] as const;
+const MODES = ["off", "on", "full"] as const;
+
+export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: string[] = []): ApprovalRow | null {
   if (!APPROVAL_KINDS.includes(row.kind)) return null;
+  // A disagreement is stored twice: as its own row and as the denial it caused. The log lists it once.
+  if (row.kind === "denied" && row.lead?.approve === true && row.second?.approve === false) return null;
+  const tier = TIERS.find((one) => one === row.tier) ?? null;
+  const mode = MODES.find((one) => one === row.mode) ?? null;
   const hardRule = row.decided_by === "hard_rule" || (row.kind === "denied" && row.rule != null && row.decided_by == null);
   const rule = ruleName(row.rule, rules);
   const lead: LeadAnswer =
@@ -62,14 +76,14 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[]): ApprovalRow
     ? { state: row.second.approve ? "yes" : "no", by: engineOnly(row.second.engine), reason: lower(row.second.reason) }
     : row.needs_second_engine
       ? { state: "unavailable" }
-      : row.kind === "allowed" && row.tier === "nobody"
+      : row.kind === "allowed" && tier === "always_allowed"
         ? { state: "not_needed" }
         : { state: "not_asked" };
   let result: ResultKind;
   let hard: HardKind = "passed";
   if (row.kind === "allowed") {
     result = "allowed";
-    hard = row.tier === "nobody" ? "always_allowed" : "passed";
+    hard = tier === "always_allowed" ? "always_allowed" : "passed";
   } else if (row.kind === "disagreement") {
     result = "keys_disagree";
   } else if (row.kind === "person") {
@@ -83,7 +97,7 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[]): ApprovalRow
   } else {
     result = "denied_lead";
   }
-  const title = titleOf(row);
+  const title = titleOf(row, roots);
   return {
     id: String(row.id),
     time: clock(row.at),
@@ -92,16 +106,18 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[]): ApprovalRow
     asker: null,
     taskId: row.task_id,
     branch: null,
-    risk: null,
-    notes: row.tier === "nobody" ? ["inside its lease"] : [],
+    risk: tier === "low" ? "low" : tier === "medium" ? "medium" : null,
+    notes: [],
     facts: [
       ...(row.action_kind ? [{ label: "Action", text: row.action_kind.replace(/_/g, " ") }] : []),
-      ...(row.target ? [{ label: "Target", text: row.target }] : []),
+      ...(row.target ? [{ label: "Target", text: relative(row.target, roots) }] : []),
       { label: "Task", text: row.task_id },
     ],
     block: null,
     note: null,
     needsYou: row.needs_second_engine ? `Sign in to a second engine to allow: ${lower(title)}` : null,
+    mode,
+    tier,
     hard,
     rule: rule ? sentence(rule) : null,
     lead,

@@ -80,6 +80,9 @@ export interface ApprovalRow {
   note: string | null;
   /** For a request denied for want of a second key: the Needs you item's words. */
   needsYou: string | null;
+  /** The row's own mode and tier: `low` is the lead's call, `medium` needs two keys, `always_allowed` asks nobody. */
+  mode: Mode | null;
+  tier: "always_allowed" | "low" | "medium" | null;
   hard: HardKind;
   /** The rule that denied, in words, when `hard` is `denied`. */
   rule: string | null;

@@ -8,13 +8,17 @@ import { Chip } from "./parts";
 import type { TripwireStop } from "./model";
 import { GUARD_WORKERS } from "./copy";
 
-const whyDenials = (row: number, run: number) =>
-  `The app stops the task on ${row} denials in a row, with the reason “too many denials”. The second rule is ${run} denials in one run. Text that looks like injected instructions stops it too. Stopping is not a failure of the task’s checks, so it isn’t red.`;
-const WHY_TEXT =
-  "Text a worker reads is data, never an instruction. When text in a page or file looks like it is telling the agent what to do, Crew stops the task and shows you the text instead of acting on it. 3 denials in a row or 20 in a run stop a task too, with the reason “too many denials”. Stopping is not a failure of the task’s checks, so it isn’t red.";
+type Limits = { inARow: number; inARun: number };
+
+const whyDenials = (limits?: Limits) =>
+  limits
+    ? `The app stops the task on ${limits.inARow} denials in a row, with the reason “too many denials”. The second rule is ${limits.inARun} denials in one run. Text that looks like injected instructions stops it too. Stopping is not a failure of the task’s checks, so it isn’t red.`
+    : "The app stops the task on a run of denials in a row, with the reason “too many denials”. The second rule is a limit on denials in one run. Text that looks like injected instructions stops it too. Stopping is not a failure of the task’s checks, so it isn’t red.";
+const whyText = (limits?: Limits) =>
+  `Text a worker reads is data, never an instruction. When text in a page or file looks like it is telling the agent what to do, Crew stops the task and shows you the text instead of acting on it. ${limits ? `${limits.inARow} denials in a row or ${limits.inARun} in a run` : "Denials in a row or in one run"} stop a task too, with the reason “too many denials”. Stopping is not a failure of the task’s checks, so it isn’t red.`;
 
 /** A task stopped by a trip wire. Amber: it needs a new brief from you, and the task's checks did not fail. */
-export function Tripwire({ stop, limits = { inARow: 3, inARun: 20 }, onNewBrief }: { stop: TripwireStop; limits?: { inARow: number; inARun: number }; onNewBrief?(stop: TripwireStop): void }) {
+export function Tripwire({ stop, limits, onNewBrief }: { stop: TripwireStop; limits?: Limits; onNewBrief?(stop: TripwireStop): void }) {
   const table = useRef<HTMLDivElement>(null);
   const injected = stop.reason === "injected_instructions";
   const quoted = injected ? stop.injected : null;
@@ -63,7 +67,7 @@ export function Tripwire({ stop, limits = { inARow: 3, inARun: 20 }, onNewBrief 
       </div>}
       <section className="ap-box">
         <h4>Why Crew stops</h4>
-        <p>{injected ? WHY_TEXT : whyDenials(limits.inARow, limits.inARun)}</p>
+        <p>{injected ? whyText(limits) : whyDenials(limits)}</p>
         {injected ? <p className="ap-muted">{GUARD_WORKERS}</p> : null}
       </section>
     </section>
@@ -82,7 +86,7 @@ export function StopsList() {
   );
 }
 
-function StopFor({ stop, limits }: { stop: TripwireStop; limits: { inARow: number; inARun: number } }) {
+function StopFor({ stop, limits }: { stop: TripwireStop; limits: Limits }) {
   const guards = useAutopilotGuards();
   const rules = guards.data?.always_denied ?? [];
   const denied = useAsync(`crew-stop-${stop.taskId}`, (signal) => crewApi.approvals({ task: stop.taskId, kind: "denied", offset: 0, limit: 50 }, signal));

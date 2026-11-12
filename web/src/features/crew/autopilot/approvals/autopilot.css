@@ -78,6 +78,8 @@
 .ap-open:focus-visible, .ap-card:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .ap-open b, .ap-row b, .ap-stop-row b, .ap-bg-row b, .ap-trust-row b, .ap-crew-row b, .ap-target-row b, .ap-destroy-row b { display: block; font-weight: 500; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ap-open small, .ap-row small, .ap-stop-row small, .ap-bg-row small, .ap-trust-row small, .ap-crew-row small, .ap-target-row small, .ap-card small { display: block; color: var(--color-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-more { align-self: center; margin: 8px; height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--color-chip); color: var(--color-textSoft); font: inherit; cursor: pointer; }
+.ap-more:disabled { cursor: default; opacity: 0.7; }
 .ap-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--color-muted); }
 
 /* cards for the 320 px panel */

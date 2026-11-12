@@ -71,9 +71,9 @@ export const TEMPLATES: { id: TemplateId; name: string; short: string; starts: s
   { id: "security_advisory", name: "Security advisory", short: "security advisory", starts: "An advisory is published for a dependency", does: "Checks whether the repo is affected, and bumps or patches it. It is High risk by default.", trigger: "dependency_update" },
 ];
 
-export const TRIGGERS: { id: TriggerId; name: string; configured: string; repeats: string }[] = [
-  { id: "ci_fails", name: "CI fails on main", configured: "ci.yml on main", repeats: "One run per failing commit; a new failure during a run is added to it." },
-  { id: "issue_label", name: "An issue gets a label", configured: "Label: crew-fix", repeats: "The issue’s text is the brief. It is data, never instructions, and goes through the same checks." },
-  { id: "schedule", name: "On a schedule", configured: "Every weekday at 07:00", repeats: "Skipped if the previous run is still going." },
-  { id: "dependency_update", name: "A dependency update opens", configured: "Dependabot or Renovate PRs", repeats: "One run per update; updates to the same package are grouped." },
+export const TRIGGERS: { id: TriggerId; name: string; repeats: string }[] = [
+  { id: "ci_fails", name: "CI fails on main", repeats: "One run per failing commit; a new failure during a run is added to it." },
+  { id: "issue_label", name: "An issue gets a label", repeats: "The issue’s text is the brief. It is data, never instructions, and goes through the same checks." },
+  { id: "schedule", name: "On a schedule", repeats: "Skipped if the previous run is still going." },
+  { id: "dependency_update", name: "A dependency update opens", repeats: "One run per update; updates to the same package are grouped." },
 ];
