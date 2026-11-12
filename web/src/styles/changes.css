@@ -554,3 +554,174 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Hunk actions: Revert hunk in the header of the hunk under the pointer or the keyboard, a pencil on the line, and the line editor. */
+.pd-hh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.pd-hh .pd-ha {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  font-family: var(--font-sans);
+  opacity: 0;
+}
+.pd-hh.on .pd-ha,
+.pd-hh:focus-within .pd-ha {
+  opacity: 1;
+}
+.pd-hb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-background);
+  box-shadow: 0 0 0 1px var(--color-borderStrong);
+  color: var(--color-textSoft);
+  font: inherit;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.pd-hb:hover {
+  color: var(--color-text);
+}
+.pd-hb.ic1 {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+.pd-pen {
+  position: absolute;
+  top: -1px;
+  right: 6px;
+  opacity: 0;
+}
+.d2 .l:hover .pd-pen,
+.d2 .l.hov .pd-pen,
+.pd-pen:focus-visible {
+  opacity: 1;
+}
+.pd-ledit {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px 14px minmax(0, 1fr);
+  margin: 1px 6px;
+  border-radius: var(--radius-5);
+  background: var(--color-background);
+  box-shadow: inset 0 0 0 1.5px var(--color-text);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  line-height: 19px;
+}
+.pd-ledit > i {
+  padding-right: 8px;
+  color: var(--color-muted);
+  font-style: normal;
+  text-align: right;
+}
+.pd-ledit > b {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.pd-field {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.pd-ebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 12px 6px 56px;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-meta);
+}
+.pd-ebar .end {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+/* The bar under a selection: Comment, Send selection to engine, Copy. */
+.pd-sbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin: 4px 12px 6px;
+  padding: 4px;
+  border-radius: var(--radius-10);
+  background: var(--color-background);
+  box-shadow:
+    0 6px 18px var(--color-shadow),
+    0 0 0 1px var(--color-borderStrong);
+}
+.pd-sbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.pd-sbar button.on {
+  background: var(--color-primary);
+  color: var(--color-onAccent);
+}
+.pd-sbar-note {
+  margin: 4px 12px 6px;
+  font-family: var(--font-sans);
+  font-size: var(--text-meta);
+}
+/* A hunk action that did not happen, and the one that did, with its few seconds to undo. */
+.hunk-banner,
+.hunk-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-10);
+  font-size: var(--text-nav);
+}
+.hunk-banner {
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+  color: var(--color-danger);
+}
+.hunk-banner > svg {
+  flex: none;
+}
+.hunk-banner > span {
+  flex: 1;
+}
+.hunk-toast {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-borderStrong);
+}
+.hunk-toast .ta {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}

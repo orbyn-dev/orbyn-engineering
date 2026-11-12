@@ -193,6 +193,18 @@ and profile and confirm that the native window renders the product UI. Service
 readiness and the packaged smoke tests alone do not establish that the UI rendered.
 Do not change the installed app or its data, and do not start a provider run.
 
+## First run on an unsigned build
+
+Builds we distribute are not signed with a Developer ID or an Authenticode certificate yet, so the first run needs one
+approval. Copy these two lines into the release notes:
+
+- **macOS:** right-click the app and choose Open, or approve it under System Settings > Privacy & Security > Open Anyway.
+  If macOS says the app is damaged, run `xattr -dr com.apple.quarantine "/Applications/Orbyn Engineering.app"` once.
+- **Windows:** when "Windows protected your PC" appears, choose More info, then Run anyway.
+
+Unsigned builds have no update channel yet, so install a newer build over the old one to update. Sign-in to an Orbyn
+account stays off in these builds (see the [account sign-in gate](account.md#sign-in-gate)).
+
 ## When something fails
 
 - **PowerShell blocks `npm.ps1`:** use `npm.cmd` (and `npx.cmd`) for the commands

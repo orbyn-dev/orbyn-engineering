@@ -353,6 +353,8 @@ const wait = setInterval(() => {
 struct PlannedDriver {
     version: PathBuf,
     go: PathBuf,
+    /// A different installer script, with the same two arguments.
+    script: Option<&'static str>,
 }
 
 #[async_trait::async_trait]
@@ -382,7 +384,7 @@ impl EngineDriver for PlannedDriver {
             program: "node".into(),
             args: vec![
                 "-e".into(),
-                INSTALLER.into(),
+                self.script.unwrap_or(INSTALLER).into(),
                 self.version.to_string_lossy().into_owned(),
                 self.go.to_string_lossy().into_owned(),
             ],
@@ -418,6 +420,7 @@ async fn an_update_reports_each_installer_line_while_it_runs() {
     engines.register(Arc::new(PlannedDriver {
         version: version.clone(),
         go: go.clone(),
+        script: None,
     }));
     let mut events = engines.update_events();
     let update = tokio::spawn({
@@ -477,6 +480,7 @@ async fn an_update_that_changes_nothing_finishes_with_its_error() {
     engines.register(Arc::new(PlannedDriver {
         version,
         go: dir.path().join("go"),
+        script: None,
     }));
     std::fs::write(dir.path().join("go"), "").unwrap();
     let mut events = engines.update_events();
@@ -504,6 +508,7 @@ async fn a_dropped_update_still_finishes_for_its_listeners() {
     engines.register(Arc::new(PlannedDriver {
         version,
         go: dir.path().join("go"),
+        script: None,
     }));
     let mut events = engines.update_events();
     let update = tokio::spawn({
@@ -522,6 +527,102 @@ async fn a_dropped_update_still_finishes_for_its_listeners() {
             break;
         }
     }
+}
+
+/// An installer that prints a secret and a failure, then stops with status 243.
+const FAILING_INSTALLER: &str = r#"
+process.stderr.write('npm error EACCES: permission denied\n');
+process.stderr.write('using ghp_abcdefghijklmnopqrstuvwxyz0123456789 to log in\n');
+process.stderr.write('npm error last line\n');
+process.exit(243);
+"#;
+
+#[tokio::test]
+async fn a_finished_update_is_kept_with_its_command_versions_and_lines() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    let version = dir.path().join("version");
+    std::fs::write(&version, "1.0.0").unwrap();
+    std::fs::write(dir.path().join("go"), "").unwrap();
+    engines.register(Arc::new(PlannedDriver {
+        version,
+        go: dir.path().join("go"),
+        script: None,
+    }));
+    engines.update("planned", "test").await.unwrap();
+    let kept = engines.installs("planned").await.unwrap().outcomes;
+    assert_eq!(kept.len(), 1);
+    let outcome = &kept[0];
+    assert!(outcome.ok && outcome.reason.is_none());
+    assert_eq!(outcome.kind, orbyn_contracts::InstallKind::Update);
+    assert_eq!(outcome.from_version.as_deref(), Some("1.0.0"));
+    assert_eq!(outcome.to_version.as_deref(), Some("2.0.0"));
+    assert_eq!(outcome.exit_status, Some(0));
+    assert!(outcome.command.as_deref().unwrap().starts_with("node -e"));
+    assert!(
+        outcome.output.contains(&"fetching".to_owned()),
+        "{outcome:?}"
+    );
+    assert!(outcome.finished_at >= outcome.started_at);
+}
+
+#[tokio::test]
+async fn a_failed_update_keeps_a_plain_reason_its_status_and_no_secret() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    let version = dir.path().join("version");
+    std::fs::write(&version, "1.0.0").unwrap();
+    engines.register(Arc::new(PlannedDriver {
+        version,
+        go: dir.path().join("go"),
+        script: Some(FAILING_INSTALLER),
+    }));
+    let error = engines.update("planned", "test").await.unwrap_err();
+    let kept = engines.installs("planned").await.unwrap().outcomes;
+    assert_eq!(kept.len(), 1);
+    let outcome = &kept[0];
+    assert!(!outcome.ok);
+    assert_eq!(
+        outcome.reason.as_deref(),
+        Some("The installer stopped with an error (exit status 243).")
+    );
+    assert_eq!(outcome.exit_status, Some(243));
+    assert_eq!(outcome.to_version, None);
+    assert_eq!(
+        outcome.output.last().map(String::as_str),
+        Some("npm error last line")
+    );
+    let everything = format!("{outcome:?}");
+    assert!(
+        !everything.contains("ghp_abcdefghijklmnopqrstuvwxyz"),
+        "{everything}"
+    );
+    // What the live channel and the audit log carry is hidden the same way.
+    // The error itself reaches the error body, so it is hidden at the source.
+    assert!(
+        !error.to_string().contains("ghp_abcdefghijklmnop"),
+        "{error}"
+    );
+    let audit = engines.store.list_audit(None, 50).unwrap();
+    assert!(
+        !format!("{audit:?}").contains("ghp_abcdefghijklmnop"),
+        "{audit:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_update_is_not_an_attempt_and_is_not_kept() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    assert!(engines.update("nobody", "test").await.is_err());
+    assert!(
+        engines
+            .installs("nobody")
+            .await
+            .unwrap()
+            .outcomes
+            .is_empty()
+    );
 }
 
 #[test]

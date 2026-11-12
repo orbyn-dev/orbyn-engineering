@@ -52,6 +52,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/engines/custom/{id}", delete(delete_custom_engine))
         .route("/api/engines/update-all", post(update_all_engines))
         .route("/api/engines/{id}/update", post(update_engine))
+        .route("/api/engines/{id}/installs", get(engine_installs))
         .route(
             "/api/engines/{id}/install-recommended",
             post(install_recommended_engine),
@@ -226,6 +227,15 @@ async fn update_engine(
     ))
 }
 
+/// What installs, updates and removals of one engine did, and the vendor's install page
+/// while it is not installed.
+async fn engine_installs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.engines.installs(&id).await?))
+}
+
 /// Installs the version the signed manifest recommends, through the installer
 /// that owns the binary.
 async fn install_recommended_engine(
@@ -288,7 +298,6 @@ async fn delete_custom_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.core.store.delete_custom_engine(&id, LOCAL_USER)?;
-    state.core.engines.invalidate().await;
+    state.core.remove_custom_engine(&id, LOCAL_USER).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -18,6 +18,10 @@ export interface FileChip extends ChipBase {
   kind: "file";
   path: string;
   line: number | null;
+  /** The last line of a selected range, when the chip names more than one line. */
+  endLine?: number;
+  /** Selected in the Changes diff, so the chip can take the person back to it there. */
+  fromDiff?: boolean;
   /** The file's text at the time it was attached; null until read. */
   excerpt: string | null;
   language: string | null;
@@ -123,7 +127,7 @@ const terminalCommand = (chip: TerminalChip): string | null => {
 export function chipLabel(chip: ComposerChip): string {
   switch (chip.kind) {
     case "file":
-      return chip.line === null ? chip.path : `${chip.path}:${chip.line}`;
+      return chip.line === null ? chip.path : `${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
     case "terminal":
       return chip.exitCode === undefined || chip.exitCode === null
         ? terminalLabel(chip)
@@ -143,7 +147,7 @@ export function chipLabel(chip: ComposerChip): string {
 export function chipPrompt(chip: ComposerChip): string {
   switch (chip.kind) {
     case "file": {
-      const where = chip.line === null ? `File \`${chip.path}\`` : `File \`${chip.path}:${chip.line}\``;
+      const where = chip.line === null ? `File \`${chip.path}\`` : `File \`${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `-${chip.endLine}` : ""}\``;
       const body = chip.excerpt?.trim();
       if (!body) return where;
       const language = chip.language ?? "";
@@ -234,6 +238,8 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
         kind: "file",
         path,
         line: number(chip.line),
+        ...(number(chip.endLine) !== null ? { endLine: number(chip.endLine)! } : {}),
+        ...(chip.fromDiff === true ? { fromDiff: true } : {}),
         excerpt: text(chip.excerpt),
         language: text(chip.language, 64),
       };

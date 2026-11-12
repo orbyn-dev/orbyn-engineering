@@ -45,6 +45,7 @@
     ["GET","/api/editors"],
     ["GET","/api/engines"],
     ["GET","/api/engines/update-events"],
+    ["GET","/api/engines/{id}/installs"],
     ["GET","/api/engines/{id}/limits"],
     ["GET","/api/engines/{id}/models"],
     ["GET","/api/engines/{id}/native-sessions"],
