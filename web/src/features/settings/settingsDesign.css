@@ -830,7 +830,7 @@
   background: transparent;
   color: var(--planned-text);
   box-shadow: inset 0 0 0 1px var(--color-borderStrong);
-
+}
 
 /* Where Keybindings is stored: the label and the path in a field-sized box. */
 .set-stored {
