@@ -30,8 +30,13 @@ describe("Settings › Secrets", () => {
     // No switch for what agents read: it is per project, through Manage.
     expect(screen.queryByRole("switch", { name: "What agents read" })).toBeNull();
     expect(screen.getByText("What agents read")).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(1);
+    expect(screen.getByText("On by default. Switched off per project.")).toBeVisible();
     expect(screen.getByText("Crew ledger and Crew objects")).toBeVisible();
+    expect(screen.getByText(/Crew blocks every recognised format/)).toBeVisible();
+    expect(screen.queryByText(/Reveal/)).toBeNull();
+    expect(screen.queryByText(/apply to new output/)).toBeNull();
+    expect(screen.getByText(/Today they apply to the Crew ledger when you read it, old rows included/)).toBeVisible();
     expect(screen.getByText("Always on")).toBeVisible();
     expect(screen.queryByRole("switch", { name: /Crew ledger/ })).toBeNull();
     expect(screen.getByText("None. Redaction is on in every project.")).toBeVisible();
@@ -98,7 +103,7 @@ describe("Settings › Secrets", () => {
   it("lists projects with their state, warns before turning one off and turns it back on plainly", async () => {
     const user = userEvent.setup();
     await open();
-    await user.click(screen.getAllByRole("button", { name: "Manage" })[1]!);
+    await user.click(screen.getByRole("button", { name: "Manage" }));
     const list = await screen.findByRole("dialog", { name: "Projects with redaction off" });
     const buttons = await within(list).findAllByRole("button", { name: /^Turn off redaction for / });
     expect(within(list).getAllByText(/Redaction on/).length).toBe(buttons.length);
@@ -107,6 +112,7 @@ describe("Settings › Secrets", () => {
     const warning = await screen.findByRole("dialog", { name: `Turn off redaction for ${name}?` });
     expect(within(warning).getByText("Agents will see real secrets in this project.")).toBeVisible();
     expect(within(warning).getByText("Only this project is affected. You can turn it back on at any time.")).toBeVisible();
+    expect(within(warning).getByText(/Not applied yet: agents are not protected today/)).toBeVisible();
     expect(within(warning).getByRole("button", { name: "Cancel" })).toHaveFocus();
     await user.click(within(warning).getByRole("button", { name: "Cancel" }));
     expect(view().projects_off).toEqual([]);

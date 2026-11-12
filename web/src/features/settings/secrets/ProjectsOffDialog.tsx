@@ -73,6 +73,7 @@ export function ProjectsOffDialog({
           onClose={() => setTurningOff(null)}
         >
           <p>Only this project is affected. You can turn it back on at any time.</p>
+          <p className="muted">Not applied yet: agents are not protected today in any project. This takes effect when hiding reaches what agents read.</p>
           <div className="secrets-warn" role="note">
             <TriangleAlert size={15} aria-hidden />
             <div>

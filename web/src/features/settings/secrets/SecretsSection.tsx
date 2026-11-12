@@ -75,12 +75,12 @@ export function SecretsSection() {
     <>
       {heading("Secrets")}
       <p className="secrets-intro">
-        Orbyn hides values that look like secrets before they are shown on screen, copied into a message or stored. Reveal
-        shows a value on that screen only. Pattern changes apply to new output.
+        Orbyn hides values that look like secrets in the Crew ledger and in what Crew stores. Your own patterns also mask
+        ledger text when you read it, old rows included. Terminal blocks and what agents read follow later.
       </p>
       <SettingsBanner>
         Hiding in terminal blocks and in what agents read is not applied yet. These choices are saved and take effect when those
-        parts arrive. Crew already hides every format, always.
+        parts arrive. Crew already blocks every format, always.
       </SettingsBanner>
       {error ? <SettingsBanner tone="err">{error}</SettingsBanner> : null}
       <SettingGroup title="Where values are hidden">
@@ -97,16 +97,12 @@ export function SecretsSection() {
             onChange={(event) => void quiet(changeSecretSurfaces({ terminal: event.target.checked }))}
           />
         </SettingRow>
-        <SettingRow
-          title="What agents read"
-          description="On by default. A hidden value is replaced by a label such as [hidden: AWS secret key]. It can be switched off for one project, with a warning."
-        >
+        <SettingRow title="What agents read" description="On by default. Switched off per project.">
           <Pending />
-          <Button small onClick={() => setProjects(true)}>Manage</Button>
         </SettingRow>
         <SettingRow
           title="Crew ledger and Crew objects"
-          description="Locked on. No Crew object holds a secret: this is a hard rule, so it can’t be switched off, for any project."
+          description="Locked on. Crew blocks every recognised format, whatever is set here, so a recognised secret cannot be stored in the ledger or in a Crew object. It can’t be switched off, for any project."
         >
           <span className="secrets-lock"><Lock size={13} aria-hidden />Always on</span>
         </SettingRow>
@@ -136,7 +132,7 @@ export function SecretsSection() {
         ))}
       </SettingGroup>
 
-      <SettingGroup title="Your patterns">
+      <SettingGroup title="Your patterns" description="Today they apply to the Crew ledger when you read it, old rows included. They do not apply to terminal blocks or what agents read yet.">
         {settings.patterns.length ? (
           <div className="set-tbl" role="table" aria-label="Your patterns">
             <div role="row" className="set-tr h secrets-cols">
