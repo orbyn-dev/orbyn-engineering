@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { App } from "../../../../app/App";
+import { renderPreviewFrame } from "../../shared/test-support";
 import { Act, UNAVAILABLE_REASON } from "./Parts";
 import { BatchReview } from "./Batch";
 import { ReviewItem } from "./ReviewItem";
@@ -9,13 +9,7 @@ import { ReviewQueue, queueCounts } from "./ReviewQueue";
 import { batch, queue, queueOverdue, queueReverted } from "./sampleQueue";
 import { mergeItem, mergeItemWithDependents } from "./sampleMerge";
 
-async function route(name: string) {
-  window.location.hash = `#/preview/crew/${name}`;
-  const view = render(<App />);
-  await act(async () => {});
-  await screen.findByText(/Sample data\./);
-  return view;
-}
+const route = renderPreviewFrame;
 
 describe("Review queue", () => {
   it("counts add up: the tab count is the sum of the items, with a batch counted by its members", async () => {
