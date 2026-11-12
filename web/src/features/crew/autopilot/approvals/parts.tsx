@@ -32,6 +32,8 @@ export function leadText(row: ApprovalRow): string {
       return "Not asked";
     case "yes":
       return `Yes: ${row.lead.short}`;
+    case "reason":
+      return row.lead.short;
     case "no":
       return `No: ${row.lead.short}`;
   }
@@ -50,6 +52,10 @@ export function secondText(row: ApprovalRow): string {
       return "You · once";
     case "yours":
       return "The decision is yours";
+    case "nobody":
+      return "Nobody answered";
+    case "answered":
+      return "Answered by you";
     case "reviewing":
       return `${second.by.engine} · reviewing`;
     default:

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import type { AccountConfirmAction } from "../../generated/AccountConfirmAction";
@@ -17,7 +17,24 @@ import { useAfter, useCountdown, type Wait } from "./useCountdown";
  * `onConfirmed` runs the action with the nonce the service answered with, which it must send back: only this window
  * has it. Cancel and Escape give a confirmation up, so an abandoned prompt does not leave one live.
  */
-export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, onClose }: { action: AccountConfirmAction; deviceId?: string; policy?: AccountConnectPolicy; subject?: string; onConfirmed(nonce: string): void | Promise<void>; onClose(): void }) {
+interface ConfirmItsYouProps {
+  action: AccountConfirmAction;
+  deviceId?: string;
+  policy?: AccountConnectPolicy;
+  /** What the confirmation is for: a line, or the facts (who asks, the command) a person reads before typing. */
+  subject?: ReactNode;
+  /** The confirming button, "Confirm" unless the action has its own name. */
+  confirmLabel?: string;
+  /** Said after the network failure's own sentence, for example that a request is still held. */
+  networkNote?: string;
+  /** Enter on an empty password closes the dialog, as Cancel does. */
+  cancelOnEmptyEnter?: boolean;
+  /** Runs the action with the nonce. Resolving `false` says the action did not use it, so it is given up. */
+  onConfirmed(nonce: string): void | boolean | Promise<void | boolean>;
+  onClose(): void;
+}
+
+export function ConfirmItsYou({ action, deviceId, policy, subject, confirmLabel = "Confirm", networkNote, cancelOnEmptyEnter, onConfirmed, onClose }: ConfirmItsYouProps) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -34,11 +51,19 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
     if (busy || throttled || !password) return;
     setBusy(true);
     setProblem(null);
+    // A retry makes a new confirmation: the one an earlier try made and did not use is given up first.
+    const earlier = held.current;
+    held.current = null;
+    if (earlier) void accountApi.cancelConfirmation(earlier).catch(() => undefined);
     try {
       const { nonce } = await accountApi.confirm(password, action, deviceId, policy);
       held.current = nonce;
       setPassword("");
-      await onConfirmed(nonce);
+      const used = await onConfirmed(nonce);
+      if (used === false) {
+        held.current = null;
+        void accountApi.cancelConfirmation(nonce).catch(() => undefined);
+      }
       held.current = null;
       onClose();
     } catch (error) {
@@ -46,7 +71,7 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
       setProblem(found);
       // The action may have reached the Engine before it failed: read the account and its devices again.
       if (found.kind !== "wrong" && found.kind !== "throttled") announceAccountChange();
-      // A wrong or refused password is cleared; the network failure keeps it typed.
+      // A wrong or refused password is cleared; the network failure keeps it typed so Try again repeats it.
       if (found.kind !== "network") setPassword("");
       if (found.kind === "throttled") setWait({ seconds: found.seconds, at: Date.now() });
       setBusy(false);
@@ -70,6 +95,12 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
     onClose();
   };
   const network = problem?.kind === "network";
+  const emptyEnter = (event: KeyboardEvent) => {
+    if (cancelOnEmptyEnter && event.key === "Enter" && !password && !busy) {
+      event.preventDefault();
+      giveUp();
+    }
+  };
   return (
     <Dialog
       title="Confirm it’s you"
@@ -79,16 +110,16 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, onConfirmed, 
         <>
           <Button onClick={giveUp} disabled={busy}>Cancel</Button>
           <Button type="submit" form="confirm-its-you" tone="primary" busy={busy && spinning} disabled={busy || throttled || !password}>
-            {busy && spinning ? "Checking…" : network ? "Try again" : "Confirm"}
+            {busy && spinning ? "Checking…" : network ? "Try again" : confirmLabel}
           </Button>
         </>
       }
     >
-      <form id="confirm-its-you" className="ac-form" onSubmit={(event) => void submit(event)}>
+      <form id="confirm-its-you" className="ac-form" onSubmit={(event) => void submit(event)} onKeyDown={emptyEnter}>
         <p>Enter your password to continue.</p>
-        {subject ? <p className="ac-sub">{subject}</p> : null}
+        {typeof subject === "string" ? <p className="ac-sub">{subject}</p> : subject ? <div className="ac-subject">{subject}</div> : null}
         {throttled ? <Failure>Too many attempts. Try again {retryText(left)}.</Failure> : null}
-        {network ? <Failure>{NETWORK_TEXT}</Failure> : null}
+        {network ? <Failure>{networkNote ? `${NETWORK_TEXT} ${networkNote}` : NETWORK_TEXT}</Failure> : null}
         {problem?.kind === "gone" ? <Failure>Denied or cancelled.</Failure> : null}
         {problem?.kind === "other" ? <Failure>{problem.message}</Failure> : null}
         <Field label="Password" error={problem?.kind === "wrong" ? "That isn’t your password. Check it and try again." : null}>

@@ -44,6 +44,8 @@ export const RESULT: Record<ResultKind, { label: string; tone: "ok" | "no" | "am
   person_only: { label: "Denied · for your review", tone: "am" },
   no_second_key: { label: "Denied · no second key", tone: "no" },
   held_you: { label: "Held for you", tone: "am" },
+  held_expired: { label: "Expired", tone: "dim" },
+  denied_you: { label: "Denied by you", tone: "no" },
   held_second_key: { label: "Held for a second key", tone: "dim" },
   approved_you: { label: "Approved by you", tone: "ok" },
   denied_second_key: { label: "Denied by the second key", tone: "no" },
@@ -77,3 +79,15 @@ export const TRIGGERS: { id: TriggerId; name: string; repeats: string }[] = [
   { id: "schedule", name: "On a schedule", repeats: "Skipped if the previous run is still going." },
   { id: "dependency_update", name: "A dependency update opens", repeats: "One run per update; updates to the same package are grouped." },
 ];
+
+/** The held-command card and the approve-once dialog, as the Crew designs (v31) write them. */
+export const HELD = {
+  restart: "Held requests are cleared if Orbyn restarts.",
+  expired: "This request expired. Nothing ran.",
+  decided: "Already decided.",
+  noAccount: "Approving needs a signed-in account.",
+  noAccountNote: "Deny and Dismiss still work without one.",
+  networkNote: "The request is still held.",
+  remote: "Do this from the computer the app runs on.",
+  why: "Nothing runs until you approve it.",
+} as const;

@@ -5,6 +5,8 @@ import { NOT_CONNECTED } from "./api";
 import { GUARD_WORKERS, MODE_COPY } from "./copy";
 
 import type { ApprovalRow, Mode } from "./model";
+import { HeldBody, HeldFooter } from "./HeldCard";
+import { phaseOf, type HoldControl } from "./held";
 import { Chip, engineLine, Facts, ResultChip, RISK_LABEL } from "./parts";
 
 const MODE_NAME = { off: MODE_COPY.off.name, on: MODE_COPY.on.name, full: MODE_COPY.full.name };
@@ -116,8 +118,15 @@ function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
     </footer>;
 }
 
+/** The head chip of a held command: "Already decided" once it was answered, whoever answered. */
+function HeldChip({ held, hold, result }: { held: NonNullable<ApprovalRow["held"]>; hold: HoldControl; result: ApprovalRow["result"] }) {
+  const phase = phaseOf(held, hold.closed ?? undefined);
+  return phase === "decided" ? <Chip tone="dim">Already decided</Chip> : <ResultChip result={result} />;
+}
+
 /** One request's whole chain, opened from a row. Escape closes it and focus goes back to the row. */
-export function DecisionDrawer({ row, act, mode }: { row: ApprovalRow; act: DrawerActions; mode: Mode }) {
+export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act: DrawerActions; mode: Mode; hold?: HoldControl }) {
+  const answers = hold && row.held ? { hold, held: row.held } : null;
   const ref = useRef<HTMLElement>(null);
   useEffect(() => ref.current?.focus(), [row.id]);
   const guarded = isGuarded(row);
@@ -142,10 +151,16 @@ export function DecisionDrawer({ row, act, mode }: { row: ApprovalRow; act: Draw
       <header className="ap-drawer-head">
         <h3>{row.title}</h3>
         <div className="ap-chips">
-          <ResultChip result={row.result} />
+          {answers ? <HeldChip held={answers.held} hold={answers.hold} result={row.result} /> : <ResultChip result={row.result} />}
           {guarded ? <Chip tone="dim">Guard</Chip> : row.risk ? <Chip tone="plain">{RISK_LABEL[row.risk]}</Chip> : row.hard === "denied" ? <Chip tone="plain">Hard limit</Chip> : row.hard === "person_only" ? <Chip tone="plain">Person-only</Chip> : null}
         </div>
       </header>
+      {answers ? (
+        <>
+          <div className="ap-drawer-body"><HeldBody row={row} held={answers.held} hold={answers.hold} mode={mode} /></div>
+          <HeldFooter held={answers.held} hold={answers.hold} close={act.close} />
+        </>
+      ) : (<>
       <div className="ap-drawer-body">
         <p className="ap-asked">
           {row.asker ? <>Asked by <b>{engineLine(row.asker)}</b>{row.branch ? ` · ${row.branch}` : ""}</> : <>Task <b>{row.taskId}</b></>}
@@ -186,6 +201,7 @@ export function DecisionDrawer({ row, act, mode }: { row: ApprovalRow; act: Draw
         {guarded ? <p className="ap-muted">{GUARD_WORKERS}</p> : null}
       </div>
       <Footer row={row} act={act} />
+      </>)}
     </aside>
   );
 }

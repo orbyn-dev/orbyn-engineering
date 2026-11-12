@@ -1,6 +1,7 @@
 // What the Autopilot screens draw. The wire shapes are the generated `Autopilot*` types; `ledger.ts` maps a
 // ledger row to the row the log draws. Guard rows (production-linked targets) have no route yet, so only
 // the components and their tests build them.
+import type { AutopilotHeldState } from "../../../../generated/AutopilotHeldState";
 import type { AutopilotMode } from "../../../../generated/AutopilotMode";
 
 export type Mode = AutopilotMode;
@@ -23,6 +24,10 @@ export type ResultKind =
   | "person_only"
   | "no_second_key"
   | "held_you"
+  /** A hold nobody answered in time. */
+  | "held_expired"
+  /** A hold you denied. */
+  | "denied_you"
   | "held_second_key"
   | "approved_you"
   | "denied_second_key"
@@ -33,11 +38,13 @@ export type HardKind = "always_allowed" | "passed" | "denied" | "person_only" | 
 export type LeadAnswer =
   | { state: "not_asked" }
   /** `short` is the table cell's words, `reason` the whole sentence the drawer shows. */
-  | { state: "yes" | "no"; reason: string; short: string };
+  | { state: "yes" | "no"; reason: string; short: string }
+  /** A held command: the service gives the reason it was held, not which key said what. */
+  | { state: "reason"; reason: string; short: string };
 
 export type SecondAnswer =
   /** `yours`: a guarded command held for the person; `you`: the person approved it once. */
-  | { state: "not_needed" | "not_asked" | "unavailable" | "you" | "yours" }
+  | { state: "not_needed" | "not_asked" | "unavailable" | "you" | "yours" | "nobody" | "answered" }
   | { state: "yes" | "no"; by: EngineRef; reason: string }
   | { state: "reviewing"; by: EngineRef };
 
@@ -54,6 +61,20 @@ export interface GuardFacts {
   /** "16:02": when the held command is waiting since, or when it was decided or run. */
   at: string | null;
   exit: number | null;
+}
+
+/** A command the guard holds for the person, as `GET /api/crew/approvals/held` lists it. */
+export interface HeldInfo {
+  id: string;
+  state: AutopilotHeldState;
+  /** The reason the service gave when it held the command. */
+  reason: string;
+  /** False when the command was too long to read whole: it can be held, denied and dismissed, never approved once. */
+  readable: boolean;
+  /** "15:02": when it began waiting. */
+  since: string;
+  /** "15:20": when it was decided, when this window or the list can tell. */
+  decidedAt: string | null;
 }
 
 export interface ApprovalRow {
@@ -94,6 +115,8 @@ export interface ApprovalRow {
   /** Milliseconds the code took, for a hard rule. */
   decidedInMs: number | null;
   guard: GuardFacts | null;
+  /** Set for a row that comes from the held list; its card has real answers. */
+  held?: HeldInfo | null;
 }
 
 export type ApprovalFilter = "all" | "allowed" | "denied_rule" | "denied_lead" | "keys_disagree" | "person_only";

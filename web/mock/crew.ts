@@ -4,7 +4,15 @@
  * answers 404 as the service does; scenarios named `crew` or `crew-<state>` turn it on: crew, crew-empty,
  * crew-many, crew-one-vendor, crew-tripwire, crew-injected, crew-per-crew, crew-first-run, crew-young.
  * Background crews have no route, so the mock has none either.
+ *
+ * Held commands: `crew-held` (the sign-in gate is off, as in every released build: Approve once cannot be tried),
+ * `crew-held-account` (a person is signed in; approving asks "Confirm it's you" with the password in `mock/account.ts`),
+ * `crew-held-account-expired` (the first hold has timed out when it is answered: 410), `crew-held-account-race` (it was
+ * denied from another window: 409), `crew-held-account-standin` (the development stand-in account is signed in, so
+ * approving once is refused as the service refuses it). Three commands are held in every one of them.
  */
+import type { AutopilotHeld } from "../src/generated/AutopilotHeld.ts";
+import type { AutopilotHeldList } from "../src/generated/AutopilotHeldList.ts";
 import type { AutopilotGuards } from "../src/generated/AutopilotGuards.ts";
 import type { AutopilotLog } from "../src/generated/AutopilotLog.ts";
 import type { AutopilotLogRow } from "../src/generated/AutopilotLogRow.ts";
@@ -112,7 +120,24 @@ const trust = (young: boolean): AutopilotTrust =>
         truncated: false,
       };
 
-export function createCrewMock() {
+const ORDERS = 'psql "$PROD_DATABASE_URL" -c "DELETE FROM orders WHERE is_test = true"';
+
+const holds = (): AutopilotHeld[] => [
+  { id: "hold-orders", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: ORDERS, reason: "The command is not in the brief.", state: "held", readable: true, age_secs: 120, expires_in_secs: 480 },
+  { id: "hold-bucket", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: "aws s3 rb s3://orbyn-assets-prod --force", reason: "The brief never mentions this bucket.", state: "held", readable: true, age_secs: 300, expires_in_secs: 300 },
+  { id: "hold-sessions", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"', reason: "A second key is missing.", state: "held", readable: true, age_secs: 420, expires_in_secs: 180 },
+];
+
+interface Door {
+  /** The email of the signed-in account, or null (the gate is off, or nobody is signed in). */
+  signedIn(): string | null;
+  /** Uses up the confirmation "Confirm it's you" made for this device id; false when there is none. */
+  consumeConfirmation(device: string): boolean;
+}
+
+export function createCrewMock(door: Door) {
+  let held: AutopilotHeld[] = [];
+  let heldScenario = "";
   let on = false;
   let failPaging = false;
   let mode: AutopilotMode = "full";
@@ -132,6 +157,8 @@ export function createCrewMock() {
       ? [{ scope: "crew", id: "login-redirect", mode: "on", updated_at: "2026-11-07T10:00:00" }, { scope: "crew", id: "dependency-bump", mode: "full", updated_at: "2026-11-06T10:00:00" }]
       : [];
     young = scenario === "crew-young";
+    heldScenario = scenario.startsWith("crew-held") ? scenario : "";
+    held = heldScenario ? holds() : [];
     failPaging = scenario === "crew-many-fails";
     all = scenario === "crew-empty" ? [] : scenario === "crew-many" || scenario === "crew-many-fails" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
     const wire: Record<string, string | number> = scenario === "crew-injected" ? { wire: "injection", class: "instructions" } : { wire: "denials", in_a_row: 3, in_a_run: 3 };
@@ -161,6 +188,34 @@ export function createCrewMock() {
     const seg = path.split("/").filter(Boolean); // api crew ...
     const [, , head, id] = seg;
     if (method === "GET" && head === "preview") return { status: 200, body: { enabled: true } };
+    if (head === "approvals" && id === "held" && method === "GET") {
+      const out: AutopilotHeldList = { items: held, hold_secs: 600, approval_secs: 600 };
+      return { status: 200, body: out };
+    }
+    if (method === "POST" && head === "approvals" && id) {
+      const how = seg[4];
+      const item = held.find((one) => one.id === id);
+      if (!item || !["approve-once", "deny", "dismiss"].includes(how ?? "")) return { status: 404, body: { code: "not_found", message: "held command not found" } };
+      const set = (state: AutopilotHeld["state"]) => {
+        held = held.map((one) => (one.id === id ? { ...one, state, expires_in_secs: state === "approved" ? 600 : 0 } : one));
+        return { status: 200, body: held.find((one) => one.id === id) };
+      };
+      if (how === "approve-once") {
+        if (door.signedIn() === null) return { status: 403, body: { code: "account_disabled", message: "Accounts are not available yet." } };
+        if (heldScenario === "crew-held-account-standin") return { status: 403, body: { code: "policy_denied", message: "Approving once is not available while the development stand-in account is signed in: its password is public." } };
+        if (!door.consumeConfirmation(`crew-approve-once:${id}`)) return { status: 403, body: { code: "reauth_required", message: "Confirm it's you to do this." } };
+      }
+      if (heldScenario === "crew-held-account-expired" && id === "hold-orders") {
+        held = held.map((one) => (one.id === id ? { ...one, state: "expired", expires_in_secs: 0 } : one));
+        return { status: 410, body: { code: "gone", message: "This command is no longer held: its time ran out or its task ended." } };
+      }
+      if (heldScenario === "crew-held-account-race" && id === "hold-orders") {
+        set("denied");
+        return { status: 409, body: { code: "invalid_transition", message: "run cannot move from denied to decided" } };
+      }
+      if (item.state !== "held") return { status: 409, body: { code: "invalid_transition", message: `run cannot move from ${item.state} to decided` } };
+      return set(how === "approve-once" ? "approved" : how === "deny" ? "denied" : "dismissed");
+    }
     if (method === "GET" && head === "approvals" && failPaging && Number(query.get("offset") ?? 0) > 18) return { status: 500, body: { code: "internal", message: "The ledger could not be read." } };
     if (method === "GET" && head === "approvals") return { status: 200, body: approvals(query) };
     if (method === "GET" && head === "stops") {

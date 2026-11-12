@@ -19,6 +19,13 @@ export function useSignedInAccount(): { view: AccountView; reload(): void } | nu
   return view?.available && view.session ? { view, reload: account.reload } : null;
 }
 
+/** Whether a signed-in account is here, for a screen that needs one: still reading, yes, or none (gate off, or signed out). */
+export function useAccountStanding(): "loading" | "signed_in" | "none" {
+  const view = useAccount().data;
+  if (!view) return "loading";
+  return view.available && view.session ? "signed_in" : "none";
+}
+
 /** Whether the Settings list shows the Account category: only when the gate is on and a backend answers. */
 export function useAccountAvailable(): boolean {
   return useAccount().data?.available === true;
