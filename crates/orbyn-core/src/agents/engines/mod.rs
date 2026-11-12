@@ -756,6 +756,14 @@ impl EngineManager {
         self.progress.subscribe()
     }
 
+    /// One lock per installer or agent, so two installs of the same thing never overlap.
+    pub(crate) fn installer_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        lock(&self.installer_locks)
+            .entry(key.to_owned())
+            .or_default()
+            .clone()
+    }
+
     pub(crate) fn emit(&self, event: EngineUpdateProgress) {
         // No listener is not an error: progress is only for whoever is watching.
         let _ = self.progress.send(event);
@@ -995,9 +1003,10 @@ impl EngineManager {
         let mut child = ManagedChild::spawn(builder)?;
         let mut stdout = child.child_mut().stdout.take();
         let mut stderr = child.child_mut().stderr.take();
+        // Kept outside the timed block, so a timeout still leaves what the installer printed.
+        let mut out = Vec::new();
+        let mut err = Vec::new();
         let outcome = tokio::time::timeout(self.config.update_timeout, async {
-            let mut out = Vec::new();
-            let mut err = Vec::new();
             let progress = |line: String| {
                 self.emit(EngineUpdateProgress::Output {
                     engine: id.to_owned(),
@@ -1009,20 +1018,20 @@ impl EngineManager {
                 read_lines(stderr.as_mut(), &mut err, progress),
                 child.wait()
             );
-            (status, out, err)
+            status
         })
         .await;
-        let Ok((status, out, err)) = outcome else {
-            return Err(CoreError::UpdateFailed(
-                "The update did not finish in time and was stopped.".into(),
-            ));
-        };
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out),
             String::from_utf8_lossy(&err)
         );
         ran.output = tail(&text, 4096);
+        let Ok(status) = outcome else {
+            return Err(CoreError::UpdateFailed(
+                "The update did not finish in time and was stopped.".into(),
+            ));
+        };
         ran.exit = status
             .as_ref()
             .ok()
@@ -1031,7 +1040,8 @@ impl EngineManager {
             Ok(status) if status.success() => Ok(tail(&text, 4096)),
             _ => {
                 ran.failed = true;
-                Err(CoreError::UpdateFailed(tail(&text, 1024)))
+                // Hidden at the source: this text reaches the error body, the audit row and the stream.
+                Err(CoreError::UpdateFailed(outcomes::hide(&tail(&text, 1024))))
             }
         }
     }
@@ -1186,26 +1196,25 @@ impl Drop for NativeOperation {
 
 /// Sends `finished` for an update dropped before it ended, so no listener is left
 /// showing it as running.
-struct Finish<'a> {
-    engines: &'a EngineManager,
-    id: String,
-    attempt: Option<Attempt>,
-    sent: bool,
+pub(crate) struct Finish<'a> {
+    pub(crate) engines: &'a EngineManager,
+    pub(crate) id: String,
+    pub(crate) attempt: Option<Attempt>,
+    pub(crate) sent: bool,
 }
 
 impl Drop for Finish<'_> {
     fn drop(&mut self) {
         if !self.sent {
             if let Some(attempt) = self.attempt.take() {
-                let error =
-                    CoreError::UpdateFailed("The update stopped before it finished.".into());
+                let error = CoreError::UpdateFailed("It stopped before it finished.".into());
                 self.engines
                     .keep_outcome(&attempt.finish(&Ran::default(), Some(&error), None));
             }
             self.engines.emit(EngineUpdateProgress::Finished {
                 engine: std::mem::take(&mut self.id),
                 version: None,
-                error: Some("The update stopped before it finished.".into()),
+                error: Some("It stopped before it finished.".into()),
             });
         }
     }

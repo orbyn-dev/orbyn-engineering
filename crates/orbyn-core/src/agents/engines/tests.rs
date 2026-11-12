@@ -598,7 +598,11 @@ async fn a_failed_update_keeps_a_plain_reason_its_status_and_no_secret() {
         "{everything}"
     );
     // What the live channel and the audit log carry is hidden the same way.
-    assert!(!outcomes::hide(&error.to_string()).contains("ghp_abcdefghijklmnop"));
+    // The error itself reaches the error body, so it is hidden at the source.
+    assert!(
+        !error.to_string().contains("ghp_abcdefghijklmnop"),
+        "{error}"
+    );
     let audit = engines.store.list_audit(None, 50).unwrap();
     assert!(
         !format!("{audit:?}").contains("ghp_abcdefghijklmnop"),

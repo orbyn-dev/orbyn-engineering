@@ -103,3 +103,12 @@ it("sends an engine that is not installed to the vendor's own page and installs 
   await user.click(screen.getByRole("button", { name: "Check again" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/engines/refresh", expect.objectContaining({ method: "POST" })));
 });
+
+it("tries a failed registry install again through the registry", async () => {
+  const user = userEvent.setup();
+  const { fetch } = serve({ outcomes: [outcome({ engine: "acp-pal", kind: "install", ok: false, from_version: undefined, reason: "That agent's archive could not be downloaded.", output: [] })] });
+  open({ ...codex, id: "acp-pal", name: "Pal Agent", tier: "acp", update_command: null });
+  await user.click(await screen.findByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/acp/registry/pal", expect.objectContaining({ method: "POST" })));
+  expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("install-recommended"), expect.anything());
+});

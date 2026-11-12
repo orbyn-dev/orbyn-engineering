@@ -220,9 +220,21 @@ impl Store {
                     detail: Value::Null,
                 },
             )?;
+            // In the same transaction as the delete, so a run cannot be admitted in between.
+            let active: i64 = tx.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM runs WHERE engine = ?1 AND state IN {}",
+                    super::ACTIVE_STATES
+                ),
+                [id],
+                |row| row.get(0),
+            )?;
             let deleted = tx.execute("DELETE FROM custom_engines WHERE id = ?1", [id])?;
             if deleted == 0 {
                 return Err(CoreError::NotFound("engine".into()));
+            }
+            if active > 0 {
+                return Err(CoreError::EngineBusy(id.to_owned()));
             }
             Ok(())
         })

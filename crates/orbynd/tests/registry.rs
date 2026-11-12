@@ -269,6 +269,19 @@ async fn an_engine_that_is_not_installed_offers_the_vendors_page_and_nothing_els
             .starts_with("https://")
     );
     assert_eq!(cursor["outcomes"], json!([]));
+    // Removing what is not there is refused and keeps nothing.
+    let gone = service
+        .client
+        .delete(format!("{}/api/engines/custom/ghost", service.url))
+        .bearer_auth(&service.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), 404);
+    assert_eq!(
+        service.json("/api/engines/ghost/installs").await["outcomes"],
+        json!([])
+    );
     let unknown = service.json("/api/engines/nobody/installs").await;
     assert!(unknown.get("vendor_page").is_none(), "{unknown}");
     service.stop().await;

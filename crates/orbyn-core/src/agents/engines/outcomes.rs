@@ -77,9 +77,65 @@ impl Attempt {
     }
 }
 
-/// `text` without terminal codes, credential-looking lines or any recognised secret format.
+/// `text` without control characters, key blocks, credentials inside addresses, any
+/// recognised secret format or any credential-looking line. The recognised formats are masked
+/// before the line check, so a multi-line key goes whole and not line by line.
 pub fn hide(text: &str) -> String {
-    Redactor::locked().replace_each(&clean(text), "[hidden]")
+    // A carriage return ends a line, as it does for the live lines; escapes and the other
+    // control characters go line by line, so the line breaks stay.
+    let plain = text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(super::strip_escapes)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let masked =
+        Redactor::locked().replace_each(&hide_blocks(&hide_url_credentials(&plain)), "[hidden]");
+    clean(&masked)
+}
+
+/// A PEM block, from its `BEGIN` line to its `END` line or the end of the text.
+fn hide_blocks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("-----BEGIN ") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        match after.find("-----END ").and_then(|end| {
+            after[end + 9..]
+                .find("-----")
+                .map(|close| end + 9 + close + 5)
+        }) {
+            Some(end) => rest = &after[end..],
+            None => rest = "",
+        }
+        out.push_str("[hidden]");
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `scheme://user:password@host` becomes `scheme://[hidden]@host`, whatever the password's length.
+fn hide_url_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c == '/' || c == '?' || c == '#' || c.is_whitespace())
+            .unwrap_or(tail.len());
+        match tail[..end].rfind('@') {
+            Some(login) => {
+                out.push_str("[hidden]");
+                rest = &tail[login..];
+            }
+            None => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The failure in plain words. An installer that ran and failed gets its status, and its own
@@ -204,6 +260,38 @@ mod tests {
         assert!(!all.contains("Bearer abc"), "{all}");
         assert!(outcome.output.contains(&"last line".to_owned()));
         assert!(outcome.output.contains(&"fetching".to_owned()));
+    }
+
+    #[test]
+    fn urls_keys_control_characters_and_auth_settings_are_hidden() {
+        // Built at run time, so no scanner reads a fixture as a real secret.
+        let begin = ["-----BEGIN ", "PRIVATE KEY", "-----"].concat();
+        let end = ["-----END ", "PRIVATE KEY", "-----"].concat();
+        let text = format!(
+            "fetch https://me:p@host.example/x ok\n{begin}\nQUJDREVGRw\nSElKS0xNTg\n{end}\nafter\n\
+             //registry/:_auth=abc123\nclean{}ed{} line\rmid\n",
+            '\u{7}', '\u{8}'
+        );
+        let shown = hide(&text);
+        for gone in [
+            "me:p",
+            "QUJDREVGRw",
+            "SElKS0xNTg",
+            "abc123",
+            "\u{7}",
+            "\u{8}",
+            "\r",
+        ] {
+            assert!(!shown.contains(gone), "{gone} in {shown:?}");
+        }
+        assert!(
+            shown.contains("https://[hidden]@host.example/x ok"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("after") && shown.contains("cleaned line"),
+            "{shown}"
+        );
     }
 
     #[test]

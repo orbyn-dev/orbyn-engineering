@@ -16,6 +16,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
+use crate::agents::engines::Finish;
 use crate::agents::engines::outcomes::{Attempt, Ran, hide};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -468,6 +469,16 @@ impl Core {
         .ok_or_else(|| {
             CoreError::Unsupported("This machine cannot install that agent that way.".into())
         })?;
+        let engine = engine_id(&agent.id);
+        // One install of an agent at a time, and none while a thread runs on it: a reinstall
+        // replaces the folder the run would be using. Both are refusals, not attempts.
+        let lock = self.engines.installer_lock(&format!("acp:{}", agent.id));
+        let Ok(_one_at_a_time) = lock.try_lock() else {
+            return Err(CoreError::EngineBusy(engine));
+        };
+        if self.store.active_runs_for_engine(&engine)? > 0 {
+            return Err(CoreError::EngineBusy(engine));
+        }
         self.store.append_audit(&AuditRecord {
             actor: actor.to_owned(),
             action: "acp.install".into(),
@@ -478,7 +489,6 @@ impl Core {
             run_id: None,
             detail: serde_json::json!({ "version": agent.version, "distribution": chosen }),
         })?;
-        let engine = engine_id(&agent.id);
         let command = launch_line(&agent, chosen);
         // Anything that went wrong from here on is an attempt that failed, and is kept.
         let attempt = Attempt::begin(&engine, InstallKind::Install, Some(&command), None);
@@ -486,18 +496,27 @@ impl Core {
             engine: engine.clone(),
             command: hide(&command),
         });
+        // A dropped request still ends the attempt, so nothing is left showing "installing".
+        let mut finish = Finish {
+            engines: &self.engines,
+            id: engine.clone(),
+            attempt: Some(attempt),
+            sent: false,
+        };
         let result = self.install_chosen(agent, chosen, actor).await;
-        let ran = Ran::default();
-        self.engines.keep_outcome(
-            &attempt.finish(
-                &ran,
-                result.as_ref().err(),
-                result
-                    .as_ref()
-                    .ok()
-                    .and_then(|status| status.version.clone()),
-            ),
-        );
+        finish.sent = true;
+        if let Some(attempt) = finish.attempt.take() {
+            self.engines.keep_outcome(
+                &attempt.finish(
+                    &Ran::default(),
+                    result.as_ref().err(),
+                    result
+                        .as_ref()
+                        .ok()
+                        .and_then(|status| status.version.clone()),
+                ),
+            );
+        }
         self.engines.emit(EngineUpdateProgress::Finished {
             engine,
             version: result
@@ -590,17 +609,15 @@ impl Core {
         self.remove_engine(id, actor, || Ok(())).await
     }
 
-    /// The one removal: refused while a thread runs on the engine, then the engine's row goes,
-    /// then `files`, and the attempt is kept whichever way it ended.
+    /// The one removal: the engine's row goes (refused in the same transaction while a thread
+    /// runs on it), then `files`. The attempt is kept whichever way it ended, except a refusal
+    /// or an engine that is not there, which are not attempts.
     async fn remove_engine(
         &self,
         engine: &str,
         actor: &str,
         files: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
-        if self.store.active_runs_for_engine(engine)? > 0 {
-            return Err(CoreError::EngineBusy(engine.to_owned()));
-        }
         let attempt = Attempt::begin(engine, InstallKind::Remove, None, None);
         let result = async {
             self.store.delete_custom_engine(engine, actor)?;
@@ -608,8 +625,16 @@ impl Core {
             files()
         }
         .await;
-        self.engines
-            .keep_outcome(&attempt.finish(&Ran::default(), result.as_ref().err(), None));
+        if !matches!(
+            result,
+            Err(CoreError::EngineBusy(_) | CoreError::NotFound(_))
+        ) {
+            self.engines.keep_outcome(&attempt.finish(
+                &Ran::default(),
+                result.as_ref().err(),
+                None,
+            ));
+        }
         result
     }
 }

@@ -1,6 +1,6 @@
 import { Check, Info, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, engineInstalls } from "../api";
+import { addRegistryEntry, api, engineInstalls } from "../api";
 import type { EngineStatus } from "../../../api/types";
 import type { InstallOutcome } from "../../../generated/InstallOutcome";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -68,7 +68,9 @@ export function InstallBanner({ engine, view }: { engine: EngineStatus; view: In
     setAgain(true);
     setError(null);
     try {
-      if (outcome.kind === "install") await api.installRecommended(engine.id);
+      // A registry agent is installed again through the registry, not as a recommended version.
+      if (outcome.kind === "install" && engine.id.startsWith("acp-")) await addRegistryEntry(engine.id.slice(4), undefined);
+      else if (outcome.kind === "install") await api.installRecommended(engine.id);
       else await api.updateEngine(engine.id);
       await refreshEngines();
     } catch (failure) { setError(toFailure(failure).message); } finally { setAgain(false); }
