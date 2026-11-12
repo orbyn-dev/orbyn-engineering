@@ -300,6 +300,16 @@ export function pageState(pull: PullRequest, mergeable: string | null, reviewAsk
   return checks === "pending" ? "running" : "open";
 }
 
+/** Whether the signed-in person opened this pull request. */
+export const ownPull = (pull: Pick<PullRequest, "author">, viewers: readonly string[]) =>
+  Boolean(pull.author && viewers.some((login) => sameLogin(login, pull.author ?? "")));
+
+/**
+ * Amber means something is waiting on the person: a review asked of them, or changes requested on their own pull request.
+ * Changes they requested themselves, or on someone else's pull request, wait on somebody else, so they stay ink.
+ */
+export const changesNeedYou = (pull: Pick<PullRequest, "author">, viewers: readonly string[]) => ownPull(pull, viewers);
+
 /** Whether Merge can be pressed, and the line under it that says why not, or what is true. */
 export function mergeGate(
   pull: PullRequest,
@@ -313,17 +323,32 @@ export function mergeGate(
   if (mergeable === "conflicting") return { enabled: false, hint: "Resolve the conflict to merge." };
   const checks = checksOf(pull.checks_state);
   if (checks === "fail") return { enabled: false, hint: "Merge is blocked by a failing check." };
-  if (checks === "pending" && !options.auto) return { enabled: false, hint: "Merge unlocks when checks pass.", tip: "Checks are still running." };
+  if (checks === "pending" && !options.auto) return { enabled: false, hint: "Checks are still running.", tip: "Checks are still running." };
   if (pull.review_state === "review_required" || pull.review_state === "changes_requested") return { enabled: false, hint: "Merge needs an approval." };
   return { enabled: true, hint: mergeable === "mergeable" ? "No conflicts" : "" };
 }
 
-/** The Review line of the status card, from what the forge reports. */
-export function reviewWords(pull: PullRequest, reviewers: readonly string[]): string {
+/**
+ * The Review line of the status card, from what the forge reports. The signed-in person is named "you", not by login.
+ * `byYou` is the person's own latest review being the one that asked for changes.
+ */
+export function reviewWords(pull: PullRequest, reviewers: readonly string[], viewers: readonly string[] = [], byYou = false): string {
   if (pull.draft) return "Not requested";
   if (pull.review_state === "approved") return "Approved";
-  if (pull.review_state === "changes_requested") return "Changes requested";
-  return reviewers.length > 0 ? `Requested from ${reviewers.map((name) => `@${name}`).join(", ")}` : "Not requested";
+  if (pull.review_state === "changes_requested" || byYou) return byYou ? "Changes requested by you" : "Changes requested";
+  const names = reviewers.map((name) => (viewers.some((login) => sameLogin(login, name)) ? "you" : `@${name}`));
+  return names.length > 0 ? `Requested from ${names.join(", ")}` : "Not requested";
+}
+
+/** The Conflicts line of the status card: what the service says, and nothing it does not (which file, how many). */
+export const conflictWords = (mergeable: string | null): string => (mergeable === "conflicting" ? "Yes" : mergeable === "mergeable" ? "None" : "\u2014");
+
+/** The word a review leaves in the list's Reviewers cell, after the avatars. Null while no review has ruled. */
+export function reviewersWord(pull: Pick<PullRequest, "author" | "review_state" | "draft">, viewers: readonly string[]): { label: string; tone: "act" | "quiet" } | null {
+  if (pull.draft) return null;
+  if (pull.review_state === "approved") return { label: "Approved", tone: "quiet" };
+  if (pull.review_state === "changes_requested") return { label: "Changes", tone: changesNeedYou(pull, viewers) ? "act" : "quiet" };
+  return null;
 }
 
 /** True when the markdown's first line is a heading with this text (any level, any case), so a card titled the same would say it twice. */
