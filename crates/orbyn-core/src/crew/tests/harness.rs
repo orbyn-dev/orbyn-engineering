@@ -26,6 +26,9 @@ use crate::testing::{TempDir, run_git};
 use crate::tools::mcp::McpBinding;
 use crate::{CoreConfig, store::CrewTask};
 
+/// A run and the restriction it was started under: `(thread, rules)`.
+pub type Confined = (String, Option<crate::host::confine::Confinement>);
+
 /// What a fake worker does in one turn.
 pub enum Turn {
     /// Reports with these arguments after doing its work.
@@ -61,6 +64,8 @@ pub struct Fake {
     pub prompts: Arc<Mutex<Vec<(String, String)>>>,
     /// What `crew_report` answered each time.
     pub answers: Arc<Mutex<Vec<String>>>,
+    /// The restriction each worker run was started under: `(thread, rules)`.
+    confines: Arc<Mutex<Vec<Confined>>>,
 }
 
 #[async_trait]
@@ -101,6 +106,10 @@ impl EngineDriver for Fake {
             .lock()
             .unwrap()
             .push((spec.thread_id.clone(), spec.prompt.clone()));
+        self.confines
+            .lock()
+            .unwrap()
+            .push((spec.thread_id.clone(), spec.confine.clone()));
         let core = self.core.get().and_then(Weak::upgrade).expect("a core");
         let spec_thread = spec.thread_id.clone();
         let worker = core
@@ -192,6 +201,8 @@ pub struct World {
     pub answers: Arc<Mutex<Vec<String>>>,
     /// What running turns were handed mid-turn: `(thread, text)`.
     pub steered: Arc<Mutex<Vec<(String, String)>>>,
+    /// The restriction each run was started under: `(thread, rules)`.
+    pub confines: Arc<Mutex<Vec<Confined>>>,
 }
 
 /// A core with the Crew Preview flag as asked, one git project with a first commit, a lead
@@ -214,6 +225,22 @@ pub async fn world_tiered(
     engines: &[(&str, bool)],
     tiered: bool,
 ) -> World {
+    world_full(preview, script, engines, tiered, false).await
+}
+
+/// `world`, with the restriction on workers left on, as it ships: a start is refused where
+/// none can be applied, and a worker run is handed its rules.
+pub async fn world_confined(script: Script) -> World {
+    world_full(true, script, &[("alpha", false)], false, true).await
+}
+
+async fn world_full(
+    preview: bool,
+    script: Script,
+    engines: &[(&str, bool)],
+    tiered: bool,
+    confine: bool,
+) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -222,6 +249,7 @@ pub async fn world_tiered(
     config.engines.codex_program = "orbyn-test-no-such-codex".into();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    config.crew_confine_workers = confine;
     // The development stand-in for the Engine, so a test can sign in and "Confirm it's you" (approve once needs it).
     config.account_gate = crate::account::AccountGate::LocalOnly;
     config.account_backend = crate::account::AccountBackendKind::Development;
@@ -244,6 +272,7 @@ pub async fn world_tiered(
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let answers = Arc::new(Mutex::new(Vec::new()));
     let steered = Arc::new(Mutex::new(Vec::new()));
+    let confines = Arc::new(Mutex::new(Vec::new()));
     let turns: Arc<AtomicUsize> = Arc::default();
     for (id, steerable) in engines {
         core.engines.register(Arc::new(Fake {
@@ -256,6 +285,7 @@ pub async fn world_tiered(
             turns: turns.clone(),
             prompts: prompts.clone(),
             answers: answers.clone(),
+            confines: confines.clone(),
         }));
     }
     cell.set(Arc::downgrade(&core)).unwrap();
@@ -309,6 +339,7 @@ pub async fn world_tiered(
         prompts,
         answers,
         steered,
+        confines,
     }
 }
 

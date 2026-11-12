@@ -407,6 +407,17 @@ These are named so nobody assumes them. They arrive in later versions of this pr
   operating-system user as the core can read the core's own store or call its CLI. An implementation
   that needs H1 to hold against such a member runs it in a sandbox that blocks those reads, and a
   process a member leaves running can outlive its turn.
+  - On macOS the reference core starts each worker under a profile that denies reading or writing the
+    core's data folder (the store, the service handle and other runs' files), except the worker's own
+    run folder and the checkout and library it works in. It also stops a worker starting a program
+    through LaunchServices and signalling other processes.
+  - It does not stop a worker reading other processes' command lines and environment, and it does not
+    cover the network, the loopback service (its token is the guard), the OS keychain, the engine's own
+    login and session folders (including the lead's own engine transcript files, closed by a later
+    change) or other files of the same user. An ACP lead's bridge process carries its MCP endpoint token
+    in its environment, so a worker could read and use it: a known limit, tracked separately.
+  - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
+    running can outlive its turn.
 - A routine lead message to one member restarts the exchange count of every pair that member is in
   (H4), so it can re-arm a looping pair the lead never looked at (option A). The core records every
   such reset in its ledger, with the pairs and their counts before, so real runs show whether it

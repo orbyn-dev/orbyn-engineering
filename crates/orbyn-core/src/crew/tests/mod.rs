@@ -16,6 +16,7 @@ mod bus_flood;
 mod bus_guards;
 mod bus_review;
 mod bus_support;
+mod confined;
 mod core;
 mod fake;
 mod filters;

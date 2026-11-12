@@ -7,7 +7,7 @@ pub mod agui;
 pub mod claude;
 pub mod codex;
 pub mod diagnostics;
-mod pipes;
+pub(crate) mod pipes;
 pub mod rpc;
 pub mod terminal;
 
@@ -108,6 +108,9 @@ pub struct RunSpec {
     pub mcp_url: Option<String>,
     /// Private scratch directory for this run, removed at run end.
     pub run_dir: PathBuf,
+    /// Set for a crew worker: the engine process starts under this restriction. A driver
+    /// that cannot apply it must not start the run.
+    pub confine: Option<crate::host::confine::Confinement>,
 }
 
 /// Historical replay captured without admitting a run or sending a prompt.

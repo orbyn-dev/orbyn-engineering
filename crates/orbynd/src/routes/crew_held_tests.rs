@@ -30,6 +30,7 @@ async fn serve(name: &str, remote: bool) -> Served {
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
     config.crew_preview = true;
+    config.crew_confine_workers = false;
     config.account_gate = AccountGate::LocalOnly;
     config.account_backend = AccountBackendKind::Development;
     let core = Arc::new(Core::open(config).unwrap());

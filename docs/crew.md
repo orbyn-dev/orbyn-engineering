@@ -978,6 +978,23 @@ reason.
 - Premise check, dependency splitting, cheap-draft escalation
 - Publishing the spec
 
+## Worker confinement (macOS)
+
+Crew runs on macOS in the beta; Windows later. On macOS each worker's engine process starts under a
+profile that denies reading or writing Orbyn's data folder (store, service handle, other runs' files),
+except its own run folder, checkout and library, and stops it starting programs through LaunchServices or signalling other processes. A worker's own file
+access to Orbyn's data folder (store, `service.json`, other runs' files) is denied. It does not stop a worker
+reading other processes' command lines and environment; an ACP lead's bridge process carries its MCP endpoint
+token in its environment, so a worker could use it (a known limit, tracked separately). Where that is not possible the worker is refused with a plain line. See
+[the architecture](architecture.md#crew-worker-confinement) and SPEC section 11.
+
+Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
+engines) and tests that run the real tool. Not built: closing the lead's own engine transcript files (next
+change, needed before the answer key is claimed safe) and a Windows or Linux restriction. Known limits: the
+network, the loopback service, the keychain, the engine's own login folders, other same-user files and
+processes a worker leaves running are outside it. Codex workers are refused until the nested-profile
+question is answered.
+
 ## Open risks
 
 - Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".

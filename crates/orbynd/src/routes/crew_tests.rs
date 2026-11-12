@@ -33,6 +33,7 @@ async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
     config.crew_preview = preview;
+    config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
         core: core.clone(),

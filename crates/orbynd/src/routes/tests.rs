@@ -75,6 +75,7 @@ async fn observed() -> Value {
     // The Crew routes hide behind the Preview flag; with it on they are protected routes like the rest.
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
     config.crew_preview = true;
+    config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
     let access = Arc::new(Access::new("token", vec![], None));
     let app = router(AppState {

@@ -109,6 +109,10 @@ impl RunManager {
             at_checkout = engine_cwd == checkout;
             start = engine_cwd;
         }
+        let confine =
+            self.confinement_for(thread, driver.as_ref(), &root, &checkout, &start, run_dir)?;
+        // A process started ahead of this turn was not started under the restriction.
+        let warm = if confine.is_some() { None } else { warm };
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -176,6 +180,7 @@ impl RunManager {
             resume,
             mcp_url,
             run_dir: run_dir.to_path_buf(),
+            confine,
         };
         let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
         let mut warm = warm;

@@ -202,6 +202,8 @@ approval. Copy these two lines into the release notes:
   If macOS says the app is damaged, run `xattr -dr com.apple.quarantine "/Applications/Orbyn Engineering.app"` once.
 - **Windows:** when "Windows protected your PC" appears, choose More info, then Run anyway.
 
+Crew runs on macOS in the beta; Windows later.
+
 Unsigned builds have no update channel yet, so install a newer build over the old one to update. Sign-in to an Orbyn
 account stays off in these builds (see the [account sign-in gate](account.md#sign-in-gate)).
 
