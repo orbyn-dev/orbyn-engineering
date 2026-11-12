@@ -432,6 +432,30 @@ fn a_closing_tag_in_a_plan_cannot_end_its_card() {
 }
 
 #[test]
+fn the_run_endpoint_reaches_claude_through_a_private_file_not_its_arguments() {
+    let dir = crate::testing::TempDir::new();
+    let mut run = spec();
+    run.mcp_url = Some("http://127.0.0.1:1/mcp/secret-token".into());
+    run.run_dir = dir.path().to_path_buf();
+    let mcp_config = dir.path().join("mcp.json");
+    let config =
+        json!({ "mcpServers": { MCP_SERVER_NAME: { "type": "http", "url": run.mcp_url } } });
+    crate::util::write_private(&mcp_config, config.to_string().as_bytes()).unwrap();
+    let args = run_args(&run, &mcp_config);
+    assert!(
+        args.iter()
+            .all(|arg| !arg.to_string_lossy().contains("secret-token"))
+    );
+    assert!(args.iter().any(|arg| *arg == mcp_config.as_os_str()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&mcp_config).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[test]
 fn command_line_matches_the_contract_and_never_uses_bare() {
     let args: Vec<String> = run_args(&spec(), Path::new("/run/mcp.json"))
         .into_iter()
@@ -1176,6 +1200,7 @@ fn error_result_reports_its_reason() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
     let dir = crate::testing::TempDir::new();

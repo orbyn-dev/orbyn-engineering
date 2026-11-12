@@ -16,6 +16,7 @@ fn orbyn(env: &[(&str, &Path)], args: &[&str]) -> Output {
     command
         .args(args)
         .env_remove("ORBYN_ACP_MCP_ENDPOINT")
+        .env_remove("ORBYN_ACP_MCP_ENDPOINT_FILE")
         .env_remove("CLAUDE_CONFIG_DIR");
     for (name, value) in env {
         command.env(name, value);
@@ -44,10 +45,21 @@ fn the_acp_helpers_need_the_endpoint_and_object_arguments() {
     ] {
         let output = orbyn(&[], args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(stderr(&output).contains("ORBYN_ACP_MCP_ENDPOINT"));
+        assert!(stderr(&output).contains("ORBYN_ACP_MCP_ENDPOINT_FILE"));
     }
-    let endpoint = Path::new("http://127.0.0.1:9/mcp/none");
-    let env = [("ORBYN_ACP_MCP_ENDPOINT", endpoint)];
+    let dir = TempDir::new();
+    let file = dir.path().join("acp-mcp-endpoint");
+    // The endpoint itself in the old variable is not accepted: it would be readable by
+    // other processes.
+    let old = Path::new("http://127.0.0.1:9/mcp/none");
+    let output = orbyn(&[("ORBYN_ACP_MCP_ENDPOINT", old)], &["acp-mcp-bridge"]);
+    assert_eq!(output.status.code(), Some(2));
+    // A missing or empty file is the same refusal.
+    let env = [("ORBYN_ACP_MCP_ENDPOINT_FILE", file.as_path())];
+    assert_eq!(orbyn(&env, &["acp-mcp-bridge"]).status.code(), Some(2));
+    std::fs::write(&file, "\n").unwrap();
+    assert_eq!(orbyn(&env, &["acp-mcp-bridge"]).status.code(), Some(2));
+    std::fs::write(&file, "http://127.0.0.1:9/mcp/none\n").unwrap();
     let output = orbyn(&env, &["acp-mcp-call", "skill_search", "not json"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("valid JSON"));

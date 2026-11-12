@@ -324,7 +324,12 @@ impl EngineDriver for ClaudeDriver {
         let Some(key) = self.warm_key(&spec) else {
             return Ok(None);
         };
-        let dir = ProbeDir::new()?;
+        // The caller names a folder under the runs folder: this one holds the run's token.
+        let dir = if spec.run_dir.as_os_str().is_empty() {
+            ProbeDir::new()?
+        } else {
+            ProbeDir::create(spec.run_dir.clone())?
+        };
         spec.run_dir = dir.path().to_path_buf();
         let process = self.launch(&spec)?;
         Ok(Some(WarmProcess { key, process, dir }))

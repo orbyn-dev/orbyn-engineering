@@ -178,7 +178,8 @@ of reports and version control.
 `orbyn acp-mcp-bridge` is hidden because an ACP agent starts it, never a person.
 Orbyn offers it as the agent's stdio MCP server when the agent does not report
 HTTP MCP support. It reads newline JSON-RPC on stdin, posts each message to the
-run's endpoint in `ORBYN_ACP_MCP_ENDPOINT` and writes each reply as one line on
+run's endpoint, read from the owner-only file that `ORBYN_ACP_MCP_ENDPOINT_FILE`
+names, and writes each reply as one line on
 stdout. The handshake runs in order and later requests run side by side, since a
 tool can wait on a person. A line that is not JSON gets a parse error, and a
 request the endpoint cannot answer gets an error reply with its id. It exits
@@ -189,9 +190,11 @@ agent that accepts `mcpServers` but never shows those tools to its model. It
 opens a session on the same endpoint, calls one tool and prints the result as
 one JSON line. A text part that only repeats `structuredContent` is dropped.
 
-Both read the endpoint only from the environment, because it carries the run's
-token, and both exit with code 2 when it is unset or the arguments are not a JSON
-object. A run's token dies with the run, so neither works outside it.
+Both read the endpoint only from that file, never from an argument or a variable
+that holds it, because it carries the run's token and other processes of the same
+user can read a command line and an environment. Both exit with code 2 when the
+variable is unset, the file is missing or empty, or the arguments are not a JSON
+object. The file sits in the run's folder and goes with it. A run's token dies with the run, so neither works outside it.
 
 `orbyn __claude-history getSessionMessages <session-id> [options-json]` prints
 one Claude session's user and assistant messages, in file order, as a JSON array.

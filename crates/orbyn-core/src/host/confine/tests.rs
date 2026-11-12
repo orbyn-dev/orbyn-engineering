@@ -95,6 +95,7 @@ fn the_env_scrub_drops_the_data_folder_variable() {
     assert_eq!(value, Some(None), "removed, not set");
 }
 
+#[cfg(unix)]
 /// A Claude folder with the shapes of the real one: a lead's transcript and a worker's own,
 /// another project's, the auto-memory folder and the prompt history.
 fn claude_folder(base: &Path) -> PathBuf {
@@ -121,6 +122,7 @@ fn claude_folder(base: &Path) -> PathBuf {
     config
 }
 
+#[cfg(unix)]
 #[test]
 fn transcript_rules_fail_closed_when_the_folder_or_the_id_is_unusable() {
     let dir = crate::testing::TempDir::new();
@@ -276,6 +278,7 @@ fn a_linked_configuration_folder_or_an_uncertain_start_folder_refuses_the_worker
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_first_turn_gets_a_new_uuid_and_a_later_turn_keeps_its_session() {
     let dir = crate::testing::TempDir::new();

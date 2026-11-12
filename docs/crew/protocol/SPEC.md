@@ -419,10 +419,11 @@ These are named so nobody assumes them. They arrive in later versions of this pr
     history. A worker on any other engine (an ACP agent) gets that folder and the history closed with no exception, so
     an ACP adapter that wraps Claude Code cannot be a worker for now. Claude's auto memory is closed (a worker starts
     without it). A worker is refused, with a plain line, when its start folder does not resolve, is non-ASCII or
-    200 or more characters, or when `~/.claude`, `CLAUDE_CONFIG_DIR` or any folder above it is a link. Claude's `plans/`,
+    200 or more characters, or when `~/.claude`, `CLAUDE_CONFIG_DIR` or any folder above it, `projects` or `history.jsonl` is a link. A confined Claude worker can create its own session files in any existing project folder, so one it wrote can appear in another project's resume list. Claude's `plans/`,
     `paste-cache/` and `session-env/` stay open, and Codex's own session files (`~/.codex/sessions`, the SQLite state
-    and logs under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused. An ACP lead's bridge process carries its MCP endpoint token
-    in its environment, so a worker could read and use it: a known limit, tracked separately.
+    and logs under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused. A lead's MCP endpoint token is kept out of the command line and environment of the
+    processes the tests read (the ACP bridge, the Claude launch), and out of shared temporary folders: it is read from an owner-only file in
+    the lead's own run folder, which the profile denies to other runs' workers.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.
 - A routine lead message to one member restarts the exchange count of every pair that member is in

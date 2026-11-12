@@ -87,6 +87,7 @@ fn close_transcripts(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn only_a_claude_worker_gets_the_transcript_rules_and_a_missing_folder_refuses_it() {
         let dir = crate::testing::TempDir::new();

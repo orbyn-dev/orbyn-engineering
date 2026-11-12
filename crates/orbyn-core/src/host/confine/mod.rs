@@ -310,9 +310,14 @@ fn make_private(path: &Path) -> Result<()> {
         Ok(meta) if meta.is_dir() => Ok(()),
         Ok(_) => Err(failed(&"not a folder")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut builder = std::fs::DirBuilder::new();
+            let builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
-            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            let builder = {
+                use std::os::unix::fs::DirBuilderExt;
+                let mut builder = builder;
+                builder.mode(0o700);
+                builder
+            };
             builder.create(path).map_err(|error| failed(&error))
         }
         Err(error) => Err(failed(&error)),
