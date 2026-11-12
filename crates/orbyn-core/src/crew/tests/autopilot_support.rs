@@ -140,6 +140,7 @@ pub fn events(w: &World, task: &str, kind: &str) -> Vec<AutopilotEvent> {
         .collect()
 }
 
+/// The approval rows of a task, in order. The routing's own `route_class` row is not an approval.
 pub fn kinds(w: &World, task: &str) -> Vec<String> {
     w.core
         .store
@@ -147,5 +148,6 @@ pub fn kinds(w: &World, task: &str) -> Vec<String> {
         .unwrap()
         .into_iter()
         .map(|e| e.kind)
+        .filter(|kind| kind != "route_class")
         .collect()
 }

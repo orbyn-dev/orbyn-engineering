@@ -211,6 +211,10 @@ impl Core {
             .crew_machine(Some(&thread.project_id))
             .await
             .map_err(|e| invalid(e.public_message()))?;
+        // The dry run reads the repository's data classes the way a start does, so it never says yes to what a start refuses.
+        // A thread with no commit to read has nothing to say here; a start refuses it on its own terms.
+        let (base, classes) = self.crew_path_classes(&thread, &brief).await;
+        let classes = base.is_some().then_some(classes);
         let input = RouteInput {
             brief: &brief,
             run_id: CrewId::new(crate::util::new_id()).map_err(invalid)?,
@@ -219,6 +223,7 @@ impl Core {
             lane,
             author_engine,
             default_engine: machine.default_engine.clone(),
+            classes: classes.as_ref(),
         };
         let answer = match route(
             &input,

@@ -1,6 +1,7 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
 //! delete and the runs; nothing fires a trigger or starts an engine), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
-//! main, the digest, the approval ledger, the trip wires and the guards. Transport only: `orbyn_core::crew` builds every view and
+//! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
+//! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
 //!
 //! **Flag off, nothing here exists.** Every route sits behind [`preview_gate`], which answers exactly what the fallback answers
@@ -160,6 +161,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
+        .route("/api/crew/classes", get(classes))
+        .route("/api/crew/classes/test", get(classes_test))
+        .route("/api/crew/route/{task_id}", get(route_view))
         .merge(writes)
         .layer(from_fn_with_state(state, preview_gate))
 }
@@ -209,6 +213,48 @@ fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
 
 fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
+}
+
+/// The repository's data classes at the commit a task started in this thread would start from. Read-only.
+async fn classes(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    let thread = thread_of(&query)?;
+    Ok(Json(state.core.crew_classes_view(&thread).await?))
+}
+
+/// Up to 10 paths against those rules. `path` holds them, one per line (a new line is `%0A`).
+async fn classes_test(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let thread = thread_of(&query)?;
+    let paths: Vec<String> = query
+        .0
+        .get("path")
+        .map(|text| {
+            text.lines()
+                .map(|line| line.trim_end_matches('\r'))
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Json(state.core.crew_class_test(&thread, &paths).await?))
+}
+
+/// How one task was routed: the decision or the refusal, and the ledger rows of the routing.
+async fn route_view(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_route_view(&task_id)?))
+}
+
+fn thread_of(query: &QueryMap) -> Result<String, CoreError> {
+    query
+        .0
+        .get("thread")
+        .cloned()
+        .ok_or_else(|| CoreError::Invalid("thread is required".into()))
 }
 
 async fn preview(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {

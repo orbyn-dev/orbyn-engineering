@@ -11,6 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
+use super::classes::Routed;
 use super::guard::{key_needles, refuse_leak, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
 use super::router::{RouteFailure, RouteInput, route};
@@ -222,6 +223,9 @@ impl Core {
             .set_crew_index_flags(&task.id, &text)
             .map_err(internal)?;
 
+        // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
+        // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
+        let (base, classes) = self.crew_path_classes(thread, &brief).await;
         let machine = self
             .crew_machine(Some(&thread.project_id))
             .await
@@ -234,6 +238,7 @@ impl Core {
             lane,
             author_engine,
             default_engine: machine.default_engine.clone(),
+            classes: Some(&classes),
         };
         let decision = match route(
             &input,
@@ -244,6 +249,19 @@ impl Core {
             Ok(decision) => decision,
             Err(RouteFailure::Invalid(error)) => return Err(error),
             Err(RouteFailure::Refused(refusal)) => {
+                // The whole list of rejections is kept with the task, not only the sentence.
+                if let Err(error) = self.record_route_class(
+                    &task.id,
+                    &task.crew_id,
+                    &classes,
+                    &refusal.rejected,
+                    &Routed::Refused {
+                        message: &refusal.message,
+                        requested: refusal.requested.as_ref(),
+                    },
+                ) {
+                    tracing::warn!(%error, "could not write a routing's ledger row");
+                }
                 self.crew_needs_person(&task.id, &refusal.message, false);
                 return Ok(json!({
                     "task": task.id,
@@ -258,6 +276,21 @@ impl Core {
                 }));
             }
         };
+        // A decision with no record is not one: if the row cannot be written, the task waits for a person.
+        if let Err(error) = self.record_route_class(
+            &task.id,
+            &task.crew_id,
+            &classes,
+            &decision.rejected,
+            &Routed::Chosen(decision.engine.as_str()),
+        ) {
+            self.crew_needs_person(
+                &task.id,
+                "The routing could not be recorded in the ledger, so nothing was started.",
+                false,
+            );
+            return Err(internal(error));
+        }
         self.route_crew_task(&task.id, &decision)?;
         for lease in (Grant {
             brief: &brief,
@@ -276,7 +309,7 @@ impl Core {
             self.store.add_crew_fix(fix).map_err(internal)?;
         }
         match self
-            .start_crew_worker(thread, &brief, &decision, &member, prompt)
+            .start_crew_worker(thread, &brief, &decision, &member, prompt, base.as_deref())
             .await
         {
             Ok(worker) => {
@@ -342,6 +375,7 @@ impl Core {
         decision: &RouteDecision,
         member: &CrewMember,
         prompt: Option<String>,
+        base: Option<&str>,
     ) -> Result<Value, CrewError> {
         // Before anything is started: a worker that cannot be restricted is refused, and the task
         // shows the reason in the "refused by the app" item.
@@ -350,13 +384,6 @@ impl Core {
             Some(text) => text,
             None => self.worker_prompt(brief, member)?,
         };
-        let base = crate::source_control::git::git(
-            std::path::Path::new(&lead.cwd),
-            &["rev-parse", "HEAD"],
-        )
-        .await
-        .ok()
-        .map(|out| crate::source_control::git::text(&out));
         let model = decision.model.as_str().to_owned();
         // The router decides medium; an engine that offers no effort setting runs without one.
         let mut wanted = ModelSelection {
@@ -383,7 +410,7 @@ impl Core {
         let thread = self
             .delegate_then(&lead.id, &task, "crew", |child| {
                 self.store
-                    .set_crew_worker(&task_id, &child.id, &child.cwd, base.as_deref())
+                    .set_crew_worker(&task_id, &child.id, &child.cwd, base)
             })
             .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.public_message()))?;
         self.store
