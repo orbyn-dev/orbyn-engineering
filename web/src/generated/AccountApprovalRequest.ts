@@ -15,4 +15,8 @@ near?: string,
 /**
  * RFC 3339.
  */
-asked_at: string, digits: string, expires_in_secs: number, };
+asked_at: string, 
+/**
+ * This device allowed it and showed the digits; the new device has not typed them yet.
+ */
+allowed: boolean, expires_in_secs: number, };

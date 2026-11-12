@@ -2,14 +2,15 @@
 import type { AccountApprovalState } from "./AccountApprovalState";
 
 /**
- * This computer's own request to sign in, while a trusted device decides.
+ * This computer's own request to sign in, while a trusted device decides. It never carries
+ * the digits: the trusted device shows them and this one types them.
  */
 export type AccountApprovalView = { state: AccountApprovalState, 
 /**
- * Six digits, shown in two groups: "418 207". The other device shows the same ones.
+ * Seconds left of the ten minutes, while the request is open.
  */
-digits: string, 
+expires_in_secs: number, 
 /**
- * Seconds left of the ten minutes, while waiting.
+ * Tries left for the digits, after a wrong entry.
  */
-expires_in_secs: number, };
+tries_left?: number, };

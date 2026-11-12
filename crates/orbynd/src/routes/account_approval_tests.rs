@@ -92,7 +92,11 @@ async fn letting_a_new_device_in_needs_the_password_for_that_request_and_is_used
         .call("GET", "/api/account/approvals", json!({}))
         .await;
     assert_eq!(status, 200);
-    assert_eq!(list[0]["digits"], "418 207");
+    assert_eq!(list[0]["allowed"], false);
+    assert!(
+        list[0].get("digits").is_none(),
+        "the list never carries digits"
+    );
     assert_eq!(list[0]["device_name"], "iPad");
     let approve = "/api/account/approvals/req-ipad/approve";
     let refused = |(status, body): (u16, Value)| {
@@ -119,9 +123,29 @@ async fn letting_a_new_device_in_needs_the_password_for_that_request_and_is_used
     assert_eq!(served.confirm("approve_device", None).await.0, 400);
     let nonce = served.nonce_for("approve_device", Some("req-ipad")).await;
     refused(served.call("POST", approve, json!({})).await);
+    let (status, allowed) = served
+        .call_with("POST", approve, json!({}), Some(&nonce))
+        .await;
+    assert_eq!(status, 200);
+    // Allowing answers with six digits in two groups, to show on this device.
+    let shown = allowed["digits"].as_str().unwrap_or_default();
+    assert_eq!(shown.len(), 7);
+    assert!(shown.chars().enumerate().all(|(index, c)| if index == 3 {
+        c == ' '
+    } else {
+        c.is_ascii_digit()
+    }));
+    // The request stays listed, as allowed, until it is closed; the list never repeats the digits.
+    let (_, list) = served
+        .call("GET", "/api/account/approvals", json!({}))
+        .await;
+    assert_eq!(list.as_array().map(Vec::len), Some(1));
+    assert_eq!(list[0]["allowed"], true);
+    assert!(list[0].get("digits").is_none());
+    // Cancel on the digits dialog closes it.
     assert_eq!(
         served
-            .call_with("POST", approve, json!({}), Some(&nonce))
+            .call("POST", "/api/account/approvals/req-ipad/deny", json!({}))
             .await
             .0,
         204
@@ -143,13 +167,7 @@ async fn refusing_a_new_device_needs_no_password_and_lets_nobody_in() {
     let served = serve("deny", AccountGate::LocalOnly, false).await;
     served.sign_in().await;
     let deny = "/api/account/approvals/req-ipad/deny";
-    assert_eq!(
-        served
-            .call("POST", deny, json!({ "codes_differ": true }))
-            .await
-            .0,
-        204
-    );
+    assert_eq!(served.call("POST", deny, json!({})).await.0, 204);
     let (_, list) = served
         .call("GET", "/api/account/approvals", json!({}))
         .await;
@@ -172,12 +190,28 @@ async fn a_new_device_waits_for_a_trusted_one_and_can_give_up() {
     );
     let (_, view) = served.call("GET", "/api/account", json!({})).await;
     assert_eq!(view["approval"]["state"], "waiting");
-    assert_eq!(view["approval"]["digits"], "418 207");
+    assert!(
+        view["approval"].get("digits").is_none(),
+        "the new device is never shown the digits"
+    );
     assert!(view["session"].is_null());
     let (status, polled) = served
         .call("POST", "/api/account/sign-in/approval", json!({}))
         .await;
     assert_eq!((status, polled["state"].as_str()), (200, Some("waiting")));
+    // Nothing is allowed yet, so typing digits is refused and malformed ones never count.
+    for (typed, want) in [("123456", 409), ("12345", 422), ("abcdef", 422)] {
+        let (status, _) = served
+            .call(
+                "POST",
+                "/api/account/sign-in/digits",
+                json!({ "digits": typed }),
+            )
+            .await;
+        assert_eq!(status, want);
+    }
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert!(view["session"].is_null());
     assert_eq!(
         served
             .call("POST", "/api/account/sign-in/cancel", json!({}))
@@ -278,5 +312,57 @@ async fn the_choices_that_overwrite_need_the_password_for_that_choice() {
             .await
             .0,
         403
+    );
+}
+
+#[tokio::test]
+async fn sign_up_goes_invite_password_then_the_code_which_signs_in_and_there_is_no_register_route()
+{
+    let served = serve("signup", AccountGate::LocalOnly, false).await;
+    let start = "/api/account/sign-up/start";
+    let password = "a fresh throwaway phrase";
+    let body = |password: &str| json!({ "invite": "K7QM-2XWH-9QXA-3C2D", "email": "new@example.com", "password": password });
+    // Too short a password is refused and sends nothing.
+    let (status, short) = served.call("POST", start, body("short")).await;
+    assert_eq!(
+        (status, short["code"].as_str()),
+        (422, Some("weak_password"))
+    );
+    // The code does nothing before the password step.
+    let code = "/api/account/sign-up/code";
+    let (status, _) = served
+        .call("POST", code, json!({ "code": "ABCD-EFGH" }))
+        .await;
+    assert_eq!(status, 422);
+    assert_eq!(served.call("POST", start, body(password)).await.0, 204);
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert!(
+        view["session"].is_null(),
+        "the password step signs nobody in"
+    );
+    let (status, _) = served
+        .call("POST", code, json!({ "code": "ZZZZ-ZZZZ" }))
+        .await;
+    assert_eq!(status, 422);
+    assert_eq!(
+        served
+            .call("POST", code, json!({ "code": "ABCD-EFGH" }))
+            .await
+            .0,
+        204
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(view["session"]["email"], "new@example.com");
+    // The old last step is gone.
+    assert_eq!(
+        served
+            .call(
+                "POST",
+                "/api/account/sign-up/register",
+                json!({ "password": password })
+            )
+            .await
+            .0,
+        404
     );
 }

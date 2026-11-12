@@ -4,9 +4,13 @@
 
 use std::time::{Duration, Instant};
 
-use orbyn_contracts::{AccountApprovalRequest, AccountApprovalState, AccountApprovalView};
+use orbyn_contracts::{
+    AccountApprovalRequest, AccountApprovalState, AccountApprovalView, AccountApproved,
+};
 
-use super::super::api::{ApprovalStatus, SessionInfo, refusal};
+use super::super::api::{ApprovalDigits, ApprovalStatus, SessionInfo, refusal};
+use super::super::device_api::DeviceError;
+use super::super::digits;
 use super::super::status::SyncState;
 use super::super::sync::SyncTiming;
 use super::super::{AccountCenter, FirstSync, settings_record};
@@ -17,11 +21,20 @@ use crate::error::{CoreError, Result};
 pub const APPROVAL_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
 /// This computer's own request to sign in, while a trusted device decides.
+///
+/// It never holds the digits: a trusted device shows them after it allows the request, and the
+/// person types them here. What it keeps is how many tries were used, so the app stays bounded
+/// even if the Engine did not count.
 pub(super) struct Approval {
     pub(super) request_id: String,
-    pub(super) digits: String,
     pub(super) asked: Instant,
-    /// Set once the request has an answer; a request that is waiting has none.
+    /// A trusted device allowed the request: the digits are due.
+    pub(super) allowed: bool,
+    /// Tries left after a wrong entry, as the Engine counted them (never above the app's own).
+    pub(super) tries_left: Option<u8>,
+    /// Entries sent to the Engine, right or wrong: the app's own bound on tries.
+    pub(super) spent_tries: u8,
+    /// Set once the request has an end; an open request has none.
     pub(super) answer: Option<AccountApprovalState>,
 }
 
@@ -45,27 +58,31 @@ impl AccountCenter {
     }
 
     pub(super) fn approval_view(&self, approval: &Approval) -> AccountApprovalView {
-        let digits = if approval.digits.len() == 6 {
-            format!("{} {}", &approval.digits[..3], &approval.digits[3..])
-        } else {
-            approval.digits.clone()
-        };
         let left = self
             .approval_life()
             .saturating_sub(approval.asked.elapsed());
+        let open = matches!(
+            approval.answer,
+            None | Some(AccountApprovalState::EnterDigits)
+        );
         AccountApprovalView {
-            state: approval.answer.unwrap_or(AccountApprovalState::Waiting),
-            digits,
-            expires_in_secs: if approval.answer.is_none() {
-                left.as_secs()
+            state: approval.answer.unwrap_or(if approval.allowed {
+                AccountApprovalState::EnterDigits
             } else {
-                0
+                AccountApprovalState::Waiting
+            }),
+            expires_in_secs: if open { left.as_secs() } else { 0 },
+            tries_left: if approval.answer.is_none() && approval.allowed {
+                approval.tries_left
+            } else {
+                None
             },
         }
     }
 
-    /// Asks how this computer's request stands. A trusted device's answer ends it; nobody
-    /// answering for ten minutes, on this computer's clock, ends it too. Allowed signs in.
+    /// Asks how this computer's request stands. A trusted device's refusal ends it, and so does
+    /// nobody finishing it for ten minutes on this computer's clock. An allowed request does not
+    /// sign in: it asks for the digits ([`Self::submit_digits`]), and only the right ones finish.
     pub async fn poll_approval(&self) -> Result<Option<AccountApprovalView>> {
         let backend = self.backend()?.clone();
         let (id, expired) = {
@@ -89,16 +106,24 @@ impl AccountCenter {
         }
         match backend.account.approval_status(&id).await {
             Ok(ApprovalStatus::Waiting) => {}
+            Ok(ApprovalStatus::Allowed) => {
+                let mut inner = self.inner.lock().await;
+                if let Some(approval) = inner
+                    .approval
+                    .as_mut()
+                    .filter(|a| a.request_id == id && a.answer.is_none())
+                {
+                    approval.allowed = true;
+                }
+            }
             Ok(ApprovalStatus::Denied) => {
                 return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
             }
-            Ok(ApprovalStatus::CodesDiffer) => {
-                return Ok(self
-                    .close_approval(&id, AccountApprovalState::CodesDiffer)
-                    .await);
+            Ok(ApprovalStatus::Locked) => {
+                return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
             }
-            Ok(ApprovalStatus::Approved(session)) => {
-                return self.finish_approval(&id, session).await;
+            Err(DeviceError::RequestGone) => {
+                return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
             }
             Err(error) => return Err(refusal(&error)),
         }
@@ -109,6 +134,97 @@ impl AccountCenter {
             .approval
             .as_ref()
             .map(|approval| self.approval_view(approval)))
+    }
+
+    /// The six digits typed on this computer for its allowed request. Only the right digits sign
+    /// in, and never automatically: an allowed request waits for them. A wrong entry keeps the
+    /// request open and reports the tries left; the last wrong one closes it. The digits are
+    /// checked once by the account server, bounded here too, and never stored, logged or returned.
+    pub async fn submit_digits(
+        &self,
+        typed: ApprovalDigits,
+    ) -> Result<Option<AccountApprovalView>> {
+        let backend = self.backend()?.clone();
+        let typed = ApprovalDigits::new(digits::clean(typed.expose()));
+        if !digits::is_well_formed(typed.expose()) {
+            return Err(CoreError::Account {
+                code: "invalid_digits",
+                message: "Type the six digits.".to_owned(),
+                retry_after_secs: None,
+                tries_left: None,
+            });
+        }
+        let id = {
+            let mut inner = self.inner.lock().await;
+            let life = self.approval_life();
+            let Some(approval) = inner.approval.as_mut() else {
+                return Ok(None);
+            };
+            if approval.answer.is_some() {
+                return Ok(Some(self.approval_view(approval)));
+            }
+            if !approval.allowed {
+                // The digits are only asked for once a trusted device allowed the request.
+                return Err(CoreError::Account {
+                    code: "request_not_allowed",
+                    message: "A trusted device has not allowed this yet.".to_owned(),
+                    retry_after_secs: None,
+                    tries_left: None,
+                });
+            }
+            let id = approval.request_id.clone();
+            if approval.asked.elapsed() >= life {
+                drop(inner);
+                let _ = backend.account.cancel_approval(&id).await;
+                return Ok(self
+                    .close_approval(&id, AccountApprovalState::TimedOut)
+                    .await);
+            }
+            if approval.spent_tries >= digits::TRIES {
+                drop(inner);
+                let _ = backend.account.cancel_approval(&id).await;
+                return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
+            }
+            // The try is taken before the call, so two entries at once cannot share one.
+            approval.spent_tries += 1;
+            id
+        };
+        match backend.account.finish_approval(&id, &typed).await {
+            Ok(session) => self.finish_approval(&id, session).await,
+            Err(DeviceError::WrongDigits { tries_left }) => {
+                let mut inner = self.inner.lock().await;
+                let Some(approval) = inner
+                    .approval
+                    .as_mut()
+                    .filter(|a| a.request_id == id && a.answer.is_none())
+                else {
+                    return Ok(None);
+                };
+                let own = digits::TRIES.saturating_sub(approval.spent_tries);
+                let left = tries_left.min(own);
+                if left == 0 {
+                    drop(inner);
+                    let _ = backend.account.cancel_approval(&id).await;
+                    return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
+                }
+                approval.tries_left = Some(left);
+                Ok(Some(self.approval_view(approval)))
+            }
+            Err(DeviceError::DigitsLocked) => {
+                Ok(self.close_approval(&id, AccountApprovalState::Locked).await)
+            }
+            Err(DeviceError::RequestGone) => {
+                Ok(self.close_approval(&id, AccountApprovalState::Denied).await)
+            }
+            Err(error) => {
+                // Nothing reached the server, so the try was not used.
+                let mut inner = self.inner.lock().await;
+                if let Some(approval) = inner.approval.as_mut().filter(|a| a.request_id == id) {
+                    approval.spent_tries = approval.spent_tries.saturating_sub(1);
+                }
+                Err(refusal(&error))
+            }
+        }
     }
 
     /// Signs in on an allowed request, under one lock: if the person gave the request up
@@ -188,32 +304,39 @@ impl AccountCenter {
                 app: request.app,
                 near: request.near,
                 asked_at: request.asked_at,
-                digits: if request.digits.len() == 6 {
-                    format!("{} {}", &request.digits[..3], &request.digits[3..])
-                } else {
-                    request.digits
-                },
+                allowed: request.allowed,
                 expires_in_secs: request.expires_in_secs,
             })
             .collect())
     }
 
-    /// Lets the new device in. Needs a confirmation for exactly this request.
-    pub async fn approve(&self, confirmed: Confirmed, id: &str) -> Result<()> {
+    /// Allows the new device and answers with the six digits to show for it. Needs a
+    /// confirmation for exactly this request. Allowing does not sign the new device in: it does
+    /// that by typing the digits, which this device never sees again.
+    pub async fn approve(&self, confirmed: Confirmed, id: &str) -> Result<AccountApproved> {
         if confirmed.action != ConfirmFor::ApproveDevice(id.to_owned()) {
             return Err(CoreError::ReauthRequired);
         }
         let result = self.backend()?.account.approve(id).await;
-        self.guard(result).await
+        let shown = self.guard(result).await?;
+        let digits = shown.expose();
+        Ok(AccountApproved {
+            digits: if digits.len() == digits::LEN {
+                format!("{} {}", &digits[..3], &digits[3..])
+            } else {
+                digits.to_owned()
+            },
+        })
     }
 
-    /// Refuses the new device. This only ever closes a request, so it needs no confirmation.
-    pub async fn deny(&self, id: &str, codes_differ: bool) -> Result<()> {
+    /// Refuses the new device, or closes a request that was allowed. This only ever closes a
+    /// request, so it needs no confirmation.
+    pub async fn deny(&self, id: &str) -> Result<()> {
         let backend = self.backend()?;
         if self.inner.lock().await.session.is_none() {
             return Err(CoreError::ReauthRequired);
         }
-        let result = backend.account.deny(id, codes_differ).await;
+        let result = backend.account.deny(id).await;
         self.guard(result).await
     }
 

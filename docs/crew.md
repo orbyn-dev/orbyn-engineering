@@ -518,6 +518,13 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
+v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by
+`#/preview/crew/<frame>` in dev builds only. They run on sample data: no HTTP route or generated binding exists for the
+Autopilot group yet, so every action that would merge, revert, send a brief or approve is disabled and says why, and each
+takes a backend-guarded handler when the routes land. Per-merge money figures are left out until the Designer settles
+per-engine units.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with
@@ -754,6 +761,7 @@ Engineering app, one pull request each.
 | 4d | Counterfactual fork: re-run a stage on another engine, compare verified outcomes, record to Eval history | Two engines' outcomes on the same stage show side by side; the router's table updates |
 | 4e | Shell: left explorer (projects, worktrees, files), Details popover, empty side panel with launcher, new Changes view with gutter comments, honest Tools state | Built from the merged frames in `crew-designs.html` and `engineer-designs.html`; old Details card and file tab removed; no duplicate destinations |
 | 4f | Autopilot: approval chain, two keys, trip wires, risk tiers, merge queue, after-merge Review queue, watch on main and bisect revert | Fake-engine tests: a hard-denied action is never approved even if the lead says yes; two keys disagree and it is denied; 3 denials stop the task; a high-risk diff waits; a broken main bisects to the right merge and reverts it |
+| 4f-API | Routes, generated TS bindings and a web-readable Preview flag for Crew and Autopilot (modes and area promote/demote, risk report, review queue, merge queue and forecast, watch state, digest, approval log, trip wires, trust/guard settings); then the screens are wired | Every write goes through the existing backend guards and no client path merges or reverts; Opus review before merge. The display-only UI (4f part B, risk, Review queue, Merge queue, watch, digest) is merged as preview on sample data and is wired by this slice |
 | 4g | Learning: trust scores, review memory, measured reviewer pairing, premise check, crew-vs-solo baseline | Needs real runs (slice 6 budget); numbers always shown with sample size |
 | 4h | Background crews from `.orbyn/crew.json` triggers and templates | A CI-failure trigger starts a crew that runs the full Flow and lands in the Review queue |
 | 5 | UI: Flow, Auto in the engine picker, Crew map, Taskboard, conversation lanes, route card, Needs you inbox, task report with evidence | Built from the merged frames in `crew-designs.html` and `engineer-designs.html`, every state designed |
