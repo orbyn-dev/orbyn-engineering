@@ -40,6 +40,7 @@ jobs:
             echo "No macOS desktop job failed; not retrying."; exit 0
           fi
           if [ "$EVENT" = pull_request ]; then
+            if [ -z "$PR" ]; then echo "No pull request in the payload (a fork or a closed one); not retrying."; exit 0; fi
             current=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
             if [ "$current" != "$HEAD_SHA" ]; then echo "Pull request moved on; not retrying."; exit 0; fi
           fi
