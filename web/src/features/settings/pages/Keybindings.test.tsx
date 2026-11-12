@@ -71,5 +71,22 @@ it("names a clash in plain words, with the context as a phrase", async () => {
   render(<KeybindingsSection />);
   expect((await screen.findByText(/Split terminal and New terminal both use/)).textContent).toBe("Split terminal and New terminal both use ⌘⇧B when the terminal is focused.");
   expect(screen.getByText(/Toggle sidebar and Toggle diff both use/).textContent).toBe("Toggle sidebar and Toggle diff both use ⌘B.");
-  expect(screen.getByText(/Send the other way and/).textContent).toBe("Send the other way and Send in the background both use ⌘↵ when composerFocus && turnRunning.");
+  expect(screen.getByText(/Send the other way and/).textContent).toBe("Send the other way and Send in the background both use ⌘↵ when the composer is focused and a turn is running.");
+});
+
+it("shows arrow keys as arrows", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.mocked(request).mockReset().mockResolvedValue({
+    ...initial, rules: [{ key: "alt+arrowup", command: "thread.editQueuedMessage", when: "composerFocus", remove: false }],
+  });
+  render(<KeybindingsSection />);
+  expect((await screen.findByLabelText("⌥↑")).textContent).toBe("⌥↑");
+});
+
+it("keeps the raw text for a context it has no phrase for", async () => {
+  vi.mocked(request).mockReset().mockResolvedValue({
+    ...initial, conflicts: [{ key: "mod+b", when: "a || b", commands: ["sidebar.toggle", "diff.toggle"] }],
+  });
+  render(<KeybindingsSection />);
+  expect((await screen.findByText(/Toggle sidebar and Toggle diff both use/)).textContent).toContain("when a || b.");
 });
