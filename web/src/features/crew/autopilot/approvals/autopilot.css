@@ -174,3 +174,7 @@ h4.ap-sub { margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   .ap-fil, .ap-mode, .ap-card, .ap-open { transition: none; }
 }
+
+/* A held command's card: a neutral line with an icon (expired, already decided, no account). */
+.ap-said { display: flex; gap: 8px; align-items: flex-start; color: var(--color-text); line-height: 1.45; }
+.ap-said svg { flex: none; margin-top: 2px; color: var(--color-muted); }

@@ -18,6 +18,7 @@
 .ac-card[data-wide] { max-width: 520px; }
 .ac-card[data-full] { max-width: none; }
 .ac-card h2 { margin: 0; font-size: 16px; font-weight: 500; color: var(--color-text); }
+.ac-subject { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .ac-card p, .ac-sub { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--color-muted); }
 .ac-form { display: flex; flex-direction: column; gap: 12px; }
 .ac-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

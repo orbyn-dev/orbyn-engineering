@@ -10,6 +10,8 @@ import { ApproveMyself } from "./ApproveMyself";
 import { ApprovalTable } from "./ApprovalRows";
 import { DecisionDrawer, type DrawerActions } from "./DecisionDrawer";
 import { HardDeniedDialog } from "./HardDenied";
+import { ApproveOnceDialog } from "./HeldCard";
+import { useHeldCommands } from "./held";
 import { LEDGER_NOTE, LEGEND, MODE_LINE, GUARD_LINE } from "./copy";
 import { dayLine, rowOf } from "./ledger";
 import type { ApprovalFilter, ApprovalRow } from "./model";
@@ -106,16 +108,20 @@ export function ApprovalsTab() {
   const [selected, setSelected] = useState<string | null>(null);
   const [myself, setMyself] = useState<ApprovalRow | null>(null);
   const [hardList, setHardList] = useState(false);
+  const [confirming, setConfirming] = useState<ApprovalRow | null>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
-  const rows = useMemo(() => (state.status === "ready" ? state.rows : []), [state]);
-  const shown = useMemo(() => rows.filter((row) => matches(row, filter, q)), [rows, filter, q]);
-  const counts = useMemo(() => Object.fromEntries(FILTERS.map((one) => [one.id, rows.filter((row) => matches(row, one.id, "")).length])) as Record<ApprovalFilter, number>, [rows]);
 
   const close = useCallback(() => {
     setSelected(null);
     // Focus goes back to the row that opened the drawer.
     requestAnimationFrame(() => rowsRef.current?.querySelector<HTMLElement>(".ap-open")?.focus());
   }, []);
+
+  const held = useHeldCommands(close);
+  // Held commands are newest, and wait for you: they come first, then the ledger.
+  const rows = useMemo(() => [...held.rows, ...(state.status === "ready" ? state.rows : [])], [held.rows, state]);
+  const shown = useMemo(() => rows.filter((row) => matches(row, filter, q)), [rows, filter, q]);
+  const counts = useMemo(() => Object.fromEntries(FILTERS.map((one) => [one.id, rows.filter((row) => matches(row, one.id, "")).length])) as Record<ApprovalFilter, number>, [rows]);
 
   if (state.status === "loading") return <Loading label="Reading the approval log" rows={5} />;
   if (state.status === "error") return <ErrorState title="Can't read the approval log" failure={state.failure} onRetry={reload} />;
@@ -129,15 +135,17 @@ export function ApprovalsTab() {
   };
   const mode = modes.data?.effective_default ?? "full";
   const guarded = rows.some((one) => one.hard === "guard" || one.hard === "guard_two_keys");
-  const line = (rows.some((one) => one.result === "held_you") ? GUARD_LINE : MODE_LINE)[mode];
+  const line = (rows.some((one) => one.result === "held_you" || one.held) ? GUARD_LINE : MODE_LINE)[mode];
   const long = state.next !== null || rows.length > PAGE;
 
   return (
     <section className="ap-page" aria-label="Approvals">
       <StopsList />
       <div className="ap-bar">
+        {held.waiting > 0 ? <Chip tone="am">Needs you · {held.waiting}</Chip> : null}
         <Chip tone="plain">{line}</Chip>
       </div>
+      {held.failure ? <ErrorState title="Can't read held commands" failure={held.failure} onRetry={() => void held.reload()} /> : null}
       {rows.length === 0 ? (
         <Empty title="No requests yet">
           <p>When an agent asks to run a command, install something or reach the network, the request appears here with how it was decided, and who decided each part.</p>
@@ -186,9 +194,10 @@ export function ApprovalsTab() {
               <span>{LEDGER_NOTE}</span>
             </div>
           </div>
-          {row ? <DecisionDrawer row={row} act={act} mode={mode} /> : null}
+          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held ? held.control(row, setConfirming) : undefined} /> : null}
         </div>
       )}
+      {confirming ? <ApproveOnceDialog row={confirming} approve={held.approve} onClose={() => setConfirming(null)} /> : null}
       {myself ? <ApproveMyself row={myself} onClose={() => setMyself(null)} /> : null}
       {hardList ? <HardDeniedDialog onClose={() => setHardList(false)} /> : null}
     </section>

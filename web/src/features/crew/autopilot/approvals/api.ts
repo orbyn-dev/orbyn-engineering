@@ -1,6 +1,8 @@
 // The one door the Autopilot screens use: the Crew routes of `orbynd`, with the generated wire types.
 // Every Crew route answers 404 while Crew Preview is off.
 import { request } from "../../../../api/client";
+import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
+import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
 import type { AutopilotGuards } from "../../../../generated/AutopilotGuards";
 import type { AutopilotLog } from "../../../../generated/AutopilotLog";
 import type { AutopilotMode } from "../../../../generated/AutopilotMode";
@@ -23,6 +25,15 @@ export const crewApi = {
     if (query.task) params.set("task", query.task);
     return request<AutopilotLog>("GET", `/api/crew/approvals?${params}`, undefined, signal);
   },
+  /** The commands the guard holds for the person, and the ones decided lately. */
+  held: (signal?: AbortSignal) => request<AutopilotHeldList>("GET", "/api/crew/approvals/held", undefined, signal),
+  /** Needs the nonce "Confirm it's you" answered with for exactly this hold, sent once in `x-orbyn-confirm`. */
+  approveOnce: (id: string, nonce: string) =>
+    request<AutopilotHeld>("POST", `/api/crew/approvals/${encodeURIComponent(id)}/approve-once`, {}, undefined, { headers: { "x-orbyn-confirm": nonce } }),
+  /** No password: it only ever refuses. */
+  denyHeld: (id: string) => request<AutopilotHeld>("POST", `/api/crew/approvals/${encodeURIComponent(id)}/deny`, {}),
+  /** No password: it only ever hides. */
+  dismissHeld: (id: string) => request<AutopilotHeld>("POST", `/api/crew/approvals/${encodeURIComponent(id)}/dismiss`, {}),
   stops: (signal?: AbortSignal) => request<AutopilotTripwires>("GET", "/api/crew/stops", undefined, signal),
   modes: (signal?: AbortSignal) => request<AutopilotModes>("GET", "/api/crew/autopilot", undefined, signal),
   guards: (signal?: AbortSignal) => request<AutopilotGuards>("GET", "/api/crew/autopilot/guards", undefined, signal),
