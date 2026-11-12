@@ -1,4 +1,5 @@
-//! Crew (Preview) over HTTP: the Preview flag, Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
+//! delete and the runs; nothing fires a trigger or starts an engine), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards. Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
 //!
@@ -87,6 +88,31 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/approvals/{id}/dismiss",
         "core autopilot_dismiss_held: one decision per hold, a ledger row; only ever hides; local only",
     ),
+    (
+        "POST",
+        "/api/crew/background/create",
+        "core background_create: a live project, bounded name, budget and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/update",
+        "core background_update: the name and trigger only (project, template and budget are fixed, also by the table), redacted, audited in the same transaction; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/enable",
+        "core background_set_enabled: the person's switch, audited in the same transaction; starts nothing, no trigger fires; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/disable",
+        "core background_set_enabled: stops a run in progress with the reason disabled, audited in the same transaction; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/delete",
+        "core background_delete: refused while a run is in progress, the audit row stays; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -105,6 +131,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/approvals/{id}/approve-once", post(approve_once))
         .route("/api/crew/approvals/{id}/deny", post(deny_held))
         .route("/api/crew/approvals/{id}/dismiss", post(dismiss_held))
+        .route("/api/crew/background/create", post(background_create))
+        .route("/api/crew/background/{id}/update", post(background_update))
+        .route("/api/crew/background/{id}/enable", post(background_enable))
+        .route(
+            "/api/crew/background/{id}/disable",
+            post(background_disable),
+        )
+        .route("/api/crew/background/{id}/delete", post(background_delete))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -123,6 +157,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/approvals/held", get(held))
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
+        .route("/api/crew/background", get(background_list))
+        .route("/api/crew/background/{id}", get(background_get))
+        .route("/api/crew/background/{id}/runs", get(background_runs))
         .merge(writes)
         .layer(from_fn_with_state(state, preview_gate))
 }
@@ -329,4 +366,68 @@ async fn dismiss_held(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_dismiss_held(&id)?))
+}
+
+/// The background crews, by name: `project`, `limit`, `offset`.
+async fn background_list(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_list(
+        query.0.get("project").map(String::as_str),
+        page(&query)?,
+    )?))
+}
+
+async fn background_get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_get(&id)?))
+}
+
+/// A crew's runs with what each spent against its budget, newest first: `limit`, `offset`.
+async fn background_runs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_runs(&id, page(&query)?)?))
+}
+
+async fn background_create(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::BackgroundCrewCreate>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_create(&body)?))
+}
+
+async fn background_update(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::BackgroundCrewUpdate>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_update(&id, &body)?))
+}
+
+async fn background_enable(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_set_enabled(&id, true)?))
+}
+
+async fn background_disable(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_set_enabled(&id, false)?))
+}
+
+async fn background_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    state.core.background_delete(&id)?;
+    Ok(Json(serde_json::json!({ "deleted": true })))
 }

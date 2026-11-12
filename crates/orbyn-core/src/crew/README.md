@@ -31,6 +31,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | [`bus`](bus/README.md) | The Crew bus: `crew_post`, `crew_ask`, the board, steering delivery and the guards for hops, posts, sizes and the end of a run |
 | [`autopilot`](autopilot/README.md) | Autopilot: the always-denied list, the approval chain, two keys, trip wires and the approval ledger |
 | [`review`](review/README.md) | Review stages: reviewer lanes, typed findings, the finding check, the fix loop and repo rules that add lanes |
+| `background` | Background crews' state: definition, strict validation, redaction, runs with spend against a budget set at creation, and the stop for the budget that queues a review. Stored in the data folder, audited, no trigger and no engine |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
 ## Rules to keep

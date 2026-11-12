@@ -353,3 +353,47 @@ CREATE TABLE crew_merges (
 );
 CREATE INDEX crew_merges_by_target ON crew_merges(repo, branch, id);
 "#;
+
+// Schema 41: background crews (docs/crew.md, "Background crews"), kept on this device in the data folder and never in a repository.
+// `crew_background` is one crew the person defined: its project, name, template, trigger and the run budget set at creation (no
+// column changes it after, and the core refuses the attempt). It is created off. `crew_background_runs` is one row per run: its
+// state, what it spent against the budget it was given, why it stopped and whether it waits for the person's review. At most one
+// run per crew is `running`. No project key: a removed project keeps its crews, which a later trigger refuses to start.
+pub(super) const CREW_BACKGROUND: &str = r#"
+CREATE TABLE crew_background (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 80),
+    template TEXT NOT NULL CHECK(template IN ('fix_failing_ci', 'flaky_test', 'dependency_bump', 'security_advisory')),
+    trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('ci_failure', 'issue_label', 'schedule', 'dependency_update')),
+    trigger_settings TEXT NOT NULL CHECK(json_valid(trigger_settings)),
+    budget_turns INTEGER NOT NULL CHECK(budget_turns BETWEEN 1 AND 1000),
+    budget_minutes INTEGER NOT NULL CHECK(budget_minutes BETWEEN 1 AND 1440),
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX crew_background_name ON crew_background(project_id, name COLLATE NOCASE);
+CREATE TRIGGER crew_background_budget_fixed BEFORE UPDATE OF project_id, template, budget_turns, budget_minutes ON crew_background
+BEGIN SELECT RAISE(ABORT, 'a background crew keeps its project, template and budget'); END;
+
+CREATE TABLE crew_background_runs (
+    id TEXT PRIMARY KEY,
+    background_id TEXT NOT NULL REFERENCES crew_background(id) ON DELETE CASCADE,
+    state TEXT NOT NULL CHECK(state IN ('running', 'stopped', 'needs_review')),
+    stop_reason TEXT CHECK(stop_reason IS NULL OR stop_reason IN ('budget', 'repeated_failure', 'engine_error', 'disabled')),
+    turns_spent INTEGER NOT NULL DEFAULT 0 CHECK(turns_spent >= 0),
+    minutes_spent INTEGER NOT NULL DEFAULT 0 CHECK(minutes_spent >= 0),
+    budget_turns INTEGER NOT NULL CHECK(budget_turns BETWEEN 1 AND 1000),
+    budget_minutes INTEGER NOT NULL CHECK(budget_minutes BETWEEN 1 AND 1440),
+    review_waiting INTEGER NOT NULL DEFAULT 0 CHECK(review_waiting IN (0, 1)),
+    review_reason TEXT,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    ended_at TEXT,
+    CHECK((state = 'stopped') = (stop_reason IS NOT NULL)),
+    CHECK((state = 'running') = (ended_at IS NULL))
+);
+CREATE UNIQUE INDEX crew_background_one_running ON crew_background_runs(background_id) WHERE state = 'running';
+CREATE INDEX crew_background_runs_by_crew ON crew_background_runs(background_id, started_at);
+"#;

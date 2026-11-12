@@ -3,6 +3,7 @@
 //! `orbyn-contracts` and their tables in `store`.
 
 mod autopilot;
+mod background;
 mod bus;
 pub mod changes;
 mod checks;
@@ -41,6 +42,9 @@ pub use autopilot::{
     Page, RULES, Rate, RecentTotals, Refusal, ReviewAnswer, ReviewItem, Risk, SHOWN_MAX, Scene,
     Scored, Summary, WatchOutcome, area_of, areas_of, check_words, injection_in, lane_ran,
     owed_lanes, refuse, review_window, score, sensitive, tier_of, valid_id,
+};
+pub use background::{
+    BackgroundEnd, EVERY_HOURS_MAX, MINUTES_MAX, NAME_MAX, SETTING_MAX, TURNS_MAX,
 };
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use gather::{LeftOut, Machine};
