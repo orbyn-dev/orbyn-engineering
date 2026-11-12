@@ -87,6 +87,7 @@
     ["GET","/api/search/messages"],
     ["GET","/api/settings"],
     ["GET","/api/settings/secrets"],
+    ["GET","/api/settings/secrets/patterns/{id}"],
     ["GET","/api/shell"],
     ["GET","/api/shell/events"],
     ["GET","/api/skills"],

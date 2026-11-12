@@ -2,10 +2,13 @@
 //! pattern. Every change is one transaction with its audit row.
 
 use orbyn_contracts::{
-    RedactionFormat, RedactionLimits, RedactionPattern, RedactionPatternInput,
-    RedactionPatternProblem, RedactionPatternTest, RedactionPatternTestInput, RedactionProject,
-    RedactionSettings, RedactionSpan, RedactionSurfaceChange,
+    RedactionFormat, RedactionLimits, RedactionPattern, RedactionPatternDetail,
+    RedactionPatternInput, RedactionPatternProblem, RedactionPatternTest,
+    RedactionPatternTestInput, RedactionProject, RedactionSettings, RedactionSpan,
+    RedactionSurfaceChange,
 };
+use std::sync::{Arc, Mutex};
+
 use serde_json::json;
 
 use super::builtin::{self, BUILTINS};
@@ -39,6 +42,24 @@ const ORDINARY: &[&str] = &[
     "Please review the change and tell me what you think.",
 ];
 
+/// Compiled sets by the settings text they came from, so a new revision is a new key. A few
+/// entries only; the oldest goes first.
+fn cached(key: String, build: impl FnOnce() -> Redactor) -> Arc<Redactor> {
+    static CACHE: Mutex<Vec<(String, Arc<Redactor>)>> = Mutex::new(Vec::new());
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((_, hit)) = cache.iter().find(|(known, _)| *known == key) {
+        return Arc::clone(hit);
+    }
+    let built = Arc::new(build());
+    if cache.len() >= 32 {
+        cache.remove(0);
+    }
+    cache.push((key, Arc::clone(&built)));
+    built
+}
+
 fn problem(found: Problem) -> CoreError {
     CoreError::PatternRefused {
         code: "invalid_pattern",
@@ -53,7 +74,8 @@ fn audit(actor: &str, action: &str, target: &str, widens: bool) -> AuditRecord {
         action: action.to_owned(),
         target: target.to_owned(),
         decision: None,
-        source: "user".to_owned(),
+        // The route cannot tell the person from an agent holding the same token.
+        source: "unknown".to_owned(),
         thread_id: None,
         run_id: None,
         // Ids and names only: a pattern's text is not copied into the log.
@@ -78,8 +100,26 @@ impl Core {
 
     /// The detectors for a surface, from the settings as saved. Crew does not come through here:
     /// it uses `Redactor::locked`, which no setting reaches.
-    pub fn redactor(&self, surface: Surface, project_id: Option<&str>) -> Result<Redactor> {
-        Ok(self.stored_redaction()?.redactor(surface, project_id))
+    pub fn redactor(&self, surface: Surface, project_id: Option<&str>) -> Result<Arc<Redactor>> {
+        let text = self.store.redaction_json()?;
+        let key = format!(
+            "{surface:?}|{}|{}",
+            project_id.unwrap_or(""),
+            text.as_deref().unwrap_or("")
+        );
+        Ok(cached(key, || {
+            Stored::parse(text.as_deref()).redactor(surface, project_id)
+        }))
+    }
+
+    /// The person's own patterns alone, for text shown back to them: the ledger and its rows are
+    /// stored as they are and masked on the way out.
+    pub fn display_redactor(&self) -> Result<Arc<Redactor>> {
+        let text = self.store.redaction_json()?;
+        let key = format!("display||{}", text.as_deref().unwrap_or(""));
+        Ok(cached(key, || {
+            Stored::parse(text.as_deref()).person_redactor()
+        }))
     }
 
     pub fn redaction_settings(&self) -> Result<RedactionSettings> {
@@ -243,6 +283,23 @@ impl Core {
         })
     }
 
+    /// One pattern with its text, for the edit dialog.
+    pub fn redaction_pattern(&self, id: &str) -> Result<RedactionPatternDetail> {
+        let stored = self.stored_redaction()?;
+        let found = stored
+            .patterns
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| CoreError::NotFound("pattern".into()))?;
+        Ok(RedactionPatternDetail {
+            id: found.id.clone(),
+            name: found.name.clone(),
+            pattern: found.pattern.clone(),
+            kind: found.kind,
+            applies_to: found.applies_to,
+        })
+    }
+
     pub fn delete_redaction_pattern(&self, actor: &str, id: &str) -> Result<RedactionSettings> {
         self.change_redaction(actor, "redaction.pattern", id, |stored| {
             let before = stored.patterns.len();
@@ -321,7 +378,6 @@ fn pattern_view(stored: &StoredPattern) -> RedactionPattern {
     RedactionPattern {
         id: stored.id.clone(),
         name: stored.name.clone(),
-        pattern: stored.pattern.clone(),
         kind: stored.kind,
         applies_to: stored.applies_to,
     }

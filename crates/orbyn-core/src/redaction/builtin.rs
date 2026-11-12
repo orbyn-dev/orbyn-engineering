@@ -22,14 +22,14 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "api_key",
         label: "API key",
-        example: "sk-••••••••••••••••••••",
+        example: "sk-••••••••",
         class: "api key",
         patterns: &[r"\bsk-[A-Za-z0-9_-]{20,}"],
     },
     Builtin {
         id: "github_token",
         label: "GitHub token",
-        example: "ghp_•••••••••••••",
+        example: "ghp_••••••••",
         class: "github token",
         patterns: &[
             r"\bgh[pousr]_[A-Za-z0-9]{36,}",
@@ -39,7 +39,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "aws_access_key",
         label: "AWS access key",
-        example: "AKIA••••••••••••••••",
+        example: "AKIA••••••••",
         class: "aws key",
         patterns: &[r"\bAKIA[0-9A-Z]{16}\b"],
     },
@@ -53,14 +53,14 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         id: "slack_token",
         label: "Slack token",
-        example: "xoxb-•••••••••",
+        example: "xoxb-••••••••",
         class: "slack token",
         patterns: &[r"\bxox[abprs]-[A-Za-z0-9-]{10,}"],
     },
     Builtin {
         id: "bearer_token",
         label: "Bearer token",
-        example: "Bearer ••••••••••••••••••••",
+        example: "Bearer ••••••••",
         class: "bearer token",
         patterns: &[r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*"],
     },

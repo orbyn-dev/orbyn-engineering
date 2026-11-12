@@ -161,13 +161,17 @@ fn strings(value: &Value) -> Vec<String> {
 }
 
 /// Cleans text and stored JSON for one task: redacted, the task's key withheld, and scanned.
+///
+/// The person's own patterns (Settings › Secrets) mask what is shown, here and nowhere else: the stored rows are never
+/// rewritten, and Crew's own rule does not read them.
 struct Scrub {
     needles: Vec<String>,
+    person: Arc<crate::redaction::Redactor>,
 }
 
 impl Scrub {
     fn text(&self, text: &str) -> String {
-        ledger::shown(text, &self.needles)
+        self.person.labelled(&ledger::shown(text, &self.needles))
     }
 
     fn texts(&self, items: &[String]) -> Vec<String> {
@@ -175,13 +179,25 @@ impl Scrub {
     }
 
     fn json(&self, value: &Value) -> Value {
-        ledger::safe(value, &self.needles)
+        self.mask(ledger::safe(value, &self.needles))
+    }
+
+    fn mask(&self, value: Value) -> Value {
+        match value {
+            Value::String(text) => Value::String(self.person.labelled(&text)),
+            Value::Array(items) => Value::Array(items.into_iter().map(|v| self.mask(v)).collect()),
+            Value::Object(map) => {
+                Value::Object(map.into_iter().map(|(k, v)| (k, self.mask(v))).collect())
+            }
+            other => other,
+        }
     }
 }
 
 /// The scrubs of the tasks one call touches, read once each.
 struct Scrubs<'a> {
     core: &'a Core,
+    person: Arc<crate::redaction::Redactor>,
     seen: HashMap<String, Arc<Scrub>>,
 }
 
@@ -189,12 +205,15 @@ impl<'a> Scrubs<'a> {
     fn new(core: &'a Core) -> Self {
         Self {
             core,
+            // Unreadable settings show the text as it is stored, which Crew's own scrub has already cleaned.
+            person: core.display_redactor().unwrap_or_default(),
             seen: HashMap::new(),
         }
     }
 
     fn of(&mut self, task_id: &str) -> Arc<Scrub> {
         let core = self.core;
+        let person = Arc::clone(&self.person);
         Arc::clone(self.seen.entry(task_id.to_owned()).or_insert_with(|| {
             let needles = core
                 .store
@@ -203,7 +222,7 @@ impl<'a> Scrubs<'a> {
                 .flatten()
                 .map(|key| key_needles(&key))
                 .unwrap_or_default();
-            Arc::new(Scrub { needles })
+            Arc::new(Scrub { needles, person })
         }))
     }
 }

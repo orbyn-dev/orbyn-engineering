@@ -3,6 +3,7 @@
 
 mod api;
 mod builtin;
+pub mod changes;
 mod custom;
 mod redactor;
 mod settings;

@@ -35,7 +35,18 @@ pub struct RedactionFormat {
 }
 
 wire! {
+/// A pattern as the list shows it. The text of the pattern is not here: a pattern can be a secret
+/// itself, so only the edit dialog the person opens reads it (`RedactionPatternDetail`).
 pub struct RedactionPattern {
+    pub id: String,
+    pub name: String,
+    pub kind: PatternKind,
+    pub applies_to: PatternScope,
+}
+}
+
+wire! {
+pub struct RedactionPatternDetail {
     pub id: String,
     pub name: String,
     pub pattern: String,

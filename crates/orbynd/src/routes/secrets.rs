@@ -4,28 +4,56 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Path, State};
-use axum::response::IntoResponse;
+use axum::extract::{Path, Request, State};
+use axum::middleware::{Next, from_fn_with_state};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use orbyn_contracts::{
     RedactionFormatChange, RedactionPatternInput, RedactionPatternTestInput,
     RedactionProjectChange, RedactionSurfaceChange,
 };
 
-use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
+use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/settings/secrets", get(read))
+pub fn routes(state: AppState) -> Router<AppState> {
+    // Turning redaction off is the person's answer at this computer: a remote viewer reads and tries
+    // a pattern, and cannot change anything (the same rule as the account's and Crew's writes).
+    let writes = Router::new()
         .route("/api/settings/secrets/surfaces", put(surfaces))
         .route("/api/settings/secrets/formats/{id}", put(format))
         .route("/api/settings/secrets/projects/{id}", put(project))
         .route("/api/settings/secrets/patterns", post(add_pattern))
-        .route("/api/settings/secrets/patterns/test", post(test_pattern))
         .route(
             "/api/settings/secrets/patterns/{id}",
             put(edit_pattern).delete(delete_pattern),
         )
+        .route_layer(from_fn_with_state(state, local_only));
+    Router::new()
+        .route("/api/settings/secrets", get(read))
+        .route("/api/settings/secrets/patterns/test", post(test_pattern))
+        .route("/api/settings/secrets/patterns/{id}", get(read_pattern))
+        .merge(writes)
+}
+
+async fn local_only(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiFailure> {
+    if state.remote {
+        return Err(ApiFailure::forbidden(
+            "local_only",
+            "Do this from the computer the app runs on.",
+        ));
+    }
+    Ok(next.run(request).await)
+}
+
+async fn read_pattern(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.redaction_pattern(&id)?))
 }
 
 async fn read(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {

@@ -98,13 +98,43 @@ impl Stored {
         )
     }
 
-    /// Whether any change from `before` to `self` lets more reach an agent or a screen.
+    /// Whether any change from `before` to `self` lets more reach an agent or a screen. A pattern
+    /// that is gone, or whose text, type or place changed, counts: an edit can stop it matching.
+    /// Adding a pattern, and renaming one, do not.
     pub fn widens(&self, before: &Stored) -> bool {
         (before.terminal && !self.terminal)
             || (before.agents && !self.agents)
             || !self.formats_off.is_subset(&before.formats_off)
             || !self.projects_off.is_subset(&before.projects_off)
-            || self.patterns.len() < before.patterns.len()
+            || before.patterns.iter().any(|old| {
+                !self.patterns.iter().any(|new| {
+                    new.id == old.id
+                        && new.pattern == old.pattern
+                        && new.kind == old.kind
+                        && new.applies_to == old.applies_to
+                })
+            })
+    }
+
+    /// Only the person's patterns, for text shown back to them (the ledger). The formats are not
+    /// part of it: what Crew stores is already clean of them.
+    pub fn person_redactor(&self) -> Redactor {
+        let mut compiled = Vec::new();
+        for stored in &self.patterns {
+            if let Ok(regex) = custom::compile(stored.kind, &stored.pattern) {
+                compiled.push((stored.name.as_str(), regex, stored.applies_to));
+            }
+        }
+        Redactor::only(
+            compiled
+                .into_iter()
+                .map(|(name, regex, applies_to)| Custom {
+                    name,
+                    regex,
+                    applies_to,
+                })
+                .collect(),
+        )
     }
 }
 

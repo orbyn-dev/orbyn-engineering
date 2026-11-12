@@ -2,4 +2,8 @@
 import type { PatternKind } from "./PatternKind";
 import type { PatternScope } from "./PatternScope";
 
-export type RedactionPattern = { id: string, name: string, pattern: string, kind: PatternKind, applies_to: PatternScope, };
+/**
+ * A pattern as the list shows it. The text of the pattern is not here: a pattern can be a secret
+ * itself, so only the edit dialog the person opens reads it (`RedactionPatternDetail`).
+ */
+export type RedactionPattern = { id: string, name: string, kind: PatternKind, applies_to: PatternScope, };

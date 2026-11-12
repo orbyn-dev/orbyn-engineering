@@ -19,6 +19,10 @@ const MIN_TEXT_CHARS: usize = 3;
 const PROGRAM_BYTES: usize = 200_000;
 const LAZY_DFA_BYTES: usize = 1_000_000;
 const NEST_LIMIT: u32 = 16;
+/// The most text one scan reads at once; longer text is read in windows that overlap.
+pub const MAX_APPLY_BYTES: usize = 1 << 20;
+/// What two windows share, so a value on the edge of one is whole in the other.
+pub const WINDOW_OVERLAP: usize = 4096;
 
 /// Why a pattern is refused, in plain words. `position` counts characters from 0.
 #[derive(Clone, Debug, PartialEq)]
@@ -130,7 +134,8 @@ pub fn compile(kind: PatternKind, pattern: &str) -> Result<Regex, Problem> {
             regex::Error::CompiledTooBig(_) => {
                 Problem::plain("This pattern is too complex. Make it shorter or less repeated.")
             }
-            other => Problem::plain(format!("This isn’t a valid pattern: {other}")),
+            // The engine's own text quotes the whole pattern, and a pattern can be a secret itself.
+            _ => Problem::plain("This isn’t a valid pattern."),
         })
 }
 

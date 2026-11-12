@@ -21,12 +21,12 @@ struct Detector {
     env_only: bool,
 }
 
-/// A stretch of text to hide, in bytes, with the name of what matched.
-#[derive(Clone, Debug, PartialEq)]
+/// A stretch of text to hide, in bytes, and the detector that found it (its label is `label`).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
-    pub label: String,
+    detector: usize,
 }
 
 /// One person's pattern, ready to compile.
@@ -101,30 +101,62 @@ impl Redactor {
             .map(|detector| detector.class)
     }
 
-    /// The stretches to hide: empty matches dropped, overlaps merged under the first label.
-    pub fn spans(&self, text: &str) -> Vec<Span> {
-        let mut found: Vec<Span> = Vec::new();
-        for detector in &self.detectors {
+    /// The name of what matched.
+    pub fn label(&self, span: &Span) -> &str {
+        &self.detectors[span.detector].label
+    }
+
+    fn scan(&self, text: &str, base: usize, found: &mut Vec<Span>) {
+        for (index, detector) in self.detectors.iter().enumerate() {
+            let mut keep = |start: usize, end: usize| {
+                if end > start {
+                    found.push(Span {
+                        start: base + start,
+                        end: base + end,
+                        detector: index,
+                    });
+                }
+            };
             if detector.env_only {
                 for values in assignments().captures_iter(text) {
                     let Some(value) = values.get(1) else { continue };
                     for hit in detector.regex.find_iter(value.as_str()) {
-                        found.push(Span {
-                            start: value.start() + hit.start(),
-                            end: value.start() + hit.end(),
-                            label: detector.label.clone(),
-                        });
+                        keep(value.start() + hit.start(), value.start() + hit.end());
                     }
                 }
             } else {
-                found.extend(detector.regex.find_iter(text).map(|hit| Span {
-                    start: hit.start(),
-                    end: hit.end(),
-                    label: detector.label.clone(),
-                }));
+                for hit in detector.regex.find_iter(text) {
+                    keep(hit.start(), hit.end());
+                }
             }
         }
-        found.retain(|span| span.end > span.start);
+    }
+
+    /// The stretches to hide: empty matches dropped, overlaps merged under the first detector that
+    /// found them. Text over `MAX_APPLY_BYTES` is read in overlapping windows, so one call never
+    /// hands the engine more than that and a value on a window's edge is still whole in the next.
+    pub fn spans(&self, text: &str) -> Vec<Span> {
+        let mut found: Vec<Span> = Vec::new();
+        if text.len() <= custom::MAX_APPLY_BYTES {
+            self.scan(text, 0, &mut found);
+        } else {
+            let mut start = 0;
+            while start < text.len() {
+                let mut end = (start + custom::MAX_APPLY_BYTES).min(text.len());
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                self.scan(&text[start..end], start, &mut found);
+                if end == text.len() {
+                    break;
+                }
+                let mut next = end - custom::WINDOW_OVERLAP;
+                while !text.is_char_boundary(next) {
+                    next += 1;
+                }
+                start = next;
+            }
+        }
         found.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
         let mut merged: Vec<Span> = Vec::new();
         for span in found {
@@ -136,12 +168,16 @@ impl Redactor {
         merged
     }
 
-    fn replace_spans(&self, text: &str, mut mask: impl FnMut(&Span, &str) -> String) -> String {
+    fn replace_spans(
+        &self,
+        text: &str,
+        mut mask: impl FnMut(&Self, &Span, &str) -> String,
+    ) -> String {
         let mut out = String::with_capacity(text.len());
         let mut at = 0;
         for span in self.spans(text) {
             out.push_str(&text[at..span.start]);
-            out.push_str(&mask(&span, &text[span.start..span.end]));
+            out.push_str(&mask(self, &span, &text[span.start..span.end]));
             at = span.end;
         }
         out.push_str(&text[at..]);
@@ -150,12 +186,12 @@ impl Redactor {
 
     /// What an agent reads: each hidden value becomes `[hidden: <label>]`.
     pub fn labelled(&self, text: &str) -> String {
-        self.replace_spans(text, |span, _| format!("[hidden: {}]", span.label))
+        self.replace_spans(text, |me, span, _| format!("[hidden: {}]", me.label(span)))
     }
 
     /// What a terminal block shows: one dot per hidden character.
     pub fn dotted(&self, text: &str) -> String {
-        self.replace_spans(text, |_, hidden| "•".repeat(hidden.chars().count()))
+        self.replace_spans(text, |_, _, hidden| "•".repeat(hidden.chars().count()))
     }
 
     /// `text` with each format replaced by `mask`, one format after the other, as Crew has always

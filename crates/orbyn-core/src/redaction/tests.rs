@@ -256,6 +256,129 @@ fn a_pattern_for_environment_values_looks_only_inside_assignments() {
 }
 
 #[test]
+fn each_masked_example_matches_no_detector() {
+    for builtin in BUILTINS {
+        assert!(
+            Redactor::locked().spans(builtin.example).is_empty(),
+            "the example of {} would be hidden",
+            builtin.id
+        );
+        assert!(
+            Redactor::locked().class_of(builtin.example).is_none(),
+            "{}",
+            builtin.id
+        );
+    }
+}
+
+#[test]
+fn text_over_the_window_is_read_whole_and_a_value_on_the_edge_is_still_hidden() {
+    let token = sample("github_token");
+    let filler = "x ".repeat(custom::MAX_APPLY_BYTES / 2);
+    // The value straddles the first window's end.
+    let cut = custom::MAX_APPLY_BYTES - token.len() / 2;
+    let mut text = filler.clone() + &filler;
+    text.replace_range(cut..cut + token.len(), &token);
+    assert!(text.len() > custom::MAX_APPLY_BYTES);
+    let hidden = Redactor::locked().labelled(&text);
+    assert!(!hidden.contains(&token));
+    assert_eq!(hidden.matches("[hidden:").count(), 1);
+}
+
+#[test]
+fn the_compiled_set_is_kept_per_settings_revision() {
+    let dir = TempDir::new();
+    let core = core(&dir);
+    let one = core.redactor(Surface::Agents, None).unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &one,
+        &core.redactor(Surface::Agents, None).unwrap()
+    ));
+    core.change_redaction_format(ACTOR, "jwt", false).unwrap();
+    let two = core.redactor(Surface::Agents, None).unwrap();
+    assert!(
+        !std::sync::Arc::ptr_eq(&one, &two),
+        "a new revision builds a new set"
+    );
+}
+
+#[test]
+fn the_list_never_carries_pattern_text_and_the_edit_dialog_reads_one() {
+    let dir = TempDir::new();
+    let core = core(&dir);
+    let text = format!("{}_[A-Za-z0-9]{{8}}", "acme");
+    let view = core
+        .save_redaction_pattern(ACTOR, None, &input("Acme key", &text, PatternKind::Regex))
+        .unwrap();
+    assert!(!serde_json::to_string(&view).unwrap().contains(&text));
+    let detail = core.redaction_pattern(&view.patterns[0].id).unwrap();
+    assert_eq!(detail.pattern, text);
+    assert!(matches!(
+        core.redaction_pattern("nope"),
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+#[test]
+fn an_error_never_echoes_the_pattern() {
+    let marker = format!("{}{}", "uniq", "marker");
+    for pattern in [
+        format!("{marker}(?P<n"),
+        format!("{marker}(?P<n>a)(?P<n>b)"),
+        format!("{marker}[z-a]"),
+    ] {
+        let found = compile(PatternKind::Regex, &pattern).unwrap_err();
+        assert!(!found.message.contains(&marker), "{}", found.message);
+    }
+}
+
+#[test]
+fn an_edit_that_could_stop_a_pattern_matching_widens_and_a_rename_or_add_does_not() {
+    let mk = |id: &str, name: &str, pattern: &str| StoredPattern {
+        id: id.into(),
+        name: name.into(),
+        pattern: pattern.into(),
+        kind: PatternKind::Regex,
+        applies_to: PatternScope::Anywhere,
+    };
+    let before = Stored {
+        patterns: vec![mk("a", "A", "abc+")],
+        ..Stored::default()
+    };
+    let with = |patterns: Vec<StoredPattern>| Stored {
+        patterns,
+        ..before.clone()
+    };
+    assert!(!with(vec![mk("a", "Renamed", "abc+")]).widens(&before));
+    assert!(!with(vec![mk("a", "A", "abc+"), mk("b", "B", "xyz")]).widens(&before));
+    assert!(
+        with(vec![mk("a", "A", "abcd")]).widens(&before),
+        "a changed pattern"
+    );
+    assert!(with(vec![]).widens(&before), "a removed one");
+    let mut scope = mk("a", "A", "abc+");
+    scope.applies_to = PatternScope::EnvironmentValues;
+    assert!(with(vec![scope]).widens(&before), "a narrower place");
+    let swapped = with(vec![mk("b", "A", "abc+")]);
+    assert!(swapped.widens(&before), "a different id is a removal");
+}
+
+#[test]
+fn the_person_patterns_alone_mask_display_text() {
+    let dir = TempDir::new();
+    let core = core(&dir);
+    let text = format!("{}_[a-z]{{6}}", "corp");
+    core.save_redaction_pattern(ACTOR, None, &input("Corp id", &text, PatternKind::Regex))
+        .unwrap();
+    let shown = core.display_redactor().unwrap();
+    let github = sample("github_token");
+    assert_eq!(
+        shown.labelled(&format!("see corp_abcdef and {github}")),
+        format!("see [hidden: Corp id] and {github}")
+    );
+}
+
+#[test]
 fn the_view_lists_every_format_on_and_the_ledger_locked() {
     let dir = TempDir::new();
     let core = core(&dir);
