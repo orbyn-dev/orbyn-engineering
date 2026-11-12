@@ -67,3 +67,12 @@ export function syncRowText(sync: AccountSyncView, unreachable = false): string 
       return "Signed out";
   }
 }
+
+/**
+ * When This device last synced, for its line in the device list: only while everything is synced. A device that is
+ * paused, offline, syncing or couldn't sync says nothing about its last sync there (the Settings sync row does).
+ */
+export function deviceSyncedAt(sync: AccountSyncView): number | null {
+  const done = sync.kind === "online" && sync.waiting === 0 && !refused(sync);
+  return done && sync.last_synced ? sync.last_synced * 1000 : null;
+}

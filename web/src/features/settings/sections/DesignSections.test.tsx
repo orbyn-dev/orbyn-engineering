@@ -10,6 +10,7 @@ import { DiffsSection } from "./DiffsSection";
 import { AppearanceSection } from "../pages/Appearance";
 import { useUi } from "../../../product/state/ui";
 import { ProviderTable } from "../providers/ProviderTable";
+import { detailsMenuItems } from "../../../product/ui/details";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
@@ -152,4 +153,24 @@ it("labels every action and context in words, keeps the ids in a tooltip, copies
   expect(write).toHaveBeenCalledWith("rightPanel.new");
   await user.type(screen.getByRole("textbox", { name: "Filter keybindings" }), "rightPanel.new");
   expect(screen.queryByText("Toggle sidebar")).toBeNull();
+});
+
+it("names the two panel toggles Toggle Changes and Toggle Browser and shows where the file is stored", async () => {
+  vi.mocked(request).mockResolvedValue({
+    path: "/tmp/keybindings.json", issues: [], conflicts: [],
+    rules: [
+      { key: "mod+d", command: "diff.toggle", when: "!terminalFocus", remove: false },
+      { key: "mod+shift+j", command: "preview.toggle", when: null, remove: false },
+    ],
+  });
+  render(<KeybindingsSection />);
+  expect(await screen.findByText("Toggle Changes")).toBeVisible();
+  expect(screen.getByText("Toggle Browser")).toBeVisible();
+  expect(screen.getByText("Stored in")).toBeVisible();
+  expect(screen.getByText("/tmp/keybindings.json")).toBeVisible();
+});
+
+it("lists the Details popover rows with the outside editor named in full", () => {
+  expect(detailsMenuItems().map((item) => item.label)).toContain("Open in an outside editor");
+  expect(detailsMenuItems().map((item) => item.label)).not.toContain("Open in editor");
 });

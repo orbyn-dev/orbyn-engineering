@@ -6,7 +6,7 @@ import { applyTheme, useUi, type LayoutChoice, type ThemeChoice, type Typography
 import { Button } from "../../../ui/controls";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
-import { isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
+import { displayColour, isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
 import { ENVIRONMENT_ICON_CHOICES } from "../EnvironmentIcon";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 
@@ -248,7 +248,7 @@ function ThemeEditorPage({ onBack }: { onBack(): void }) {
     if (!selected) return;
     const read = readThemeFile(await selected.text());
     if ("colors" in read) { setFailure(null); save(read.colors); }
-    else setFailure(`Couldn't import ${selected.name}. ${read.error} Nothing changed.`);
+    else setFailure(`Couldn’t import ${selected.name}. ${read.error} Nothing changed.`);
     if (file.current) file.current.value = "";
   };
   return (
@@ -276,7 +276,7 @@ function ThemeEditorPage({ onBack }: { onBack(): void }) {
       <div className="tokg">
         {THEME_TOKENS.map(([token, label]) => (
           <TokenRow key={token} label={label}
-            value={custom[token] ?? preset?.colors[token] ?? colourOf(token)}
+            value={custom[token] ?? preset?.colors[token] ?? displayColour(colourOf(token))}
             save={(next) => save({ ...custom, [token]: next })} />
         ))}
       </div>

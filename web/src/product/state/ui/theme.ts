@@ -1,4 +1,4 @@
-import { presetById, THEME_TOKENS } from "../../../styles/themes";
+import { APPLIED_TOKENS, presetById } from "../../../styles/themes";
 import { LAYOUT_CHOICES, type ThemeChoice } from "./types";
 import { useUi } from "./store";
 
@@ -16,7 +16,7 @@ export function applyTheme(choice: ThemeChoice): void {
   const preset = presetById(scheme === "dark" ? darkPreset : lightPreset);
   if (preset) root.dataset.preset = preset.id;
   else delete root.dataset.preset;
-  for (const [token] of THEME_TOKENS) {
+  for (const token of APPLIED_TOKENS) {
     // A preset with a full token set in tokens.css is styled there; only custom colours override it.
     const value = customColors[token] ?? (preset?.tokens ? undefined : preset?.colors[token]);
     if (value) root.style.setProperty(token, value);
