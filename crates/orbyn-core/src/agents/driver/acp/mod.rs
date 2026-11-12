@@ -364,14 +364,14 @@ async fn open_session(
                 "This agent cannot resume its saved session.".into(),
             ));
         };
-        let params = json!({"sessionId":id,"cwd":spec.cwd,"additionalDirectories":[],"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref())});
+        let params = json!({"sessionId":id,"cwd":spec.cwd,"additionalDirectories":[],"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref(),&spec.run_dir)});
         let session = resume_without_replay(rpc, inbound, method, params, id).await?;
         (id.clone(), session)
     } else {
         let session = rpc
             .call(
                 "session/new",
-                json!({"cwd":spec.cwd,"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref())}),
+                json!({"cwd":spec.cwd,"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref(),&spec.run_dir)}),
                 CALL_TIMEOUT,
             )
             .await?;
@@ -420,7 +420,7 @@ async fn open_raw(
 ) -> Result<(String, Value, Value)> {
     let init = initialize(rpc).await?;
     slot.record(&init);
-    let servers = mcp_servers(&init, mcp_url);
+    let servers = mcp_servers(&init, mcp_url, cwd);
     let session = rpc
         .call(
             "session/new",
@@ -444,15 +444,23 @@ async fn initialize(rpc: &RpcClient) -> Result<Value> {
     Ok(init)
 }
 
-fn mcp_servers(init: &Value, url: Option<&str>) -> Value {
-    servers_for(init, url, crate::agents::acp_mcp_bridge::bridge_program)
+fn mcp_servers(init: &Value, url: Option<&str>, run_dir: &std::path::Path) -> Value {
+    servers_for(
+        init,
+        url,
+        run_dir,
+        crate::agents::acp_mcp_bridge::bridge_program,
+    )
 }
 
 /// HTTP when the agent says it supports it. Otherwise stdio, which ACP requires of
-/// every agent, through the sibling `orbyn` bridge; none when that program is absent.
+/// every agent, through the sibling `orbyn` bridge; none when that program is absent
+/// or the endpoint cannot be left in `run_dir`. The bridge is given that file's path,
+/// never the endpoint, so the token is in no process's arguments or environment.
 fn servers_for(
     init: &Value,
     url: Option<&str>,
+    run_dir: &std::path::Path,
     bridge: impl FnOnce() -> Option<std::path::PathBuf>,
 ) -> Value {
     let Some(url) = url else {
@@ -465,9 +473,15 @@ fn servers_for(
     if http {
         return json!([{"type":"http","name":MCP_SERVER_NAME,"url":url,"headers":[]}]);
     }
-    match bridge() {
-        Some(program) => json!([crate::agents::acp_mcp_bridge::stdio_server(&program, url)]),
-        None => json!([]),
+    let Some(program) = bridge() else {
+        return json!([]);
+    };
+    match crate::agents::acp_mcp_bridge::write_endpoint(run_dir, url) {
+        Ok(file) => json!([crate::agents::acp_mcp_bridge::stdio_server(&program, &file)]),
+        Err(error) => {
+            tracing::warn!(%error, "the MCP endpoint could not be left for the stdio bridge");
+            json!([])
+        }
     }
 }
 

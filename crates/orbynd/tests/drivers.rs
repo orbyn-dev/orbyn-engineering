@@ -476,8 +476,16 @@ async fn an_acp_agent_without_http_mcp_reaches_tools_through_the_stdio_bridge() 
     let events = service.all_events(&thread).await;
     assert_eq!(
         text_of(&events),
-        "bridge true listed tools; call ok; token on command line no"
+        "bridge true listed tools; call ok; token in argv or env no; endpoint file private; live read ok"
     );
+    // The endpoint file lives in the run's folder, which goes with the run.
+    let runs = dir.path().join("data").join("runs");
+    let left: Vec<_> = std::fs::read_dir(&runs)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect();
+    assert!(left.is_empty(), "run folders left behind: {left:?}");
 }
 
 /// The fake AG-UI agent, stopped with its test.

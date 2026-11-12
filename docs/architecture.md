@@ -2321,8 +2321,10 @@ sets no `PATH`: `child_env` widens that for every child without sourcing a shell
 random per run, is passed only to that run's engine, and is revoked at run end.
 An ACP agent that does not report HTTP MCP support gets a stdio server instead,
 which ACP requires every agent to support: the sibling `orbyn acp-mcp-bridge`,
-with the run's endpoint (token included) in `ORBYN_ACP_MCP_ENDPOINT`, never in its
-arguments. The bridge relays each JSON-RPC line to the same route, so it adds no
+with the run's endpoint (token included) in an owner-only file `acp-mcp-endpoint` in the
+run's own folder, named by `ORBYN_ACP_MCP_ENDPOINT_FILE`; neither the arguments nor the
+environment of any process hold the token, and the file goes with the run folder at run end.
+The bridge relays each JSON-RPC line to the same route, so it adds no
 tool, scope or credential. Without a sibling `orbyn` program the agent gets no
 MCP server, as before.
 Tools: `approve` (Claude permission prompt), `skill_search`, `skill_load`, the
@@ -2755,13 +2757,18 @@ Orbyn's data folder (store, `service.json`, other runs' files) is denied.
 
 What it does not cover: the profile does not stop a worker reading other processes' command lines and
 environment (`process-info*` is denied, but `sysctl` reads of another process's arguments and environment still
-work, and `pgrep -lf` shows the service's arguments). An ACP lead's bridge process carries its MCP endpoint
-token in its environment (`ORBYN_ACP_MCP_ENDPOINT`, `acp_mcp_bridge.rs`), so a worker could read and use it: a
-known limit, tracked separately. Also not covered: the network, the loopback service (its token is the guard),
+work, and `pgrep -lf` shows the service's arguments). Nothing secret is meant to be there: the lead
+bridge's MCP endpoint (token included) is read from an owner-only file in the lead's run folder, which the profile
+denies to other runs' workers, and the Claude run's `--mcp-config` is a path to a file in the run folder; Codex
+receives its endpoint over its own standard input. A test starts the bridge and reads its live arguments and
+environment the way a worker could (macOS and Linux) and finds only the file's path, and unit tests check that the
+file is mode 0600, that no stdio or Claude entry carries the token and that the run folder is removed at run end.
+That covers the endpoint token of ACP stdio and Claude launches; it does not show that no other value in any
+process is secret. Also not covered: the network, the loopback service (its token is the guard),
 the OS keychain, the engine's own login and session folders (the lead's own engine transcript files are closed by a
 later change), other files of the same user, and a process a worker leaves running after its turn. The run
 folder is writable by the worker, so it can edit its own per-run settings and `mcp.json`. The tests do not
-establish the answer key as a whole, which waits for the transcript change and the process-reading limit above. A
+establish the answer key as a whole, which waits for the transcript change. A
 worker also cannot write to a second checkout that lives inside the data folder. File and folder names in the data
 folder can still be learnt through their inode numbers (the contents cannot be read).
 

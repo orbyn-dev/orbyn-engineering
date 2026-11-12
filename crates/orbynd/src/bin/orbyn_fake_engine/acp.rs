@@ -413,6 +413,10 @@ pub(crate) fn acp_stdio_bridge(servers: &Value) -> String {
         .spawn()
         .expect("start the bridge");
 
+    // While the bridge waits on its input, read its command line and environment as
+    // another process would.
+    let live = live_process_text(bridge.id());
+
     {
         let mut input = bridge.stdin.take().expect("bridge stdin");
 
@@ -449,10 +453,42 @@ pub(crate) fn acp_stdio_bridge(servers: &Value) -> String {
 
     let called = call.status.success() && result["isError"] != true && result["content"].is_array();
 
-    let token_on_line = args.iter().any(|arg| arg.contains("/mcp/"));
+    // What another process of this user can read about the bridge: what Orbyn offered it
+    // (argument list and environment) and, where `ps` shows them, the live process's.
+    let offered = std::iter::once(program.to_owned())
+        .chain(args.iter().cloned())
+        .chain(
+            env.iter()
+                .flat_map(|(name, value)| [name.clone(), value.clone()]),
+        )
+        .collect::<Vec<_>>()
+        .join(" ");
+    let token_visible = offered.contains("/mcp/") || live.contains("/mcp/");
+    // Proof the live read works: it must show the variable that names the file.
+    let live_read = cfg!(not(any(target_os = "linux", target_os = "macos")))
+        || live.contains("ORBYN_ACP_MCP_ENDPOINT_FILE");
+    let file = env
+        .iter()
+        .find(|(name, _)| name == "ORBYN_ACP_MCP_ENDPOINT_FILE")
+        .map(|(_, value)| std::path::PathBuf::from(value));
+    let file_private = file.as_ref().is_some_and(|file| {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            return false;
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(file).map(|m| m.permissions().mode() & 0o777);
+            text.contains("/mcp/") && mode.ok() == Some(0o600)
+        }
+        #[cfg(not(unix))]
+        {
+            text.contains("/mcp/")
+        }
+    });
 
     format!(
-        "bridge {} {}; call {}; token on command line {}",
+        "bridge {} {}; call {}; token in argv or env {}; endpoint file {}; live read {}",
         output.status.success(),
         if listed {
             "listed tools"
@@ -460,6 +496,70 @@ pub(crate) fn acp_stdio_bridge(servers: &Value) -> String {
             "listed nothing"
         },
         if called { "ok" } else { "failed" },
-        if token_on_line { "yes" } else { "no" },
+        if token_visible { "yes" } else { "no" },
+        if file_private { "private" } else { "wrong" },
+        if live_read { "ok" } else { "blind" },
     )
+}
+
+/// A process's command line and environment as another process of its owner can read
+/// them; empty where this platform has no such reader here.
+fn live_process_text(pid: u32) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        let read = |name: &str| std::fs::read(format!("/proc/{pid}/{name}")).unwrap_or_default();
+        let mut bytes = read("cmdline");
+        bytes.extend(read("environ"));
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // KERN_PROCARGS2: the argument list and environment of a same-user process,
+        // the read a confined crew worker can still make.
+        unsafe extern "C" {
+            fn sysctl(
+                name: *mut i32,
+                namelen: u32,
+                oldp: *mut std::ffi::c_void,
+                oldlenp: *mut usize,
+                newp: *mut std::ffi::c_void,
+                newlen: usize,
+            ) -> i32;
+        }
+        let mut name = [1, 49, pid as i32];
+        let mut size = 0usize;
+        // SAFETY: `name` and `size` outlive the calls; the buffer is as long as `size`.
+        unsafe {
+            if sysctl(
+                name.as_mut_ptr(),
+                3,
+                std::ptr::null_mut(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            ) != 0
+            {
+                return String::new();
+            }
+            let mut buffer = vec![0u8; size];
+            if sysctl(
+                name.as_mut_ptr(),
+                3,
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            ) != 0
+            {
+                return String::new();
+            }
+            buffer.truncate(size);
+            String::from_utf8_lossy(&buffer).into_owned()
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        String::new()
+    }
 }

@@ -984,8 +984,8 @@ Crew runs on macOS in the beta; Windows later. On macOS each worker's engine pro
 profile that denies reading or writing Orbyn's data folder (store, service handle, other runs' files),
 except its own run folder, checkout and library, and stops it starting programs through LaunchServices or signalling other processes. A worker's own file
 access to Orbyn's data folder (store, `service.json`, other runs' files) is denied. It does not stop a worker
-reading other processes' command lines and environment; an ACP lead's bridge process carries its MCP endpoint
-token in its environment, so a worker could use it (a known limit, tracked separately). Where that is not possible the worker is refused with a plain line. See
+reading other processes' command lines and environment, so nothing secret is passed there: a lead's MCP endpoint
+token is read from an owner-only file in the lead's run folder, never from arguments or environment. Where that is not possible the worker is refused with a plain line. See
 [the architecture](architecture.md#crew-worker-confinement) and SPEC section 11.
 
 Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
