@@ -15,6 +15,7 @@ use crate::account::changes::{account_paths_in, changes_account_state};
 use crate::crew::changes::crew_change;
 use crate::crew::checks::covers;
 use crate::crew::find_secret;
+use crate::redaction::changes::redaction_change;
 
 /// What the rules need to know besides the action.
 pub struct Scene<'a> {
@@ -206,7 +207,7 @@ fn squash(text: &str) -> String {
     text
 }
 
-/// Whether text names a state-changing account route, or a Crew route that changes state: the person's answers are not an
+/// Whether text names a state-changing account route, or a Crew or Settings › Secrets route that changes state: the person's answers are not an
 /// agent's to give (`crew::changes`).
 pub fn account_change(text: &str) -> bool {
     let named = |text: &str| {
@@ -214,6 +215,7 @@ pub fn account_change(text: &str) -> bool {
             .iter()
             .any(|path| changes_account_state(path))
             || crew_change(text)
+            || redaction_change(text)
     };
     named(text) || named(&squash(text))
 }
