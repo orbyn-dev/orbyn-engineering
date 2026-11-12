@@ -5,12 +5,16 @@ import { SseParser } from "../api";
 import type { EngineUpdateProgress } from "../../../generated/EngineUpdateProgress";
 
 const RETRY_MS = 3000;
+/** How many of an installer's lines a running update keeps for the log. */
+const LOG_LINES = 12;
 
 interface EngineUpdates {
   /** Each engine updating now, with what its installer last said. */
   running: Record<string, string>;
   /** What each engine's installer last said, kept after it finished. */
   said: Record<string, string>;
+  /** The command and the last lines each engine's installer printed, kept after it finished. */
+  logs: Record<string, { command: string; lines: string[] }>;
   /** Each engine whose update ended, with the version it reports and why it failed. */
   ended: Record<string, { version: string | null; error: string | null }>;
   apply(event: EngineUpdateProgress): void;
@@ -20,20 +24,23 @@ interface EngineUpdates {
 export const useEngineUpdates = create<EngineUpdates>((set) => ({
   running: {},
   said: {},
+  logs: {},
   ended: {},
   apply: (event) =>
-    set(({ running, said, ended }) => {
+    set(({ running, said, logs, ended }) => {
       const next = { ...running };
       if (event.kind === "finished") {
         delete next[event.engine];
-        return { running: next, said, ended: { ...ended, [event.engine]: { version: event.version, error: event.error } } };
+        return { running: next, said, logs, ended: { ...ended, [event.engine]: { version: event.version, error: event.error } } };
       }
       const line = event.kind === "started" ? event.command : event.line;
       next[event.engine] = line;
       // A new update of the same engine starts clean.
       const rest = { ...ended };
       if (event.kind === "started") delete rest[event.engine];
-      return { running: next, said: { ...said, [event.engine]: line }, ended: rest };
+      const log = event.kind === "started" ? { command: event.command, lines: [] } : (logs[event.engine] ?? { command: "", lines: [] });
+      const lines = event.kind === "output" ? [...log.lines, event.line].slice(-LOG_LINES) : log.lines;
+      return { running: next, said: { ...said, [event.engine]: line }, logs: { ...logs, [event.engine]: { command: log.command, lines } }, ended: rest };
     }),
   clear: () => set({ running: {} }),
 }));
