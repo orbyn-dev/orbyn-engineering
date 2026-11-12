@@ -72,10 +72,6 @@
   border-left: 0;
   border-top-left-radius: 0;
 }
-/* The docked details card has no place in the column. When asked for, it floats over the thread. */
-:root[data-workspace="reading"] .thread-main[data-details="reserved"] > .details {
-  display: none;
-}
 /* On a wide window the side panel floats over the thread as a drawer instead of
    taking a column; on smaller windows it already floats over the thread, or replaces it on the phone. */
 :root[data-workspace="reading"] .thread-layout {
@@ -94,23 +90,6 @@
 }
 
 /* Frame overrides per layout. */
-/* Ledger: a 300px details rail in place of the floating card. */
-:root[data-workspace="ledger"] {
-  --details-w: var(--rail-w);
-  --details-gap: 0px;
-}
-:root[data-workspace="ledger"] .thread-main > .details {
-  top: 0;
-  right: 0;
-  bottom: 0;
-  max-height: none;
-  border-left: 1px solid var(--color-border);
-  border-radius: 0;
-  background: var(--color-background);
-}
-:root[data-workspace="ledger"] .thread-main[data-details="reserved"] .topbar {
-  padding-right: calc(var(--details-w) + 28px);
-}
 /* Reading: no sidebar column; the thread is one column and the panel a drawer. */
 :root[data-workspace="reading"] .topbar,
 :root[data-workspace="reading"] .composer-lane {

@@ -135,7 +135,7 @@ test("the editor menu lists what's installed and opens the chosen one", async ({
   await page.getByRole("menuitem", { name: "VS Code" }).or(page.getByRole("menuitemradio", { name: "VS Code" })).first().click();
   await expect.poll(() => existsSync(log)).toBe(true);
   expect(readFileSync(log, "utf8")).toContain(".");
-  await expect(card.getByRole("button", { name: /^Open in editor/ })).toHaveAttribute("title", "Open in VS Code");
+  await expect(card.getByRole("button", { name: /^Open in an outside editor/ })).toHaveAttribute("title", "Open in VS Code");
 });
 
 test("a file's menu opens it elsewhere, and dragging it mentions it", async ({ page }) => {

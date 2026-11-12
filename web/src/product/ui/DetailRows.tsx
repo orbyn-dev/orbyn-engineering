@@ -23,6 +23,7 @@ export function DRow({
   skeleton = 80,
   action,
   expanded,
+  chevron,
   extra,
   title,
   ariaLabel,
@@ -43,6 +44,8 @@ export function DRow({
   /** The shortcut or hint on an action row, which reads in mono. */
   action?: boolean;
   expanded?: boolean;
+  /** The row opens something elsewhere, such as a tab or a page: a right chevron, as an expandable row shows while closed. */
+  chevron?: boolean;
   extra?: ReactNode;
   title?: string;
   /** The row's name when its pieces read run together. */
@@ -58,7 +61,7 @@ export function DRow({
         {!loading && sub ? <small>{sub}</small> : null}
         {!loading && subLines ? subLines.map((line, at) => <small key={at}>{line}</small>) : null}
       </span>
-      {expanded === undefined ? null : expanded ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+      {expanded === undefined ? (chevron ? <ChevronRight size={14} aria-hidden /> : null) : expanded ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
     </>
   );
   return (

@@ -16,7 +16,6 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   panelTabOrder: state.panelTabOrder,
   panelTabsClosed: state.panelTabsClosed,
   panelAnimationMs: state.panelAnimationMs,
-  detailsOpen: state.detailsOpen,
   terminalOpen: state.terminalOpen,
   panelMaximized: state.panelMaximized,
   panelWidth: state.panelWidth,
@@ -125,7 +124,8 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
         const tabs = cleanTabs(canonicalList(layout.panelTabOrder), layout.panelTabsClosed);
         const panelTab = isPanelTab(canonicalFileTab(layout.panelTab)) ? (canonicalFileTab(layout.panelTab) as ThreadLayout["panelTab"]) : null;
         // Open or closed is one global choice now; an older per-thread value must not override it.
-        const { panelOpen: _global, ...rest } = layout as ThreadLayout & { panelOpen?: unknown };
+        // The Details card became a popover that opens from the header button; its old open state is dropped.
+        const { panelOpen: _global, detailsOpen: _card, ...rest } = layout as ThreadLayout & { panelOpen?: unknown; detailsOpen?: unknown };
         return [key, { ...rest, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed }];
       }),
   );
@@ -137,6 +137,13 @@ export function savedPrefs(): Partial<Prefs> {
   const saved = migratePrefs(isPlainObject(stored) ? (stored as Partial<Prefs>) : {});
   // The favourites list was removed; an old save still carries it.
   delete (saved as Record<string, unknown>).modelFavorites;
+  delete (saved as Record<string, unknown>).detailsOpen;
+  // The card's collapsed state had a key of its own; the popover has no such state.
+  try {
+    sessionStorage.removeItem("orbyn.details.collapsed");
+  } catch {
+    // Not available here; nothing to remove.
+  }
   const panelTab = isPanelTab(canonicalFileTab(saved.panelTab)) ? (canonicalFileTab(saved.panelTab) as Prefs["panelTab"]) : null;
   const tabs = cleanTabs(canonicalList(saved.panelTabOrder), saved.panelTabsClosed);
   const grouping = saved.projectGrouping;

@@ -58,8 +58,6 @@ export interface Prefs {
   panelTabsClosed: BuiltinTab[];
   /** Panel and hero motion in ms, 0 to 400. 0 is off; the default is the --m-slow token. */
   panelAnimationMs: number;
-  /** The floating details card on wide layouts. */
-  detailsOpen: boolean;
   /** The terminal drawer under the conversation. */
   terminalOpen: boolean;
   panelMaximized: boolean;
@@ -185,7 +183,6 @@ export interface ThreadLayout {
   panelTab: RightTab | null;
   panelTabOrder: RightTab[];
   panelTabsClosed: BuiltinTab[];
-  detailsOpen: boolean;
   terminalOpen: boolean;
   panelMaximized: boolean;
   panelWidth: number | null;

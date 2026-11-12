@@ -37,6 +37,10 @@ export function listThreadServers(threadId: string, signal?: AbortSignal) {
   return request<LocalServer[]>("GET", `/api/threads/${q(threadId)}/servers`, undefined, signal);
 }
 
+export function stopThreadServer(threadId: string, pid: number) {
+  return request<void>("POST", `/api/threads/${q(threadId)}/servers/${pid}/stop`);
+}
+
 export function listThreadScripts(threadId: string, signal?: AbortSignal) {
   return request<ProjectFileView>("GET", `/api/threads/${q(threadId)}/scripts`, undefined, signal);
 }

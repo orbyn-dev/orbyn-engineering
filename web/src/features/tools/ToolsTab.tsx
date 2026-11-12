@@ -1,4 +1,4 @@
-import { RefreshCw, Settings } from "lucide-react";
+import { BookOpen, Plug, RefreshCw, Settings } from "lucide-react";
 import { useState } from "react";
 import { api } from "./api";
 import { topics } from "../../lib/dataRefresh";
@@ -9,7 +9,9 @@ import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { Empty } from "../../product/ui/states";
 import { ToolsList } from "./ToolsList";
-import { groupOf } from "./toolsModel";
+import { NOT_REPORTED_CODE } from "./notReported";
+import { GROUP_SHORT, groupOf, summarize } from "./toolsModel";
+import type { EngineTools } from "../../api/types";
 
 const clock = (iso: string | null | undefined) => {
   const date = iso ? new Date(iso) : null;
@@ -33,6 +35,46 @@ function Header({ engineName, source, checkedAt, onRefresh, busy }: { engineName
       <IconButton label="Tools and connectors settings" onClick={() => navigate({ name: "settings", section: "tools" })}>
         <Settings size={13} aria-hidden />
       </IconButton>
+    </div>
+  );
+}
+
+/** Orbyn's own skills library, with the way into it. */
+function SkillsLine({ count }: { count: number }) {
+  return (
+    <div className="tg-skills-line">
+      <BookOpen size={14} aria-hidden />
+      <span>Skills</span>
+      <span className="t3">{count}</span>
+      <Button small tone="quiet" onClick={() => navigate({ name: "skills" })}>
+        Open Skills
+      </Button>
+    </div>
+  );
+}
+
+/** Orbyn's own library is known without asking the engine; it is read only when this line is on screen. */
+function OrbynSkills() {
+  const skills = useAsync("tools-skills-count", (signal) => api.skills(signal));
+  return skills.data ? <SkillsLine count={skills.data.skills.length} /> : null;
+}
+
+/** What the last good read said, dimmed, so nothing the person knew disappears. Read-only. */
+function LastRead({ data }: { data: EngineTools }) {
+  const at = clock(data.checked_at);
+  const rows = data.groups.filter((group) => GROUP_SHORT[group.id]);
+  return (
+    <div className="tg-last" aria-label="Last read">
+      <div className="t3">{at ? `Last read ${at}` : "Last read"}</div>
+      {rows.map((group) => {
+        const ready = summarize({ ...data, groups: [group] }).ready;
+        return (
+          <div key={group.id} className="tg-last-row">
+            <span>{GROUP_SHORT[group.id]}</span>
+            <span className="t3">{ready} ready</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -71,23 +113,46 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
       </div>
     );
   }
-  if (tools.status === "error" || !tools.data) {
+  // An engine with no list to give is not a failure: one plain state, and Orbyn's own library is still there.
+  if (tools.status === "error" && tools.error.code === NOT_REPORTED_CODE) {
     return (
       <div className="tg-tools">
-        <Empty title="Couldn’t read the tools">
-          <p className="t3">Try again.</p>
-          <Button small onClick={() => void tools.reload()}>Try again</Button>
-        </Empty>
+        <div className="tg-empty">
+          <Plug size={22} aria-hidden className="tg-empty-icon" />
+          <h4>Not reported by {engineName}</h4>
+          <span>{engineName} doesn’t list its tools to Orbyn, so there is nothing to show here. Orbyn’s own skills are still available.</span>
+          <OrbynSkills />
+        </div>
       </div>
     );
   }
   const data = tools.data;
+  // One error with its reason; what the person knew stays below, dimmed, with its time.
+  if (tools.status === "error" || data?.error) {
+    const reason = tools.status === "error" ? tools.error.message : (data?.error ?? "");
+    return (
+      <div className="tg-tools">
+        <div className="tg-fail-box" role="alert">
+          <span>
+            <b>Couldn’t read the tools.</b>
+            <br />
+            {reason}
+          </span>
+          <Button small tone="quiet" onClick={() => void tools.reload()}>
+            Try again
+          </Button>
+        </div>
+        {data && data.groups.length > 0 ? <LastRead data={data} /> : null}
+      </div>
+    );
+  }
+  if (!data) return null;
   if (!data.reported) {
     const skills = groupOf(data, "skills");
     return (
       <div className="tg-tools">
-        <Empty title="No tools reported yet">
-          <p className="t3">{engineName} reports its tools when a run starts. Send a message and they appear here.</p>
+        <Empty title="No tools reported for this run">
+          <p className="t3">{engineName} reports its tools when a run starts. They appear here after the next message.</p>
         </Empty>
         {skills ? <ToolsList tools={{ ...data, groups: [skills], not_reported: [] }} engineName={engineName} mode="thread" /> : null}
       </div>
@@ -96,7 +161,6 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
   return (
     <div className="tg-tools">
       <Header engineName={engineName} source={data.source} checkedAt={data.checked_at} busy={checking || tools.refreshing} onRefresh={data.source === "run" ? undefined : () => void checkAgain()} />
-      {data.error ? <p className="tg-note" role="status">{data.error} The list is from {clock(data.checked_at) ?? "earlier"}.</p> : null}
       <ToolsList tools={data} engineName={engineName} mode="thread" />
       <button type="button" className="tg-footlink" onClick={() => navigate({ name: "settings", section: "tools" })}>
         Tools and connectors settings

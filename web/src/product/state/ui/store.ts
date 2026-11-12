@@ -89,7 +89,6 @@ interface UiState extends Prefs {
   /** The remembered choice, held aside while a phone-width window uses its own. */
   desktopPanelOpen: boolean | null;
   setPanelAnimationMs(ms: number): void;
-  toggleDetails(): void;
   setPanelMaximized(maximized: boolean): void;
   setPanelWidth(width: number | null): void;
   /** Shows another thread's layout, restoring what it last had. */
@@ -299,10 +298,6 @@ export const useUi = create<UiState>((set, get) => {
     },
     setPanelAnimationMs(ms) {
       set({ panelAnimationMs: Math.min(Math.max(ms, 0), 400) });
-      savePrefs();
-    },
-    toggleDetails() {
-      set((state) => ({ detailsOpen: !state.detailsOpen }));
       savePrefs();
     },
     setPanelMaximized(maximized) {

@@ -40,13 +40,13 @@ test("a Claude thread's Tools row opens the tab, grouped, with statuses in words
   await expect(page.getByRole("switch")).toHaveCount(0);
 });
 
-test("a thread that has not run says nothing was reported yet", async ({ page }) => {
+test("a thread that has not run says the row fills in once the engine has run", async ({ page }) => {
   const id = await thread("claude");
   await page.goto(`${service.page}#/threads/${id}`);
   const card = await openDetails(page);
-  await expect(card.getByRole("button", { name: "Tools" })).toContainText("Not reported yet");
+  await expect(card.getByRole("button", { name: "Tools" })).toContainText("Shown once this engine has run");
   await card.getByRole("button", { name: "Tools" }).click();
-  await expect(page.getByText("No tools reported yet")).toBeVisible();
+  await expect(page.getByText("No tools reported for this run")).toBeVisible();
 });
 
 test("Settings › Tools and connectors has one tab per engine and says what Codex does not report", async ({ page }) => {

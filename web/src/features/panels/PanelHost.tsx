@@ -178,7 +178,6 @@ export function PanelHost({
   closing,
   moves,
   maximized,
-  details = null,
   sideChat = null,
   onToggleMaximize,
   onReturn,
@@ -189,8 +188,6 @@ export function PanelHost({
   /** False while the panel is part of the page as it first appeared. */
   moves: boolean;
   maximized: boolean;
-  /** The thread's details card, which sits at the top of the panel above its tabs. */
-  details?: ReactNode;
   /** The Side chat tab's content; the thread owns it, so it is handed in. */
   sideChat?: ReactNode;
   onToggleMaximize(): void;
@@ -247,7 +244,10 @@ export function PanelHost({
     // A strip with no width yet (not laid out, or hidden) folds nothing.
     if (head.clientWidth === 0) return setSlots(Number.POSITIVE_INFINITY);
     const end = head.querySelector<HTMLElement>(".ctx-end");
-    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0);
+    // A docked panel's strip also stops short of the title bar's end, so its real padding can exceed the usual 16 px.
+    const style = getComputedStyle(head);
+    const pad = Math.max(STRIP_PAD, (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0));
+    const room = head.clientWidth - pad - (end?.offsetWidth ?? 0);
     setSlots(tabSlots(room, latest.current.count));
   }, []);
   useLayoutEffect(() => {
@@ -391,7 +391,6 @@ export function PanelHost({
           </span>
         </header>
       ) : null}
-      {details}
       <header ref={strip} className="ctx-strip">
         <div ref={list} className="ctx-tabs" role={shown.length > 0 ? "tablist" : undefined} aria-label={shown.length > 0 ? "Panel tabs" : undefined} onKeyDown={onTabKey}>
           {shown.map((id) => {

@@ -12,7 +12,7 @@ async function openThread(page: Page, layout: Layout, chatWidth: Width) {
     if (sessionStorage.getItem("composer-width-seeded")) return;
     localStorage.setItem("orbyn.prefs.v1", JSON.stringify({
       workspaceLayout: layout, chatWidth, panelOpen: true, panelAnimationMs: 0,
-      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side"], panelTabsClosed: [], detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: 380, sideChat: null } },
+      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side"], panelTabsClosed: [], terminalOpen: false, panelMaximized: false, panelWidth: 380, sideChat: null } },
     }));
     sessionStorage.setItem("composer-width-seeded", "1");
   }, { layout, chatWidth });
@@ -22,9 +22,9 @@ async function openThread(page: Page, layout: Layout, chatWidth: Width) {
   await expect(page.getByRole("separator", { name: "Resize panel" })).toBeVisible();
 }
 
-/** The text and composer share the available column, with the details rail outside it. */
-async function expectColumn(page: Page, railShown: boolean) {
-  const result = await page.evaluate((hasRail) => {
+/** The text and composer share the available column. Details is a popover, so no layout reserves a rail. */
+async function expectColumn(page: Page) {
+  const result = await page.evaluate(() => {
     const main = document.querySelector<HTMLElement>(".thread-main")!;
     const transcript = document.querySelector<HTMLElement>(".transcript-inner")!;
     const composer = document.querySelector<HTMLElement>(".composer-box")!;
@@ -33,9 +33,8 @@ async function expectColumn(page: Page, railShown: boolean) {
     const t = transcript.getBoundingClientRect();
     const ts = getComputedStyle(transcript);
     const c = composer.getBoundingClientRect();
-    const railBox = hasRail ? rail?.getBoundingClientRect() : undefined;
     const left = mainBox.left + 16;
-    const right = (railBox?.left ?? mainBox.right) - 16;
+    const right = mainBox.right - 16;
     const available = right - left;
     const reading = getComputedStyle(main).getPropertyValue("--reading-w").trim();
     const maxWidth = reading.endsWith("%") ? available : parseFloat(reading);
@@ -47,16 +46,14 @@ async function expectColumn(page: Page, railShown: boolean) {
       transcriptLeft: t.left + parseFloat(ts.paddingLeft),
       transcriptRight: t.right - parseFloat(ts.paddingRight),
       expectedLeft, expectedRight: expectedLeft + width, expectedWidth: width,
-      railLeft: railBox?.left,
     };
-  }, railShown);
-  expect(result.railVisible).toBe(railShown);
+  });
+  expect(result.railVisible).toBe(false);
   expect(result.left).toBeCloseTo(result.expectedLeft, 0);
   expect(result.right).toBeCloseTo(result.expectedRight, 0);
   expect(result.width).toBeCloseTo(result.expectedWidth, 0);
   expect(result.transcriptLeft).toBeCloseTo(result.expectedLeft, 0);
   expect(result.transcriptRight).toBeCloseTo(result.expectedRight, 0);
-  if (result.railLeft !== undefined) expect(result.right).toBeLessThan(result.railLeft);
 }
 
 async function dragToWidth(page: Page, target: number) {
@@ -70,43 +67,41 @@ async function dragToWidth(page: Page, target: number) {
   await page.mouse.move(handleBox!.x + handleBox!.width / 2, y);
   await page.mouse.down();
   await page.mouse.move(paneBox!.x + paneBox!.width - target, y, { steps: 8 });
-  await expectColumn(page, true);
+  await expectColumn(page);
   await page.mouse.up();
-  await expectColumn(page, true);
+  await expectColumn(page);
   await expect.poll(async () => Math.round((await pane.boundingBox())!.width)).toBe(target);
 }
 
 for (const width of ["wide", "full"] as const) {
-  test(`Ledger ${width} keeps its column clear of the rail while resizing`, async ({ page }) => {
+  test(`Ledger ${width} keeps its column while resizing`, async ({ page }) => {
     await openThread(page, "ledger", width);
-    await expectColumn(page, true);
+    await expectColumn(page);
     await dragToWidth(page, 720);
     await page.getByRole("tab", { name: "Changes", exact: true }).click();
-    await expectColumn(page, true);
+    await expectColumn(page);
     await page.reload();
     await expect.poll(async () => Math.round((await page.locator(".context").boundingBox())!.width)).toBe(720);
-    await expectColumn(page, true);
+    await expectColumn(page);
     await dragToWidth(page, 320);
     await page.reload();
     await expect.poll(async () => Math.round((await page.locator(".context").boundingBox())!.width)).toBe(320);
-    await expectColumn(page, true);
+    await expectColumn(page);
     await page.getByRole("button", { name: "Hide sidebar" }).click();
-    await expectColumn(page, true);
-    await page.getByRole("button", { name: "Details", exact: true }).click();
-    await expectColumn(page, false);
+    await expectColumn(page);
     await page.getByRole("button", { name: "Show sidebar" }).click();
-    await expectColumn(page, false);
+    await expectColumn(page);
   });
 }
 
 for (const layout of ["console", "ledger", "reading"] as const) {
   test(`${layout} comfortable width uses its available column`, async ({ page }) => {
     await openThread(page, layout, "comfortable");
-    await expectColumn(page, layout === "ledger");
+    await expectColumn(page);
   });
 }
 
-test("the shell-ledger preview opens the full-width Ledger rail", async ({ page }) => {
+test("the shell-ledger preview opens Ledger with no details rail", async ({ page }) => {
   const frame = FRAMES["shell-ledger"] as {
     route: string;
     steps: ({ do: "click"; role: "link" | "radio"; name: string; exact?: boolean; prefix?: boolean } | { do: "press"; key: string })[];
@@ -120,7 +115,7 @@ test("the shell-ledger preview opens the full-width Ledger rail", async ({ page 
   await expect(page.getByRole("region", { name: "Settings" })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute("data-workspace", "ledger");
   await expect(page.locator(".thread-main")).toHaveAttribute("data-chat-width", "full");
-  await expect(page.locator(".thread-main > .details")).toBeVisible();
+  await expect(page.locator(".thread-main > .details")).toHaveCount(0);
   await expect(page.locator(".context")).toHaveCount(0);
-  await expectColumn(page, true);
+  await expectColumn(page);
 });
