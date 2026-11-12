@@ -469,9 +469,6 @@ function TasksView({ page }: { page: boolean }) {
                   </span>
                   <span role="cell" className="task-when">
                     {scheduleLabel(task.schedule)}
-                    <small>
-                      {!task.enabled ? "Paused" : task.next_run_at ? `Next run ${new Date(task.next_run_at).toLocaleString()}` : ""}
-                    </small>
                   </span>
                   <span role="cell">
                     <LastRun task={task} />

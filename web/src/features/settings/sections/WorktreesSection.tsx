@@ -12,27 +12,20 @@ const NAMING_MODES = [
   { value: "custom", label: "Custom", description: "Named using your branch name instructions." },
 ];
 
-/** The three ways a branch is named, each saying what it does. */
+/** The three ways a branch is named; the row's description says what the chosen one does. */
 function BranchNaming({ value, save }: { value: string; save(next: string): void }) {
-  const chosen = NAMING_MODES.find((mode) => mode.value === value);
-  return <div className="set-naming">
-    <Segmented label="Branch naming" value={value} options={NAMING_MODES.map(({ value, label }) => ({ value, label }))} onChange={save} />
-    {chosen ? <small className="set-naming-note">{chosen.description}</small> : null}
-  </div>;
+  return <Segmented label="Branch naming" value={value} options={NAMING_MODES.map(({ value, label }) => ({ value, label }))} onChange={save} />;
 }
 
-/** The prefix without its slash, and the branch name it makes. */
+/** The prefix without its slash; the row's description shows the branch name it makes. */
 function BranchPrefix({ value, save, disabled, mixed }: { value: string; save(next: string): void; disabled: boolean; mixed?: boolean }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
   const clean = draft.trim().replace(/\/+$/, "");
-  return <div className="set-naming">
-    <input aria-label="Branch prefix" className="mono" spellCheck={false} disabled={disabled} value={draft} placeholder={mixed ? "Mixed" : undefined}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => { if (clean !== value) save(clean); }}
-      onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} />
-    <small className="set-naming-note mono">{clean ? `${clean}/fix-login` : "fix-login"}</small>
-  </div>;
+  return <input aria-label="Branch prefix" className="mono" spellCheck={false} disabled={disabled} value={draft} placeholder={mixed ? "Mixed" : undefined}
+    onChange={(event) => setDraft(event.target.value)}
+    onBlur={() => { if (clean !== value) save(clean); }}
+    onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} />;
 }
 
 export function WorktreesSection() {
@@ -61,15 +54,19 @@ export function WorktreesSection() {
               {
                 key: "branch_naming_mode",
                 title: settingsLabel("worktrees-naming"),
+                describe: (valueOf) => NAMING_MODES.find((mode) => mode.value === valueOf("branch_naming_mode"))?.description,
                 render: (value, save) => <BranchNaming value={String(value ?? "")} save={save} />,
               },
               {
                 key: "branch_name_prefix",
                 title: settingsLabel("worktrees-branch-prefix"),
-                description: "A / is added after the prefix.",
+                describe: (valueOf) => {
+                  const prefix = String(valueOf("branch_name_prefix") ?? "").trim().replace(/\/+$/, "");
+                  return `Added in front of every branch Orbyn creates. A / is added after the prefix${prefix ? `, so ${prefix} gives ${prefix}/fix-login` : ""}.`;
+                },
                 render: (value, save, control) => <BranchPrefix value={String(value ?? "")} save={save} disabled={control.disabled} mixed={control.mixed} />,
               },
-              { key: "branch_name_instructions", title: settingsLabel("worktrees-branch-name-instructions"), description: "Extra guidance for the names Orbyn generates", multiline: true,
+              { key: "branch_name_instructions", title: settingsLabel("worktrees-branch-name-instructions"), description: "Extra guidance for the names Orbyn generates", multiline: true, placeholder: "Optional. For example: keep names under 40 characters.",
                 showWhen: (valueOf) => valueOf("branch_naming_mode") === "custom" },
             ],
           },

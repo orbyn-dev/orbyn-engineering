@@ -70,7 +70,8 @@ export function ScopedRows({ groups, query, inheritance }: {
         if (!value) return null;
         if (row.showWhen && !row.showWhen((key) => result.rows.find((entry) => entry.key === key)?.value)) return null;
         const hasOverride = value.members.some((member) => member.view.source === "project");
-        return <SettingRow key={row.key} title={row.title} description={row.description} actions={
+        const description = row.describe?.((key) => result.rows.find((entry) => entry.key === key)?.value) ?? row.description;
+        return <SettingRow key={row.key} title={row.title} description={description} actions={
           <div className="setting-inheritance-actions">
             {showInheritance && (inheritance === true || value.project_scoped) ? <PreferenceInheritance row={row} view={value.members[0]?.view ?? value.environment} global={value.environment}
               members={value.members} mixed={value.mixed} overrides={all ? value.overrides : []} disabled={disabled}
@@ -114,7 +115,7 @@ function ValueControl({ row, value, save, control }: { row: PreferenceRow; value
     ref={(element) => { if (element) element.indeterminate = value.mixed; }}
     checked={!value.mixed && value.value === true} onChange={(event) => save(event.target.checked)} />;
   const props = {
-    "aria-label": row.title, placeholder: value.mixed ? "Mixed" : undefined,
+    "aria-label": row.title, placeholder: value.mixed ? "Mixed" : row.placeholder,
     defaultValue: value.mixed ? "" : String(value.value ?? ""),
     onChange: () => { touched.current = true; },
     onBlur: (event: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {

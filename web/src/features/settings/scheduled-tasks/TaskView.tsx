@@ -16,13 +16,13 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { Empty, Loading } from "../../../product/ui/states";
 
 /** How a run ended, as the service names it; Refused and Skipped say why after a dot. */
-const OUTCOMES: Record<string, { label: string; tone?: "blue" | "warn" | "bad"; icon?: "check" | "spin" }> = {
+const OUTCOMES: Record<string, { label: string; tone?: "blue" | "bad"; icon?: "check" | "spin" }> = {
   queued: { label: "Queued" },
   running: { label: "Running", tone: "blue", icon: "spin" },
   completed: { label: "Completed", icon: "check" },
   failed: { label: "Failed", tone: "bad" },
   cancelled: { label: "Cancelled" },
-  interrupted: { label: "Interrupted", tone: "warn" },
+  interrupted: { label: "Interrupted" },
   refused: { label: "Refused" },
   skipped: { label: "Skipped" },
 };
@@ -45,7 +45,7 @@ const SENDER_LIMIT = 80;
 const RUN_COLUMNS = "minmax(0, 1fr) 100px 250px 120px";
 const DELIVERY_COLUMNS = "minmax(0, 1fr) 300px 110px 100px";
 
-function Pill({ tone, title, children }: { tone?: "blue" | "warn" | "bad"; title?: string; children: React.ReactNode }) {
+function Pill({ tone, title, children }: { tone?: "blue" | "bad"; title?: string; children: React.ReactNode }) {
   return <span className={tone ? `set-pill ${tone}` : "set-pill"} title={title}>{children}</span>;
 }
 
@@ -81,7 +81,7 @@ function Runs({ task }: { task: ScheduledTask }) {
         <Button small className="set-back-end" icon={<RefreshCw size={13} aria-hidden />} onClick={runs.reload}>Retry</Button></p>
     );
   }
-  if (runs.data.length === 0) return <Empty title="No runs yet."><p>Runs appear here after the task first runs.</p></Empty>;
+  if (runs.data.length === 0) return <Empty title="No runs yet."><p>Runs appear here once the task has run.</p></Empty>;
   const now = Date.now();
   return (
     <>

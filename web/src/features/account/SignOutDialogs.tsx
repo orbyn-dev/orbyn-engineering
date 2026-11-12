@@ -195,6 +195,7 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
         }
       >
         <p>Orbyn can’t sign out every session right now. Sign out everywhere is off while your account is waiting to be deleted. Signing out of this computer only still works.</p>
+        <p>To sign out every device, wait until the deletion is cancelled or completed.</p>
       </Dialog>
     );
   }

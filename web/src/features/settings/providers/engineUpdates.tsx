@@ -9,18 +9,31 @@ const RETRY_MS = 3000;
 interface EngineUpdates {
   /** Each engine updating now, with what its installer last said. */
   running: Record<string, string>;
+  /** What each engine's installer last said, kept after it finished. */
+  said: Record<string, string>;
+  /** Each engine whose update ended, with the version it reports and why it failed. */
+  ended: Record<string, { version: string | null; error: string | null }>;
   apply(event: EngineUpdateProgress): void;
   clear(): void;
 }
 
 export const useEngineUpdates = create<EngineUpdates>((set) => ({
   running: {},
+  said: {},
+  ended: {},
   apply: (event) =>
-    set(({ running }) => {
+    set(({ running, said, ended }) => {
       const next = { ...running };
-      if (event.kind === "finished") delete next[event.engine];
-      else next[event.engine] = event.kind === "started" ? event.command : event.line;
-      return { running: next };
+      if (event.kind === "finished") {
+        delete next[event.engine];
+        return { running: next, said, ended: { ...ended, [event.engine]: { version: event.version, error: event.error } } };
+      }
+      const line = event.kind === "started" ? event.command : event.line;
+      next[event.engine] = line;
+      // A new update of the same engine starts clean.
+      const rest = { ...ended };
+      if (event.kind === "started") delete rest[event.engine];
+      return { running: next, said: { ...said, [event.engine]: line }, ended: rest };
     }),
   clear: () => set({ running: {} }),
 }));
