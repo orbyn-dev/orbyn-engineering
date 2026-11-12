@@ -4,19 +4,9 @@ import { compactAge } from "../../../lib/format";
 import { useWaited } from "../../../lib/motion";
 import { attentionRank } from "../sidebar/groups";
 import { CHANGE, MAX_DEPTH, crumb, type Row } from "./model";
+import { ChangeLetter, MiddleName } from "./ChangeLetter";
 import { FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { Button } from "../../../ui/controls";
-
-/** A name that gives way in the middle, so the ending that tells two files apart stays in view. */
-function Name({ text, middle }: { text: string; middle: boolean }) {
-  if (!middle || text.length <= 10) return <span className="nm">{text}</span>;
-  return (
-    <span className="nm nm-mid">
-      <span className="nm-head">{text.slice(0, -7)}</span>
-      <span className="nm-tail">{text.slice(-7)}</span>
-    </span>
-  );
-}
 
 function ThreadStatus({ thread }: { thread: NonNullable<Row["thread"]> }) {
   if (attentionRank(thread) === 0) return <span className="n"><span className="status-dot tone-warn" role="img" aria-label="Needs you" /></span>;
@@ -129,7 +119,7 @@ export const ExplorerRow = memo(function ExplorerRow({
       {row.kind === "worktree" ? <GitBranch size={13} className="ic" aria-hidden /> : null}
       {row.kind === "dir" ? <Folder size={13} className="ic" aria-hidden /> : null}
       {row.kind === "file" ? <File size={13} className="ic" aria-hidden /> : null}
-      <Name text={row.label} middle={row.kind === "file"} />
+      <MiddleName text={row.label} middle={row.kind === "file"} />
       {row.kind === "project" && (row.needs ?? 0) > 0 ? <span className="n amber">{row.needs}</span> : null}
       {row.kind === "worktree" && row.current ? <span className="xdot" role="img" aria-label="Current worktree" title="Current worktree" /> : null}
       {row.badge ? <span className="n x2ro">{row.badge}</span> : null}
@@ -150,11 +140,7 @@ export const ExplorerRow = memo(function ExplorerRow({
           <MoreHorizontal size={14} aria-hidden />
         </button>
       ) : null}
-      {row.kind === "file" && row.change && CHANGE[row.change] ? (
-        <span className={`xm ${row.change === "modified" ? "m" : row.change === "added" ? "a" : row.change === "renamed" ? "r" : row.change === "untracked" ? "u" : row.change === "deleted" ? "d" : row.change === "conflicted" ? "xg-bang" : ""}`} title={CHANGE[row.change]!.label} aria-label={CHANGE[row.change]!.label}>
-          {CHANGE[row.change]!.letter}
-        </span>
-      ) : null}
+      {row.kind === "file" && row.change ? <ChangeLetter change={row.change} /> : null}
     </div>
   );
 });

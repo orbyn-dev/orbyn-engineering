@@ -236,7 +236,7 @@ test("changed files list per turn and open the diff; a delegated thread runs on 
   await settled(service, id);
   await page.getByRole("button", { name: "1 file changed" }).click();
   await page.getByRole("list", { name: "Changed files" }).getByRole("button").click();
-  await expect(page.getByRole("radiogroup", { name: "Diff source" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Scope: / })).toBeVisible();
 
   const child = await service.api<{ id: string }>("POST", `/api/threads/${id}/delegate`, { prompt: "[scene:usage] help" });
   await page.goto(`${service.page}#/threads/${child.id}`);
@@ -253,7 +253,7 @@ test("a large turn opens Changes when asked to, and another thread's finish is a
   await page.goto(`${service.page}#/new/${projectId}`);
   await send(page, "[scene:large]");
   await expect(page).toHaveURL(/#\/threads\//);
-  await expect(page.getByRole("radiogroup", { name: "Diff source" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /^Scope: / })).toBeVisible({ timeout: 15_000 });
 
   const engines = await service.api<{ id: string }[]>("GET", "/api/engines");
   const other = await service.api<{ id: string }>("POST", "/api/threads", {
@@ -302,6 +302,6 @@ test("a link to a commit here opens it in Diff", async ({ page }) => {
   await send(page, "[scene:commitlink]");
   await expect(page).toHaveURL(/#\/threads\//);
   await page.getByRole("link", { name: "this commit" }).click();
-  await expect(page.getByRole("radiogroup", { name: "Diff source" }).getByRole("radio", { name: "Commit" })).toBeChecked();
+  await expect(page.getByRole("button", { name: "Scope: Commit" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: /commit/i })).toContainText("First");
 });

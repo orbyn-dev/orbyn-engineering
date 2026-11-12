@@ -6,3 +6,4 @@ export { samePath, threadPathOf, worktreeLabel } from "./model";
 export { canStartThreadIn, startThreadIn } from "./startThread";
 export { useFileTabNames } from "./names";
 export { useExplorer } from "./store";
+export { ChangeLetter, MiddleName } from "./ChangeLetter";

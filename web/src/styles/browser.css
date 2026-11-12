@@ -544,64 +544,7 @@ div.browser-bridge-row {
   .browser-agent-cursor { transition: none !important; }
   .browser-agent-click { animation: none; opacity: .35; transform: none; }
 }
-.patch-line[data-selected] {
-  background: var(--color-selected);
-}
-.diff-annotations {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 4px 10px;
-  white-space: normal;
-  font-family: var(--font-sans);
-}
-.diff-comment {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 8px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-background);
-  color: var(--color-textSoft);
-  font-family: var(--font-sans);
-  font-size: var(--text-meta);
-  white-space: normal;
-}
-.diff-comment-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 6px;
-  grid-column: 1;
-}
-.diff-comment-head strong {
-  color: var(--color-text);
-  font-weight: 500;
-}
-.diff-comment-where,
-.diff-comment-state {
-  color: var(--color-muted);
-}
-.diff-comment-where::before,
-.diff-comment-state::before {
-  content: "· ";
-}
-.diff-comment p {
-  grid-column: 1;
-  margin: 0;
-  white-space: pre-wrap;
-}
-.diff-comment button {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: start;
-}
-.diff-more {
-  display: flex;
-  justify-content: center;
-  padding: 8px;
-}
+
 /* Holds the branch's place until the workspace status names it. */
 .composer-branch-pending {
   visibility: hidden;
@@ -628,40 +571,13 @@ div.browser-bridge-row {
 .tabpanel {
   padding: 0 6px 10px;
 }
-.diff-sources.segment {
-  margin: 4px 12px;
-}
-.diff-options {
-  gap: 4px 12px;
-  padding: 4px 12px;
-  font-size: var(--text-meta);
-}
-.diff-find {
-  padding: 0 12px 4px;
-}
+
 .panel-bar {
   padding: 0 12px;
   font-size: var(--text-meta);
   color: var(--color-muted);
 }
-.diff-files {
-  gap: 8px;
-  padding: 0 6px;
-}
-.diff-file {
-  border-radius: var(--radius-lg);
-}
-.diff-file-row {
-  min-height: 30px;
-  font-size: var(--text-nav);
-}
-.patch {
-  font-size: var(--text-label);
-  line-height: 1.6;
-}
-.patch-split {
-  grid-template-columns: repeat(2, minmax(240px, 1fr));
-}
+
 .file-tree button {
   min-height: 26px;
   border-radius: var(--radius-md);
@@ -706,24 +622,11 @@ div.browser-bridge-row {
 .timeline {
   padding: 4px 8px;
 }
-.diff-find input {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  font-size: var(--text-meta);
-}
+
 .browser-popout {
   margin-left: auto;
 }
-.diff-view.segment {
-  margin: 4px 12px;
-}
-.diff-foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px;
-}
+
 .activity-head {
   display: flex;
   align-items: center;

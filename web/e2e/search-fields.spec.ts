@@ -42,13 +42,19 @@ const filled = async (input: Locator) => {
   expect(style.pad).not.toBe("0px");
 };
 
-test("the thread find and diff find inputs keep their fill and padding", async ({ page }) => {
+test("the thread find input keeps its fill and padding", async ({ page }) => {
   await page.goto("/#/threads/t-done");
   await page.keyboard.press("ControlOrMeta+f");
   await filled(page.locator(".thread-find input").first());
-  await page.keyboard.press("Escape");
+});
+
+test("the Changes file filter and find bar are one pill each", async ({ page }) => {
+  await page.goto("/#/threads/t-approval");
   await page.getByRole("button", { name: "Show side panel" }).click();
   await page.getByRole("button", { name: "Open a tab" }).click();
   await page.getByRole("menuitem", { name: "Changes" }).click();
-  await filled(page.locator(".diff-find input").first());
+  await bare(page.getByRole("searchbox", { name: "Filter files" }));
+  await page.getByRole("group", { name: "Patch" }).focus();
+  await page.keyboard.press("ControlOrMeta+f");
+  await bare(page.getByRole("searchbox", { name: "Find in diff" }));
 });

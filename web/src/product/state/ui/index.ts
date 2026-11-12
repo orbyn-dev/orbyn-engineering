@@ -2,6 +2,7 @@
 export { fileName, fileTabId, parseFileTab, type FileTarget } from "./fileTab";
 export { applyTheme, resolveTheme } from "./theme";
 export { useUi } from "./store";
+export { defaults as defaultPrefs } from "./defaults";
 export {
   DEFAULT_SIDEBAR_WIDTH,
   DRAFT_LAYOUT,

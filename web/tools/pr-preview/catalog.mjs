@@ -142,6 +142,26 @@ export const FRAMES = {
   "panel-activity": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity"]) },
   "panel-side": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity", "Side chat"]) },
 
+  // Changes (mock threads: t-approval has three changed files, t-done none). The conflict, binary, rename, huge, staged and Markdown
+  // frames need diffs the mock does not carry; they are drawn from fixtures in the unit tests.
+  "changes-default": { route: "#/threads/t-approval", steps: openTabs(["Changes"]) },
+  "changes-empty": { route: "#/threads/t-done", steps: openTabs(["Changes"]) },
+  "changes-error": { route: "#/threads/t-approval", pre: [{ route: "**/api/threads/*/diff*", status: 500 }], steps: openTabs(["Changes"]) },
+  "changes-loading": { route: "#/threads/t-approval", pre: [{ route: "**/api/threads/*/diff*", delay: 20000 }], steps: openTabs(["Changes"]), wait: 900 },
+  "changes-view-menu": { route: "#/threads/t-approval", steps: [...openTabs(["Changes"]), click("button", "View options")] },
+  "changes-compare-menu": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("button", "Scope:", { prefix: true }), click("menuitem", "Branch"), click("button", "Compare", { prefix: true })],
+  },
+  "changes-find": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("group", "Patch"), { do: "press", key: "Control+f" }, { do: "fill", label: "Find in diff", value: "expire" }],
+  },
+  "comment-select": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("button", "Comment on line 87")],
+  },
+
   // Usage, the Limits tab (mock scenarios "limits*"): only Codex reports a window; Claude Code and the others read Not reported.
   "usage-claude-windows": { route: "#/usage", scenario: "limits-claude", steps: [click("tab", "Limits")] },
   "usage-claude-windows-unavailable": { route: "#/usage", scenario: "limits", steps: [click("tab", "Limits")] },
