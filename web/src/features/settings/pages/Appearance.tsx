@@ -61,7 +61,7 @@ const LAYOUTS: LayoutOption[] = [
   {
     value: "ledger",
     label: "Ledger",
-    description: "What needs you first",
+    description: "What needs you at the top",
     columns: "24% 1fr 22%",
     rows: "14px 1fr",
     cells: [{ span: true, lead: true }, { lead: true }, { span: true }, {}],
@@ -297,7 +297,7 @@ function FontRow({ title, label, value, save }: { title: string; label: string; 
   const [seen, setSeen] = useState(value);
   if (seen !== value) { setSeen(value); setDraft(value); }
   return (
-    <SettingRow title={title}>
+    <SettingRow title={title} description="Any installed font name">
       <input aria-label={label} placeholder="Any installed font" value={draft} spellCheck={false}
         onChange={(event) => setDraft(event.target.value)} onBlur={() => { if (draft.trim() !== value) save(draft.trim()); }} />
       {value !== "" ? <Button small tone="quiet" aria-label={`Reset ${label} to default`} onClick={() => { setDraft(""); save(""); }}>Reset to default</Button> : null}

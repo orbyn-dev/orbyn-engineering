@@ -48,7 +48,7 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **The side panel.** `panel-empty`, `panel-launcher-menu`, `panel-tab-menu`, `panel-tabs-single`, `panel-browser`, `panel-activity`, `panel-side`
 
-**Changes, in the side panel.** `changes-default`, `changes-empty`, `changes-error`, `changes-loading`, `changes-view-menu`, `changes-compare-menu`, `changes-find`, `comment-select`
+**Changes, in the side panel.** `changes-default`, `changes-empty`, `changes-error`, `changes-loading`, `changes-view-menu`, `changes-compare-menu`, `changes-find`, `changes-file-menu`, `changes-more-files`, `changes-turn-picker`, `changes-commit-picker`, `comment-select`, `comment-pending`
 
 **Settings, one page for each section.** `s-general`, `s-appearance`, `s-chat`, `s-diffs`, `s-keybindings`, `s-providers`, `s-threads`, `s-tasks`, `s-projects`, `s-source-control`, `s-worktrees`, `s-maintenance`, `s-labs`, `s-about`, `s-archive`
 

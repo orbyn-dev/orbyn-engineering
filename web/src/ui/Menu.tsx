@@ -21,8 +21,10 @@ export interface MenuItem {
   keepOpen?: boolean;
   /** With `keepOpen`: one of several exclusive choices, announced as a radio item rather than a checkbox. */
   radio?: boolean;
-  /** With `keepOpen`: the check sits before the label, in a slot kept for it, so labels line up. */
+  /** The check sits before the label, in a slot kept for it, so labels line up. Drawn on the selected item. */
   leadCheck?: boolean;
+  /** Replaces the label's text where the row needs more than one phrase; `label` stays its name. */
+  content?: ReactNode;
   /** Opens a submenu instead of acting. */
   children?: MenuItem[];
   onSelect?(): void;
@@ -131,6 +133,7 @@ function MenuList({
               role={item.keepOpen ? (item.radio ? "menuitemradio" : "menuitemcheckbox") : "menuitem"}
               aria-checked={item.keepOpen ? item.selected === true : undefined}
               data-label={item.label}
+              aria-label={item.content ? item.label : undefined}
               data-destructive={item.destructive || undefined}
               aria-haspopup={item.children ? "menu" : undefined}
               aria-expanded={item.children ? open?.item === item : undefined}
@@ -156,11 +159,11 @@ function MenuList({
                 item.onSelect?.();
               }}
             >
-              {item.keepOpen && item.leadCheck ? (
+              {item.leadCheck ? (
                 <span className="menu-lead">{item.selected ? <Check size={14} aria-hidden /> : null}</span>
               ) : null}
               {item.icon}
-              <span>{item.label}</span>
+              {item.content ?? <span>{item.label}</span>}
               {item.shortcut ? <span className="menu-shortcut">{item.shortcut}</span> : null}
               {item.keepOpen && item.selected && !item.leadCheck ? <Check size={14} className="menu-check" aria-hidden /> : null}
               {item.children ? <ChevronRight size={14} className="menu-chev" aria-hidden /> : null}

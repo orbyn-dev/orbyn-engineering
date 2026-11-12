@@ -6,6 +6,9 @@ import type { EngineStatus } from "../../../api/types";
 import { useWorkspace } from "../../../product/state/workspace";
 import { KeybindingsSection } from "../pages/Keybindings";
 import { AboutSection } from "./AboutSection";
+import { DiffsSection } from "./DiffsSection";
+import { AppearanceSection } from "../pages/Appearance";
+import { useUi } from "../../../product/state/ui";
 import { ProviderTable } from "../providers/ProviderTable";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
@@ -55,14 +58,14 @@ it("opens the licence lists from About and narrows them by package name", async 
   vi.mocked(request).mockResolvedValue({ version: "1.0.0", platform: "macos", remote: false });
   const user = userEvent.setup();
   render(<AboutSection />);
-  await user.click(await screen.findByRole("button", { name: "View lists" }));
+  await user.click(await screen.findByRole("button", { name: "View" }));
   const table = screen.getByRole("table", { name: "Packages" });
   const before = within(table).getAllByRole("row").length;
   await user.type(screen.getByRole("textbox", { name: "Find a package" }), "zzzz-no-such-package");
   expect(within(table).getAllByRole("row")).toHaveLength(1);
   expect(before).toBeGreaterThan(1);
   await user.click(screen.getByRole("button", { name: "About" }));
-  expect(screen.getByRole("button", { name: "View lists" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "View" })).toBeVisible();
 });
 
 it("lists the installed agent CLIs and their versions on About", async () => {
@@ -79,6 +82,50 @@ it("leads the About card with the 40 px mark tile, not a lettered placeholder", 
   expect(tile).toHaveAttribute("data-size", "40");
   expect(tile?.querySelector("svg.logo")).toHaveAttribute("data-logo", "28");
   expect(container.querySelector(".set-card img")).toBeNull();
+});
+
+it("lists the five About rows the design draws, and the orbyn.dev link, with no platform line", async () => {
+  vi.mocked(request).mockResolvedValue({ version: "1.2.3", platform: "macos", remote: false });
+  useWorkspace.setState({ engines: { data: [engine({})], error: null, loading: false } });
+  render(<AboutSection />);
+  expect(await screen.findByText(/^Orbyn Engineering/)).toBeVisible();
+  expect(screen.queryByText(/^Platform /)).toBeNull();
+  expect(screen.getByText("Check for updates automatically")).toBeVisible();
+  expect(screen.getByText("Agent CLIs")).toBeVisible();
+  expect(screen.getByText("Open-source licences")).toBeVisible();
+  expect(screen.getByText("Website, documentation and release notes")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("href", "https://orbyn.dev");
+});
+
+it("says an app update is downloaded on the About card and offers Later and Restart to update", async () => {
+  vi.mocked(request).mockResolvedValue({ version: "0.42.1", platform: "macos", remote: false });
+  const updates = { app: { current: "0.42.1", latest: "0.43.0", notes: null, mode: "desktop", can_apply: true, blocked_reason: null, unconfigured: false, downloaded: 10n, total: 10n } };
+  useWorkspace.setState({ updates: { data: updates as never, error: null, loading: false } });
+  const user = userEvent.setup();
+  render(<AboutSection />);
+  expect(await screen.findByText("Update 0.43.0 downloaded")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Restart to update" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Later" }));
+  expect(screen.queryByText("Update 0.43.0 downloaded")).toBeNull();
+  useWorkspace.setState({ updates: { data: null, error: null, loading: false } as never });
+});
+
+it("turns whitespace-only changes out of the diff from Settings, the same switch the Changes menu has", async () => {
+  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
+  const user = userEvent.setup();
+  render(<DiffsSection />);
+  const toggle = await screen.findByRole("switch", { name: "Ignore whitespace changes" });
+  expect(toggle).not.toBeChecked();
+  await user.click(toggle);
+  expect(useUi.getState().diffIgnoreWhitespace).toBe(true);
+  useUi.getState().setPrefs({ diffIgnoreWhitespace: false });
+});
+
+it("describes the Ledger layout and the two font fields in the design's words", async () => {
+  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
+  render(<AppearanceSection />);
+  expect(await screen.findByText("What needs you at the top")).toBeVisible();
+  expect(screen.getAllByText("Any installed font name")).toHaveLength(2);
 });
 
 it("labels every action and context in words, keeps the ids in a tooltip, copies an id from the row menu, and searches both", async () => {

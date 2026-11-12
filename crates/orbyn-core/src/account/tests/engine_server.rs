@@ -50,6 +50,8 @@ struct State {
     refuse: Option<(String, u16, String)>,
     log: Vec<String>,
     removed: Vec<String>,
+    invites: Vec<String>,
+    invite_limited: bool,
 }
 
 #[derive(Default)]
@@ -115,6 +117,15 @@ impl Server {
             approval: None,
         });
         token
+    }
+
+    /// An invite the server accepts; checking it uses nothing up.
+    pub fn allow_invite(&self, code: &str) {
+        self.lock().invites.push(code.to_owned());
+    }
+
+    pub fn limit_invites(&self, limited: bool) {
+        self.lock().invite_limited = limited;
     }
 
     pub fn set_offline(&self, offline: bool) {
@@ -184,6 +195,21 @@ impl Server {
         }
         if path == "/v1/accounts/status" {
             return answer(200, &json!({ "deleted_at": "" }));
+        }
+        if path == "/v1/invites/check" {
+            let body: Value = request
+                .body
+                .as_ref()
+                .and_then(|bytes| serde_json::from_slice(bytes).ok())
+                .unwrap_or(Value::Null);
+            let code = body["invite"].as_str().unwrap_or_default();
+            if state.invite_limited {
+                return failure(429, "rate_limited");
+            }
+            if state.invites.iter().any(|good| good == code) {
+                return answer(200, &json!({}));
+            }
+            return failure(400, "invite_invalid");
         }
         let me = request
             .bearer

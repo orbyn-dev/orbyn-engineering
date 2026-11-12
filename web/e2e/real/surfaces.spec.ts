@@ -102,7 +102,12 @@ test("the Changes panel: letters, test filter, find, split, whitespace, collapse
 
   await page.getByRole("button", { name: /^Scope: / }).click();
   await page.getByRole("menuitem", { name: "Commit", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Commit" })).toContainText("Second commit");
+  // Choosing Commit opens the list of commits; the newest is checked.
+  const commits = page.getByRole("menu", { name: "Commit" });
+  await expect(commits.getByRole("menuitem").first()).toContainText("Second commit");
+  await expect(commits.getByRole("menuitem").first()).toHaveAttribute("aria-current", "true");
+  await page.keyboard.press("Escape");
+  await expect(commits).toHaveCount(0);
   await row(/^\w+ notes\.md/).click();
   await expect(page.locator("[data-diff-file='notes.md']")).toBeVisible();
 });

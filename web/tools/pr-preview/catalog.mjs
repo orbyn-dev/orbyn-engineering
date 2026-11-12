@@ -142,8 +142,8 @@ export const FRAMES = {
   "panel-activity": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity"]) },
   "panel-side": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity", "Side chat"]) },
 
-  // Changes (mock threads: t-approval has three changed files, t-done none). The conflict, binary, rename, huge, staged and Markdown
-  // frames need diffs the mock does not carry; they are drawn from fixtures in the unit tests.
+  // Changes (mock threads: t-approval has three changed files, t-done none). The conflict, binary, rename, huge, staged, Markdown, more-files,
+  // turn-picker, commit-picker and comment-pending frames need data the mock does not carry; they are drawn from fixtures in the unit tests.
   "changes-default": { route: "#/threads/t-approval", steps: openTabs(["Changes"]) },
   "changes-empty": { route: "#/threads/t-done", steps: openTabs(["Changes"]) },
   "changes-error": { route: "#/threads/t-approval", pre: [{ route: "**/api/threads/*/diff*", status: 500 }], steps: openTabs(["Changes"]) },
@@ -156,6 +156,10 @@ export const FRAMES = {
   "changes-find": {
     route: "#/threads/t-approval",
     steps: [...openTabs(["Changes"]), click("group", "Patch"), { do: "press", key: "Control+f" }, { do: "fill", label: "Find in diff", value: "expire" }],
+  },
+  "changes-file-menu": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("button", "Actions for", { prefix: true })],
   },
   "comment-select": {
     route: "#/threads/t-approval",

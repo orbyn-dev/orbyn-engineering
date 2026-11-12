@@ -86,6 +86,17 @@ export function dayStamp(iso: string, now = new Date()): string {
   return days === 0 ? `Today ${clock}` : days === 1 ? `Yesterday ${clock}` : `${at.getDate()} ${MONTHS[at.getMonth()]} ${clock}`;
 }
 
+/** "14:20", "yesterday", "Mon", "3 Nov": when something happened, as short as the day allows. */
+export function pickerTime(iso: string, now = new Date()): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((midnight(now) - midnight(at)) / 86_400_000);
+  if (days <= 0) return clock24(at);
+  if (days === 1) return "yesterday";
+  return days < 7 ? DAYS[at.getDay()] ?? "" : `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+}
+
 /** "Mon 9 Nov 07:00": a run's start, which can be days from now or long gone. */
 export function weekdayStamp(iso: string): string {
   const at = new Date(iso);

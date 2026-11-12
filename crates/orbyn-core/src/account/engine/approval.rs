@@ -329,8 +329,9 @@ where
 
     /// Don't allow. An approval being started is given up by the Allow that runs it. Otherwise the
     /// approver starts one and denies it at once, which closes it on the new device immediately
-    /// and needs no recent sign-in; if that cannot be started the device is removed, which does.
-    /// After an Allow was confirmed, Cancel removes the device, so the digits finish nothing.
+    /// and needs no recent sign-in. If one cannot be started the request stays listed and the
+    /// error is returned, so the screen shows it and the person can try again. After an Allow was
+    /// confirmed, Cancel removes the device, so the digits finish nothing.
     pub(super) async fn refuse(&self, id: &str) -> Result<(), DeviceError> {
         let (running, confirmed) = {
             let mut trusted = self.trusted();
@@ -343,6 +344,19 @@ where
         if running {
             return Ok(());
         }
+        let result = self.close(id, confirmed).await;
+        let mut trusted = self.trusted();
+        if result.is_err() {
+            // Not closed: it stays on the list so Don't allow can be tried again.
+            trusted.dismissed.remove(id);
+        } else {
+            trusted.confirmed.remove(id);
+            trusted.left.remove(id);
+        }
+        result
+    }
+
+    async fn close(&self, id: &str, confirmed: bool) -> Result<(), DeviceError> {
         let client = &self.shared.client;
         let guard = self.shared.engine().await?;
         let Some(engine) = guard.as_ref() else {
@@ -354,20 +368,15 @@ where
             }
             other => map(other),
         };
-        let result = if confirmed {
-            client.remove_device(engine, id).await.map_err(gone)
-        } else {
-            match client.start_approval(engine, id).await {
-                Ok(approval) => client.deny_approval(approval).await.map_err(gone),
-                // Nothing to close: the device is not in the account any more.
-                Err(dc::DeviceError::InvalidInput(_)) => Ok(()),
-                Err(_) => client.remove_device(engine, id).await.map_err(gone),
-            }
-        };
-        let mut trusted = self.trusted();
-        trusted.confirmed.remove(id);
-        trusted.left.remove(id);
-        result
+        if confirmed {
+            return client.remove_device(engine, id).await.map_err(gone);
+        }
+        match client.start_approval(engine, id).await {
+            Ok(approval) => client.deny_approval(approval).await.map_err(gone),
+            // Nothing to close: the device is not in the account any more.
+            Err(dc::DeviceError::InvalidInput(_)) => Ok(()),
+            Err(error) => Err(map(error)),
+        }
     }
 
     /// A test plays a Don't allow arriving at a chosen point of an Allow.

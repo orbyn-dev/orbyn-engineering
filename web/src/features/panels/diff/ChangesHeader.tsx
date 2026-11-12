@@ -106,6 +106,8 @@ export interface ComparePair {
   /** Only the Branch scope has a base to pick. */
   enabled: boolean;
   onBase(name: string): void;
+  /** For the Turn and Commit scopes: the pair opens the list of turns or commits instead of a base menu. */
+  onOpen?(): void;
 }
 
 /** “main → origin/main”: the base and the branch compared with it, as one button that opens both choices. */
@@ -123,18 +125,30 @@ function Pair({ pair }: { pair: ComparePair }) {
       : []),
   ];
   const name = pair.head ? `Compare ${pair.base} to ${pair.head}` : `Compare ${pair.base}`;
+  const contents = (
+    <>
+      <span className="mono">{pair.base}</span>
+      {pair.head ? (
+        <>
+          <ArrowRight size={11} aria-hidden />
+          <span className="mono">{pair.head}</span>
+        </>
+      ) : null}
+      <ChevronDown size={11} aria-hidden />
+    </>
+  );
+  if (pair.onOpen) {
+    return (
+      <button type="button" className="pair" aria-label={name} aria-haspopup="menu" onClick={pair.onOpen}>
+        {contents}
+      </button>
+    );
+  }
   return (
     <MenuButton items={items} menuLabel="Compare" width={260} disabled={!pair.enabled}>
       {(props) => (
         <button type="button" className="pair" aria-label={name} title={pair.enabled ? undefined : "Compare applies to the Branch scope"} {...props}>
-          <span className="mono">{pair.base}</span>
-          {pair.head ? (
-            <>
-              <ArrowRight size={11} aria-hidden />
-              <span className="mono">{pair.head}</span>
-            </>
-          ) : null}
-          <ChevronDown size={11} aria-hidden />
+          {contents}
         </button>
       )}
     </MenuButton>

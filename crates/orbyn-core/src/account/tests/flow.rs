@@ -88,6 +88,12 @@ async fn sign_up_runs_invite_email_password_and_code_in_that_order_then_signs_in
         code(a.check_invite("OOOO-OOOO-OOOO-OOOO").await.unwrap_err()),
         "invalid_invite"
     );
+    // A good code spends nothing, so it passes again; a limited check is the throttled state.
+    a.check_invite("k7qm 2xwh-9qxa 3c2d").await.unwrap();
+    assert_eq!(
+        code(a.check_invite("K7QM-2XWH-9QXA-3C2E").await.unwrap_err()),
+        "rate_limited"
+    );
     // The email step sends nothing, so a code cannot be verified before the password step.
     assert_eq!(
         code(a.verify_email_code(EMAIL_CODE).await.unwrap_err()),

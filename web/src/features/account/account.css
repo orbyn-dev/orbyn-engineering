@@ -81,6 +81,8 @@
 .ac-skr i { display: block; height: 10px; width: 60%; border-radius: 5px; background: var(--color-selected); }
 .ac-skr i + i { width: 35%; }
 .ac-last[data-stale] { opacity: 0.55; pointer-events: none; }
+/* The Devices page keeps its last list at full contrast: the red row above says it failed. */
+.ac-devpage .ac-last[data-stale] { opacity: 1; }
 
 /* Sidebar footer: avatar and sync status, then the Settings gear. */
 .ac-foot { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 4px; }

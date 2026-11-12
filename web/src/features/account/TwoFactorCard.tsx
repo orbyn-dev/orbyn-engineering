@@ -60,7 +60,7 @@ export function TwoFactorCard({ onDone, onCancel }: { onDone(): void; onCancel(t
   const error = wrong
     ? recovery
       ? "That recovery code didn’t work. Check it, or use a code you haven’t used."
-      : `That code isn’t right. Codes change every 30 seconds, so try the current one.${problem.triesLeft === null ? "" : ` ${problem.triesLeft} ${problem.triesLeft === 1 ? "try" : "tries"} left.`}`
+      : `That code isn’t right. Codes change every 30 seconds.${problem.triesLeft === null ? "" : ` ${problem.triesLeft} ${problem.triesLeft === 1 ? "try" : "tries"} left.`}`
     : null;
   return (
     <Card
