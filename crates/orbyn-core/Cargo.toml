@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 license-file.workspace = true
 
+[features]
+# Rows and a repository for the HTTP tests of orbynd.
+test-support = []
+
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
 # The Engine's device client, by tag: the one Engine crate the app names (docs/account.md, "Engine pin").

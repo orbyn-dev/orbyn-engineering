@@ -49,6 +49,8 @@ export const defaults: Prefs = {
   diffFilesCollapsed: false,
   diffIgnoreWhitespace: false,
   diffHideTests: false,
+  diffWrapLines: true,
+  diffMarkdownRendered: false,
   lightPreset: null,
   darkPreset: null,
   customColors: {},

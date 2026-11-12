@@ -38,7 +38,7 @@ mod threads;
 
 pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
-pub use crew_autopilot::AutopilotEvent;
+pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};

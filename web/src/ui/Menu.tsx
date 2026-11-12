@@ -13,10 +13,16 @@ export interface MenuItem {
   title?: string;
   destructive?: boolean;
   separatorBefore?: boolean;
+  /** A small caption drawn above this item, to name the group that starts here. */
+  heading?: string;
   /** Shown right-aligned, such as the key that runs the same command. */
   shortcut?: string;
   /** A checkable item: choosing it toggles at once and the menu stays open. */
   keepOpen?: boolean;
+  /** With `keepOpen`: one of several exclusive choices, announced as a radio item rather than a checkbox. */
+  radio?: boolean;
+  /** With `keepOpen`: the check sits before the label, in a slot kept for it, so labels line up. */
+  leadCheck?: boolean;
   /** Opens a submenu instead of acting. */
   children?: MenuItem[];
   onSelect?(): void;
@@ -40,6 +46,7 @@ function MenuList({
   items,
   submenu,
   closing,
+  minWidth,
   onClose,
   onBack,
 }: {
@@ -48,6 +55,7 @@ function MenuList({
   origin: string;
   label: string;
   heading?: string;
+  minWidth?: number;
   items: MenuItem[];
   submenu?: boolean;
   closing?: boolean;
@@ -110,17 +118,17 @@ function MenuList({
         role="menu"
         aria-label={label}
         data-menu-root
-        style={{ left: x, top: y, transformOrigin: origin }}
+        style={{ left: x, top: y, transformOrigin: origin, ...(minWidth ? { minWidth } : {}) }}
         data-origin={origin}
         onKeyDown={onKeyDown}
         {...closingProps(closing)}
       >
         {heading ? <div className="menu-heading" role="presentation">{heading}</div> : null}
         {items.map((item, index) => (
-          <FragmentRow key={item.label} separator={item.separatorBefore === true && index > 0}>
+          <FragmentRow key={item.label} separator={item.separatorBefore === true && index > 0} heading={item.heading}>
             <button
               type="button"
-              role={item.keepOpen ? "menuitemcheckbox" : "menuitem"}
+              role={item.keepOpen ? (item.radio ? "menuitemradio" : "menuitemcheckbox") : "menuitem"}
               aria-checked={item.keepOpen ? item.selected === true : undefined}
               data-label={item.label}
               data-destructive={item.destructive || undefined}
@@ -148,10 +156,13 @@ function MenuList({
                 item.onSelect?.();
               }}
             >
+              {item.keepOpen && item.leadCheck ? (
+                <span className="menu-lead">{item.selected ? <Check size={14} aria-hidden /> : null}</span>
+              ) : null}
               {item.icon}
               <span>{item.label}</span>
               {item.shortcut ? <span className="menu-shortcut">{item.shortcut}</span> : null}
-              {item.keepOpen && item.selected ? <Check size={14} className="menu-check" aria-hidden /> : null}
+              {item.keepOpen && item.selected && !item.leadCheck ? <Check size={14} className="menu-check" aria-hidden /> : null}
               {item.children ? <ChevronRight size={14} className="menu-chev" aria-hidden /> : null}
             </button>
           </FragmentRow>
@@ -178,10 +189,11 @@ function MenuList({
   );
 }
 
-function FragmentRow({ separator, children }: { separator: boolean; children: ReactNode }) {
+function FragmentRow({ separator, heading, children }: { separator: boolean; heading?: string; children: ReactNode }) {
   return (
     <>
       {separator ? <hr className="menu-separator" /> : null}
+      {heading ? <div className="menu-heading" role="presentation">{heading}</div> : null}
       {children}
     </>
   );
@@ -217,12 +229,15 @@ export function Menu({
   heading,
   items,
   closing,
+  minWidth,
   onClose,
 }: {
   x: number;
   y: number;
   origin?: "top left" | "bottom left" | "bottom right";
   label: string;
+  /** The least width in px, for a menu the design draws wider than its longest label. */
+  minWidth?: number;
   /** A small caption above the items, such as "Hidden tabs". */
   heading?: string;
   items: MenuItem[];
@@ -263,7 +278,7 @@ export function Menu({
   // Chosen once, so a dialog opening or closing behind the menu doesn't remount it.
   const [host] = useState(menuHost);
   return createPortal(
-    <MenuList x={x} y={y} origin={origin} label={label} heading={heading} items={items} closing={closing} onClose={dismiss} />,
+    <MenuList x={x} y={y} origin={origin} label={label} heading={heading} items={items} closing={closing} minWidth={minWidth} onClose={dismiss} />,
     host,
   );
 }

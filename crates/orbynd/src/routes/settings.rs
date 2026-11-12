@@ -48,6 +48,7 @@ async fn info(State(state): State<AppState>) -> Json<ServerInfo> {
         channel: Some(orbyn_core::settings::environment::release_channel()),
         environment_icon: state.core.environment_icon().ok().flatten(),
         database_upgrade: state.core.store.upgrade(),
+        crew_preview: state.core.config.crew_preview.then_some(true),
     })
 }
 

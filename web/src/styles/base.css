@@ -135,7 +135,9 @@ select {
     .branch-find,
     .settings-search,
     .pulls-search,
-    .palette-search
+    .palette-search,
+    .flf,
+    .x2find
   )
   input:not([type="checkbox"], [type="radio"]):not([type="hidden"]),
 .pulls-fld .pulls-inp input:not([type="checkbox"], [type="radio"]) {
@@ -724,6 +726,11 @@ input[type="checkbox"][role="switch"]:disabled {
 }
 .popup-menu button[data-destructive] {
   color: var(--color-danger);
+}
+.popup-menu .menu-lead {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
 }
 .popup-menu .menu-chev {
   margin-left: auto;

@@ -21,8 +21,10 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
 | `merge/review_queue` | The after-merge Review queue and the person's answers |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
+| `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
 | `merge/gitops` | The git behind them: scratch checkouts, merge, revert, compare-and-swap of the branch |
 
+The Crew marker is [`crew::changes`](../changes.rs): the Crew routes that change state, which N1 refuses by path too (any path under `/api/crew` that is not a listed read).
 The account marker is [`account::changes`](../../account/changes.rs): the list of account routes that change state,
 which N1 refuses by path. `orbynd`'s route-table test fails when a route under `/api/account` is in neither list.
 
@@ -45,10 +47,10 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
 
-Outside a Crew task only N1 (the account) is enforced, so an ordinary thread cannot call a state-changing account route. N1 looks
+Outside a Crew task only N1 (the account, and the Crew routes that change state) is enforced, so an ordinary thread cannot call a state-changing account or Crew route. N1 looks
 at requests, not at files: a network, browser or tool action that names a route, or a command run by a connecting program
 (curl, wget, an interpreter) that does. A file change, a search or a read of a document that merely names `/api/account/...`
-is not refused, so ordinary work does not trip the wires.
+is not refused, so ordinary work does not trip the wires. N1 reads spelling only: `//`, `/./`, `/x/../` and quotes inside a word are undone, but a path built from a variable, string pieces or a script the agent wrote is not seen; that is the sandbox's work (#441).
 
 Under `off` every request goes to a person, always-allowed reads and leased writes included: that is "every request", and the hard
 rules still refuse first.

@@ -1,6 +1,6 @@
 import { AppWindow, Copy, Download, ExternalLink, Paperclip } from "lucide-react";
 import { useState } from "react";
-import { api, openThreadFileInBrowser, readThreadFile, saveThreadFile } from "../api";
+import { openThreadFileInBrowser, readThreadFile, saveThreadFile } from "../api";
 import type { FileContent } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
@@ -13,7 +13,7 @@ import { FileBytes, FileMedia } from "./FileMedia";
 import { mediaKind, rawUrl } from "../../../product/media/media";
 import { FilePreview, previewKind } from "./FilePreview";
 import { ZipViewer, isZipPath } from "./ZipViewer";
-import { primaryEditor } from "../../../product/composer/editorPreferences";
+import { openInEditor } from "./openInEditor";
 import { useWorkspace } from "../../../product/state/workspace";
 import { FileComments } from "./FileComments";
 import { formatBytes } from "../../../lib/format";
@@ -105,7 +105,6 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
   });
   // Key changes are cleared by an effect; never expose old bytes in that render.
   const file = { ...read, data: read.data?.cwd === cwd && read.data.path === path ? read.data.content : null };
-  const preferred = useUi((state) => state.preferredEditor);
   const pushToast = useUi((state) => state.pushToast);
   const [copying, setCopying] = useState(false);
   // Only a complete, non-binary file has text to copy: a media file is never
@@ -129,16 +128,7 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
       setCopying(false);
     }
   };
-  const open = async () => {
-    try {
-      const editors = await api.editors();
-      const editor = primaryEditor(editors, preferred);
-      if (!editor) return;
-      await api.openInEditor(threadId, { path, editor: editor.id, ...(line ? { line } : {}) });
-    } catch (failure) {
-      pushToast(`Couldn't open it. ${toFailure(failure).message}`);
-    }
-  };
+  const open = () => openInEditor(threadId, path, line);
   const openInBrowser = async () => {
     try {
       await openThreadFileInBrowser(threadId, path);

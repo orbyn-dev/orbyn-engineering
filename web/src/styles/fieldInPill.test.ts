@@ -15,7 +15,6 @@ const sharedBody = rule?.[3] ?? "";
 const EXEMPT: Record<string, string> = {
   ".thread-find": "its input is the filled field beside the match count",
   ".browser-bar": "the address field is the filled input itself",
-  ".diff-find": "the find input is the filled field",
   ".filter-popup": "the popup's input sits on the popup's own surface",
   ".question": "an answer field, not a search pill",
   ".project-image-picker": "a direct child field of the picker",

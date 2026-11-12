@@ -16,9 +16,10 @@ pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
 pub use hosts::read_allowed_hosts;
 pub use merge::{
-    DiffFacts, MergeOutcome, MergeTarget, Rate, RecentTotals, ReviewAnswer, ReviewItem, Risk,
-    Scored, WatchOutcome, area_of, areas_of, check_words, lane_ran, owed_lanes, review_window,
-    score, sensitive,
+    Answering, COMMENT_MAX, DIGEST_HOURS_MAX, DiffFacts, MergeOutcome, MergeTarget, OFFSET_MAX,
+    PAGE_DEFAULT, PAGE_MAX, Page, Rate, RecentTotals, ReviewAnswer, ReviewItem, Risk, Scored,
+    WatchOutcome, area_of, areas_of, check_words, lane_ran, owed_lanes, review_window, score,
+    sensitive, valid_id,
 };
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};

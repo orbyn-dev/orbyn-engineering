@@ -8,6 +8,7 @@ mod auth;
 mod automations;
 mod checkpoints;
 mod composer;
+mod crew;
 mod engines;
 mod explorer;
 mod files;
@@ -38,6 +39,8 @@ mod account_approval_tests;
 #[cfg(test)]
 mod account_tests;
 #[cfg(test)]
+mod crew_tests;
+#[cfg(test)]
 mod tests;
 
 use axum::Router;
@@ -53,6 +56,7 @@ pub fn router(state: AppState) -> Router {
     let access = state.access.clone();
     let protected = Router::new()
         .merge(account::routes(state.clone()))
+        .merge(crew::routes(state.clone()))
         .merge(media::routes())
         .merge(settings::routes())
         .merge(projects::routes())

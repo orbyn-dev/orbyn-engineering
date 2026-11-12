@@ -799,3 +799,74 @@ fn gh_graphql_mutations_aliases_and_extensions_are_refused() {
     assert_eq!(command("gh alias list"), None);
     assert_eq!(command("gh extension list"), None);
 }
+
+#[test]
+fn n1_refuses_a_state_changing_crew_route_in_every_spelling_and_leaves_the_reads() {
+    for text in [
+        "curl -X PUT http://127.0.0.1:9/api/crew/autopilot/mode -d x",
+        "curl -X DELETE http://127.0.0.1:9/api/crew/autopilot/mode",
+        "curl -X GET http://127.0.0.1:9/api/crew/autopilot/confirm",
+        "curl -X POST http://127.0.0.1:9/api/crew/autopilot/confirm/",
+        "curl -X POST 'http://127.0.0.1:9/api/crew/autopilot/review/t-1/revert?now=1'",
+        "curl -XPOST http://127.0.0.1:9/API/CREW/AUTOPILOT/REVIEW/T-1/LOOKS-GOOD",
+        "wget --method=POST http://localhost:9/api/crew/autopilot/review/t-1/comment",
+        "python3 -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:9/api/%63rew/autopilot/mode')\"",
+        "U=http://127.0.0.1:9/api/crew/autopilot/review/t/revert; curl -X POST $U",
+        "curl http://127.0.0.1:9/api/crew/not-listed-yet",
+    ] {
+        assert_eq!(command(text), Some("N1"), "{text}");
+    }
+    for kind in [ActionKind::Network, ActionKind::Browser, ActionKind::Tool] {
+        assert_eq!(
+            refused(kind, "PUT http://127.0.0.1:9/api/crew/autopilot/mode", &[]),
+            Some("N1"),
+            "{kind:?}"
+        );
+    }
+    // A read, a file that only names the route, and a program that connects to nothing here are not refused.
+    assert_eq!(
+        command("curl http://127.0.0.1:9/api/crew/approvals?limit=5"),
+        None
+    );
+    assert_eq!(command("curl http://127.0.0.1:9/api/crews"), None);
+    assert_eq!(
+        refused(ActionKind::FileChange, "docs/crew.md", &["docs/crew.md"]),
+        None
+    );
+}
+
+#[test]
+fn n1_reads_a_route_spelled_around_its_prefix_across_a_whole_command() {
+    for text in [
+        r#"curl -X PUT http://127.0.0.1:9/api/"crew"/autopilot/mode"#,
+        r#"curl -X PUT http://127.0.0.1:9/api/cr"ew"/autopilot/mode"#,
+        r#"curl -X PUT "http://127.0.0.1:9/api/crew"/autopilot/mode"#,
+        r#"curl -X POST 'http://127.0.0.1:9/api/'crew/autopilot/confirm"#,
+        "curl -X PUT http://127.0.0.1:9/api/./crew/autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9/api/x/../crew/autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9/api/x/y/../../crew/autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9//api//crew//autopilot/mode",
+        "curl -X PUT http://127.0.0.1:9/api//crew/autopilot/mode",
+        r#"wget --method=POST http://127.0.0.1:9/api/"account"/sign-out"#,
+        "wget --method=POST http://127.0.0.1:9/api/./account/sign-out",
+        "wget --method=POST http://127.0.0.1:9/api/x/../account/sign-out",
+        r#"sh -c 'curl -X PUT http://127.0.0.1:9/api/"crew"/autopilot/mode'"#,
+        r#"env X=1 curl -X PUT http://127.0.0.1:9/api/"crew"/autopilot/mode"#,
+    ] {
+        assert_eq!(command(text), Some("N1"), "{text}");
+    }
+    // Reads stay open however they are spelled, and so does a request that names no route.
+    for text in [
+        r#"curl http://127.0.0.1:9/api/"crew"/approvals"#,
+        "curl http://127.0.0.1:9/api/./crew/autopilot/digest",
+        "curl http://127.0.0.1:9/api/x/../crew/stops",
+        "curl http://127.0.0.1:9/api/projects",
+    ] {
+        assert_eq!(command(text), None, "{text}");
+    }
+    // Not caught, by design: a path built from pieces is #441's sandbox, not this list's.
+    assert_eq!(
+        command(r#"curl -X PUT "http://127.0.0.1:9/api/$P/autopilot/mode""#),
+        None
+    );
+}

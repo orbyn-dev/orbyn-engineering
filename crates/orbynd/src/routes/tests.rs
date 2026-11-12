@@ -72,8 +72,10 @@ pub(super) fn registered(router: &Router) -> BTreeSet<(String, String)> {
 async fn observed() -> Value {
     let dir = std::env::temp_dir().join(format!("orbynd-routes-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let core =
-        Arc::new(Core::open(CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into())).unwrap());
+    // The Crew routes hide behind the Preview flag; with it on they are protected routes like the rest.
+    let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
+    config.crew_preview = true;
+    let core = Arc::new(Core::open(config).unwrap());
     let access = Arc::new(Access::new("token", vec![], None));
     let app = router(AppState {
         core,

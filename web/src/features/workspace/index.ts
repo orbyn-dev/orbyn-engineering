@@ -14,4 +14,4 @@ export { Sidebar } from "./sidebar/Sidebar";
 export { useDrawnOrder } from "./sidebar/drawnOrder";
 export { copyReference, pinThreads, unpinThreads } from "./sidebar/threadActions";
 export { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from "./sidebar/threadUndo";
-export { canStartThreadIn, readExplorerFile, startThreadIn, threadPathOf, useExplorer, useFileTabNames } from "./explorer";
+export { ChangeLetter, MiddleName, canStartThreadIn, readExplorerFile, startThreadIn, threadPathOf, useExplorer, useFileTabNames } from "./explorer";
