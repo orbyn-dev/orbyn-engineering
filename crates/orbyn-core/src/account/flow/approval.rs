@@ -122,7 +122,7 @@ impl AccountCenter {
             Ok(ApprovalStatus::Locked) => {
                 return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
             }
-            Err(DeviceError::RequestGone) => {
+            Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
                 return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
             }
             Err(error) => return Err(refusal(&error)),
@@ -213,7 +213,7 @@ impl AccountCenter {
             Err(DeviceError::DigitsLocked) => {
                 Ok(self.close_approval(&id, AccountApprovalState::Locked).await)
             }
-            Err(DeviceError::RequestGone) => {
+            Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
                 Ok(self.close_approval(&id, AccountApprovalState::Denied).await)
             }
             Err(error) => {
@@ -317,10 +317,13 @@ impl AccountCenter {
         if confirmed.action != ConfirmFor::ApproveDevice(id.to_owned()) {
             return Err(CoreError::ReauthRequired);
         }
-        let result = self.backend()?.account.approve(id).await;
+        let backend = self.backend()?;
+        let result = backend.account.approve(id).await;
+        let left = backend.account.time_left(id).map(|left| left.as_secs());
         let shown = self.guard(result).await?;
         let digits = shown.expose();
         Ok(AccountApproved {
+            expires_in_secs: left,
             digits: if digits.len() == digits::LEN {
                 format!("{} {}", &digits[..3], &digits[3..])
             } else {

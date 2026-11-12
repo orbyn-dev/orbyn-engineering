@@ -8,6 +8,8 @@ license-file.workspace = true
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
+# The Engine's device client, by tag: the one Engine crate the app names (docs/account.md, "Engine pin").
+orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.2" }
 async-trait.workspace = true
 base64 = "0.22"
 ed25519-dalek.workspace = true

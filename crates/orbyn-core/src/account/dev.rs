@@ -8,7 +8,7 @@
 //! | Input | Answer |
 //! | --- | --- |
 //! | invite `K7QM-2XWH-9QXA-3C2D` | accepted; any other well-formed invite is refused |
-//! | emailed code `ABCD-EFGH` | accepted, after the password step; any other is `InvalidCode`, and the fifth wrong one in a row refuses every code until a new one is sent |
+//! | emailed code `ABCD-EFGH` | accepted, after the password step, for an address with no account; any other is `InvalidCode`, the fifth wrong one in a row refuses every code until a new one is sent, and an address that already has an account is `InvalidCode` too and keeps its account |
 //! | `dev@example.com` and the password below | signed in |
 //! | `two@example.com` | asks for a code: `123456` or the recovery code `ABCDE-FGH23` |
 //! | `slow@example.com` | `RateLimited` for 90 seconds |
@@ -418,7 +418,16 @@ impl AccountApi for DevAccount {
             return Err(DeviceError::InvalidCode);
         };
         let email = signup.email.clone();
-        state.accounts.retain(|account| account.email != email);
+        // The Engine makes no live account before the code, and never replaces one that exists: a
+        // sign-up for an address that has an account ends here, with the same answer as a wrong
+        // code, and the account it met is untouched (issue 489, item 5).
+        if state
+            .accounts
+            .iter()
+            .any(|account| account.email.eq_ignore_ascii_case(&email))
+        {
+            return Err(DeviceError::InvalidCode);
+        }
         state.accounts.push(Account {
             email: email.clone(),
             password: signup.password.clone(),
@@ -479,13 +488,13 @@ impl AccountApi for DevAccount {
         Ok(SignInOutcome::Signed(session(email)))
     }
 
-    async fn second_factor(&self, code: &str) -> Result<SessionInfo, DeviceError> {
+    async fn second_factor(&self, code: &str) -> Result<SignInOutcome, DeviceError> {
         let mut state = self.lock();
         let normalized = code.replace('-', "").to_ascii_uppercase();
         if state.pending_second_factor.is_some() && SECOND_FACTOR.contains(&normalized.as_str()) {
             let email = state.pending_second_factor.take().unwrap_or_default();
             state.session = Some(email.clone());
-            Ok(session(&email))
+            Ok(SignInOutcome::Signed(session(&email)))
         } else {
             Err(DeviceError::InvalidCode)
         }
@@ -531,8 +540,9 @@ impl AccountApi for DevAccount {
             .incoming
             .iter()
             .filter(|(_, asked)| asked.elapsed() < life)
-            .map(|(request, asked)| IncomingApproval {
-                expires_in_secs: life.saturating_sub(asked.elapsed()).as_secs(),
+            // No time left is reported: the Engine does not expose one yet.
+            .map(|(request, _)| IncomingApproval {
+                expires_in_secs: 0,
                 ..request.clone()
             })
             .collect())

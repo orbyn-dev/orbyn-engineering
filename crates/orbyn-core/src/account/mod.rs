@@ -17,6 +17,7 @@ pub mod changes;
 pub mod codes;
 pub mod device_api;
 pub mod digits;
+pub mod engine;
 pub mod flow;
 pub mod merge;
 pub mod policy;
@@ -67,15 +68,18 @@ pub enum FirstSync {
     UseAccount,
 }
 
-/// Which backend the account talks to. `Development` is an in-memory stand-in for the
-/// Engine, for debug builds and tests only; it is compiled out of release builds, so a
-/// release has none, and the real device client is not part of this build yet.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Which backend the account talks to. `Development` is an in-memory stand-in for the Engine,
+/// and `Engine` is the real device client at a loopback address (docs/account.md, "Engine pin");
+/// both exist in debug builds and tests only and answer only under the `LocalOnly` gate, so a
+/// release has neither. Nothing selects `Engine` outside tests yet: real sign-in is off.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum AccountBackendKind {
     #[default]
     None,
     #[cfg(any(test, debug_assertions))]
     Development,
+    #[cfg(any(test, debug_assertions))]
+    Engine { address: String },
 }
 
 // A release build has one gate value and one backend. Adding a variant outside the debug
@@ -136,6 +140,12 @@ impl AccountCenter {
         #[cfg(test)]
         let mut stand_in = None;
         let backend = match (gate, kind) {
+            // The real client is built only when the gate lets anything happen at all, and only
+            // for a loopback address; under `Off` this arm is never reached.
+            #[cfg(any(test, debug_assertions))]
+            (AccountGate::LocalOnly, AccountBackendKind::Engine { address }) => {
+                engine::connect(&address, "This computer").ok()
+            }
             #[cfg(any(test, debug_assertions))]
             (AccountGate::LocalOnly, AccountBackendKind::Development) => {
                 let (backend, _handle) = dev::handle();
@@ -165,6 +175,26 @@ impl AccountCenter {
             #[cfg(test)]
             last_nonce: Mutex::new(String::new()),
         }
+    }
+
+    /// A center over a given backend, for tests that count what reaches it.
+    #[cfg(test)]
+    pub(crate) fn with_backend(
+        gate: AccountGate,
+        backend: Backend,
+        store: Arc<Store>,
+        keybindings_path: PathBuf,
+        keybinding_writer: Arc<Mutex<()>>,
+    ) -> Self {
+        let mut center = Self::new(
+            gate,
+            AccountBackendKind::None,
+            store,
+            keybindings_path,
+            keybinding_writer,
+        );
+        center.backend = Some(backend);
+        center
     }
 
     #[cfg(test)]
@@ -239,8 +269,12 @@ impl AccountCenter {
         } else {
             self.seed()?
         };
-        self.store
-            .account_enable(settings_record::ZONE, &seed, first == FirstSync::UseDevice)?;
+        self.store.account_enable(
+            settings_record::ZONE,
+            &seed,
+            first == FirstSync::UseDevice,
+            api.device_tag().as_deref(),
+        )?;
         Ok(sync::spawn(sync::ZoneWorker {
             zone: settings_record::ZONE,
             store: self.store.clone(),

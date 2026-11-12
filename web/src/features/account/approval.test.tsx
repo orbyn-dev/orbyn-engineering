@@ -49,7 +49,8 @@ describe("a new device waiting for a trusted one", () => {
     expect(await screen.findByText("Approve this sign-in on another device")).toBeVisible();
     expect(screen.getByText(/We asked your other devices to approve this one\. Open Orbyn on a device you trust and allow it\. That device then shows six digits to type here\./)).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent(/^Waiting for approval$/);
-    expect(screen.getByText(/this request expires in \d+:\d\d/)).toBeVisible();
+    expect(screen.getByText(/this request expires after ten minutes/)).toBeVisible();
+    expect(screen.queryByText(/expires in \d/)).toBeNull();
     // The new device never shows the digits and never compares: Cancel is all there is.
     expect(screen.queryByText("418 207")).toBeNull();
     expect(screen.queryByRole("button", { name: "They don’t match" })).toBeNull();
@@ -62,7 +63,7 @@ describe("a new device waiting for a trusted one", () => {
     expect(screen.getByLabelText("Digit 1 of 6")).toHaveAttribute("inputmode", "numeric");
     expect(screen.getByLabelText("Digit 1 of 6")).toHaveFocus();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-    expect(screen.getByText(/This request expires in \d+:\d\d/)).toBeVisible();
+    expect(screen.getByText(/This request expires after ten minutes\./)).toBeVisible();
     expect(screen.queryByText("Signed in on this device · This computer")).toBeNull();
     await typeDigits(user, RIGHT);
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
@@ -229,7 +230,8 @@ describe("a trusted device answering", () => {
     expect(digits).toHaveTextContent("Type these six digits on the iPad to finish the sign-in. Nothing is signed in until you do.");
     expect(within(digits).getByText("418 207")).toBeVisible();
     expect(within(digits).getByLabelText("Digits 4 1 8, 2 0 7")).toBeVisible();
-    expect(within(digits).getByText(/This request expires in \d+:\d\d\./)).toBeVisible();
+    expect(within(digits).getByText("This request expires after ten minutes.")).toBeVisible();
+    expect(within(digits).queryByText(/expires in \d/)).toBeNull();
     expect(within(digits).getAllByRole("button").map((button) => button.textContent)).toEqual(["Cancel"]);
     // The request stays in the list until the digits are accepted or it is closed.
     expect(screen.getByRole("listitem", { name: "iPad asks to sign in" })).toBeVisible();
@@ -409,19 +411,18 @@ describe("answering a request, the edges", () => {
 });
 
 describe("the waiting screen over time", () => {
-  it("counts down between looks and takes the service's time again on each look", async () => {
+  it("never shows a time left, whatever the service reports, until the Engine exposes one", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const view = { state: "waiting" as const, expires_in_secs: 600 };
       const poll = vi.spyOn(accountApi, "pollApproval").mockResolvedValue({ ...view, expires_in_secs: 580 });
       render(<ApprovalCard approval={view} onChanged={() => undefined} onBack={() => undefined} />);
-      expect(screen.getByText(/expires in 10:00/)).toBeVisible();
-      act(() => { vi.advanceTimersByTime(1000); });
-      expect(screen.getByText(/expires in 9:59/)).toBeVisible();
-      // At the first look the service says 580: the screen follows it, not its own count.
-      await act(async () => { vi.advanceTimersByTime(1000); });
-      await waitFor(() => expect(screen.getByText(/expires in 9:40/)).toBeVisible());
+      expect(screen.getByText(/expires after ten minutes/)).toBeVisible();
+      await act(async () => { vi.advanceTimersByTime(2500); });
       expect(poll).toHaveBeenCalled();
+      expect(screen.getByText(/expires after ten minutes/)).toBeVisible();
+      expect(screen.queryByText(/expires in/)).toBeNull();
+      expect(screen.queryByText(/\d+:\d\d/)).toBeNull();
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();

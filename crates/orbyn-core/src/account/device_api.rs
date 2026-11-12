@@ -1,9 +1,8 @@
 //! The app's side of the Engine's `DeviceApi`: push and pull per zone, and status.
 //! It is shaped like the contract in [docs/account.md](../../../../docs/account.md#dependency-on-the-engine)
-//! so the real `orbyn-device-client` can replace it, and it names no Engine crate: tag
-//! `engine-v0.2.0` (commit `32f3600`) has the client, but the app does not depend on it yet
-//! (docs/account.md, "Engine pin"). The client does no sealing here; a record
-//! crosses this trait as plain fields.
+//! so the real `orbyn-device-client` can sit behind it (`account::engine`, tag `engine-v0.2.2`,
+//! docs/account.md "Engine pin"). This file names no Engine crate. The client does no sealing
+//! here; a record crosses this trait as plain fields.
 
 use std::time::Duration;
 
@@ -68,6 +67,23 @@ pub enum DeviceError {
     /// The server asked for proof of work (a 428) and the client could not finish it.
     #[error("proof of work failed")]
     ProofFailed,
+    /// A password sign-in in the last ten minutes is needed first ("Confirm it's you").
+    #[error("sign in again to do this")]
+    ReauthRequired,
+    /// The last trusted device of the account cannot be removed.
+    #[error("last trusted device")]
+    LastTrustedDevice,
+    /// This computer already belongs to an account: signing up or in as another never replaces it.
+    #[error("already signed in")]
+    AlreadySignedIn,
+    /// The emailed code was accepted and the account exists, but this computer could not save its
+    /// keys. Nothing is lost: asking again saves them without a new code.
+    #[error("keys not saved")]
+    KeysNotSaved,
+    /// The Engine refused the approval itself: other keys, a reveal that did not match, a signature
+    /// from an approver that cannot sign what this device accepts. The approval is closed.
+    #[error("approval refused")]
+    ApprovalRefused,
 }
 
 /// What the client reports about itself.
@@ -99,4 +115,11 @@ pub trait DeviceApi: Send + Sync {
 
     /// Counts live notices that another device changed a zone.
     fn notices(&self) -> watch::Receiver<u64>;
+
+    /// The name this device stamps its edits with, when the backend decides it (the Engine's
+    /// device clock). It is stored with the zone the first time sync is switched on, so the
+    /// stamps the app makes and the stamps the Engine makes name this device the same way.
+    fn device_tag(&self) -> Option<String> {
+        None
+    }
 }

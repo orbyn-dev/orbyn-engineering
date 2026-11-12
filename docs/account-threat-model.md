@@ -315,3 +315,10 @@ session lifetime. `default_permission_mode` is never synced (a loosened mode mus
 
 - The "Confirm it's you" password prompt for the four sensitive actions in control 5.
 - Account page copy that says, on Windows, any program you run can act as this device.
+
+## Sign-up never makes a live account before the code, and never replaces one
+
+The Engine's sign-up makes a pending sign-up at the password step; the account is live only when the emailed code is
+verified. The app's adapter stores nothing until then, refuses a computer that already belongs to an account, and a
+sign-up for an address that has an account ends as a wrong code and leaves that account untouched. The development
+stand-in behaves the same. (Issue 489, item 5.)
