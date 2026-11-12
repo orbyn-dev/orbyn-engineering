@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDetails, send, settled, startProject, type Service } from "./service";
 
@@ -32,6 +32,8 @@ test("E10: a diff range comment shows inline, follows its chip and reaches the p
   const file = page.locator("[data-diff-file='review.txt']");
   await file.getByRole("button", { name: "Comment on line 1", exact: true }).click();
   await file.getByRole("button", { name: "Comment on line 2", exact: true }).click({ modifiers: ["Shift"] });
+  // A range is selected first; the bar under it offers Comment, Send selection to engine and Copy.
+  await file.getByRole("toolbar", { name: "Selection" }).getByRole("button", { name: "Comment", exact: true }).click();
   await file.getByLabel("Review comment on review.txt line 1–2").fill("Why uppercase?");
   await file.getByRole("button", { name: "Comment", exact: true }).click();
 
@@ -86,4 +88,51 @@ test("E18: a large uncommitted diff lists every file, and find counts matches ac
   await page.keyboard.press("ControlOrMeta+f");
   await page.getByRole("searchbox", { name: "Find in diff" }).fill("marker");
   await expect(page.getByText(/^1 of 1[3-9]\d$/)).toBeVisible();
+});
+
+test("a hunk is reverted and a line edited through the file route, and the working tree is what changes", async ({ page }) => {
+  const path = join(service.repo, "hunks.txt");
+  writeFileSync(path, "one\ntwo\nthree\nfour\n");
+  commit("Hunks base");
+  writeFileSync(path, "one\nTWO\nthree\nfour\nFIVE\n");
+  const { id } = await thread("Hunk actions");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`${service.page}#/threads/${id}`);
+  await (await openDetails(page)).getByRole("button", { name: /^Changes/ }).click();
+  const file = page.locator("[data-diff-file='hunks.txt']");
+  // Hunk buttons show for the hunk under the pointer; bring the target into view and hover before pressing it.
+  const press = async (name: string, nth = 0) => {
+    const target = file.getByRole("button", { name, exact: true }).nth(nth);
+    await target.scrollIntoViewIfNeeded();
+    await (name === "Edit this line" ? target.locator("xpath=..") : file.locator(".hh2").first()).hover();
+    await target.click();
+  };
+  await expect(file.getByRole("button", { name: "Revert hunk" })).toHaveCount(1);
+
+  // Edit one line in place: only that line changes on disk.
+  await press("Edit this line", 1);
+  const field = file.getByRole("textbox", { name: /^Edit line/ });
+  await field.fill("TWO!");
+  await field.press("Meta+Enter");
+  await expect(file.getByText("TWO!")).toBeVisible();
+  expect(readFileSync(path, "utf8")).toBe("one\nTWO!\nthree\nfour\nFIVE\n");
+
+  // Revert the hunk after confirming, then undo it.
+  await press("Revert hunk");
+  const dialog = page.getByRole("dialog", { name: "Revert this hunk?" });
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await dialog.getByRole("button", { name: "Revert hunk" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Hunk reverted in hunks.txt." })).toBeVisible();
+  expect(readFileSync(path, "utf8")).toBe("one\ntwo\nthree\nfour\n");
+  await page.getByRole("button", { name: /^Undo/ }).click();
+  await expect.poll(() => readFileSync(path, "utf8")).toBe("one\nTWO!\nthree\nfour\nFIVE\n");
+
+  // The diff has read the undone file again before the file is changed under it.
+  await expect(file.getByText("TWO!")).toBeVisible();
+  // A file that changed under the diff is left alone.
+  writeFileSync(path, "one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
+  await press("Revert hunk");
+  await page.getByRole("dialog", { name: "Revert this hunk?" }).getByRole("button", { name: "Revert hunk" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Nothing was changed." })).toBeVisible();
+  expect(readFileSync(path, "utf8")).toBe("one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
 });

@@ -17,6 +17,8 @@ export const DIFF_SOURCES: { id: DiffSource; label: string }[] = [
 
 /** The least width the panel needs for a split view, and for the file list to stand beside the diff. */
 export const WIDE = 640;
+/** Under this width (the design draws 320; the panel is 380 by default) a hunk's buttons fold into one More menu. */
+export const NARROW = 360;
 
 const count = (value: number) => value.toLocaleString("en-US");
 

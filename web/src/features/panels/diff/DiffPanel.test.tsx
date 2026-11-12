@@ -468,6 +468,8 @@ it("a line's number is the button that starts a comment; shift selects a range a
   await user.keyboard("{Shift>}");
   await user.click(screen.getByRole("button", { name: "Comment on line 16" }));
   await user.keyboard("{/Shift}");
+  expect(screen.getByRole("toolbar", { name: "Selection" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Comment" }));
   const box = screen.getByRole("textbox", { name: "Review comment on auth/redirect.ts line 15–16" });
   expect(screen.getByText("Comment on lines 15–16")).toBeInTheDocument();
   expect(screen.getByText("Sent with your next message")).toBeInTheDocument();
@@ -483,6 +485,7 @@ it("dragging down the gutter selects the lines it passes over", async () => {
   const first = within(patch).getByRole("button", { name: "Comment on line 15" });
   const last = within(patch).getByRole("button", { name: "Comment on line 16" });
   await user.pointer([{ keys: "[MouseLeft>]", target: first }, { target: last }, { keys: "[/MouseLeft]", target: last }]);
+  await user.click(await screen.findByRole("button", { name: "Comment" }));
   expect(await screen.findByText("Comment on lines 15–16")).toBeInTheDocument();
 });
 
@@ -494,6 +497,7 @@ it("Comment adds the review chip with its range and excerpt, ⌘↵ sends it, an
   await user.keyboard("{Shift>}");
   await user.click(screen.getByRole("button", { name: "Comment on line 16" }));
   await user.keyboard("{/Shift}");
+  await user.click(screen.getByRole("button", { name: "Comment" }));
   const box = screen.getByRole("textbox", { name: "Review comment on auth/redirect.ts line 15–16" });
   expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
   await user.type(box, "Does inside() reject //evil.com");
@@ -533,8 +537,9 @@ it("the keyboard moves between lines with the arrows, C comments on the line and
   await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
   expect(patch.querySelector(".l.hov")).toHaveTextContent("const next");
   await user.keyboard("{Shift>}{ArrowDown}{/Shift}");
-  expect(await screen.findByText("Comment on lines 15–16")).toBeInTheDocument();
+  expect(await screen.findByRole("toolbar", { name: "Selection" })).toBeInTheDocument();
   await user.keyboard("{Escape}");
+  expect(screen.queryByRole("toolbar", { name: "Selection" })).toBeNull();
   patch.focus();
   await user.keyboard("c");
   expect(await screen.findByRole("textbox", { name: /Review comment on auth\/redirect\.ts line 1[56]/ })).toBeInTheDocument();
