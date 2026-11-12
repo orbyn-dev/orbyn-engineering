@@ -1,5 +1,5 @@
 import { AppWindow, Copy, Download, ExternalLink, Paperclip } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { openThreadFileInBrowser, readThreadFile, saveThreadFile } from "../api";
 import type { FileContent } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -17,6 +17,10 @@ import { openInEditor } from "./openInEditor";
 import { useWorkspace } from "../../../product/state/workspace";
 import { FileComments } from "./FileComments";
 import { formatBytes } from "../../../lib/format";
+import { BinaryFile } from "../editor/BinaryFile";
+import { EditorLoading } from "../editor/EditorShell";
+import { FileEditor } from "../editor/FileEditor";
+import { useEditorSessions } from "../editor/editorSessions";
 
 
 /** Reads a file by what it holds, with the source a click away and edits saved safely. */
@@ -90,7 +94,7 @@ function FileBody({
 }
 
 /** A file of the thread's checkout, by what it holds. Exported so the bar's own controls can be tested from one file. */
-export function Viewer({ threadId, path, line, onBack }: { threadId: string; path: string; line: number | null; onBack?(): void }) {
+export function Viewer({ threadId, tabId, path, line, onBack }: { threadId: string; tabId: string; path: string; line: number | null; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   const media = mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -129,6 +133,17 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
     }
   };
   const open = () => openInEditor(threadId, path, line);
+  // A plain text file is drawn as the editor (Engineer Designs v106), which has no bar of its own: what it offers is in the header and the tab menu.
+  const editing = !media && !zip && !office && !previewKind(path) && !!file.data && !file.data.binary && !file.data.truncated;
+  const plain = !media && !zip && !office && !previewKind(path);
+  const locked = plain && !!file.data && file.data.binary;
+  // Everything but an error, an unfinished read or a file too big to read in full wears the editor's own frame.
+  const bare = plain && file.status !== "error" && !file.data?.truncated;
+  const setLock = useEditorSessions((state) => state.lock);
+  useEffect(() => {
+    setLock(tabId, locked);
+    return () => setLock(tabId, false);
+  }, [tabId, locked, setLock]);
   const openInBrowser = async () => {
     try {
       await openThreadFileInBrowser(threadId, path);
@@ -138,7 +153,8 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
     }
   };
   return (
-    <div className="files-viewer" data-thread-id={threadId}>
+    <div className="files-viewer" data-thread-id={threadId} data-editor={bare || undefined}>
+      {bare ? null : (
       <div className="panel-bar">
         {onBack ? (
           <Button small tone="quiet" onClick={onBack}>
@@ -179,10 +195,11 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
           <ExternalLink size={14} aria-hidden />
         </IconButton>
       </div>
+      )}
       {media ? (
         <FileMedia kind={media} threadId={threadId} path={path} />
       ) : file.status === "loading" ? (
-        <Loading label="Loading file" rows={6} />
+        plain ? <EditorLoading path={path} /> : <Loading label="Loading file" rows={6} />
       ) : file.status === "error" && file.error.status === 404 ? (
         // A moved thread reads its files from the new checkout, which may not have this one.
         <Empty title="This file isn't in this checkout." />
@@ -192,10 +209,14 @@ export function Viewer({ threadId, path, line, onBack }: { threadId: string; pat
         <ZipViewer threadId={threadId} path={path} size={file.data.size} />
       ) : office ? (
         <DocumentViewer threadId={threadId} path={path} kind={office} size={file.data.size} />
+      ) : file.data.binary && plain ? (
+        <BinaryFile threadId={threadId} path={path} size={Number(file.data.size)} />
       ) : file.data.binary ? (
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="hex" />
       ) : file.data.truncated ? (
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="text" />
+      ) : editing ? (
+        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} onReload={file.reload} />
       ) : (
         <FileBody threadId={threadId} cwd={cwd} path={path} file={file.data} line={line} onSaved={file.reload} />
       )}

@@ -28,6 +28,7 @@ import "./styles/tools.css";
 import "./styles/panelTabs.css";
 import "./styles/panelStrip.css";
 import "./styles/explorer.css";
+import "./styles/editor.css";
 import "./styles/pages.css";
 import "./styles/layouts.css";
 import "./styles/selection.css";

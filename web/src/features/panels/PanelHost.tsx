@@ -10,6 +10,10 @@ import { ActivityPanel } from "./activity/ActivityPanel";
 import { BrowserPanel } from "./browser/BrowserPanel";
 import { DiffPanel } from "./diff/DiffPanel";
 import { FileTab } from "./files/FileTab";
+import { EditorTitleExtras } from "./editor/EditorTitleExtras";
+import { SaveChangesDialog } from "./editor/SaveChangesDialog";
+import { isDirty, saveSession, useEditorSessions } from "./editor/editorSessions";
+import { useFileTabMenu } from "./editor/useFileTabMenu";
 import { useFileTabNames } from "../workspace";
 import { useWorkspace } from "../../product/state/workspace";
 import { ToolsTab } from "../tools";
@@ -299,8 +303,15 @@ export function PanelHost({
   const plusButton = useRef<HTMLButtonElement>(null);
   const focusTab = (id: RightTab) =>
     requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(tabSelector(id))?.focus());
-  /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
+  // A file with unsaved changes asks before its tab goes: Save, Don't save or Cancel.
+  const [asking, setAsking] = useState<RightTab | null>(null);
+  const dirtyTabs = useEditorSessions((state) => state.sessions);
   const closeWithFocus = (id: RightTab) => {
+    if (isDirty(dirtyTabs[id])) return setAsking(id);
+    closeNow(id);
+  };
+  /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
+  const closeNow = (id: RightTab) => {
     const at = rowIds.indexOf(id);
     const neighbour = rowIds[at + 1] ?? rowIds[at - 1];
     // A neighbour folded into "..." has no slot to hold focus: the tab that opens takes the last slot.
@@ -363,6 +374,8 @@ export function PanelHost({
           ...maximise.map((item, at) => (at === 0 && rowIds.length > 1 ? { ...item, separatorBefore: true } : item)),
         ];
 
+  const fileMenu = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab));
+  const askedSession = asking ? dirtyTabs[asking] : undefined;
   return (
     <aside
       className="context"
@@ -414,7 +427,7 @@ export function PanelHost({
                       : { transform: `translateX(${slotShift(shown.indexOf(id), drag.from, drag.to)}px)` }
                     : undefined
                 }
-                aria-label={label}
+                aria-label={isDirty(dirtyTabs[id]) ? `${label}, unsaved changes` : label}
                 aria-selected={tab === id}
                 aria-controls={tab === id ? `context-${domId(id)}` : undefined}
                 tabIndex={tab === id ? 0 : -1}
@@ -424,6 +437,7 @@ export function PanelHost({
                 }}
               >
                 <Icon size={14} aria-hidden />
+                {isDirty(dirtyTabs[id]) ? <i className="ctx-dot" aria-hidden /> : null}
               </button>
             );
           })}
@@ -479,6 +493,7 @@ export function PanelHost({
         <div className="ctx-title">
           <b>{tabOf(tab).label}</b>
           {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
+          {isFileTab(tab) ? <EditorTitleExtras tabId={tab} onSave={() => saveSession(thread.id, tab)} /> : null}
           <IconButton
             label="Tab menu"
             pressed={tabMenu !== null}
@@ -506,7 +521,7 @@ export function PanelHost({
             x={tabMenu.x}
             y={tabMenu.y}
             label="Tab menu"
-            items={tabMenuItems}
+            items={fileMenu ?? tabMenuItems}
             onClose={() => setTabMenu(null)}
           />
         ) : null}
@@ -546,6 +561,26 @@ export function PanelHost({
       <span className="sr-only" role="status" aria-live="polite">
         {said}
       </span>
+      {asking && askedSession ? (
+        <SaveChangesDialog
+          path={askedSession.path}
+          onCancel={() => setAsking(null)}
+          onDiscard={() => {
+            const id = asking;
+            setAsking(null);
+            useEditorSessions.getState().drop(id);
+            closeNow(id);
+          }}
+          onSave={() => {
+            const id = asking;
+            void saveSession(thread.id, id).then((saved) => {
+              if (!saved) return;
+              setAsking(null);
+              closeNow(id);
+            });
+          }}
+        />
+      ) : null}
     </aside>
   );
 }

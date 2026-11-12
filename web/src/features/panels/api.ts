@@ -105,7 +105,7 @@ export function readThreadFile(threadId: string, path: string, signal?: AbortSig
 }
 
 export function saveThreadFile(threadId: string, body: { path: string; content: string; base_revision: string | null }) {
-  return request("PUT", `${thread(threadId)}/files/content`, body);
+  return request<FileContent>("PUT", `${thread(threadId)}/files/content`, body);
 }
 
 export function openThreadFileInBrowser(threadId: string, path: string) {

@@ -76,7 +76,8 @@ test("a file outside the checkout opens read-only and its HTML stays isolated", 
   expect(held).toBeTruthy();
   await openFullPath(held!);
   await expect(page.getByText(/own data isn't shown here/)).toBeVisible();
-  // A full path inside the checkout is not an outside file: it opens as the checkout's own, with Edit and Save.
+  // A full path inside the checkout is not an outside file: it opens as the checkout's own, in the editor with Save.
   await openFullPath(join(realpathSync(service.repo), "inside.txt"));
-  await expect(page.locator(".files-viewer:not(.outside-file)").getByRole("radio", { name: "Edit" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Edit inside.txt" })).toHaveValue("inside\n");
+  await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
 });

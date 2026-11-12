@@ -23,6 +23,9 @@ const filterNeedsMyReview = [
   { do: "press", key: "Escape" },
 ];
 
+/** Opens Cargo.toml from the left bar's Files view, which puts it in the editor. */
+const openFile = [click("tab", "Files"), click("treeitem", "Cargo.toml", { prefix: true })];
+
 /** Opens the side panel, then each named tab from the + launcher, the way a person does. */
 const openTabs = (names) => [
   click("button", "Show side panel"),
@@ -165,6 +168,19 @@ export const FRAMES = {
     route: "#/threads/t-approval",
     steps: [...openTabs(["Changes"]), click("button", "Comment on line 87")],
   },
+
+  // The file editor (Engineer Designs v106). A file of the mock thread's own worktree opens in it; binary, read-only (another worktree), large, comment,
+  // save-error, conflict and narrow need data or a failing write the mock does not carry, so they are drawn from fixtures in the unit tests.
+  "editor-default": { route: "#/threads/t-done", steps: openFile },
+  "editor-unsaved": { route: "#/threads/t-done", steps: [...openFile, click("textbox", "Edit Cargo.toml"), { do: "press", key: "End" }, { do: "press", key: "x" }] },
+  "editor-find": { route: "#/threads/t-done", steps: [...openFile, click("button", "Find ⌘F"), { do: "fill", label: "Find in file", value: "//" }] },
+  "editor-goto": { route: "#/threads/t-done", steps: [...openFile, click("button", "Go to line ⌘G")] },
+  "editor-tab-menu": { route: "#/threads/t-done", steps: [...openFile, click("button", "Tab menu")] },
+  "editor-close-confirm": {
+    route: "#/threads/t-done",
+    steps: [...openFile, click("textbox", "Edit Cargo.toml"), { do: "press", key: "x" }, click("button", "Tab menu"), click("menuitem", "Close tab")],
+  },
+  "editor-loading": { route: "#/threads/t-done", pre: [{ route: "**/api/threads/*/files/content*", delay: 20000 }], steps: openFile, wait: 900 },
 
   // Usage, the Limits tab (mock scenarios "limits*"): only Codex reports a window; Claude Code and the others read Not reported.
   "usage-claude-windows": { route: "#/usage", scenario: "limits-claude", steps: [click("tab", "Limits")] },
