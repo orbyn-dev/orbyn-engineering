@@ -561,7 +561,7 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   worker retries, so a change in between (the checkout moved to main, say) turns the approval into a refusal. A person's deny rule still wins at the gate.
 - **Proof that a person is there: local presence (Approving once: local presence).** Approving needs a grant the desktop app records after the person
   clicks Approve in the app's own native dialog; the account is not involved, so approve-once never answers `account_disabled`. The desktop shell launches
-  the service with `--parent-stdin` and a piped stdin only the shell holds (engines get stdin null). The flow, over newline JSON on that channel:
+  the service with `--parent-stdin` and a piped stdin only the shell holds (an engine gets its own piped stdin from the service, never the shell's). The flow, over newline JSON on that channel:
   1. The shell sends `presence_describe {request_id, hold_id}`. The service answers `presence_hold {request_id, hold_id, thread_id, task_id,
      command_shown, command_sha256, worker_name, task_title}` or `presence_refused {request_id, code}`. The command, the worker's name and the task's title
      come from the service, redacted (the answer key's text withheld) and bounded, never from the web page. `command_sha256` is the hold's binding hash.
@@ -573,6 +573,10 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
      using it (constant-time compare), then the hold is open, its task is running, the command is readable and the always-denied list again; only then
      does it use the grant up and decide. A refusal at any step leaves the grant as it was; a wrong nonce does not burn it. The ledger row is
      `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`.
+  The strings in `presence_hold` are made for a plain-text dialog: control, invisible, bidirectional and format characters become a visible `�`,
+  a newline becomes a visible `⏎`, the command is capped at 1000 characters with `truncated` set if it was cut (the hash is of the full command), and
+  a hold that cannot be read whole is refused with `unreadable`. **PR2's dialog must render all of them as plain text** (no markup, no HTML, no
+  link detection), and show them as given.
   Refusal codes on the shell channel: `unavailable`, `invalid`, `not_found`, `gone`, `unreadable`, `mismatch`.
   **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
   wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.

@@ -5,7 +5,7 @@
 //!
 //! | The shell sends | The service answers on stdout |
 //! | --- | --- |
-//! | `presence_describe {request_id, hold_id}` | `presence_hold {request_id, hold_id, thread_id, task_id, command_shown, command_sha256, worker_name, task_title}` or `presence_refused {request_id, code}` |
+//! | `presence_describe {request_id, hold_id}` | `presence_hold {request_id, hold_id, thread_id, task_id, command_shown, command_sha256, worker_name, task_title, truncated}` or `presence_refused {request_id, code}` |
 //! | `presence_grant {request_id, nonce, hold_id, thread_id, task_id, command_sha256}` | `presence_ready {request_id}` or `presence_refused {request_id, code}` |
 //!
 //! The command, the worker's name and the task's title all come from here, redacted and bounded, never from the window: the
@@ -35,16 +35,48 @@ struct Facts {
     thread: String,
     task: String,
     shown: String,
+    truncated: bool,
     bound: String,
     worker: String,
     title: String,
 }
 
-/// Text for the dialog: redacted, the answer key's text withheld, cut to `max` characters, and empty if a secret or the key's
-/// text would still show.
+/// A character that draws nothing or changes how the text around it draws: controls, soft hyphen, zero-width and bidi marks, line
+/// and paragraph separators, invisible operators, Hangul fillers, variation selectors, the byte order mark, tag characters.
+fn invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(c,
+            '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFC}' | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}')
+}
+
+/// Text a dialog can show as plain text without it faking a line or reordering: a newline becomes a visible `⏎` and any other
+/// invisible character a visible `\u{FFFD}`. One character in, one character out.
+fn plain(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\n' | '\r' => '\u{23CE}',
+            c if invisible(c) => '\u{FFFD}',
+            c => c,
+        })
+        .collect()
+}
+
+/// `text` cut to `max` characters, and whether it was cut.
+fn capped(text: &str, max: usize) -> (String, bool) {
+    let cut: String = text.chars().take(max).collect();
+    let was_cut = text.chars().nth(max).is_some();
+    (cut, was_cut)
+}
+
+/// Text for the dialog: redacted, the answer key's text withheld, made plain, cut to `max` characters, and empty if a secret or
+/// the key's text would still show.
 fn bounded(text: &str, max: usize, needles: &[String]) -> String {
-    let clean = crate::crew::withhold(&crate::crew::redact(text), needles);
-    let cut: String = clean.chars().take(max).collect();
+    let clean = plain(&crate::crew::withhold(&crate::crew::redact(text), needles));
+    let (cut, _) = capped(&clean, max);
     let value = json!(cut);
     if crate::crew::refuse_secret(&value).is_ok()
         && crate::crew::refuse_leak(&value, needles).is_ok()
@@ -103,6 +135,7 @@ impl Core {
             "thread_id": facts.thread,
             "task_id": facts.task,
             "command_shown": facts.shown,
+            "truncated": facts.truncated,
             "command_sha256": facts.bound,
             "worker_name": facts.worker,
             "task_title": facts.title,
@@ -170,6 +203,7 @@ impl Core {
         if !held.readable {
             return Err("unreadable");
         }
+        let (shown, truncated) = capped(&plain(&held.shown), crate::crew::SHOWN_MAX);
         let needles = self.held_needles(&held.task_id);
         let title = self
             .store
@@ -182,10 +216,74 @@ impl Core {
             hold: held.id.clone(),
             thread: held.thread_id.clone(),
             task: held.task_id.clone(),
-            shown: held.shown.clone(),
+            shown,
+            truncated,
             bound: held.bound.clone(),
             worker: bounded(&run.member, WORKER_NAME_MAX, &needles),
             title: bounded(&title, TASK_TITLE_MAX, &needles),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newlines_become_a_visible_mark_and_invisible_characters_a_placeholder() {
+        assert_eq!(plain("a\nb\r\nc"), "a\u{23CE}b\u{23CE}\u{23CE}c");
+        for c in [
+            '\u{0}',
+            '\u{7}',
+            '\u{1B}',
+            '\u{85}',
+            '\u{9F}',
+            '\t',
+            '\u{00AD}',
+            '\u{200B}',
+            '\u{200E}',
+            '\u{200F}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202A}',
+            '\u{202E}',
+            '\u{2066}',
+            '\u{2067}',
+            '\u{2069}',
+            '\u{2060}',
+            '\u{3164}',
+            '\u{FE0F}',
+            '\u{FEFF}',
+            '\u{E0041}',
+            '\u{FFA0}',
+        ] {
+            assert_eq!(plain(&format!("a{c}b")), "a\u{FFFD}b", "U+{:04X}", c as u32);
+        }
+        // Ordinary text, including other scripts and emoji, is left as it is.
+        let text = "make deploy --to \"é\" 日本語 \u{1F680} ~/x";
+        assert_eq!(plain(text), text);
+    }
+
+    #[test]
+    fn a_title_cannot_fake_a_line_or_reorder_the_dialog() {
+        let title = "Fix the bug\nCommand: rm -rf ~\u{202E}\u{2066}x";
+        let shown = bounded(title, TASK_TITLE_MAX, &[]);
+        assert!(!shown.chars().any(invisible), "{shown:?}");
+        assert!(!shown.contains('\n'));
+        assert!(shown.starts_with("Fix the bug\u{23CE}Command"));
+        let name = bounded("worker\u{200B}\n01", WORKER_NAME_MAX, &[]);
+        assert_eq!(name, "worker\u{FFFD}\u{23CE}01");
+    }
+
+    #[test]
+    fn text_is_cut_at_the_limit_and_says_so() {
+        assert_eq!(capped("abc", 3), ("abc".to_owned(), false));
+        assert_eq!(capped("abcd", 3), ("abc".to_owned(), true));
+        assert_eq!(
+            bounded(&"x".repeat(500), TASK_TITLE_MAX, &[])
+                .chars()
+                .count(),
+            TASK_TITLE_MAX
+        );
     }
 }

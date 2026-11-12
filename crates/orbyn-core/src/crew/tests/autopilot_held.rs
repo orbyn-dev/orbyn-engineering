@@ -1,5 +1,5 @@
-//! A person's one-time answer to a held command, through a real `Core`, the real gate and the account's "Confirm it's you"
-//! (the development stand-in for the Engine). The lead says no, so a command is denied and held; the person then approves it
+//! A person's one-time answer to a held command, through a real `Core`, the real gate and a played desktop shell (the
+//! presence messages of `autopilot::presence`). The lead says no, so a command is denied and held; the person then approves it
 //! once, denies it or dismisses it. Values that stand for a secret are built at run time and named by label.
 
 use orbyn_contracts::{ActionKind, AutopilotHeldState as State, StopReason};
@@ -737,4 +737,69 @@ async fn with_the_flag_off_none_of_it_exists() {
         w.core.autopilot_dismiss_held("hold-x"),
         Err(CoreError::NotFound(_))
     ));
+}
+
+#[tokio::test]
+async fn the_dialog_text_has_no_newline_control_or_bidi_character() {
+    let (w, id) = held_world().await;
+    let command = "make deploy\u{202E}\n\u{200B}check\u{2028}\u{3164}x";
+    // The always-denied list may well read such a command itself; the hold is made directly, as the chain's denial would.
+    let task = w.core.store.crew_task(&id).unwrap().unwrap();
+    let hold = w
+        .core
+        .held_make(
+            &task,
+            &w.worker(&id),
+            &ask(ActionKind::Command, command, &[]),
+            "The lead said no.",
+            &[],
+            unix_now(),
+        )
+        .expect("held");
+    let shown = describe(&w, &hold, unix_now());
+    assert_eq!(shown["type"], "presence_hold", "{shown}");
+    let text = shown["command_shown"].as_str().unwrap();
+    assert!(
+        text.contains('\u{23CE}') && text.contains('\u{FFFD}'),
+        "{text:?}"
+    );
+    for field in ["command_shown", "worker_name", "task_title"] {
+        let value = shown[field].as_str().unwrap();
+        assert!(
+            !value
+                .chars()
+                .any(|c| c.is_control() || ('\u{200B}'..='\u{202E}').contains(&c)),
+            "{field}: {value:?}"
+        );
+    }
+    assert_eq!(shown["truncated"], false);
+    // The hash is of the real command, not of what is shown.
+    assert_eq!(shown["command_sha256"].as_str().unwrap().len(), 64);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_approvals_with_the_same_nonce_racing_have_exactly_one_success() {
+    for round in 0..10 {
+        let (w, id) = held_world().await;
+        let hold = hold_of(&w, &id, &format!("make step-{round}")).await;
+        let nonce = grant_for(&w, &hold);
+        let mut tasks = Vec::new();
+        for _ in 0..4 {
+            let (core, hold, nonce) = (w.core.clone(), hold.clone(), nonce.clone());
+            tasks.push(tokio::spawn(async move {
+                core.autopilot_approve_once(&hold, Some(&nonce)).await
+            }));
+        }
+        let mut wins = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                Ok(_) => wins += 1,
+                Err(CoreError::PresenceRequired | CoreError::InvalidTransition { .. }) => {}
+                Err(other) => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(wins, 1, "round {round}");
+        assert_eq!(events(&w, &id, "approved_once").len(), 1);
+        assert_eq!(w.core.presence.len(), 0);
+    }
 }

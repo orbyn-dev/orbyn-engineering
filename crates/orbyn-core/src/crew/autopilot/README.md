@@ -48,7 +48,7 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
 5b. **Held for a person:** a denied command is held ([`held`](held.rs)). The person may approve that exact command once (bound to its
    text, arguments, paths, thread and task; one retry; 10 minutes), deny it or dismiss it, from the app's window only. The retry is checked
    against the always-denied list first and then lets the one approval through, with a ledger row (`decided_by: person`). Approving needs
-   the account's "Confirm it's you" for the hold. Nothing on the always-denied list is ever held.
+   the person's click in the desktop app's own dialog (`presence`). Nothing on the always-denied list is ever held.
 6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
