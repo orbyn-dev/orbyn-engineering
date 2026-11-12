@@ -1,5 +1,6 @@
 import {
   Activity,
+  Briefcase,
   Bug,
   Check,
   ChevronDown,
@@ -9,12 +10,15 @@ import {
   Diff,
   Ellipsis,
   Eye,
+  GitBranch,
   Folder,
   GitCommitHorizontal,
   Info,
   ListTree,
   Lock,
   Maximize2,
+  Minus,
+  Pencil,
   MessageSquare,
   Pause,
   Plus,
@@ -25,6 +29,7 @@ import {
   TriangleAlert,
   Workflow,
   X,
+  User,
   type LucideIcon,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
@@ -34,11 +39,14 @@ import { unavailable } from "../autopilot/review/Parts";
 const ICONS = {
   activity: Activity,
   alert: TriangleAlert,
+  branch: GitBranch,
+  brief: Briefcase,
   bug: Bug,
   check2: Check,
   clock: Clock,
   diff: Diff,
   down: ChevronDown,
+  edit: Pencil,
   eye: Eye,
   flow: Workflow,
   folder: Folder,
@@ -46,6 +54,7 @@ const ICONS = {
   info: Info,
   lock: Lock,
   max: Maximize2,
+  minus: Minus,
   more: Ellipsis,
   ok: CircleCheck,
   pause: Pause,
@@ -57,6 +66,7 @@ const ICONS = {
   side: MessageSquare,
   stop: Square,
   tree: ListTree,
+  user: User,
   x: X,
 } satisfies Record<string, LucideIcon>;
 
