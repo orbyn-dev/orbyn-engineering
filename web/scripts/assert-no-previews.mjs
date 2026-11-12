@@ -15,6 +15,13 @@ const markers = [
   "preview\\/crew",
   "mergequeue-narrow-panel",
   "crew-apq",
+  // Crew Designs v20 to v23 (features/crew/{escape,capacity,settings,shared}): the stage class, a frame id of each group
+  // and the design's own class prefix.
+  "cx-stage",
+  "cx-frame",
+  "escape-narrow-window",
+  "capacity-coverage-narrow-window",
+  "settings-crew",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

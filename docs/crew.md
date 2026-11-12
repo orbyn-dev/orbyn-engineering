@@ -556,6 +556,18 @@ Autopilot group yet, so every action that would merge, revert, send a brief or a
 takes a backend-guarded handler when the routes land. Per-merge money figures are left out until the Designer settles
 per-engine units.
 
+**As built (slice 4f, UI part C):** the escape log (Crew Designs v20, 17 frames), review capacity (v21, 18 frames) and the
+Settings › Crew page (v23, `settings-crew`, with its Review capacity, Independent oracle and Reviewer backtest rows) as
+display-only Preview screens in `web/src/features/crew/{escape,capacity,settings}`, opened by `#/preview/crew/<frame>` in
+dev builds only. They share one stage in `features/crew/shared`: the design's own markup, with its rules renamed `cx-*` in
+`shared/design.css` on the app's tokens. None of them has a backend, a client or a guessed route: every button is disabled
+with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices. Values the design
+marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
+stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
+show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads
+"Codex 62% of its weekly limit", per-merge cost is tokens and minutes in the engine's own unit, and the review-reverted
+card offers "Create a check".
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with

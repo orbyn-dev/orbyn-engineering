@@ -158,7 +158,7 @@ export const digestDaily: DigestData = {
   ],
   also: {
     heading: "Also today",
-    text: "Auth moved from Full to On at 15:36: 2 reverts in 14 days, in 9 merges (Settings › Crew › Autopilot by area). 1 request that needs a person was denied (publishing the package), 0 trip wires, main broke once and was healthy again after 23 minutes. Costs are per engine, each in its own unit: Claude Code 412k tokens, Codex $3.20.",
+    text: "Auth moved from Full to On at 15:36: 2 reverts in 14 days, in 9 merges (Settings › Crew › Autopilot by area). 1 request that needs a person was denied (publishing the package), 0 trip wires, main broke once and was healthy again after 23 minutes. Costs are per engine, each in its own unit: Claude Code 412k tokens, Codex 62% of its weekly limit.",
   },
 };
 

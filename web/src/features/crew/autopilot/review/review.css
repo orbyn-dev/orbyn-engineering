@@ -941,7 +941,7 @@ button.crew-risk {
 }
 .crew-batch-row label {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   padding: 11px 14px;
@@ -952,6 +952,9 @@ button.crew-risk {
   opacity: 0;
   width: 16px;
   height: 16px;
+}
+.crew-batch-cost {
+  white-space: nowrap;
 }
 .crew-ck {
   display: grid;

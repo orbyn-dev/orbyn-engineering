@@ -43,6 +43,7 @@ export function BatchReview({ data, onLooksGood }: { data: BatchData; onLooksGoo
                     <b>{row.title}</b>
                     <span className="crew-cmn">{row.detail}</span>
                   </span>
+                  <span className="crew-cmn crew-batch-cost">{row.cost}</span>
                 </label>
               </li>
             ))}

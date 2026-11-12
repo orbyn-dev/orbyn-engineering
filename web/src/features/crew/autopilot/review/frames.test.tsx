@@ -6,7 +6,7 @@ import { UNAVAILABLE_REASON } from "./Parts";
 
 /** What each frame must show, from Crew Designs v19. */
 const SHOWS: Record<ReviewFrameId, string[]> = {
-  "risk-reasons": ["Risk tiers", "Merges by itself · review within 24 hours", "How the tier is decided"],
+  "risk-reasons": ["Risk tiers", "Merges by itself · review within 24 hours", "count as High unless the changes are in a path class marked Low in .orbyn/crew.json"],
   "risk-popover": ["Why Medium", "Area auth is on Full: 1 revert in 14 days · 8 merges"],
   "risk-high-full": ["Merged by Crew at 15:02.", "Why High", "Key rotation under load. No check covers it."],
   "risk-high-on": ["Waiting for you before the merge.", "Approve and merge", "Switch to Full"],
@@ -18,7 +18,7 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "mergequeue-removed": ["Left the queue", "What happens next"],
   "mergequeue-empty": ["Nothing in the merge queue"],
   "mergequeue-narrow-panel": ["Open in Crew", "Re-checking combined"],
-  "review-queue": ["Rotate the signing key", "Ranked by risk, then by the time you have left", "Looks good for all 4"],
+  "review-queue": ["Rotate the signing key", "Ranked by risk, then by the time you have left", "Looks good for all 4", "156k tokens · 41 min", "50k tokens together"],
   "review-item": ["Not verified", "Reviewed by", "Paths outside the app are never followed."],
   "review-comment": ["Comment on this merge", "The brief Crew will write"],
   "review-revert": ["Revert this merge", "Later merges on top"],
@@ -26,8 +26,8 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "review-empty": ["Nothing to review", "Open the daily digest"],
   "review-overdue": ["1 review is overdue.", "Review overdue"],
   "review-overdue-high": ["1 High review is overdue.", "Its 4-hour window ended at 19:02, 1 h ago."],
-  "review-reverted": ["Reverted automatically · the fix brief is queued", "Open the revert"],
-  "review-batch": ["Batch review · 12 low-risk changes", "Untick all", "Looks good for 12"],
+  "review-reverted": ["Reverted automatically · the fix brief is queued", "Open the revert", "Create a check"],
+  "review-batch": ["Batch review · 12 low-risk changes", "Untick all", "Looks good for 12", "12 changes · 160k tokens together · all checks passed"],
   "review-narrow-panel": ["Open in Crew", "top of queue"],
   "review-narrow-window": ["Rotate the signing key", "Use next in the auth redirect"],
   "review-demoted": ["Auth moved from Full to On at 15:36.", "Auth is on On: 2 reverts in 14 days"],
@@ -38,7 +38,7 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "watch-asks": ["Crew isn’t certain why, so it is asking you.", "Revert the later one", "What Crew knows"],
   "watch-flow": ["Gate decided by:", "Click a line to open what it carries"],
   "watch-flaky": ["The failure didn’t reproduce", "Re-run the check", "What Crew saw"],
-  "digest-daily": ["Waiting for your review", "Also today", "Costs are per engine, each in its own unit"],
+  "digest-daily": ["Waiting for your review", "Also today", "Costs are per engine, each in its own unit: Claude Code 412k tokens, Codex 62% of its weekly limit."],
   "digest-empty": ["Nothing merged today", "Open the Review queue"],
 };
 
@@ -71,18 +71,17 @@ describe("Autopilot review frames (Crew Designs v19)", () => {
       expect(control).toBeDisabled();
       expect(control).toHaveAttribute("aria-description", UNAVAILABLE_REASON);
     }
-    for (const label of ["Looks good", "Approve and merge", "Revert both together", "Revert the later one", "Open the revert"]) {
+    for (const label of ["Looks good", "Approve and merge", "Revert both together", "Revert the later one", "Open the revert", "Create a check"]) {
       for (const button of screen.queryAllByRole("button", { name: label })) expect(button).toBeDisabled();
     }
   });
 
-  it("no frame shows a per-merge dollar figure: only the page header names a budget", async () => {
+  it("Crew v22: no frame shows a dollar figure, and the header says Codex's usage as a share of its weekly limit", async () => {
     for (const name of REVIEW_FRAMES) {
       const { container, unmount } = await open(name);
-      const body = [...container.querySelectorAll(".crew-page > *:not(.crew-tabs)")].map((node) => node.textContent ?? "").join(" ");
-      const stripped = body.replace("Codex $3.20", "");
-      const allowed = name === "digest-daily" ? stripped.replace("Codex $3.20.", "") : stripped;
-      expect(allowed, name).not.toMatch(/\$\d/);
+      expect(container.textContent, name).not.toMatch(/\$\d/);
+      const usage = container.querySelector(".crew-end");
+      if (usage) expect(usage.textContent, name).toBe("Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m");
       unmount();
     }
   });

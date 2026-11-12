@@ -42,6 +42,7 @@ export function ReviewCard({
         {entry.state === "reverted" ? (
           <>
             <Act label="Open the revert" primary />
+            <Act label="Create a check" />
             <Button small onClick={() => onOpen(entry, "comment")}>
               Comment
             </Button>
