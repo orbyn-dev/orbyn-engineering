@@ -414,8 +414,9 @@ These are named so nobody assumes them. They arrive in later versions of this pr
   - It does not stop a worker reading other processes' command lines and environment, and it does not
     cover the network, the loopback service (its token is the guard), the OS keychain, the engine's own
     login and session folders (including the lead's own engine transcript files, closed by a later
-    change) or other files of the same user. An ACP lead's bridge process carries its MCP endpoint token
-    in its environment, so a worker could read and use it: a known limit, tracked separately.
+    change) or other files of the same user. A lead's MCP endpoint token is kept out of the command line and environment of the
+    processes the tests read (the ACP bridge, the Claude launch), and out of shared temporary folders: it is read from an owner-only file in
+    the lead's own run folder, which the profile denies to other runs' workers.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.
 - A routine lead message to one member restarts the exchange count of every pair that member is in

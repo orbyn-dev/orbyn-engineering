@@ -214,7 +214,11 @@ impl RunManager {
             options: chosen.options,
             resume: self.store.engine_session(&thread.id)?,
             mcp_url: Some(url.clone()),
-            run_dir: PathBuf::new(),
+            // Under the runs folder, so a confined worker cannot read the token file the
+            // process writes there, and a start-up sweep removes it if the core dies.
+            run_dir: self
+                .runs_dir
+                .join(format!("warm-{}", crate::util::new_id())),
             confine: None,
         };
         // No update may begin while this process starts and is parked: it would hold
