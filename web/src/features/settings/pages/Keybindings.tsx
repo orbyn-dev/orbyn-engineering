@@ -136,7 +136,7 @@ export function KeybindingsSection() {
               }]}
             />
           ) : null}
-          <p className="muted">{view.data.path}</p>
+          <div className="set-stored"><span className="t3">Stored in</span><span className="set-path mono" title={view.data.path}>{view.data.path}</span></div>
         </>
       )}
     </>

@@ -226,7 +226,7 @@ it("shows the two task defaults on the settings page, with Run while closed gone
   installMockFetch();
   render(<ScheduledTasksSection />);
   expect(await screen.findByRole("switch", { name: "Skip a run when a limit is near" })).toBeVisible();
-  expect(screen.getByText("Waits until a limit window has room (90% used or more). Applies to scheduled and follow-up runs.")).toBeVisible();
+  expect(screen.getByText("Waits until Codex’s limit window has room (90% used or more). Engines that report no window are never held. Applies to scheduled and follow-up runs.")).toBeVisible();
   expect(screen.getByRole("switch", { name: "Notify when a run finishes or fails" })).toBeChecked();
   expect(screen.queryByText(/while closed/i)).toBeNull();
 });
