@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { readKeybindings, saveKeybinding } from "../api";
 import { inDesktopApp } from "../api";
-import { commandLabel, whenPhrase } from "./commandLabels";
+import { commandLabel, whenClause, whenPhrase } from "./commandLabels";
 import { formatShortcut, runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { AlertCircle, MoreHorizontal, Pencil, Search } from "lucide-react";
@@ -87,7 +87,7 @@ export function KeybindingsSection() {
           {view.data.conflicts.map((conflict) => (
             <p key={`${conflict.key}:${conflict.when ?? ""}`} className="banner banner-warn">
               <AlertCircle size={13} aria-hidden />
-              {conflict.commands.map(commandLabel).join(" and ")} both use {keyCaps(conflict.key).join("")}{conflict.when ? ` when ${conflict.when}` : ""}.
+              {conflict.commands.map(commandLabel).join(" and ")} both use {keyCaps(conflict.key).join("")}{whenClause(conflict.when) ? ` ${whenClause(conflict.when)}` : ""}.
             </p>
           ))}
           <div className="set-tbl" role="table" aria-label="Keybindings">
