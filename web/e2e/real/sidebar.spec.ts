@@ -282,6 +282,8 @@ test("the terminal drawer opens tabs, and files and diff sources read the checko
 test("every settings section loads from the real service", async ({ page }) => {
   const failures: string[] = [];
   page.on("response", (response) => {
+    // Crew Preview answers 404 while it is off: that is how the app learns to draw nothing of Crew.
+    if (response.url().includes("/api/crew/preview") && response.status() === 404) return;
     if (response.url().includes("/api/") && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
   });
   await page.goto(`${service.page}#/settings/general`);

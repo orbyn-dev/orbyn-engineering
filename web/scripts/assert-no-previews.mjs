@@ -8,8 +8,9 @@ const markers = [
   "platform-notice",
   "Sign in to Orbyn",
   "sam@example.com",
-  // Crew Preview screens: the notice, the hash route (plain and as a regex source), a frame id and a class.
-  "Crew is not connected to this app yet",
+  // Crew preview-only code (features/crew/autopilot/review previews): the hash route (plain and as a regex source),
+  // a frame id and a class. The real Crew screens ship in production behind the service's own flag, so their text
+  // and classes ("Crew is not connected to this app yet", ap-*) are not markers.
   "preview/crew",
   "preview\\/crew",
   "mergequeue-narrow-panel",

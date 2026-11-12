@@ -1,0 +1,188 @@
+/**
+ * The mock's Crew Preview: the routes of `orbynd` (`/api/crew/...`) with the generated wire shapes, answering with
+ * ledger rows that read like the Crew designs' samples. The default scenario has Crew off, so every Crew route
+ * answers 404 as the service does; scenarios named `crew` or `crew-<state>` turn it on: crew, crew-empty,
+ * crew-many, crew-one-vendor, crew-tripwire, crew-injected, crew-per-crew, crew-first-run, crew-young.
+ * Background crews have no route, so the mock has none either.
+ */
+import type { AutopilotGuards } from "../src/generated/AutopilotGuards.ts";
+import type { AutopilotLog } from "../src/generated/AutopilotLog.ts";
+import type { AutopilotLogRow } from "../src/generated/AutopilotLogRow.ts";
+import type { AutopilotMode } from "../src/generated/AutopilotMode.ts";
+import type { AutopilotModeEntry } from "../src/generated/AutopilotModeEntry.ts";
+import type { AutopilotModes } from "../src/generated/AutopilotModes.ts";
+import type { AutopilotTripwires } from "../src/generated/AutopilotTripwires.ts";
+import type { AutopilotTrust } from "../src/generated/AutopilotTrust.ts";
+import type { MockResponse } from "./api.ts";
+
+const row = (id: number, time: string, kind: string, over: Partial<AutopilotLogRow>): AutopilotLogRow => ({
+  id,
+  task_id: "task-redirect",
+  crew_id: "crew-redirect",
+  kind,
+  at: `2026-11-07T${time}:00`,
+  paths: [],
+  mode: "full",
+  needs_second_engine: false,
+  body: {},
+  ...over,
+});
+
+const sample = (): AutopilotLogRow[] => [
+  row(6, "14:45", "person", { rule: "N9", action_kind: "publish", target: "the package to the registry", decided_by: "hard_rule" }),
+  row(5, "14:37", "disagreement", {
+    tier: "medium",
+    action_kind: "run",
+    target: "node db/gen-migration.js",
+    lead: { approve: true, reason: "It matches the brief’s migration test." },
+    second: { engine: "opencode", approve: false, reason: "it writes to a table outside the brief." },
+  }),
+  // A disagreement is stored twice: its own row, then the denial it caused.
+  row(55, "14:37", "denied", {
+    decided_by: "two_keys",
+    tier: "medium",
+    action_kind: "run",
+    target: "node db/gen-migration.js",
+    lead: { approve: true, reason: "It matches the brief’s migration test." },
+    second: { engine: "opencode", approve: false, reason: "it writes to a table outside the brief." },
+  }),
+  row(4, "14:33", "denied", { decided_by: "lead", tier: "low", action_kind: "run", target: "scripts/gen.sh", lead: { approve: false, reason: "The script isn’t in the brief, and the worker didn’t say what it changes." } }),
+  row(3, "14:26", "denied", { decided_by: "hard_rule", rule: "N4", action_kind: "write", target: "../shared/config.json" }),
+  row(2, "14:19", "allowed", {
+    tier: "medium",
+    decided_by: "two_keys",
+    action_kind: "install",
+    target: "zod@3.24.1",
+    lead: { approve: true, reason: "It’s pinned to one version and the brief asks for schema tests." },
+    second: { engine: "opencode", approve: true, reason: "It’s pinned." },
+  }),
+  row(1, "14:12", "allowed", { tier: "always_allowed", decided_by: "tier", action_kind: "read", target: "auth/redirect.ts" }),
+];
+
+/** 214 requests, newest first, each after a merge row that the log leaves out. */
+const many = (): AutopilotLogRow[] => {
+  const base = sample().filter((one) => one.id !== 55);
+  return Array.from({ length: 214 }, (_, i) => {
+    const one = base[i % base.length] as AutopilotLogRow;
+    const minutes = 15 * 60 + 2 + (213 - i) * 3;
+    const time = `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    return [row(5000 - i, time, "merged", { task_id: "task-merge" }), { ...one, id: 1000 - i, at: `2026-11-07T${time}:00` }];
+  }).flat();
+};
+
+const GUARDS: AutopilotGuards = {
+  always_denied: [
+    ["N1", "changing account, device or sign-in state"],
+    ["N2", "reading or sending secrets and credentials"],
+    ["N3", "network access to a host the repository has not allowed"],
+    ["N4", "writing or deleting outside the worktree"],
+    ["N5", "force-push, history rewrite or any push to main"],
+    ["N6", "changing branch protection, permissions or settings"],
+    ["N7", "editing answer keys, check files or .orbyn/crew.json"],
+    ["N8", "production deploys"],
+    ["N9", "publishing or messaging outside the repository"],
+    ["N10", "payments"],
+  ].map(([id, rule]) => ({ id: id as string, rule: rule as string })),
+  in_a_row_limit: 3,
+  in_a_run_limit: 20,
+  review_windows: [],
+  large_files: 20,
+  large_lines: 800,
+  high_revert_permille: 200,
+  min_sample: 10,
+  window_days: 60,
+  default_mode: "full",
+  lead_engine: "claude-code",
+  second_key_engines: ["opencode", "codex"],
+};
+
+const rate = (merges: number, reverts: number) => ({ merges, reverts, revert_permille: merges ? Math.round((reverts * 1000) / merges) : 0, counts: merges >= 10 });
+
+const trust = (young: boolean): AutopilotTrust =>
+  young
+    ? { window_days: 60, min_sample: 10, high_revert_permille: 200, total: rate(5, 0), areas: [], engines: [{ name: "claude-code", rate: rate(3, 0) }, { name: "codex", rate: rate(2, 0) }], autonomy_by_area: false, truncated: false }
+    : {
+        window_days: 60,
+        min_sample: 10,
+        high_revert_permille: 200,
+        total: rate(53, 6),
+        engines: [{ name: "claude-code", rate: rate(31, 2) }, { name: "codex", rate: rate(18, 1) }, { name: "opencode", rate: rate(4, 0) }],
+        areas: [{ name: "docs/", rate: rate(31, 0) }, { name: "auth/", rate: rate(14, 2) }, { name: "keys/", rate: rate(11, 3) }],
+        autonomy_by_area: false,
+        truncated: false,
+      };
+
+export function createCrewMock() {
+  let on = false;
+  let failPaging = false;
+  let mode: AutopilotMode = "full";
+  let confirmed = true;
+  let entries: AutopilotModeEntry[] = [];
+  let all: AutopilotLogRow[] = [];
+  let tripwire: AutopilotLogRow[] = [];
+  let young = false;
+
+  const modes = (): AutopilotModes => ({ confirmed, effective_default: mode, entries, truncated: false });
+
+  function reset(scenario: string) {
+    on = scenario === "crew" || scenario.startsWith("crew-");
+    mode = "full";
+    confirmed = scenario !== "crew-first-run";
+    entries = scenario === "crew-per-crew"
+      ? [{ scope: "crew", id: "login-redirect", mode: "on", updated_at: "2026-11-07T10:00:00" }, { scope: "crew", id: "dependency-bump", mode: "full", updated_at: "2026-11-06T10:00:00" }]
+      : [];
+    young = scenario === "crew-young";
+    failPaging = scenario === "crew-many-fails";
+    all = scenario === "crew-empty" ? [] : scenario === "crew-many" || scenario === "crew-many-fails" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
+    const wire: Record<string, string | number> = scenario === "crew-injected" ? { wire: "injection", class: "instructions" } : { wire: "denials", in_a_row: 3, in_a_run: 3 };
+    tripwire = scenario === "crew-tripwire" || scenario === "crew-injected" ? [row(90, "14:27", "tripwire", { task_id: "task-client", body: wire })] : [];
+    if (tripwire.length) {
+      all = [
+        ...all,
+        row(80, "14:26", "denied", { task_id: "task-client", decided_by: "hard_rule", rule: "N3", action_kind: "fetch", target: "https://cdn.example/spec" }),
+        row(79, "14:24", "denied", { task_id: "task-client", decided_by: "lead", action_kind: "run", target: "scripts/gen.sh", lead: { approve: false, reason: "Not in the brief" } }),
+        row(78, "14:21", "denied", { task_id: "task-client", decided_by: "hard_rule", rule: "N4", action_kind: "write", target: "../client/api.ts" }),
+      ];
+    }
+  }
+
+  function approvals(params: URLSearchParams): AutopilotLog {
+    const offset = Number(params.get("offset") ?? 0);
+    const limit = Number(params.get("limit") ?? 50);
+    const kind = params.get("kind");
+    const task = params.get("task");
+    const list = all.filter((one) => (!kind || one.kind === kind) && (!task || one.task_id === task));
+    const next = offset + limit < list.length ? offset + limit : null;
+    return { rows: list.slice(offset, offset + limit), total: list.length, next_offset: next };
+  }
+
+  function handle(method: string, path: string, body: unknown, query: URLSearchParams): MockResponse {
+    if (!on) return { status: 404, body: { code: "not_found", message: "Crew is not on." } };
+    const seg = path.split("/").filter(Boolean); // api crew ...
+    const [, , head, id] = seg;
+    if (method === "GET" && head === "preview") return { status: 200, body: { enabled: true } };
+    if (method === "GET" && head === "approvals" && failPaging && Number(query.get("offset") ?? 0) > 18) return { status: 500, body: { code: "internal", message: "The ledger could not be read." } };
+    if (method === "GET" && head === "approvals") return { status: 200, body: approvals(query) };
+    if (method === "GET" && head === "stops") {
+      const out: AutopilotTripwires = { in_a_row_limit: 3, in_a_run_limit: 20, running: [], recent: tripwire };
+      return { status: 200, body: out };
+    }
+    if (method === "GET" && head === "autopilot" && !id) return { status: 200, body: modes() };
+    if (method === "GET" && head === "autopilot" && id === "guards") return { status: 200, body: GUARDS };
+    if (method === "PUT" && head === "autopilot" && id === "mode") {
+      const change = body as { scope: "default" | "repo" | "crew"; id?: string; mode: AutopilotMode };
+      if (change.scope === "default") mode = change.mode;
+      entries = [{ scope: change.scope, id: change.id ?? null, mode: change.mode, updated_at: new Date().toISOString() }, ...entries.filter((one) => !(one.scope === change.scope && one.id === (change.id ?? null)))];
+      confirmed = true;
+      return { status: 200, body: modes() };
+    }
+    if (method === "POST" && head === "autopilot" && id === "confirm") {
+      confirmed = true;
+      return { status: 200, body: modes() };
+    }
+    if (method === "GET" && head === "trust") return { status: 200, body: trust(young) };
+    return { status: 404, body: { code: "not_found", message: `No mock for ${method} ${path}.` } };
+  }
+
+  return { reset, handle };
+}
