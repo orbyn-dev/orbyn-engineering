@@ -10,6 +10,7 @@ import { onShellEvent, Shell } from "./shell";
 import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
 import { PreviewWindow, previewWindowRoute } from "../features/panels";
+import { CrewPreview, crewPreviewRoute } from "../features/crew";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
 
 type Boot =
@@ -28,6 +29,14 @@ const readHash = () => window.location.hash;
 export function App() {
   const hash = useSyncExternalStore(subscribeHash, readHash);
   const screen = previewScreenRoute(hash);
+  const crewScreen = crewPreviewRoute(hash);
+  if (crewScreen && CrewPreview) {
+    return (
+      <Suspense fallback={null}>
+        <CrewPreview name={crewScreen} />
+      </Suspense>
+    );
+  }
   if (screen && PreviewScreen) {
     return (
       <Suspense fallback={null}>
