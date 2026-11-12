@@ -296,7 +296,7 @@ pub enum Answering {
 
 impl Core {
     /// With the Crew Preview flag off, nothing here exists.
-    fn crew_preview_only(&self) -> Result<()> {
+    pub(in crate::crew) fn crew_preview_only(&self) -> Result<()> {
         if self.config.crew_preview {
             Ok(())
         } else {

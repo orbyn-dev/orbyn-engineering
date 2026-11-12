@@ -4,6 +4,7 @@
 //! `starts` for what a start refuses, `runs` for a task from its first turn to its end.
 
 mod autopilot;
+mod autopilot_held;
 mod autopilot_merge;
 mod autopilot_risk;
 mod autopilot_rules;

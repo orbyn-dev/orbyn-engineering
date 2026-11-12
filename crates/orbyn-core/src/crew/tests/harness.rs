@@ -222,6 +222,9 @@ pub async fn world_tiered(
     config.engines.codex_program = "orbyn-test-no-such-codex".into();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    // The development stand-in for the Engine, so a test can sign in and "Confirm it's you" (approve once needs it).
+    config.account_gate = crate::account::AccountGate::LocalOnly;
+    config.account_backend = crate::account::AccountBackendKind::Development;
     if tiered {
         let words = crate::crew::TierWords {
             lead: Some("lead".into()),

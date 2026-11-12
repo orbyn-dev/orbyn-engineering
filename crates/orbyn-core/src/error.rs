@@ -122,6 +122,9 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// The thing existed and is over: a held command that expired or whose task ended.
+    #[error("{0}")]
+    Gone(String),
     #[error("{0}")]
     Internal(String),
 }
@@ -165,6 +168,7 @@ impl CoreError {
             Self::PackTampered(_) => "pack_tampered",
             Self::AccountDisabled => "account_disabled",
             Self::ReauthRequired => "reauth_required",
+            Self::Gone(_) => "gone",
             Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
@@ -220,6 +224,7 @@ impl CoreError {
             | Self::StaleOwner
             | Self::RunClosed
             | Self::InvalidTransition { .. } => 409,
+            Self::Gone(_) => 410,
             Self::UpdateUnavailable(_)
             | Self::Unsupported(_)
             | Self::UnsupportedOption(_)
@@ -235,6 +240,7 @@ impl CoreError {
     pub(crate) fn duplicate(&self) -> Self {
         match self {
             Self::NotFound(s) => Self::NotFound(s.clone()),
+            Self::Gone(s) => Self::Gone(s.clone()),
             Self::Invalid(s) => Self::Invalid(s.clone()),
             Self::SettingsConflict => Self::SettingsConflict,
             Self::SettingsScopeUnavailable => Self::SettingsScopeUnavailable,

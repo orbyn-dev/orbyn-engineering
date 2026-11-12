@@ -72,3 +72,33 @@ pub fn git(repo: &Path, args: &[&str]) -> String {
     assert!(out.status.success(), "git {args:?}");
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
+
+/// Gives a stored task a worker thread and a checkout, as a running task has, and holds `command` for the person as the
+/// chain's denial would. Returns the hold's id. For the HTTP tests of the person's answers to a held command.
+pub fn hold_command(core: &crate::Core, task_id: &str, checkout: &Path, command: &str) -> String {
+    use crate::governance::approvals::ActionAsk;
+    core.store
+        .add_crew_run(task_id, "lead-thread", "member-01")
+        .unwrap();
+    let worker = format!("worker-{task_id}");
+    core.store
+        .set_crew_worker(task_id, &worker, &checkout.to_string_lossy(), None)
+        .unwrap();
+    let task = core.store.crew_task(task_id).unwrap().unwrap();
+    let ask = ActionAsk {
+        kind: orbyn_contracts::ActionKind::Command,
+        target: command.to_owned(),
+        summary: "A request from the worker.".to_owned(),
+        detail: json!({}),
+        paths: Vec::new(),
+    };
+    core.held_make(
+        &task,
+        &worker,
+        &ask,
+        "The lead said no.",
+        &[],
+        crate::util::unix_now(),
+    )
+    .expect("a held command")
+}

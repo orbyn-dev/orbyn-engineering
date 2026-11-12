@@ -221,7 +221,10 @@ pub fn account_change(text: &str) -> bool {
 }
 
 /// N1: a request to a state-changing account route, or to one this module does not know, and likewise a state-changing Crew
-/// route.
+/// route. **No agent approves; a person may approve once:** the routes that answer a held command (`approve-once`, `deny`,
+/// `dismiss`) are Crew routes that change state, so an agent's request to one is refused here, in every mode, and the person's
+/// own call needs the account's confirmation (see `held`). Nothing on this list is ever held, and a person's approval cannot
+/// cover it: it is checked again at approval time.
 fn n1(ctx: &Ctx<'_>) -> bool {
     account_refused(ctx.kind, &ctx.target, ctx.paths)
 }

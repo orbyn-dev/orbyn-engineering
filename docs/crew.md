@@ -481,7 +481,9 @@ first, then a person").
    approver on a different vendor must also say yes. If they disagree, the action is denied, and the disagreement is
    logged.
 4. **Person-only actions in Autopilot are denied, and work continues.** The Needs you item does not block anything; it
-   waits for the person's review.
+   waits for the person's review. **No agent approves; a person may approve once.** A command the chain denied is held for
+   the person, who may approve that exact command once, deny it or dismiss it (below). Nothing on the always-denied list is
+   ever held, and no approval covers it.
 5. **Trip wires:** 3 denials in a row or 20 in a run stop the task with reason "too many denials". Text that looks like
    injected instructions stops it too.
 
@@ -544,7 +546,31 @@ reverted stays reverted. Every free-text field and stored JSON value is redacted
 
 The marker `crew::changes` lists the Crew routes that change state, as `account::changes` does for the account, and N1 refuses an agent's
 request to any of them (or to any path under `/api/crew` that is not a listed read) in every mode. The route-table test checks the list
-against the router. N1 reads a command word by word with the quotes off, and undoes `//`, `/./` and `/x/../` first; it does not see a path built from a variable, string pieces or a script the agent wrote, which is the sandbox's work (#441). A confirmation nonce for these routes is a follow-up ([#486](https://github.com/orbyn-dev/orbyn-engineering/issues/486)).
+against the router. N1 reads a command word by word with the quotes off, and undoes `//`, `/./` and `/x/../` first; it does not see a path built from a variable, string pieces or a script the agent wrote, which is the sandbox's work (#441). The person's answers to a held command are in the next paragraph.
+
+**As built (slice 4f, approve once):** a command the chain denied (the lead said no, or a second key is missing) is also *held*, in memory only
+(a restart drops it, and the raw command, which may hold a secret, is never written to disk). `GET /api/crew/approvals/held` lists the holds
+with the redacted command (the answer key's text withheld; a command too long to read whole cannot be approved). The person answers from the
+app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny` and `/dismiss`. **No agent approves; a person may approve once.**
+
+- **One command, once.** An approval is bound to a hash of the exact command text, its arguments and paths, the worker's thread and the task. It
+  covers one retry of that same request from that same thread, within 10 minutes of approving (a hold waits 10 minutes for the person), and is
+  used up by that retry. Another command, other arguments, another thread, a second retry or a late one gets nothing. A hold is decided once: a
+  racing approve and deny have exactly one winner. A hold that expired, or whose task ended, answers 410 (`gone`); one already decided answers 409.
+- **Never the always-denied list.** A command on the list (N1 to N10) is never held. The list is read again when the person approves and again when the
+  worker retries, so a change in between (the checkout moved to main, say) turns the approval into a refusal. A person's deny rule still wins at the gate.
+- **Proof that a person is there.** Approving needs the account's "Confirm it's you" for this hold: the window asks `POST /api/account/confirm` with the
+  action `approve_device` and the `device_id` `crew-approve-once:<hold id>`, and sends the one-time nonce back in `x-orbyn-confirm`. It is for this hold
+  only, used up by its first use, 10 minutes at most, in memory only (the account's rules, [issue #435](account.md#sensitive-account-actions)). **It
+  protects against** a caller that holds only the service token (a worker, [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)): it has no
+  nonce, so it cannot approve. **It does not protect against** a worker that can read the password or drive the window (the sandbox, #441), and it needs a
+  signed-in account: without one nothing can be approved once. **In release builds approve-once always fails with `account_disabled` (the account is off). In dev builds the stand-in account's password is public, so a worker holding the token could call `/api/account/confirm` itself (by a script N1 does not read) and approve its own hold: the protection is only as strong as the account password.** As a code guard, approve-once is refused while a seeded stand-in account (an `@example.com` address on the development backend) is signed in. Deny and dismiss need no password because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or
+  dismiss a hold, never approve one. A dedicated confirmation action instead of the `approve_device` id convention waits for the account's own code to change.
+- **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
+  a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
+- **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the
+  `allowed` row says `decided_by: person`) and `hold_ended` (it expired or its task ended). A row carries the hold id, who decided, the redacted command
+  and a `sha256:` hash of the exact request, never the raw command.
 
 Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
 ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its
@@ -552,8 +578,7 @@ class only. The risk, review and queue views read the whole table and then page,
 comment is kept and is not yet a fix brief.
 
 Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
-conflict forecast, bisect progress, production-linked target rules (4i), background crews (they write `.orbyn/crew.json`), the person's
-once-approval of a held command, and the digest's send time.
+conflict forecast, bisect progress, production-linked target rules (4i), background crews (they write `.orbyn/crew.json`), and the digest's send time.
 
 **As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
 v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by
