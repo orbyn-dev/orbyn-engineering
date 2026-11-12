@@ -7,6 +7,7 @@ import { useWorkspace } from "../../product/state/workspace";
 import { useConnection } from "../../product/state/connection";
 import { fileTabId, useUi, type RightTab } from "../../product/state/ui";
 import { PanelHost, type PanelMode } from "./PanelHost";
+import { useEditorSessions, type EditorSession } from "./editor/editorSessions";
 
 vi.mock("./browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
 vi.mock("./diff/DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
@@ -592,5 +593,59 @@ describe("tabs that do not fit", () => {
     panel();
     expect(ids()).toHaveLength(5);
     expect(screen.queryByRole("button", { name: "More tabs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("unsaved files and the tab menu", () => {
+  const unsaved = (threadId: string): EditorSession => ({
+    key: `k-${threadId}`, threadId, cwd: "", path: "notes.md", tabs: [FILE], text: "edited", saved: "was", eol: "LF", revision: "r", saving: false, trouble: null,
+  });
+  beforeEach(() => useEditorSessions.setState({ sessions: {}, locked: {} }));
+
+  it("marks the tab of this thread's unsaved file and asks before Close all tabs, file by file", async () => {
+    const user = userEvent.setup();
+    useEditorSessions.setState({ sessions: { [`k-thread-1`]: unsaved("thread-1") } });
+    panel();
+    expect(screen.getByRole("tab", { name: "notes.md, unsaved changes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close all tabs" }));
+    expect(screen.getByRole("dialog", { name: "Save changes to notes.md?" })).toBeInTheDocument();
+    // Cancel keeps everything open.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(names()).toContain("notes.md, unsaved changes");
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close all tabs" }));
+    await user.click(screen.getByRole("button", { name: "Don’t save" }));
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(useEditorSessions.getState().sessions).toEqual({});
+  });
+
+  it("asks before Close other tabs too", async () => {
+    const user = userEvent.setup();
+    useEditorSessions.setState({ sessions: { [`k-thread-1`]: unsaved("thread-1") } });
+    panel();
+    await user.click(screen.getByRole("tab", { name: "Browser" }));
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close other tabs" }));
+    expect(screen.getByRole("dialog", { name: "Save changes to notes.md?" })).toBeInTheDocument();
+  });
+
+  it("ignores another thread's unsaved file of the same name", async () => {
+    const user = userEvent.setup();
+    useEditorSessions.setState({ sessions: { [`k-thread-2`]: unsaved("thread-2") } });
+    panel();
+    expect(screen.queryByRole("tab", { name: "notes.md, unsaved changes" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close all tabs" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the tab's own menu after a file's items", async () => {
+    const user = userEvent.setup();
+    panel();
+    await user.click(screen.getByRole("tab", { name: "notes.md" }));
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
+    expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]));
   });
 });

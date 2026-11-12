@@ -12,8 +12,8 @@ import { DiffPanel } from "./diff/DiffPanel";
 import { FileTab } from "./files/FileTab";
 import { EditorTitleExtras } from "./editor/EditorTitleExtras";
 import { SaveChangesDialog } from "./editor/SaveChangesDialog";
-import { isDirty, saveSession, useEditorSessions } from "./editor/editorSessions";
-import { useFileTabMenu } from "./editor/useFileTabMenu";
+import { isDirty, saveSession, sessionOfTab, useEditorSessions } from "./editor/editorSessions";
+import { useFileTabMenu, withFileItems } from "./editor/useFileTabMenu";
 import { useFileTabNames } from "../workspace";
 import { useWorkspace } from "../../product/state/workspace";
 import { ToolsTab } from "../tools";
@@ -303,13 +303,17 @@ export function PanelHost({
   const plusButton = useRef<HTMLButtonElement>(null);
   const focusTab = (id: RightTab) =>
     requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(tabSelector(id))?.focus());
-  // A file with unsaved changes asks before its tab goes: Save, Don't save or Cancel.
-  const [asking, setAsking] = useState<RightTab | null>(null);
-  const dirtyTabs = useEditorSessions((state) => state.sessions);
-  const closeWithFocus = (id: RightTab) => {
-    if (isDirty(dirtyTabs[id])) return setAsking(id);
-    closeNow(id);
+  // A file with unsaved changes asks before its tab goes, one file at a time: Save, Don't save or Cancel. Closing several asks for each.
+  const cwd = useWorkspace((state) => state.threads[thread.id]?.cwd ?? "");
+  const sessions = useEditorSessions((state) => state.sessions);
+  const sessionFor = (id: RightTab) => (isFileTab(id) ? sessionOfTab(sessions, thread.id, cwd, id) : undefined);
+  const [pending, setPending] = useState<{ ids: RightTab[]; then(): void } | null>(null);
+  const guardClose = (ids: RightTab[], then: () => void) => {
+    const dirty = ids.filter((id) => isDirty(sessionFor(id)));
+    if (dirty.length > 0) setPending({ ids: dirty, then });
+    else then();
   };
+  const closeWithFocus = (id: RightTab) => guardClose([id], () => closeNow(id));
   /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
   const closeNow = (id: RightTab) => {
     const at = rowIds.indexOf(id);
@@ -367,15 +371,27 @@ export function PanelHost({
           ...(rowIds.length > 1
             ? [
                 { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) },
-                { label: "Close other tabs", icon: <X size={14} aria-hidden />, onSelect: () => { closeOthers(tab); setSaid("Other tabs closed"); focusTab(tab); } },
-                { label: "Close all tabs", icon: <X size={14} aria-hidden />, onSelect: () => { closeAll(); setSaid("All tabs closed. Nothing is open."); plusButton.current?.focus(); } },
+                { label: "Close other tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds.filter((one) => one !== tab), () => { closeOthers(tab); setSaid("Other tabs closed"); focusTab(tab); }) },
+                { label: "Close all tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds, () => { closeAll(); setSaid("All tabs closed. Nothing is open."); plusButton.current?.focus(); }) },
               ]
             : []),
           ...maximise.map((item, at) => (at === 0 && rowIds.length > 1 ? { ...item, separatorBefore: true } : item)),
         ];
 
-  const fileMenu = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab));
-  const askedSession = asking ? dirtyTabs[asking] : undefined;
+  // A file's own items come first and the tab's own menu stays whole after them: Close tab, Close other tabs, Close all tabs, Maximise.
+  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab));
+  const menuItems = withFileItems(fileItems, tabMenuItems);
+  const asked = pending?.ids[0];
+  const askedSession = asked ? sessionFor(asked) : undefined;
+  const nextAsked = () => {
+    if (!pending) return;
+    const rest = pending.ids.slice(1);
+    if (rest.length > 0) setPending({ ...pending, ids: rest });
+    else {
+      setPending(null);
+      pending.then();
+    }
+  };
   return (
     <aside
       className="context"
@@ -427,7 +443,7 @@ export function PanelHost({
                       : { transform: `translateX(${slotShift(shown.indexOf(id), drag.from, drag.to)}px)` }
                     : undefined
                 }
-                aria-label={isDirty(dirtyTabs[id]) ? `${label}, unsaved changes` : label}
+                aria-label={isDirty(sessionFor(id)) ? `${label}, unsaved changes` : label}
                 aria-selected={tab === id}
                 aria-controls={tab === id ? `context-${domId(id)}` : undefined}
                 tabIndex={tab === id ? 0 : -1}
@@ -437,7 +453,7 @@ export function PanelHost({
                 }}
               >
                 <Icon size={14} aria-hidden />
-                {isDirty(dirtyTabs[id]) ? <i className="ctx-dot" aria-hidden /> : null}
+                {isDirty(sessionFor(id)) ? <i className="ctx-dot" aria-hidden /> : null}
               </button>
             );
           })}
@@ -493,7 +509,7 @@ export function PanelHost({
         <div className="ctx-title">
           <b>{tabOf(tab).label}</b>
           {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
-          {isFileTab(tab) ? <EditorTitleExtras tabId={tab} onSave={() => saveSession(thread.id, tab)} /> : null}
+          {isFileTab(tab) ? <EditorTitleExtras threadId={thread.id} tabId={tab} onSave={() => { const own = sessionFor(tab); return own ? saveSession(own.key) : undefined; }} /> : null}
           <IconButton
             label="Tab menu"
             pressed={tabMenu !== null}
@@ -521,7 +537,7 @@ export function PanelHost({
             x={tabMenu.x}
             y={tabMenu.y}
             label="Tab menu"
-            items={fileMenu ?? tabMenuItems}
+            items={menuItems}
             onClose={() => setTabMenu(null)}
           />
         ) : null}
@@ -561,22 +577,18 @@ export function PanelHost({
       <span className="sr-only" role="status" aria-live="polite">
         {said}
       </span>
-      {asking && askedSession ? (
+      {pending && askedSession ? (
         <SaveChangesDialog
+          key={askedSession.key}
           path={askedSession.path}
-          onCancel={() => setAsking(null)}
+          onCancel={() => setPending(null)}
           onDiscard={() => {
-            const id = asking;
-            setAsking(null);
-            useEditorSessions.getState().drop(id);
-            closeNow(id);
+            useEditorSessions.getState().drop(askedSession.key);
+            nextAsked();
           }}
           onSave={() => {
-            const id = asking;
-            void saveSession(thread.id, id).then((saved) => {
-              if (!saved) return;
-              setAsking(null);
-              closeNow(id);
+            void saveSession(askedSession.key).then((saved) => {
+              if (saved) nextAsked();
             });
           }}
         />

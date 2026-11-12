@@ -9,7 +9,7 @@ test.beforeAll(async () => { ({ service, projectId } = await startProject({ fake
 test.afterAll(async () => { await service?.stop(); });
 
 /** A file of the thread's own checkout, opened from the command palette into the editor, through the real write route. */
-async function openInEditor(page: Page, name: string, text: string) {
+async function openInEditor(page: Page, name: string, text: string, shown = text) {
   writeFileSync(join(service.repo, name), text);
   const thread = await service.api<{ id: string }>("POST", "/api/threads", {
     project_id: projectId, engine: "codex", model: null, title: "Editor", worktree: null, skill_profile: null,
@@ -21,7 +21,7 @@ async function openInEditor(page: Page, name: string, text: string) {
   await palette.getByRole("combobox", { name: "Search" }).fill(name);
   await palette.getByRole("button", { name: new RegExp(name.replace(".", "\\.")) }).first().click();
   const code = page.getByRole("textbox", { name: `Edit ${name}` });
-  await expect(code).toHaveValue(text);
+  await expect(code).toHaveValue(shown);
   return code;
 }
 
@@ -63,4 +63,17 @@ test("Reload takes what is on disk and drops the unsaved changes", async ({ page
   await page.getByRole("alert").getByRole("button", { name: "Reload" }).click();
   await expect(code).toHaveValue("theirs\n");
   await expect(page.locator(".ed-end")).toHaveText("Saved");
+});
+
+test("a CRLF file stays CRLF on disk after an edit, and opens without an unsaved mark", async ({ page }) => {
+  const code = await openInEditor(page, "windows.ts", "one\r\ntwo\r\n", "one\ntwo\n");
+  await expect(page.locator(".ed-end")).toHaveText("Saved");
+  await expect(page.locator(".ed-status")).toContainText("UTF-8 · CRLF");
+  await code.click();
+  await page.keyboard.type("x");
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect(page.locator(".ed-end")).toHaveText("Saved");
+  const disk = readFileSync(join(service.repo, "windows.ts"), "utf8");
+  expect(disk).toContain("\r\n");
+  expect(disk.replace(/\r\n/g, "")).not.toContain("\n");
 });

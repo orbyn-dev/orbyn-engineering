@@ -599,7 +599,7 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] !== "files" || seg[4] !== "content") break;
         const { path, content, base_revision } = body as { path: string; content: string; base_revision: string | null };
         const key = `${seg[2]}:${path}`;
-        const current = savedFiles.get(key)?.revision ?? "mock";
+        const current = savedFiles.get(key)?.revision ?? `mock-${seg[2]}-${path}`;
         if (base_revision !== current) return err(409, "file_conflict", "The file changed on disk.", { revision: current });
         const revision = `mock-${(savedFiles.get(key)?.count ?? 0) + 1}`;
         savedFiles.set(key, { content, revision, count: (savedFiles.get(key)?.count ?? 0) + 1 });
@@ -822,8 +822,9 @@ export function createMockApi(options: MockOptions = {}) {
           if (seg[3] === "files" && seg[4] === "content") {
             const file = query.get("path") ?? "";
             const saved = savedFiles.get(`${seg[2]}:${file}`);
-            const content = saved?.content ?? `// ${file}\n// Mock file contents.\n`;
-            return { status: 200, body: { path: file, content, revision: saved?.revision ?? "mock", size: content.length, binary: false, truncated: false } };
+            // A thread's file is its own: its text and revision name the thread, so the same path in two threads differs.
+            const content = saved?.content ?? `// ${file}\n// Mock file contents of ${seg[2]}.\n`;
+            return { status: 200, body: { path: file, content, revision: saved?.revision ?? `mock-${seg[2]}-${file}`, size: content.length, binary: false, truncated: false } };
           }
           if (seg[3] === "files" && !seg[4]) {
             const dir = query.get("path") ?? "";

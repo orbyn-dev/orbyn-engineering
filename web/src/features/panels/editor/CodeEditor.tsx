@@ -31,13 +31,20 @@ export const CodeEditor = forwardRef<
     readOnly: boolean;
     matches?: readonly Mark[];
     current?: number;
+    /** Lines may be commented on: a "+" beside the line number under the pointer, or the cursor's line while the code has focus. */
+    onComment?(line: number, extend: boolean): void;
+    /** The lines a comment is being written for, and the lines that already have one. */
+    selected?: { from: number; to: number } | null;
+    commented?: readonly number[];
     onChange(text: string): void;
     onCursor(position: { line: number; col: number }, offset: number): void;
   }
->(function CodeEditor({ text, label, grammar, readOnly, matches = [], current = -1, onChange, onCursor }, ref) {
+>(function CodeEditor({ text, label, grammar, readOnly, matches = [], current = -1, onComment, selected = null, commented = [], onChange, onCursor }, ref) {
   const area = useRef<HTMLTextAreaElement>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [cursor, setCursor] = useState(0);
+  const [hover, setHover] = useState<number | null>(null);
+  const [focused, setFocused] = useState(false);
   const lines = useMemo(() => text.split("\n"), [text]);
   const coloured = grammar !== null && lines.length <= COLOUR_LINES;
   // Tokens follow the text a moment late; a line whose text changed shows plain until they catch up.
@@ -111,10 +118,38 @@ export const CodeEditor = forwardRef<
 
   return (
     <div className="ed-body">
-      <pre className="ed-gut" aria-hidden>
-        <span style={{ transform: `translateY(${-scroll.top}px)` }}>{lines.map((_, at) => at + 1).join("\n")}</span>
-      </pre>
+      <div
+        className="ed-gutw"
+        onMouseMove={(event) => {
+          // Over the + itself the line stays the one it marks.
+          if (!onComment || (event.target as HTMLElement).closest(".ed-plus")) return;
+          const box = event.currentTarget.getBoundingClientRect();
+          setHover(Math.min(Math.max(1, Math.floor((event.clientY - box.top - TOP + scroll.top) / LINE) + 1), total));
+        }}
+        onMouseLeave={() => setHover(null)}
+      >
+        <pre className="ed-gut" aria-hidden>
+          <span style={{ transform: `translateY(${-scroll.top}px)` }}>{lines.map((_, at) => at + 1).join("\n")}</span>
+        </pre>
+        {commented.map((line) => (
+          <i key={line} className="ed-dot" aria-hidden style={{ transform: `translateY(${TOP + (line - 1) * LINE - scroll.top}px)` }} />
+        ))}
+        {onComment && (hover ?? (focused ? row : null)) !== null ? (
+          <button
+            type="button"
+            className="ed-plus"
+            aria-label={`Comment on line ${hover ?? row}`}
+            style={{ transform: `translateY(${TOP + ((hover ?? row) - 1) * LINE - scroll.top}px)` }}
+            onClick={(event) => onComment(hover ?? row, event.shiftKey)}
+          >
+            +
+          </button>
+        ) : null}
+      </div>
       <div className="ed-main">
+        {selected ? (
+          <div className="ed-sel" aria-hidden style={{ transform: `translateY(${TOP + (selected.from - 1) * LINE - scroll.top}px)`, height: (selected.to - selected.from + 1) * LINE }} />
+        ) : null}
         <div className="ed-cur" aria-hidden style={{ transform: `translateY(${TOP + (row - 1) * LINE - scroll.top}px)` }} />
         <pre className="ed-hl" aria-hidden>
           <span style={{ transform: `translate(${-scroll.left}px, ${-scroll.top}px)` }}>
@@ -161,6 +196,8 @@ export const CodeEditor = forwardRef<
           onSelect={(event) => report(event.currentTarget)}
           onKeyUp={(event) => report(event.currentTarget)}
           onClick={(event) => report(event.currentTarget)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
         />
       </div>
     </div>

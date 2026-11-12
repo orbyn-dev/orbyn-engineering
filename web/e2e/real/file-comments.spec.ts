@@ -75,3 +75,33 @@ test("file ranges become editable review chips and reach the persisted prompt", 
   expect(readFileSync(file, "utf8")).toBe("later disk version\n");
   await expect(page.getByRole("list", { name: "Context chips" })).toHaveCount(0);
 });
+
+test("a plain text file takes line comments from the editor's gutter, as the same chips", async ({ page }) => {
+  const original = "first line\n<script>captured text</script>\nlast line\n";
+  writeFileSync(join(service.repo, "editor-source.txt"), original);
+  const thread = await service.api<{ id: string }>("POST", "/api/threads", {
+    project_id: projectId, engine: "codex", model: null, title: "Editor review", worktree: null, skill_profile: null,
+  });
+  await page.goto(`${service.page}#/threads/${thread.id}`);
+  await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+p");
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  await palette.getByRole("combobox", { name: "Search" }).fill("editor-source.txt");
+  await palette.getByRole("button", { name: /editor-source\.txt/ }).first().click();
+  const viewer = page.locator(".files-viewer");
+  await expect(viewer.getByRole("textbox", { name: "Edit editor-source.txt" })).toHaveValue(original);
+  const gutter = viewer.locator(".ed-gutw");
+  const overLine = (line: number) => gutter.hover({ position: { x: 20, y: 4 + (line - 1) * 19 + 8 } });
+  await overLine(3);
+  await viewer.getByRole("button", { name: "Comment on line 3", exact: true }).click();
+  await overLine(1);
+  await viewer.getByRole("button", { name: "Comment on line 1", exact: true }).click({ modifiers: ["Shift"] });
+  await viewer.getByRole("textbox", { name: "File comment" }).fill("Please check this range");
+  await viewer.getByRole("button", { name: "Add comment", exact: true }).click();
+  const chip = page.getByRole("button", { name: "Review comment editor-source.txt:1–3", exact: true });
+  await chip.click();
+  const details = page.getByRole("dialog", { name: "Review comment editor-source.txt:1–3", exact: true });
+  await expect(details.locator("pre")).toHaveText(original.trimEnd());
+  await details.getByRole("button", { name: "Remove comment" }).click();
+  await expect(chip).toHaveCount(0);
+});

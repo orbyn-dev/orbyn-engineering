@@ -17,12 +17,23 @@ import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
 
 type ExplorerTarget = Extract<FileTarget, { kind: "explorer" }>;
 
+/** Whether the worktree the thread runs in is one Orbyn must not write to (locked), for a file named by a link or tab of the thread. */
+function useOwnWorktreeLocked(threadId: string): boolean {
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
+  const kept = useExplorer((state) => state.worktrees[projectId]);
+  useEffect(() => {
+    if (projectId && !kept) void useExplorer.getState().loadWorktrees(projectId, { thread: threadId });
+  }, [projectId, kept, threadId]);
+  return !!(kept?.data?.worktrees ?? []).some((one) => one.read_only && (one.threads ?? []).some((thread) => thread.id === threadId));
+}
+
 /**
  * A file of the thread's own checkout, named by a link in a message or by the thread's worktree in the
  * left bar. The path may be one inside the checkout or a full path outside it, which only reads.
  */
-function ThreadFile({ threadId, tabId, path }: { threadId: string; tabId: string; path: string }) {
+function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId: string; path: string; locked?: boolean }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
+  const own = useOwnWorktreeLocked(threadId);
   const reveal = useUi((state) => state.fileReveal);
   const consume = useUi((state) => state.consumeFileReveal);
   // A link that named a line says it once; the line stays for this open.
@@ -34,7 +45,7 @@ function ThreadFile({ threadId, tabId, path }: { threadId: string; tabId: string
   }, [reveal, threadId, path, consume]);
   const resolved = useResolvedThreadPath(threadId, cwd ? { threadId, cwd, path, basis: "thread", nonce: 0 } : null);
   const full = fullPathOf(path);
-  if (resolved.value?.checkout_path) return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} />;
+  if (resolved.value?.checkout_path) return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} locked={locked ?? own} />;
   if (resolved.value && isFullPath(full)) return <OutsideFileViewer threadId={threadId} path={full} />;
   if (resolved.value || resolved.error) return <Empty title={resolved.error?.message ?? "That path is outside this checkout."} />;
   return <Loading label="Loading file" rows={6} />;
@@ -55,9 +66,9 @@ function ReadOnlyFile({ threadId, tabId, target, worktree }: { threadId: string 
   const setLock = useEditorSessions((state) => state.lock);
   const readOnly = notMine || locked;
   useEffect(() => {
-    setLock(tabId, readOnly);
-    return () => setLock(tabId, false);
-  }, [tabId, readOnly, setLock]);
+    setLock(threadId ?? "", tabId, readOnly);
+    return () => setLock(threadId ?? "", tabId, false);
+  }, [threadId, tabId, readOnly, setLock]);
   const banner = (
     <>
       {locked ? (
@@ -123,7 +134,7 @@ function ExplorerFile({ threadId, tabId, target }: { threadId: string | null; ta
   // The thread's folder may be a subfolder of the worktree (the service roots a worktree at the Git root): the thread names
   // a file relative to its own folder, and reads only what is inside it.
   const own = threadId && worktree && cwd ? threadPathOf(worktree.path, cwd, target.path) : null;
-  if (threadId && own !== null) return <ThreadFile threadId={threadId} tabId={tabId} path={own} />;
+  if (threadId && own !== null) return <ThreadFile threadId={threadId} tabId={tabId} path={own} locked={!!worktree?.read_only} />;
   return <ReadOnlyFile threadId={threadId} tabId={tabId} target={target} worktree={worktree} />;
 }
 

@@ -48,6 +48,8 @@ test("a folder is read when it is unfolded, and a file opens as an icon-only tab
 test("another worktree is read-only: its row says so and its file opens with a banner and a way to start a thread there", async ({ page }) => {
   await row(page, /^approval-timeout/).click();
   await expect(row(page, /^approval-timeout/).getByText("Read-only")).toBeVisible();
+  // Its own copy of the files is read when it unfolds: wait for it before taking the last one.
+  await expect(tree(page).getByRole("treeitem", { name: /^README\.md/ })).not.toHaveCount(1);
   await tree(page).getByRole("treeitem", { name: /^README\.md/ }).last().click();
   await expect(page.getByText("Read-only · not this thread’s worktree.")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Read README.md" })).toHaveValue(/\/\/ approval-timeout/);
@@ -64,6 +66,8 @@ test("a missing worktree is muted and says Missing, and its tab says so; a locke
   await expect(page.getByText("Nothing to browse")).toBeVisible();
   await row(page, /^feat\/locked/).click();
   await expect(row(page, /^feat\/locked/)).toContainText("Locked");
+  // Its own copy of the files is read when it unfolds: wait for it before taking the last one.
+  await expect(tree(page).getByRole("treeitem", { name: /^README\.md/ })).not.toHaveCount(1);
   await tree(page).getByRole("treeitem", { name: /^README\.md/ }).last().click();
   await expect(page.getByText("This worktree is locked. Files open read-only.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start a thread here" })).toHaveCount(0);

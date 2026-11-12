@@ -9,7 +9,7 @@ import { useComposerChips } from "../../../product/state/composerChipStore";
 import { FileComments } from "./FileComments";
 import { useWorkspace } from "../../../product/state/workspace";
 import { formatBytes } from "../../../lib/format";
-import { useEditorSessions } from "../editor/editorSessions";
+import { isLocked, useEditorSessions } from "../editor/editorSessions";
 
 /** The toast the last action raised. */
 const lastToast = () => useUi.getState().toasts.at(-1)?.text;
@@ -170,9 +170,11 @@ it("says a binary file has no text to show, with its size, and leaves the editor
   render(<Viewer threadId="t" tabId="tab" path="assets/image.bin" line={null} onBack={() => undefined} />);
   expect(await screen.findByText("Can’t show this file")).toBeInTheDocument();
   expect(screen.getByText(/image\.bin is a binary file \(64 B\)/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open in editor" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Save file" })).toHaveAttribute("href", expect.stringContaining("/files/raw?"));
   expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeDisabled();
-  expect(useEditorSessions.getState().locked["tab"]).toBe(true);
+  expect(isLocked(useEditorSessions.getState().locked, "t", "tab")).toBe(true);
 });
 
 it("leaves Copy contents disabled for a media file", async () => {

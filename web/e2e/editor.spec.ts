@@ -18,7 +18,7 @@ test("a file opens as an editor with its folders, line numbers, cursor and saved
   await expect(code(page)).toHaveValue(/Mock file contents/);
   await expect(page.locator(".ed-gut")).toContainText("1");
   await expect(page.getByText("Ln 1, Col 1")).toBeVisible();
-  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(page.locator(".ed-end")).toHaveText("Saved");
   await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Find ⌘F" })).toBeVisible();
 });
@@ -31,11 +31,11 @@ test("typing marks the tab and header unsaved, and Save writes the file and clea
   await expect(page.locator(".ed-unsaved")).toHaveText("Unsaved");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("tab", { name: "Cargo.toml", exact: true })).toBeVisible();
-  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(page.locator(".ed-end")).toHaveText("Saved");
   // A second edit starts from the revision the first save wrote.
   await page.keyboard.type("!");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(page.locator(".ed-end")).toHaveText("Saved");
 });
 
 test("Find counts matches and Go to line moves the cursor", async ({ page }) => {

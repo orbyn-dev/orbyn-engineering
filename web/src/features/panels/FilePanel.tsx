@@ -19,7 +19,7 @@ function Title({ tab }: { tab: FileTabId }) {
     <div className="ctx-title">
       <b>{target?.kind === "explorer" ? fileName(target.path) : tabOf(tab).label}</b>
       {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
-      <EditorTitleExtras tabId={tab} onSave={() => undefined} />
+      <EditorTitleExtras threadId={null} tabId={tab} onSave={() => undefined} />
     </div>
   );
 }

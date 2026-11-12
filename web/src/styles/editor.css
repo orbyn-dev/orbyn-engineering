@@ -321,3 +321,53 @@
     display: block;
   }
 }
+/* Line comments from the editor (editor-comment): a "+" beside the line number, a dot on a line that has one, the box and the list under the code. */
+.ed-gutw {
+  position: relative;
+  flex: none;
+  width: 44px;
+}
+.ed-gutw .ed-gut {
+  height: 100%;
+}
+.ed-plus {
+  position: absolute;
+  top: 0;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  margin-top: 1.5px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-5);
+  background: var(--color-primary);
+  color: var(--color-background);
+  font: 13px/15px var(--font-sans, inherit);
+  text-align: center;
+  cursor: pointer;
+}
+.ed-dot {
+  position: absolute;
+  top: 0;
+  left: 6px;
+  width: 6px;
+  height: 6px;
+  margin-top: 6.5px;
+  border-radius: 50%;
+  background: var(--color-textSoft);
+  pointer-events: none;
+}
+.ed-sel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: -44px;
+  background: var(--color-selected);
+  pointer-events: none;
+}
+.ed-comments {
+  flex: none;
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--color-border);
+}

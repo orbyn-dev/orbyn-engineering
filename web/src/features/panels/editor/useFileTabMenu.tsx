@@ -1,12 +1,15 @@
-import { Copy, Pencil, X } from "lucide-react";
+import { Copy, Paperclip, Pencil, X } from "lucide-react";
 import { api } from "../../../api/client";
 import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { chipId, fileExcerpt, languageForPath } from "../../../product/composer/composerContext";
+import { savedContents, sessionOfTab, useEditorSessions } from "./editorSessions";
 import { launchableEditors, primaryEditor } from "../../../product/composer/editorPreferences";
 import { navigate } from "../../../product/state/route";
 import { parseFileTab, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import type { MenuItem } from "../../../ui/Menu";
-import { useExplorer } from "../../workspace";
+import { threadPathOf, useExplorer } from "../../workspace";
 
 /**
  * The ⋯ menu of an open file (editor-tab-menu): the path in two forms, the file in an outside editor (the picker of
@@ -20,6 +23,8 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   const worktree = useExplorer((state) => (target?.kind === "explorer" ? state.worktrees[target.projectId]?.data?.worktrees.find((one) => one.id === target.worktreeId) : undefined));
   const pushToast = useUi((state) => state.pushToast);
+  // What the editor holds, for the two items that read the file: only a file open in the editor has any.
+  const held = useEditorSessions((state) => (tab ? sessionOfTab(state.sessions, threadId, cwd, tab) : undefined));
   const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: close };
   if (!target) return null;
   if (target.kind === "worktree") return [closeItem];
@@ -31,8 +36,8 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
       () => pushToast(done),
       () => pushToast("Couldn't copy the path"),
     );
-  // The thread's own file is named relative to its folder; an explorer file to the worktree, and only the thread's can be handed to an editor.
-  const own = target.kind === "thread" ? target.path : null;
+  // The thread's own file is named relative to its folder, a thread file by its tab and an explorer file by the worktree it is in; only a file of the thread's folder can be handed to an editor.
+  const own = target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
   const list = editors.data ?? [];
   const primary = primaryEditor(list, preferred);
   const open = async (id: string, remember: boolean) => {
@@ -57,9 +62,44 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   return [
     { label: "Copy path", icon: <Copy size={14} aria-hidden />, disabled: absolute === null, onSelect: () => absolute && void copy(absolute, "Path copied") },
     { label: "Copy relative path", icon: <Copy size={14} aria-hidden />, onSelect: () => void copy(relative, "Path copied") },
+    ...(held
+      ? [
+          {
+            label: "Copy contents",
+            icon: <Copy size={14} aria-hidden />,
+            separatorBefore: true,
+            onSelect: () =>
+              void (navigator.clipboard
+                ? navigator.clipboard.writeText(savedContents(held)).then(
+                    () => pushToast("Contents copied"),
+                    (failure: unknown) => pushToast(`Couldn't copy. ${failure instanceof Error && failure.message ? failure.message : "The clipboard is unavailable."}`),
+                  )
+                : pushToast("Couldn't copy. The clipboard is unavailable.")),
+          },
+          {
+            label: "Add file to message",
+            icon: <Paperclip size={14} aria-hidden />,
+            onSelect: () => {
+              useComposerChips.getState().add(threadId, { id: chipId(), kind: "file", path: held.path, line: null, excerpt: fileExcerpt(held.saved, null), language: languageForPath(held.path) });
+              pushToast("File added to your message");
+            },
+          },
+        ]
+      : []),
     ...(own !== null && primary
       ? [{ label: "Open in an outside editor", icon: <Pencil size={14} aria-hidden />, separatorBefore: true, children: picker }]
       : []),
     { ...closeItem, separatorBefore: true },
+  ];
+}
+
+/** A file's items first, then the tab's own menu whole (Close tab appears once, from the tab's menu when it has one). */
+export function withFileItems(file: MenuItem[] | null, tab: MenuItem[]): MenuItem[] {
+  if (!file) return tab;
+  const close = file.filter((item) => item.label === "Close tab");
+  return [
+    ...file.filter((item) => item.label !== "Close tab"),
+    ...(tab.some((item) => item.label === "Close tab") ? [] : close),
+    ...tab.map((item, at) => (at === 0 ? { ...item, separatorBefore: true } : item)),
   ];
 }

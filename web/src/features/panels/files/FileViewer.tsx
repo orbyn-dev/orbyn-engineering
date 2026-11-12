@@ -94,7 +94,7 @@ function FileBody({
 }
 
 /** A file of the thread's checkout, by what it holds. Exported so the bar's own controls can be tested from one file. */
-export function Viewer({ threadId, tabId, path, line, onBack }: { threadId: string; tabId: string; path: string; line: number | null; onBack?(): void }) {
+export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   const media = mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -141,9 +141,9 @@ export function Viewer({ threadId, tabId, path, line, onBack }: { threadId: stri
   const bare = plain && file.status !== "error" && !file.data?.truncated;
   const setLock = useEditorSessions((state) => state.lock);
   useEffect(() => {
-    setLock(tabId, locked);
-    return () => setLock(tabId, false);
-  }, [tabId, locked, setLock]);
+    setLock(threadId, tabId, locked);
+    return () => setLock(threadId, tabId, false);
+  }, [threadId, tabId, locked, setLock]);
   const openInBrowser = async () => {
     try {
       await openThreadFileInBrowser(threadId, path);
@@ -216,7 +216,7 @@ export function Viewer({ threadId, tabId, path, line, onBack }: { threadId: stri
       ) : file.data.truncated ? (
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="text" />
       ) : editing ? (
-        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} onReload={file.reload} />
+        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} cwd={cwd} locked={worktreeLocked} onReload={file.reload} />
       ) : (
         <FileBody threadId={threadId} cwd={cwd} path={path} file={file.data} line={line} onSaved={file.reload} />
       )}

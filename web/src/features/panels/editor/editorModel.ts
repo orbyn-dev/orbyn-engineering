@@ -42,6 +42,10 @@ export const eolOf = (text: string): "LF" | "CRLF" => {
   return at > 0 && text[at - 1] === "\r" ? "CRLF" : "LF";
 };
 
+/** The editor holds every line break as a line feed, as a text field does; the file's own ending is put back on save. */
+export const toLF = (text: string): string => text.replace(/\r\n?/g, "\n");
+export const withEol = (text: string, eol: "LF" | "CRLF"): string => (eol === "CRLF" ? text.replace(/\n/g, "\r\n") : text);
+
 /** Tabs, or the commonest leading run of spaces (2 or 4) among the first lines. */
 export function indentOf(text: string): string {
   const counts = new Map<number, number>();

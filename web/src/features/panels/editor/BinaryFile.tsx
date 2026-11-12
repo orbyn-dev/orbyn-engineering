@@ -4,6 +4,8 @@ import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
 import { api } from "../api";
+import { openInEditor } from "../files/openInEditor";
+import { rawUrl } from "../../../product/media/media";
 import { EditorEmpty } from "./EditorShell";
 
 /** editor-binary: no text editor for a file that is not text. It says so, gives the size and can reveal the file. Images, PDFs, archives and documents never get here. */
@@ -25,11 +27,19 @@ export function BinaryFile({ threadId, path, size }: { threadId: string; path: s
       icon={<FileText size={22} aria-hidden />}
       title="Can’t show this file"
       actions={
-        manager ? (
-          <Button tone="quiet" onClick={() => void reveal()}>
-            Reveal in {manager.name}
+        <>
+          {manager ? (
+            <Button tone="quiet" onClick={() => void reveal()}>
+              Reveal in {manager.name}
+            </Button>
+          ) : null}
+          <Button tone="quiet" onClick={() => void openInEditor(threadId, path)}>
+            Open in editor
           </Button>
-        ) : null
+          <a className="btn btn-quiet" href={rawUrl(threadId, path, true)} download>
+            Save file
+          </a>
+        </>
       }
     >
       {name} is a binary file ({formatBytes(size)}). Images, PDFs and archives preview in the file tab; this type has no preview.

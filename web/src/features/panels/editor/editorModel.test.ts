@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eolOf, findMatches, indentOf, languageOf, lineCount, lineStart, piecesOf, positionOf, saveFailureReason } from "./editorModel";
+import { toLF, withEol, eolOf, findMatches, indentOf, languageOf, lineCount, lineStart, piecesOf, positionOf, saveFailureReason } from "./editorModel";
 
 describe("editor model", () => {
   it("names the language from the file name and has no grammar for plain text", () => {
@@ -44,6 +44,13 @@ describe("editor model", () => {
       [" = 1", undefined],
     ]);
     expect(pieces[0]?.color).toBe("k");
+  });
+
+  it("holds line breaks as line feeds and puts the file's own ending back", () => {
+    expect(toLF("a\r\nb\rc\n")).toBe("a\nb\nc\n");
+    expect(withEol("a\nb\n", "CRLF")).toBe("a\r\nb\r\n");
+    expect(withEol("a\nb\n", "LF")).toBe("a\nb\n");
+    expect(withEol(toLF("a\r\nb\r\n"), eolOf("a\r\nb\r\n"))).toBe("a\r\nb\r\n");
   });
 
   it("puts a failed save in plain words", () => {
