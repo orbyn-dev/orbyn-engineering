@@ -17,6 +17,12 @@ import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilit
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
+import type { RedactionPatternDetail } from "../../generated/RedactionPatternDetail";
+import type { RedactionPatternInput } from "../../generated/RedactionPatternInput";
+import type { RedactionPatternTest } from "../../generated/RedactionPatternTest";
+import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
+import type { RedactionSettings } from "../../generated/RedactionSettings";
+import type { RedactionSurfaceChange } from "../../generated/RedactionSurfaceChange";
 import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
@@ -135,3 +141,37 @@ export { ApiFailure, NETWORK_ERROR, api, authHeaders } from "../../api/client";
 export { serviceUrl } from "../../api/origin";
 export { inDesktopApp, onShellChange } from "../../api/shell";
 export { SseParser } from "../../api/sse";
+
+// Settings › Secrets. Every write answers with the whole view.
+export function readSecrets(signal?: AbortSignal) {
+  return request<RedactionSettings>("GET", "/api/settings/secrets", undefined, signal);
+}
+
+export function changeSecretSurfaces(change: RedactionSurfaceChange) {
+  return request<RedactionSettings>("PUT", "/api/settings/secrets/surfaces", change);
+}
+
+export function changeSecretFormat(id: string, enabled: boolean) {
+  return request<RedactionSettings>("PUT", `/api/settings/secrets/formats/${q(id)}`, { enabled });
+}
+
+export function changeSecretProject(id: string, redaction: boolean) {
+  return request<RedactionSettings>("PUT", `/api/settings/secrets/projects/${q(id)}`, { redaction });
+}
+
+export function saveSecretPattern(id: string | null, input: RedactionPatternInput) {
+  return request<RedactionSettings>(id ? "PUT" : "POST", id ? `/api/settings/secrets/patterns/${q(id)}` : "/api/settings/secrets/patterns", input);
+}
+
+export function deleteSecretPattern(id: string) {
+  return request<RedactionSettings>("DELETE", `/api/settings/secrets/patterns/${q(id)}`);
+}
+
+export function trySecretPattern(input: RedactionPatternTestInput, signal?: AbortSignal) {
+  return request<RedactionPatternTest>("POST", "/api/settings/secrets/patterns/test", input, signal);
+}
+
+/** One pattern with its text: only the edit dialog the person opens reads it. */
+export function readSecretPattern(id: string, signal?: AbortSignal) {
+  return request<RedactionPatternDetail>("GET", `/api/settings/secrets/patterns/${q(id)}`, undefined, signal);
+}

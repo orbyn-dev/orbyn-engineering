@@ -26,6 +26,7 @@ import type {
 import { createAccountMock } from "./account.ts";
 import { createCrewMock } from "./crew.ts";
 import { createExplorerMock } from "./explorer.ts";
+import { createSecretsMock } from "./secrets.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
@@ -124,6 +125,7 @@ export function createMockApi(options: MockOptions = {}) {
 
   const accountMock = createAccountMock();
   const crewMock = createCrewMock();
+  const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
@@ -131,6 +133,7 @@ export function createMockApi(options: MockOptions = {}) {
     scenario = next;
     accountMock.reset(next === "account");
     crewMock.reset(next);
+    secretsMock.reset();
     signedIn = false;
     idCounter = 0;
     preferenceValues = {};
@@ -1079,6 +1082,7 @@ export function createMockApi(options: MockOptions = {}) {
         return err(failure.status, failure.code, failure.message);
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
+      if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/crew")) return crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
