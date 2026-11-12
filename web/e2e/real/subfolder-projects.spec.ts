@@ -42,8 +42,8 @@ test("subfolder file links stay local while repository-wide patches remain visib
     });
     await conversation(page, f);
     await page.getByRole("button", { name: "repository path", exact: true }).click();
-    await expect(page.locator(".file-source")).toContainText("child-diff-new");
-    await expect(page.locator(".file-source")).not.toContainText("literal-duplicate-must-not-open");
+    await expect(page.locator(".ed-ta")).toHaveValue(/child-diff-new/);
+    await expect(page.locator(".ed-ta")).not.toHaveValue(/literal-duplicate-must-not-open/);
     expect(reads).toContain("kept.txt");
     expect(reads).not.toContain("packages/web/kept.txt");
     await page.getByRole("button", { name: "sibling path", exact: true }).click();
@@ -82,10 +82,10 @@ test("new file clicks and route changes cancel older subfolder lookups", async (
     await page.getByRole("button", { name: "repository path", exact: true }).click();
     await expect.poll(() => releases.length).toBeGreaterThan(0);
     await page.getByRole("button", { name: "other local path", exact: true }).click();
-    await expect(page.locator(".file-source")).toContainText("newest-file-only");
+    await expect(page.locator(".ed-ta")).toHaveValue(/newest-file-only/);
     for (const release of releases.splice(0)) release();
     await expect.poll(() => pending).toBe(0);
-    await expect(page.locator(".file-source")).not.toContainText("child-diff-new");
+    await expect(page.locator(".ed-ta")).not.toHaveValue(/child-diff-new/);
     await page.getByRole("button", { name: "repository path", exact: true }).click();
     await expect.poll(() => releases.length).toBeGreaterThan(0);
     await page.getByRole("button", { name: "Close side panel", exact: true }).click();
@@ -145,7 +145,7 @@ test("a moved thread rejects a file-link lookup captured at its old cwd", async 
     for (const release of releases.splice(0)) release();
     expect((await reply).status()).toBe(409);
     await expect.poll(() => pending).toBe(0);
-    await expect(page.locator(".file-source")).toHaveCount(0);
+    await expect(page.locator(".ed-ta")).toHaveCount(0);
     expect(reads).not.toContain("kept.txt");
     // The open view follows the thread to its new checkout, which has no links.md,
     // so it says so instead of keeping the old checkout's text on screen.

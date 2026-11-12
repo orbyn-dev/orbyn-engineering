@@ -14,6 +14,8 @@ export interface EditorSession {
   threadId: string;
   cwd: string;
   path: string;
+  /** The line a link named when the file was opened: the line Add file to message carries. */
+  line: number | null;
   /** The tabs showing this file, so the strip can mark them. */
   tabs: string[];
   /** The text as the editor holds it, with every line break a line feed. */

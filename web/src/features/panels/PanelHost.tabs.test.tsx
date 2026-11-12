@@ -598,7 +598,7 @@ describe("tabs that do not fit", () => {
 
 describe("unsaved files and the tab menu", () => {
   const unsaved = (threadId: string): EditorSession => ({
-    key: `k-${threadId}`, threadId, cwd: "", path: "notes.md", tabs: [FILE], text: "edited", saved: "was", eol: "LF", mixed: false, revision: "r", saving: false, trouble: null,
+    key: `k-${threadId}`, threadId, cwd: "", path: "notes.md", tabs: [FILE], text: "edited", saved: "was", line: null, eol: "LF", mixed: false, revision: "r", saving: false, trouble: null,
   });
   beforeEach(() => useEditorSessions.setState({ sessions: {}, locked: {} }));
 

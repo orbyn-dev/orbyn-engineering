@@ -80,7 +80,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
             label: "Add file to message",
             icon: <Paperclip size={14} aria-hidden />,
             onSelect: () => {
-              useComposerChips.getState().add(threadId, { id: chipId(), kind: "file", path: held.path, line: null, excerpt: fileExcerpt(held.saved, null), language: languageForPath(held.path) });
+              useComposerChips.getState().add(threadId, { id: chipId(), kind: "file", path: held.path, line: held.line, excerpt: fileExcerpt(held.saved, held.line), language: languageForPath(held.path) });
               pushToast("File added to your message");
             },
           },

@@ -93,7 +93,9 @@ test("diff, file, terminal and page-element chips are sent as labelled blocks", 
   await page.locator(".msg-assistant").getByRole("button", { name: "the notes" }).click();
   const viewer = page.locator(".files-viewer");
   await expect(viewer.getByText("notes.txt", { exact: true })).toBeVisible();
-  await viewer.getByRole("button", { name: "Add file to message" }).click();
+  // A plain text file is in the editor, whose tab menu carries Add file to message; the line the link named goes with it.
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await page.getByRole("menuitem", { name: "Add file to message" }).click();
   await expect(chips(page).locator("li[data-kind=file]")).toContainText("notes.txt:3");
 
   // Terminal: a selection in the drawer.

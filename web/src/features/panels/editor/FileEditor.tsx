@@ -28,11 +28,11 @@ export function FileEditor({ threadId, tabId, path, file, line, cwd, locked = fa
       return;
     }
     useEditorSessions.getState().put({
-      key, threadId, cwd, path, tabs,
+      key, threadId, cwd, path, tabs, line,
       text: toLF(file.content), saved: toLF(file.content), ...endingsOf(file.content),
       revision: file.revision, saving: false, trouble: null,
     });
-  }, [key, tabId, threadId, cwd, path, file.content, file.revision, locked, missing]);
+  }, [key, tabId, threadId, cwd, path, file.content, file.revision, locked, missing, line]);
   const { patch } = useEditorSessions.getState();
   const text = session?.text ?? toLF(file.content);
 
