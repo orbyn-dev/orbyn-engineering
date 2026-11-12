@@ -216,8 +216,8 @@ pub async fn guard_origin(
 }
 
 /// The headers a desktop page may send across origins. `x-orbyn-confirm` carries the nonce a
-/// confirmed account action sends back; allowing the header grants nothing alone, the nonce is
-/// still checked by the account guard.
+/// confirmed account action, or a held command the person approved in the desktop app, sends back; allowing the header grants
+/// nothing alone, the nonce is still checked by the account guard or the core's presence grant.
 const NATIVE_HEADERS: &str = "authorization, content-type, accept, last-event-id, range, if-range, if-none-match, x-orbyn-confirm";
 
 fn native_preflight(request: &Request<Body>) -> bool {

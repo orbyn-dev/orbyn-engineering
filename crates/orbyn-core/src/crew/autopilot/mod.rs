@@ -8,6 +8,7 @@ mod held;
 mod hosts;
 mod ledger;
 mod merge;
+mod presence;
 mod review;
 mod shell;
 mod tier;
@@ -15,7 +16,7 @@ mod tripwire;
 
 pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
-pub use held::{APPROVAL_LIFETIME_SECS, CONFIRM_PREFIX, HELD_LIFETIME_SECS, HeldBook, SHOWN_MAX};
+pub use held::{APPROVAL_LIFETIME_SECS, HELD_LIFETIME_SECS, HeldBook, SHOWN_MAX};
 pub use hosts::read_allowed_hosts;
 pub use merge::{
     Answering, COMMENT_MAX, DIGEST_HOURS_MAX, DiffFacts, MergeOutcome, MergeTarget, OFFSET_MAX,

@@ -559,13 +559,34 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   racing approve and deny have exactly one winner. A hold that expired, or whose task ended, answers 410 (`gone`); one already decided answers 409.
 - **Never the always-denied list.** A command on the list (N1 to N10) is never held. The list is read again when the person approves and again when the
   worker retries, so a change in between (the checkout moved to main, say) turns the approval into a refusal. A person's deny rule still wins at the gate.
-- **Proof that a person is there.** Approving needs the account's "Confirm it's you" for this hold: the window asks `POST /api/account/confirm` with the
-  action `approve_device` and the `device_id` `crew-approve-once:<hold id>`, and sends the one-time nonce back in `x-orbyn-confirm`. It is for this hold
-  only, used up by its first use, 10 minutes at most, in memory only (the account's rules, [issue #435](account.md#sensitive-account-actions)). **It
-  protects against** a caller that holds only the service token (a worker, [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)): it has no
-  nonce, so it cannot approve. **It does not protect against** a worker that can read the password or drive the window (the sandbox, #441), and it needs a
-  signed-in account: without one nothing can be approved once. **In release builds approve-once always fails with `account_disabled` (the account is off). In dev builds the stand-in account's password is public, so a worker holding the token could call `/api/account/confirm` itself (by a script N1 does not read) and approve its own hold: the protection is only as strong as the account password.** As a code guard, approve-once is refused while a seeded stand-in account (an `@example.com` address on the development backend) is signed in. Deny and dismiss need no password because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or
-  dismiss a hold, never approve one. A dedicated confirmation action instead of the `approve_device` id convention waits for the account's own code to change.
+- **Proof that a person is there: local presence (Approving once: local presence).** Approving needs a grant the desktop app records after the person
+  clicks Approve in the app's own native dialog; the account is not involved, so approve-once never answers `account_disabled`. The desktop shell launches
+  the service with `--parent-stdin` and a piped stdin only the shell holds (engines get stdin null). The flow, over newline JSON on that channel:
+  1. The shell sends `presence_describe {request_id, hold_id}`. The service answers `presence_hold {request_id, hold_id, thread_id, task_id,
+     command_shown, command_sha256, worker_name, task_title}` or `presence_refused {request_id, code}`. The command, the worker's name and the task's title
+     come from the service, redacted (the answer key's text withheld) and bounded, never from the web page. `command_sha256` is the hold's binding hash.
+  2. The shell shows the dialog. When the person clicks Approve it mints a nonce (16 random bytes, hex) and sends `presence_grant {request_id, nonce,
+     hold_id, thread_id, task_id, command_sha256}`. The service records one grant for the hold in memory (`PresenceBook`), only if the hold is open now
+     and every bound field matches it as it stands now, and answers `presence_ready {request_id}`. The shell hands the nonce to the page only after that.
+     A later grant for the same hold replaces the earlier one. A grant lives 60 seconds, is used by one approval and is cleared by a restart.
+  3. The page posts `POST /api/crew/approvals/{hold}/approve-once` with the nonce in `x-orbyn-confirm`. The service checks the grant first, without
+     using it (constant-time compare), then the hold is open, its task is running, the command is readable and the always-denied list again; only then
+     does it use the grant up and decide. A refusal at any step leaves the grant as it was; a wrong nonce does not burn it. The ledger row is
+     `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`.
+  Refusal codes on the shell channel: `unavailable`, `invalid`, `not_found`, `gone`, `unreadable`, `mismatch`.
+  **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
+  wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.
+  **What it protects.** No caller that only speaks HTTP to the service can approve once, with or without the service token. Deny and dismiss need no grant
+  because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or dismiss a hold, never approve one.
+  **What a process of the same OS user can still do, so this is not OS-level presence:**
+  - drive the desktop app's native dialog through Accessibility or SendInput, including a lead that is not confined;
+  - read the shell's memory (on macOS the hardened runtime blocks `task_for_pid`, but signing is not checked here; on Windows `PROCESS_VM_READ`);
+  - write into the shell's pipe to the service (on Linux `/proc/<pid>/fd/0`, on Windows `DuplicateHandle`).
+  The devtools feature is on in release builds (`desktop/src-tauri/Cargo.toml:15`): a script in the page can call `invoke` but cannot click the native
+  dialog. That is a known exposure, tracked in [issue #532](https://github.com/orbyn-dev/orbyn-engineering/issues/532).
+  **Idea, not built (Linux only):** a per-launch HMAC key between the shell and the service, so a line written into the pipe by another process fails.
+  **Not built yet:** the shell's dialog (PR2) and the web card that asks for it and sends the nonce (PR3). Until the dialog exists nothing can mint a grant,
+  so approve-once answers `presence_required` (desktop service) or `desktop_required` (no shell) for every caller.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the

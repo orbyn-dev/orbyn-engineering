@@ -180,7 +180,7 @@ fn read_parent(core: Arc<Core>, closed: oneshot::Sender<()>) {
         for line in std::io::stdin().lock().lines() {
             match line {
                 Ok(line) => {
-                    if !core.shell.on_line(&line) {
+                    if !core.shell.on_line(&line) && !core.presence_line(&line) {
                         core.updates.on_shell_line(&line);
                     }
                 }

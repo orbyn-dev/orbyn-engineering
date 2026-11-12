@@ -2218,6 +2218,22 @@ memory changed ([Instant reads](#instant-reads)). `ShellBridge` owns this Core c
 most, for the first window; `GET /api/shell` counts attached windows. Lines belonging
 to app updates continue to `UpdateCenter`.
 
+Approving a held Crew command needs the person's click in the desktop app's own dialog
+(docs/crew.md, "Approving once: local presence"). Over this channel the shell sends
+`presence_describe {request_id, hold_id}` and `presence_grant {request_id, nonce, hold_id,
+thread_id, task_id, command_sha256}`; the service answers on stdout `presence_hold`
+(the redacted command, worker name, task title, ids and the hold's binding hash, all from
+the service), `presence_ready` or `presence_refused {code}`. `host::presence::PresenceBook`
+keeps one in-memory grant per hold for 60 seconds, bound to the hold, thread, task and hash,
+replaced by a later grant, used once and dropped by a restart; `autopilot_approve_once` checks it
+first without using it, runs its other checks, then takes it. A service without `--parent-stdin`
+(or a remote one) answers `403 desktop_required`; a missing, wrong, used, expired or mismatched
+nonce in `x-orbyn-confirm` is `403 presence_required`. No caller that only speaks HTTP to the
+service can approve once, with or without the service token. This is not OS-level presence: a
+process of the same OS user can still drive the native dialog (Accessibility, SendInput), read the
+shell's memory or write into its pipe. Not built yet: the shell's dialog (PR2) and the web card
+(PR3), so until then nothing mints a grant.
+
 Only a service started with `--parent-stdin` accepts cross-origin native API traffic,
 from the two exact product asset origins to a loopback host. Preflight permits only
 its explicit methods and request headers. Actual requests still require the per-launch

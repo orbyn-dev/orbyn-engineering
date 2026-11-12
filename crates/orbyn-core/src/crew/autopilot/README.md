@@ -16,6 +16,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |
+| `presence` | The shell messages that carry a person's approval of a hold (`presence_describe`, `presence_grant`) and what they check |
 | `review` | `Core`'s side: the mode, the approvers, and `ActionReview` for the gate |
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
 | `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |

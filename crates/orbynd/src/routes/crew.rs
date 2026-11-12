@@ -20,15 +20,14 @@
 //!
 //! **No agent approves; a person may approve once.** A command the chain denied is held (`GET /api/crew/approvals/held`). The person
 //! may approve that exact command once (`POST /api/crew/approvals/{id}/approve-once`), deny it or dismiss it. Approving needs the
-//! account's "Confirm it's you" for this hold: the window asks `POST /api/account/confirm` (`approve_device`, `device_id`
-//! `crew-approve-once:<hold id>`) and sends the nonce back in `x-orbyn-confirm`, so a caller that holds only the service token
-//! (#441) cannot approve. It protects against that caller and nothing more: a worker that can drive the window or read the
-//! password defeats it. **In release builds approve-once always fails with `account_disabled` (the account is off); in dev builds
-//! the stand-in account's password is public, so the protection is only as strong as that password, and approve-once is refused
-//! while a seeded stand-in account is signed in.** Deny and dismiss need no password (they only refuse), so a token holder can
-//! deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers are refused for
-//! all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays for
-//! development only.
+//! person's click in the desktop app's own native dialog: the shell records a one-time grant with the service on the channel only
+//! the shell holds, and the page sends the grant's nonce in `x-orbyn-confirm`. A service without a desktop shell, and a remote one,
+//! answers `403 desktop_required`; a missing, wrong, used, expired or mismatched nonce is `403 presence_required` and does not use
+//! the grant up. No caller that only speaks HTTP to the service can approve once, with or without the service token. This is not
+//! OS-level presence (docs/crew.md, "Approving once: local presence"). Deny and dismiss need no grant (they only refuse), so a
+//! token holder can deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers
+//! are refused for all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays
+//! for development only.
 
 use axum::Json;
 use axum::Router;
@@ -76,7 +75,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/approvals/{id}/approve-once",
-        "core autopilot_approve_once: the account's confirmation for this hold (x-orbyn-confirm), used up; the hold open, its task running, the command read whole, the always-denied list again, one decision; local only",
+        "core autopilot_approve_once: a desktop shell, the person's grant for this hold as it stands (x-orbyn-confirm), used up; the hold open, its task running, the command read whole, the always-denied list again, one decision; local only",
     ),
     (
         "POST",
@@ -187,6 +186,12 @@ async fn local_only(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiFailure> {
+    if state.remote && request.uri().path().ends_with("/approve-once") {
+        return Err(ApiFailure::forbidden(
+            "desktop_required",
+            "Approving a command needs the Orbyn desktop app on this computer.",
+        ));
+    }
     if state.remote {
         return Err(ApiFailure::forbidden(
             "local_only",
@@ -340,7 +345,7 @@ async fn held(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_held()?))
 }
 
-/// The header the confirmation's nonce comes back in: what the account's "Confirm it's you" answered with.
+/// The header the person's grant nonce comes in: what the desktop app handed the page after the person clicked Approve.
 const CONFIRM_HEADER: &str = "x-orbyn-confirm";
 
 async fn approve_once(
