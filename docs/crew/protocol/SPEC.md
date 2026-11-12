@@ -409,10 +409,13 @@ These are named so nobody assumes them. They arrive in later versions of this pr
   process a member leaves running can outlive its turn.
   - On macOS the reference core starts each worker under a profile that denies reading or writing the
     core's data folder (the store, the service handle and other runs' files), except the worker's own
-    run folder and the checkout and library it works in, and denies inspecting other processes.
-  - It does not cover the network, the loopback service (its token is the guard), the OS keychain, the
-    engine's own login and session folders (including the lead's own engine transcript files, closed by
-    a later change) or other files of the same user.
+    run folder and the checkout and library it works in. It also stops a worker starting a program
+    through LaunchServices and signalling other processes.
+  - It does not stop a worker reading other processes' command lines and environment, and it does not
+    cover the network, the loopback service (its token is the guard), the OS keychain, the engine's own
+    login and session folders (including the lead's own engine transcript files, closed by a later
+    change) or other files of the same user. An ACP lead's bridge process carries its MCP endpoint token
+    in its environment, so a worker could read and use it: a known limit, tracked separately.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.
 - A routine lead message to one member restarts the exchange count of every pair that member is in

@@ -20,7 +20,9 @@ fn terminal_engines_and_codex_are_refused_and_others_are_not() {
 fn where_no_restriction_exists_nothing_is_wrapped_and_the_reason_is_plain() {
     assert_eq!(unavailable().as_deref(), Some(UNSUPPORTED_PLATFORM));
     let dir = crate::testing::TempDir::new();
-    let rules = Confinement::new(dir.path(), dir.path(), &[], &[]).unwrap();
+    let run = dir.path().join("runs");
+    std::fs::create_dir_all(&run).unwrap();
+    let rules = Confinement::new(dir.path(), &run, &[], &[]).unwrap();
     let mut command = ResolvedCommand {
         program: "engine".into(),
         prefix: Vec::new(),
@@ -34,7 +36,26 @@ fn where_no_restriction_exists_nothing_is_wrapped_and_the_reason_is_plain() {
 fn a_path_that_does_not_resolve_is_an_error() {
     let dir = crate::testing::TempDir::new();
     assert!(Confinement::new(&dir.path().join("missing"), dir.path(), &[], &[]).is_err());
-    assert!(Confinement::new(dir.path(), dir.path(), &[&dir.path().join("missing")], &[]).is_err());
+    let run = dir.path().join("runs");
+    std::fs::create_dir_all(&run).unwrap();
+    assert!(Confinement::new(dir.path(), &run, &[&dir.path().join("missing")], &[]).is_err());
+    assert!(Confinement::new(dir.path(), &run, &[], &[]).is_ok());
+}
+
+#[test]
+fn an_allowance_that_contains_the_data_folder_is_refused() {
+    let dir = crate::testing::TempDir::new();
+    let data = dir.path().join("data");
+    let inner = data.join("workspace");
+    std::fs::create_dir_all(&inner).unwrap();
+    // Equal to, or above, the data folder: refused for every kind of allowance.
+    for wide in [data.as_path(), dir.path()] {
+        assert!(Confinement::new(&data, &inner, &[wide], &[]).is_err());
+        assert!(Confinement::new(&data, &inner, &[], &[wide]).is_err());
+        assert!(Confinement::new(&data, wide, &[], &[]).is_err());
+    }
+    // Inside the data folder, such as the managed workspace, is fine.
+    assert!(Confinement::new(&data, &inner, &[&inner], &[&inner]).is_ok());
 }
 
 #[test]
@@ -43,7 +64,9 @@ fn an_installed_agent_may_run_from_its_own_folder_only() {
     let agent = dir.path().join("acp-agents/one");
     std::fs::create_dir_all(&agent).unwrap();
     std::fs::write(agent.join("bin"), "").unwrap();
-    let rules = Confinement::new(dir.path(), dir.path(), &[], &[]).unwrap();
+    let run = dir.path().join("runs");
+    std::fs::create_dir_all(&run).unwrap();
+    let rules = Confinement::new(dir.path(), &run, &[], &[]).unwrap();
     assert_eq!(
         rules.for_program(&agent.join("bin")).allow_exec,
         [std::fs::canonicalize(&agent).unwrap()]
@@ -59,7 +82,9 @@ fn an_installed_agent_may_run_from_its_own_folder_only() {
 #[test]
 fn the_env_scrub_drops_the_data_folder_variable() {
     let dir = crate::testing::TempDir::new();
-    let rules = Confinement::new(dir.path(), dir.path(), &[], &[]).unwrap();
+    let run = dir.path().join("runs");
+    std::fs::create_dir_all(&run).unwrap();
+    let rules = Confinement::new(dir.path(), &run, &[], &[]).unwrap();
     let mut command = Command::new("true");
     command.env("ORBYN_DATA_DIR", "/somewhere");
     rules.scrub_env(&mut command);
@@ -268,15 +293,62 @@ mod macos_tests {
         assert_eq!(out.trim(), "denied");
     }
 
+    /// A program the worker wrote, started through LaunchServices, would run from launchd
+    /// outside the profile and could copy the service handle into the run folder.
     #[test]
-    fn inspecting_other_processes_is_denied() {
+    fn a_program_the_worker_wrote_cannot_be_started_through_launchservices() {
         let s = setup();
         let data = std::fs::canonicalize(&s.data).unwrap();
-        let out = run(
-            &s.rules,
-            &data.join("workspace/repo/p"),
-            "ps -p 1 >/dev/null 2>&1",
+        let cwd = data.join("workspace/repo/p");
+        let app = data.join("runs/mine/escape.app");
+        std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        std::fs::write(
+            app.join("Contents/Info.plist"),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
+             <key>CFBundleExecutable</key><string>run</string>\
+             <key>CFBundleIdentifier</key><string>dev.orbyn.confine-test</string>\
+             <key>CFBundlePackageType</key><string>APPL</string>\
+             <key>LSUIElement</key><true/></dict></plist>",
+        )
+        .unwrap();
+        let out = data.join("runs/mine/stolen");
+        let script = format!(
+            "#!/bin/sh\ncat '{}' > '{}'\n",
+            data.join("service.json").display(),
+            out.display()
         );
-        assert!(!out.status.success(), "ps looked at another process");
+        let exe = app.join("Contents/MacOS/run");
+        std::fs::write(&exe, script).unwrap();
+        std::fs::set_permissions(&exe, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let opened = run(
+            &s.rules,
+            &cwd,
+            &format!("/usr/bin/open -g -j '{}'", app.display()),
+        );
+        assert!(!opened.status.success(), "open started it: {opened:?}");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        assert!(!out.exists(), "the program ran outside the profile");
+    }
+
+    #[test]
+    fn a_worker_cannot_signal_another_process_but_can_signal_its_own_children() {
+        let s = setup();
+        let data = std::fs::canonicalize(&s.data).unwrap();
+        let cwd = data.join("workspace/repo/p");
+        let mut other = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let out = run(&s.rules, &cwd, &format!("kill -TERM {}", other.id()));
+        assert!(!out.status.success(), "{out:?}");
+        assert!(
+            other.try_wait().unwrap().is_none(),
+            "the other process was signalled"
+        );
+        other.kill().unwrap();
+        let _ = other.wait();
+        let own = run(&s.rules, &cwd, "sleep 60 & kill -TERM $!");
+        assert!(own.status.success(), "{own:?}");
     }
 }

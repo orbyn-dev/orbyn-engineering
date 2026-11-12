@@ -65,7 +65,7 @@ impl Confinement {
         allow_write: &[&Path],
     ) -> Result<Self> {
         let data = canonical(data)?;
-        let run_dir = canonical(run_dir)?;
+        let run_dir = inside(&data, canonical(run_dir)?)?;
         let mut confinement = Self {
             data,
             run_dir,
@@ -74,10 +74,12 @@ impl Confinement {
             allow_exec: Vec::new(),
         };
         for path in allow_read {
-            confinement.allow_read.push(canonical(path)?);
+            let path = inside(&confinement.data, canonical(path)?)?;
+            confinement.allow_read.push(path);
         }
         for path in allow_write {
-            confinement.allow_write.push(canonical(path)?);
+            let path = inside(&confinement.data, canonical(path)?)?;
+            confinement.allow_write.push(path);
         }
         Ok(confinement)
     }
@@ -107,6 +109,18 @@ impl Confinement {
     pub fn scrub_env(&self, command: &mut Command) {
         command.env_remove("ORBYN_DATA_DIR");
     }
+}
+
+/// An allowance is applied after the data folder's denial and overrides it, so one that
+/// equals or contains the data folder would open all of it. Refused, never narrowed.
+fn inside(data: &Path, allowed: PathBuf) -> Result<PathBuf> {
+    if data.starts_with(&allowed) {
+        return Err(CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: {} contains Orbyn's data folder.",
+            allowed.display()
+        )));
+    }
+    Ok(allowed)
 }
 
 fn canonical(path: &Path) -> Result<PathBuf> {

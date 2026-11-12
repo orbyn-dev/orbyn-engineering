@@ -11,14 +11,20 @@ use crate::error::{CoreError, Result};
 const TOOL: &str = "/usr/bin/sandbox-exec";
 
 /// Later rules win, so the allowances after the data folder's denial open only their own
-/// folders. `process-info*` and the task port stop a worker looking into the core or the
-/// lead's engine; Apple events stop it driving another app.
+/// folders. The task port and Apple events stop a worker driving another process; `lsopen`
+/// stops it asking LaunchServices to start a program it wrote, which would run from launchd
+/// outside this profile; `signal` leaves a worker able to signal itself and its own children
+/// only. `process-info*` is kept, but it does not stop a worker reading other processes'
+/// command lines or environment (`docs/architecture.md` lists this as a limit).
 const HEAD: &str = "(version 1)\n(allow default)\n\
     (deny file-read* file-write* (subpath (param \"DATA\")))\n\
     (allow file-read* file-write* (subpath (param \"RUN\")))\n";
 const TAIL: &str = "(deny mach-priv-task-port)\n\
     (deny process-info* (target others))\n\
-    (deny appleevent-send)\n";
+    (deny appleevent-send)\n\
+    (deny lsopen)\n\
+    (deny signal)\n\
+    (allow signal (target self) (target children) (target same-sandbox))\n";
 
 /// The profile for `confinement`: the head, one rule per allowance named by parameter
 /// (`R0`, `W0`, `X0`...), and the tail.

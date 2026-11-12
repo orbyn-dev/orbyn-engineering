@@ -14,12 +14,16 @@ impl RunManager {
         start: &Path,
         run_dir: &Path,
     ) -> Result<Option<Confinement>> {
-        let Some(core) = self.crew.get().and_then(Weak::upgrade) else {
+        if self.store.crew_task_for_worker(&thread.id)?.is_none() {
             return Ok(None);
+        }
+        // A worker whose core is not bound cannot be told apart from an unrestricted run.
+        let Some(core) = self.crew.get().and_then(Weak::upgrade) else {
+            return Err(CoreError::EngineUnavailable(
+                "A crew worker could not be restricted: the core is not ready.".into(),
+            ));
         };
-        if !core.config.crew_confine_workers
-            || self.store.crew_task_for_worker(&thread.id)?.is_none()
-        {
+        if !core.config.crew_confine_workers {
             return Ok(None);
         }
         if let Some(reason) = engine_refusal(driver.descriptor().tier, &driver.family()) {
