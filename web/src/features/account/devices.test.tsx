@@ -207,6 +207,7 @@ describe("sign out", () => {
     const dialog = await screen.findByRole("dialog", { name: "Deletion is scheduled." });
     expect(within(dialog).getByRole("button", { name: "OK" })).toBeVisible();
     expect(dialog).toHaveTextContent("Orbyn can’t sign out every session right now. Sign out everywhere is off while your account is waiting to be deleted. Signing out of this computer only still works.");
+    expect(dialog).toHaveTextContent("To sign out every device, wait until the deletion is cancelled or completed.");
     expect(screen.queryByRole("dialog", { name: "Confirm it’s you" })).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Sign out of this computer only" }));
     expect(await screen.findByRole("dialog", { name: "Sign out of this computer?" })).toBeVisible();

@@ -6,7 +6,7 @@ import type { EngineModels, EngineStatus } from "../../../api/types";
 import { ProvidersSection } from "./Providers";
 
 const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
-const actions = vi.hoisted(() => ({ sendFeedback: vi.fn(), models: vi.fn(), updateAllEngines: vi.fn() }));
+const actions = vi.hoisted(() => ({ sendFeedback: vi.fn(), models: vi.fn(), updateAllEngines: vi.fn(), updateEngine: vi.fn() }));
 vi.mock("../../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../api/client")>();
   return { ...original, api: { ...original.api, ...actions } };
@@ -157,14 +157,43 @@ describe("update all", () => {
     render(<ProvidersSection />);
 
     await user.click(await screen.findByRole("button", { name: "Update all" }));
-    const dialog = await screen.findByRole("dialog", { name: "Update 2 providers?" });
+    const dialog = await screen.findByRole("dialog", { name: "Update 2 engines?" });
     expect(within(dialog).getByText("npm install -g x@latest")).toBeVisible();
     expect(within(dialog).getByText("npm install -g y@latest")).toBeVisible();
-    await user.click(within(dialog).getByRole("button", { name: "Update all" }));
+    await user.click(within(dialog).getByRole("button", { name: "Update 2 engines" }));
 
     expect(actions.updateAllEngines).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText("Claude: Claude is busy.")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Updating engines" })).toBeVisible();
+    expect(await screen.findByText("1 of 2 engines couldn’t be updated.")).toBeVisible();
+    expect(screen.getByText("Claude is busy.")).toBeVisible();
     await waitFor(() => expect(mock.refresh).toHaveBeenCalled());
+  });
+
+  it("names an engine with no installer as skipped, and Try again runs only the one that failed", async () => {
+    const user = userEvent.setup();
+    mock.engines = [
+      engine({ ...owned, id: "codex", name: "Codex" }),
+      engine({ ...owned, id: "claude", name: "Claude", update_command: "npm install -g y@latest" }),
+      engine({ ...owned, id: "gemini", name: "Gemini CLI", update_command: null }),
+    ];
+    actions.updateAllEngines.mockResolvedValue([
+      { id: "codex", name: "Codex", version: "2.0.0" },
+      { id: "claude", name: "Claude", error: "brew: Permission denied" },
+    ]);
+    actions.updateEngine.mockResolvedValue(undefined);
+    render(<ProvidersSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Update all" }));
+    const dialog = await screen.findByRole("dialog", { name: "Update 2 engines?" });
+    expect(within(dialog).getByText("Skipped: Gemini CLI has no installer Orbyn recognises.")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Update 2 engines" }));
+
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(actions.updateEngine).toHaveBeenCalledTimes(1);
+    expect(actions.updateEngine).toHaveBeenCalledWith("claude");
+    expect(actions.updateAllEngines).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Try again" })).toBeNull());
+    expect(screen.queryByText("1 of 2 engines couldn’t be updated.")).toBeNull();
   });
 
   it("does not offer update all for a single engine or one already current", async () => {

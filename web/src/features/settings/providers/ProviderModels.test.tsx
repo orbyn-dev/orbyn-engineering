@@ -60,7 +60,7 @@ it("asks once, in the design's words, before removing an engine", async () => {
   useWorkspace.setState({ threads: {} });
   const user = userEvent.setup();
   render(<ProviderDetail engine={{ ...engine, tier: "acp" } as EngineStatus} store={store} onBack={() => undefined} onEdit={() => undefined} />);
-  expect(await screen.findByText("Removes this engine from Orbyn. Its sign-in and sessions stay with the engine.")).toBeVisible();
+  expect(await screen.findByText("Removes this instance from Orbyn. Its sign-in and sessions stay with the CLI.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Remove Claude Code" }));
   const dialog = await screen.findByRole("dialog", { name: "Remove Claude Code?" });
   expect(within(dialog).getByText("It leaves Orbyn’s list. Its sign-in and sessions stay with the engine.")).toBeVisible();
