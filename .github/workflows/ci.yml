@@ -482,6 +482,8 @@ jobs:
     name: Unsigned desktop build (${{ matrix.os }})
     needs: [changes, lint]
     if: ${{ !cancelled() }}
+    # Counts running time only, not time queued for a runner. Default is 360.
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     env:
       RUN: ${{ needs.changes.outputs.desktop == 'true' && (matrix.os != 'windows-2022' || needs.changes.outputs.windows == 'true') }}
@@ -610,6 +612,8 @@ jobs:
   desktop-cache-warm:
     name: Desktop cache warm (${{ matrix.os }})
     if: github.event_name == 'push'
+    # Counts running time only, not time queued for a runner. Default is 360.
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     env:
       ORBYN_CARGO_PROFILE: ci-release

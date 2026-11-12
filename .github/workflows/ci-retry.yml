@@ -1,0 +1,47 @@
+name: CI retry
+
+# Reruns the failed jobs of a CI run once when a macOS desktop job failed. It covers
+# "Desktop cache warm (macos-15)" and "Unsigned desktop build (macos-15)" only, and only
+# a first attempt that ended in failure. It does not bound time spent waiting for a
+# runner: a job queued with no runner never starts, so timeout-minutes cannot apply and
+# this workflow is not triggered until the run ends.
+# workflow_run workflows run from the default branch, so this takes effect after merge.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  retry:
+    name: Retry macOS desktop jobs once
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      EVENT: ${{ github.event.workflow_run.event }}
+      PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+    steps:
+      - shell: bash
+        run: |
+          set -euo pipefail
+          failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" --paginate \
+            --jq '.jobs[] | select(.conclusion == "failure") | .name')
+          echo "Failed jobs:"; echo "$failed"
+          if ! grep -qxE 'Desktop cache warm \(macos-15\)|Unsigned desktop build \(macos-15\)' <<< "$failed"; then
+            echo "No macOS desktop job failed; not retrying."; exit 0
+          fi
+          if [ "$EVENT" = pull_request ]; then
+            if [ -z "$PR" ]; then echo "No pull request in the payload (a fork or a closed one); not retrying."; exit 0; fi
+            current=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+            if [ "$current" != "$HEAD_SHA" ]; then echo "Pull request moved on; not retrying."; exit 0; fi
+          fi
+          gh run rerun "$RUN_ID" --failed --repo "$REPO"
