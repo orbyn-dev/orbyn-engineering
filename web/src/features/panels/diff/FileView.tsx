@@ -10,7 +10,8 @@ import { ChangeLetter } from "../../workspace";
 import { readThreadFile } from "../api";
 import { checkoutPath, openChanged } from "./openChanged";
 import { FilePreview, previewKind } from "../files/FilePreview";
-import { Patch } from "./DiffPatch";
+import { Patch, type PatchActions } from "./DiffPatch";
+import type { Hunk } from "./hunkModel";
 import { fileName } from "./ChangedFiles";
 import { MenuButton } from "./ChangesHeader";
 import { changeOf, isBinaryPatch, renameOf, type DiffLine } from "./diffModel";
@@ -49,7 +50,7 @@ function RenderToggle({ rendered }: { rendered: boolean }) {
 }
 
 /** One file of the change: its header, then its lines, or the one line that says why there are none. */
-export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar }: {
+export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow }: {
   file: FileDiff;
   lines: readonly DiffLine[];
   threadId: string;
@@ -63,6 +64,9 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   canRender: boolean;
   /** The find bar, when it is open: it sits between the file's header and its lines. */
   bar?: ReactNode;
+  /** The working tree can be changed from here: set for the Working tree scope, with whitespace shown. */
+  edits?: { revert(path: string, hunk: Hunk): Promise<void>; saveLine(path: string, number: number, was: string, next: string): Promise<boolean> };
+  narrow?: boolean;
 }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   const renderedPref = useUi((state) => state.diffMarkdownRendered);
@@ -70,6 +74,10 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   const markdown = previewKind(file.path) === "markdown" && canRender && file.status !== "deleted" && !binary;
   const rendered = markdown && renderedPref;
   const conflict = file.status === "conflicted";
+  // A deleted or conflicted file has no lines to write back to.
+  const actions: PatchActions | undefined = edits && file.status !== "deleted" && !conflict
+    ? { revert: (hunk) => edits.revert(file.path, hunk), saveLine: (number, was, next) => edits.saveLine(file.path, number, was, next) }
+    : undefined;
   return (
     <div className="x2file" data-diff-file={file.path}>
       <div className="fh2">
@@ -116,7 +124,7 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
         </p>
       ) : (
         <Patch lines={lines} path={file.path} threadId={threadId} origin={origin} needle={needle} current={current}
-          full={full} split={split} onShowAll={onShowAll} />
+          full={full} split={split} onShowAll={onShowAll} actions={actions} narrow={narrow} />
       )}
     </div>
   );
