@@ -130,14 +130,16 @@ has the page heading and 28px content padding.
 - Pull requests: filter pills (Open and Drafts, each with a count) beside search, Sort,
   Filters (state, draft, review, checks, author, label), the project filter and Refresh.
   Rows are a table: select box, title with its number, branch, project and author, Checks
-  (Running, Failing, Passing or No checks), Review (changes requested is an amber pill),
-  Updated, and row actions (Reopen, Ready for review, Merge, Close) that show on hover or
+  (Running, Failing, Passing or No checks), Reviewers (avatars, then Approved or Changes;
+  Changes is amber only on your own pull request, ink on anyone else's), Updated, and row actions (Reopen, Ready for review, Merge, Close) that show on hover or
   focus. Selecting rows offers Close selected. A row opens the pull request as its own
   page with a back button and its title in the title bar; the list keeps its filters. The
   tabs are Summary, Guide, Timeline and Code. Summary has the description and conversation
   beside a side column: status card (status, branch, checks, changes), a merge method,
   Work on this, Close and Merge, then checks, reviewers and labels. On the other tabs and
-  on a narrow window those actions move to the heading. A thread's side panel keeps the
+  on a narrow window those actions move to the heading. Amber on a pull request page means
+  you are waited on: a review asked of you, or changes requested on your own pull request.
+  A conflict, and changes you requested yourself, stay ink. A thread's side panel keeps the
   compact detail.
 - Usage: tabs Usage and Limits under the heading. Usage has period, provider and metric
   (Cost, Tokens) controls, tiles for tokens, estimated cost and cache hits, the daily bar

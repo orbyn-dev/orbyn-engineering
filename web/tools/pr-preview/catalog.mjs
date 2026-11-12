@@ -5,7 +5,7 @@
 //   scenario  the mock API's scenario (web/mock/api.ts); "default" when omitted
 //   pre       network behaviour set up before the page opens: { route, delay } holds a request for `delay` ms, { route, status } answers it
 //   steps     what to do once it has loaded, in order:
-//               { do: "click", role, name, prefix?, exact? }   a button, tab, checkbox ... by its accessible name
+//               { do: "click", role, name, prefix?, exact?, within? }   a button, tab, checkbox ... by its accessible name (`within`: only inside the region of that name)
 //               { do: "fill", label, value, exact? }          a field by its label (exact when another label contains it)
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
@@ -17,6 +17,8 @@
 
 const pull = (n) => `#/pulls/p-app/${n}`;
 const click = (role, name, more = {}) => ({ do: "click", role, name, ...more });
+const note = [{ do: "fill", label: "What needs to change?", value: "Should this reject //evil.com? The check also accepts //evil.com/x." }];
+const send = click("button", "Request changes", { within: "Request changes" });
 const filterNeedsMyReview = [
   click("button", "Filters", { prefix: true }),
   click("checkbox", "Needs my review"),
@@ -78,6 +80,7 @@ export const FRAMES = {
   "pr-list-loading": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls?*", delay: 20000 }] },
   "pr-list-error": { route: "#/pulls", scenario: "pulls-unreachable" },
   "pr-list-signedout": { route: "#/pulls", scenario: "pulls-signed-out" },
+  "pr-list-draft": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Drafts", { prefix: true })] },
   "pr-list-offline": { route: "#/pulls", scenario: "pulls", steps: [{ do: "offline" }] },
   "pr-list-filtered": {
     route: "#/pulls",
@@ -121,6 +124,24 @@ export const FRAMES = {
     steps: [click("tab", "Files changed", { prefix: true }), { do: "fill", label: "Filter files", value: "migrations" }],
   },
   "pr-review-open": { route: pull(203), scenario: "pulls", steps: [click("button", "Request changes")] },
+  "pr-review-filled": { route: pull(203), scenario: "pulls", steps: [click("button", "Request changes"), ...note] },
+  // The answer is held back, so the card shows Requesting…
+  "pr-review-busy": {
+    route: pull(203),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/203/review", delay: 20000 }],
+    steps: [click("button", "Request changes"), ...note, send],
+    wait: 900,
+  },
+  "pr-review-done": { route: pull(203), scenario: "pulls", steps: [click("button", "Request changes"), ...note, send, { do: "wait", ms: 600 }] },
+  // The forge refuses it (a 409, so nothing was sent).
+  "pr-review-error": {
+    route: pull(203),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/203/review", status: 409 }],
+    steps: [click("button", "Request changes"), ...note, send],
+  },
+  "pr-review-own": { route: pull(210), scenario: "pulls", steps: [click("button", "Request changes")] },
 
   // Threads: run states, the tool call states, the details card.
   "thread-approval": { route: "#/threads/t-approval" },
