@@ -285,6 +285,96 @@ fn text_over_the_window_is_read_whole_and_a_value_on_the_edge_is_still_hidden() 
     assert_eq!(hidden.matches("[hidden:").count(), 1);
 }
 
+/// `filler` of two-byte units with `value` laid over it from byte `at`.
+fn laid(value: &str, at: usize, total: usize) -> String {
+    let mut text = "x ".repeat(total / 2);
+    text.replace_range(at..at + value.len(), value);
+    text
+}
+
+#[test]
+fn a_value_longer_than_the_overlap_is_hidden_whole_across_a_window_edge() {
+    // One run with no end: it begins before the first window's end and runs 100 KiB past it.
+    let long = format!("Bearer {}", "a1".repeat(50 * 1024));
+    let text = laid(
+        &long,
+        custom::MAX_APPLY_BYTES - 1000,
+        custom::MAX_APPLY_BYTES + 200 * 1024,
+    );
+    let hidden = Redactor::locked().labelled(&text);
+    assert!(!hidden.contains("a1a1a1"), "a tail of the value is left");
+    assert_eq!(hidden.matches("[hidden:").count(), 1, "one value, one mask");
+    // A text pattern's `*` run behaves the same way.
+    let star = compile(PatternKind::Text, "pre-*").unwrap();
+    let only = Redactor::only(vec![Custom {
+        name: "run",
+        regex: star,
+        applies_to: PatternScope::Anywhere,
+    }]);
+    let run = format!("pre-{}", "z".repeat(150 * 1024));
+    let text = laid(
+        &run,
+        custom::MAX_APPLY_BYTES - 5000,
+        custom::MAX_APPLY_BYTES + 200 * 1024,
+    );
+    let hidden = only.labelled(&text);
+    assert!(!hidden.contains("zzzz") && hidden.matches("[hidden:").count() == 1);
+}
+
+#[test]
+fn a_private_key_block_is_hidden_through_its_end_line_even_across_a_window_edge() {
+    let body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n".repeat(100);
+    let begin = format!("-----BEGIN {} PRIVATE KEY-----", "RSA");
+    let block = format!("{begin}\n{body}-----END {} PRIVATE KEY-----", "RSA");
+    assert!(
+        Redactor::locked()
+            .labelled(&format!("a\n{block}\nb"))
+            .eq("a\n[hidden: Private key block]\nb")
+    );
+    for at in [
+        custom::MAX_APPLY_BYTES - 40,
+        custom::MAX_APPLY_BYTES - block.len() / 2,
+        custom::MAX_APPLY_BYTES - block.len() + 10,
+    ] {
+        let text = laid(&block, at, custom::MAX_APPLY_BYTES + 100 * 1024);
+        let hidden = Redactor::locked().labelled(&text);
+        assert!(
+            !hidden.contains("MIIEvQ") && !hidden.contains("-----END"),
+            "at {at}"
+        );
+        assert_eq!(hidden.matches("[hidden:").count(), 1, "at {at}");
+    }
+    // A header with no END line still hides the header.
+    let header_only = Redactor::locked().labelled(&format!("{begin}\nMIIEvQ"));
+    assert_eq!(header_only, "[hidden: Private key block]\nMIIEvQ");
+}
+
+#[test]
+fn the_start_of_a_window_is_not_taken_for_the_start_of_a_word() {
+    // Glued to letters, the access key has no word boundary before it, wherever a window begins.
+    let key = format!("{}A{}", "AKI", "Q".repeat(16));
+    let at = custom::MAX_APPLY_BYTES - custom::WINDOW_OVERLAP;
+    let mut text = "q".repeat(custom::MAX_APPLY_BYTES + 10_000);
+    text.replace_range(at..at + key.len(), &key);
+    assert_eq!(Redactor::locked().labelled(&text), text);
+}
+
+#[test]
+fn settings_that_do_not_read_fail_the_ledger_read_and_leave_the_surfaces_hiding_everything() {
+    let dir = TempDir::new();
+    let core = core(&dir);
+    core.store.set_setting("redaction", "{ not json").unwrap();
+    assert!(core.display_redactor().is_err());
+    assert!(!core.redactor(Surface::Agents, None).unwrap().is_empty());
+    core.store
+        .set_setting("redaction", r#"{"terminal":false}"#)
+        .unwrap();
+    assert!(
+        core.display_redactor().is_ok(),
+        "a partly known document reads"
+    );
+}
+
 #[test]
 fn the_compiled_set_is_kept_per_settings_revision() {
     let dir = TempDir::new();

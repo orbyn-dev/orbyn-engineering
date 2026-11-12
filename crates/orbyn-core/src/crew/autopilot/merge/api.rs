@@ -202,11 +202,21 @@ struct Scrubs<'a> {
 }
 
 impl<'a> Scrubs<'a> {
-    fn new(core: &'a Core) -> Self {
+    /// Fails when the redaction settings cannot be read: the rows are not shown rather than shown
+    /// without the patterns the person asked to hide.
+    fn new(core: &'a Core) -> Result<Self> {
+        Ok(Self {
+            core,
+            person: core.display_redactor()?,
+            seen: HashMap::new(),
+        })
+    }
+
+    /// For text that is stored, not shown: the person's patterns do not apply, and the settings need not read.
+    fn for_storing(core: &'a Core) -> Self {
         Self {
             core,
-            // Unreadable settings show the text as it is stored, which Crew's own scrub has already cleaned.
-            person: core.display_redactor().unwrap_or_default(),
+            person: Arc::default(),
             seen: HashMap::new(),
         }
     }
@@ -427,7 +437,7 @@ impl Core {
     pub fn autopilot_risk(&self, task_id: &str) -> Result<wire::AutopilotRiskReport> {
         self.crew_preview_only()?;
         valid_id(task_id)?;
-        let mut scrubs = Scrubs::new(self);
+        let mut scrubs = Scrubs::new(self)?;
         let scrub = scrubs.of(task_id);
         let not_measured = vec!["test coverage of the touched code".to_owned()];
         if let Some(entry) = self.store.merge_entry(task_id)? {
@@ -474,7 +484,7 @@ impl Core {
     ) -> Result<wire::AutopilotReviewQueue> {
         self.crew_preview_only()?;
         let all = self.crew_review_queue(now)?;
-        let mut scrubs = Scrubs::new(self);
+        let mut scrubs = Scrubs::new(self)?;
         let items = slice(&all, page)
             .into_iter()
             .map(|item| {
@@ -575,7 +585,7 @@ impl Core {
                         "A comment is 1 to {COMMENT_MAX} characters."
                     )));
                 }
-                let needles = Scrubs::new(self).of(task_id).needles.clone();
+                let needles = Scrubs::for_storing(self).of(task_id).needles.clone();
                 ReviewAnswer::Comment(withhold(&redact(text), &needles))
             }
         };
@@ -603,7 +613,7 @@ impl Core {
     pub fn autopilot_merge_queue(&self, page: Page) -> Result<wire::AutopilotMergeQueue> {
         self.crew_preview_only()?;
         let (all, _) = self.store.merge_entries_page(&ACTIVE, ACTIVE_MAX, 0)?;
-        let mut scrubs = Scrubs::new(self);
+        let mut scrubs = Scrubs::new(self)?;
         let mut ahead: HashMap<(String, String), u32> = HashMap::new();
         let mut rows = Vec::with_capacity(all.len());
         for entry in &all {
@@ -637,7 +647,7 @@ impl Core {
     pub fn autopilot_watch(&self, page: Page) -> Result<wire::AutopilotWatch> {
         self.crew_preview_only()?;
         let (records, total) = self.store.crew_merges_page(page.limit, page.offset)?;
-        let mut scrubs = Scrubs::new(self);
+        let mut scrubs = Scrubs::new(self)?;
         let rows = records
             .iter()
             .map(|m| watch_row(m, &scrubs.of(&m.task_id)))
@@ -673,7 +683,7 @@ impl Core {
         let (events, total) = self
             .store
             .crew_autopilot_events_page(task_id, kinds, limit, offset)?;
-        let mut scrubs = Scrubs::new(self);
+        let mut scrubs = Scrubs::new(self)?;
         let rows = events
             .iter()
             .map(|e| log_row(e, &scrubs.of(&e.task_id)))

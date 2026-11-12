@@ -114,8 +114,20 @@ impl Core {
 
     /// The person's own patterns alone, for text shown back to them: the ledger and its rows are
     /// stored as they are and masked on the way out.
+    ///
+    /// Settings that cannot be read fail the read. Unlike the surfaces (where an unreadable document
+    /// means everything is hidden), nothing here can stand in for patterns that are not known, and
+    /// showing the text unmasked would drop what the person asked to hide: so the ledger read errors.
     pub fn display_redactor(&self) -> Result<Arc<Redactor>> {
         let text = self.store.redaction_json()?;
+        if let Some(raw) = text.as_deref()
+            && serde_json::from_str::<Stored>(raw).is_err()
+        {
+            tracing::error!("the redaction settings do not read; the ledger is not shown");
+            return Err(CoreError::Internal(
+                "the redaction settings do not read".into(),
+            ));
+        }
         let key = format!("display||{}", text.as_deref().unwrap_or(""));
         Ok(cached(key, || {
             Stored::parse(text.as_deref()).person_redactor()

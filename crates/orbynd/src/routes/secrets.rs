@@ -16,22 +16,22 @@ use orbyn_contracts::{
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
 
 pub fn routes(state: AppState) -> Router<AppState> {
-    // Turning redaction off is the person's answer at this computer: a remote viewer reads and tries
-    // a pattern, and cannot change anything (the same rule as the account's and Crew's writes).
+    // Turning redaction off is the person's answer at this computer: a remote viewer reads the list and tries
+    // a pattern, and can neither change anything nor read a pattern's text (the same rule as the account's and Crew's writes).
     let writes = Router::new()
         .route("/api/settings/secrets/surfaces", put(surfaces))
         .route("/api/settings/secrets/formats/{id}", put(format))
         .route("/api/settings/secrets/projects/{id}", put(project))
         .route("/api/settings/secrets/patterns", post(add_pattern))
+        // A pattern's text can be a secret itself, so a remote viewer does not read it either.
         .route(
             "/api/settings/secrets/patterns/{id}",
-            put(edit_pattern).delete(delete_pattern),
+            get(read_pattern).put(edit_pattern).delete(delete_pattern),
         )
         .route_layer(from_fn_with_state(state, local_only));
     Router::new()
         .route("/api/settings/secrets", get(read))
         .route("/api/settings/secrets/patterns/test", post(test_pattern))
-        .route("/api/settings/secrets/patterns/{id}", get(read_pattern))
         .merge(writes)
 }
 

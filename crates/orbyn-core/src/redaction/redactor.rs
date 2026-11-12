@@ -106,56 +106,91 @@ impl Redactor {
         &self.detectors[span.detector].label
     }
 
-    fn scan(&self, text: &str, base: usize, found: &mut Vec<Span>) {
-        for (index, detector) in self.detectors.iter().enumerate() {
-            let mut keep = |start: usize, end: usize| {
-                if end > start {
-                    found.push(Span {
-                        start: base + start,
-                        end: base + end,
-                        detector: index,
-                    });
+    /// Looks for matches that start in `start..end` of `text`, reading `text[..end]` so what lies
+    /// before the window is seen (a `\b` at its first byte is judged against the byte before it).
+    /// `touch` takes the earliest start of a match that runs to `end`: it may go on in the next window.
+    fn scan(
+        &self,
+        text: &str,
+        start: usize,
+        end: usize,
+        more: bool,
+        found: &mut Vec<Span>,
+        touch: &mut Option<usize>,
+    ) {
+        let hay = &text[..end];
+        let mut keep = |index: usize, from: usize, to: usize| {
+            if to > from {
+                found.push(Span {
+                    start: from,
+                    end: to,
+                    detector: index,
+                });
+                if more && to == end {
+                    *touch = Some(touch.map_or(from, |at| at.min(from)));
                 }
-            };
+            }
+        };
+        for (index, detector) in self.detectors.iter().enumerate() {
             if detector.env_only {
-                for values in assignments().captures_iter(text) {
+                // An assignment sits on one line: read from the line that holds `start`.
+                let line = hay[..start].rfind('\n').map_or(0, |at| at + 1);
+                for values in assignments().captures_iter(&hay[line..]) {
                     let Some(value) = values.get(1) else { continue };
+                    let base = line + value.start();
                     for hit in detector.regex.find_iter(value.as_str()) {
-                        keep(value.start() + hit.start(), value.start() + hit.end());
+                        keep(index, base + hit.start(), base + hit.end());
                     }
                 }
             } else {
-                for hit in detector.regex.find_iter(text) {
-                    keep(hit.start(), hit.end());
+                let mut at = start;
+                while at <= hay.len() {
+                    let Some(hit) = detector.regex.find_at(hay, at) else {
+                        break;
+                    };
+                    keep(index, hit.start(), hit.end());
+                    at = if hit.end() > hit.start() {
+                        hit.end()
+                    } else {
+                        hay[hit.end()..]
+                            .chars()
+                            .next()
+                            .map_or(hay.len() + 1, |c| hit.end() + c.len_utf8())
+                    };
                 }
             }
         }
     }
 
     /// The stretches to hide: empty matches dropped, overlaps merged under the first detector that
-    /// found them. Text over `MAX_APPLY_BYTES` is read in overlapping windows, so one call never
-    /// hands the engine more than that and a value on a window's edge is still whole in the next.
+    /// found them.
+    ///
+    /// Text over `MAX_APPLY_BYTES` is read in windows of that size, each seeing the text before it.
+    /// The next window starts `WINDOW_OVERLAP` (64 KiB) before the end of the last, or at the start
+    /// of a match that ran to the end, whichever is earlier. So a match is found whole when it is at
+    /// most 64 KiB long, or when it is one run (`{20,}`, `\S*`) that carries on from where it began.
+    /// A match that needs both ends of a block longer than 64 KiB is not found: the built-in private
+    /// key pattern reads at most 8 KiB between its markers for that reason.
     pub fn spans(&self, text: &str) -> Vec<Span> {
         let mut found: Vec<Span> = Vec::new();
-        if text.len() <= custom::MAX_APPLY_BYTES {
-            self.scan(text, 0, &mut found);
-        } else {
-            let mut start = 0;
-            while start < text.len() {
-                let mut end = (start + custom::MAX_APPLY_BYTES).min(text.len());
-                while !text.is_char_boundary(end) {
-                    end -= 1;
-                }
-                self.scan(&text[start..end], start, &mut found);
-                if end == text.len() {
-                    break;
-                }
-                let mut next = end - custom::WINDOW_OVERLAP;
-                while !text.is_char_boundary(next) {
-                    next += 1;
-                }
-                start = next;
+        let mut start = 0;
+        loop {
+            let mut end = (start + custom::MAX_APPLY_BYTES).min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
             }
+            let more = end < text.len();
+            let mut touch = None;
+            self.scan(text, start, end, more, &mut found, &mut touch);
+            if !more {
+                break;
+            }
+            let mut next = touch.unwrap_or(end).min(end - custom::WINDOW_OVERLAP);
+            while !text.is_char_boundary(next) {
+                next += 1;
+            }
+            // A match as long as the window itself is cut here; its rest is found from this point on.
+            start = if next > start { next } else { end };
         }
         found.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
         let mut merged: Vec<Span> = Vec::new();

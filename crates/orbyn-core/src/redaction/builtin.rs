@@ -17,7 +17,10 @@ pub const BUILTINS: &[Builtin] = &[
         label: "Private key block",
         example: "-----BEGIN … PRIVATE KEY-----",
         class: "private key",
-        patterns: &[r"-----BEGIN [A-Z ]*PRIVATE KEY-----"],
+        // The header, and the block through its END line when that follows within 8 KiB.
+        patterns: &[
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[A-Za-z0-9+/=:,.\s-]{0,8192}-----END [A-Z ]*PRIVATE KEY-----)?",
+        ],
     },
     Builtin {
         id: "api_key",

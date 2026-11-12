@@ -77,7 +77,7 @@ fn concrete(path: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_remote_viewer_cannot_change_any_redaction_setting() {
+async fn a_remote_viewer_cannot_change_or_read_a_pattern_s_text() {
     let app = serve("remote", true).await;
     for (method, path) in STATE_CHANGING {
         let (status, body) = app.call(method, &concrete(path), Some("token")).await;

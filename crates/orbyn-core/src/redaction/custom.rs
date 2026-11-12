@@ -19,10 +19,10 @@ const MIN_TEXT_CHARS: usize = 3;
 const PROGRAM_BYTES: usize = 200_000;
 const LAZY_DFA_BYTES: usize = 1_000_000;
 const NEST_LIMIT: u32 = 16;
-/// The most text one scan reads at once; longer text is read in windows that overlap.
+/// The most text one scan reads at once; longer text is read in windows (see `Redactor::spans`).
 pub const MAX_APPLY_BYTES: usize = 1 << 20;
-/// What two windows share, so a value on the edge of one is whole in the other.
-pub const WINDOW_OVERLAP: usize = 4096;
+/// What two windows share. A match up to this long is found whole wherever it falls.
+pub const WINDOW_OVERLAP: usize = 64 * 1024;
 
 /// Why a pattern is refused, in plain words. `position` counts characters from 0.
 #[derive(Clone, Debug, PartialEq)]
