@@ -1,6 +1,9 @@
 import { Check, Plus, RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
-import { queryPreferences, updatePreferences } from "../api";
+import { listProviders, queryPreferences, updatePreferences } from "../api";
+import type { ProviderEntry } from "../../../generated/ProviderEntry";
+import type { ProviderList } from "../../../generated/ProviderList";
+import { GROUPS, LABEL_TEXT } from "./providerLabels";
 import type { EngineStatus } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -61,56 +64,99 @@ const subtitle = (engine: EngineStatus) => {
   return [rowNames(engine).label, status].filter(Boolean).join(" · ") || null;
 };
 
-const COLUMNS = "28px minmax(0, 1fr) 90px 130px 60px 72px";
+/** The labels the service gives a provider: what Orbyn has not seen or cannot control. */
+function Labels({ entry }: { entry: ProviderEntry | undefined }) {
+  return <>{entry?.labels.map((label) => <span key={label} className={label === "planned" ? "set-pill planned" : "set-pill dot"}>{LABEL_TEXT[label]}</span>)}</>;
+}
+
+/** The grouped list, read again whenever the engines change. `null` until the service answers or when it cannot. */
+export function useProviderList(engines: EngineStatus[]): ProviderList | null {
+  const key = engines.map((engine) => `${engine.id}:${engine.installed}:${engine.auth}:${engine.version ?? ""}`).join();
+  const list = useAsync(`provider-list:${key}`, (signal) => listProviders(signal), { keep: true });
+  return list.data;
+}
+
+const COLUMNS = "28px minmax(0, 1fr) 90px minmax(130px, auto) 60px 72px";
 
 /** One row per provider and provider instance. A row opens its detail; Edit and In use belong to instances. */
-export function ProviderTable({ engines, store, onOpen, onEdit }: {
+export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }: {
   engines: EngineStatus[];
   store: InstanceStore;
   onOpen(id: string): void;
   onEdit(id: string): void;
+  /** The grouped list. Without it, one flat table of the engines. */
+  catalog?: ProviderList | null;
 }) {
   const inUse = useProvidersInUse();
   const row = inUse.row;
   const all = inUse.scope?.catalog?.selection.kind === "all_projects";
+  const head = (
+    <div role="row" className="set-tr h" style={{ gridTemplateColumns: COLUMNS }}>
+      <span /><span role="columnheader">Provider</span><span role="columnheader">Version</span><span role="columnheader">Status</span><span />
+      <span role="columnheader" className="set-inuse-head">In use{row?.project_scoped ? (
+        <PreferenceInheritance row={{ key: KEY, title: "Providers in use" }} view={row.members[0]?.view ?? row.environment} global={row.environment}
+          members={row.members} mixed={row.mixed} overrides={all ? row.overrides : []} disabled={inUse.blocked}
+          onResetOverrides={(ids) => void inUse.reset(ids)}
+          onOpenOverride={(id) => {
+            const group = inUse.scope?.catalog?.groups.find((entry) => entry.members.some((member) => member.project_id === id));
+            if (group) inUse.scope?.select({ kind: "checkout", group_key: group.key, project_id: id });
+          }} />
+      ) : null}</span>
+    </div>
+  );
+  const engineRow = (engine: EngineStatus, entry?: ProviderEntry) => {
+    const note = entry?.note ?? subtitle(engine);
+    const instance = store.instances.find((candidate) => candidate.id === engine.id);
+    return (
+      <div key={engine.id} role="row" className="set-tr set-tr-open" style={{ gridTemplateColumns: COLUMNS }} onClick={() => onOpen(engine.id)}>
+        <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
+        <span role="cell">
+          <button type="button" className="set-row-open name" aria-label={engine.name} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{rowNames(engine).title}</button>
+          {note ? <><br /><span className="sub">{note}</span></> : null}
+        </span>
+        <span role="cell" className="t3">{engine.version ?? ""}</span>
+        <span role="cell" className="set-states"><Status engine={engine} /><Labels entry={entry} /></span>
+        <span role="cell">{instance ? <Button small aria-label={`Edit ${engine.name}`} onClick={(event) => { event.stopPropagation(); onEdit(engine.id); }}>Edit</Button> : null}</span>
+        <span role="cell" onClick={(event) => event.stopPropagation()}>
+          {row ? <input type="checkbox" role="switch" aria-label={`Use ${engine.name}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}
+            ref={(element) => { if (element) element.indeterminate = row.mixed; }} checked={!row.mixed && !inUse.off.includes(engine.id)} disabled={inUse.blocked}
+            onChange={(event) => void inUse.set(engine.id, event.target.checked)} /> : null}
+        </span>
+      </div>
+    );
+  };
+  // A row with no engine behind it has nothing to open, sign in to or switch: only its words.
+  const plainRow = (entry: ProviderEntry) => (
+    <div key={entry.id} role="row" className="set-tr" style={{ gridTemplateColumns: COLUMNS }}>
+      <span role="cell"><span className="set-mark">{entry.name.charAt(0).toUpperCase()}</span></span>
+      <span role="cell"><span className="name">{entry.name}</span>{entry.note ? <><br /><span className="sub">{entry.note}</span></> : null}</span>
+      <span role="cell" /><span role="cell" className="set-states"><Labels entry={entry} /></span><span role="cell" /><span role="cell" />
+    </div>
+  );
+  // A real list always ends with the engines not built, so an empty one means the service gave none.
+  const grouped = catalog && catalog.providers.length > 0
+    ? GROUPS.map(({ group, heading }) => ({ heading, entries: catalog.providers.filter((entry) => entry.group === group) })).filter((part) => part.entries.length > 0)
+    : null;
   return (
     <>
-    <div className="set-tbl" role="table" aria-label="Providers">
-      <div role="row" className="set-tr h" style={{ gridTemplateColumns: COLUMNS }}>
-        <span /><span role="columnheader">Provider</span><span role="columnheader">Version</span><span role="columnheader">Status</span><span />
-        <span role="columnheader" className="set-inuse-head">In use{row?.project_scoped ? (
-          <PreferenceInheritance row={{ key: KEY, title: "Providers in use" }} view={row.members[0]?.view ?? row.environment} global={row.environment}
-            members={row.members} mixed={row.mixed} overrides={all ? row.overrides : []} disabled={inUse.blocked}
-            onResetOverrides={(ids) => void inUse.reset(ids)}
-            onOpenOverride={(id) => {
-              const group = inUse.scope?.catalog?.groups.find((entry) => entry.members.some((member) => member.project_id === id));
-              if (group) inUse.scope?.select({ kind: "checkout", group_key: group.key, project_id: id });
-            }} />
-        ) : null}</span>
-      </div>
-      {engines.map((engine) => {
-        const note = subtitle(engine);
-        const instance = store.instances.find((entry) => entry.id === engine.id);
-        return (
-          <div key={engine.id} role="row" className="set-tr set-tr-open" style={{ gridTemplateColumns: COLUMNS }} onClick={() => onOpen(engine.id)}>
-            <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
-            <span role="cell">
-              <button type="button" className="set-row-open name" aria-label={engine.name} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{rowNames(engine).title}</button>
-              {note ? <><br /><span className="sub">{note}</span></> : null}
-            </span>
-            <span role="cell" className="t3">{engine.version ?? ""}</span>
-            <span role="cell"><Status engine={engine} /></span>
-            <span role="cell">{instance ? <Button small aria-label={`Edit ${engine.name}`} onClick={(event) => { event.stopPropagation(); onEdit(engine.id); }}>Edit</Button> : null}</span>
-            <span role="cell" onClick={(event) => event.stopPropagation()}>
-              {row ? <input type="checkbox" role="switch" aria-label={`Use ${engine.name}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}
-                ref={(element) => { if (element) element.indeterminate = row.mixed; }} checked={!row.mixed && !inUse.off.includes(engine.id)} disabled={inUse.blocked}
-                onChange={(event) => void inUse.set(engine.id, event.target.checked)} /> : null}
-            </span>
+      {grouped ? grouped.map(({ heading, entries }, at) => (
+        <div key={heading}>
+          <p className="set-grp">{heading}</p>
+          <div className="set-tbl" role="table" aria-label={heading}>
+            {at === 0 ? head : null}
+            {entries.map((entry) => {
+              const engine = entry.registered ? engines.find((candidate) => candidate.id === entry.id) : undefined;
+              return engine ? engineRow(engine, entry) : entry.registered ? null : plainRow(entry);
+            })}
           </div>
-        );
-      })}
-    </div>
-    {inUse.error ? <p className="field-error" role="alert">{inUse.error} <Button small onClick={inUse.reload}>Reload</Button></p> : null}
+        </div>
+      )) : (
+        <div className="set-tbl" role="table" aria-label="Providers">
+          {head}
+          {engines.map((engine) => engineRow(engine))}
+        </div>
+      )}
+      {inUse.error ? <p className="field-error" role="alert">{inUse.error} <Button small onClick={inUse.reload}>Reload</Button></p> : null}
     </>
   );
 }

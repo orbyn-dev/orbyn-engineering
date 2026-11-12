@@ -27,7 +27,9 @@ beforeEach(() => {
   entries = [{ id: "work", driver: "claude", name: "Work", enabled: false, forward: "mine", program: "/opt/work" }, { id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }];
   revision = "revision-1"; conflict = null; writes = []; inUseWrites = []; mock.refresh.mockReset();
   vi.mocked(request).mockReset();
-  vi.mocked(request).mockImplementation(async (method, _path, body) => {
+  vi.mocked(request).mockImplementation(async (method, path, body) => {
+    // The grouped list is a read of its own; with none, the page shows the flat table these tests drive.
+    if (method === "GET" && path === "/api/providers") return { providers: [] } as never;
     const wanted = (body as { keys?: string[]; edits?: Record<string, { value: JsonValue[] }> });
     if (method === "POST" && wanted.keys?.[0] === "disabled_engines") return { catalog: { version: "members-1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: [], mixed: false, default: [], project_scoped: true, environment: { source: "default", value: [], default: [] }, members: [], overrides: [] }] } as never;
     if (method === "PUT" && wanted.edits?.disabled_engines) { inUseWrites.push(wanted.edits.disabled_engines.value); return {} as never; }

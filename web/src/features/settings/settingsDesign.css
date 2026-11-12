@@ -826,6 +826,12 @@
   border-radius: 50%;
   background: currentColor;
 }
+/* A provider's states side by side: the ready or update pill and every label the service gives it. */
+.set-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .set-pill.planned {
   background: transparent;
   color: var(--planned-text);

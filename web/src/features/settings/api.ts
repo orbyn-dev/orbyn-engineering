@@ -17,10 +17,16 @@ import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilit
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
+import type { ProviderList } from "../../generated/ProviderList";
 import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
+
+/** The grouped provider list: labels and rows the router's own facts give (Providers page). */
+export function listProviders(signal?: AbortSignal) {
+  return request<ProviderList>("GET", "/api/providers", undefined, signal);
+}
 
 export function queryPreferences(body: unknown, signal?: AbortSignal) {
   return request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", body, signal);

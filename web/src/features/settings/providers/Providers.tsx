@@ -12,7 +12,7 @@ import { ErrorState, Loading } from "../../../product/ui/states";
 import { AddProviderDialog, InstanceEditor, useProviderInstances } from "./ProviderInstances";
 import { ProviderDetail } from "./ProviderDetail";
 import { AcpRegistryView, HistoryImportView } from "./ProviderViews";
-import { ProviderListActions, ProviderTable } from "./ProviderTable";
+import { ProviderListActions, ProviderTable, useProviderList } from "./ProviderTable";
 import { SettingsBanner } from "../rows/SettingsBanner";
 import { followEngineUpdates } from "./engineUpdates";
 import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
@@ -61,6 +61,7 @@ export function ProvidersSection() {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState<{ instance: ProviderInstance; program: string; title: string } | null>(null);
+  const catalog = useProviderList(engines.data ?? []);
   const checkedAt = useRef<number | null>(null);
   if (engines.data && !offline) checkedAt.current = Date.now();
 
@@ -145,7 +146,7 @@ export function ProvidersSection() {
           </span>
         </div>
       ) : (<>
-        <ProviderTable engines={engines.data} store={store} onOpen={(id) => setView({ page: "detail", id })} onEdit={setEditing} />
+        <ProviderTable engines={engines.data} catalog={catalog} store={store} onOpen={(id) => setView({ page: "detail", id })} onEdit={setEditing} />
         <ProviderListActions onAdd={() => setAdding(true)} onRecheck={() => void recheck()} checking={refreshing} />
         <SettingRow title="Agent history import" description="Bring in sessions you ran in Claude Code or Codex outside Orbyn">
           <Button small onClick={() => setView({ page: "history" })}>Import…</Button>

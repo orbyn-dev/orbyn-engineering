@@ -22,6 +22,7 @@ mod harness;
 mod lifecycle;
 mod overrides;
 mod protect;
+mod provider_facts;
 mod review;
 mod review_fix;
 mod review_rules;

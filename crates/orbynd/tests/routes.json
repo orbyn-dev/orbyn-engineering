@@ -81,6 +81,7 @@
     ["GET","/api/projects/{id}/worktrees"],
     ["GET","/api/projects/{id}/worktrees/{worktree}/file"],
     ["GET","/api/projects/{id}/worktrees/{worktree}/tree"],
+    ["GET","/api/providers"],
     ["GET","/api/pulls"],
     ["GET","/api/questions"],
     ["GET","/api/search/messages"],

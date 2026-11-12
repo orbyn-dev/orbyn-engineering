@@ -30,6 +30,7 @@ import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
 import { cleanupPreview, cleanupSummary, diagnostics } from "./maintenance.ts";
+import { providerList } from "./providers.ts";
 import { preferenceCatalog, projectPreferenceKeys } from "./preferenceCatalog.ts";
 
 export interface MockResponse {
@@ -847,6 +848,8 @@ export function createMockApi(options: MockOptions = {}) {
             skills: fixtures.skills,
           },
         };
+      case "GET /api/providers":
+        return { status: 200, body: providerList(engines) };
       case "GET /api/engines":
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
