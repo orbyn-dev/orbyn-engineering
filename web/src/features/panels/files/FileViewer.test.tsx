@@ -9,6 +9,7 @@ import { useComposerChips } from "../../../product/state/composerChipStore";
 import { FileComments } from "./FileComments";
 import { useWorkspace } from "../../../product/state/workspace";
 import { formatBytes } from "../../../lib/format";
+import { isLocked, useEditorSessions } from "../editor/editorSessions";
 
 /** The toast the last action raised. */
 const lastToast = () => useUi.getState().toasts.at(-1)?.text;
@@ -23,7 +24,7 @@ afterEach(() => {
   Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
 });
 
-it("binds annotation source to cwd and waits for the new checkout's delayed read", async () => {
+it("shows only the new checkout's text after a thread moves, and waits for its delayed read", async () => {
   useWorkspace.setState({ threads: { t: { id: "t", cwd: "/old" } as never } });
   let finish!: (value: Response) => void;
   const second = new Promise<Response>((done) => { finish = done; });
@@ -32,16 +33,13 @@ it("binds annotation source to cwd and waits for the new checkout's delayed read
     reads += 1;
     return reads === 1 ? new Response(JSON.stringify({ path: "a.txt", revision: "old", content: "OLD_CHECKOUT", size: 12, binary: false, truncated: false })) : second;
   }));
-  render(<Viewer threadId="t" path="a.txt" line={null} onBack={() => undefined} />);
-  await screen.findByRole("button", { name: "Comment on line 1" });
+  render(<Viewer threadId="t" tabId="tab-a" path="a.txt" line={null} onBack={() => undefined} />);
+  expect(await screen.findByRole("textbox", { name: "Edit a.txt" })).toHaveValue("OLD_CHECKOUT");
   act(() => useWorkspace.setState({ threads: { t: { id: "t", cwd: "/new" } as never } }));
   await waitFor(() => expect(reads).toBe(2));
-  expect(screen.queryByRole("button", { name: "Comment on line 1" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Edit a.txt" })).not.toBeInTheDocument();
   await act(async () => finish(new Response(JSON.stringify({ path: "a.txt", revision: "new", content: "NEW_CHECKOUT", size: 12, binary: false, truncated: false }))));
-  await userEvent.click(await screen.findByRole("button", { name: "Comment on line 1" }));
-  await userEvent.type(screen.getByRole("textbox", { name: "File comment" }), "new source only");
-  await userEvent.click(screen.getByRole("button", { name: "Add comment" }));
-  expect(useComposerChips.getState().chips.t?.[0]).toMatchObject({ excerpt: "NEW_CHECKOUT", sourceCwd: "/new", sourceRevision: "new" });
+  expect(await screen.findByRole("textbox", { name: "Edit a.txt" })).toHaveValue("NEW_CHECKOUT");
 });
 
 it("says a file is missing from the checkout a moved thread now reads", async () => {
@@ -53,12 +51,11 @@ it("says a file is missing from the checkout a moved thread now reads", async ()
       ? new Response(JSON.stringify({ path: "notes.txt", revision: "old", content: "OLD_CHECKOUT", size: 12, binary: false, truncated: false }))
       : new Response(JSON.stringify({ code: "not_found", message: "file not found" }), { status: 404 });
   }));
-  render(<Viewer threadId="t" path="notes.txt" line={null} onBack={() => undefined} />);
-  await screen.findByRole("button", { name: "Comment on line 1" });
+  render(<Viewer threadId="t" tabId="tab-a" path="notes.txt" line={null} onBack={() => undefined} />);
+  await screen.findByRole("textbox", { name: "Edit notes.txt" });
   act(() => useWorkspace.setState({ threads: { t: { id: "t", cwd: "/new" } as never } }));
   expect(await screen.findByText("This file isn't in this checkout.")).toBeInTheDocument();
-  expect(screen.queryByText("OLD_CHECKOUT")).not.toBeInTheDocument();
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByDisplayValue("OLD_CHECKOUT")).not.toBeInTheDocument();
 });
 
 it("captures a reversed source range as one comment and removes the paired chip", async () => {
@@ -112,6 +109,7 @@ interface ServedFile {
 function serve(file: ServedFile, raw?: Uint8Array<ArrayBuffer>) {
   const fetch = vi.fn(async (input: string) => {
     if (String(input).includes("/files/raw") && raw) return new Response(raw.slice().buffer);
+    if (String(input).includes("/api/editors")) return new Response("[]");
     return new Response(
       JSON.stringify({ path: "bundle.zip", revision: "r", ...file }),
       { status: 200 },
@@ -127,7 +125,7 @@ it("opens a zip as a folder list with the archive's own size in the bar", async 
     { name: "src/main.ts", data: Buffer.from("export const main = 1;\n") },
   ]);
   serve({ content: "", binary: true, truncated: false, size: archive.byteLength }, archive);
-  render(<Viewer threadId="t" path="bundle.zip" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="bundle.zip" line={null} onBack={() => undefined} />);
 
   expect(await screen.findByRole("button", { name: /notes\.txt/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /src/ })).toBeInTheDocument();
@@ -143,7 +141,7 @@ it("copies the text the viewer shows", async () => {
   const writeText = vi.fn(async (_text: string) => undefined);
   setClipboard(writeText);
   serve({ content: "alpha\nbeta\n", binary: false, truncated: false, size: 11 });
-  render(<Viewer threadId="t" path="notes.txt" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="notes.md" line={null} onBack={() => undefined} />);
 
   const copy = await screen.findByRole("button", { name: "Copy contents" });
   expect(copy).toBeEnabled();
@@ -161,29 +159,34 @@ it("reports a clipboard failure", async () => {
   const user = userEvent.setup();
   setClipboard(vi.fn(async () => Promise.reject(new Error("Clipboard is blocked."))));
   serve({ content: "alpha\n", binary: false, truncated: false, size: 6 });
-  render(<Viewer threadId="t" path="notes.txt" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="notes.md" line={null} onBack={() => undefined} />);
 
   await user.click(await screen.findByRole("button", { name: "Copy contents" }));
   await waitFor(() => expect(lastToast()).toBe("Couldn't copy. Clipboard is blocked."));
 });
 
-it("leaves Copy contents disabled for a binary file", async () => {
+it("says a binary file has no text to show, with its size, and leaves the editor tools off (editor-binary)", async () => {
   serve({ content: "", binary: true, truncated: false, size: 64 }, new Uint8Array([0x00, 0x01, 0x02]));
-  render(<Viewer threadId="t" path="image.bin" line={null} onBack={() => undefined} />);
-  expect(await screen.findByRole("button", { name: "Copy contents" })).toBeDisabled();
-  expect(screen.getByLabelText("Bytes")).toBeInTheDocument();
+  render(<Viewer threadId="t" tabId="tab" path="assets/image.bin" line={null} onBack={() => undefined} />);
+  expect(await screen.findByText("Can’t show this file")).toBeInTheDocument();
+  expect(screen.getByText(/image\.bin is a binary file \(64 B\)/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open in editor" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Save file" })).toHaveAttribute("href", expect.stringContaining("/files/raw?"));
+  expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeDisabled();
+  expect(isLocked(useEditorSessions.getState().locked, "t", "tab")).toBe(true);
 });
 
 it("leaves Copy contents disabled for a media file", async () => {
   serve({ content: "", binary: true, truncated: false, size: 64 });
-  render(<Viewer threadId="t" path="logo.png" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="logo.png" line={null} onBack={() => undefined} />);
   expect(await screen.findByRole("button", { name: "Copy contents" })).toBeDisabled();
   expect(screen.getByRole("img")).toBeInTheDocument();
 });
 
 it("leaves Copy contents disabled for a truncated file", async () => {
   serve({ content: "", binary: false, truncated: true, size: 12 * 1024 * 1024 });
-  render(<Viewer threadId="t" path="huge.log" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="huge.log" line={null} onBack={() => undefined} />);
   expect(await screen.findByRole("button", { name: "Copy contents" })).toBeDisabled();
 });
 
@@ -193,7 +196,7 @@ it("opens a Word document in the document viewer rather than the hex view", asyn
     `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Plan</w:t></w:r></w:p>${docxParagraph("Hello from Word")}`,
   );
   serve({ content: "", binary: true, truncated: false, size: document.byteLength }, document);
-  render(<Viewer threadId="t" path="plan.docx" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="plan.docx" line={null} onBack={() => undefined} />);
 
   expect(await screen.findByRole("heading", { name: "Plan" })).toBeInTheDocument();
   expect(screen.getByText("Hello from Word")).toBeInTheDocument();
@@ -208,7 +211,7 @@ it("opens a spreadsheet in the document viewer rather than the hex view", async 
     { name: "Sheet", xml: worksheet(`<row r="1"><c r="A1" t="inlineStr"><is><t>Cell</t></is></c></row>`) },
   ]);
   serve({ content: "", binary: true, truncated: false, size: book.byteLength }, book);
-  render(<Viewer threadId="t" path="book.xlsx" line={null} onBack={() => undefined} />);
+  render(<Viewer threadId="t" tabId="tab" path="book.xlsx" line={null} onBack={() => undefined} />);
 
   expect(await screen.findByRole("tab", { name: "Sheet" })).toBeInTheDocument();
   expect(await screen.findByRole("cell", { name: "Cell" })).toBeInTheDocument();

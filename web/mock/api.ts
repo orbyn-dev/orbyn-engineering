@@ -82,9 +82,9 @@ export interface MockOptions {
   stepMs?: number;
 }
 
-const err = (status: number, code: string, message: string): MockResponse => ({
+const err = (status: number, code: string, message: string, detail?: unknown): MockResponse => ({
   status,
-  body: { code, message },
+  body: detail === undefined ? { code, message } : { code, message, detail },
 });
 
 export function createMockApi(options: MockOptions = {}) {
@@ -109,6 +109,8 @@ export function createMockApi(options: MockOptions = {}) {
   let settings: ServerSettings = fixtures.serverSettings();
   let failStep: string | null = null;
   let queued: QueuedMessage[] = [];
+  /** Files the editor saved, by thread and path, with the revision the next save must start from. */
+  const savedFiles = new Map<string, { content: string; revision: string; count: number }>();
   let tasks: ScheduledTask[] = [];
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
@@ -601,6 +603,17 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
       case "GET /api/settings":
         return { status: 200, body: settings };
+      // The editor's save: it writes only over the revision it started from, as the service does.
+      case "PUT /api/threads": {
+        if (seg[3] !== "files" || seg[4] !== "content") break;
+        const { path, content, base_revision } = body as { path: string; content: string; base_revision: string | null };
+        const key = `${seg[2]}:${path}`;
+        const current = savedFiles.get(key)?.revision ?? `mock-${seg[2]}-${path}`;
+        if (base_revision !== current) return err(409, "file_conflict", "The file changed on disk.", { revision: current });
+        const revision = `mock-${(savedFiles.get(key)?.count ?? 0) + 1}`;
+        savedFiles.set(key, { content, revision, count: (savedFiles.get(key)?.count ?? 0) + 1 });
+        return { status: 200, body: { path, content, revision, size: content.length, binary: false, truncated: false } };
+      }
       case "PUT /api/settings":
         if (seg[2] === "preferences") {
           const change = data as unknown as ScopedPreferencesChange;
@@ -817,8 +830,10 @@ export function createMockApi(options: MockOptions = {}) {
           // The Files surface: a small checkout tree, and text for any file in it.
           if (seg[3] === "files" && seg[4] === "content") {
             const file = query.get("path") ?? "";
-            const content = `// ${file}\n// Mock file contents.\n`;
-            return { status: 200, body: { path: file, content, revision: "mock", size: content.length, binary: false, truncated: false } };
+            const saved = savedFiles.get(`${seg[2]}:${file}`);
+            // A thread's file is its own: its text and revision name the thread, so the same path in two threads differs.
+            const content = saved?.content ?? `// ${file}\n// Mock file contents of ${seg[2]}.\n`;
+            return { status: 200, body: { path: file, content, revision: saved?.revision ?? `mock-${seg[2]}-${file}`, size: content.length, binary: false, truncated: false } };
           }
           if (seg[3] === "files" && !seg[4]) {
             const dir = query.get("path") ?? "";

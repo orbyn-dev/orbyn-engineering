@@ -4,6 +4,7 @@ import { panelOverlays, useLayoutWidth } from "../../lib/useLayout";
 import { fileName, isFileTab, parseFileTab, useUi, type FileTabId } from "../../product/state/ui";
 import { IconButton } from "../../ui/controls";
 import { useFileTabNames } from "../workspace";
+import { EditorTitleExtras } from "./editor/EditorTitleExtras";
 import { FileTab } from "./files/FileTab";
 import { PanelResizer } from "./PanelHost";
 import { PANEL_DEFAULT } from "./strip/panelWidth";
@@ -18,6 +19,7 @@ function Title({ tab }: { tab: FileTabId }) {
     <div className="ctx-title">
       <b>{target?.kind === "explorer" ? fileName(target.path) : tabOf(tab).label}</b>
       {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
+      <EditorTitleExtras threadId={null} tabId={tab} onSave={() => undefined} />
     </div>
   );
 }

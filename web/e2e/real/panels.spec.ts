@@ -68,7 +68,7 @@ test("each panel scrolls alone, past both ends, with the chat parked mid-way", a
   await page.keyboard.press("ControlOrMeta+p");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("combobox", { name: "Search" }).fill("big.txt");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("button", { name: /big\.txt/ }).click();
-  await expectChatUntouched(page, page.locator(".file-source"));
+  await expectChatUntouched(page, page.locator(".ed-ta"));
 
 });
 
@@ -92,8 +92,9 @@ test("images, binaries and oversized text open from the raw route", async ({ pag
   await expect(page.getByRole("link", { name: "Save file" })).toHaveAttribute("href", /download=true/);
 
   await open("blob.bin");
-  await expect(page.getByLabel("Bytes")).toContainText("00 01 02 41 42 ff");
-  await expect(page.getByLabel("Bytes")).toContainText("...AB.");
+  // A file with no text has no editor (editor-binary): it says so and gives its size.
+  await expect(page.getByText("Can’t show this file")).toBeVisible();
+  await expect(page.getByText(/blob\.bin is a binary file \(6 B\)/)).toBeVisible();
 
   await open("huge.log");
   await expect(page.getByLabel("Text", { exact: true })).toContainText("start of the log");

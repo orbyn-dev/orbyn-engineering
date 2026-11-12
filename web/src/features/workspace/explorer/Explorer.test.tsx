@@ -111,9 +111,12 @@ it("reads another worktree's file read-only, with a way to start a thread there"
   // Its own copy of the files is below it, after main's.
   await waitFor(() => expect(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ })).toHaveLength(2));
   await user.click(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ }).at(-1)!);
-  const banner = await screen.findByText("Read-only · not this thread’s worktree");
+  const banner = await screen.findByText("Read-only · not this thread’s worktree.");
   expect(banner).toBeInTheDocument();
-  expect(await screen.findByText("// approval-timeout")).toBeInTheDocument();
+  expect(await screen.findByDisplayValue(/\/\/ approval-timeout/)).toBeInTheDocument();
+  // The file is in the editor, which cannot be typed in; the header says so beside the worktree's name.
+  expect(screen.getByRole("textbox", { name: "Read README.md" })).toHaveAttribute("readonly");
+  expect(screen.getAllByText("Read-only").length).toBeGreaterThan(0);
   await user.click(screen.getByRole("button", { name: "Start a thread here" }));
   expect(window.location.hash).toBe("#/new/p-app");
 });
@@ -219,12 +222,13 @@ it("opens a file with no thread open as a read-only tab beside the new-thread co
   await user.click(readme);
   const panel = await screen.findByRole("complementary", { name: "Files" });
   expect(await within(panel).findByText("Read-only · no thread is open")).toBeInTheDocument();
-  expect(await within(panel).findByText("// main")).toBeInTheDocument();
+  expect(await within(panel).findByDisplayValue(/\/\/ main/)).toBeInTheDocument();
   // Only the file's own tab, closable; none of a thread's surfaces, and no composer in the panel.
   expect(within(panel).getAllByRole("tab")).toHaveLength(1);
   expect(within(panel).getByRole("tab", { name: "README.md" })).toHaveAttribute("aria-selected", "true");
   expect(within(panel).queryByRole("button", { name: "Open a tab" })).toBeNull();
-  expect(within(panel).queryByRole("textbox")).toBeNull();
+  // The only text field is the file itself, read-only: no composer.
+  expect(within(panel).getAllByRole("textbox").map((box) => box.getAttribute("aria-label"))).toEqual(["Read README.md"]);
   expect(window.location.hash).toBe("#/");
   // The way to a thread stays: it opens the new-thread composer for that worktree.
   await user.click(within(panel).getByRole("button", { name: "Start a thread here" }));

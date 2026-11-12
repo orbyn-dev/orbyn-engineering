@@ -48,9 +48,11 @@ test("a folder is read when it is unfolded, and a file opens as an icon-only tab
 test("another worktree is read-only: its row says so and its file opens with a banner and a way to start a thread there", async ({ page }) => {
   await row(page, /^approval-timeout/).click();
   await expect(row(page, /^approval-timeout/).getByText("Read-only")).toBeVisible();
+  // Its own copy of the files is read when it unfolds: wait for it before taking the last one.
+  await expect(tree(page).getByRole("treeitem", { name: /^README\.md/ })).not.toHaveCount(1);
   await tree(page).getByRole("treeitem", { name: /^README\.md/ }).last().click();
-  await expect(page.getByText("Read-only · not this thread’s worktree")).toBeVisible();
-  await expect(page.getByText("// approval-timeout")).toBeVisible();
+  await expect(page.getByText("Read-only · not this thread’s worktree.")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Read README.md" })).toHaveValue(/\/\/ approval-timeout/);
   await page.getByRole("button", { name: "Start a thread here" }).click();
   await expect(page).toHaveURL(/#\/new\/p-app$/);
 });
@@ -64,6 +66,8 @@ test("a missing worktree is muted and says Missing, and its tab says so; a locke
   await expect(page.getByText("Nothing to browse")).toBeVisible();
   await row(page, /^feat\/locked/).click();
   await expect(row(page, /^feat\/locked/)).toContainText("Locked");
+  // Its own copy of the files is read when it unfolds: wait for it before taking the last one.
+  await expect(tree(page).getByRole("treeitem", { name: /^README\.md/ })).not.toHaveCount(1);
   await tree(page).getByRole("treeitem", { name: /^README\.md/ }).last().click();
   await expect(page.getByText("This worktree is locked. Files open read-only.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start a thread here" })).toHaveCount(0);
@@ -126,11 +130,13 @@ test("with no thread open a file opens as a read-only tab beside the new-thread 
   await row(page, /^README\.md/).click();
   const panel = page.getByRole("complementary", { name: "Files" });
   await expect(panel.getByText("Read-only · no thread is open")).toBeVisible();
-  await expect(panel.getByText("// main")).toBeVisible();
+  await expect(panel.getByRole("textbox", { name: "Read README.md" })).toHaveValue(/\/\/ main/);
   await expect(panel.getByRole("tab")).toHaveCount(1);
   await expect(panel.getByRole("tab", { name: "README.md" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".ctx-title b")).toHaveText("README.md");
-  await expect(panel.getByRole("textbox")).toHaveCount(0);
+  // The only text field in the panel is the file itself, which cannot be typed in.
+  await expect(panel.getByRole("textbox")).toHaveCount(1);
+  await expect(panel.getByRole("textbox", { name: "Read README.md" })).toHaveAttribute("readonly", "");
   // The page beside it is still the composer for a thread that does not exist yet, and the route has not changed.
   await expect(page.getByRole("textbox").first()).toBeVisible();
   await expect(page).toHaveURL(/#\/$/);
