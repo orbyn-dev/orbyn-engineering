@@ -10,6 +10,8 @@ pub mod engines;
 pub mod history_import;
 pub mod native_sessions;
 pub mod permission_modes;
+pub mod provider_facts;
+pub mod provider_list;
 pub mod selection;
 pub mod sse;
 pub mod titles;

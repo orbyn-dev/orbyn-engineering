@@ -45,6 +45,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/triage/playbook", get(triage_playbook))
         .route("/api/history/import", post(import_history_session))
         .route("/api/engines", get(list_engines))
+        .route("/api/providers", get(list_providers))
         .route("/api/engines/refresh", post(refresh_engines))
         .route("/api/engines/probe-binary", post(probe_engine_binary))
         .route("/api/engines/custom", post(add_custom_engine))
@@ -197,6 +198,11 @@ async fn delete_native_session(
 
 async fn list_engines(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.engines.statuses(false).await?))
+}
+
+/// The grouped Providers list, with the labels the crew router's filters give the same engines.
+async fn list_providers(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.engines.provider_list().await?))
 }
 
 async fn refresh_engines(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {

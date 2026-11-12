@@ -469,6 +469,17 @@ impl EngineManager {
         Ok(statuses)
     }
 
+    /// The grouped provider list the Providers page shows, from the same statuses and
+    /// facts the crew router reads.
+    pub async fn provider_list(&self) -> Result<orbyn_contracts::ProviderList> {
+        let statuses = self.statuses(false).await?;
+        Ok(crate::agents::provider_list::list(
+            &statuses,
+            &crate::agents::provider_list::installed_apps(),
+            &crate::agents::provider_list::refused_programs(),
+        ))
+    }
+
     /// Drops the cached list so the next read sees a changed engine set.
     pub async fn invalidate(&self) {
         *self.statuses.lock().await = None;

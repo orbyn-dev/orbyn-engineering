@@ -1,9 +1,10 @@
 //! What the router knows about one engine: a plain copy of the registry's status, its
 //! model list and its usage, so the router itself touches no process and no file.
 
+use crate::agents::provider_facts::ProviderFacts;
 use orbyn_contracts::{
-    AuthState, CompatibilityStatus, CrewToken, EngineCapabilities, EngineLimits, EngineModels,
-    EngineStatus, EngineTier, ModelInfo,
+    AuthState, CrewToken, EngineCapabilities, EngineLimits, EngineModels, EngineStatus, EngineTier,
+    ModelInfo,
 };
 
 #[derive(Clone, Debug)]
@@ -43,15 +44,23 @@ impl EngineView {
             turned_off,
             installed: status.installed,
             auth: status.auth,
-            broken: status
-                .compatibility
-                .as_ref()
-                .filter(|c| c.status == CompatibilityStatus::Broken)
-                .map(|c| c.message.clone()),
+            broken: ProviderFacts::of(status).broken_note().map(str::to_owned),
             capabilities: status.capabilities.clone(),
             models: None,
             used_percent: None,
         })
+    }
+
+    /// The state facts the Providers list reads too (`agents::provider_facts`), so the
+    /// hard filters and the list cannot disagree about an engine.
+    pub fn facts(&self) -> ProviderFacts {
+        ProviderFacts::from_parts(
+            self.installed,
+            self.auth,
+            self.broken.clone(),
+            None,
+            &self.capabilities,
+        )
     }
 
     pub fn with_models(mut self, models: &EngineModels) -> Self {
@@ -75,9 +84,6 @@ impl EngineView {
     /// True for an engine the router may look inside: the checks that need no model list
     /// all pass, so reading its models and limits is worth a call.
     pub fn worth_reading(&self) -> bool {
-        !self.turned_off
-            && self.installed
-            && matches!(self.auth, AuthState::LoggedIn | AuthState::NotApplicable)
-            && self.broken.is_none()
+        !self.turned_off && self.facts().unavailable().is_none()
     }
 }

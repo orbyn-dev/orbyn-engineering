@@ -4,9 +4,11 @@
 //! `needs`, a model for the tier, and quota left.
 
 use orbyn_contracts::{
-    AuthState, Brief, BriefEffect, CrewShortText, EngineCapabilities, LeaseMode, ModelInfo,
-    RejectionWhy, RouteRejection, RouteTier,
+    Brief, BriefEffect, CrewShortText, EngineCapabilities, LeaseMode, ModelInfo, RejectionWhy,
+    RouteRejection, RouteTier,
 };
+
+use crate::agents::provider_facts::{Unavailable, WriteBlock};
 
 use super::tiers::{RouterConfig, Unfit, model_for_tier, model_named, tier_of_model};
 use super::view::EngineView;
@@ -133,52 +135,56 @@ pub fn screen<'a>(
             format!("{name} is turned off in Settings."),
         ));
     }
-    if !view.installed {
-        return Err(rejection(
-            view,
-            RejectionWhy::NotInstalled,
-            format!("{name} isn't installed."),
-        ));
-    }
-    match view.auth {
-        AuthState::LoggedIn | AuthState::NotApplicable => {}
-        AuthState::LoggedOut => {
+    let facts = view.facts();
+    match facts.unavailable() {
+        None => {}
+        Some(Unavailable::NotInstalled) => {
+            return Err(rejection(
+                view,
+                RejectionWhy::NotInstalled,
+                format!("{name} isn't installed."),
+            ));
+        }
+        Some(Unavailable::SignedOut) => {
             return Err(rejection(
                 view,
                 RejectionWhy::NotSignedIn,
                 format!("{name} isn't signed in."),
             ));
         }
-        AuthState::Unknown => {
+        Some(Unavailable::SignInUnconfirmed) => {
             return Err(rejection(
                 view,
                 RejectionWhy::NotSignedIn,
                 format!("{name}'s sign-in couldn't be confirmed."),
             ));
         }
-    }
-    if let Some(message) = &view.broken {
-        let note: String = message.chars().take(300).collect();
-        return Err(rejection(
-            view,
-            RejectionWhy::CompatibilityBroken,
-            format!("{name}'s installed version is known to be broken: {note}"),
-        ));
-    }
-    if want.writes {
-        if !view.capabilities.managed {
+        Some(Unavailable::Broken(message)) => {
+            let note: String = message.chars().take(300).collect();
             return Err(rejection(
                 view,
-                RejectionWhy::NotManaged,
-                format!("{name} can't be gated by Orbyn, so it can't write."),
+                RejectionWhy::CompatibilityBroken,
+                format!("{name}'s installed version is known to be broken: {note}"),
             ));
         }
-        if !view.capabilities.approvals {
-            return Err(rejection(
-                view,
-                RejectionWhy::NoApprovals,
-                format!("{name} can't ask for approval, so it can't write."),
-            ));
+    }
+    if want.writes {
+        match facts.write_block() {
+            None => {}
+            Some(WriteBlock::NotManaged) => {
+                return Err(rejection(
+                    view,
+                    RejectionWhy::NotManaged,
+                    format!("{name} can't be gated by Orbyn, so it can't write."),
+                ));
+            }
+            Some(WriteBlock::NoApprovals) => {
+                return Err(rejection(
+                    view,
+                    RejectionWhy::NoApprovals,
+                    format!("{name} can't ask for approval, so it can't write."),
+                ));
+            }
         }
     }
     for need in want.needs.iter().filter(|need| *need != "image") {

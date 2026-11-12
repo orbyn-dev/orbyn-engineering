@@ -829,6 +829,22 @@
   border-radius: 50%;
   background: currentColor;
 }
+/* A group's heading inside the one providers table. */
+.set-grp-row {
+  display: block;
+}
+.set-grp-row > .set-grp {
+  display: block;
+}
+.set-grp-row + .set-tr {
+  border-top: 1px solid var(--color-border);
+}
+/* A provider's states side by side: the ready or update pill and every label the service gives it. */
+.set-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .set-pill.planned {
   background: transparent;
   color: var(--planned-text);

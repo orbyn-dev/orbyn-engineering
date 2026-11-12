@@ -32,6 +32,7 @@ import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
 import { cleanupPreview, cleanupSummary, diagnostics } from "./maintenance.ts";
+import { providerList } from "./providers.ts";
 import { preferenceCatalog, projectPreferenceKeys } from "./preferenceCatalog.ts";
 
 export interface MockResponse {
@@ -123,7 +124,7 @@ export function createMockApi(options: MockOptions = {}) {
   let preferenceValues: Record<string, JsonValue> = {};
   let preferenceOverrides: Record<string, Record<string, JsonValue>> = {};
   const preferenceDefaults: Record<string, JsonValue> = { ...preferenceCatalog, default_thread_env_mode: "local", branch_name_prefix: "feat",
-    default_engine: "", default_model: "", default_effort: "", default_model_options: {}, fallback_model: "", disabled_engines: [],
+    default_engine: "", default_model: "", default_effort: "", default_model_options: {}, fallback_model: "", disabled_engines: ["cursor", "kimi"],
     auto_thread_titles: true, default_permission_mode: "supervised", response_streaming_mode: "paragraph", pull_request_merge_method: "squash",
     source_control_writing_style: { mode: "conventional_commits", custom_instructions: "", follow_templates: true } };
   const subscribers = new Map<string, Set<Subscriber>>();
@@ -883,6 +884,8 @@ export function createMockApi(options: MockOptions = {}) {
             skills: fixtures.skills,
           },
         };
+      case "GET /api/providers":
+        return { status: 200, body: providerList(engines) };
       case "GET /api/engines":
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };

@@ -18,6 +18,7 @@ import type { EngineInstalls } from "../../generated/EngineInstalls";
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
+import type { ProviderList } from "../../generated/ProviderList";
 import type { RedactionPatternDetail } from "../../generated/RedactionPatternDetail";
 import type { RedactionPatternInput } from "../../generated/RedactionPatternInput";
 import type { RedactionPatternTest } from "../../generated/RedactionPatternTest";
@@ -28,6 +29,11 @@ import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesR
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
+
+/** The grouped provider list: labels and rows the router's own facts give (Providers page). */
+export function listProviders(signal?: AbortSignal) {
+  return request<ProviderList>("GET", "/api/providers", undefined, signal);
+}
 
 export function queryPreferences(body: unknown, signal?: AbortSignal) {
   return request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", body, signal);

@@ -264,6 +264,12 @@ raise a tier. Only the person can change a lead tier.
 
 1. Hard filters: installed, logged in, compatibility not `Broken`, and `managed` plus `approvals` for any brief that
    writes. The brief's `needs` (for example `image`, `mcp`) must match capabilities.
+   - **One source for the state facts:** the first three checks and the write check read `ProviderFacts`
+     (`agents/provider_facts.rs`), the same facts the Settings Providers list reads for its Not found, Can't start
+     (a `Broken` version) and Unmanaged (no `managed` or no `approvals`) labels, and for the Signed out state.
+     A test runs every combination of those facts through the router and the list and fails if they disagree.
+     A sign-in that could not be confirmed has no designed label, so the list shows none for it while the router
+     still refuses. Limited support (an `Unsupported` or `Graceful` version) is list-only and never keeps an engine out.
 2. Score: pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from
    `usage`, then the person's default engine to break ties.
    - **As built (slice 2, differs from the plan):** a full quota window is also a hard filter (`quota_exhausted`), not
