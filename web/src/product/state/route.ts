@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS = [
   "source-control",
   "worktrees",
   "crew",
+  "secrets",
   "maintenance",
   "labs",
   "about",

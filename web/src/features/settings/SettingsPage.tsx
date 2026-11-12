@@ -25,6 +25,7 @@ import { GeneralSection } from "./sections/GeneralSection";
 import { LabsSection } from "./sections/LabsSection";
 import { SourceControlSection } from "./sections/SourceControlSection";
 import { WorktreesSection } from "./sections/WorktreesSection";
+import { SecretsSection } from "./secrets/SecretsSection";
 import { ScheduledTasksSection } from "./scheduled-tasks/ScheduledTasks";
 import { ThreadsSection } from "./pages/Threads";
 import { ToolsConnectorsSection } from "./tools-connectors/ToolsConnectors";
@@ -45,6 +46,7 @@ export const labels: Record<SettingsSection, string> = {
   "source-control": "Source control",
   worktrees: "Worktrees",
   crew: "Crew",
+  secrets: "Secrets",
   maintenance: "Maintenance",
   labs: "Labs",
   about: "About",
@@ -54,7 +56,7 @@ export const labels: Record<SettingsSection, string> = {
 /** The reference product's order. Sections without a backend here stay out. */
 const groups: { label: string | null; sections: SettingsSection[] }[] = [
   { label: null, sections: ["general", "account", "appearance", "chat", "diffs", "keybindings"] },
-  { label: "Agents", sections: ["providers", "tools", "threads", "tasks", "crew"] },
+  { label: "Agents", sections: ["providers", "tools", "threads", "tasks", "crew", "secrets"] },
   { label: "Code", sections: ["projects", "source-control", "worktrees"] },
   { label: null, sections: ["maintenance", "labs", "about", "archive"] },
 ];
@@ -69,6 +71,7 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
   "source-control": SourceControlSection,
   worktrees: WorktreesSection,
   crew: CrewSettingsSection,
+  secrets: SecretsSection,
   labs: LabsSection,
   about: AboutSection,
   archive: ArchiveSection,
