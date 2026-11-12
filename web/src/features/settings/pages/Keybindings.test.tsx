@@ -70,7 +70,7 @@ it("names a clash in plain words, with the context as a phrase", async () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   render(<KeybindingsSection />);
   expect((await screen.findByText(/Split terminal and New terminal both use/)).textContent).toBe("Split terminal and New terminal both use ⌘⇧B when the terminal is focused.");
-  expect(screen.getByText(/Toggle sidebar and Toggle diff both use/).textContent).toBe("Toggle sidebar and Toggle diff both use ⌘B.");
+  expect(screen.getByText(/Toggle sidebar and Toggle Changes both use/).textContent).toBe("Toggle sidebar and Toggle Changes both use ⌘B.");
   expect(screen.getByText(/Send the other way and/).textContent).toBe("Send the other way and Send in the background both use ⌘↵ when the composer is focused and a turn is running.");
 });
 
@@ -88,5 +88,5 @@ it("keeps the raw text for a context it has no phrase for", async () => {
     ...initial, conflicts: [{ key: "mod+b", when: "a || b", commands: ["sidebar.toggle", "diff.toggle"] }],
   });
   render(<KeybindingsSection />);
-  expect((await screen.findByText(/Toggle sidebar and Toggle diff both use/)).textContent).toContain("when a || b.");
+  expect((await screen.findByText(/Toggle sidebar and Toggle Changes both use/)).textContent).toContain("when a || b.");
 });
