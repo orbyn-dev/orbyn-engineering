@@ -2762,7 +2762,8 @@ the OS keychain, the engine's own login and session folders (the lead's own engi
 later change), other files of the same user, and a process a worker leaves running after its turn. The run
 folder is writable by the worker, so it can edit its own per-run settings and `mcp.json`. The tests do not
 establish the answer key as a whole, which waits for the transcript change and the process-reading limit above. A
-worker also cannot write to a second checkout that lives inside the data folder.
+worker also cannot write to a second checkout that lives inside the data folder. File and folder names in the data
+folder can still be learnt through their inode numbers (the contents cannot be read).
 
 ## ACP registry
 
