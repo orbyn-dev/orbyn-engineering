@@ -180,8 +180,9 @@ An engine that finds `service.json` holds the service token and can call any `/a
   - change the protection setting, including to Advanced, which destroys the escrow copy;
   - record deletes and zone-key rotations.
 
-  That is more than a denial of service. Approving a **new** device is different: it needs the person's digits on both
-  screens, and starting a pending device needs the password, so an engine cannot do it alone.
+  That is more than a denial of service. Approving a **new** device is different: it needs a person at both devices (the
+  trusted device allows it, with the password, and shows six digits that the new device types), and starting a pending
+  device needs the password, so an engine cannot do it alone.
 
 Controls (decision D12 and Engineering 1's answer):
 
@@ -190,6 +191,17 @@ Controls (decision D12 and Engineering 1's answer):
   orbyn-engine#120 and is needed before real-account sign-in (not for the local end-to-end test). The app asks with a
   "Confirm it's you" password prompt on every platform, and the check is in `orbynd`, not only in the page. Approving
   a device keeps its two-sided digits plus the password. Signing out **this device only** stays open.
+- **The digits of a new device.** After Allow (which needs the password), the trusted device shows six digits and the new
+  device types them; the sign-in is never finished by the allowance alone, and no code path finishes it without the
+  digits. The rule is in `orbyn_core::account::digits`: three tries (an entry is a try even when the server counts too;
+  the app takes it before the call), single use, a constant-time compare that looks at every digit so the time taken says
+  nothing about how many were right, and ten minutes. The digits are six random digits from the operating system's
+  generator, drawn without modulo bias, and the generator failing closes the request rather than falling back to a fixed
+  value. The digits typed on the new device are never logged, formatted, stored or returned (they cross the account trait
+  as an `ApprovalDigits`, which prints `[redacted]`); the digits shown on the trusted device are returned once, to the
+  window that typed the password, and are not in the request list. Guessing six digits in three tries is a one in
+  three-hundred-thousand chance per request, and a request closes after the third wrong try on both devices. Wrong digits
+  do not say which digit was wrong, and the trusted device is not told which were typed.
   The confirmation is bound to the window that typed the password: `/confirm` answers with a one-time nonce (in
   memory, single-use, for one action and one device, request or choice) that the action must send back in a header,
   so an engine holding only the service token cannot run the action first, and cancelling the dialog drops the
@@ -250,7 +262,8 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
   binds its name, platform and that label. It is the device's own signed claim, so a malicious or modified client can
   claim either one. It says what the device asserted, never which app is running. It is a hint for the person
   approving a device and is never proof: no code or copy treats it as an identity check, and the approve prompt shows it
-  as a hint at most. What protects the account is the digits comparison and the person's own judgement of the device.
+  as a hint at most. What protects the account is the digits typed on the new device and the person's own judgement of
+  the device.
 - **A compromised Engine server.** Out of scope here; see the Engine's own threat model. D10 means its failure is
   not isolated per app either.
 
@@ -268,7 +281,7 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
    Control 5 lists what an engine can do through it. Real-account sign-in waits for both.
 4. **Browser and computer actions.** An agent with the browser or the computer gateway might click Approve in
    Orbyn's own window. These actions always reach a person or a rule (`approvals.rs:101`, `mode_accepts`), but a
-   person who allows them broadly weakens this. Approval also needs the digit comparison on the other device.
+   person who allows them broadly weakens this. Approval also needs the six digits, typed on the other device.
 5. **Text matching is evadable** (control 3, last bullet).
 6. **An unsigned or re-signed build** loses the macOS access rule and gets prompts or no protection.
 7. **Backups.** Time Machine and similar copy the data folder, including the sealed snapshot. The vault key is in the

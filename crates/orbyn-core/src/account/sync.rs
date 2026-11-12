@@ -257,6 +257,8 @@ impl ZoneWorker {
                 | DeviceError::WrongPassword
                 | DeviceError::InvalidCode
                 | DeviceError::RequestGone
+                | DeviceError::WrongDigits { .. }
+                | DeviceError::DigitsLocked
                 | DeviceError::ProofFailed,
             ) => pause(PauseReason::ZoneFailed),
             Failure::Local(error) => {

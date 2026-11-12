@@ -57,6 +57,14 @@ pub enum DeviceError {
     /// answered any more.
     #[error("request ended")]
     RequestGone,
+    /// The six digits typed on the new device were not the ones the trusted device showed.
+    /// `tries_left` is how many tries the request has left; the digits themselves are never
+    /// carried here.
+    #[error("wrong digits")]
+    WrongDigits { tries_left: u8 },
+    /// The tries ran out, or the digits were already used: the request is closed.
+    #[error("digits locked")]
+    DigitsLocked,
     /// The server asked for proof of work (a 428) and the client could not finish it.
     #[error("proof of work failed")]
     ProofFailed,

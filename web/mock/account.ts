@@ -5,7 +5,9 @@
  *
  * Known values: invite K7QM-2XWH-9QXA-3C2D, emailed code ABCD-EFGH, password "correct horse battery"
  * for dev@, two@ (asks for 123456 or the recovery code ABCDE-FGH23), slow@ (rate limited), down@ (offline).
- * Sign-up with hard@ fails its device check; busy@ takes a moment in the service (set `/__mock/delay/<ms>` to see it here).
+ * Sign-up goes invite, email, password (which creates the account and emails the code), then the code, which signs in.
+ * The password step with hard@ fails its device check; busy@ takes a moment in the service (set `/__mock/delay/<ms>` to see it here).
+ * A new device asks a trusted one, which then shows six digits (418 207 here) that the new device types: three tries.
  */
 import type { AccountDevice } from "../src/generated/AccountDevice.ts";
 import type { AccountApprovalRequest } from "../src/generated/AccountApprovalRequest.ts";
@@ -17,9 +19,12 @@ const INVITE = "K7QM2XWH9QXA3C2D";
 const EMAIL_CODE = "ABCDEFGH";
 const PASSWORD = "correct horse battery";
 const SECOND_FACTOR = ["123456", "ABCDEFGH23"];
-const ACCOUNTS = ["dev@example.com", "two@example.com", "slow@example.com", "down@example.com", "approve@example.com", "deny@example.com", "mismatch@example.com", "late@example.com", "expired@example.com", "connect@example.com", "removed@example.com"];
+const ACCOUNTS = ["dev@example.com", "two@example.com", "slow@example.com", "down@example.com", "approve@example.com", "deny@example.com", "late@example.com", "expired@example.com", "connect@example.com", "removed@example.com"];
+/** The six digits a trusted device shows once it allowed a request, and the tries the new device has for them. */
+const DIGITS = "418207";
+const DIGIT_TRIES = 3;
 /** What a trusted device answers a new device, by the account that signs in; `late@` is never answered. */
-const CANNED: Record<string, AccountApprovalView["state"] | null> = { "approve@example.com": "approved", "deny@example.com": "denied", "mismatch@example.com": "codes_differ", "late@example.com": null, "expired@example.com": "timed_out" };
+const CANNED: Record<string, AccountApprovalView["state"] | null> = { "approve@example.com": "enter_digits", "deny@example.com": "denied", "late@example.com": null, "expired@example.com": "timed_out" };
 
 const fail = (status: number, code: string, message: string, detail?: unknown): MockResponse => ({
   status,
@@ -30,7 +35,7 @@ const clean = (text: unknown) => String(text ?? "").replace(/[\s-]/g, "").toUppe
 export function createAccountMock() {
   let on = false;
   let passwords = new Map<string, string>();
-  let signup: { email: string; verified: boolean } | null = null;
+  let signup: { email: string; password: string; wrong: number } | null = null;
   let pending: { email: string; wrong: number } | null = null;
   let session: string | null = null;
   let paused = false;
@@ -46,20 +51,20 @@ export function createAccountMock() {
   let devicesDown = false;
   // The throwaway account's devices, the same three the service stand-in lists.
   const freshDevices = (): AccountDevice[] => [
-    { id: "dev-this", name: "This computer", platform: "macOS 15", app: "engineering", trusted_since: "2026-07-12T09:00:00Z", last_seen: new Date().toISOString(), current: true },
-    { id: "dev-phone", name: "iPhone", platform: "iOS 18", app: "planner", trusted_since: "2026-08-08T09:00:00Z", last_seen: new Date(Date.now() - 120_000).toISOString(), current: false },
-    { id: "dev-mini", name: "Mac mini", platform: "macOS 15", app: "engineering", trusted_since: "2026-09-26T09:00:00Z", last_seen: new Date(Date.now() - 86_400_000).toISOString(), current: false },
+    { id: "dev-this", name: "This computer", platform: "macOS 15", app: "engineering", trusted_since: "2026-07-12T09:00:00Z", current: true },
+    { id: "dev-phone", name: "iPhone", platform: "iOS 18", app: "planner", trusted_since: "2026-08-08T09:00:00Z", current: false },
+    { id: "dev-mini", name: "Mac mini", platform: "macOS 15", app: "engineering", trusted_since: "2026-09-26T09:00:00Z", current: false },
   ];
   let deviceList = freshDevices();
   /** One confirmation for one action (and device), used up by the action. */
   let grant: { action: string; device: string | null; nonce: string } | null = null;
   let nonces = 0;
   // This computer's own request to sign in, and what a trusted device answered.
-  let approval: { answer: AccountApprovalView["state"]; askedAt: number; autoAt: number | null; autoAnswer: AccountApprovalView["state"] | null; email: string } | null = null;
+  let approval: { answer: AccountApprovalView["state"]; askedAt: number; autoAt: number | null; autoAnswer: AccountApprovalView["state"] | null; email: string; tries: number } | null = null;
   const APPROVAL_LIFE_SECS = 600;
   // Requests from other devices, waiting for this one to answer.
   const freshIncoming = (): AccountApprovalRequest[] => [
-    { id: "req-ipad", device_name: "iPad", app: "planner", near: "Near Melbourne", asked_at: new Date().toISOString(), digits: "418 207", expires_in_secs: 540 },
+    { id: "req-ipad", device_name: "iPad", app: "planner", near: "Near Melbourne", asked_at: new Date().toISOString(), allowed: false, expires_in_secs: 540 },
   ];
   let incoming = freshIncoming();
   // Joining this computer's settings: asked once after a sign-in on a computer that has settings.
@@ -92,10 +97,16 @@ export function createAccountMock() {
   }) satisfies AccountView;
 
   function approvalView(): AccountApprovalView {
-    if (!approval) return { state: "waiting", digits: "418 207", expires_in_secs: 0 };
+    if (!approval) return { state: "waiting", expires_in_secs: 0 };
     const left = Math.max(0, APPROVAL_LIFE_SECS - Math.floor((Date.now() - approval.askedAt) / 1000));
-    if (approval.answer === "waiting" && left === 0) approval.answer = "timed_out";
-    return { state: approval.answer, digits: "418 207", expires_in_secs: approval.answer === "waiting" ? left : 0 };
+    const open = approval.answer === "waiting" || approval.answer === "enter_digits";
+    if (open && left === 0) approval.answer = "timed_out";
+    const wrong = approval.answer === "enter_digits" && approval.tries < DIGIT_TRIES;
+    return {
+      state: approval.answer,
+      expires_in_secs: approval.answer === "waiting" || approval.answer === "enter_digits" ? left : 0,
+      ...(wrong ? { tries_left: approval.tries } : {}),
+    };
   }
 
   function signedOut() {
@@ -189,22 +200,23 @@ export function createAccountMock() {
         case "POST /api/account/sign-up/start":
           if (inviteRequired && clean(data.invite) !== INVITE) return fail(403, "invite_required", "An invite is needed.");
           if (data.email === "hard@example.com") return fail(502, "check_failed", "Couldn't finish checking this device.");
-          signup = { email: String(data.email ?? ""), verified: false };
+          if (String(data.password ?? "").length < 12) return fail(422, "weak_password", "Use at least 12 characters for the password.");
+          signup = { email: String(data.email ?? ""), password: String(data.password ?? ""), wrong: 0 };
           return { status: 204 };
         case "POST /api/account/sign-up/resend":
-          return signup ? { status: 204 } : fail(422, "invalid_code", "That code isn't right.");
+          if (!signup) return fail(422, "invalid_code", "That code isn't right.");
+          signup.wrong = 0;
+          return { status: 204 };
         case "POST /api/account/sign-up/code":
-          if (signup && clean(data.code) === EMAIL_CODE) {
-            signup.verified = true;
+          // Every failure of the code answers the same way, and the fifth wrong one refuses all until a new code is sent.
+          if (signup && signup.wrong < 5 && clean(data.code) === EMAIL_CODE) {
+            passwords.set(signup.email, signup.password);
+            signedIn(signup.email);
+            signup = null;
             return { status: 204 };
           }
+          if (signup) signup.wrong += 1;
           return fail(422, "invalid_code", "That code isn't right.");
-        case "POST /api/account/sign-up/register":
-          if (!signup?.verified) return fail(422, "invalid_code", "That code isn't right.");
-          passwords.set(signup.email, String(data.password ?? ""));
-          signedIn(signup.email);
-          signup = null;
-          return { status: 204 };
         case "POST /api/account/sign-in": {
           const email = String(data.email ?? "");
           if (email === "slow@example.com") return fail(429, "rate_limited", "Too many attempts.", { retry_after_secs: 90 });
@@ -222,7 +234,7 @@ export function createAccountMock() {
           }
           if (email in CANNED) {
             const canned = CANNED[email] ?? null;
-            approval = { answer: canned === "timed_out" ? "timed_out" : "waiting", askedAt: Date.now(), autoAt: canned && canned !== "timed_out" ? Date.now() + 1500 : null, autoAnswer: canned, email };
+            approval = { answer: canned === "timed_out" ? "timed_out" : "waiting", askedAt: Date.now(), autoAt: canned && canned !== "timed_out" ? Date.now() + 1500 : null, autoAnswer: canned, email, tries: DIGIT_TRIES };
             return { status: 200, body: { outcome: "awaiting_approval" } };
           }
           signedIn(email);
@@ -231,12 +243,23 @@ export function createAccountMock() {
         case "POST /api/account/sign-in/approval": {
           if (!approval) return { status: 200, body: null };
           if (approval.answer === "waiting" && approval.autoAt !== null && Date.now() >= approval.autoAt) approval.answer = approval.autoAnswer ?? "waiting";
-          const shown = approvalView();
-          if (shown.state === "approved") {
+          return { status: 200, body: approvalView() };
+        }
+        case "POST /api/account/sign-in/digits": {
+          if (!approval) return { status: 200, body: null };
+          approvalView();
+          const typed = clean(data.digits);
+          if (!/^\d{6}$/.test(typed)) return fail(422, "invalid_digits", "Type the six digits.");
+          if (approval.answer !== "enter_digits") return approval.answer === "waiting" ? fail(409, "request_not_allowed", "A trusted device has not allowed this yet.") : { status: 200, body: approvalView() };
+          if (typed === DIGITS) {
             const email = approval.email;
+            const shown: AccountApprovalView = { state: "approved", expires_in_secs: 0 };
             signedIn(email);
+            return { status: 200, body: shown };
           }
-          return { status: 200, body: shown };
+          approval.tries -= 1;
+          if (approval.tries <= 0) approval.answer = "locked";
+          return { status: 200, body: approvalView() };
         }
         case "GET /api/account/approvals":
           if (!session) return fail(403, "reauth_required", "Sign in first.");
@@ -340,7 +363,14 @@ export function createAccountMock() {
               grant = null;
               if (!session || !allowed) return fail(403, "reauth_required", "Confirm it's you to do this.");
             }
-            if (!incoming.some((request) => request.id === id)) return fail(404, "request_gone", "That request has ended.");
+            const found = incoming.find((request) => request.id === id);
+            if (!found) return fail(404, "request_gone", "That request has ended.");
+            if (answer[2] === "approve") {
+              // Allowing shows the digits; the request stays listed, as allowed, until it is closed.
+              if (found.allowed) return fail(404, "request_gone", "That request has ended.");
+              incoming = incoming.map((request) => (request.id === id ? { ...request, allowed: true } : request));
+              return { status: 200, body: { digits: "418 207" } };
+            }
             incoming = incoming.filter((request) => request.id !== id);
             return { status: 204 };
           }
