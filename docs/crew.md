@@ -988,12 +988,18 @@ reading other processes' command lines and environment; an ACP lead's bridge pro
 token in its environment, so a worker could use it (a known limit, tracked separately). Where that is not possible the worker is refused with a plain line. See
 [the architecture](architecture.md#crew-worker-confinement) and SPEC section 11.
 
+A Claude worker also cannot read or write another session's saved Claude conversation (the lead's transcript
+under `~/.claude/projects`), nor Claude's prompt history; it keeps its own session, which a first turn names with
+`--session-id`. It starts without Claude's auto memory for the project.
+
 Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
-engines) and tests that run the real tool. Not built: closing the lead's own engine transcript files (next
-change, needed before the answer key is claimed safe) and a Windows or Linux restriction. Known limits: the
-network, the loopback service, the keychain, the engine's own login folders, other same-user files and
-processes a worker leaves running are outside it. Codex workers are refused until the nested-profile
-question is answered.
+engines), the Claude transcript denial and tests that run the real tool. Not built: a Windows or Linux restriction,
+and a denial of other engines' saved conversations. Not covered: an ACP agent's or Codex's saved conversations (Codex
+also keeps them in SQLite files), Claude's other per-session files (to-do lists, file history, debug logs, shell
+snapshots, `sessions/`), the network, the loopback service, the keychain, `~/.claude.json`, other same-user files
+and processes a worker leaves running. The lead's Claude transcript is closed for a Claude worker; the answer key as a
+whole is not claimed safe. Codex workers are refused until the nested-profile question is answered, and Codex's
+conversation files are a second reason to keep it so.
 
 ## Open risks
 

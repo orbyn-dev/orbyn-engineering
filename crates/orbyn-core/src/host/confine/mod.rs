@@ -7,8 +7,12 @@
 //! and stops the data folder or a folder above it being renamed away. Everywhere else no restriction is available and the
 //! core refuses to start a worker (hard rule 7: never run with less than was promised).
 //!
+//! For a Claude worker it also denies reading and writing Claude's saved conversations
+//! (`<config>/projects`) except the worker's own session, so the lead's transcript is closed.
+//!
 //! What this does not cover is listed in `docs/crew.md`: the network and the loopback service,
-//! the OS keychain, the engine's own login and session folders, and other same-user files.
+//! the OS keychain, the engine's own login folders, other engines' saved conversations, and
+//! other same-user files.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,7 +34,10 @@ use unsupported as platform;
 
 /// Whether a Codex engine may run a crew worker. Codex starts its own Seatbelt profile for
 /// each command, and a profile cannot be started inside another, so until that is checked
-/// the core refuses it. Flip this one constant once it is.
+/// the core refuses it. Flip this one constant once it is, and once Codex's own saved
+/// conversations are closed: its `thread/start` writes rollout files under `sessions/` only on
+/// the first turn (so a worker's own file cannot be named at launch), and 0.166 keeps threads
+/// and logs in SQLite files under its home too, which a path rule cannot split per thread.
 pub const CODEX_WORKERS_ALLOWED: bool = false;
 
 /// The one line a person sees when a worker is refused because no restriction can be applied.
@@ -53,6 +60,25 @@ pub struct Confinement {
     pub allow_write: Vec<PathBuf>,
     /// Places inside `data` the worker may read and run (an installed agent's files).
     pub allow_exec: Vec<PathBuf>,
+    /// The engine's saved conversations, when the engine is one Orbyn can close them for.
+    pub transcripts: Option<Transcripts>,
+}
+
+/// Where an engine keeps its saved conversations, and the one session the worker owns. Every
+/// other conversation under `root` is denied, including one the engine creates after the
+/// worker starts, because the rule is on the folder and the allowance names only this session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Transcripts {
+    /// The folder of per-project folders (Claude's `<config>/projects`), canonical.
+    pub root: PathBuf,
+    /// The worker's own session id: its `<id>.jsonl` and `<id>/` stay readable and writable
+    /// in whichever project folder the engine keys them under.
+    pub session: String,
+    /// True when the session does not exist yet and the engine is told to use this id
+    /// (`--session-id`), so the allowance can name it before it is written.
+    pub fresh: bool,
+    /// The engine's prompt history across sessions: denied, the engine runs without it.
+    pub history: PathBuf,
 }
 
 impl Confinement {
@@ -72,6 +98,7 @@ impl Confinement {
             allow_read: Vec::new(),
             allow_write: Vec::new(),
             allow_exec: Vec::new(),
+            transcripts: None,
         };
         for path in allow_read {
             let path = inside(&confinement.data, canonical(path)?)?;
@@ -82,6 +109,36 @@ impl Confinement {
             confinement.allow_write.push(path);
         }
         Ok(confinement)
+    }
+
+    /// Adds the denial of Claude's saved conversations. `projects` is the folder Claude keeps
+    /// them in (`agents::usage::history_root`), `session` the worker's own id from an earlier
+    /// turn, or `None` for its first turn, which then starts under a new id. A folder that
+    /// does not resolve, or an id the engine could not have made, is an error: a rule that
+    /// names nothing would leave the lead's transcript open.
+    pub fn with_claude_transcripts(
+        mut self,
+        projects: &Path,
+        session: Option<&str>,
+    ) -> Result<Self> {
+        let transcripts = Transcripts::claude(projects, session)?;
+        if self.data.starts_with(&transcripts.root) || transcripts.root.starts_with(&self.data) {
+            return Err(CoreError::EngineUnavailable(format!(
+                "A crew worker could not be restricted: {} overlaps Orbyn's data folder.",
+                transcripts.root.display()
+            )));
+        }
+        self.transcripts = Some(transcripts);
+        Ok(self)
+    }
+
+    /// The id a first turn must start under, when the rules chose one.
+    #[must_use]
+    pub fn fresh_session(&self) -> Option<&str> {
+        self.transcripts
+            .as_ref()
+            .filter(|transcripts| transcripts.fresh)
+            .map(|transcripts| transcripts.session.as_str())
     }
 
     /// These rules for an engine whose executable is `program`: one that lives under
@@ -121,6 +178,78 @@ fn inside(data: &Path, allowed: PathBuf) -> Result<PathBuf> {
         )));
     }
     Ok(allowed)
+}
+
+impl Transcripts {
+    fn claude(projects: &Path, session: Option<&str>) -> Result<Self> {
+        // A relative folder would mean something else to the engine, which starts elsewhere.
+        let config = projects
+            .parent()
+            .filter(|config| config.is_absolute())
+            .ok_or_else(|| {
+                CoreError::EngineUnavailable(format!(
+                    "A crew worker could not be restricted: {} is not an absolute folder.",
+                    projects.display()
+                ))
+            })?;
+        let config = canonical(config)?;
+        let (session, fresh) = match session {
+            Some(id) if usable_session(id) => (id.to_owned(), false),
+            Some(_) => {
+                return Err(CoreError::EngineUnavailable(
+                    "A crew worker could not be restricted: its Claude session id is not usable."
+                        .into(),
+                ));
+            }
+            None => (new_session()?, true),
+        };
+        Ok(Self {
+            root: resolved_or_named(&config, "projects")?,
+            session,
+            fresh,
+            history: resolved_or_named(&config, "history.jsonl")?,
+        })
+    }
+}
+
+/// `config/name` through its links when it exists, else under the canonical `config`: a rule
+/// by path would miss a file that a link points elsewhere.
+fn resolved_or_named(config: &Path, name: &str) -> Result<PathBuf> {
+    let path = config.join(name);
+    match std::fs::canonicalize(&path) {
+        Ok(found) => Ok(found),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(error) => Err(CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: {} did not resolve ({error}).",
+            path.display()
+        ))),
+    }
+}
+
+/// The characters Claude's own ids use. The profile puts the id into a pattern, so nothing
+/// else may pass.
+fn usable_session(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A random version 4 UUID, the form `claude --session-id` takes.
+fn new_session() -> Result<String> {
+    let mut bytes = crate::util::random_bytes::<16>()?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = crate::util::hex(&bytes);
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
 }
 
 fn canonical(path: &Path) -> Result<PathBuf> {
