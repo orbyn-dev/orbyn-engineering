@@ -157,7 +157,7 @@ describe("provider pages", () => {
       engine({ id: "work", name: "Claude Code · Work", tier: "native", instance_of: "claude", account: "sam@acme.com" }),
       engine({ id: "codex", name: "Codex", tier: "native", auth: "logged_out" })];
     render(<ProvidersSection />);
-    await screen.findByRole("table", { name: "In use" });
+    await screen.findByRole("rowgroup", { name: "In use" });
     expect(await screen.findByText("sam@example.com")).toBeVisible();
     expect(screen.getByText("Work · sam@acme.com")).toBeVisible();
     expect(screen.getByText("Not signed in")).toBeVisible();
@@ -166,7 +166,7 @@ describe("provider pages", () => {
     const user = userEvent.setup();
     mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" })];
     render(<ProvidersSection />);
-    await screen.findByRole("table", { name: "In use" });
+    await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude Code" }));
     expect(await screen.findByText("Signed in as sam@example.com")).toBeVisible();
   });
@@ -196,21 +196,21 @@ describe("provider pages", () => {
   it("hides Native sessions when the service has no count to give", async () => {
     vi.spyOn(api, "nativeSessionCount").mockRejectedValue(new ApiFailure("unsupported", "No history folder.", 400));
     render(<ProvidersSection />);
-    await screen.findByRole("table", { name: "In use" });
+    await screen.findByRole("rowgroup", { name: "In use" });
     expect(screen.queryByText("Native sessions")).toBeNull();
   });
   it("opens a provider and returns with the back link", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
-    await screen.findByRole("table", { name: "In use" });
+    await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude Code · Work" }));
     expect(await screen.findByRole("heading", { name: "Claude Code · Work" })).toBeVisible();
     expect(screen.getByText("/opt/work")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Providers" }));
-    expect(await screen.findByRole("table", { name: "In use" })).toBeVisible();
+    expect(await screen.findByRole("rowgroup", { name: "In use" })).toBeVisible();
   });
   it("removes only the selected instance record", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
-    await screen.findByRole("table", { name: "In use" });
+    await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude Code · Work" }));
     await user.click(await screen.findByRole("button", { name: "Remove Claude Code · Work" }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));

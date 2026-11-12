@@ -157,21 +157,16 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
   })();
   return (
     <>
-      {places ? GROUPS.map(({ place, heading, note }) => ({ heading, note, nodes: places.filter((one) => one.place === place).map((one) => one.node) })).filter((part) => part.nodes.length > 0).map(({ heading, note, nodes }) => (
-        <div key={heading}>
-          <p className="set-grp">{heading}</p>
-          {note ? <p className="setting-line-desc">{note}</p> : null}
-          <div className="set-tbl" role="table" aria-label={heading}>
-            {head}
+      <div className="set-tbl" role="table" aria-label="Providers">
+        {head}
+        {places ? GROUPS.map(({ place, heading, note }) => ({ heading, note, nodes: places.filter((one) => one.place === place).map((one) => one.node) })).filter((part) => part.nodes.length > 0).map(({ heading, note, nodes }) => (
+          <div key={heading} role="rowgroup" aria-label={heading}>
+            <div role="row" className="set-grp-row"><span role="rowheader" className="set-grp">{heading}</span></div>
+            {note ? <div role="row" className="set-grp-row"><span role="cell" className="setting-line-desc">{note}</span></div> : null}
             {nodes}
           </div>
-        </div>
-      )) : (
-        <div className="set-tbl" role="table" aria-label="Providers">
-          {head}
-          {engines.map((engine) => engineRow(engine))}
-        </div>
-      )}
+        )) : engines.map((engine) => engineRow(engine))}
+      </div>
       {inUse.error ? <p className="field-error" role="alert">{inUse.error} <Button small onClick={inUse.reload}>Reload</Button></p> : null}
     </>
   );

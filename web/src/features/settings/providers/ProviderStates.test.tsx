@@ -26,9 +26,9 @@ function show(engines: EngineStatus[], providers: ProviderEntry[], off: string[]
 const rowOf = (name: string) => screen.getByText(name, { selector: ".name" }).closest("[role=row]") as HTMLElement;
 
 const switches = () => screen.findAllByRole("switch");
-const tables = () => screen.getAllByRole("table").map((table) => table.getAttribute("aria-label"));
+const tables = () => within(screen.getByRole("table", { name: "Providers" })).getAllByRole("rowgroup").map((group) => group.getAttribute("aria-label"));
 
-it("groups the list under the frame's headings by the in-use switch and gives every group its column headers", async () => {
+it("groups the list under the frame's headings by the in-use switch, in one table with one set of column headers", async () => {
   show([engine({}), engine({ id: "cursor", name: "Cursor", tier: "acp" })], [
     entry({}),
     entry({ id: "cursor", name: "Cursor", group: "found", labels: ["not_verified"], openable: false }),
@@ -36,7 +36,9 @@ it("groups the list under the frame's headings by the in-use switch and gives ev
   ], ["cursor"]);
   await switches();
   await waitFor(() => expect(tables()).toEqual(["In use", "Found on this computer", "Not built yet"]));
-  for (const table of screen.getAllByRole("table")) expect(within(table).getByRole("columnheader", { name: "Provider" })).toBeVisible();
+  // One table, one set of column headers, the groups as row groups inside it.
+  expect(screen.getAllByRole("table")).toHaveLength(1);
+  expect(screen.getAllByRole("columnheader", { name: "Provider" })).toHaveLength(1);
   expect(screen.queryByText("Found, can’t start")).toBeNull();
 });
 
@@ -85,7 +87,7 @@ it("says Limited support beside Ready on an older version", async () => {
 it("puts a known-broken engine under Found, can’t start and still opens it", async () => {
   const open = show([engine({})], [entry({ group: "cant_start", labels: ["cant_start"], note: "0.1.2 corrupts sessions." })]);
   await switches();
-  expect(screen.getByRole("table", { name: "Found, can’t start" })).toBeVisible();
+  expect(tables()).toEqual(["Found, can’t start"]);
   await userEvent.click(screen.getByRole("button", { name: "Claude Code" }));
   expect(open).toHaveBeenCalledWith("claude");
 });
@@ -153,4 +155,5 @@ it("falls back to one flat table of the engines until the service answers", () =
   vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<ProviderTable store={store} onOpen={() => undefined} onEdit={() => undefined} engines={[engine({})]} />);
   expect(screen.getByRole("table", { name: "Providers" })).toBeVisible();
+  expect(screen.queryAllByRole("rowgroup")).toHaveLength(0);
 });
