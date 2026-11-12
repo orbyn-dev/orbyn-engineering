@@ -4,6 +4,7 @@ name: Release
 # not publish: it uploads bundles for a person to review and promote. macOS
 # bundles are signed with the Apple secrets only when they exist; otherwise they
 # are ad-hoc signed (no identity, not notarized). Windows bundles are not signed.
+# What is signed and what is not built: docs/releasing.md.
 on:
   workflow_dispatch:
 
