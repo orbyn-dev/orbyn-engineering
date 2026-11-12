@@ -80,6 +80,9 @@ pub struct Transcripts {
     pub fresh: bool,
     /// The engine's prompt history across sessions: denied, the engine runs without it.
     pub history: PathBuf,
+    /// The project folder under `root` for the worker's start folder, which the core makes
+    /// before the engine starts so the worker never has to create anything there.
+    pub folder: Option<PathBuf>,
 }
 
 impl Confinement {
@@ -114,11 +117,27 @@ impl Confinement {
 
     /// Adds the denial of Claude's saved conversations. `projects` is the folder Claude keeps
     /// them in (`agents::usage::history_root`), `session` the worker's own id from an earlier
-    /// turn, or `None` for its first turn, which then starts under a new id. A folder that
-    /// does not resolve, or an id the engine could not have made, is an error: a rule that
-    /// names nothing would leave the lead's transcript open.
-    pub fn with_claude_transcripts(self, projects: &Path, session: Option<&str>) -> Result<Self> {
-        self.with_transcripts(Transcripts::claude(projects, session)?)
+    /// turn, or `None` for its first turn, which then starts under a new id, and `start` the
+    /// folder the engine starts in. This makes `projects` and the project folder for `start`
+    /// (private to the person) so the worker may create nothing there but its own session.
+    /// A folder that does not resolve or goes through a link, a start folder whose Claude
+    /// name cannot be told with confidence, or an id the engine could not have made, is an
+    /// error: a rule that names nothing would leave the lead's transcript open.
+    pub fn with_claude_transcripts(
+        self,
+        projects: &Path,
+        session: Option<&str>,
+        start: &Path,
+    ) -> Result<Self> {
+        let transcripts = Transcripts::claude(projects, session, start)?;
+        let rules = self.with_transcripts(transcripts)?;
+        if let Some(transcripts) = &rules.transcripts {
+            make_private(&transcripts.root)?;
+            if let Some(folder) = &transcripts.folder {
+                make_private(folder)?;
+            }
+        }
+        Ok(rules)
     }
 
     /// Closes Claude's saved conversations to a worker that is not Claude, with no allowance:
@@ -189,8 +208,8 @@ fn inside(data: &Path, allowed: PathBuf) -> Result<PathBuf> {
 }
 
 impl Transcripts {
-    fn claude(projects: &Path, session: Option<&str>) -> Result<Self> {
-        let config = canonical(&config_of(projects)?)?;
+    fn claude(projects: &Path, session: Option<&str>, start: &Path) -> Result<Self> {
+        let config = unlinked(&config_of(projects)?)?;
         let (session, fresh) = match session {
             Some(id) if usable_session(id) => (id.to_owned(), false),
             Some(_) => {
@@ -206,14 +225,21 @@ impl Transcripts {
             session: Some(session),
             fresh,
             history: not_a_link(&config, "history.jsonl")?,
+            folder: Some(config.join("projects").join(project_folder(start)?)),
         })
     }
 
     fn closed(projects: &Path) -> Result<Self> {
         let config = config_of(projects)?;
         let config = match std::fs::canonicalize(&config) {
-            Ok(found) => found,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => config,
+            Ok(_) => unlinked(&config)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Nothing there yet; the part that exists must not be a link either.
+                if let Some(existing) = config.ancestors().find(|a| a.exists()) {
+                    unlinked(existing)?;
+                }
+                config
+            }
             Err(_) => canonical(&config)?,
         };
         Ok(Self {
@@ -221,6 +247,7 @@ impl Transcripts {
             session: None,
             fresh: false,
             history: not_a_link(&config, "history.jsonl")?,
+            folder: None,
         })
     }
 }
@@ -238,6 +265,58 @@ fn config_of(projects: &Path) -> Result<PathBuf> {
                 projects.display()
             ))
         })
+}
+
+/// `config` when it is already its own canonical path. A link in front of it (the folder
+/// itself or any folder above) could be swapped later, and the rules protect only the folders
+/// above the resolved path, so such a worker is refused, not followed.
+fn unlinked(config: &Path) -> Result<PathBuf> {
+    let real = canonical(config)?;
+    if real != config {
+        return Err(CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: {} goes through a link.",
+            config.display()
+        )));
+    }
+    Ok(real)
+}
+
+/// Claude's folder name for a start folder: the real path with every character that is not an
+/// ASCII letter or digit turned into `-`. Seen with Claude 2.1.318 for ASCII paths below the
+/// length where Claude shortens the name; any other path is refused, never guessed.
+fn project_folder(start: &Path) -> Result<String> {
+    let real = canonical(start)?;
+    match real.to_str() {
+        Some(text) if text.is_ascii() && text.len() < 200 => {
+            Ok(crate::agents::claude_history::project_folder_name(text))
+        }
+        _ => Err(CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: Claude's folder name for {} is not certain.",
+            real.display()
+        ))),
+    }
+}
+
+/// Makes a folder private to the person if it is not there; one that is there must be a
+/// folder, not a link.
+fn make_private(path: &Path) -> Result<()> {
+    let failed = |error: &dyn std::fmt::Display| {
+        CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: {} could not be prepared ({error}).",
+            path.display()
+        ))
+    };
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(failed(&"not a folder")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder.create(path).map_err(|error| failed(&error))
+        }
+        Err(error) => Err(failed(&error)),
+    }
 }
 
 /// `config/name`, refused when it is a link. A rule by path cannot follow a link that the

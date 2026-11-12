@@ -1190,7 +1190,7 @@ fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
     first.confine = Some(
         rules
             .clone()
-            .with_claude_transcripts(&config.join("projects"), None)
+            .with_claude_transcripts(&config.join("projects"), None, dir.path())
             .unwrap(),
     );
     let id = first
@@ -1214,7 +1214,7 @@ fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
     later.resume = Some("sess".into());
     later.confine = Some(
         rules
-            .with_claude_transcripts(&config.join("projects"), Some("sess"))
+            .with_claude_transcripts(&config.join("projects"), Some("sess"), dir.path())
             .unwrap(),
     );
     let args: Vec<String> = run_args(&later, Path::new("/m"))

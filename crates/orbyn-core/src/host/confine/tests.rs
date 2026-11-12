@@ -132,7 +132,7 @@ fn transcript_rules_fail_closed_when_the_folder_or_the_id_is_unusable() {
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"))
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
             .is_ok()
     );
     // The configuration folder does not resolve, or is relative.
@@ -140,13 +140,13 @@ fn transcript_rules_fail_closed_when_the_folder_or_the_id_is_unusable() {
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(&missing, Some("own"))
+            .with_claude_transcripts(&missing, Some("own"), Path::new("/"))
             .is_err()
     );
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(Path::new("projects"), None)
+            .with_claude_transcripts(Path::new("projects"), None, Path::new("/"))
             .is_err()
     );
     // An id that could change the pattern, or is empty, is refused.
@@ -154,7 +154,7 @@ fn transcript_rules_fail_closed_when_the_folder_or_the_id_is_unusable() {
         assert!(
             rules
                 .clone()
-                .with_claude_transcripts(&projects, Some(bad))
+                .with_claude_transcripts(&projects, Some(bad), Path::new("/"))
                 .is_err(),
             "{bad:?}"
         );
@@ -165,14 +165,18 @@ fn transcript_rules_fail_closed_when_the_folder_or_the_id_is_unusable() {
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(&inside, Some("own"))
+            .with_claude_transcripts(&inside, Some("own"), Path::new("/"))
             .is_err()
     );
     let outer = dir.path().join("c2/projects");
     let inner = outer.join("data");
     std::fs::create_dir_all(inner.join("run")).unwrap();
     let above = Confinement::new(&inner, &inner.join("run"), &[], &[]).unwrap();
-    assert!(above.with_claude_transcripts(&outer, Some("own")).is_err());
+    assert!(
+        above
+            .with_claude_transcripts(&outer, Some("own"), Path::new("/"))
+            .is_err()
+    );
 }
 
 /// A link is not followed by a rule by path and could be swapped later, so nothing starts.
@@ -194,7 +198,7 @@ fn a_linked_projects_folder_or_history_file_refuses_the_worker() {
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"))
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
             .is_err()
     );
     assert!(rules.clone().with_closed_claude_folder(&projects).is_err());
@@ -202,7 +206,7 @@ fn a_linked_projects_folder_or_history_file_refuses_the_worker() {
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"))
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
             .is_ok()
     );
     // A linked projects folder.
@@ -211,10 +215,65 @@ fn a_linked_projects_folder_or_history_file_refuses_the_worker() {
     assert!(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"))
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
             .is_err()
     );
     assert!(rules.with_closed_claude_folder(&projects).is_err());
+}
+
+/// A link in front of the configuration folder, or above it, could be swapped for another
+/// folder that the rules do not name: the worker is refused. So is a start folder whose
+/// Claude name cannot be told with confidence.
+#[cfg(unix)]
+#[test]
+fn a_linked_configuration_folder_or_an_uncertain_start_folder_refuses_the_worker() {
+    let dir = crate::testing::TempDir::new();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(data.join("runs/mine")).unwrap();
+    let rules = Confinement::new(&data, &data.join("runs/mine"), &[], &[]).unwrap();
+    let real = claude_folder(dir.path());
+    let linked = dir.path().join("linked-config");
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    for config in [linked.clone(), linked.join("nested")] {
+        let projects = config.join("projects");
+        assert!(
+            rules
+                .clone()
+                .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
+                .is_err()
+        );
+        assert!(rules.clone().with_closed_claude_folder(&projects).is_err());
+    }
+    let projects = real.join("projects");
+    assert!(
+        rules
+            .clone()
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
+            .is_ok()
+    );
+    // A long start folder (Claude shortens the name) and a non-ASCII one are refused.
+    let long = dir.path().join("x".repeat(210));
+    std::fs::create_dir_all(&long).unwrap();
+    assert!(
+        rules
+            .clone()
+            .with_claude_transcripts(&projects, Some("own"), &long)
+            .is_err()
+    );
+    let accent = dir.path().join("caf\u{e9}");
+    std::fs::create_dir_all(&accent).unwrap();
+    assert!(
+        rules
+            .clone()
+            .with_claude_transcripts(&projects, Some("own"), &accent)
+            .is_err()
+    );
+    // A start folder that does not exist is refused too.
+    assert!(
+        rules
+            .with_claude_transcripts(&projects, Some("own"), &dir.path().join("nope"))
+            .is_err()
+    );
 }
 
 #[test]
@@ -226,7 +285,7 @@ fn a_first_turn_gets_a_new_uuid_and_a_later_turn_keeps_its_session() {
     let projects = claude_folder(dir.path()).join("projects");
     let first = rules
         .clone()
-        .with_claude_transcripts(&projects, None)
+        .with_claude_transcripts(&projects, None, Path::new("/"))
         .unwrap();
     let id = first
         .fresh_session()
@@ -237,11 +296,11 @@ fn a_first_turn_gets_a_new_uuid_and_a_later_turn_keeps_its_session() {
     assert_eq!(&id[14..15], "4", "version 4");
     let second = rules
         .clone()
-        .with_claude_transcripts(&projects, None)
+        .with_claude_transcripts(&projects, None, Path::new("/"))
         .unwrap();
     assert_ne!(second.fresh_session(), Some(id), "not reused");
     let later = rules
-        .with_claude_transcripts(&projects, Some("own"))
+        .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
         .unwrap();
     assert_eq!(
         later.fresh_session(),
@@ -558,8 +617,22 @@ mod macos_tests {
     fn claude_worker(s: &Setup, config: &Path, session: Option<&str>) -> Confinement {
         s.rules
             .clone()
-            .with_claude_transcripts(&config.join("projects"), session)
+            .with_claude_transcripts(&config.join("projects"), session, &checkout(s))
             .expect("the folder resolves")
+    }
+
+    /// The folder the worker's engine starts in: its checkout.
+    fn checkout(s: &Setup) -> PathBuf {
+        std::fs::canonicalize(&s.data)
+            .unwrap()
+            .join("workspace/repo/p")
+    }
+
+    /// Claude's project folder for that start folder, which the core makes before launch.
+    fn project_of(s: &Setup, config: &Path) -> PathBuf {
+        let name =
+            crate::agents::claude_history::project_folder_name(&checkout(s).to_string_lossy());
+        config.join("projects").join(name)
     }
 
     fn base_of(s: &Setup) -> PathBuf {
@@ -665,10 +738,11 @@ mod macos_tests {
         assert!(out.stdout.is_empty(), "{out:?}");
     }
 
-    /// A first turn has no session file and may have no project folder: Claude makes both under
-    /// the id the rules chose, and still cannot reach a lead's transcript beside it.
+    /// A first turn has no session file: Claude makes it under the id the rules chose, in the
+    /// project folder the core made, and cannot make any other folder or reach a lead's
+    /// transcript beside it.
     #[test]
-    fn a_first_turn_creates_its_folder_and_session_and_no_other() {
+    fn a_first_turn_creates_its_own_session_in_the_prepared_folder_and_nothing_else() {
         let s = setup();
         let base = base_of(&s);
         let config = base.join("fresh");
@@ -676,35 +750,42 @@ mod macos_tests {
         let config = std::fs::canonicalize(&config).unwrap();
         let rules = claude_worker(&s, &config, None);
         let id = rules.fresh_session().unwrap().to_owned();
-        let cwd = std::fs::canonicalize(&s.data)
-            .unwrap()
-            .join("workspace/repo/p");
-        let folder = config.join("projects/-new-folder");
+        let cwd = checkout(&s);
+        // `projects` and the project folder were made, private to the person.
+        let folder = project_of(&s, &config);
+        assert!(folder.is_dir());
+        use std::os::unix::fs::PermissionsExt;
+        for dir in [config.join("projects"), folder.clone()] {
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "{dir:?} {mode:o}");
+        }
         let out = run(
             &rules,
             &cwd,
             &format!(
-                "mkdir -p '{f}' && echo one > '{f}/{id}.jsonl' && mkdir '{f}/{id}' \
-                 && echo two > '{f}/{id}/x' && cat '{f}/{id}.jsonl'",
+                "echo one > '{f}/{id}.jsonl' && mkdir '{f}/{id}' && echo two > '{f}/{id}/x' \
+                 && mkdir '{f}/{id}/subagents' && echo s > '{f}/{id}/subagents/a.jsonl' \
+                 && cat '{f}/{id}.jsonl'",
                 f = folder.display()
             ),
         );
         assert!(out.status.success(), "{out:?}");
         assert_eq!(out.stdout, b"one\n");
-        // Another thread's session in the same new folder is not the worker's.
+        // No other folder, file or session may be created, and another thread's is unreadable.
         std::fs::write(folder.join("lead.jsonl"), "lead").unwrap();
-        let out = run(
-            &rules,
-            &cwd,
-            &format!("cat '{}/lead.jsonl'", folder.display()),
-        );
-        assert!(!out.status.success() && out.stdout.is_empty());
-        let out = run(
-            &rules,
-            &cwd,
-            &format!("echo x > '{}/someone-else.jsonl'", folder.display()),
-        );
-        assert!(!out.status.success());
+        for script in [
+            format!("cat '{}/lead.jsonl'", folder.display()),
+            format!("echo x > '{}/someone-else.jsonl'", folder.display()),
+            format!("mkdir '{}/projects/-other'", config.display()),
+            format!("mkdir '{}/-other'", config.join("projects").display()),
+            format!("mkdir '{}/other'", folder.display()),
+        ] {
+            let out = run(&rules, &cwd, &script);
+            assert!(
+                !out.status.success() && out.stdout.is_empty(),
+                "{script}: {out:?}"
+            );
+        }
     }
 
     /// The lead's file cannot be reached by moving a folder above it, by linking to it or by
@@ -759,60 +840,127 @@ mod macos_tests {
         assert!(out.status.success(), "{out:?}");
     }
 
-    /// Only a directory may be created where a project folder goes. A link planted there, or
-    /// at `projects` itself when it does not exist yet, would send a later session (or a
-    /// memory file the lead loads) to a place the worker reads and writes.
+    /// Seatbelt cannot tell a directory made by `mkdir` from one moved in by `rename`, so
+    /// nothing may be created at `projects` or directly under it, however it is made. Each
+    /// attempt prepares a tree outside, with a link inside it, and moves it in.
     #[test]
-    fn a_link_cannot_be_planted_where_a_project_folder_or_projects_will_be() {
+    fn a_prepared_tree_cannot_be_moved_into_the_claude_folder_under_any_name() {
         let s = setup();
         let base = base_of(&s);
         let config = std::fs::canonicalize(claude_folder(&base)).unwrap();
         let rules = claude_worker(&s, &config, Some("own"));
-        let cwd = std::fs::canonicalize(&s.data)
-            .unwrap()
-            .join("workspace/repo/p");
-        let evil = cwd.join("evil");
+        let cwd = checkout(&s);
+        let out_dir = cwd.join("out");
+        let evil = out_dir.join("evil");
         std::fs::create_dir_all(&evil).unwrap();
-        let future = config.join("projects/-future-worktree");
-        let out = run(
-            &rules,
-            &cwd,
-            &format!("ln -s '{}' '{}'", evil.display(), future.display()),
-        );
-        assert!(!out.status.success(), "{out:?}");
-        let out = run(&rules, &cwd, &format!("echo x > '{}'", future.display()));
-        assert!(!out.status.success(), "a plain file too");
+        let projects = config.join("projects");
+        let folder = project_of(&s, &config);
+        let future = projects.join("-future-worktree");
+        let prep = |name: &str, link: &str| {
+            format!(
+                "mkdir -p '{o}/{name}' && ln -s '{e}' '{o}/{name}/{link}'",
+                o = out_dir.display(),
+                e = evil.display()
+            )
+        };
+        let tries = [
+            // Under a future project name: a plain link, a directory, a prepared tree.
+            format!("ln -s '{}' '{}'", evil.display(), future.display()),
+            format!("mkdir '{}'", future.display()),
+            format!(
+                "{} && mv '{}/p1' '{}'",
+                prep("p1", "memory"),
+                out_dir.display(),
+                future.display()
+            ),
+            // Over the prepared folder, which is not empty, and under it.
+            format!(
+                "{} && mv '{}/p2' '{}/-more'",
+                prep("p2", "memory"),
+                out_dir.display(),
+                folder.display()
+            ),
+            // From inside the allowance: the worker's own dir renamed to another name.
+            format!(
+                "mkdir -p '{f}/own2' && ln -s '{e}' '{f}/own2/memory' && mv '{f}/own2' '{p}/-Users-x-e'",
+                f = folder.display(),
+                e = evil.display(),
+                p = projects.display()
+            ),
+            format!(
+                "mkdir -p '{f}/own/memory2' && mv '{f}/own' '{f}/-elsewhere'",
+                f = folder.display()
+            ),
+            // The prepared folder itself and `projects` moved aside, or replaced.
+            format!("mv '{}' '{}-x'", folder.display(), folder.display()),
+            format!("mv '{}' '{}-x'", projects.display(), projects.display()),
+            format!("rmdir '{}'", folder.display()),
+        ];
+        for script in tries {
+            let out = run(&rules, &cwd, &script);
+            assert!(!out.status.success(), "{script}: {out:?}");
+        }
         assert!(std::fs::symlink_metadata(&future).is_err());
-        // A directory there is what Claude makes, and what the worker's own session needs.
-        let out = run(&rules, &cwd, &format!("mkdir '{}'", future.display()));
-        assert!(out.status.success(), "{out:?}");
-        // A later write by anyone else under it is not visible to the worker.
-        std::fs::write(future.join("lead-next.jsonl"), "later").unwrap();
+        assert!(!folder.join("-more").exists() && !projects.join("-Users-x-e").exists());
+        // A write by anyone else under a would-be new folder, or the prepared one, stays unread.
+        std::fs::write(folder.join("lead-next.jsonl"), "later").unwrap();
         let out = run(
             &rules,
             &cwd,
-            &format!("cat '{}/lead-next.jsonl'", future.display()),
+            &format!("cat '{}/lead-next.jsonl'", folder.display()),
         );
         assert!(!out.status.success() && out.stdout.is_empty());
+        // The worker's own session still works.
+        let out = run(
+            &rules,
+            &cwd,
+            &format!(
+                "echo ok > '{f}/own.jsonl' && mkdir -p '{f}/own/memory' && cat '{f}/own.jsonl'",
+                f = folder.display()
+            ),
+        );
+        assert!(out.status.success(), "{out:?}");
+    }
 
-        // `projects` absent at launch: a link in its place is denied, a folder is not.
+    /// `projects` absent at launch is made by the core, so a worker has no gap to move a
+    /// prepared tree into.
+    #[test]
+    fn a_missing_projects_folder_is_made_by_the_core_and_cannot_be_replaced() {
+        let s = setup();
+        let base = base_of(&s);
         let fresh = base.join("fresh2");
         std::fs::create_dir_all(&fresh).unwrap();
         let fresh = std::fs::canonicalize(&fresh).unwrap();
+        assert!(!fresh.join("projects").exists());
         let rules = claude_worker(&s, &fresh, Some("own"));
-        let out = run(
-            &rules,
-            &cwd,
-            &format!("ln -s '{}' '{}/projects'", evil.display(), fresh.display()),
-        );
-        assert!(!out.status.success(), "{out:?}");
-        assert!(std::fs::symlink_metadata(fresh.join("projects")).is_err());
-        let out = run(
-            &rules,
-            &cwd,
-            &format!("mkdir '{}/projects'", fresh.display()),
-        );
-        assert!(out.status.success(), "{out:?}");
+        assert!(fresh.join("projects").is_dir());
+        let cwd = checkout(&s);
+        let evil = cwd.join("evil");
+        std::fs::create_dir_all(&evil).unwrap();
+        let name = project_of(&s, &fresh);
+        let name = name.file_name().unwrap().to_string_lossy().into_owned();
+        for script in [
+            format!(
+                "mkdir -p '{c}/prep' && ln -s '{e}' '{c}/prep/{name}' && mv '{c}/prep' '{p}'",
+                c = cwd.display(),
+                e = evil.display(),
+                p = fresh.join("projects").display()
+            ),
+            format!(
+                "rmdir '{}/projects/{name}' && ln -s '{}' '{}/projects/{name}'",
+                fresh.display(),
+                evil.display(),
+                fresh.display()
+            ),
+            format!(
+                "ln -s '{}' '{}/projects/-x'",
+                evil.display(),
+                fresh.display()
+            ),
+        ] {
+            let out = run(&rules, &cwd, &script);
+            assert!(!out.status.success(), "{script}: {out:?}");
+        }
     }
 
     /// A worker that is not Claude gets the folder closed whole: no session of its own.

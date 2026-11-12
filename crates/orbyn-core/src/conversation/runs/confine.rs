@@ -55,7 +55,7 @@ impl RunManager {
             &[start, checkout, project],
         )?;
         let projects = crate::agents::usage::history_root(crate::agents::usage::Engine::Claude);
-        close_transcripts(confinement, &driver.family(), projects, resume).map(Some)
+        close_transcripts(confinement, &driver.family(), projects, resume, start).map(Some)
     }
 }
 
@@ -68,6 +68,7 @@ fn close_transcripts(
     family: &str,
     projects: Option<std::path::PathBuf>,
     resume: Option<&str>,
+    start: &Path,
 ) -> Result<Confinement> {
     let projects = projects.ok_or_else(|| {
         CoreError::EngineUnavailable(
@@ -79,7 +80,7 @@ fn close_transcripts(
         // cannot run as a worker until it can take a `--session-id`.
         return confinement.with_closed_claude_folder(&projects);
     }
-    confinement.with_claude_transcripts(&projects, resume)
+    confinement.with_claude_transcripts(&projects, resume, start)
 }
 
 #[cfg(test)]
@@ -95,21 +96,28 @@ mod tests {
         std::fs::create_dir_all(&config).unwrap();
         let rules = Confinement::new(&data, &data.join("runs/w"), &[], &[]).unwrap();
         let projects = Some(config.join("projects"));
-        let claude = close_transcripts(rules.clone(), "claude", projects.clone(), None).unwrap();
+        let claude =
+            close_transcripts(rules.clone(), "claude", projects.clone(), None, dir.path()).unwrap();
         assert!(
             claude.fresh_session().is_some(),
             "a first turn names its id"
         );
-        let later =
-            close_transcripts(rules.clone(), "claude", projects.clone(), Some("s1")).unwrap();
+        let later = close_transcripts(
+            rules.clone(),
+            "claude",
+            projects.clone(),
+            Some("s1"),
+            dir.path(),
+        )
+        .unwrap();
         assert_eq!(later.transcripts.unwrap().session.as_deref(), Some("s1"));
         // Another engine gets the folder closed with no session of its own.
-        let acp = close_transcripts(rules.clone(), "gemini", projects, None).unwrap();
+        let acp = close_transcripts(rules.clone(), "gemini", projects, None, dir.path()).unwrap();
         assert_eq!(acp.fresh_session(), None);
         assert_eq!(acp.transcripts.unwrap().session, None);
         // No home folder, or one that does not resolve: the worker is refused.
-        assert!(close_transcripts(rules.clone(), "claude", None, None).is_err());
+        assert!(close_transcripts(rules.clone(), "claude", None, None, dir.path()).is_err());
         let missing = Some(dir.path().join("none/projects"));
-        assert!(close_transcripts(rules, "claude", missing, None).is_err());
+        assert!(close_transcripts(rules, "claude", missing, None, dir.path()).is_err());
     }
 }

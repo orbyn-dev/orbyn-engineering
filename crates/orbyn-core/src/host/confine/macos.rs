@@ -21,19 +21,18 @@ const HEAD: &str = "(version 1)\n(allow default)\n\
     (allow file-read* file-write* (subpath (param \"RUN\")))\n";
 /// A saved-conversations folder is denied whole, and so is the prompt history. A worker of
 /// another engine gets nothing back. A Claude worker then gets the one session it owns,
-/// allowed by pattern: any project folder directly under the root, then `<id>.jsonl` or
-/// anything under `<id>/`. The pattern is what lets a first turn, whose project folder does
-/// not exist yet, and a folder Claude names in a way this code does not repeat (a long path,
-/// a link) still work, while a session created later by another thread stays denied. The
-/// folder and the pattern's own parts arrive as parameters (`TQ` is the folder with its
-/// pattern characters escaped). Only a directory may be created at the root or directly
-/// under it: a link there would send a later session, or a memory file the lead loads, to a
-/// place the worker reads and writes.
+/// allowed by pattern: `<id>.jsonl` or anything under `<id>/` in a project folder directly
+/// under the root. The core has already made `projects` and the project folder for the
+/// worker's start folder, so nothing may be created at either: a rename moves a prepared
+/// tree in under a new name, which the profile cannot tell from a new directory, so no
+/// create is allowed there at all. The pattern keeps working for a folder named in a way this
+/// code does not repeat, and a session another thread creates later stays denied. The folder
+/// and the pattern's own parts arrive as parameters (`TQ` is the folder with its pattern
+/// characters escaped).
 const TRANSCRIPTS: &str = r#"(deny file-read* file-write* (subpath (param "TR")))
 (deny file-read* file-write* (literal (param "TH")))
 "#;
 const OWN_SESSION: &str = r#"(allow file-read-metadata (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))
-(allow file-write-create (require-all (vnode-type DIRECTORY) (require-any (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))))
 (allow file-read* file-write* (regex (string-append "^" (param "TQ") "/[^/]+/" (param "TS") "(\\.jsonl|/.*)?$")))
 "#;
 const TAIL: &str = "(deny mach-priv-task-port)\n\

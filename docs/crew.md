@@ -992,15 +992,16 @@ A Claude worker also cannot read or write another session's saved Claude convers
 under `~/.claude/projects`), nor Claude's prompt history; it keeps its own session, which a first turn names with
 `--session-id`. It starts without Claude's auto memory for the project (`memory/` is closed with the rest). A worker on
 another engine (an ACP agent) gets the whole folder closed with no session; an ACP adapter that wraps Claude Code may be
-unable to run as a worker until it can take a `--session-id`. A linked `projects` or `history.jsonl` refuses the worker.
+unable to run as a worker until it can take a `--session-id`. The core makes `projects` and the project folder before launch and the worker can create nothing there but its own
+session. A configuration folder, `projects` or `history.jsonl` that goes through a link, or a start folder whose Claude
+name is not certain (non-ASCII, very long), refuses the worker.
 
 Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
 engines), the Claude transcript denial and tests that run the real tool. Not built: a Windows or Linux restriction,
 and a denial of other engines' saved conversations. Not covered: an ACP agent's or Codex's saved conversations (Codex
 also keeps them in SQLite files), Claude's other per-session files (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do
 lists, file history, debug logs, shell snapshots, `sessions/`), the network, the loopback service, the keychain, `~/.claude.json`, other same-user files
-and processes a worker leaves running. A worker can learn which project folder names exist under `projects` and can leave
-empty folders there that it cannot remove. The lead's Claude transcript is closed for a Claude worker; the answer key as a
+and processes a worker leaves running. A worker can learn which project folder names exist under `projects` (their metadata may be read), not what is in them. The lead's Claude transcript is closed for a Claude worker; the answer key as a
 whole is not claimed safe. Codex workers are refused until the nested-profile question is answered, and Codex's
 conversation files are a second reason to keep it so.
 

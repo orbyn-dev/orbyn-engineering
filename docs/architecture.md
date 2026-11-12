@@ -2740,17 +2740,22 @@ parameters and are canonicalised first, because a rule on `/var/...` does not ma
 For a Claude worker the profile also closes Claude's saved conversations, where the lead's own transcript lives
 (`CLAUDE_CONFIG_DIR` or `~/.claude`, then `projects/<folder>/<session>.jsonl`, with a subagent and tool-result folder
 `<session>/` beside it). Reading and writing under `projects` is denied, then one session is allowed by pattern: any
-project folder directly under it, then `<own id>.jsonl` or anything under `<own id>/`. The worker's id is its stored
+project folder directly under it, then `<own id>.jsonl` or anything under `<own id>/`. Before the engine starts the core makes
+`projects` and the project folder for the start folder (Claude's name for it: the real path with every non-alphanumeric
+character turned into `-`, seen with 2.1.318 for ASCII paths; a non-ASCII path, one of 200 characters or more, or one that does
+not resolve refuses the worker rather than guess) with mode 0700. The worker's id is its stored
 `engine_session`; on its first turn Orbyn makes a version 4 UUID and starts Claude with `--session-id <uuid>`, so the allowance
 names the session before it is written. The pattern does not repeat Claude's folder naming (it keys on the real path of the
 start folder, and a long path is shortened), so a naming difference cannot lock the worker out of its own session. A
 transcript another thread creates after the worker started is denied too, because the rule is on the folder, and the
 folder is not listed, so other session ids are not shown. Claude's prompt history `history.jsonl` is denied (Orbyn's `-p`
 runs do not write it; a person's own terminal sessions do). The saved-conversations folder and every folder above it
-cannot be renamed, as for the data folder. Only a directory may be created at `projects` or directly under it, so a worker
-cannot plant a link where a later session or a project's `memory/MEMORY.md` would be written. A `projects` folder or a
-`history.jsonl` that is itself a link is not followed: the worker is refused, because a rule by path cannot follow a link
-that is swapped later. A Claude folder that does not resolve, is relative, overlaps the data folder, or a session id
+cannot be renamed, as for the data folder. Nothing may be created at `projects` or directly under it, by any means: a profile cannot tell a
+directory made by `mkdir` from one a worker prepared elsewhere (with a link inside) and renamed in, so the folders are made
+by the core and the profile allows no create there. The worker's own `<id>.jsonl` and `<id>/` are the only names it can
+make. A configuration folder that goes through a link (itself or a folder above it), a `projects` folder or a `history.jsonl`
+that is itself a link is not followed: the worker is refused, because a rule by path cannot follow a link that is swapped
+later. A Claude folder that does not resolve, is relative, overlaps the data folder, or a session id
 outside letters, digits, `-` and `_` also refuses the worker with a plain line. Auto memory (`projects/<folder>/memory`) is
 closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent; Codex is refused) gets
 `projects` and `history.jsonl` closed with no allowance, so an ACP adapter that wraps Claude Code and writes its sessions
@@ -2773,11 +2778,13 @@ shaped like Claude's, with a link, spaces and pattern characters in the path: th
 the memory folder and the prompt history cannot be read or changed (nor listed), the worker's own session and its
 subagent files can be read and written, a transcript created after the profile started is denied, a first turn creates
 its own folder and session and no other, `projects`, `history.jsonl` or the folder above them cannot be moved, replaced
-by a link or linked to reach a transcript, a link cannot be planted at a missing project folder name or at a missing
-`projects`, a directory can, a linked `projects` or `history.jsonl` refuses the worker, and a worker of another engine
-reads none of it. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
+by a link or linked to reach a transcript, a tree prepared outside with a link inside it cannot be moved in under a missing
+project name, over or under the prepared folder, from inside the worker's own folder, or into a missing `projects` (which the
+core makes), nothing but the worker's own session can be created there, a linked configuration folder, `projects` or
+`history.jsonl` refuses the worker, an uncertain start folder name refuses it, and a worker of another engine reads none of it.
+Each of those tests fails if the create allowance is put back. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
 `--session-id` writes its own session, `--resume` of its own session works, and `--resume` of another session in the same
-folder answers "No conversation found". What that proves: a worker's own file access to
+folder answers "No conversation found", with the folders made beforehand and no create allowed. What that proves: a worker's own file access to
 Orbyn's data folder (store, `service.json`, other runs' files) is denied, and so is its access to another session's Claude
 transcript file.
 
@@ -2793,7 +2800,7 @@ an ACP agent's conversation, including an ACP adapter that writes Claude's folde
 stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
 in this change (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do lists, file history,
 debug logs, shell snapshots, the live-session registry `sessions/`), are open to a worker. A worker can learn which project
-folder names exist (`mkdir` answers "File exists") and can leave empty folders under `projects` that it cannot remove. A worker that makes Claude create a session under another id (for example `/clear` inside a turn)
+folder names exist under `projects` (their metadata may be read), not what is in them. A worker that makes Claude create a session under another id (for example `/clear` inside a turn)
 would have that transcript denied: not tried with a signed-in turn, which also leaves tool-result and subagent folders
 unobserved under the profile. The run
 folder is writable by the worker, so it can edit its own per-run settings and `mcp.json`. The tests do not
