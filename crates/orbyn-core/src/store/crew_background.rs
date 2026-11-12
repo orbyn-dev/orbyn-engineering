@@ -353,8 +353,8 @@ impl Store {
         })
     }
 
-    /// Deletes a crew and its runs. Refused while a run is in progress or waits for the person's review: those runs would vanish with
-    /// the crew, review included. The audit row stays and records how many runs the delete removed.
+    /// Deletes a crew and its runs. Refused only while a run is in progress. Waiting reviews go with the crew; the audit row stays and
+    /// records how many runs, and how many waiting reviews, the delete removed.
     pub fn delete_background_crew(&self, id: &str, actor: &str) -> Result<()> {
         self.commit(|tx, _| {
             let current = crew_in(tx, id)?;
@@ -366,11 +366,6 @@ impl Store {
                 [id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            if waiting > 0 {
-                return Err(CoreError::Invalid(
-                    "this background crew has runs waiting for your review".into(),
-                ));
-            }
             audit(
                 tx,
                 actor,

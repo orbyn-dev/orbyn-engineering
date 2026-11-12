@@ -655,7 +655,7 @@ fn a_spend_is_audited_and_a_person_s_disable_is_logged_as_the_person() {
 }
 
 #[test]
-fn a_delete_records_what_it_removes_and_is_refused_with_a_review_waiting() {
+fn a_delete_removes_waiting_reviews_and_counts_them_in_the_audit_row() {
     let f = fixture(true);
     let crew = f
         .core
@@ -664,33 +664,31 @@ fn a_delete_records_what_it_removes_and_is_refused_with_a_review_waiting() {
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let first = f.core.crew_background_start_run(&crew.id).unwrap();
     f.core.crew_background_spend(&first.id, 10, 0).unwrap();
-    let error = f.core.background_delete(&crew.id).unwrap_err();
-    assert!(error.to_string().contains("review"), "{error}");
-    assert!(
-        f.core.background_get(&crew.id).is_ok(),
-        "nothing was removed"
-    );
-    assert!(audit_rows(&f.core, "crew.background.delete").is_empty());
-    // Runs with nothing waiting go with the crew, counted in the audit row.
-    let fresh = f
-        .core
-        .background_create(&create_body(&f.project, "Counted"))
+    let second = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core
+        .crew_background_end_run(
+            &second.id,
+            BackgroundEnd::Stopped(wire::BackgroundStopReason::EngineError),
+        )
         .unwrap();
-    f.core.background_set_enabled(&fresh.id, true).unwrap();
-    for _ in 0..2 {
-        let run = f.core.crew_background_start_run(&fresh.id).unwrap();
-        f.core
-            .crew_background_end_run(
-                &run.id,
-                BackgroundEnd::Stopped(wire::BackgroundStopReason::EngineError),
-            )
-            .unwrap();
-    }
-    f.core.background_delete(&fresh.id).unwrap();
+    assert_eq!(f.core.background_get(&crew.id).unwrap().reviews_waiting, 1);
+    f.core.background_delete(&crew.id).unwrap();
+    assert!(f.core.background_get(&crew.id).is_err());
     let deletes = audit_rows(&f.core, "crew.background.delete");
     assert_eq!(deletes.len(), 1);
     assert_eq!(deletes[0].detail["runs_removed"], 2);
-    assert_eq!(deletes[0].detail["reviews_waiting_removed"], 0);
+    assert_eq!(deletes[0].detail["reviews_waiting_removed"], 1);
+    // A run in progress still refuses it.
+    let busy = f
+        .core
+        .background_create(&create_body(&f.project, "Busy"))
+        .unwrap();
+    f.core.background_set_enabled(&busy.id, true).unwrap();
+    f.core.crew_background_start_run(&busy.id).unwrap();
+    assert!(matches!(
+        f.core.background_delete(&busy.id),
+        Err(CoreError::RunsActive)
+    ));
 }
 
 #[test]

@@ -12,7 +12,6 @@ use orbyn_contracts as wire;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-use super::autopilot::has_hidden;
 use super::{Page, redact, valid_id, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -40,8 +39,19 @@ fn parse_wire<T: DeserializeOwned>(text: &str) -> Result<T> {
         .map_err(|_| CoreError::Internal(format!("a stored background value is unknown: {text}")))
 }
 
+/// Characters that hide text from a person, a wider set than the Autopilot tripwire's: zero-width, bidirectional controls and the tag
+/// block, plus soft hyphen, combining grapheme joiner, Arabic letter mark, Hangul and Braille fillers, Mongolian free variation
+/// selectors, line and paragraph separators, the deprecated format controls and interlinear annotation marks. A name or trigger text
+/// the person types has no use for any of them; the tripwire reads agent text, where some are legitimate, so it keeps its own list.
+/// Emoji variation selectors are allowed.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}'..='\u{1160}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}'
+        | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
+}
+
 /// Text a person typed: trimmed, 1 to `max` characters, no control characters and none that hide text (zero-width, bidirectional,
-/// tag-block and other invisible format characters, the same check the Autopilot tripwire uses), then redacted by the locked redactor. A redaction
+/// tag-block and other invisible format characters, see `invisible`), then redacted by the locked redactor. A redaction
 /// that makes it too long is refused rather than cut.
 fn text(label: &str, value: &str, max: usize) -> Result<String> {
     let value = value.trim();
@@ -56,7 +66,7 @@ fn text(label: &str, value: &str, max: usize) -> Result<String> {
             "{label} has a character that cannot be shown"
         )));
     }
-    if has_hidden(value) {
+    if value.chars().any(invisible) {
         return Err(CoreError::Invalid(format!(
             "{label} has a hidden character"
         )));
@@ -311,7 +321,7 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Deletes a crew and its runs. Refused while a run is in progress or waits for the person's review.
+    /// Deletes a crew and its runs. Refused only while a run is in progress; waiting reviews go with the crew.
     pub fn background_delete(&self, id: &str) -> Result<()> {
         self.crew_preview_only()?;
         self.background_row(id)?;
