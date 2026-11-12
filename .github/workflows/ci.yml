@@ -553,21 +553,25 @@ jobs:
         if: env.RUN == 'true'
         shell: bash
         run: |
+          # macOS signs ad-hoc with the same config the release uses.
+          cfg='{}'
+          if [ "$RUNNER_OS" = macOS ]; then
+            cfg='{"bundle":{"macOS":{"signingIdentity":"-","hardenedRuntime":false}}}'
+          fi
           if [ "$ORBYN_CARGO_PROFILE" = release ]; then
-            npx tauri build --bundles ${{ matrix.bundles }}
+            npx tauri build --bundles ${{ matrix.bundles }} --config "$cfg"
           else
-            npx tauri build --bundles ${{ matrix.bundles }} -- --profile "$ORBYN_CARGO_PROFILE"
+            npx tauri build --bundles ${{ matrix.bundles }} --config "$cfg" -- --profile "$ORBYN_CARGO_PROFILE"
           fi
         working-directory: desktop
       # Cargo output is only linker-signed per binary, so the bundle seal does not verify and a
-      # downloaded copy can read "damaged". Sign the bundle ad-hoc and fail if it still does not verify.
-      - name: Ad-hoc sign and verify the macOS bundle
+      # downloaded copy can read "damaged". The build above signs ad-hoc; fail if it still does not verify.
+      - name: Verify the macOS bundle seal
         if: env.RUN == 'true' && runner.os == 'macOS'
         shell: bash
         run: |
           bundle="desktop/src-tauri/target/${{ env.ORBYN_CARGO_PROFILE }}/bundle"
           for app in "$bundle"/macos/*.app; do
-            codesign --force --deep -s - "$app"
             codesign --verify --deep --strict --verbose=2 "$app"
           done
       - name: Release script tests

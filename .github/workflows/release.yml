@@ -59,39 +59,58 @@ jobs:
         working-directory: desktop
       - run: npm run prepare-bundle
         working-directory: desktop
-      - name: Build with updater files
+      - name: Build the bundles
         working-directory: desktop
         shell: bash
         run: |
-          # With Apple secrets, Tauri signs with them (unchanged). Without them, sign the
-          # whole bundle ad-hoc ("-") during the build so the .app, the dmg and the updater
-          # archive all carry a valid seal. Empty secret variables are cleared first.
+          # Apple: with secrets, Tauri signs with them (unchanged). Without them, sign the whole
+          # bundle ad-hoc ("-") during the build so the .app, the dmg and the updater archive
+          # all carry a valid seal. Empty secret variables are cleared first.
           mac=''
           if [ "$RUNNER_OS" = macOS ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
             unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
             mac=',"macOS":{"signingIdentity":"-","hardenedRuntime":false}'
             echo "No Apple signing identity: ad-hoc signing the macOS bundle."
           fi
+          # Updater files need both the update public key and the signing private key.
+          upd=false
+          plugins=''
+          if [ -n "${ORBYN_UPDATE_PUBKEY:-}" ] && [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            upd=true
+            plugins=',"plugins":{"updater":{"pubkey":"'"$ORBYN_UPDATE_PUBKEY"'"}}'
+          else
+            echo "No updater key pair: building without updater files."
+          fi
           npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} \
-            --config '{"bundle":{"createUpdaterArtifacts":true'"$mac"'},"plugins":{"updater":{"pubkey":"${{ vars.ORBYN_UPDATE_PUBKEY }}"}}}'
+            --config '{"bundle":{"createUpdaterArtifacts":'"$upd$mac"'}'"$plugins"'}'
       - name: Verify the macOS bundle seal
         if: runner.os == 'macOS'
+        timeout-minutes: 10
         shell: bash
         # Fails the job when the .app, or the .app inside the dmg, does not verify, so a
-        # bundle that macOS would call damaged is never uploaded.
+        # bundle that macOS would call damaged is never uploaded. The dmg may carry a licence
+        # agreement (bundle.licenseFile), so attach answers it from stdin.
         run: |
           bundle="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           for app in "$bundle"/macos/*.app; do
             codesign --verify --deep --strict --verbose=2 "$app"
           done
+          mnt=''
+          detach() {
+            if [ -n "$mnt" ]; then
+              hdiutil detach "$mnt" > /dev/null || hdiutil detach -force "$mnt" > /dev/null || true
+              mnt=''
+            fi
+          }
+          trap detach EXIT
           for dmg in "$bundle"/dmg/*.dmg; do
             mnt="$(mktemp -d)"
-            hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" > /dev/null
+            printf 'Y\n' | hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" > /dev/null
             status=0
             for app in "$mnt"/*.app; do
               codesign --verify --deep --strict --verbose=2 "$app" || status=1
             done
-            hdiutil detach "$mnt" > /dev/null
+            detach
             [ "$status" = 0 ] || exit 1
           done
       - name: Check notarization

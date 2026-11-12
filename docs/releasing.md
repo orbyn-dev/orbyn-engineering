@@ -7,15 +7,17 @@ How a release is built today. Nothing here publishes: a person reviews and promo
 - `.github/workflows/release.yml`, run by hand (`workflow_dispatch`), `release` environment.
 - One job per target: macOS aarch64 and x86_64 (`app,dmg`), Windows x86_64 and aarch64 (`nsis`).
 - Each job builds with updater files, checks the bundle, packs the CLI, writes checksums and an inventory (`scripts/release-evidence.mjs`), and uploads a 14-day artifact.
-- Pull requests only build an unsigned desktop bundle in `ci.yml` (`Unsigned desktop build`), ad-hoc signed and verified on macOS.
+- `ci.yml` also builds a desktop bundle (`Unsigned desktop build`) on pull requests and pushes to main; on macOS it is ad-hoc signed with the same config and verified.
 
 ## What is signed
 
 | Platform | State |
 | --- | --- |
 | macOS, `APPLE_*` secrets present | Tauri signs with them; `scripts/verify-macos-release.sh` checks notarization for a Developer ID identity. |
-| macOS, no secrets (today) | Ad-hoc signed (`-`), whole bundle. Not notarized. `codesign --verify --deep --strict` must pass or the job fails. |
+| macOS, no secrets (today) | Ad-hoc signed (`-`), whole bundle. Not notarized. |
 | Windows | Not signed. The Azure step only reports that. No Authenticode signing exists yet. |
+
+In both macOS cases `codesign --verify --deep --strict` runs on the `.app` and the dmg's `.app`, and a failure fails the job.
 
 There is no Apple Developer account, so no Developer ID and no notarization. Expect a Gatekeeper block on a downloaded Mac build and SmartScreen on the Windows installer. Tester steps: [first run on an unsigned build](setup.md#first-run-on-an-unsigned-build).
 
@@ -26,7 +28,7 @@ There is no Apple Developer account, so no Developer ID and no notarization. Exp
 
 ## Updates
 
-The updater reads `ORBYN_UPDATE_PUBKEY` and `ORBYN_UPDATE_ENDPOINT` at compile time. No endpoint or key is configured, so an unsigned build has no update channel ("Updates aren't set up for this build."). `createUpdaterArtifacts` is on in the release build and needs `TAURI_SIGNING_PRIVATE_KEY`; whether the job passes with that secret empty is UNVERIFIED.
+The updater reads `ORBYN_UPDATE_PUBKEY` and `ORBYN_UPDATE_ENDPOINT` at compile time. No endpoint or key is configured, so an unsigned build has no update channel ("Updates aren't set up for this build."). The release build turns on updater files only when both `ORBYN_UPDATE_PUBKEY` and `TAURI_SIGNING_PRIVATE_KEY` exist; otherwise it builds without them. UNVERIFIED: a run of that path.
 
 ## Not yet verified on a real machine
 
