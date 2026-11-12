@@ -36,12 +36,6 @@ export const HARD_DENIED: [id: string, text: string][] = [
 export const HARD_FOOT =
   "Checked by Orbyn’s code before any model sees the request, so an instruction hidden in a page or a file does not change them. Read-only: a person can’t switch one off here, and nothing the lead decides can either. Always allowed: reads and writes inside a worker’s leased paths, and running the brief’s checks.";
 
-export const TRIP_WIRES = [
-  "3 denials in a row stop the task with the reason “too many denials”.",
-  "20 denials in one run stop it with the same reason.",
-  "Text that looks like injected instructions, in a page or a file the worker read, stops it with the reason “possible injected instructions”.",
-];
-
 export const RESULT: Record<ResultKind, { label: string; tone: "ok" | "no" | "am" | "dim" }> = {
   allowed: { label: "Allowed", tone: "ok" },
   denied_rule: { label: "Denied by rule", tone: "no" },

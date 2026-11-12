@@ -2,11 +2,14 @@ import { useRef, useState } from "react";
 import { Loading, ErrorState } from "../../../../product/ui/states";
 import { toFailure } from "../../../../lib/useAsync";
 import { crewApi } from "./api";
-import { MODE_COPY, TRIP_WIRES } from "./copy";
-import { enforcedRules, HardDeniedList } from "./HardDenied";
-import { MODES, type AutopilotSettings as Settings, type Mode } from "./model";
+import { MODE_COPY } from "./copy";
+import type { AutopilotGuards } from "../../../../generated/AutopilotGuards";
+import type { AutopilotModeEntry } from "../../../../generated/AutopilotModeEntry";
+import { HardDeniedList, listed } from "./HardDenied";
+import { dayOf } from "./ledger";
+import { MODES, type Mode } from "./model";
 import { Chip } from "./parts";
-import { useAutopilotSettings } from "./useCrew";
+import { useAutopilotGuards, useAutopilotModes } from "./useCrew";
 
 const HIGH_RISK = "Auth, keys, crypto, migrations, CI, dependency changes, large diffs, and areas or engines with a high revert rate. The risk of each task is shown with its reasons.";
 
@@ -42,12 +45,16 @@ export function ModePicker({ mode, onChange }: { mode: Mode; onChange(mode: Mode
   );
 }
 
-function ModeNotes({ mode }: { mode: Mode }) {
+function ModeNotes({ mode, guards }: { mode: Mode; guards: AutopilotGuards }) {
   if (mode === "full") {
     return (
       <section className="ap-box" aria-label="Trip wires that stop a task">
         <h4>Trip wires that stop a task</h4>
-        <ul className="ap-list">{TRIP_WIRES.map((line) => <li key={line}>{line}</li>)}</ul>
+        <ul className="ap-list">
+          <li>{guards.in_a_row_limit} denials in a row stop the task with the reason “too many denials”.</li>
+          <li>{guards.in_a_run_limit} denials in one run stop it with the same reason.</li>
+          <li>Text that looks like injected instructions, in a page or a file the worker read, stops it with the reason “possible injected instructions”.</li>
+        </ul>
         <p className="ap-muted">Nothing is lost when a task stops: its worktree is kept, and you get a Needs you item with a new brief. Stopping is amber, not red.</p>
       </section>
     );
@@ -68,17 +75,17 @@ function ModeNotes({ mode }: { mode: Mode }) {
   );
 }
 
-function PerCrew({ settings }: { settings: Settings }) {
+function PerCrew({ entries }: { entries: AutopilotModeEntry[] }) {
   return (
     <div className="ap-crews" role="table" aria-label="Autopilot per crew">
       <div className="ap-crew-row ap-head" role="row">
         {["Crew", "Autopilot", "Why"].map((name) => <span key={name} role="columnheader">{name}</span>)}
       </div>
-      {settings.crews.map((crew) => (
-        <div key={crew.crew} className="ap-crew-row" role="row">
-          <span role="cell"><b>{crew.crew}</b><small>{crew.detail}</small></span>
-          <span role="cell"><Chip tone="plain">{MODE_COPY[crew.mode].name}</Chip></span>
-          <span role="cell" className="ap-clip">{crew.why}</span>
+      {entries.map((entry) => (
+        <div key={`${entry.scope}-${entry.id}`} className="ap-crew-row" role="row">
+          <span role="cell"><b>{entry.id}</b></span>
+          <span role="cell"><Chip tone="plain">{MODE_COPY[entry.mode].name}</Chip></span>
+          <span role="cell" className="ap-clip">You set this {entry.scope === "crew" ? "crew" : "repo"} to {MODE_COPY[entry.mode].name} on {dayOf(entry.updated_at)}.</span>
         </div>
       ))}
     </div>
@@ -87,22 +94,25 @@ function PerCrew({ settings }: { settings: Settings }) {
 
 /** Settings › Crew › Autopilot: who answers agents’ requests, and what merges without waiting for you. */
 export function AutopilotSettings() {
-  const read = useAutopilotSettings();
+  const modes = useAutopilotModes();
+  const guards = useAutopilotGuards();
   const [failed, setFailed] = useState<string | null>(null);
-  if (read.status === "loading") return <Loading label="Reading Autopilot" rows={3} />;
-  if (read.status === "error") return <ErrorState title="Can't read Autopilot" failure={read.error} onRetry={read.reload} />;
-  const settings = read.data;
-  const choose = (mode: Mode) => {
-    if (mode === settings.mode) return;
+  if (modes.status === "loading" || guards.status === "loading") return <Loading label="Reading Autopilot" rows={3} />;
+  if (modes.status === "error") return <ErrorState title="Can't read Autopilot" failure={modes.error} onRetry={modes.reload} />;
+  if (guards.status === "error") return <ErrorState title="Can't read Autopilot" failure={guards.error} onRetry={guards.reload} />;
+  const mode = modes.data.entries.find((entry) => entry.scope === "default")?.mode ?? modes.data.effective_default;
+  const overrides = modes.data.entries.filter((entry) => entry.scope !== "default");
+  const choose = (next: Mode) => {
+    if (next === mode) return;
     setFailed(null);
-    const before = settings;
-    read.setData({ ...settings, mode, confirmed: true });
-    crewApi.setMode(mode).catch((error: unknown) => {
-      read.setData(before);
+    const before = modes.data;
+    // The new choice shows at once; the service's answer replaces it, and a refusal puts the old one back.
+    modes.setData({ ...before, effective_default: next, confirmed: true, entries: [{ scope: "default", mode: next, updated_at: new Date().toISOString() }, ...before.entries.filter((entry) => entry.scope !== "default")] });
+    crewApi.setMode(next).then(modes.setData, (error: unknown) => {
+      modes.setData(before);
       setFailed(toFailure(error).message);
     });
   };
-  const hardCount = enforcedRules(settings.hardDenied).length;
   return (
     <section className="ap-set" aria-labelledby="ap-set-title">
       <header className="ap-set-head">
@@ -110,26 +120,26 @@ export function AutopilotSettings() {
         <Chip tone="plain">Preview</Chip>
       </header>
       <p className="ap-lead">
-        Who answers agents’ requests, and what merges without waiting for you. Applies to <b>{settings.repo}</b>
-        {settings.crews.length ? " · all crews; a crew can override the repo." : "."}
+        Who answers agents’ requests, and what merges without waiting for you. Applies to every repo
+        {overrides.length ? " · all crews; a crew can override the repo." : "; a crew can override the repo."}
       </p>
-      <ModePicker mode={settings.mode} onChange={choose} />
+      <ModePicker mode={mode} onChange={choose} />
       {failed ? <p role="alert" className="ap-error">{failed}</p> : null}
-      <ModeNotes mode={settings.mode} />
-      {settings.crews.length ? (
+      <ModeNotes mode={mode} guards={guards.data} />
+      {overrides.length ? (
         <>
-          <PerCrew settings={settings} />
+          <PerCrew entries={overrides} />
           <details className="ap-fold">
             <summary>
               <b>Always denied, in every mode</b>
-              <span>{hardCount} actions</span>
+              <span>{listed(guards.data.always_denied).length} actions</span>
               <span className="ap-link">Show the list</span>
             </summary>
-            <HardDeniedList rules={settings.hardDenied} heading="Always denied, in every mode" />
+            <HardDeniedList rules={guards.data.always_denied} heading="The list" />
           </details>
         </>
       ) : (
-        <HardDeniedList rules={settings.hardDenied} />
+        <HardDeniedList rules={guards.data.always_denied} />
       )}
     </section>
   );

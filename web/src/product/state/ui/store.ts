@@ -4,6 +4,9 @@ import { readJson, writeJson } from "../../../lib/storage";
 import {
   DRAFT_LAYOUT,
   RIGHT_TAB_IDS,
+  defaultOrder,
+  isFileTab,
+  withTab,
   type ContextTab,
   type PaletteStart,
   type Prefs,
@@ -13,6 +16,7 @@ import {
   type ToastAction,
   type ToastKind,
 } from "./types";
+import { fileTabId, type FileTarget } from "./fileTab";
 import { PREFS_KEY, currentLayout, defaults, layoutDefaults, withLayout } from "./defaults";
 import { foldersMigrated, prefsOf, savedPrefs } from "./savedPrefs";
 
@@ -66,6 +70,8 @@ interface UiState extends Prefs {
   closeAllPanelTabs(): void;
   /** Puts a closed surface back in the row, opens it and shows the panel. */
   reopenPanelTab(tab: RightTab): void;
+  /** Opens a file from the left bar as a tab, or shows the one already open. */
+  openFileTab(target: FileTarget): void;
   /** Moves a tab to `index` in the row's order. */
   movePanelTab(tab: RightTab, index: number): void;
   /** The default order. Which tabs are open stays as it is. */
@@ -83,7 +89,6 @@ interface UiState extends Prefs {
   /** The remembered choice, held aside while a phone-width window uses its own. */
   desktopPanelOpen: boolean | null;
   setPanelAnimationMs(ms: number): void;
-  toggleDetails(): void;
   setPanelMaximized(maximized: boolean): void;
   setPanelWidth(width: number | null): void;
   /** Shows another thread's layout, restoring what it last had. */
@@ -174,13 +179,20 @@ export const useUi = create<UiState>((set, get) => {
       set({ messageReveal: null });
     },
     revealFile(path, line, origin) {
+      const id = fileTabId({ kind: "thread", path });
       set({
         fileReveal: { ...origin, path, line, nonce: ++navigationNonce },
         diffReveal: null,
         panelOpen: true,
-        panelTab: "files",
-        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== "files"),
+        panelTab: id,
+        panelTabOrder: withTab(get().panelTabOrder, id),
       });
+      savePrefs();
+    },
+    openFileTab(target) {
+      const id = fileTabId(target);
+      set({ panelOpen: true, panelTab: id, panelTabOrder: withTab(get().panelTabOrder, id) });
+      savePrefs();
     },
     consumeFileReveal(nonce) {
       set((state) => state.fileReveal?.nonce === nonce ? { fileReveal: null } : state);
@@ -221,27 +233,40 @@ export const useUi = create<UiState>((set, get) => {
     },
     closePanelTab(tab) {
       const { panelTabOrder, panelTabsClosed, panelTab } = get();
-      const row = panelTabOrder.filter((id) => !panelTabsClosed.includes(id));
+      const row = panelTabOrder.filter((id) => isFileTab(id) || !panelTabsClosed.includes(id));
       if (!row.includes(tab)) return;
       const at = row.indexOf(tab);
       const shown = panelTab && row.includes(panelTab) ? panelTab : row[0];
       set({
-        panelTabsClosed: [...panelTabsClosed, tab],
+        // A surface of the panel's own stays in the order, closed; a file tab is simply gone.
+        ...(isFileTab(tab)
+          ? { panelTabOrder: panelTabOrder.filter((id) => id !== tab) }
+          : { panelTabsClosed: [...panelTabsClosed, tab] }),
         ...(shown === tab ? { panelTab: row[at + 1] ?? row[at - 1] ?? null } : {}),
       });
       savePrefs();
     },
     closeOtherPanelTabs(tab) {
-      if (get().panelTabsClosed.includes(tab)) return;
-      set({ panelTabsClosed: RIGHT_TAB_IDS.filter((id) => id !== tab), panelTab: tab });
+      const { panelTabOrder, panelTabsClosed } = get();
+      if (!isFileTab(tab) && panelTabsClosed.includes(tab)) return;
+      set({
+        panelTabsClosed: RIGHT_TAB_IDS.filter((id) => id !== tab),
+        panelTabOrder: panelTabOrder.filter((id) => !isFileTab(id) || id === tab),
+        panelTab: tab,
+      });
       savePrefs();
     },
     closeAllPanelTabs() {
-      set({ panelTabsClosed: [...RIGHT_TAB_IDS], panelTab: null });
+      set({ panelTabsClosed: [...RIGHT_TAB_IDS], panelTabOrder: get().panelTabOrder.filter((id) => !isFileTab(id)), panelTab: null });
       savePrefs();
     },
     reopenPanelTab(tab) {
-      set({ panelTabsClosed: get().panelTabsClosed.filter((id) => id !== tab), panelOpen: true, panelTab: tab });
+      set({
+        panelTabsClosed: get().panelTabsClosed.filter((id) => id !== tab),
+        panelTabOrder: withTab(get().panelTabOrder, tab),
+        panelOpen: true,
+        panelTab: tab,
+      });
       savePrefs();
     },
     movePanelTab(tab, index) {
@@ -251,7 +276,7 @@ export const useUi = create<UiState>((set, get) => {
       savePrefs();
     },
     resetPanelTabs() {
-      set({ panelTabOrder: [...RIGHT_TAB_IDS] });
+      set({ panelTabOrder: defaultOrder(get().panelTabOrder) });
       savePrefs();
     },
     closePanel() {
@@ -273,10 +298,6 @@ export const useUi = create<UiState>((set, get) => {
     },
     setPanelAnimationMs(ms) {
       set({ panelAnimationMs: Math.min(Math.max(ms, 0), 400) });
-      savePrefs();
-    },
-    toggleDetails() {
-      set((state) => ({ detailsOpen: !state.detailsOpen }));
       savePrefs();
     },
     setPanelMaximized(maximized) {

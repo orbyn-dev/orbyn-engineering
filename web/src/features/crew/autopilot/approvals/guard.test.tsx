@@ -1,35 +1,48 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MockApi } from "../../../../../mock/api";
-import { installMockFetch } from "../../../../test-support";
-import { ApprovalsTab } from "./ApprovalsTab";
+import { describe, expect, it, vi } from "vitest";
+import { ApprovalTable } from "./ApprovalRows";
+import { ApproveMyself } from "./ApproveMyself";
+import { DecisionDrawer, type DrawerActions } from "./DecisionDrawer";
 import { GuardHold, GuardNeedsYouItem, YouPanel } from "./YouPanel";
-import type { YouState } from "./model";
+import type { ApprovalRow, EngineRef, Mode, YouState } from "./model";
 
-let mock: MockApi;
-beforeEach(() => {
-  mock = installMockFetch();
+// The guard has no route yet, so these rows are built by hand: what the service will answer with once it does.
+const LEAD: EngineRef = { engine: "Claude Code", model: "Opus 5.5", vendor: "Anthropic" };
+const CODEX: EngineRef = { engine: "Codex", model: "GPT-5.5", vendor: "OpenAI" };
+const OPENCODE: EngineRef = { engine: "OpenCode", model: "DeepSeek V4", vendor: "DeepSeek" };
+const CLAUDE: EngineRef = { engine: "Claude Code", model: "Sonnet 5.5", vendor: "Anthropic" };
+
+const target = (name: string, kind: string, at: string, short: string, exit: number | null = null, markedBy: string | null = "prod-targets") => ({
+  short, target: name, kind, markedBy, reason: "This command deletes data in a production-linked target.", at, exit,
 });
 
-async function open(scenario: "crew" | `crew-${string}`) {
-  mock.reset(scenario);
-  const user = userEvent.setup();
-  render(<ApprovalsTab />);
-  await screen.findByRole("region", { name: "Approvals" });
-  return user;
+const base: ApprovalRow = {
+  id: "g", time: "15:02", at: null, title: "", asker: CODEX, taskId: null, branch: null, risk: null, notes: [], facts: [], block: null, note: null, needsYou: null,
+  hard: "guard_two_keys", rule: null, lead: { state: "not_asked" }, leadBy: LEAD, second: { state: "not_asked" }, result: "held_second_key", decidedInMs: null, guard: null,
+};
+const held: ApprovalRow = { ...base, title: "Delete test orders in prod-db-1", hard: "guard", notes: ["remote database", "guarded"], block: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM orders WHERE is_test = true"', lead: { state: "yes", reason: "It matches the brief’s cleanup of test orders.", short: "it matches the brief’s cleanup of test orders" }, second: { state: "yours" }, result: "held_you", guard: target("prod-db-1", "remote database", "15:02", "DELETE FROM orders WHERE is_test = true", null, null) };
+const secondKey: ApprovalRow = { ...base, title: "Delete test orders in prod-db-1", block: held.block, lead: { state: "yes", reason: "It matches the brief’s cleanup of test orders, and the filter names test rows.", short: "it matches the brief’s cleanup of test orders" }, second: { state: "reviewing", by: OPENCODE }, guard: target("prod-db-1", "production-linked", "15:02", "DELETE FROM orders WHERE is_test = true") };
+const denied: ApprovalRow = { ...base, id: "d", title: "Drop users.legacy_id on prod-db-1", asker: CLAUDE, branch: "crew/redirect-impl", result: "denied_second_key", block: 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users DROP COLUMN legacy_id"', lead: { state: "yes", reason: "The column isn’t used in the diff.", short: "the column isn’t used in the diff" }, second: { state: "no", by: CODEX, reason: "a report still reads users.legacy_id." }, note: "The worker was told the second key’s reason and can ask again with a narrower command or after the report changes.", guard: target("prod-db-1", "production-linked", "14:20", "ALTER TABLE users DROP COLUMN legacy_id") };
+const noSecond: ApprovalRow = { ...base, id: "n", title: "Truncate audit_log on prod-db-1", asker: CLAUDE, result: "no_second_key", block: 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"', lead: { state: "yes", reason: "It is a cleanup in the brief.", short: "it is a cleanup in the brief" }, second: { state: "unavailable" }, guard: target("prod-db-1", "production-linked", "13:58", "TRUNCATE audit_log") };
+const twoKeys: ApprovalRow = { ...base, id: "t", title: "Delete expired sessions in prod-db-1", asker: OPENCODE, result: "approved_two_keys", block: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"', lead: { state: "yes", reason: "expired sessions, and the brief names them.", short: "expired sessions, in the brief" }, second: { state: "yes", by: CODEX, reason: "the filter matches rows past expires_at." }, guard: target("prod-db-1", "production-linked", "14:05", "DELETE FROM sessions WHERE expires_at < now()", 0) };
+const byYou: ApprovalRow = { ...twoKeys, id: "y", hard: "guard", result: "approved_you", leadBy: CLAUDE, second: { state: "you" }, guard: target("prod-db-1", "remote database", "14:05", "DELETE FROM sessions WHERE expires_at < now()", 0) };
+
+function show(row: ApprovalRow, mode: Mode = "full", over: Partial<DrawerActions> = {}) {
+  const act: DrawerActions = { approveMyself: () => undefined, signInSecondEngine: () => undefined, close: () => undefined, ...over };
+  render(<DecisionDrawer row={row} act={act} mode={mode} />);
+  return screen.getByRole("complementary", { name: row.title });
 }
-const drawer = (name: string) => screen.getByRole("complementary", { name });
 
 describe("the guard under On or Off", () => {
-  it("holds a destructive command against a production-linked target for you", async () => {
-    const user = await open("crew-guard-on");
-    expect(screen.getByText("Autopilot On · the guard holds guarded commands for you")).toBeVisible();
-    expect(screen.getByText("Guard · production-linked targets")).toBeVisible();
+  it("holds a destructive command against a production-linked target for you, in an amber row", () => {
+    render(<ApprovalTable rows={[held]} selected={null} onSelect={() => undefined} />);
     const row = screen.getByRole("button", { name: /Delete test orders in prod-db-1/ }).closest('[role="row"]');
     expect(row).toHaveTextContent("GuardYes: it matches the brief’s cleanup of test ordersThe decision is yoursHeld for you");
-    await user.click(screen.getByRole("button", { name: /Delete test orders/ }));
-    const d = drawer("Delete test orders in prod-db-1");
+  });
+
+  it("shows the exact command, the target and why, with the answers waiting for the route", () => {
+    const d = show(held, "on");
     expect(d).toHaveTextContent("Held for youGuard");
     expect(d).toHaveTextContent("Targetprod-db-1 · remote database · guarded");
     expect(d).toHaveTextContent("AutopilotOn: the guard holds this command for you");
@@ -38,33 +51,25 @@ describe("the guard under On or Off", () => {
     expect(d).toHaveTextContent("Why it is held");
     expect(d).toHaveTextContent("A held command is never approved in a batch");
     expect(d).toHaveTextContent("Workers run as you, with your machine’s permissions.");
+    for (const name of ["Approve once", "Deny"]) {
+      expect(within(d).getByRole("button", { name })).toBeDisabled();
+      expect(within(d).getByRole("button", { name })).toHaveAttribute("title", "Crew is not connected to this app yet");
+    }
   });
 
-  it("answers one held command at a time: Approve once takes it out of the list", async () => {
-    const user = await open("crew-guard-on");
-    await user.click(screen.getByRole("button", { name: /Delete test orders/ }));
-    await user.click(within(drawer("Delete test orders in prod-db-1")).getByRole("button", { name: "Approve once" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: /Delete test orders/ })).toBeNull());
-    expect(screen.queryByRole("complementary")).toBeNull();
-  });
-
-  it("shows a command you approved yourself next to the lead's yes, and says you are not a second key", async () => {
-    const user = await open("crew-guard-on");
-    await user.click(screen.getByRole("button", { name: /Delete expired sessions/ }));
-    const d = drawer("Delete expired sessions in prod-db-1");
+  it("shows a command you approved yourself next to the lead's yes, and says you are not a second key", () => {
+    const d = show(byYou, "on");
     expect(d).toHaveTextContent("Approved by youGuard");
     expect(d).toHaveTextContent("Approved at14:05 · exit 0");
-    expect(d).toHaveTextContent("The leadClaude Code · Sonnet 5.5 · AnthropicYes: expired sessions, in the brief");
+    expect(d).toHaveTextContent("The leadClaude Code · Sonnet 5.5 · AnthropicYes: expired sessions, and the brief names them.");
     expect(d).toHaveTextContent("YouApproved once, on this computerYou read the command and the target, and approved this one command.");
     expect(d).toHaveTextContent("this isn’t counted as a second key");
   });
 });
 
 describe("the guard under Full", () => {
-  it("holds a command for a second key and shows the whole chain", async () => {
-    const user = await open("crew-guard");
-    await user.click(screen.getByRole("button", { name: /Delete test orders/ }));
-    const d = drawer("Delete test orders in prod-db-1");
+  it("holds a command for a second key and shows the whole chain", () => {
+    const d = show(secondKey);
     expect(d).toHaveTextContent("Held for a second keyGuard");
     const steps = within(within(d).getByRole("list", { name: "Decision chain" })).getAllByRole("listitem");
     expect(steps[0]).toHaveTextContent("Hard rule: the guardA destructive command against a production-linked target. It needs two keys.");
@@ -73,10 +78,8 @@ describe("the guard under Full", () => {
     expect(d).toHaveTextContent("It can’t be turned off.");
   });
 
-  it("denies when the second key says no, with its reason, and offers to approve it yourself", async () => {
-    const user = await open("crew-guard");
-    await user.click(screen.getByRole("button", { name: /Drop users\.legacy_id/ }));
-    const d = drawer("Drop users.legacy_id on prod-db-1");
+  it("denies when the second key says no, with its reason, and offers to approve it yourself", () => {
+    const d = show(denied);
     expect(d).toHaveTextContent("Denied by the second keyGuard");
     expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, marked by the rule prod-targets");
     expect(d).toHaveTextContent("Key 2: noCodex · GPT-5.5, a different vendor: a report still reads users.legacy_id.");
@@ -84,10 +87,8 @@ describe("the guard under Full", () => {
     expect(within(d).getByRole("button", { name: "Approve it myself" })).toBeVisible();
   });
 
-  it("denies for now when no second vendor is signed in, next to Approve it myself", async () => {
-    const user = await open("crew-guard");
-    await user.click(screen.getByRole("button", { name: /Truncate audit_log/ }));
-    const d = drawer("Truncate audit_log on prod-db-1");
+  it("denies for now when no second vendor is signed in, next to Approve it myself", () => {
+    const d = show(noSecond);
     expect(d).toHaveTextContent("Denied · no second keyGuard");
     expect(d).toHaveTextContent("Key 2: not availableA second key needs a different vendor from the lead. Claude Code is the one vendor signed in.");
     expect(d).toHaveTextContent("Denied for now, and you can approve it yourself");
@@ -95,32 +96,20 @@ describe("the guard under Full", () => {
     expect(within(d).getByRole("button", { name: "Approve it myself" })).toBeVisible();
   });
 
-  it("shows two keys side by side when both said yes", async () => {
-    const user = await open("crew-guard");
-    await user.click(screen.getByRole("button", { name: /Delete expired sessions/ }));
-    const d = drawer("Delete expired sessions in prod-db-1");
+  it("shows two keys side by side when both said yes", () => {
+    const d = show(twoKeys);
     expect(d).toHaveTextContent("Approved by two keysGuard");
     expect(d).toHaveTextContent("Ran at14:05 · exit 0");
     expect(d).toHaveTextContent("Key 1 · the leadClaude Code · Opus 5.5 · AnthropicYes: expired sessions, and the brief names them.");
     expect(d).toHaveTextContent("Key 2 · a second vendorCodex · GPT-5.5 · OpenAIYes: the filter matches rows past expires_at.");
   });
 
-  it("approves one command yourself in a dialog that names the command, the target and the reason", async () => {
-    const user = await open("crew-guard");
-    await user.click(screen.getByRole("button", { name: /Truncate audit_log/ }));
-    await user.click(within(drawer("Truncate audit_log on prod-db-1")).getByRole("button", { name: "Approve it myself" }));
-    const dialog = await screen.findByRole("dialog", { name: "Approve this command yourself?" });
-    expect(dialog).toHaveTextContent('psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"');
-    expect(dialog).toHaveTextContent("Targetprod-db-1 · production-linked · guarded");
-    expect(dialog).toHaveTextContent("CommandTRUNCATE audit_log");
-    expect(dialog).toHaveTextContent("ReasonThis command deletes data in a production-linked target.");
-    expect(dialog).toHaveTextContent("CoversThis one command, on this target, once");
-    expect(dialog).toHaveTextContent("It isn’t a second key, and nothing else is approved with it.");
-    // The dialog is a confirmation: Cancel has focus, so one key does not approve a deletion.
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    await user.click(within(dialog).getByRole("button", { name: "Approve once" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await waitFor(() => expect(screen.queryByRole("button", { name: /Truncate audit_log/ })).toBeNull());
+  it("names the command, the target and the reason in a dialog; approving waits for the route and Escape cancels", async () => {
+    const user = userEvent.setup();
+    const myself = vi.fn();
+    const d = show(noSecond, "full", { approveMyself: myself });
+    await user.click(within(d).getByRole("button", { name: "Approve it myself" }));
+    expect(myself).toHaveBeenCalledWith(noSecond);
   });
 });
 
@@ -230,5 +219,22 @@ describe("the You stage of Flow", () => {
     expect(panel).toHaveTextContent("Autopilot is Off for this repo");
     expect(panel).toHaveTextContent("Risk · Low");
     expect(within(panel).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve and merge", "Approve, don’t merge", "Send back to Build"]);
+  });
+});
+
+describe("approving one command yourself", () => {
+  it("names the exact command, the target and the reason; Cancel has focus and Approve once waits for the route", () => {
+    const close = vi.fn();
+    render(<ApproveMyself row={noSecond} onClose={close} />);
+    const dialog = screen.getByRole("dialog", { name: "Approve this command yourself?" });
+    expect(dialog).toHaveTextContent('psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"');
+    expect(dialog).toHaveTextContent("Targetprod-db-1 · production-linked · guarded");
+    expect(dialog).toHaveTextContent("CommandTRUNCATE audit_log");
+    expect(dialog).toHaveTextContent("ReasonThis command deletes data in a production-linked target.");
+    expect(dialog).toHaveTextContent("CoversThis one command, on this target, once");
+    expect(dialog).toHaveTextContent("It isn’t a second key, and nothing else is approved with it.");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "Approve once" })).toBeDisabled();
+    expect(dialog).toHaveTextContent("Crew is not connected to this app yet");
   });
 });

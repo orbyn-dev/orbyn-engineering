@@ -125,11 +125,10 @@ describe("composer menu shortcuts (K41)", () => {
   it("composer.branch opens the branch switcher", async () => {
     const user = userEvent.setup();
     for (const thread of mock.threads) thread.active_run = null;
-    // The Branch row lives on the details card at the top of the side panel, open here on request.
-    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     render(<App />);
-    await screen.findByRole("button", { name: /^Branch / });
+    // The key lives on the thread's header, so it works with the Details popover closed.
+    await screen.findByRole("button", { name: "Details" });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await chord(user, "g");
     const dialog = await screen.findByRole("dialog", { name: "Switch branch" });
@@ -139,11 +138,10 @@ describe("composer menu shortcuts (K41)", () => {
   it("the branch switcher follows the footerless design: Find a branch, a Current note and the switch hint", async () => {
     const user = userEvent.setup();
     for (const thread of mock.threads) thread.active_run = null;
-    // The Branch row lives on the details card at the top of the side panel, open here on request.
-    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     render(<App />);
-    await screen.findByRole("button", { name: /^Branch / });
+    // The key lives on the thread's header, so it works with the Details popover closed.
+    await screen.findByRole("button", { name: "Details" });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await chord(user, "g");
     const dialog = await screen.findByRole("dialog", { name: "Switch branch" });

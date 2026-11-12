@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "../../../../ui/controls";
 import { chainOf, verdictOf, type Step } from "./chain";
+import { NOT_CONNECTED } from "./api";
 import { GUARD_WORKERS, MODE_COPY } from "./copy";
 
 import type { ApprovalRow, Mode } from "./model";
@@ -16,9 +17,6 @@ export interface DrawerActions {
   seeHardDenied?(): void;
   signInSecondEngine?(): void;
   approveMyself(row: ApprovalRow): void;
-  approveOnce(row: ApprovalRow): void;
-  deny(row: ApprovalRow): void;
-  dismiss(row: ApprovalRow): void;
   close(): void;
 }
 
@@ -77,6 +75,11 @@ function sideBySide(row: ApprovalRow): { head: string; who: string; text: string
   ];
 }
 
+/** A button for an answer the service cannot take yet: disabled, with the reason in its description. */
+function Waiting({ children, tone = "secondary" }: { children: ReactNode; tone?: "primary" | "secondary" | "quiet" }) {
+  return <Button small tone={tone} disabled title={NOT_CONNECTED} aria-description={NOT_CONNECTED}>{children}</Button>;
+}
+
 function Button2({ children, onClick, tone = "secondary" }: { children: ReactNode; onClick(): void; tone?: "primary" | "secondary" | "quiet" }) {
   return <Button small tone={tone} onClick={onClick}>{children}</Button>;
 }
@@ -93,21 +96,24 @@ function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
       case "keys_disagree":
         return [act.openDisagreement ? <Button2 key="dis" onClick={() => act.openDisagreement?.(row)}>Open the disagreement</Button2> : null, close];
       case "person_only":
-        return [act.openRequest ? <Button2 key="req" onClick={() => act.openRequest?.(row)}>Open the request</Button2> : null, <Button2 key="dismiss" onClick={() => act.dismiss(row)} tone="quiet">Dismiss</Button2>];
+        return [act.openRequest ? <Button2 key="req" onClick={() => act.openRequest?.(row)}>Open the request</Button2> : null, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "no_second_key":
-        return isGuarded(row) ? [signIn, self, close] : [signIn, <Button2 key="dismiss" onClick={() => act.dismiss(row)} tone="quiet">Dismiss</Button2>];
+        return isGuarded(row) ? [signIn, self, close] : [signIn, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "denied_second_key":
         return [self, ledger, close];
       case "held_you":
         return [
-          <Button key="once" small tone="primary" onClick={() => act.approveOnce(row)}>Approve once</Button>,
-          <Button key="deny" small onClick={() => act.deny(row)}>Deny</Button>,
+          <Waiting key="once" tone="primary">Approve once</Waiting>,
+          <Waiting key="deny">Deny</Waiting>,
         ];
       default:
         return [ledger, close];
     }
   })();
-  return <footer className="ap-drawer-foot">{list}</footer>;
+  return <footer className="ap-drawer-foot">
+      {list}
+      {list.some((item) => item && (item as { type?: unknown }).type === Waiting) ? <small className="ap-muted ap-reason">{NOT_CONNECTED}</small> : null}
+    </footer>;
 }
 
 /** One request's whole chain, opened from a row. Escape closes it and focus goes back to the row. */
@@ -142,8 +148,7 @@ export function DecisionDrawer({ row, act, mode }: { row: ApprovalRow; act: Draw
       </header>
       <div className="ap-drawer-body">
         <p className="ap-asked">
-          Asked by <b>{engineLine(row.asker)}</b>
-          {row.branch ? ` · ${row.branch}` : ""}
+          {row.asker ? <>Asked by <b>{engineLine(row.asker)}</b>{row.branch ? ` · ${row.branch}` : ""}</> : <>Task <b>{row.taskId}</b></>}
         </p>
         {guard ? (
           <Facts rows={[

@@ -55,7 +55,7 @@ const nameOf = (step) => (step.exact ? new RegExp(`^${escape(step.name)}$`) : st
 async function route(page, spec) {
   await page.route(spec.route, async (request) => {
     if (spec.delay) await new Promise((resolve) => setTimeout(resolve, spec.delay));
-    if (spec.status) return request.fulfill({ status: spec.status, contentType: "application/json", body: JSON.stringify({ code: "bad_gateway", message: "The forge did not answer." }) });
+    if (spec.status) return request.fulfill({ status: spec.status, contentType: "application/json", body: JSON.stringify({ code: spec.code ?? "bad_gateway", message: "The forge did not answer." }) });
     return request.continue();
   });
 }
@@ -67,7 +67,7 @@ async function run(page, step) {
       await page.waitForTimeout(400);
       return;
     case "fill":
-      await page.getByRole("textbox", { name: step.label }).fill(step.value);
+      await page.getByLabel(step.label, { exact: step.exact }).fill(step.value);
       return;
     case "press":
       await page.keyboard.press(step.key);
@@ -90,7 +90,7 @@ async function run(page, step) {
 
 /** One frame in one theme: a fresh page, the frame's network set-up, its route, its steps, a screenshot. */
 async function draw({ browser, app, id, frame, theme, out }) {
-  const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: "reduce" });
+  const context = await browser.newContext({ viewport: { ...VIEWPORT, width: frame.width ?? VIEWPORT.width }, reducedMotion: "reduce" });
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);

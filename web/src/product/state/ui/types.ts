@@ -10,28 +10,38 @@ export interface ToastAction { label: string; run(): void }
 
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
-export type RightTab = "diff" | "files" | "activity" | "browser" | "side" | "tools";
+/** The panel's own surfaces. A file opened from the left bar is a tab too (`FileTabId`). */
+export type BuiltinTab = "diff" | "activity" | "browser" | "side" | "tools";
+/** A file tab's id: `file:` and an encoded target (see `features/panels/files/fileTab.ts`). */
+export type FileTabId = `file:${string}`;
+export type RightTab = BuiltinTab | FileTabId;
 /** The panel's surfaces in their default order, the launcher's order. Terminal is the header button and the drawer, never a tab. */
-export const RIGHT_TAB_IDS: readonly RightTab[] = ["diff", "browser", "activity", "side", "tools", "files"];
+export const RIGHT_TAB_IDS: readonly BuiltinTab[] = ["diff", "browser", "activity", "side", "tools"];
 
-/** The default order before Files moved last, with and without the Tools tab that came later. */
-const LEGACY_DEFAULT_ORDERS: readonly (readonly RightTab[])[] = [
-  ["diff", "files", "browser", "activity", "side", "tools"],
-  ["diff", "files", "browser", "activity", "side"],
-];
+export const isFileTab = (id: unknown): id is FileTabId => typeof id === "string" && id.length > 5 && id.startsWith("file:");
+export const isPanelTab = (id: unknown): id is RightTab => isFileTab(id) || RIGHT_TAB_IDS.includes(id as BuiltinTab);
 
-/** A saved order or closed set may be stale: unknown and repeated ids go, and missing ones return at the end, closed. */
-export function cleanTabs(order: unknown, closed: unknown): { order: RightTab[]; closed: RightTab[] } {
+/**
+ * A saved order or closed set may be stale: unknown and repeated ids go (a Files tab saved before the left-bar
+ * explorer goes with them), and missing surfaces return at the end, closed. A file tab in the order is open:
+ * only a surface of the panel's own is ever "closed", a closed file tab is simply gone.
+ */
+export function cleanTabs(order: unknown, closed: unknown): { order: RightTab[]; closed: BuiltinTab[] } {
   const valid = (list: unknown): RightTab[] =>
-    (Array.isArray(list) ? list : []).filter((id, at, all): id is RightTab => RIGHT_TAB_IDS.includes(id as RightTab) && all.indexOf(id) === at);
-  // A row saved in the previous default order has not been reordered by anyone: it takes the new default order.
+    (Array.isArray(list) ? list : []).filter((id, at, all): id is RightTab => isPanelTab(id) && all.indexOf(id) === at);
   const saved = valid(order);
-  const first = LEGACY_DEFAULT_ORDERS.some((legacy) => legacy.length === saved.length && legacy.every((id, at) => id === saved[at])) ? [] : saved;
-  const shut = valid(closed);
+  const shut = valid(closed).filter((id): id is BuiltinTab => !isFileTab(id));
   // Every tab starts closed, so a thread's side panel starts with none; a saved row from before a tab existed has not seen it, so it starts closed too.
   for (const id of RIGHT_TAB_IDS) if (!saved.includes(id) && !shut.includes(id)) shut.push(id);
-  return { order: [...first, ...RIGHT_TAB_IDS.filter((id) => !first.includes(id))], closed: shut };
+  return { order: [...saved, ...RIGHT_TAB_IDS.filter((id) => !saved.includes(id))], closed: shut };
 }
+export type LeftBarView = "threads" | "files";
+/** The order with `tab` in it: a file tab not yet open joins the end. */
+export const withTab = (order: readonly RightTab[], tab: RightTab): RightTab[] => (order.includes(tab) ? [...order] : [...order, tab]);
+
+/** The default order: the panel's own surfaces as listed, then the open files as they were. */
+export const defaultOrder = (order: readonly RightTab[]): RightTab[] => [...RIGHT_TAB_IDS, ...order.filter(isFileTab)];
+
 export type ContextTab = RightTab | "terminal";
 export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
@@ -45,11 +55,9 @@ export interface Prefs {
   /** The tab row's order for this thread. */
   panelTabOrder: RightTab[];
   /** Surfaces closed in this thread's tab row; the "+" brings them back. */
-  panelTabsClosed: RightTab[];
+  panelTabsClosed: BuiltinTab[];
   /** Panel and hero motion in ms, 0 to 400. 0 is off; the default is the --m-slow token. */
   panelAnimationMs: number;
-  /** The floating details card on wide layouts. */
-  detailsOpen: boolean;
   /** The terminal drawer under the conversation. */
   terminalOpen: boolean;
   panelMaximized: boolean;
@@ -64,6 +72,10 @@ export interface Prefs {
   sidebarWidth: number;
   /** Sidebar groups the viewer has opened or closed. */
   groups: Record<string, boolean>;
+  /** The left bar's view: the thread list or the file explorer. Remembered for each person. */
+  leftBarView: LeftBarView;
+  /** Explorer rows the viewer opened (true) or folded (false); a row not here follows its default. */
+  explorerOpen: Record<string, boolean>;
   /** Projects the thread list is limited to; empty is all. */
   projectFilter: string[];
   /** Folders the active list by project. */
@@ -170,8 +182,7 @@ export interface StashedPrompt {
 export interface ThreadLayout {
   panelTab: RightTab | null;
   panelTabOrder: RightTab[];
-  panelTabsClosed: RightTab[];
-  detailsOpen: boolean;
+  panelTabsClosed: BuiltinTab[];
   terminalOpen: boolean;
   panelMaximized: boolean;
   panelWidth: number | null;

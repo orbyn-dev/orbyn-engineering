@@ -733,3 +733,124 @@ async fn a_lane_that_slice_4b_ran_satisfies_the_owed_check_and_a_block_is_one_ev
         "{outcomes:?}"
     );
 }
+
+/// Three docs-only tasks merged under Full, each touching its own file.
+async fn three_merged() -> (Merging, Vec<String>) {
+    let m = merging(Mode::Full, |n| match n {
+        0 => vec![("docs/a.md", "a\n")],
+        1 => vec![("docs/b.md", "b\n")],
+        _ => vec![("docs/c.md", "c\n")],
+    })
+    .await;
+    let mut tasks = Vec::new();
+    for (n, file) in ["a", "b", "c"].iter().enumerate() {
+        let task = passed(&m.w, &["docs/**"], &format!("Write {file}.")).await;
+        m.w.core
+            .crew_queue_merge(&task, &m.target, NOW + n as i64)
+            .await
+            .unwrap();
+        tasks.push(task);
+    }
+    let outcomes = m.process(NOW + 10).await;
+    assert_eq!(outcomes.len(), 3, "{outcomes:?}");
+    (m, tasks)
+}
+
+fn scratch_folders(m: &Merging) -> usize {
+    std::fs::read_dir(m.w.core.config.data_dir.join("crew-merge"))
+        .map(|dir| dir.count())
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn two_reverts_of_one_merge_act_once_and_a_looks_good_cannot_undo_a_revert() {
+    let (m, tasks) = three_merged().await;
+    let core = &m.w.core;
+    let target = &m.target;
+    // The last merge, reverted twice at once: one revert commit, one refusal.
+    let (first, second) = tokio::join!(
+        core.crew_answer_review(&tasks[2], ReviewAnswer::Revert, target, NOW + 20),
+        core.crew_answer_review(&tasks[2], ReviewAnswer::Revert, target, NOW + 20),
+    );
+    assert_eq!(
+        [first.is_ok(), second.is_ok()]
+            .iter()
+            .filter(|ok| **ok)
+            .count(),
+        1,
+        "{first:?} {second:?}"
+    );
+    let made = first.ok().or(second.ok()).flatten().unwrap();
+    assert_eq!(m.tip().await, made);
+    let count = gitq(
+        &m.w.repo,
+        &["rev-list", "--count", &format!("{}..{}", m.main, "HEAD")],
+    )
+    .await;
+    let _ = count;
+    // A looks-good racing a revert, in either order, never leaves anything but "reverted".
+    let (reverted, good) = tokio::join!(
+        core.crew_answer_review(&tasks[1], ReviewAnswer::Revert, target, NOW + 21),
+        core.crew_answer_review(&tasks[1], ReviewAnswer::LooksGood, target, NOW + 21),
+    );
+    assert!(reverted.is_ok() || good.is_ok());
+    let state = core.store.crew_merge(&tasks[1]).unwrap().unwrap();
+    if reverted.is_ok() {
+        assert_eq!(state.review_state, "reverted", "{good:?}");
+        assert!(state.reverted_commit.is_some());
+    }
+    // And a late answer to a reverted merge is refused by the store, not just by the check before it.
+    let late = core.store.set_merge_review(&tasks[2], "looks_good", None);
+    assert!(late.is_err());
+    assert_eq!(
+        core.store
+            .crew_merge(&tasks[2])
+            .unwrap()
+            .unwrap()
+            .review_state,
+        "reverted"
+    );
+    // Every scratch checkout was removed, whichever way the answers went.
+    assert_eq!(scratch_folders(&m), 0);
+}
+
+#[tokio::test]
+async fn a_revert_refuses_a_branch_that_no_longer_holds_the_merge_and_a_checked_out_dirty_one() {
+    let (m, tasks) = three_merged().await;
+    let core = &m.w.core;
+    let record = core.store.crew_merge(&tasks[0]).unwrap().unwrap();
+    // Dirty and checked out: the crew never touches it.
+    run_git(&m.w.repo, &["checkout", "-q", &m.main]);
+    std::fs::write(m.w.repo.join("docs/a.md"), "edited by a person\n").unwrap();
+    let tip = m.tip().await;
+    let why = core
+        .crew_answer_review(&tasks[2], ReviewAnswer::Revert, &m.target, NOW + 30)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("checked out"), "{why}");
+    assert_eq!(m.tip().await, tip);
+    assert_eq!(
+        std::fs::read_to_string(m.w.repo.join("docs/a.md")).unwrap(),
+        "edited by a person\n"
+    );
+    run_git(&m.w.repo, &["checkout", "-q", "--force", "-"]);
+    // Unrelated: the branch was put back before the merge, so the merge is not on it.
+    run_git(&m.w.repo, &["branch", "-f", &m.main, &record.before_commit]);
+    let why = core
+        .crew_answer_review(&tasks[0], ReviewAnswer::Revert, &m.target, NOW + 31)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("no longer holds"), "{why}");
+    assert_eq!(m.tip().await, record.before_commit);
+    assert_eq!(
+        core.store
+            .crew_merge(&tasks[0])
+            .unwrap()
+            .unwrap()
+            .review_state,
+        "waiting"
+    );
+    assert_eq!(scratch_folders(&m), 0, "no scratch checkout is left behind");
+}

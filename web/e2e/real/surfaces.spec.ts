@@ -126,19 +126,15 @@ test("files preview by kind, keep the source, and save safely", async ({ page })
   await expect(page.getByRole("alert").filter({ hasText: "changed on disk" })).toBeVisible();
   expect(readFileSync(join(service.repo, "notes.md"), "utf8")).toBe("# Changed elsewhere\n");
 
-  await page.getByRole("button", { name: "Files" }).first().click();
   await open("data.csv");
   await expect(page.locator(".file-table td").first()).toHaveText("Moon, the");
 
-  await page.getByRole("button", { name: "Files" }).first().click();
   await open("flow.mmd");
   await expect(page.locator(".md-diagram svg")).toBeVisible({ timeout: 15_000 });
 
-  await page.getByRole("button", { name: "Files" }).first().click();
   await open("book.ipynb");
   await expect(page.locator(".file-notebook h2")).toHaveText("Cell title");
 
-  await page.getByRole("button", { name: "Files" }).first().click();
   await open("page.html");
   await expect(page.frameLocator("iframe.file-frame").getByRole("heading", { name: "Page" })).toBeVisible();
   await expect(page).not.toHaveTitle("pwned");

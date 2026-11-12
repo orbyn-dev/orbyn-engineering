@@ -1,6 +1,7 @@
 // The decision chain of one request, in the order the drawer reads it: the hard rule (decided by
 // code), the lead, then a second key. Pure: the words are the designs' own; the reasons are the row's.
 import type { ApprovalRow } from "./model";
+import { engineLine } from "./parts";
 
 export type StepTone = "ok" | "no" | "skip" | "am" | "plain";
 export interface Step {
@@ -45,18 +46,18 @@ function secondStep(row: ApprovalRow): Step | null {
       const who = row.result === "keys_disagree"
         ? `${second.by.engine} · a different vendor: ${second.reason}`
         : second.state === "yes"
-          ? `${second.by.engine} · ${second.by.model}, a different vendor from the lead.`
-          : `${second.by.engine} · ${second.by.model}, a different vendor: ${second.reason}`;
+          ? `${engineLine(second.by)}, a different vendor from the lead.`
+          : `${engineLine(second.by)}, a different vendor: ${second.reason}`;
       return { tone: second.state === "yes" ? "ok" : "no", title: `${label}: ${second.state}`, text: who };
     }
     case "reviewing":
-      return { tone: "skip", title: `${label}: waiting`, text: `${second.by.engine} · ${second.by.model}, a different vendor from the lead, is reviewing.` };
+      return { tone: "skip", title: `${label}: waiting`, text: `${engineLine(second.by)}, a different vendor from the lead, is reviewing.` };
     case "unavailable":
       return {
         tone: "skip",
         title: `${label}: not available`,
         text: guard
-          ? `A second key needs a different vendor from the lead. ${row.asker.engine} is the one vendor signed in.`
+          ? `A second key needs a different vendor from the lead. ${row.asker?.engine ?? "One engine"} is the one vendor signed in.`
           : "Medium risk needs an approver on a different vendor, and no second vendor is signed in.",
       };
     case "not_asked":

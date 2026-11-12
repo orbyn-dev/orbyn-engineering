@@ -73,6 +73,13 @@ pub(super) async fn revert_merge(
         )));
     }
     let tip = gitops::rev(&target.repo, &target.branch).await?;
+    // A branch that no longer holds this merge (reset, rewritten, or another history under the same name) is not reverted.
+    if !gitops::contains(&target.repo, &target.branch, &record.merge_commit).await? {
+        return Ok(Err(format!(
+            "{} no longer holds this merge, so there is nothing to revert on it",
+            target.branch
+        )));
+    }
     let commands = gitops::repo_checks(&target.repo, &record.before_commit).await?;
     let scratch = Scratch::at(&target.repo, &core.config.data_dir.join("crew-merge"), &tip).await?;
     let made = async {

@@ -102,7 +102,7 @@ Changes come to Products Research.
 | --- | --- | --- |
 | E1 | Add the `orbyn-engineering` crate (the `engineering.settings` zone first) and `docs/engineering.md`, which names every record, key and merge rule and states the D10 key-sharing fact | Schemas validate; merge tests pass |
 | E1 | Build `orbyn-device-client` (D3). The device registration also gains an `app` label (`planner` or `engineering`) bound into the signed register message, which closes Engine issue #73 | A fake-server test passes; the device list shows the label |
-| E1 | Tag the workspace (`engine-v0.1.0` first) | The app pins the tag |
+| E1 | Tag the workspace (`engine-v0.1.0` first; `engine-v0.2.0` adds the device client and the v3 approval, see [Engine pin](account.md#engine-pin)) | The app pins the tag |
 | E1 | Keep staging working for invite-only sign-up on a desktop client, not just the Planner web app | A new invited person signs in from the app against staging |
 | E2 | A new account module in `orbyn-core` built on the `orbyn-device-client` trait, against a fake server until the crate lands: session, device keychain, trusted-device approval, a sync worker per zone, status events, and the D10 threat model | Unit tests with a fake server; no password in any request body |
 | E2 | Settings, Account for real (sign in, devices, sync status, sign out), replacing the preview-only sign-in screen. The other preview screens stay behind the flag | Built from merged Account frames (check with the Designer first) |
@@ -110,7 +110,7 @@ Changes come to Products Research.
 | E1 + E2 | A cross-repository end-to-end test: sign in against the Engine's compose stack, change a setting on machine A, see it on machine B | It passes in the app's CI on affected paths |
 
 **Engine order (E1):** (a) design note, `orbyn-engineering` crate and `docs/engineering.md`; (b) `orbyn-device-client`
-with a fake-server test; (c) the device `app` label, Engine issue #73 and tag `engine-v0.1.0`; (d) a desktop-client run
+with a fake-server test; (c) the device `app` label (a hint only, never proof), Engine issue #73 and tags `engine-v0.1.0` and `engine-v0.2.0`; (d) a desktop-client run
 against the compose stack with invite-only config; (e) the cross-repository end-to-end test with Engineering 2.
 Sign-up needs an invite, an 8-character email code and proof of work. Staging is not deployed yet, which is the owner's
 step.
@@ -518,6 +518,44 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
+flag. With it off every route answers 404 for every method, like a path nothing serves, and `/api/info` omits `crew_preview`. The flag is
+read, never set, over HTTP. **The Preview flag stays for development only until [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)
+is fixed:** a worker runs as the person and can read the service token and the data folder, so it could reach these routes.
+Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
+`/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
+`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires) and `/trust` (revert rates by area and engine).
+Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
+`PUT /autopilot/mode`, `POST /autopilot/confirm`, and `POST /autopilot/review/{task}/{looks-good,comment,revert}`.
+
+What a change may and may not do: no route takes a command from the client or runs one, and no route pushes or merges. A revert runs
+only the repository's own checks (`.orbyn/crew.json` at the commit before the merge) in a scratch checkout under the data folder, always
+removed afterwards (also when the task panics), then moves the local branch by compare-and-swap. It is refused when a later merge needs
+the one reverted, when the branch is checked out anywhere (a dirty checkout included) and when the branch no longer holds the merge.
+The merge's repository and branch come from the stored merge, and the request names the whole merge commit it was shown (a prefix is
+refused). Answers are taken one at a time and the merge is read inside that lock, so two reverts act once, and a merge that was
+reverted stays reverted. Every free-text field and stored JSON value is redacted and has the task's key withheld on the way out.
+
+The marker `crew::changes` lists the Crew routes that change state, as `account::changes` does for the account, and N1 refuses an agent's
+request to any of them (or to any path under `/api/crew` that is not a listed read) in every mode. The route-table test checks the list
+against the router. N1 reads a command word by word with the quotes off, and undoes `//`, `/./` and `/x/../` first; it does not see a path built from a variable, string pieces or a script the agent wrote, which is the sandbox's work (#441). A confirmation nonce for these routes is a follow-up ([#486](https://github.com/orbyn-dev/orbyn-engineering/issues/486)).
+
+Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
+ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its
+class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
+comment is kept and is not yet a fix brief.
+
+Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
+conflict forecast, bisect progress, production-linked target rules (4i), background crews (they write `.orbyn/crew.json`), the person's
+once-approval of a held command, and the digest's send time.
+
+**As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
+v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by
+`#/preview/crew/<frame>` in dev builds only. They run on sample data: no HTTP route or generated binding exists for the
+Autopilot group yet, so every action that would merge, revert, send a brief or approve is disabled and says why, and each
+takes a backend-guarded handler when the routes land. Per-merge money figures are left out until the Designer settles
+per-engine units.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with
@@ -754,6 +792,7 @@ Engineering app, one pull request each.
 | 4d | Counterfactual fork: re-run a stage on another engine, compare verified outcomes, record to Eval history | Two engines' outcomes on the same stage show side by side; the router's table updates |
 | 4e | Shell: left explorer (projects, worktrees, files), Details popover, empty side panel with launcher, new Changes view with gutter comments, honest Tools state | Built from the merged frames in `crew-designs.html` and `engineer-designs.html`; old Details card and file tab removed; no duplicate destinations |
 | 4f | Autopilot: approval chain, two keys, trip wires, risk tiers, merge queue, after-merge Review queue, watch on main and bisect revert | Fake-engine tests: a hard-denied action is never approved even if the lead says yes; two keys disagree and it is denied; 3 denials stop the task; a high-risk diff waits; a broken main bisects to the right merge and reverts it |
+| 4f-API | Routes, generated TS bindings and a web-readable Preview flag for Crew and Autopilot (modes and area promote/demote, risk report, review queue, merge queue and forecast, watch state, digest, approval log, trip wires, trust/guard settings); then the screens are wired | Every write goes through the existing backend guards and no client path merges or reverts; Opus review before merge. The display-only UI (4f part B, risk, Review queue, Merge queue, watch, digest) is merged as preview on sample data and is wired by this slice |
 | 4g | Learning: trust scores, review memory, measured reviewer pairing, premise check, crew-vs-solo baseline | Needs real runs (slice 6 budget); numbers always shown with sample size |
 | 4h | Background crews from `.orbyn/crew.json` triggers and templates | A CI-failure trigger starts a crew that runs the full Flow and lands in the Review queue |
 | 5 | UI: Flow, Auto in the engine picker, Crew map, Taskboard, conversation lanes, route card, Needs you inbox, task report with evidence | Built from the merged frames in `crew-designs.html` and `engineer-designs.html`, every state designed |

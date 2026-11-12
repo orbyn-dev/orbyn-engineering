@@ -1,15 +1,16 @@
 import { ConfirmDialog } from "../../../../ui/Dialog";
 import type { ApprovalRow } from "./model";
+import { NOT_CONNECTED } from "./api";
 import { GUARD_WORKERS } from "./copy";
 
 /**
  * One dialog that names the exact command, the target and the reason, and covers that one command once.
  * It is never offered for several commands at a time, and it is not a second key.
  */
-export function ApproveMyself({ row, onApprove, onClose }: { row: ApprovalRow; onApprove(): Promise<void>; onClose(): void }) {
+export function ApproveMyself({ row, onClose }: { row: ApprovalRow; onClose(): void }) {
   const guard = row.guard;
   return (
-    <ConfirmDialog title="Approve this command yourself?" confirmLabel="Approve once" onConfirm={onApprove} onClose={onClose} cancelFocus>
+    <ConfirmDialog title="Approve this command yourself?" confirmLabel="Approve once" confirmDisabled onConfirm={() => Promise.resolve()} onClose={onClose} cancelFocus>
       <p>This command deletes data in a production-linked target. You are the final authority, and your approval is one deliberate action that names the exact command and the target.</p>
       {row.block ? <pre className="ap-cmd"><code>{row.block}</code></pre> : null}
       <dl className="ap-facts">
@@ -20,6 +21,7 @@ export function ApproveMyself({ row, onApprove, onClose }: { row: ApprovalRow; o
       </dl>
       <p className="ap-muted">It is logged with the time. It isn’t a second key, and nothing else is approved with it.</p>
       <p className="ap-muted">{GUARD_WORKERS}</p>
+      <p className="ap-muted" role="note">{NOT_CONNECTED}: approving one command is not available yet.</p>
     </ConfirmDialog>
   );
 }

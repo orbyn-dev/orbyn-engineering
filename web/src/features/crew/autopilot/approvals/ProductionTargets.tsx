@@ -1,8 +1,8 @@
 import { ErrorState, Loading } from "../../../../product/ui/states";
+import { NOT_CONNECTED } from "./api";
 import { GUARD_WORKERS } from "./copy";
-import type { TargetRule } from "./model";
-import { Chip, engineLine } from "./parts";
-import { useAutopilotSettings } from "./useCrew";
+import { Chip } from "./parts";
+import { useAutopilotGuards } from "./useCrew";
 
 const DESTRUCTIVE: [string, string][] = [
   ["Data", "DROP, TRUNCATE, DELETE without a WHERE"],
@@ -13,7 +13,7 @@ const DESTRUCTIVE: [string, string][] = [
   ["Secrets", "Revoking a key or a token"],
 ];
 
-function Targets({ title, rules, note }: { title: string; rules: TargetRule[]; note: string }) {
+function Targets({ title }: { title: string }) {
   return (
     <div className="ap-targets" role="table" aria-label={title}>
       <div className="ap-target-row ap-head" role="row">
@@ -21,24 +21,17 @@ function Targets({ title, rules, note }: { title: string; rules: TargetRule[]; n
         <span role="columnheader">Matched by</span>
         <span role="columnheader">Source</span>
       </div>
-      {rules.map((rule) => (
-        <div key={rule.name} className="ap-target-row" role="row">
-          <span role="cell"><b>{rule.name}</b><small>{rule.kind}</small></span>
-          <span role="cell">{rule.matchedBy.map((line) => <code key={line}>{line}</code>)}</span>
-          <span role="cell"><code>{rule.source}</code><small>.orbyn/crew.json</small></span>
-        </div>
-      ))}
-      {note ? <p className="ap-muted ap-note">{note}</p> : null}
+      <p className="ap-muted ap-note" role="note">{NOT_CONNECTED}: the repo’s target lists are not served yet.</p>
     </div>
   );
 }
 
 /** Settings › Crew › Production-linked targets: a hard rule, read-only, with the targets it guards. */
 export function ProductionTargets() {
-  const read = useAutopilotSettings();
+  const read = useAutopilotGuards();
   if (read.status === "loading") return <Loading label="Reading the guard" rows={3} />;
   if (read.status === "error") return <ErrorState title="Can't read the guard" failure={read.error} onRetry={read.reload} />;
-  const { prodTargets, safeTargets, secondKeys } = read.data;
+  const secondKeys = read.data.second_key_engines;
   return (
     <section className="ap-set" aria-labelledby="ap-guard-title">
       <header className="ap-set-head">
@@ -53,8 +46,8 @@ export function ProductionTargets() {
         <h4>What is production-linked</h4>
         <p>Remote targets are guarded unless listed as safe. A remote database, a cloud account or project, a Kubernetes context, a Terraform workspace or a bucket is guarded, and an unknown remote is guarded. Local targets are not. Targets are matched against the host names, profile names, project ids, context names and workspace names found in the command, its environment and the project’s config files.</p>
       </section>
-      <Targets title="Always guarded" rules={prodTargets} note="prod_targets are always guarded. safe_targets are exempt, for example a throwaway staging database. Both live in .orbyn/crew.json, and changing them is a reviewed change to the repo." />
-      <Targets title="Exempt (safe)" rules={safeTargets} note="" />
+      <Targets title="Always guarded" />
+      <Targets title="Exempt (safe)" />
       <section className="ap-box">
         <h4>What counts as destructive</h4>
         <p>A built-in list by category, plus patterns a repo can add in .orbyn/crew.json. These are examples; the list isn’t complete. Orbyn checks the command, not the worker’s description of it.</p>
@@ -75,7 +68,7 @@ export function ProductionTargets() {
         <h4>The second key</h4>
         <p>
           It comes from an engine on a different vendor from the lead’s.{" "}
-          {secondKeys.length ? `Signed in now: ${secondKeys.map(engineLine).join(" and ")}. ` : ""}
+          {secondKeys.length ? `Engines that can be a second key: ${secondKeys.join(" and ")}. ` : ""}
           With none signed in, a guarded command is denied for now, and you can approve it yourself.
         </p>
       </section>

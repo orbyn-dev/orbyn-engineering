@@ -91,12 +91,10 @@ test("images, binaries and oversized text open from the raw route", async ({ pag
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
   await expect(page.getByRole("link", { name: "Save file" })).toHaveAttribute("href", /download=true/);
 
-  await page.getByRole("button", { name: "Files", exact: true }).click();
   await open("blob.bin");
   await expect(page.getByLabel("Bytes")).toContainText("00 01 02 41 42 ff");
   await expect(page.getByLabel("Bytes")).toContainText("...AB.");
 
-  await page.getByRole("button", { name: "Files", exact: true }).click();
   await open("huge.log");
   await expect(page.getByLabel("Text", { exact: true })).toContainText("start of the log");
   await expect(page.getByText(/Showing 65,536 of 5,000,017 bytes/)).toBeVisible();

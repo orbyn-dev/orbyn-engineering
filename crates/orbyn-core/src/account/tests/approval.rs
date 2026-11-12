@@ -9,6 +9,7 @@ use serde_json::json;
 
 use super::{dev, set, stored, until};
 use crate::CoreError;
+use crate::account::ApprovalDigits;
 use crate::account::dev::{Answer, PASSWORD};
 use crate::account::settings_record::{self as record, ZONE};
 use crate::account::{ConfirmFor, FirstSync, Password, SyncState};
@@ -47,8 +48,28 @@ async fn asking(core: &crate::Core, email: &str) {
     assert_eq!(outcome, AccountSignInOutcome::AwaitingApproval);
 }
 
+/// The digits as the person reads them off the trusted device, and an entry that can never match them.
+fn shown(core: &crate::Core) -> String {
+    core.account
+        .stand_in()
+        .shown_digits()
+        .expect("the trusted device showed digits")
+}
+
+/// Every digit changed, so the entry cannot equal `right`.
+fn wrong_for(right: &str) -> String {
+    right
+        .bytes()
+        .map(|byte| char::from(b'0' + (byte - b'0' + 1) % 10))
+        .collect()
+}
+
+fn typed(digits: &str) -> ApprovalDigits {
+    ApprovalDigits::new(digits.to_owned())
+}
+
 #[tokio::test]
-async fn a_new_device_shows_the_digits_and_waits_without_a_session() {
+async fn a_new_device_waits_without_a_session_and_is_shown_no_digits() {
     let dir = TempDir::new();
     let core = dev(&dir, "waits");
     asking(&core, "late@example.com").await;
@@ -56,58 +77,228 @@ async fn a_new_device_shows_the_digits_and_waits_without_a_session() {
     assert!(view.session.is_none());
     let approval = view.approval.unwrap();
     assert_eq!(approval.state, AccountApprovalState::Waiting);
-    assert_eq!(approval.digits, "418 207");
+    assert_eq!(approval.tries_left, None);
     assert!(approval.expires_in_secs > 590 && approval.expires_in_secs <= 600);
     let polled = core.account.poll_approval().await.unwrap().unwrap();
     assert_eq!(polled.state, AccountApprovalState::Waiting);
     assert!(core.account.view("macos").await.session.is_none());
+    // Nothing has been allowed, so there are no digits anywhere; typing now is refused.
+    assert!(core.account.stand_in().shown_digits().is_none());
+    assert_eq!(
+        code(
+            core.account
+                .submit_digits(typed("123456"))
+                .await
+                .unwrap_err()
+        ),
+        "request_not_allowed"
+    );
 }
 
 #[tokio::test]
-async fn when_a_trusted_device_allows_it_the_new_device_signs_in() {
+async fn allowing_asks_for_the_digits_and_never_signs_in_by_itself() {
     let dir = TempDir::new();
     let core = dev(&dir, "allowed");
     asking(&core, "late@example.com").await;
     core.account.stand_in().answer(Answer::Allow);
-    let shown = core.account.poll_approval().await.unwrap().unwrap();
-    assert_eq!(shown.state, AccountApprovalState::Approved);
+    for _ in 0..3 {
+        let shown = core.account.poll_approval().await.unwrap().unwrap();
+        assert_eq!(shown.state, AccountApprovalState::EnterDigits);
+        assert_eq!(shown.tries_left, None);
+        assert!(core.account.view("macos").await.session.is_none());
+    }
+    let right = shown(&core);
+    let done = core
+        .account
+        .submit_digits(typed(&right))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(done.state, AccountApprovalState::Approved);
     let view = core.account.view("macos").await;
     assert_eq!(view.session.unwrap().email, "late@example.com");
     assert!(
         view.approval.is_none(),
-        "the request is over once it is allowed"
+        "the request is over once the digits are accepted"
     );
     assert_eq!(core.account.poll_approval().await.unwrap(), None);
 }
 
 #[tokio::test]
-async fn a_refusal_and_a_mismatch_close_the_request_and_sign_nobody_in() {
-    for (answer, state) in [
-        (Answer::Deny, AccountApprovalState::Denied),
-        (Answer::CodesDiffer, AccountApprovalState::CodesDiffer),
-    ] {
-        let dir = TempDir::new();
-        let core = dev(&dir, "closed");
-        asking(&core, "late@example.com").await;
-        core.account.stand_in().answer(answer);
-        let shown = core.account.poll_approval().await.unwrap().unwrap();
-        assert_eq!(shown.state, state);
-        // It stays closed on every later look, and the screen can say why until the person leaves it.
-        assert_eq!(
-            core.account.poll_approval().await.unwrap().unwrap().state,
-            state
-        );
-        let view = core.account.view("macos").await;
-        assert_eq!(view.approval.unwrap().state, state);
-        assert!(view.session.is_none());
-        assert_eq!(
-            core.account.status().state,
-            SyncState::SignedOut { reason: None }
-        );
-        // Leaving clears it; asking again makes a new request.
-        core.account.cancel_second_factor().await.unwrap();
-        assert!(core.account.view("macos").await.approval.is_none());
+async fn a_refusal_closes_the_request_and_signs_nobody_in() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "closed");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Deny);
+    let shown = core.account.poll_approval().await.unwrap().unwrap();
+    assert_eq!(shown.state, AccountApprovalState::Denied);
+    // It stays closed on every later look, and the screen can say so until the person leaves it.
+    assert_eq!(
+        core.account.poll_approval().await.unwrap().unwrap().state,
+        AccountApprovalState::Denied
+    );
+    let view = core.account.view("macos").await;
+    assert_eq!(view.approval.unwrap().state, AccountApprovalState::Denied);
+    assert!(view.session.is_none());
+    assert_eq!(
+        core.account.status().state,
+        SyncState::SignedOut { reason: None }
+    );
+    // Leaving clears it; asking again makes a new request.
+    core.account.cancel_second_factor().await.unwrap();
+    assert!(core.account.view("macos").await.approval.is_none());
+}
+
+#[tokio::test]
+async fn wrong_digits_keep_the_request_open_and_count_down_the_tries() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "wrong");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    let wrong = wrong_for(&right);
+    let first = core
+        .account
+        .submit_digits(typed(&wrong))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.state, AccountApprovalState::EnterDigits);
+    assert_eq!(first.tries_left, Some(2));
+    // The view the page reads says the same, and nobody is signed in.
+    let view = core.account.view("macos").await;
+    assert_eq!(view.approval.unwrap().tries_left, Some(2));
+    assert!(view.session.is_none());
+    let second = core
+        .account
+        .submit_digits(typed(&wrong))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.tries_left, Some(1));
+    // A wrong entry before the right one does not stop the right one.
+    let done = core
+        .account
+        .submit_digits(typed(&right))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(done.state, AccountApprovalState::Approved);
+    assert!(core.account.view("macos").await.session.is_some());
+}
+
+#[tokio::test]
+async fn the_last_wrong_try_closes_the_request_and_the_right_digits_no_longer_work() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "locked");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    let wrong = wrong_for(&right);
+    for _ in 0..2 {
+        core.account.submit_digits(typed(&wrong)).await.unwrap();
     }
+    let closed = core
+        .account
+        .submit_digits(typed(&wrong))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(closed.state, AccountApprovalState::Locked);
+    assert_eq!(closed.tries_left, None);
+    assert_eq!(closed.expires_in_secs, 0);
+    // The right digits come too late: the request is closed and nobody is signed in.
+    let after = core
+        .account
+        .submit_digits(typed(&right))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.state, AccountApprovalState::Locked);
+    assert!(core.account.view("macos").await.session.is_none());
+    assert_eq!(
+        core.account.poll_approval().await.unwrap().unwrap().state,
+        AccountApprovalState::Locked
+    );
+    assert_eq!(
+        core.account.status().state,
+        SyncState::SignedOut { reason: None }
+    );
+    assert!(
+        core.account.stand_in().shown_digits().is_none(),
+        "a locked request shows no digits"
+    );
+}
+
+#[tokio::test]
+async fn the_app_bounds_the_tries_itself_when_the_server_does_not_count() {
+    // The stand-in plays a server that never locks: its digits are reissued with fresh tries.
+    let dir = TempDir::new();
+    let core = dev(&dir, "bounded");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let wrong = wrong_for(&shown(&core));
+    for _ in 0..crate::account::digits::TRIES {
+        core.account.stand_in().refresh_digit_tries();
+        core.account.submit_digits(typed(&wrong)).await.unwrap();
+    }
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Locked
+    );
+}
+
+#[tokio::test]
+async fn digits_that_are_not_six_digits_are_refused_and_cost_no_try() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "malformed");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    for bad in ["", "12345", "1234567", "12345a", "abcdef"] {
+        assert_eq!(
+            code(core.account.submit_digits(typed(bad)).await.unwrap_err()),
+            "invalid_digits"
+        );
+    }
+    assert_eq!(core.account.stand_in().digit_tries_left(), Some(3));
+    // Pasted with a space, as the trusted device shows them.
+    let right = shown(&core);
+    let pasted = format!("{} {}", &right[..3], &right[3..]);
+    let done = core
+        .account
+        .submit_digits(typed(&pasted))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(done.state, AccountApprovalState::Approved);
+}
+
+#[tokio::test]
+async fn nothing_prints_the_typed_digits() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "private");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    let wrong = wrong_for(&right);
+    assert!(!format!("{:?}", typed(&wrong)).contains(&wrong));
+    let view = core
+        .account
+        .submit_digits(typed(&wrong))
+        .await
+        .unwrap()
+        .unwrap();
+    let text = format!("{view:?} {:?}", core.account.view("macos").await);
+    assert!(!text.contains(&wrong));
+    assert!(!text.contains(&right));
+    let json = serde_json::to_string(&view).unwrap();
+    assert!(!json.contains(&wrong));
+    assert!(!json.contains(&right));
 }
 
 #[tokio::test]
@@ -130,6 +321,26 @@ async fn ten_minutes_without_an_answer_end_the_request_on_this_computers_clock()
         core.account.poll_approval().await.unwrap().unwrap().state,
         AccountApprovalState::TimedOut
     );
+    assert!(core.account.view("macos").await.session.is_none());
+}
+
+#[tokio::test]
+async fn digits_typed_after_the_ten_minutes_do_not_sign_in() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "late-digits");
+    core.account.set_approval_life(Duration::from_millis(30));
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let late = core
+        .account
+        .submit_digits(typed(&right))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(late.state, AccountApprovalState::TimedOut);
     assert!(core.account.view("macos").await.session.is_none());
 }
 
@@ -161,7 +372,7 @@ async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation
     let list = a.approval_requests().await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, "req-ipad");
-    assert_eq!(list[0].digits, "418 207");
+    assert!(!list[0].allowed);
     assert_eq!(list[0].near.as_deref(), Some("Near Melbourne"));
     // Signing in is not a confirmation; neither is one for another action or request.
     let ask = || ConfirmFor::ApproveDevice("req-ipad".into());
@@ -185,11 +396,21 @@ async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation
     );
     a.confirm(ask(), pw(PASSWORD)).await.unwrap();
     let token = a.require_confirmed_last(ask()).await.unwrap();
-    a.approve(token, "req-ipad").await.unwrap();
-    assert!(a.approval_requests().await.unwrap().is_empty());
+    let approved = a.approve(token, "req-ipad").await.unwrap();
+    // Allowing answers with the six digits to show, in two groups; it stays listed as allowed.
+    let shown = a.stand_in().digits_shown_for("req-ipad").unwrap();
+    assert_eq!(approved.digits.replace(' ', ""), shown);
+    assert_eq!(approved.digits.len(), 7);
+    let list = a.approval_requests().await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert!(list[0].allowed);
+    assert_eq!(a.stand_in().decided(), vec![("req-ipad".to_owned(), true)]);
+    // It is allowed once.
+    a.confirm(ask(), pw(PASSWORD)).await.unwrap();
+    let again = a.require_confirmed_last(ask()).await.unwrap();
     assert_eq!(
-        a.stand_in().decided(),
-        vec![("req-ipad".to_owned(), Some(true))]
+        code(a.approve(again, "req-ipad").await.unwrap_err()),
+        "request_gone"
     );
     // Used up on first use.
     assert_eq!(
@@ -199,21 +420,37 @@ async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation
 }
 
 #[tokio::test]
-async fn refusing_needs_no_confirmation_and_says_whether_the_codes_differed() {
+async fn refusing_needs_no_confirmation_and_cancel_closes_an_allowed_request() {
     let dir = TempDir::new();
     let core = dev(&dir, "refuse");
     let a = &core.account;
     assert_eq!(
-        code(a.deny("req-ipad", false).await.unwrap_err()),
+        code(a.deny("req-ipad").await.unwrap_err()),
         "reauth_required"
     );
     a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
-    a.deny("req-ipad", true).await.unwrap();
+    a.deny("req-ipad").await.unwrap();
+    assert_eq!(a.stand_in().decided(), vec![("req-ipad".to_owned(), false)]);
+    assert!(a.approval_requests().await.unwrap().is_empty());
+    // After Allow, Cancel on the digits dialog closes the request and its digits go with it.
+    let ask = || ConfirmFor::ApproveDevice("req-ipad".into());
+    let dir = TempDir::new();
+    let core = dev(&dir, "cancel-allowed");
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.confirm(ask(), pw(PASSWORD)).await.unwrap();
+    let token = a.require_confirmed_last(ask()).await.unwrap();
+    a.approve(token, "req-ipad").await.unwrap();
+    a.deny("req-ipad").await.unwrap();
+    assert!(a.approval_requests().await.unwrap().is_empty());
+    assert!(a.stand_in().digits_shown_for("req-ipad").is_none());
     assert_eq!(
         a.stand_in().decided(),
-        vec![("req-ipad".to_owned(), Some(false))]
+        vec![
+            ("req-ipad".to_owned(), true),
+            ("req-ipad".to_owned(), false)
+        ]
     );
-    assert!(a.approval_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -504,15 +741,12 @@ async fn a_request_that_expired_was_answered_or_was_given_up_cannot_be_answered(
         a.require_confirmed_last(ask()).await.unwrap()
     };
     // Answered once, it is gone.
-    a.deny("req-ipad", false).await.unwrap();
+    a.deny("req-ipad").await.unwrap();
     assert_eq!(
         code(a.approve(token().await, "req-ipad").await.unwrap_err()),
         "request_gone"
     );
-    assert_eq!(
-        code(a.deny("req-ipad", false).await.unwrap_err()),
-        "request_gone"
-    );
+    assert_eq!(code(a.deny("req-ipad").await.unwrap_err()), "request_gone");
     // Given up by the other device.
     let (_, stand_in) = (0, a.stand_in());
     stand_in.cancel_incoming("req-ipad");
@@ -549,7 +783,13 @@ async fn a_second_look_at_an_allowed_request_keeps_the_session_the_first_made() 
         device_name: "This computer".into(),
     };
     // Two looks both heard "allowed" from the Engine; the second arrives after the first signed in.
-    let first = core.account.poll_approval().await.unwrap().unwrap();
+    core.account.poll_approval().await.unwrap();
+    let first = core
+        .account
+        .submit_digits(typed(&shown(&core)))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first.state, AccountApprovalState::Approved);
     assert_eq!(
         core.account
@@ -668,4 +908,26 @@ async fn dismissing_while_signed_in_does_not_hide_the_next_real_notice() {
     );
     a.ended_seen().await.unwrap();
     assert!(!a.view("macos").await.ended_notice);
+}
+
+#[tokio::test]
+async fn signing_up_on_a_computer_with_settings_asks_how_to_join_them() {
+    let dir = TempDir::new();
+    let core = with_settings(&dir, "signup-asks").await;
+    let a = &core.account;
+    a.start_sign_up(
+        crate::account::dev::INVITE,
+        "fresh@example.com",
+        pw("a fresh throwaway phrase"),
+    )
+    .await
+    .unwrap();
+    a.verify_email_code(crate::account::dev::EMAIL_CODE)
+        .await
+        .unwrap();
+    let view = a.view("macos").await;
+    assert_eq!(view.session.unwrap().email, "fresh@example.com");
+    assert_eq!(view.connect, AccountConnectState::Needed);
+    assert_eq!(a.status().state, SyncState::NotConnected);
+    assert!(a.stand_in().zones().zone(ZONE).is_none());
 }

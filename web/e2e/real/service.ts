@@ -341,22 +341,36 @@ export async function projectSettingsUrl(service: Service, projectId: string, se
 }
 
 /**
- * Opens the thread's Details card and returns it. The card is a popover under the Details button while the side
- * panel is closed and sits at the top of the panel while it is open; either way the button shows whether it is on.
+ * Opens the thread's Details popover and returns it. It is a popover under the thread header's Details button, whether
+ * or not the side panel is open; the button shows whether it is on.
  */
 export async function openDetails(page: Page) {
   const toggle = page.getByRole("button", { name: "Details", exact: true });
   // A freshly started dev server compiles the page on its first load.
   await expect(toggle).toBeVisible({ timeout: 30_000 });
   if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-  const card = page.getByRole("complementary", { name: "Thread details" });
+  const card = page.getByRole("dialog", { name: "Thread details" });
   await expect(card).toBeVisible();
   return card;
 }
 
 /**
- * Opens the thread's side panel if it is closed and, when a tab is named ("Diff" for Changes, "Files", "Browser", "Activity",
- * "Pull requests", "Side chat"), selects it. Returns the panel. The panel is closed on a narrower window until the
+ * Switches the left bar to Files, the explorer, and returns its tree. Files of the checkout open from it as tabs in the side
+ * panel; there is no Files tab in the panel itself.
+ */
+export async function openExplorer(page: Page) {
+  const switcher = page.getByRole("tablist", { name: "Left bar view" });
+  await expect(switcher).toBeVisible({ timeout: 30_000 });
+  const files = switcher.getByRole("tab", { name: "Files", exact: true });
+  if ((await files.getAttribute("aria-selected")) !== "true") await files.click();
+  const tree = page.getByRole("tree", { name: "Projects, worktrees and files" });
+  await expect(tree).toBeVisible();
+  return tree;
+}
+
+/**
+ * Opens the thread's side panel if it is closed and, when a tab is named ("Diff" for Changes, "Browser", "Activity",
+ * "Side chat", "Tools"), selects it. Returns the panel. The panel is closed on a narrower window until the
  * title bar's Show side panel button turns it on.
  */
 export async function openPanelTab(page: Page, name?: string) {

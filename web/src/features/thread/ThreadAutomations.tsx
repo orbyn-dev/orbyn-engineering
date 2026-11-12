@@ -5,7 +5,6 @@ import type { ScheduledTask } from "../../api/types";
 import { toFailure, useAsync } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
 import { scheduleLabel, taskTone } from "../../product/tasks/taskSchedule";
-import { useWaited } from "../../lib/motion";
 import { DRow } from "../../product/ui/DetailRows";
 import { navigate, useRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
@@ -61,9 +60,8 @@ export function ThreadAutomations({ threadId }: { threadId: string }) {
 
   const [expanded, setExpanded] = useState(false);
   const timestampFormat = useUi((state) => state.timestampFormat);
-  const waited = useWaited(tasks.status === "loading");
   const icon = <CalendarClock size={16} aria-hidden />;
-  if (tasks.status === "loading") return <DRow icon={icon} label="Automations" loading waited={waited} skeleton={80} />;
+  if (tasks.status === "loading") return <DRow icon={icon} label="Automations" loading />;
   if (tasks.status === "error" && bound.length === 0) {
     return (
       <DRow

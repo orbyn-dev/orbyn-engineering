@@ -138,7 +138,7 @@ export function runShellCommand(command: string, route: Route): boolean {
       ui.closePanel();
       return true;
     case "threadPanel.toggle":
-      ui.toggleDetails();
+      ui.setPanelOpen(ui.panelOpen !== true);
       return true;
     case "thread.stop":
       if (!thread?.active_run) return false;
@@ -166,7 +166,7 @@ const FOCUS_AREAS = [
   "nav[aria-label='Workspace'] .thread-row a, nav[aria-label='Workspace'] a",
   ".transcript, [aria-label='Thread messages']",
   ".composer textarea",
-  "[aria-label='Thread context'] button, .details button",
+  "[aria-label='Thread context'] button",
 ];
 
 function cycleFocus(step: number): boolean {

@@ -3,19 +3,19 @@ import { Button } from "../../../../ui/controls";
 import { navigate } from "../../../../product/state/route";
 import { crewApi } from "./api";
 import { MODE_COPY } from "./copy";
-import { useAutopilotSettings } from "./useCrew";
+import { useAutopilotModes } from "./useCrew";
 
 /** A new repo is on Full by default; until the person has changed or kept it, one line says so. */
 export function FirstRunBanner() {
-  const read = useAutopilotSettings();
+  const read = useAutopilotModes();
   const [failed, setFailed] = useState(false);
   if (read.status !== "ready" || read.data.confirmed) return null;
-  const { repo, mode } = read.data;
+  const mode = read.data.effective_default;
   const name = MODE_COPY[mode].name;
   return (
     <div className="ap-banner ap-banner-plain" role="region" aria-label="Autopilot">
       <p>
-        <b>Autopilot is {name} for {repo}.</b>{" "}
+        <b>Autopilot is {name}.</b>{" "}
         {mode === "full"
           ? "The lead answers agents’ requests, verified work merges by itself, and you review what reached main in the Review tab."
           : MODE_COPY[mode].text}
@@ -26,7 +26,7 @@ export function FirstRunBanner() {
           small
           onClick={() => {
             setFailed(false);
-            crewApi.confirmMode().then(read.reload, () => setFailed(true));
+            crewApi.confirmMode().then(read.setData, () => setFailed(true));
           }}
         >
           Keep {name}

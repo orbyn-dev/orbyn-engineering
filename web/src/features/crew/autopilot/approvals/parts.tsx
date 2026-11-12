@@ -12,11 +12,11 @@ export const ResultChip = ({ result }: { result: ResultKind }) => <Chip tone={RE
 
 export const RISK_LABEL: Record<Risk, string> = { low: "Low risk", medium: "Medium risk", high: "High risk" };
 
-export const engineLine = (engine: EngineRef) => `${engine.engine} · ${engine.model}`;
+export const engineLine = (engine: EngineRef) => [engine.engine, engine.model].filter(Boolean).join(" · ");
 
 /** "Claude Code · Sonnet 5.5 · inside its lease": who asked and the row's own notes. */
 export function askedBy(row: ApprovalRow) {
-  const parts = [engineLine(row.asker)];
+  const parts = [row.asker ? engineLine(row.asker) : `Task ${row.taskId ?? ""}`.trim()];
   if (row.risk) parts.push(RISK_LABEL[row.risk].toLowerCase());
   return [...parts, ...row.notes].join(" · ");
 }

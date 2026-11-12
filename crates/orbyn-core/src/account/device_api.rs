@@ -1,7 +1,8 @@
 //! The app's side of the Engine's `DeviceApi`: push and pull per zone, and status.
 //! It is shaped like the contract in [docs/account.md](../../../../docs/account.md#dependency-on-the-engine)
 //! so the real `orbyn-device-client` can replace it, and it names no Engine crate: tag
-//! `engine-v0.1.0` does not exist yet. The client does no sealing here; a record
+//! `engine-v0.2.0` (commit `32f3600`) has the client, but the app does not depend on it yet
+//! (docs/account.md, "Engine pin"). The client does no sealing here; a record
 //! crosses this trait as plain fields.
 
 use std::time::Duration;
@@ -56,6 +57,14 @@ pub enum DeviceError {
     /// answered any more.
     #[error("request ended")]
     RequestGone,
+    /// The six digits typed on the new device were not the ones the trusted device showed.
+    /// `tries_left` is how many tries the request has left; the digits themselves are never
+    /// carried here.
+    #[error("wrong digits")]
+    WrongDigits { tries_left: u8 },
+    /// The tries ran out, or the digits were already used: the request is closed.
+    #[error("digits locked")]
+    DigitsLocked,
     /// The server asked for proof of work (a 428) and the client could not finish it.
     #[error("proof of work failed")]
     ProofFailed,

@@ -85,6 +85,91 @@ impl Store {
         })
     }
 
+    /// Every saved mode, by scope, at most `limit`.
+    pub fn crew_autopilot_modes_all(&self, limit: u32) -> Result<Vec<(String, String, String)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT scope, mode, updated_at FROM crew_autopilot_modes ORDER BY scope LIMIT ?1",
+        )?;
+        Ok(statement
+            .query_map([limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// One page of the ledger across tasks, newest first, and how many rows match. `kinds` empty means every kind.
+    pub fn crew_autopilot_events_page(
+        &self,
+        task_id: Option<&str>,
+        kinds: &[&str],
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<AutopilotEvent>, u32)> {
+        let marks = vec!["?"; kinds.len()].join(",");
+        let mut filter = String::from("WHERE 1 = 1");
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(task) = task_id {
+            filter.push_str(" AND task_id = ?");
+            args.push(task.to_owned().into());
+        }
+        if !kinds.is_empty() {
+            filter.push_str(&format!(" AND kind IN ({marks})"));
+            args.extend(
+                kinds
+                    .iter()
+                    .map(|k| rusqlite::types::Value::from((*k).to_owned())),
+            );
+        }
+        let conn = self.reader();
+        let total: u32 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM crew_autopilot_events {filter}"),
+            rusqlite::params_from_iter(args.iter()),
+            |row| row.get(0),
+        )?;
+        args.push(i64::from(limit).into());
+        args.push(i64::from(offset).into());
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events {filter}
+             ORDER BY id DESC LIMIT ? OFFSET ?"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let events = rows
+            .into_iter()
+            .map(|(id, crew_id, task_id, kind, body, at)| {
+                Ok(AutopilotEvent {
+                    id,
+                    crew_id,
+                    task_id,
+                    kind,
+                    body: serde_json::from_str(&body)?,
+                    at,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok((events, total))
+    }
+
+    /// How many rows of each kind were written at or after `since` (RFC 3339, UTC).
+    pub fn crew_autopilot_counts_since(&self, since: &str) -> Result<Vec<(String, u32)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT kind, COUNT(*) FROM crew_autopilot_events WHERE at >= ?1 GROUP BY kind",
+        )?;
+        Ok(statement
+            .query_map([since], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// A task's ledger, oldest first.
     pub fn crew_autopilot_events(&self, task_id: &str) -> Result<Vec<AutopilotEvent>> {
         let conn = self.reader();

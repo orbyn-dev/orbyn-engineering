@@ -39,6 +39,32 @@ impl fmt::Debug for Password {
     }
 }
 
+/// The six approval digits, typed on the new device or shown on the trusted one. Like a
+/// password it prints as `[redacted]`, is never stored or logged, and is cleared when dropped.
+pub struct ApprovalDigits(String);
+
+impl ApprovalDigits {
+    pub fn new(text: String) -> Self {
+        Self(text)
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for ApprovalDigits {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+impl fmt::Debug for ApprovalDigits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ApprovalDigits([redacted])")
+    }
+}
+
 /// What a signed-in session knows. No key, token or password.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionInfo {
@@ -52,7 +78,7 @@ pub enum SignInOutcome {
     Signed(SessionInfo),
     /// The account has two-factor on: an authenticator or recovery code comes next.
     SecondFactor,
-    /// A trusted device has to allow this one. The digits are shown here and on that device.
+    /// A trusted device has to allow this one, and then shows six digits to type here.
     AwaitingApproval(PendingApproval),
 }
 
@@ -60,17 +86,19 @@ pub enum SignInOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingApproval {
     pub request_id: String,
-    /// Six digits, no spaces.
-    pub digits: String,
 }
 
 /// Where this device's request stands. Ten minutes without an answer is the app's own count.
+/// A request that was allowed never signs in by itself: only the right digits do
+/// ([`AccountApi::finish_approval`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApprovalStatus {
     Waiting,
-    Approved(SessionInfo),
+    /// A trusted device allowed it and shows six digits; this device has to type them.
+    Allowed,
     Denied,
-    CodesDiffer,
+    /// The tries for the digits ran out.
+    Locked,
 }
 
 /// A new device asking this trusted one to let it in.
@@ -83,8 +111,8 @@ pub struct IncomingApproval {
     pub near: Option<String>,
     /// RFC 3339.
     pub asked_at: String,
-    /// Six digits, no spaces.
-    pub digits: String,
+    /// This device allowed it and showed the digits; the new device has not typed them yet.
+    pub allowed: bool,
     /// Seconds the request has left.
     pub expires_in_secs: u64,
 }
@@ -94,11 +122,17 @@ pub trait AccountApi: Send + Sync {
     /// Whether creating an account needs an invite; the server decides.
     fn invite_required(&self) -> bool;
     async fn check_invite(&self, invite: &str) -> Result<(), DeviceError>;
-    /// Sends the emailed code. Answers the same whether or not the email has an account.
-    async fn start_sign_up(&self, invite: &str, email: &str) -> Result<(), DeviceError>;
+    /// The password step: creates the account and emails the code. Answers the same whether or
+    /// not the email has an account.
+    async fn start_sign_up(
+        &self,
+        invite: &str,
+        email: &str,
+        password: &Password,
+    ) -> Result<(), DeviceError>;
     async fn resend_code(&self) -> Result<(), DeviceError>;
-    async fn verify_email_code(&self, code: &str) -> Result<(), DeviceError>;
-    async fn register(&self, password: &Password) -> Result<SessionInfo, DeviceError>;
+    /// The emailed code: the last step, which signs the new account in.
+    async fn verify_email_code(&self, code: &str) -> Result<SessionInfo, DeviceError>;
     async fn sign_in(&self, email: &str, password: &Password)
     -> Result<SignInOutcome, DeviceError>;
     /// An authenticator code (six digits) or a recovery code.
@@ -109,10 +143,19 @@ pub trait AccountApi: Send + Sync {
     async fn cancel_approval(&self, request_id: &str) -> Result<(), DeviceError>;
     /// On a trusted device: the requests waiting for an answer.
     async fn approval_requests(&self) -> Result<Vec<IncomingApproval>, DeviceError>;
-    /// On a trusted device: let the new device in, after the digits were compared.
-    async fn approve(&self, request_id: &str) -> Result<(), DeviceError>;
-    /// On a trusted device: refuse. `codes_differ` is the "Codes don't match" answer.
-    async fn deny(&self, request_id: &str, codes_differ: bool) -> Result<(), DeviceError>;
+    /// On a trusted device: allow the request. It answers with the six digits to show, which the
+    /// new device types; the sign-in is not finished until it does.
+    async fn approve(&self, request_id: &str) -> Result<ApprovalDigits, DeviceError>;
+    /// On a trusted device: refuse, or close a request that was allowed.
+    async fn deny(&self, request_id: &str) -> Result<(), DeviceError>;
+    /// The new device types the six digits. Right ones sign it in, once. Wrong ones are
+    /// [`DeviceError::WrongDigits`] with the tries left, and the last wrong try closes the
+    /// request ([`DeviceError::DigitsLocked`]).
+    async fn finish_approval(
+        &self,
+        request_id: &str,
+        digits: &ApprovalDigits,
+    ) -> Result<SessionInfo, DeviceError>;
     /// Checks the password again for "Confirm it's you".
     async fn verify_password(&self, password: &Password) -> Result<(), DeviceError>;
     async fn devices(&self) -> Result<Vec<AccountDevice>, DeviceError>;
@@ -146,6 +189,19 @@ pub fn refusal(error: &DeviceError) -> CoreError {
         DeviceError::ProtectionAdvanced => ("protection_advanced", "Protection is on.", None),
         DeviceError::AccountGone => ("account_gone", "The account is gone.", None),
         DeviceError::RequestGone => ("request_gone", "That request has ended.", None),
+        DeviceError::WrongDigits { tries_left } => {
+            return CoreError::Account {
+                code: "wrong_digits",
+                message: "Those digits don't match.".to_owned(),
+                retry_after_secs: None,
+                tries_left: Some(*tries_left),
+            };
+        }
+        DeviceError::DigitsLocked => (
+            "digits_locked",
+            "Too many tries. This request is closed.",
+            None,
+        ),
         DeviceError::ProofFailed => (
             "check_failed",
             "Couldn't finish checking this device.",

@@ -1,8 +1,9 @@
-// What the Autopilot screens draw. These shapes are the contract the Crew routes must answer
-// (docs/crew.md, Autopilot): the core has the ledger rows and the modes, but no route serves them yet,
-// so the mock API serves these and the screens fail closed when the service does not answer.
+// What the Autopilot screens draw. The wire shapes are the generated `Autopilot*` types; `ledger.ts` maps a
+// ledger row to the row the log draws. Guard rows (production-linked targets) have no route yet, so only
+// the components and their tests build them.
+import type { AutopilotMode } from "../../../../generated/AutopilotMode";
 
-export type Mode = "off" | "on" | "full";
+export type Mode = AutopilotMode;
 export const MODES: readonly Mode[] = ["off", "on", "full"];
 
 export type Risk = "low" | "medium" | "high";
@@ -59,9 +60,13 @@ export interface ApprovalRow {
   id: string;
   /** "14:12" in the person's time. */
   time: string;
+  /** The ledger row's own time, for the day line. */
+  at: string | null;
   /** What was asked, in words: "Install zod 3.24 as a dev dependency". */
   title: string;
-  asker: EngineRef;
+  /** The engine that asked, when the ledger row says; the stored row names the task only. */
+  asker: EngineRef | null;
+  taskId: string | null;
   /** The task's branch, for example "crew/redirect-tests". */
   branch: string | null;
   risk: Risk | null;
@@ -88,28 +93,7 @@ export interface ApprovalRow {
   guard: GuardFacts | null;
 }
 
-export interface ApprovalCounts {
-  all: number;
-  allowed: number;
-  denied_rule: number;
-  denied_lead: number;
-  keys_disagree: number;
-  person_only: number;
-}
-
-export type ApprovalFilter = keyof ApprovalCounts;
-
-export interface ApprovalPage {
-  rows: ApprovalRow[];
-  /** The real totals, whatever the page holds. */
-  counts: ApprovalCounts;
-  /** The rows the filter and search match. */
-  total: number;
-  offset: number;
-  mode: Mode;
-  /** The day the rows are from, as read: "Today · Sat 7 Nov 2026". */
-  day: string | null;
-}
+export type ApprovalFilter = "all" | "allowed" | "denied_rule" | "denied_lead" | "keys_disagree" | "person_only";
 
 export type StopReason = "too_many_denials" | "injected_instructions";
 
@@ -123,7 +107,7 @@ export interface DeniedRequest {
 export interface TripwireStop {
   taskId: string;
   taskTitle: string;
-  engine: EngineRef;
+  engine: EngineRef | null;
   reason: StopReason;
   /** How many denials stopped it, and whether they were counted in a row (3) or in one run (20). */
   denialCount: number;
@@ -133,120 +117,8 @@ export interface TripwireStop {
   injected: { where: string; source: string; text: string } | null;
 }
 
-export interface CrewPreview {
-  enabled: boolean;
-}
-
-export interface HardDeniedRule {
-  id: string;
-  /** False while the rule is not enforced; the screen leaves the row out. */
-  enforced: boolean;
-}
-
-export interface CrewOverride {
-  crew: string;
-  detail: string;
-  mode: Mode;
-  /** "You set this crew to On on Sat 7 Nov." or "Follows the repo." */
-  why: string;
-}
-
-export interface AutopilotSettings {
-  repo: string;
-  mode: Mode;
-  /** Set once the person has chosen or kept the default; false shows the first-run banner. */
-  confirmed: boolean;
-  crews: CrewOverride[];
-  hardDenied: HardDeniedRule[];
-  /** The second key's engines that are signed in now. */
-  secondKeys: EngineRef[];
-  prodTargets: TargetRule[];
-  safeTargets: TargetRule[];
-}
-
-export interface TargetRule {
-  name: string;
-  kind: string;
-  matchedBy: string[];
-  source: "prod_targets" | "safe_targets";
-}
-
-export interface TrustCell {
-  count: number;
-  of: number;
-}
-
-export interface TrustRow {
-  name: string;
-  vendor: string | null;
-  reverted: TrustCell;
-  reworked: TrustCell;
-  merges: number;
-}
-
-export interface ReviewerRow {
-  name: string;
-  confirmed: number;
-  dropped: number;
-  findings: number;
-}
-
-export interface SoloRow {
-  taskClass: string;
-  crew: { merges: number; reverted: number; reworked: number; medianMin: number; cost: string };
-  solo: { runs: number; reverted: number; reworked: number; medianMin: number; cost: string };
-  /** Words from the core's comparison; null when the sample cannot show it. */
-  shows: string | null;
-}
-
-export interface TrustView {
-  repo: string;
-  days: number;
-  merges: number;
-  engines: TrustRow[];
-  areas: TrustRow[];
-  reviewers: ReviewerRow[];
-  solo: SoloRow[];
-}
-
 export type TemplateId = "fix_ci" | "flaky_test" | "dependency_bump" | "security_advisory";
 export type TriggerId = "ci_fails" | "issue_label" | "schedule" | "dependency_update";
-
-export interface BackgroundCrew {
-  id: string;
-  name: string;
-  template: TemplateId;
-  trigger: TriggerId;
-  startsWhen: string;
-  lastRun: string | null;
-  enabled: boolean;
-  mode: Mode;
-  budget: string;
-}
-
-export interface BackgroundRun {
-  id: string;
-  name: string;
-  template: TemplateId;
-  startedBy: string;
-  result: string;
-  state: "Merged" | "Running" | "Stopped" | "Failed";
-  mode: Mode;
-}
-
-export interface BackgroundView {
-  crews: BackgroundCrew[];
-  runs: BackgroundRun[];
-  /** The default budget for a new crew, from Settings. */
-  defaultBudget: string;
-}
-
-export interface NewBackgroundCrew {
-  template: TemplateId;
-  trigger: TriggerId;
-  detail: string;
-  budget: string;
-}
 
 export interface StageLine {
   label: string;

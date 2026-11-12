@@ -6,11 +6,12 @@
 //   pre       network behaviour set up before the page opens: { route, delay } holds a request for `delay` ms, { route, status } answers it
 //   steps     what to do once it has loaded, in order:
 //               { do: "click", role, name, prefix?, exact? }   a button, tab, checkbox ... by its accessible name
-//               { do: "fill", label, value }                  a field by its label
+//               { do: "fill", label, value, exact? }          a field by its label (exact when another label contains it)
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
 //               { do: "offline" }                             the device loses its network
 //               { do: "wait", ms }                            let time pass here, for a state that arrives after a step
+//   width     the window width in px when the screen is drawn narrow (default 1400)
 //   wait      ms to wait after load, for states that show only after a delay (default 1500)
 // Only data and a few verbs: nothing here imports the app. Add a screen by adding an entry, and its id to docs/match-kit.md.
 
@@ -26,6 +27,31 @@ const filterNeedsMyReview = [
 const openTabs = (names) => [
   click("button", "Show side panel"),
   ...names.flatMap((name) => [click("button", "Open a tab"), click("menuitem", name, { prefix: true })]),
+];
+
+/** Create account, driven as far as `step` ("details" is the email step, "password", "code"). */
+const signUpTo = (step, email = "sam@example.com") => {
+  const steps = [click("button", "Create account"), { do: "fill", label: "Invite code", value: "K7QM2XWH9QXA3C2D" }, click("button", "Continue")];
+  if (step === "details") return steps;
+  steps.push({ do: "fill", label: "Email", value: email }, click("button", "Continue"));
+  if (step === "password") return steps;
+  return [...steps, ...passwords("a throwaway phrase", "a throwaway phrase"), click("button", "Continue")];
+};
+const passwords = (password, confirm) => [
+  { do: "fill", label: "Password", value: password, exact: true },
+  { do: "fill", label: "Confirm password", value: confirm },
+];
+
+/** Six digits into the six boxes, one each, then Continue. */
+const typeDigits = (digits) => [...[...digits].map((digit, index) => ({ do: "fill", label: `Digit ${index + 1} of 6`, value: digit })), click("button", "Continue")];
+/** A new device whose trusted device allows it, with `digits` typed once. */
+const approveAndType = (digits) => [
+  click("button", "Sign in"),
+  { do: "fill", label: "Email", value: "approve@example.com" },
+  { do: "fill", label: "Password", value: "correct horse battery" },
+  click("button", "Sign in"),
+  { do: "wait", ms: 2600 },
+  ...typeDigits(digits),
 ];
 
 export const FRAMES = {
@@ -105,6 +131,7 @@ export const FRAMES = {
   "thread-tools": { route: "#/threads/t-tools" },
   "thread-tools-live": { route: "#/threads/t-tools-live" },
   "thread-details": { route: "#/threads/t-done", steps: [click("button", "Details")] },
+  "details-popover": { route: "#/threads/t-done", steps: [click("button", "Details")] },
 
   // The side panel: starts with no tab, the + launcher, the tab menu (Engineer Designs v98). panel-tabs-drag is a pointer drag and has no verb here.
   "panel-empty": { route: "#/threads/t-done", steps: [click("button", "Show side panel")] },
@@ -114,6 +141,18 @@ export const FRAMES = {
   "panel-browser": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser"]) },
   "panel-activity": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity"]) },
   "panel-side": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity", "Side chat"]) },
+
+  // Usage, the Limits tab (mock scenarios "limits*"): only Codex reports a window; Claude Code and the others read Not reported.
+  "usage-claude-windows": { route: "#/usage", scenario: "limits-claude", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-unavailable": { route: "#/usage", scenario: "limits", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-loading": { route: "#/usage", scenario: "limits", pre: [{ route: "**/api/limits*", delay: 20000 }], steps: [click("tab", "Limits")], wait: 900 },
+  "usage-claude-windows-narrow": { route: "#/usage", scenario: "limits", width: 640, steps: [click("tab", "Limits")] },
+  "usage-claude-windows-near": { route: "#/usage", scenario: "limits-near", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-reached": { route: "#/usage", scenario: "limits-reached", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-signedout": { route: "#/usage", scenario: "limits-signedout", steps: [click("tab", "Limits")] },
+  "usage-providers": { route: "#/usage", scenario: "limits-providers", steps: [click("tab", "Limits")] },
+  "usage-providers-error": { route: "#/usage", scenario: "limits-error", steps: [click("tab", "Limits")] },
+
 
   // Settings: one page for each section.
   "s-general": { route: "#/settings/general" },
@@ -157,17 +196,53 @@ export const FRAMES = {
     ],
   },
   "acct-signup-invite": { route: "#/settings/account", scenario: "account", steps: [click("button", "Create account")] },
-  "acct-signup-email-code": {
+  "acct-signup-details": { route: "#/settings/account", scenario: "account", steps: [...signUpTo("details")] },
+  "acct-signup-password": { route: "#/settings/account", scenario: "account", steps: [...signUpTo("password")] },
+  "acct-signup-password-weak": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("password"), ...passwords("short pw", "short pw"), click("button", "Continue")],
+  },
+  "acct-signup-password-mismatch": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("password"), ...passwords("a throwaway phrase", "another phrase here"), click("button", "Continue")],
+  },
+  "acct-signup-password-network": {
     route: "#/settings/account",
     scenario: "account",
     steps: [
-      click("button", "Create account"),
-      { do: "fill", label: "Invite code", value: "K7QM2XWH9QXA3C2D" },
+      ...signUpTo("password"),
+      ...passwords("a throwaway phrase", "a throwaway phrase"),
+      { do: "route", route: "**/api/account/sign-up/start", status: 503, code: "account_offline" },
       click("button", "Continue"),
-      { do: "fill", label: "Email", value: "sam@example.com" },
-      { do: "fill", label: "Password", value: "a throwaway phrase" },
-      click("button", "Continue with a password"),
     ],
+  },
+  "acct-signup-check-failed": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("password", "hard@example.com"), ...passwords("a throwaway phrase", "a throwaway phrase"), click("button", "Continue")],
+  },
+  "acct-signup-email-code": { route: "#/settings/account", scenario: "account", steps: [...signUpTo("code")] },
+  "acct-signup-code-wrong": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("code"), { do: "fill", label: "8-character code", value: "K7QMR4TX" }, click("button", "Verify")],
+  },
+  "acct-signup-code-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      ...signUpTo("code"),
+      { do: "fill", label: "8-character code", value: "K7QMR4TW" },
+      { do: "route", route: "**/api/account/sign-up/code", status: 503, code: "account_offline" },
+      click("button", "Verify"),
+    ],
+  },
+  "acct-signup-done": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("code"), { do: "fill", label: "8-character code", value: "ABCDEFGH" }, click("button", "Verify")],
   },
   "acct-2fa-code": {
     route: "#/settings/account",
@@ -276,7 +351,36 @@ export const FRAMES = {
       { do: "fill", label: "Password", value: "correct horse battery" },
       click("button", "Sign in"),
       click("button", "Manage devices"),
-      click("button", "Compare codes"),
+      click("button", "Review"),
+    ],
+  },
+  "acct-device-approve-digits": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+      click("button", "Review"),
+      click("button", "Allow"),
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Confirm"),
+    ],
+  },
+  "acct-reauth-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Sign out everywhere…"),
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      { do: "route", route: "**/api/account/confirm", status: 503, code: "account_offline" },
+      click("button", "Confirm"),
     ],
   },
   "acct-device-approved": {
@@ -312,16 +416,28 @@ export const FRAMES = {
       click("button", "Sign in"),
     ],
   },
+  "acct-device-enter-digits": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "approve@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
   "acct-device-codes-mismatch": {
     route: "#/settings/account",
     scenario: "account",
-    steps: [
-      click("button", "Sign in"),
-      { do: "fill", label: "Email", value: "late@example.com" },
-      { do: "fill", label: "Password", value: "correct horse battery" },
-      click("button", "Sign in"),
-      click("button", "They don’t match"),
-    ],
+    wait: 2600,
+    steps: [...approveAndType("529318"), { do: "wait", ms: 600 }],
+  },
+  "acct-device-digits-locked": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [...approveAndType("529318"), ...typeDigits("529318"), ...typeDigits("529318"), { do: "wait", ms: 600 }],
   },
   "acct-device-check-failed": {
     route: "#/settings/account",

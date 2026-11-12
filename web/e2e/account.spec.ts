@@ -17,19 +17,32 @@ test("with the gate off there is no Account in Settings and the footer is the pl
   await expect(page.getByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page");
 });
 
-test("creates an account with an invite and an emailed code, then pauses and resumes sync", async ({ page }) => {
+test("creates an account in five steps: invite, email, password, emailed code, done, then pauses and resumes sync", async ({ page }) => {
   await open(page, "account", "#/settings/account");
   await expect(page.getByText("Use an account to sync your settings")).toBeVisible();
   await page.getByRole("button", { name: "Create account" }).click();
   await page.getByLabel("Invite code").fill("k7qm 2xwh 9qxa 3c2d");
   await expect(page.getByLabel("Invite code")).toHaveValue("K7QM-2XWH-9QXA-3C2D");
   await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Step 2 of 5 · Email")).toBeVisible();
   await expect(page.getByText("Invite accepted")).toBeVisible();
   await page.getByLabel("Email").fill("new@example.com");
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Continue with a password" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Step 3 of 5 · Password")).toBeVisible();
+  await page.getByLabel("Password", { exact: true }).fill("too short");
+  await page.getByLabel("Confirm password").fill("too short");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Too short. Use at least 12 characters.")).toBeVisible();
+  await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill("not the same phrase");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("The two passwords don’t match.")).toBeVisible();
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Step 4 of 5 · Check your email")).toBeVisible();
   await page.getByLabel("8-character code").fill("abcdefgh");
   await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByText("Step 5 of 5 · Done")).toBeVisible();
   await expect(page.getByText("Your account is ready")).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByText("Signed in on this device · This computer")).toBeVisible();
@@ -118,31 +131,63 @@ test("signs out everywhere only after the password for that action", async ({ pa
   await expect(page.getByText("Use an account to sync your settings")).toBeVisible();
 });
 
-test("a new device waits for a trusted one and signs in when it is allowed", async ({ page }) => {
+test("a new device waits for a trusted one, then signs in only when the six digits are typed", async ({ page }) => {
   await open(page, "account", "#/settings/account");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByLabel("Email").fill("approve@example.com");
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByText("Approve this sign-in on another device")).toBeVisible();
-  await expect(page.getByText("418 207")).toBeVisible();
+  // The new device shows no digits: the trusted device does, once it allows.
+  await expect(page.getByText("418 207")).toHaveCount(0);
+  await expect(page.getByText("Type the digits from your other device")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("Signed in on this device · This computer")).toHaveCount(0);
+  // Wrong digits keep the request open and count the tries; the right ones finish it.
+  await page.getByLabel("Digit 1 of 6").click();
+  await page.keyboard.type("529318");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Those digits don’t match.")).toBeVisible();
+  await expect(page.getByText("2 tries left.")).toBeVisible();
+  await page.keyboard.type("418207");
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByText("Signed in on this device · This computer")).toBeVisible({ timeout: 15000 });
 });
 
-test("a trusted device lets a new one in only after the password", async ({ page }) => {
+test("three wrong digits close the request", async ({ page }) => {
+  await open(page, "account", "#/settings/account");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByLabel("Email").fill("approve@example.com");
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByText("Type the digits from your other device")).toBeVisible({ timeout: 15000 });
+  for (const answer of ["2 tries left.", "1 try left."]) {
+    await page.keyboard.type("529318");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByText(answer)).toBeVisible();
+  }
+  await page.keyboard.type("529318");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "Too many tries. This request is closed." })).toBeVisible();
+  await expect(page.getByText("Signed in on this device · This computer")).toHaveCount(0);
+});
+
+test("a trusted device allows a new one only after the password, then shows the six digits", async ({ page }) => {
   await open(page, "account", "#/settings/account");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByLabel("Email").fill("dev@example.com");
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Manage devices" }).click();
-  await page.getByRole("button", { name: "Compare codes" }).click();
+  await page.getByRole("button", { name: "Review" }).click();
   await expect(page.getByRole("dialog", { name: "New sign-in" }).getByRole("button", { name: "Don’t allow" })).toBeVisible();
-  await page.getByRole("button", { name: "Codes match · Allow" }).click();
+  await page.getByRole("dialog", { name: "New sign-in" }).getByRole("button", { name: "Allow", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "Confirm it’s you" });
   await expect(confirm.getByText("To let iPad sign in")).toBeVisible();
   await confirm.getByLabel("Password").fill(PASSWORD);
   await confirm.getByRole("button", { name: "Confirm" }).click();
+  const digits = page.getByRole("dialog", { name: "Type these digits on the new device" });
+  await expect(digits.getByText("418 207")).toBeVisible();
+  await digits.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("listitem", { name: "iPad asks to sign in" })).toHaveCount(0);
 });
 

@@ -76,7 +76,7 @@ function LayoutRow() {
   const setPrefs = useUi((state) => state.setPrefs);
   const current = LAYOUTS.find((choice) => choice.value === layout) ?? CONSOLE;
   const choose = (value: LayoutChoice) => {
-    if (value === "ledger") setPrefs({ workspaceLayout: value, sidebarCollapsed: false, detailsOpen: true });
+    if (value === "ledger") setPrefs({ workspaceLayout: value, sidebarCollapsed: false });
     else if (value === "reading") setPrefs({ workspaceLayout: value, sidebarCollapsed: true, chatWidth: "comfortable" });
     else setPrefs({ workspaceLayout: value, sidebarCollapsed: false });
     applyTheme(theme);

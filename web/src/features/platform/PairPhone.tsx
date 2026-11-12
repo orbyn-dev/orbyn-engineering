@@ -42,7 +42,7 @@ export function PairPhone({ offer }: { offer: PairingOffer }) {
           <li key={device.name}>
             <Smartphone size={16} aria-hidden />
             <span>{device.name}</span>
-            <span className="platform-hint">{device.lastSeen}</span>
+            <span className="platform-hint">{device.detail}</span>
             <Button tone="quiet" small {...unavailable}>
               Remove
             </Button>

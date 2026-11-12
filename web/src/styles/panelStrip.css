@@ -179,3 +179,8 @@
   justify-content: center;
   margin-top: 4px;
 }
+/* A docked panel's strip is the top of the window's right column, under the title bar's end (environment pill, waiting count):
+   its buttons stop short of it, as the page header's do. */
+.shell .context[data-mode="docked"]:not(:has(> .drawer-head)) > .ctx-strip {
+  padding-right: max(8px, calc(var(--bar-end-w, 0px) + 14px + 12px));
+}

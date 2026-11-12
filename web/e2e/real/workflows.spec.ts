@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { openDetails, openPanelTab, send, settled, startProject, threadIdOf, type Service } from "./service";
+import { openDetails, openExplorer, openPanelTab, send, settled, startProject, threadIdOf, type Service } from "./service";
 
 /** Smaller flows that cross the UI and the service: presets, servers, scripts, editors, stops. */
 const FAKE = resolve(import.meta.dirname, "../../../target/debug/orbyn-fake-engine");
@@ -135,7 +135,7 @@ test("the editor menu lists what's installed and opens the chosen one", async ({
   await page.getByRole("menuitem", { name: "VS Code" }).or(page.getByRole("menuitemradio", { name: "VS Code" })).first().click();
   await expect.poll(() => existsSync(log)).toBe(true);
   expect(readFileSync(log, "utf8")).toContain(".");
-  await expect(card.getByRole("button", { name: /^Open in editor/ })).toHaveAttribute("title", "Open in VS Code");
+  await expect(card.getByRole("button", { name: /^Open in an outside editor/ })).toHaveAttribute("title", "Open in VS Code");
 });
 
 test("a file's menu opens it elsewhere, and dragging it mentions it", async ({ page }) => {
@@ -144,11 +144,11 @@ test("a file's menu opens it elsewhere, and dragging it mentions it", async ({ p
   const made = await thread("File menu");
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto(`${service.page}#/threads/${made.id}`);
-  await openPanelTab(page, "Files");
-  const file = page.locator(".file-tree button").filter({ hasText: "README.md" }).first();
+  const tree = await openExplorer(page);
+  const file = tree.getByRole("treeitem", { name: /^README\.md/ }).first();
   await file.click({ button: "right" });
-  await expect(page.getByRole("menuitem", { name: "Open", exact: true })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Open in VS Code" }).click();
+  await expect(page.getByRole("menuitem", { name: /^Open/, exact: false }).first()).toBeVisible();
+  await page.getByRole("menuitem", { name: "Open in an outside editor" }).click();
   await expect.poll(() => (existsSync(log) ? readFileSync(log, "utf8") : "")).toContain("README.md");
   const data = await page.evaluateHandle(() => new DataTransfer());
   await file.dispatchEvent("dragstart", { dataTransfer: data });

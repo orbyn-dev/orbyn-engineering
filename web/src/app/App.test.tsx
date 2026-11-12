@@ -561,8 +561,6 @@ describe("App against the mock API", () => {
   });
 
   it("shows the thread details with real data only", async () => {
-    // The card sits at the top of the side panel, which is open because it was asked for.
-    useUi.setState({ panelOpen: true });
     go("#/threads/t-approval");
     window.matchMedia = ((query: string) => ({
       matches: query.includes("min-width"),
@@ -570,12 +568,14 @@ describe("App against the mock API", () => {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
     })) as unknown as typeof window.matchMedia;
+    const user = userEvent.setup();
     render(<App />);
-    const details = await screen.findByRole("complementary", { name: "Thread details" });
+    await user.click(await screen.findByRole("button", { name: "Details" }));
+    const details = await screen.findByRole("dialog", { name: "Thread details" });
     await waitFor(() => expect(details).toHaveTextContent("+42 −3"));
     expect(within(details).getByText("approval-timeout")).toBeInTheDocument();
     expect(within(details).queryByText("Commit")).toBeNull();
-    expect(within(details).getByText("Open in editor")).toBeInTheDocument();
+    expect(within(details).getByText("Open in an outside editor")).toBeInTheDocument();
   });
 
   it("opens the command palette and goes to a result", async () => {
@@ -694,7 +694,7 @@ describe("App against the mock API", () => {
     setViewportWidth(1700);
     useUi.setState({
       panelOpen: true,
-      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools", "files"], panelTabsClosed: ["tools"], detailsOpen: false, terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
+      layouts: { "t-done": { panelTab: "diff", panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["tools"], terminalOpen: false, panelMaximized: false, panelWidth: null, sideChat: null } },
     });
     go("#/threads/t-done");
     render(<App />);

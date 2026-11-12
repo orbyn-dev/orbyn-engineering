@@ -152,6 +152,7 @@ fn any_body() -> Value {
         "invite": "K7QM-2XWH-9QXA-3C2D",
         "email": "dev@example.com",
         "code": "ABCD-EFGH",
+        "digits": "123456",
         "password": "x",
         "action": "sign_out_everywhere",
         "policy": "combine",
@@ -234,6 +235,8 @@ async fn no_route_outside_the_account_prefix_names_an_account_sign_in_sign_out_o
         .routes
         .iter()
         .filter(|(_, path)| !path.starts_with("/api/account"))
+        // The one Crew route that shares the word: it keeps the Autopilot default and has nothing to do with the account.
+        .filter(|(_, path)| path != "/api/crew/autopilot/confirm")
         .filter(|(_, path)| {
             [
                 "account", "sign-in", "sign-out", "signin", "signout", "device", "password",

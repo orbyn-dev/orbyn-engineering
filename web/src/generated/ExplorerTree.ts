@@ -13,4 +13,13 @@ path: string, entries: Array<ExplorerEntry>,
 /**
  * More entries matched than one answer carries. Narrow with `filter`.
  */
-truncated: boolean, changes: ExplorerChanges, read_only: boolean, };
+truncated: boolean, 
+/**
+ * Entries in this folder that match `filter`, counted before the cut to one answer.
+ * With `total_at_least` it is a floor: the folder was too large to count whole.
+ */
+total: number, 
+/**
+ * The read stopped counting at its scan limit, so `total` may be higher.
+ */
+total_at_least: boolean, changes: ExplorerChanges, read_only: boolean, };

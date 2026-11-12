@@ -32,8 +32,8 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 `orbyn-core` depends on the Engine's device client:
 
 ```toml
-orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.1.0" }
-orbyn-engineering = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.1.0" }
+orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.0" }
+orbyn-engineering = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.0" }
 ```
 
 Both name the same tag, so one revision is locked for both. `orbyn-device-client` re-exports only `orbyn-sync`'s merge;
@@ -56,22 +56,83 @@ the record schema comes from `orbyn-engineering`.
   - `Clock`, so tests control time.
   - Sign-up: `check_invite`, `start_sign_up(invite, email)`, `resend_code`, `verify_email_code` (eight characters,
     normalised by the client), `register(password: SecretString)`. Proof of work is solved inside the client, and
-    sixty starts an hour become `RateLimited { retry_after }`.
+    sixty starts an hour become `RateLimited { retry_after }`. The app's account trait folds this into the order the
+    screens follow (see [The plan for the adapter](#the-plan-for-the-adapter)): the password step calls
+    `start_sign_up` with the password, and the emailed code signs in.
   - Sign-in: `SignInOutcome` is `Signed(Session)`, `SecondFactor(challenge)` or `AwaitingApproval { request_id,
     digits }`. A trusted device lists `approval_requests()` and answers `approve(id)` after the digit comparison, or
     `deny(id)`.
   - Sync, per zone: push and pull, with sealing, zone keys and rotation inside the client. A conflict returns plain
     records and the app merges them with `orbyn-sync`, which the client re-exports. An upload is at most 4 MiB.
-  - `devices()` returns `Device { id, name, app, last_seen, current }` (`last_seen` is coarse RFC 3339, `app` is
-    `planner` or `engineering`).
+  - `devices()` returns `Device { id, name, app, current }` (`app` is `planner` or `engineering`; there is no
+    `last_seen`).
   - `status()` is a watch of signed out, signing in, online, `offline { since }` and `paused { reason }`. Live notices
     come over a websocket the client keeps alive and reconnects.
   - Errors: `Offline`, `Unauthorized`, `InviteRequired`, `WrongPassword`, `RateLimited { retry_after }`, `Conflict`,
     `TooLarge`, `InvalidKey`, `Server { retryable }`, `InvalidCode`, `DeletionScheduled`, `ProtectionAdvanced` and
     `AccountGone`.
-- **Does not exist yet.** At this commit the Engine has no `orbyn-device-client` crate, no `docs/engineering.md` and no
-  `engine-v0.1.0` tag. Until they land, the app builds the account module against a fake `DeviceApi` that lives in the
-  app's test support.
+- **Engine pin.** See [Engine pin](#engine-pin). The real client exists at `engine-v0.2.0`; the app does not depend on it
+  yet, and the account module still builds against the fake `DeviceApi` in the app's test support.
+
+### Engine pin
+
+The Engine release this design is written against is tag `engine-v0.2.0`, commit
+`32f360016633ae38aebdf913603fa73a66ecfa24` (its main CI is green). It adds the `orbyn-device-client` crate (start,
+confirm and deny an approval; the new device's join, digits, finish and deny; `remove_device`; `devices`) and the v3
+approval message that binds the device's name, platform and `app` label into the approval. The earlier tag
+`engine-v0.1.0` is superseded; the `tag =` lines above name `engine-v0.2.0`.
+
+**Where the real pin lives.** Nowhere in code yet: no Engine crate is in `Cargo.toml` or `Cargo.lock`. The dependency
+lands with the adapter pull request, once `orbyn-client` re-exports `DevicePlatform` and `DeviceApp` (D6 stands: the app
+never names the Engine's `orbyn-contracts`). Then the pin is the `tag =` in `crates/orbyn-core/Cargo.toml`, the
+revision in `Cargo.lock`, and the tag-resolves-to-locked-revision check described under Pin. Until then this section is
+the record. Sign-in condition 2 below names `engine-v0.1.0`; `engine-v0.2.0` contains that tag's work, and the condition
+is not marked satisfied by this note.
+
+### The plan for the adapter
+
+Decided with the lead session. Nothing here is built, and real sign-in stays off.
+
+- **Sync.** The Engine's per-record sync on `orbyn-engineering::Settings` is the source of truth for the merge. The app's
+  whole-record `pull` and `push` with a base version are not carried over. The "offline edit lost" list is rebuilt by
+  diffing the settings before and after a pass.
+- **Sign-up order** follows the Engine: invite, email, password with its confirmation, the emailed code, done. Built
+  (Engineer Designs v104): the invite and the email steps send nothing; the password step creates the account and emails
+  the code (the device check and the retry limit sit there); the code signs in. The account trait is
+  `start_sign_up(invite, email, password)` then `verify_email_code(code) -> SessionInfo`; there is no separate
+  `register`. Against the real client the adapter calls `start_sign_up`, `register(password)` and `verify_email_code`
+  in the order the Engine needs and keeps the password only until `register` returns. The app keeps the old rules: the
+  password is at least twelve characters and nothing else is checked, five wrong emailed codes in a row refuse every code
+  until a new one is sent (the Engine counts too; the core is bounded on its own), every failure of the code answers
+  `invalid_code`, and the password and the code are never logged, echoed or stored.
+- **New device approval** is a two-way check that needs a person at both devices. The trusted device sees Allow and
+  Don't allow first; Allow (which asks for the password, D12) shows six digits, and the new device types them. Built
+  (Engineer Designs v104): the new device shows no digits, there is no "They don't match" and no skip, and **finish is
+  never automatic**: allowing only moves the new device to the digits step, and only the right digits sign it in. The
+  adapter never calls `finish_approval` with no digits to skip that step. The digits rule is in
+  `orbyn_core::account::digits` and is applied by the stand-in that plays the server: **three tries** (the first wrong
+  entry says "2 tries left"), **single use**, a **constant-time compare** that looks at every digit, and **ten minutes**
+  (the digits die with the request). The app counts its own tries too (an entry sent to the server is a try, taken before
+  the call so two entries at once cannot share one), so it stays bounded when a server does not count. The typed digits
+  are never logged, formatted or returned: they cross `AccountApi::finish_approval` as an `ApprovalDigits`, which prints
+  `[redacted]`. The trusted device's digits come back once, from `approve`, to the window that confirmed the password;
+  the request list never carries them. D12's confirmation and the nonce binding are unchanged.
+- **D6 stands.** `orbyn-client` will re-export `DevicePlatform` and `DeviceApp` (Engineering 1 is doing it), so the app
+  never names the Engine's contracts crate.
+- **"Confirm it's you"** (`verify_password`) maps to the client's `reauthenticate`, a network OPAQUE login. Its copy and
+  its error states cover a network failure (`acct-reauth-network`, built): the dialog says Orbyn could not be reached and
+  nothing was changed, keeps the password typed, and offers Try again and Cancel.
+- **`last_seen`.** The Engine's `Device` has none. Neither the device list nor `AccountDevice` has one, and no screen
+  that names a device (the device rows, pair phone, the paired-machine text) shows when it was last seen.
+- **Gate.** Real sign-in stays off: the gate is `Off` in release builds, the `LocalOnly` stand-in stays debug and test
+  only, and nothing makes a network call under `Off`.
+
+### The `app` label is a hint
+
+A device signs itself in with an `app` label (`planner` or `engineering`), and from v3 the approval binds the name,
+platform and label. The label is the device's **own signed claim**: it says what the device asserted at sign-in, never
+which app is actually running. It is a hint for the person approving, not proof, and no decision (code or copy) may treat
+it as proof of which app is asking. The approve prompt may show it as a hint and no more.
 
 ## Where the account module sits
 
@@ -447,7 +508,8 @@ The app records them here so the backend carries what the screens will need.
 
 - Sign-in takes an authenticator code (six digits) or a two-factor recovery code in the form `XXXXX-XXXXX`: ten codes,
   shown once, plain base32, input ignores case, the hyphen and spaces. **Five wrong codes close the sign-in.**
-- New-device approval is a two-way code comparison on a trusted device. **The approval expires after 10 minutes.**
+- New-device approval is a two-way check: a trusted device allows the request and shows six digits, and the new device
+  types them (three tries, single use). **The approval expires after 10 minutes.**
 - Turning two-factor on or off is not in Orbyn Engineering, and the account-site page for it will not exist in the beta
   (Planner work is paused); signing in with an authenticator or recovery code still works. **Password change and account
   recovery are Planned, not built.**
@@ -479,13 +541,13 @@ The designs decided that with the gate `Off` Settings > Account is hidden, the p
 sidebar footer shows no sync status. The sections below are the plan as written before that work.
 
 **Sign-in approval, what a real sign-in can show.** The Engine\'s `deny(id)` and a cancel look the same and carry no
-reason, so on the new device the closed states a real sign-in can reach are: waiting (with the digits and the time
-left), allowed (a spinner and "Signing you in…"), "Denied or cancelled." (any close from the other side), and "No one
-approved this sign-in in time" (ten minutes, counted on this computer\'s clock). "The codes didn\'t match" shows only
-when the person taps "They don\'t match" on this computer\'s own screen, which gives the request up. The core\'s
-`codes_differ` answer belongs to the development stand-in and is not reachable from the real client; no screen depends
-on it (it reads as "Denied or cancelled."). On the trusted device a request that is gone reads "Denied or cancelled."
-too.
+reason, so on the new device the states are: waiting (the time left, no digits), the six digits to type (with "2 tries
+left" after a wrong entry), approved (a spinner and "Signing you in…"), "Denied or cancelled." (any close from the other
+side, including Cancel on the trusted device\'s digits dialog), "Too many tries. This request is closed." (the tries ran
+out) and "This request expired" (ten minutes, counted on this computer\'s clock). There is no "They don\'t match" and no
+`codes_differ` answer any more. When the app cannot reach the server with the digits it shows the existing "Couldn\'t
+check this request." state (the entry was not used and is not kept); no separate frame draws that case. On the trusted
+device a request that is gone reads "Denied or cancelled." too.
 
 **Planned is design-time only.** In the beta a Planned row or label is communication in the frames and nothing
 the product shows, unless the owner says otherwise: no Security group (password, two-factor, passkeys), no "Forgot
@@ -499,9 +561,10 @@ enrolling or turning it off is not in Orbyn Engineering.
 | Prefix | Frame ids |
 | --- | --- |
 | `acct-signin*` | `acct-signin`, `acct-signin-checking`, `acct-signin-invite-required`, `acct-signin-narrow`, `acct-signin-network`, `acct-signin-throttled`, `acct-signin-wrong-password` |
-| `acct-signup-*` | `acct-signup-invite`, `acct-signup-check`, `acct-signup-check-failed`, `acct-signup-details`, `acct-signup-email-code`, `acct-signup-code-wrong`, `acct-signup-code-expired`, `acct-signup-too-many`, `acct-signup-done` |
+| `acct-signup-*` | `acct-signup-invite`, `acct-signup-details` (the email step), `acct-signup-password`, `acct-signup-password-weak`, `acct-signup-password-mismatch`, `acct-signup-password-network`, `acct-signup-check`, `acct-signup-check-failed`, `acct-signup-too-many`, `acct-signup-email-code`, `acct-signup-code-wrong`, `acct-signup-code-expired`, `acct-signup-code-resent`, `acct-signup-code-network`, `acct-signup-done` (built from Engineer Designs v104) |
 | `acct-2fa-*` | `acct-2fa-code`, `acct-2fa-wrong`, `acct-2fa-recovery`, `acct-2fa-recovery-wrong` |
-| `acct-device-*` | `acct-device-waiting`, `acct-device-approve-prompt`, `acct-device-approved`, `acct-device-denied`, `acct-device-timeout` |
+| `acct-device-*` | `acct-device-waiting`, `acct-device-enter-digits`, `acct-device-approve-prompt`, `acct-device-approve-digits`, `acct-device-codes-mismatch` (now the wrong-digits state), `acct-device-digits-locked`, `acct-device-approved`, `acct-device-denied`, `acct-device-timeout` (built from Engineer Designs v104; `acct-device-check-failed` was already built) |
+| `acct-reauth-*` | `acct-reauth`, `acct-reauth-network` (built from v104: the network failure of "Confirm it's you") |
 | `acct-settings-*` | `acct-settings-signed-out`, `acct-settings-signed-in`, `acct-settings-loading`, `acct-settings-error`, `acct-settings-offline`, `acct-settings-narrow` |
 | `acct-connect-*` | `acct-connect-workspace`, `acct-connect-progress`, `acct-connect-done` |
 | `sync-*` | `sync-line`, `sync-line-narrow`, `sync-popover`, `sync-popover-offline`, `sync-popover-failed`, `sync-paused`, `sync-first-sync`, `sync-conflict`, `sync-conflict-resolved` |

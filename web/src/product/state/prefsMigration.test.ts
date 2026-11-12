@@ -111,4 +111,14 @@ describe("saved-preference migration", () => {
     expect(reloaded.getState().projectFolders).toBe(false);
     expect(reloaded.getState().foldersNotice).toBe(false);
   });
+
+  it("loads saved layouts that still carry the Details card's open state, drops it, and forgets its collapsed key", async () => {
+    sessionStorage.setItem("orbyn.details.collapsed", "1");
+    put({ detailsOpen: false, layouts: { "t-1": { panelTab: "diff", panelTabOrder: ["diff"], panelTabsClosed: [], detailsOpen: true, terminalOpen: false, panelMaximized: false, panelWidth: 380, sideChat: null } } });
+    const ui = await load();
+    expect(ui.getState().layouts["t-1"]?.panelTab).toBe("diff");
+    expect(ui.getState().layouts["t-1"]).not.toHaveProperty("detailsOpen");
+    expect(ui.getState()).not.toHaveProperty("detailsOpen");
+    expect(sessionStorage.getItem("orbyn.details.collapsed")).toBeNull();
+  });
 });

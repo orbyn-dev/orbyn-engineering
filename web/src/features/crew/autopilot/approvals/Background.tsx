@@ -1,19 +1,41 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { Button } from "../../../../ui/controls";
-import { Dialog } from "../../../../ui/Dialog";
-import { Segmented } from "../../../../ui/Segmented";
-import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
-import { toFailure, useAsync } from "../../../../lib/useAsync";
-import { crewApi } from "./api";
+import { Empty } from "../../../../product/ui/states";
+import { NOT_CONNECTED } from "./api";
 import { MODE_COPY, TEMPLATES, TRIGGERS } from "./copy";
-import type { BackgroundCrew, BackgroundRun, BackgroundView, NewBackgroundCrew, TemplateId, TriggerId } from "./model";
+import type { Mode, TemplateId } from "./model";
 import { Chip } from "./parts";
 
-const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.short ?? id;
-const DETAIL_LABEL: Record<TriggerId, string> = { ci_fails: "CI workflow and branch", issue_label: "Label", schedule: "Schedule", dependency_update: "Updates from" };
-const DETAIL_DEFAULT: Record<TriggerId, string> = { ci_fails: "ci.yml on main", issue_label: "crew-fix", schedule: "Every weekday at 07:00", dependency_update: "Dependabot or Renovate PRs" };
+// Background crews have no route yet: their state will live in the app's data folder, not in the repo.
+// The shapes below are what the screens draw once a route serves them.
+export interface BackgroundCrew {
+  id: string;
+  name: string;
+  template: TemplateId;
+  startsWhen: string;
+  lastRun: string | null;
+  enabled: boolean;
+  mode: Mode;
+}
+export interface BackgroundRun {
+  id: string;
+  name: string;
+  template: TemplateId;
+  startedBy: string;
+  result: string;
+  state: "Merged" | "Running" | "Stopped" | "Failed";
+  mode: Mode;
+}
+export interface BackgroundView {
+  crews: BackgroundCrew[];
+  runs: BackgroundRun[];
+  /** The default budget for a new crew, in each engine's own units. */
+  defaultBudget: string;
+}
 
-function CrewRows({ crews, onToggle }: { crews: BackgroundCrew[]; onToggle(crew: BackgroundCrew, enabled: boolean): void }) {
+const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.short ?? id;
+
+function CrewRows({ crews, onToggle }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void }) {
   return (
     <div className="ap-bg" role="table" aria-label="Background crews">
       <div className="ap-bg-row ap-head" role="row">
@@ -25,7 +47,7 @@ function CrewRows({ crews, onToggle }: { crews: BackgroundCrew[]; onToggle(crew:
           <span role="cell" className="ap-clip">{crew.startsWhen}</span>
           <span role="cell" className="ap-clip">{crew.lastRun ?? "Never run"}</span>
           <span role="cell">
-            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} state`} className="ap-switch" onClick={() => onToggle(crew, !crew.enabled)}>
+            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} state`} className="ap-switch" disabled={!onToggle} onClick={() => onToggle?.(crew, !crew.enabled)}>
               {crew.enabled ? "On" : "Off"}
             </button>
           </span>
@@ -74,7 +96,7 @@ function Runs({ runs }: { runs: BackgroundRun[] }) {
   );
 }
 
-function Templates({ onUse }: { onUse(id: TemplateId): void }) {
+function Templates() {
   return (
     <section className="ap-block" id="ap-templates" aria-label="Templates">
       <header className="ap-set-head"><h3>Templates</h3><Chip tone="plain">Preview</Chip></header>
@@ -84,7 +106,7 @@ function Templates({ onUse }: { onUse(id: TemplateId): void }) {
             <h4>{template.name}</h4>
             <p className="ap-muted">Starts when: {template.starts}</p>
             <p>{template.does}</p>
-            <Button small onClick={() => onUse(template.id)} aria-label={`Use the ${template.name} template`}>Use this template</Button>
+            <Button small disabled title={NOT_CONNECTED} aria-description={NOT_CONNECTED} aria-label={`Use the ${template.name} template`}>Use this template</Button>
           </article>
         ))}
       </div>
@@ -112,61 +134,7 @@ function Triggers() {
   );
 }
 
-export function NewBackgroundDialog({ initial, defaultBudget, onCreate, onClose }: { initial: TemplateId; defaultBudget: string; onCreate(crew: NewBackgroundCrew): Promise<void>; onClose(): void }) {
-  const [template, setTemplate] = useState<TemplateId>(initial);
-  const [trigger, setTrigger] = useState<TriggerId>(TEMPLATES.find((one) => one.id === initial)?.trigger ?? "ci_fails");
-  const [detail, setDetail] = useState(DETAIL_DEFAULT[trigger]);
-  const [budget, setBudget] = useState(defaultBudget);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const chooseTrigger = (next: TriggerId) => {
-    setTrigger(next);
-    setDetail(DETAIL_DEFAULT[next]);
-  };
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await onCreate({ template, trigger, detail, budget });
-      onClose();
-    } catch (failure) {
-      setError(toFailure(failure).message);
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      title="Create a background crew"
-      onClose={onClose}
-      busy={busy}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button tone="primary" onClick={() => void submit()} busy={busy}>Create background crew</Button>
-        </>
-      }
-    >
-      <p>It starts when the trigger fires, runs the full flow and lands in your Review queue. It is saved in .orbyn/crew.json so it can be reviewed like any other change.</p>
-      <div className="ap-field">
-        <Segmented<TemplateId> label="Template" value={template} onChange={setTemplate} options={TEMPLATES.map((one) => ({ value: one.id, label: one.name }))} />
-      </div>
-      <div className="ap-field">
-        <Segmented<TriggerId> label="Starts when" value={trigger} onChange={chooseTrigger} options={[
-          { value: "ci_fails", label: "CI fails" },
-          { value: "issue_label", label: "An issue gets a label" },
-          { value: "schedule", label: "On a schedule" },
-          { value: "dependency_update", label: "A dependency update opens" },
-        ]} />
-      </div>
-      <label className="ap-field"><span>{DETAIL_LABEL[trigger]}</span><input value={detail} onChange={(event) => setDetail(event.target.value)} /></label>
-      <label className="ap-field"><span>Budget for each run</span><input value={budget} onChange={(event) => setBudget(event.target.value)} /></label>
-      {error ? <p role="alert" className="ap-error">{error}</p> : null}
-    </Dialog>
-  );
-}
-
-export function BackgroundPageView({ view, onToggle, onCreate }: { view: BackgroundView; onToggle(crew: BackgroundCrew, enabled: boolean): void; onCreate(crew: NewBackgroundCrew): Promise<void> }) {
-  const [creating, setCreating] = useState<TemplateId | null>(null);
+export function BackgroundPageView({ view, onToggle }: { view: BackgroundView; onToggle?(crew: BackgroundCrew, enabled: boolean): void }) {
   const templates = useRef<HTMLDivElement>(null);
   const none = view.crews.length === 0;
   return (
@@ -176,12 +144,12 @@ export function BackgroundPageView({ view, onToggle, onCreate }: { view: Backgro
         <Chip tone="plain">Preview</Chip>
         <span className="ap-spacer" />
         <code className="ap-file">.orbyn/crew.json</code>
-        <Button small tone="primary" onClick={() => setCreating("fix_ci")}>New background crew</Button>
+        <Button small tone="primary" disabled title={NOT_CONNECTED} aria-description={NOT_CONNECTED}>New background crew</Button>
       </header>
       {none ? (
         <Empty title="No background crews yet">
           <p>A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and lands its change in your Review queue.</p>
-          <Button small onClick={() => templates.current?.querySelector<HTMLElement>("button")?.focus()}>See the templates</Button>
+          <Button small onClick={() => templates.current?.scrollIntoView?.({ block: "start" })}>See the templates</Button>
         </Empty>
       ) : (
         <>
@@ -193,29 +161,18 @@ export function BackgroundPageView({ view, onToggle, onCreate }: { view: Backgro
           {view.runs.length ? <Runs runs={view.runs} /> : null}
         </>
       )}
-      <div ref={templates}><Templates onUse={setCreating} /></div>
+      <div ref={templates}><Templates /></div>
       <Triggers />
-      {creating ? <NewBackgroundDialog initial={creating} defaultBudget={view.defaultBudget} onCreate={onCreate} onClose={() => setCreating(null)} /> : null}
     </section>
   );
 }
 
+/** Nothing serves background crews yet, so the page is the empty one, with the templates and triggers it will use. */
 export function BackgroundTab() {
-  const read = useAsync("crew-background", (signal) => crewApi.background(signal), { keep: true });
-  if (read.status === "loading") return <Loading label="Reading background crews" rows={4} />;
-  if (read.status === "error") return <ErrorState title="Can't read background crews" failure={read.error} onRetry={read.reload} />;
   return (
-    <BackgroundPageView
-      view={read.data}
-      onToggle={(crew, enabled) => {
-        const before = read.data;
-        read.setData({ ...before, crews: before.crews.map((one) => (one.id === crew.id ? { ...one, enabled } : one)) });
-        crewApi.setBackground(crew.id, enabled).catch(() => read.setData(before));
-      }}
-      onCreate={async (crew) => {
-        await crewApi.createBackground(crew);
-        read.reload();
-      }}
-    />
+    <>
+      <BackgroundPageView view={{ crews: [], runs: [], defaultBudget: "" }} />
+      <p className="ap-muted" role="note">{NOT_CONNECTED}.</p>
+    </>
   );
 }

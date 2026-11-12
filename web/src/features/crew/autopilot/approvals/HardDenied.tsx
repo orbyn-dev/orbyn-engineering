@@ -1,21 +1,24 @@
 import { Dialog } from "../../../../ui/Dialog";
 import { HARD_DENIED, HARD_FOOT } from "./copy";
-import type { HardDeniedRule } from "./model";
-import { useAutopilotSettings } from "./useCrew";
+import type { AutopilotRule } from "../../../../generated/AutopilotRule";
+import { useAutopilotGuards } from "./useCrew";
 import { Loading } from "../../../../product/ui/states";
 
-/** The actions denied in every mode, by code. A rule that is not enforced yet is left out of the list. */
-export function enforcedRules(rules: HardDeniedRule[]) {
-  const on = new Set(rules.filter((rule) => rule.enforced).map((rule) => rule.id));
-  return HARD_DENIED.filter(([id]) => on.has(id));
+/** The always-denied list from the service, in the designs' order and words; a rule the designs do not name keeps the core's own words. */
+export function listed(rules: AutopilotRule[]): [string, string][] {
+  const order = HARD_DENIED.map(([id]) => id);
+  const byId = new Map(rules.map((rule) => [rule.id, rule.rule]));
+  const known = HARD_DENIED.filter(([id]) => byId.has(id));
+  const extra = rules.filter((rule) => !order.includes(rule.id)).map((rule): [string, string] => [rule.id, rule.rule.charAt(0).toUpperCase() + rule.rule.slice(1)]);
+  return [...known, ...extra];
 }
 
-export function HardDeniedList({ rules, heading = "Always denied, in every mode" }: { rules: HardDeniedRule[]; heading?: string }) {
+export function HardDeniedList({ rules, heading = "Always denied, in every mode" }: { rules: AutopilotRule[]; heading?: string }) {
   return (
     <section className="ap-box" aria-label={heading}>
       <h4>{heading}</h4>
       <ul className="ap-list">
-        {enforcedRules(rules).map(([id, text]) => <li key={id}>{text}</li>)}
+        {listed(rules).map(([id, text]) => <li key={id}>{text}</li>)}
       </ul>
       <p className="ap-muted">{HARD_FOOT}</p>
     </section>
@@ -23,7 +26,7 @@ export function HardDeniedList({ rules, heading = "Always denied, in every mode"
 }
 
 /** Opened from the setting: what is denied in every mode, what is always allowed, and why it is code. */
-export function HardDeniedPage({ rules }: { rules: HardDeniedRule[] }) {
+export function HardDeniedPage({ rules }: { rules: AutopilotRule[] }) {
   return (
     <div className="ap-stack">
       <HardDeniedList rules={rules} />
@@ -46,10 +49,10 @@ export function HardDeniedPage({ rules }: { rules: HardDeniedRule[] }) {
 }
 
 export function HardDeniedDialog({ onClose }: { onClose(): void }) {
-  const settings = useAutopilotSettings();
+  const guards = useAutopilotGuards();
   return (
     <Dialog title="What Autopilot can never do" onClose={onClose} className="ap-dialog">
-      {settings.status === "ready" ? <HardDeniedPage rules={settings.data.hardDenied} /> : <Loading label="Reading the list" rows={3} />}
+      {guards.status === "ready" ? <HardDeniedPage rules={guards.data.always_denied} /> : <Loading label="Reading the list" rows={3} />}
     </Dialog>
   );
 }

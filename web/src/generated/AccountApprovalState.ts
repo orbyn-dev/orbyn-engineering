@@ -3,4 +3,4 @@
 /**
  * Where a new device's request to sign in stands.
  */
-export type AccountApprovalState = "waiting" | "approved" | "denied" | "codes_differ" | "timed_out";
+export type AccountApprovalState = "waiting" | "enter_digits" | "approved" | "denied" | "locked" | "timed_out";

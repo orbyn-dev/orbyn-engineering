@@ -106,7 +106,7 @@ wire_enum! {
 pub enum AccountSignInOutcome {
     Signed,
     SecondFactor,
-    /// A trusted device has to allow this one: `approval` in the view has the code to compare.
+    /// A trusted device has to allow this one; `approval` in the view says how the request stands.
     AwaitingApproval,
 }
 }
@@ -114,28 +114,34 @@ pub enum AccountSignInOutcome {
 wire_enum! {
 /// Where a new device's request to sign in stands.
 pub enum AccountApprovalState {
-    /// Asked; waiting for a trusted device.
+    /// Asked; waiting for a trusted device to allow it.
     Waiting,
-    /// Allowed; finishing the sign-in.
+    /// A trusted device allowed it and shows six digits; this device types them.
+    /// `tries_left` is set after wrong digits.
+    EnterDigits,
+    /// The right digits were typed; finishing the sign-in.
     Approved,
-    /// A trusted device said no.
+    /// A trusted device said no, or the request was cancelled.
     Denied,
-    /// A trusted device said the codes were not the same.
-    CodesDiffer,
-    /// Nobody answered in ten minutes, counted on this computer's clock.
+    /// The tries for the digits ran out.
+    Locked,
+    /// Nobody finished it in ten minutes, counted on this computer's clock.
     TimedOut,
 }
 }
 
 wire! {
-/// This computer's own request to sign in, while a trusted device decides.
+/// This computer's own request to sign in, while a trusted device decides. It never carries
+/// the digits: the trusted device shows them and this one types them.
 pub struct AccountApprovalView {
     pub state: AccountApprovalState,
-    /// Six digits, shown in two groups: "418 207". The other device shows the same ones.
-    pub digits: String,
-    /// Seconds left of the ten minutes, while waiting.
+    /// Seconds left of the ten minutes, while the request is open.
     #[ts(type = "number")]
     pub expires_in_secs: u64,
+    /// Tries left for the digits, after a wrong entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub tries_left: Option<u8>,
 }
 }
 
@@ -152,18 +158,27 @@ pub struct AccountApprovalRequest {
     pub near: Option<String>,
     /// RFC 3339.
     pub asked_at: String,
-    pub digits: String,
+    /// This device allowed it and showed the digits; the new device has not typed them yet.
+    pub allowed: bool,
     #[ts(type = "number")]
     pub expires_in_secs: u64,
 }
 }
 
-wire! {
-/// "Codes don't match" closes the request with that reason; "Don't allow" without it.
-pub struct AccountDeny {
-    #[serde(default)]
-    pub codes_differ: bool,
+/// What letting a new device in answers with: the six digits to type on the new device, in two
+/// groups ("418 207"). They are the trusted device's to show and are never logged.
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct AccountApproved {
+    pub digits: String,
 }
+
+impl fmt::Debug for AccountApproved {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AccountApproved")
+            .field("digits", &"[redacted]")
+            .finish_non_exhaustive()
+    }
 }
 
 wire_enum! {
@@ -211,13 +226,6 @@ pub struct AccountInvite {
 }
 
 wire! {
-pub struct AccountSignUpStart {
-    pub invite: String,
-    pub email: String,
-}
-}
-
-wire! {
 pub struct AccountCode {
     pub code: String,
 }
@@ -231,7 +239,6 @@ pub struct AccountDevice {
     /// `planner` or `engineering`.
     pub app: String,
     pub trusted_since: String,
-    pub last_seen: String,
     pub current: bool,
 }
 }
@@ -245,7 +252,7 @@ pub struct AccountSignOut {
 }
 
 /// A password in a request body. It prints as `[redacted]`, is cleared from memory when
-/// dropped and is never serialised. The web UI builds the three request bodies below by hand,
+/// dropped and is never serialised. The web UI builds the request bodies below by hand,
 /// so none of them is exported to TypeScript.
 #[derive(Deserialize)]
 #[serde(transparent)]
@@ -276,10 +283,19 @@ pub struct AccountSignIn {
     pub password: SecretText,
 }
 
-/// The last step of sign-up: the password for the new account.
+/// The password step of sign-up: it creates the account and emails the code. The invite and the
+/// email come with it because the earlier steps send nothing.
 #[derive(Debug, Deserialize)]
-pub struct AccountRegister {
+pub struct AccountSignUp {
+    pub invite: String,
+    pub email: String,
     pub password: SecretText,
+}
+
+/// The six digits typed on the new device. They are checked once and never read back or logged.
+#[derive(Debug, Deserialize)]
+pub struct AccountDigits {
+    pub digits: SecretText,
 }
 
 wire_enum! {
