@@ -24,10 +24,11 @@ use super::errors::map;
 use super::shared::Shared;
 use crate::account::device_api::{DeviceApi, DeviceError, DeviceStatus, Version, ZoneSnapshot};
 use crate::account::merge::{Field, Record, Stamp};
-use crate::account::settings_record::ZONE;
 
-const RECORD_TYPE: &str = "person_settings";
-const RECORD_ID: &str = "person";
+// The Engine's own names for the zone and the record, re-exported by the device client.
+const ZONE: &str = dc::ZONE_SETTINGS;
+const RECORD_TYPE: &str = dc::PERSON_SETTINGS;
+const RECORD_ID: &str = dc::PERSON_RECORD_ID;
 
 pub struct EngineZones<T, S, C> {
     shared: Arc<Shared<T, S, C>>,
@@ -54,7 +55,9 @@ impl<T, S, C> Drop for EngineZones<T, S, C> {
 fn to_app(fields: Option<&dc::Fields>) -> Record {
     fields
         .map(|fields| {
-            fields
+            // `Settings` keeps the settings that never leave a device out, whatever arrives.
+            let settings = dc::Settings::from_fields(fields.clone()).into_fields();
+            settings
                 .0
                 .iter()
                 .filter(|(name, _)| !name.starts_with('_'))
@@ -224,7 +227,9 @@ where
                     any = true;
                 }
             }
-            if any {
+            // The Engine's settings type drops what never syncs before anything is staged.
+            let changes = dc::Settings::from_fields(changes).into_fields();
+            if any && !changes.0.is_empty() {
                 engine
                     .stage(ZONE, RECORD_TYPE, RECORD_ID, &changes)
                     .map_err(|_| DeviceError::Server { retryable: false })?;

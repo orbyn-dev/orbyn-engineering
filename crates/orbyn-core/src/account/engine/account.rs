@@ -134,10 +134,11 @@ where
         true
     }
 
-    /// The client at `engine-v0.2.1` has no call that checks an invite alone: the code is checked
-    /// at the password step, which answers `invite_required` when it is not valid.
-    async fn check_invite(&self, _invite: &str) -> Result<(), DeviceError> {
-        Ok(())
+    /// Asks the Engine whether the code can start a sign-up (`POST /v1/invites/check`). A good code
+    /// spends nothing. An unknown, used or expired one is `invite_required`, the existing invite
+    /// state, and too many wrong tries are `rate_limited`, the existing throttled state.
+    async fn check_invite(&self, invite: &str) -> Result<(), DeviceError> {
+        self.shared.client.check_invite(invite).await.map_err(map)
     }
 
     async fn start_sign_up(
