@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
-use orbyn_core::account::{AccountBackendKind, AccountGate};
+use orbyn_core::account::{AccountBackendKind, AccountGate, Password};
 use orbyn_core::crew::Stamper;
 use orbyn_core::crew::fixtures::hold_command;
 use orbyn_core::{Core, CoreConfig};
@@ -78,16 +78,22 @@ impl Served {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    /// A private account, not one of the stand-in's seeded ones, whose password is public.
     async fn sign_in(&self) {
-        let (status, _) = self
-            .call(
-                "POST",
-                "/api/account/sign-in",
-                json!({ "email": "dev@example.com", "password": password() }),
-                None,
+        self.core
+            .account
+            .start_sign_up(
+                "K7QM2XWH9QXA3C2D",
+                "crew-test@example.org",
+                Password::new(password()),
             )
-            .await;
-        assert_eq!(status, 200);
+            .await
+            .unwrap();
+        self.core
+            .account
+            .verify_email_code("ABCDEFGH")
+            .await
+            .unwrap();
     }
 
     /// What the window does before approving: "Confirm it's you" for this hold.

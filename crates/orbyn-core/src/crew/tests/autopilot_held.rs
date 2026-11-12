@@ -19,13 +19,17 @@ fn account_password() -> String {
 }
 
 async fn signed_in(w: &World) {
-    let outcome = w
-        .core
+    // A private account, not one of the stand-in's seeded ones, whose password is public.
+    w.core
         .account
-        .sign_in("dev@example.com", Password::new(account_password()))
+        .start_sign_up(
+            "K7QM2XWH9QXA3C2D",
+            "crew-test@example.org",
+            Password::new(account_password()),
+        )
         .await
         .unwrap();
-    assert_eq!(outcome, orbyn_contracts::AccountSignInOutcome::Signed);
+    w.core.account.verify_email_code("ABCDEFGH").await.unwrap();
 }
 
 /// What the window does: "Confirm it's you" for this hold, answering with the nonce.
@@ -373,7 +377,10 @@ async fn deny_needs_no_password_and_the_same_command_is_not_held_again() {
     let denied = w.core.autopilot_deny_held(&hold).unwrap();
     assert_eq!(denied.state, State::Denied);
     let row = &events(&w, &id, "denied_by_person")[0];
-    assert_eq!(row.body["decided_by"], "person");
+    assert_eq!(
+        row.body["decided_by"], "local_caller",
+        "no proof of who called"
+    );
     assert_eq!(row.body["hold"], hold);
     // One decision each: a second answer is refused.
     assert!(matches!(
@@ -531,4 +538,27 @@ async fn with_the_flag_off_none_of_it_exists() {
         w.core.autopilot_dismiss_held("hold-x"),
         Err(CoreError::NotFound(_))
     ));
+}
+
+#[tokio::test]
+async fn approve_once_is_refused_while_a_seeded_stand_in_account_is_signed_in() {
+    let (w, id) = running().await;
+    let lead = Scripted::no("alpha", "alpha");
+    w.core.set_crew_approvers(approvers(&lead, &[]));
+    // The seeded account's password is public, so anything holding the token could confirm as it.
+    let outcome = w
+        .core
+        .account
+        .sign_in("dev@example.com", Password::new(account_password()))
+        .await
+        .unwrap();
+    assert_eq!(outcome, orbyn_contracts::AccountSignInOutcome::Signed);
+    let hold = hold_of(&w, &id, "make deploy").await;
+    let nonce = nonce_for(&w, &hold).await;
+    let refused = w.core.autopilot_approve_once(&hold, Some(&nonce)).await;
+    match refused {
+        Err(CoreError::PolicyDenied(words)) => assert!(words.contains("stand-in"), "{words}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(state_of(&w, &hold), State::Held);
 }

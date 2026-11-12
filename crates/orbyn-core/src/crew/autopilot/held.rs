@@ -50,8 +50,13 @@ const KEPT: usize = 200;
 /// token (a worker, per #441) cannot approve; it is for one hold, used up by its first use, ten minutes at most, in memory only.
 /// **What it does not:** it needs a signed-in account (without one, nothing can be approved once), and a worker that can read
 /// the password or drive the window (the sandbox, #441) can still defeat it. Deny and dismiss need no password, so a caller
-/// with the token can deny or dismiss a hold (never approve one). A dedicated confirmation action replaces this id convention
-/// once the account's own code can change.
+/// with the token can deny or dismiss a hold (never approve one).
+///
+/// **In release builds approve-once always fails** (`account_disabled`: the account is off). **In dev builds the stand-in
+/// account's password is public**, so a worker holding the token (#441) could call `/api/account/confirm` itself, by a script N1
+/// does not read, and approve its own hold: the protection is only as strong as the account password. As a code guard,
+/// approve-once is refused while a seeded stand-in account (an `@example.com` address on the development backend) is signed in.
+/// A dedicated confirmation action replaces this id convention once the account's own code can change.
 pub const CONFIRM_PREFIX: &str = "crew-approve-once:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,8 +240,15 @@ impl HeldBook {
             stage: Stage::Held,
             ask: Some(new.ask),
         });
+        // Past the limit the oldest finished holds go. An approval waiting for its retry, an open hold and a denial still in
+        // force (it keeps the same command from being held again) stay until they end.
         while self.items.len() > KEPT {
-            match self.items.iter().position(|i| i.stage != Stage::Held) {
+            let gone = |i: &Held| match i.stage {
+                Stage::Used | Stage::Expired | Stage::Dismissed => true,
+                Stage::Denied => i.deadline <= now,
+                Stage::Held | Stage::Approved => false,
+            };
+            match self.items.iter().position(gone) {
                 Some(at) => {
                     self.items.remove(at);
                 }
@@ -367,7 +379,12 @@ impl Core {
         let needles = self.held_needles(&held.task_id);
         let mut body = json!({
             "hold": held.id,
-            "decided_by": if kind == "held" || kind == "hold_ended" || kind == "hold_used" { "autopilot" } else { "person" },
+            // A deny or a dismiss has no proof of who sent it, so it says only that the call came from a local caller.
+            "decided_by": match kind {
+                "held" | "hold_ended" | "hold_used" => "autopilot",
+                "denied_by_person" | "dismissed_by_person" => "local_caller",
+                _ => "person",
+            },
             "bound": format!("sha256:{}", held.bound),
             "action": { "kind": held.kind, "target": held.shown, "paths": [] },
         });
@@ -406,7 +423,16 @@ impl Core {
         }
         let redacted = crate::crew::withhold(&crate::crew::redact(&ask.target), needles);
         let readable = redacted.chars().count() <= SHOWN_MAX;
-        let shown: String = redacted.chars().take(SHOWN_MAX).collect();
+        let mut shown: String = redacted.chars().take(SHOWN_MAX).collect();
+        // The same last check as a ledger row: what is shown holds no secret and no key text, or nothing is shown and nothing can
+        // be approved.
+        let shown_value = json!(shown);
+        let readable = readable
+            && crate::crew::refuse_secret(&shown_value).is_ok()
+            && crate::crew::refuse_leak(&shown_value, needles).is_ok();
+        if !readable && !shown.is_empty() && crate::crew::refuse_secret(&shown_value).is_err() {
+            shown = "No command can be shown.".to_owned();
+        }
         let new = NewHold {
             task_id: task.id.clone(),
             crew_id: task.crew_id.clone(),
@@ -557,6 +583,12 @@ impl Core {
         if !self.account.available() {
             return Err(CoreError::AccountDisabled);
         }
+        if self.stand_in_account_signed_in().await {
+            return Err(CoreError::PolicyDenied(
+                "Approving once is not available while the development stand-in account is signed in: its password is public."
+                    .into(),
+            ));
+        }
         if !self.account.confirmed_for(&action, nonce) {
             return Err(CoreError::ReauthRequired);
         }
@@ -598,6 +630,25 @@ impl Core {
             &json!({ "via": "local_session", "expires_in_secs": APPROVAL_LIFETIME_SECS }),
         );
         Ok(HeldBook::view(&held, now))
+    }
+
+    /// The development backend, signed in as one of its seeded `@example.com` accounts, whose password is public.
+    async fn stand_in_account_signed_in(&self) -> bool {
+        #[cfg(any(test, debug_assertions))]
+        {
+            if self.config.account_backend != crate::account::AccountBackendKind::Development {
+                return false;
+            }
+            self.account
+                .view(std::env::consts::OS)
+                .await
+                .session
+                .is_some_and(|session| session.email.to_ascii_lowercase().ends_with("@example.com"))
+        }
+        #[cfg(not(any(test, debug_assertions)))]
+        {
+            false
+        }
     }
 
     /// The always-denied list, against the exact request, as it stands now.
@@ -781,6 +832,25 @@ mod tests {
             held(&mut book, &format!("c{n}"));
         }
         assert_eq!(book.add(new_hold("zzz", "w-1"), 102), Added::Full);
+    }
+
+    #[test]
+    fn eviction_keeps_an_approval_an_open_hold_and_a_denial_in_force() {
+        let mut book = HeldBook::default();
+        let approved = held(&mut book, "approved");
+        book.decide(&approved, 101, Stage::Approved).unwrap();
+        let denied = held(&mut book, "denied");
+        book.decide(&denied, 101, Stage::Denied).unwrap();
+        for n in 0..KEPT + 10 {
+            let mut hold = new_hold(&format!("n{n}"), "w-1");
+            hold.task_id = format!("t-{n}");
+            if let Added::New(id) = book.add(hold, 102) {
+                book.decide(&id, 103, Stage::Dismissed).unwrap();
+            }
+        }
+        assert!(book.items.len() <= KEPT + 1);
+        assert_eq!(book.get(&approved).unwrap().stage, Stage::Approved);
+        assert_eq!(book.get(&denied).unwrap().stage, Stage::Denied);
     }
 
     #[test]

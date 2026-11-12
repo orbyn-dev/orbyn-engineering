@@ -16,8 +16,18 @@
 //! are. The Preview flag is never settable from here.
 //!
 //! The same marker makes Autopilot refuse an agent's request to any of these paths (N1), so a worker cannot answer for the person.
-//! There is no confirmation nonce for Crew yet (the account's is its own): a follow-up in #486. Until #441 (workers can read the
-//! service token and the data folder) is fixed, the Preview flag stays for development only.
+//!
+//! **No agent approves; a person may approve once.** A command the chain denied is held (`GET /api/crew/approvals/held`). The person
+//! may approve that exact command once (`POST /api/crew/approvals/{id}/approve-once`), deny it or dismiss it. Approving needs the
+//! account's "Confirm it's you" for this hold: the window asks `POST /api/account/confirm` (`approve_device`, `device_id`
+//! `crew-approve-once:<hold id>`) and sends the nonce back in `x-orbyn-confirm`, so a caller that holds only the service token
+//! (#441) cannot approve. It protects against that caller and nothing more: a worker that can drive the window or read the
+//! password defeats it. **In release builds approve-once always fails with `account_disabled` (the account is off); in dev builds
+//! the stand-in account's password is public, so the protection is only as strong as that password, and approve-once is refused
+//! while a seeded stand-in account is signed in.** Deny and dismiss need no password (they only refuse), so a token holder can
+//! deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers are refused for
+//! all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays for
+//! development only.
 
 use axum::Json;
 use axum::Router;
