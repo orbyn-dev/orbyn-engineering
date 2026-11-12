@@ -2760,8 +2760,8 @@ environment (`process-info*` is denied, but `sysctl` reads of another process's 
 work, and `pgrep -lf` shows the service's arguments). Nothing secret is meant to be there: the lead
 bridge's MCP endpoint (token included) is read from an owner-only file in the lead's run folder, which the profile
 denies to other runs' workers, and the Claude run's `--mcp-config` is a path to a file in the run folder (for a process
-started ahead of the next turn, a `warm-<id>` folder under `runs/`, removed when that process ends or is adopted by
-its run and by the start-up sweep, never a shared temporary folder); Codex
+started ahead of the next turn, a `warm-<id>` folder under `runs/`, removed when Orbyn drops that process or, once adopted,
+at its run's end, and by the start-up sweep, never a shared temporary folder); Codex
 receives its endpoint over its own standard input. A test starts the bridge and reads its live arguments and
 environment the way a worker could (macOS and Linux) and finds only the file's path, and unit tests check that the
 file is mode 0600, that no stdio or Claude entry carries the token and that the run folder is removed at run end; a
