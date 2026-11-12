@@ -60,22 +60,25 @@ impl RunManager {
 }
 
 /// The lead's own transcript lives in the same folder as the worker's: for Claude, its saved
-/// conversations are closed except the worker's own session. Other engines keep theirs
-/// elsewhere, and `docs/crew.md` lists them as not covered.
+/// conversations are closed except the worker's own session. Any other engine gets the folder
+/// closed outright; its own conversations are elsewhere and `docs/crew.md` lists them as not
+/// covered.
 fn close_transcripts(
     confinement: Confinement,
     family: &str,
     projects: Option<std::path::PathBuf>,
     resume: Option<&str>,
 ) -> Result<Confinement> {
-    if family != "claude" {
-        return Ok(confinement);
-    }
     let projects = projects.ok_or_else(|| {
         CoreError::EngineUnavailable(
             "A crew worker could not be restricted: Claude's folder is unknown.".into(),
         )
     })?;
+    if family != "claude" {
+        // No allowance: an ACP agent that wraps Claude Code and writes its sessions here
+        // cannot run as a worker until it can take a `--session-id`.
+        return confinement.with_closed_claude_folder(&projects);
+    }
     confinement.with_claude_transcripts(&projects, resume)
 }
 
@@ -99,10 +102,11 @@ mod tests {
         );
         let later =
             close_transcripts(rules.clone(), "claude", projects.clone(), Some("s1")).unwrap();
-        assert_eq!(later.transcripts.unwrap().session, "s1");
-        // Another engine is left as it was, whatever folder is named.
+        assert_eq!(later.transcripts.unwrap().session.as_deref(), Some("s1"));
+        // Another engine gets the folder closed with no session of its own.
         let acp = close_transcripts(rules.clone(), "gemini", projects, None).unwrap();
-        assert_eq!(acp, rules);
+        assert_eq!(acp.fresh_session(), None);
+        assert_eq!(acp.transcripts.unwrap().session, None);
         // No home folder, or one that does not resolve: the worker is refused.
         assert!(close_transcripts(rules.clone(), "claude", None, None).is_err());
         let missing = Some(dir.path().join("none/projects"));

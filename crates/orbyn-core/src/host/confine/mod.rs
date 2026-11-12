@@ -72,8 +72,9 @@ pub struct Transcripts {
     /// The folder of per-project folders (Claude's `<config>/projects`), canonical.
     pub root: PathBuf,
     /// The worker's own session id: its `<id>.jsonl` and `<id>/` stay readable and writable
-    /// in whichever project folder the engine keys them under.
-    pub session: String,
+    /// in whichever project folder the engine keys them under. None for an engine that has no
+    /// business in this folder: the whole folder is then closed.
+    pub session: Option<String>,
     /// True when the session does not exist yet and the engine is told to use this id
     /// (`--session-id`), so the allowance can name it before it is written.
     pub fresh: bool,
@@ -116,12 +117,19 @@ impl Confinement {
     /// turn, or `None` for its first turn, which then starts under a new id. A folder that
     /// does not resolve, or an id the engine could not have made, is an error: a rule that
     /// names nothing would leave the lead's transcript open.
-    pub fn with_claude_transcripts(
-        mut self,
-        projects: &Path,
-        session: Option<&str>,
-    ) -> Result<Self> {
-        let transcripts = Transcripts::claude(projects, session)?;
+    pub fn with_claude_transcripts(self, projects: &Path, session: Option<&str>) -> Result<Self> {
+        self.with_transcripts(Transcripts::claude(projects, session)?)
+    }
+
+    /// Closes Claude's saved conversations to a worker that is not Claude, with no allowance:
+    /// an engine of another family has no session there. A folder that does not exist yet is
+    /// named as given (it holds nothing to read, and the rules still stop a worker making it
+    /// a link); one that exists resolves as for a Claude worker.
+    pub fn with_closed_claude_folder(self, projects: &Path) -> Result<Self> {
+        self.with_transcripts(Transcripts::closed(projects)?)
+    }
+
+    fn with_transcripts(mut self, transcripts: Transcripts) -> Result<Self> {
         if self.data.starts_with(&transcripts.root) || transcripts.root.starts_with(&self.data) {
             return Err(CoreError::EngineUnavailable(format!(
                 "A crew worker could not be restricted: {} overlaps Orbyn's data folder.",
@@ -138,7 +146,7 @@ impl Confinement {
         self.transcripts
             .as_ref()
             .filter(|transcripts| transcripts.fresh)
-            .map(|transcripts| transcripts.session.as_str())
+            .and_then(|transcripts| transcripts.session.as_deref())
     }
 
     /// These rules for an engine whose executable is `program`: one that lives under
@@ -182,17 +190,7 @@ fn inside(data: &Path, allowed: PathBuf) -> Result<PathBuf> {
 
 impl Transcripts {
     fn claude(projects: &Path, session: Option<&str>) -> Result<Self> {
-        // A relative folder would mean something else to the engine, which starts elsewhere.
-        let config = projects
-            .parent()
-            .filter(|config| config.is_absolute())
-            .ok_or_else(|| {
-                CoreError::EngineUnavailable(format!(
-                    "A crew worker could not be restricted: {} is not an absolute folder.",
-                    projects.display()
-                ))
-            })?;
-        let config = canonical(config)?;
+        let config = canonical(&config_of(projects)?)?;
         let (session, fresh) = match session {
             Some(id) if usable_session(id) => (id.to_owned(), false),
             Some(_) => {
@@ -204,20 +202,55 @@ impl Transcripts {
             None => (new_session()?, true),
         };
         Ok(Self {
-            root: resolved_or_named(&config, "projects")?,
-            session,
+            root: not_a_link(&config, "projects")?,
+            session: Some(session),
             fresh,
-            history: resolved_or_named(&config, "history.jsonl")?,
+            history: not_a_link(&config, "history.jsonl")?,
+        })
+    }
+
+    fn closed(projects: &Path) -> Result<Self> {
+        let config = config_of(projects)?;
+        let config = match std::fs::canonicalize(&config) {
+            Ok(found) => found,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => config,
+            Err(_) => canonical(&config)?,
+        };
+        Ok(Self {
+            root: not_a_link(&config, "projects")?,
+            session: None,
+            fresh: false,
+            history: not_a_link(&config, "history.jsonl")?,
         })
     }
 }
 
-/// `config/name` through its links when it exists, else under the canonical `config`: a rule
-/// by path would miss a file that a link points elsewhere.
-fn resolved_or_named(config: &Path, name: &str) -> Result<PathBuf> {
+/// The configuration folder above `projects`; relative would mean something else to the
+/// engine, which starts elsewhere.
+fn config_of(projects: &Path) -> Result<PathBuf> {
+    projects
+        .parent()
+        .filter(|config| config.is_absolute())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            CoreError::EngineUnavailable(format!(
+                "A crew worker could not be restricted: {} is not an absolute folder.",
+                projects.display()
+            ))
+        })
+}
+
+/// `config/name`, refused when it is a link. A rule by path cannot follow a link that the
+/// worker (or anyone) later swaps, and the folders above a link's target are not protected, so
+/// a linked folder or file is not restricted at all: no worker starts.
+fn not_a_link(config: &Path, name: &str) -> Result<PathBuf> {
     let path = config.join(name);
-    match std::fs::canonicalize(&path) {
-        Ok(found) => Ok(found),
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: {} is a link.",
+            path.display()
+        ))),
+        Ok(_) => Ok(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
         Err(error) => Err(CoreError::EngineUnavailable(format!(
             "A crew worker could not be restricted: {} did not resolve ({error}).",

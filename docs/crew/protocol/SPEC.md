@@ -415,7 +415,8 @@ These are named so nobody assumes them. They arrive in later versions of this pr
     cover the network, the loopback service (its token is the guard), the OS keychain, the engine's own
     login files, the saved conversations of engines other than Claude, Claude's per-session files other
     than its transcripts, or other files of the same user. For a Claude worker the profile also denies the other
-    sessions' saved Claude conversations (the lead's own transcript) and Claude's prompt history. An ACP lead's bridge process carries its MCP endpoint token
+    sessions' saved Claude conversations (the lead's own transcript) and Claude's prompt history, and for any other
+    engine it denies that folder with no exception; Claude's `plans/`, `paste-cache/` and `session-env/` stay open. An ACP lead's bridge process carries its MCP endpoint token
     in its environment, so a worker could read and use it: a known limit, tracked separately.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.

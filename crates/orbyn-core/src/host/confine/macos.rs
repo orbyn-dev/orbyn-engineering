@@ -19,17 +19,21 @@ const TOOL: &str = "/usr/bin/sandbox-exec";
 const HEAD: &str = "(version 1)\n(allow default)\n\
     (deny file-read* file-write* (subpath (param \"DATA\")))\n\
     (allow file-read* file-write* (subpath (param \"RUN\")))\n";
-/// A saved-conversations folder is denied whole, then the one session the worker owns is
+/// A saved-conversations folder is denied whole, and so is the prompt history. A worker of
+/// another engine gets nothing back. A Claude worker then gets the one session it owns,
 /// allowed by pattern: any project folder directly under the root, then `<id>.jsonl` or
 /// anything under `<id>/`. The pattern is what lets a first turn, whose project folder does
 /// not exist yet, and a folder Claude names in a way this code does not repeat (a long path,
 /// a link) still work, while a session created later by another thread stays denied. The
 /// folder and the pattern's own parts arrive as parameters (`TQ` is the folder with its
-/// pattern characters escaped); a project folder may be created and looked at, not listed.
+/// pattern characters escaped). Only a directory may be created at the root or directly
+/// under it: a link there would send a later session, or a memory file the lead loads, to a
+/// place the worker reads and writes.
 const TRANSCRIPTS: &str = r#"(deny file-read* file-write* (subpath (param "TR")))
 (deny file-read* file-write* (literal (param "TH")))
-(allow file-read-metadata (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))
-(allow file-write-create (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))
+"#;
+const OWN_SESSION: &str = r#"(allow file-read-metadata (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))
+(allow file-write-create (require-all (vnode-type DIRECTORY) (require-any (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))))
 (allow file-read* file-write* (regex (string-append "^" (param "TQ") "/[^/]+/" (param "TS") "(\\.jsonl|/.*)?$")))
 "#;
 const TAIL: &str = "(deny mach-priv-task-port)\n\
@@ -57,6 +61,13 @@ pub(super) fn profile(confinement: &Confinement) -> String {
     }
     if confinement.transcripts.is_some() {
         text.push_str(TRANSCRIPTS);
+        if confinement
+            .transcripts
+            .as_ref()
+            .is_some_and(|t| t.session.is_some())
+        {
+            text.push_str(OWN_SESSION);
+        }
     }
     // The folders on the way down to an allowance may be looked at (not listed or read), so
     // a path through them can be walked, such as `cd` into the checkout.
@@ -143,11 +154,13 @@ fn parameters(confinement: &Confinement) -> Vec<(String, PathBuf)> {
     }
     if let Some(transcripts) = &confinement.transcripts {
         all.push(("TR".to_owned(), transcripts.root.clone()));
-        all.push((
-            "TQ".to_owned(),
-            PathBuf::from(pattern_text(&transcripts.root)),
-        ));
-        all.push(("TS".to_owned(), PathBuf::from(&transcripts.session)));
+        if let Some(session) = &transcripts.session {
+            all.push((
+                "TQ".to_owned(),
+                PathBuf::from(pattern_text(&transcripts.root)),
+            ));
+            all.push(("TS".to_owned(), PathBuf::from(session)));
+        }
         all.push(("TH".to_owned(), transcripts.history.clone()));
     }
     for (prefix, paths) in [("M", route(confinement)), ("A", above(confinement))] {
