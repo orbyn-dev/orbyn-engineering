@@ -8,6 +8,7 @@
 //! | Input | Answer |
 //! | --- | --- |
 //! | invite `K7QM-2XWH-9QXA-3C2D` | accepted; any other well-formed invite is refused |
+//! | invite `K7QM-2XWH-9QXA-3C2E` | the check is `RateLimited` for 90 seconds |
 //! | emailed code `ABCD-EFGH` | accepted, after the password step, for an address with no account; any other is `InvalidCode`, the fifth wrong one in a row refuses every code until a new one is sent, and an address that already has an account is `InvalidCode` too and keeps its account |
 //! | `dev@example.com` and the password below | signed in |
 //! | `two@example.com` | asks for a code: `123456` or the recovery code `ABCDE-FGH23` |
@@ -39,6 +40,8 @@ use super::digits::{self, Check, Issued};
 use super::fake::FakeDeviceApi;
 
 pub const INVITE: &str = "K7QM2XWH9QXA3C2D";
+/// A well-formed invite whose check is rate limited, as the Engine does after too many wrong tries.
+pub const INVITE_LIMITED: &str = "K7QM2XWH9QXA3C2E";
 pub const EMAIL_CODE: &str = "ABCDEFGH";
 /// The digits a canned trusted device shows for the new device's own request.
 pub const DEV_DIGITS: &str = "418207";
@@ -357,6 +360,12 @@ impl AccountApi for DevAccount {
     }
 
     async fn check_invite(&self, invite: &str) -> Result<(), DeviceError> {
+        if invite == INVITE_LIMITED {
+            return Err(DeviceError::RateLimited {
+                retry_after: Duration::from_secs(90),
+            });
+        }
+        // Checking uses nothing up: the same good code passes any number of times.
         if invite == INVITE {
             Ok(())
         } else {

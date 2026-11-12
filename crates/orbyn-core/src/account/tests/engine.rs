@@ -243,11 +243,51 @@ async fn dont_allow_starts_an_approval_and_denies_it_so_the_new_device_sees_it_e
 }
 
 #[tokio::test]
-async fn dont_allow_falls_back_to_removing_the_device_when_an_approval_cannot_start() {
+async fn dont_allow_that_cannot_start_an_approval_says_so_and_stays_listed_for_a_retry() {
     let (server, approver, _newcomer) = pair();
     server.refuse("/v1/devices/approvals", 500, "server_error");
+    let failed = approver.account.deny(NEWCOMER).await;
+    assert!(failed.is_err());
+    assert!(!server.was_removed(NEWCOMER), "no remove_device fallback");
+    assert_eq!(approver.account.approval_requests().await.unwrap().len(), 1);
+    server.clear_refusal();
     approver.account.deny(NEWCOMER).await.unwrap();
-    assert!(server.was_removed(NEWCOMER));
+    assert!(
+        approver
+            .account
+            .approval_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!server.was_removed(NEWCOMER));
+}
+
+#[tokio::test]
+async fn the_invite_step_asks_the_engine_and_a_good_code_spends_nothing() {
+    let (server, approver, _newcomer) = pair();
+    server.allow_invite("GOODINVITE");
+    for _ in 0..2 {
+        approver.account.check_invite("GOODINVITE").await.unwrap();
+    }
+    assert_eq!(
+        approver.account.check_invite("OTHERINVITE").await.err(),
+        Some(DeviceError::InviteRequired)
+    );
+    server.limit_invites(true);
+    assert!(matches!(
+        approver.account.check_invite("GOODINVITE").await.err(),
+        Some(DeviceError::RateLimited { .. })
+    ));
+    assert_eq!(
+        crate::account::api::refusal(&DeviceError::InviteRequired).code(),
+        "invite_required"
+    );
+}
+
+#[test]
+fn the_zone_and_record_names_are_the_engines_own() {
+    assert_eq!(crate::account::settings_record::ZONE, dc::ZONE_SETTINGS);
 }
 
 #[tokio::test]
