@@ -1,10 +1,5 @@
 /* Diff options and file views */
 
-.diff-commit {
-  margin: 4px 8px;
-  max-width: calc(100% - 16px);
-}
-
 .file-modes {
   margin: 4px 8px;
 }

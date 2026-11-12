@@ -97,23 +97,73 @@ it("the arrow keys move between rows of the file list", async () => {
 // scope menu, turn and commit pickers, jj
 it("the scope menu names the five scopes and a pick reads that scope", async () => {
   const user = userEvent.setup();
-  const diff = setup();
-  vi.spyOn(api, "checkpoints").mockResolvedValue([
-    { run_id: "r1", start: "s1", end: "e1", created_at: "" },
-    { run_id: "r2", start: "s2", end: "e2", created_at: "" },
-  ]);
+  setup();
   await open();
   await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
   const menu = await screen.findByRole("menu", { name: "Scope" });
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Working tree", "Turn", "Thread", "Branch", "Commit"]);
-  await user.click(within(menu).getByRole("menuitem", { name: "Turn" }));
-  const picker = await screen.findByRole("combobox", { name: "Turn" });
-  expect(picker).toHaveValue("r2");
+  await user.click(within(menu).getByRole("menuitem", { name: "Branch" }));
+  expect(screen.getByRole("button", { name: "Scope: Branch" })).toBeInTheDocument();
+  expect(screen.queryByRole("menu", { name: "Turn" })).toBeNull();
+});
+
+// changes-turn-picker
+it("choosing Turn opens the drawn turn list: newest first, the current one checked, with time, totals and files; a pick changes the scope in place", async () => {
+  const user = userEvent.setup();
+  const diff = setup();
+  vi.spyOn(api, "checkpoints").mockResolvedValue([
+    { run_id: "r1", start: "s1", end: "e1", created_at: "2026-11-12T14:12:00" },
+    { run_id: "r2", start: "s2", end: "e2", created_at: "2026-11-12T14:31:00" },
+  ]);
+  await open();
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
+  const picker = await screen.findByRole("menu", { name: "Turn" });
+  expect(within(picker).getByText("Turns in this thread")).toBeInTheDocument();
+  expect(screen.queryByRole("combobox")).toBeNull();
+  const rows = within(picker).getAllByRole("menuitem");
+  expect(rows.map((row) => row.getAttribute("data-label"))).toEqual(["Turn 2", "Turn 1"]);
+  expect(rows[0]).toHaveAttribute("aria-current", "true");
+  expect(rows[1]).not.toHaveAttribute("aria-current");
+  await waitFor(() => expect(rows[0]).toHaveTextContent("14:31 · +4 −3 · 2 files"));
+  expect(screen.getByRole("button", { name: "Compare turn 1 to turn 2" })).toBeInTheDocument();
   await waitFor(() => expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "turn&run=r2"));
-  await user.selectOptions(picker, "r1");
+  await user.click(within(picker).getByRole("menuitem", { name: /^Turn 1/ }));
   await waitFor(() => expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "turn&run=r1"));
+  expect(screen.queryByRole("menu", { name: "Turn" })).toBeNull();
   expect(screen.getByRole("button", { name: "Scope: Turn" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Compare start to turn 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Restore files to before this response" })).toBeInTheDocument();
+  // The pair opens the list again.
+  await user.click(screen.getByRole("button", { name: "Compare start to turn 1" }));
+  expect(await screen.findByRole("menu", { name: "Turn" })).toBeInTheDocument();
+});
+
+// changes-commit-picker
+it("choosing Commit opens the drawn commit list with hash, subject, author and time; a pick changes the scope in place", async () => {
+  const user = userEvent.setup();
+  const diff = setup();
+  vi.spyOn(api, "commits").mockResolvedValue([
+    { sha: "a3f9c21".padEnd(40, "0"), author: "Jo Smith", date: new Date().toISOString(), subject: "Use next for the redirect" },
+    { sha: "7be0d44".padEnd(40, "0"), author: "Mia Kay", date: new Date(Date.now() - 86_400_000 * 20).toISOString(), subject: "Add tests for inside()" },
+  ]);
+  await open();
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Commit" }));
+  const picker = await screen.findByRole("menu", { name: "Commit" });
+  expect(within(picker).getByText("Commits on fix/login")).toBeInTheDocument();
+  expect(screen.queryByRole("combobox")).toBeNull();
+  const rows = within(picker).getAllByRole("menuitem");
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toHaveAttribute("aria-current", "true");
+  expect(rows[0]).toHaveTextContent("a3f9c21Use next for the redirectJS");
+  expect(rows[1]).toHaveTextContent("7be0d44Add tests for inside()MK");
+  expect(screen.getByRole("button", { name: "Compare a3f9c21^ to a3f9c21" })).toBeInTheDocument();
+  await waitFor(() => expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), `commit&sha=${"a3f9c21".padEnd(40, "0")}`));
+  await user.click(rows[1]!);
+  await waitFor(() => expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), `commit&sha=${"7be0d44".padEnd(40, "0")}`));
+  expect(screen.queryByRole("menu", { name: "Commit" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Compare 7be0d44^ to 7be0d44" })).toBeInTheDocument();
 });
 
 it("the Commit scope lists the commits, and a commit's comments show only on that commit", async () => {
@@ -125,7 +175,7 @@ it("the Commit scope lists the commits, and a commit's comments show only on tha
   expect(await screen.findByRole("note", { name: "Review comment auth/redirect.ts:16" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
   await user.click(await screen.findByRole("menuitem", { name: "Commit" }));
-  await screen.findByRole("combobox", { name: "Commit" });
+  await screen.findByRole("menu", { name: "Commit" });
   await waitFor(() => expect(screen.queryByRole("note", { name: "Review comment auth/redirect.ts:16" })).toBeNull());
 });
 
@@ -367,7 +417,7 @@ it("a Markdown file of a Commit scope has no Rendered, since the checkout is not
   expect(screen.getByRole("radiogroup", { name: "View" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
   await user.click(await screen.findByRole("menuitem", { name: "Commit" }));
-  await screen.findByRole("combobox", { name: "Commit" });
+  await screen.findByRole("menu", { name: "Commit" });
   await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "View" })).toBeNull());
 });
 
@@ -545,7 +595,25 @@ it("revealing a file opens it in the view", async () => {
 });
 
 // rulings: row actions, paging, empty scopes, lock files, sent comments
-it("a file row's ⋯ menu copies the path and opens the file in the editor", async () => {
+// changes-file-menu
+it("the ⋯ on a file's header holds Open in editor then Copy path, with no keys, and the list rows have none", async () => {
+  const user = userEvent.setup();
+  setup();
+  await open();
+  const header = document.querySelector<HTMLElement>(".fh2")!;
+  expect(within(header).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Open in editor", "Actions for auth/redirect.ts"]);
+  expect(within(screen.getByRole("group", { name: "Changed files" })).queryByRole("button", { name: /^Actions for/ })).toBeNull();
+  const more = screen.getByRole("button", { name: "Actions for auth/redirect.ts" });
+  await user.click(more);
+  const menu = await screen.findByRole("menu", { name: "Actions for auth/redirect.ts" });
+  expect(more).toHaveAttribute("aria-expanded", "true");
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open in editor", "Copy path"]);
+  expect(menu.querySelector(".menu-shortcut")).toBeNull();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu", { name: "Actions for auth/redirect.ts" })).toBeNull());
+});
+
+it("a file's ⋯ menu copies the path and opens the file in the editor", async () => {
   const user = userEvent.setup();
   setup();
   const write = vi.fn().mockResolvedValue(undefined);
@@ -562,17 +630,46 @@ it("a file row's ⋯ menu copies the path and opens the file in the editor", asy
   await waitFor(() => expect(opened).toHaveBeenCalledWith("t", expect.objectContaining({ path: "auth/redirect.ts" })));
 });
 
-it("a long list shows 50 files and ends with a row that shows more", async () => {
+// changes-more-files
+const MANY = (count: number): FileDiff[] =>
+  Array.from({ length: count }, (_, at) => ({ path: `src/f-${String(at).padStart(3, "0")}.ts`, status: "modified", additions: 1, deletions: 0, patch: `@@ -1 +1 @@\n-a\n+b${at}\n` }));
+
+it("a long list shows 50 files, says how many are not shown and a button adds all of them", async () => {
   const user = userEvent.setup();
-  setup(Array.from({ length: 120 }, (_, at) => ({ path: `src/f-${String(at).padStart(3, "0")}.ts`, status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n-a\n+b\n" })));
+  setup(MANY(62));
   await open();
   await screen.findByRole("group", { name: "Changed files" });
   expect(rowsOf()).toHaveLength(50);
-  await user.click(screen.getByRole("button", { name: "Show 70 more files" }));
-  expect(rowsOf()).toHaveLength(100);
-  await user.click(screen.getByRole("button", { name: "Show 20 more files" }));
-  expect(rowsOf()).toHaveLength(120);
+  expect(screen.getByText("12 more files not shown.")).toBeInTheDocument();
+  expect(document.querySelector(".x2n")).toHaveTextContent("+62 −0");
+  await user.click(screen.getByRole("button", { name: "Show 12 more files" }));
+  expect(rowsOf()).toHaveLength(62);
+  expect(screen.queryByText(/more files not shown/)).toBeNull();
   expect(screen.queryByRole("button", { name: /^Show \d+ more/ })).toBeNull();
+});
+
+it("a file revealed past the first 50 opens in the list", async () => {
+  window.history.replaceState(null, "", "#/threads/t");
+  setup(MANY(62));
+  vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "src/f-058.ts", repository_path: "src/f-058.ts" });
+  await open();
+  await screen.findByRole("group", { name: "Changed files" });
+  act(() => useUi.getState().revealDiff("src/f-058.ts", { threadId: "t", cwd: "/repo" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Modified src\/f-058\.ts/ })).toHaveAttribute("aria-current", "true"));
+  expect(rowsOf()).toHaveLength(59);
+  expect(screen.getByText("3 more files not shown.")).toBeInTheDocument();
+});
+
+it("a find match past the first 50 opens that file in the list", async () => {
+  const user = userEvent.setup();
+  setup(MANY(62));
+  await open();
+  await screen.findByRole("group", { name: "Changed files" });
+  screen.getByRole("group", { name: "Patch" }).focus();
+  await user.keyboard("{Meta>}f{/Meta}");
+  await user.type(await screen.findByRole("searchbox", { name: "Find in diff" }), "b55");
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Modified src\/f-055\.ts/ })).toHaveAttribute("aria-current", "true"));
+  expect(rowsOf()).toHaveLength(56);
 });
 
 it("an empty scope says so and links to the nearest scope", async () => {
@@ -586,11 +683,22 @@ it("an empty scope says so and links to the nearest scope", async () => {
   await waitFor(() => expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "branch&base=main"));
 });
 
-it("a minified file collapses like a lock file when long, and a short one does not", async () => {
-  const body = Array.from({ length: 300 }, (_, at) => `+x${at}`).join("\n");
-  setup([{ path: "dist/app.min.js", status: "modified", additions: 300, deletions: 0, patch: `@@ -0,0 +1,300 @@\n${body}\n` }]);
+it.each(["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "dist/app.min.js", "web/styles.min.css"])(
+  "%s collapses by name over 200 lines behind the same row",
+  async (path) => {
+    const body = Array.from({ length: 300 }, (_, at) => `+x${at}`).join("\n");
+    setup([{ path, status: "modified", additions: 300, deletions: 0, patch: `@@ -0,0 +1,300 @@\n${body}\n` }]);
+    await open();
+    expect(await screen.findByText("Large diff: 300 lines not shown.")).toBeInTheDocument();
+  },
+);
+
+it("a lock file of 200 lines or fewer and an ordinary long file are shown as any other file", async () => {
+  const body = (count: number) => Array.from({ length: count }, (_, at) => `+x${at}`).join("\n");
+  setup([{ path: "Cargo.lock", status: "modified", additions: 150, deletions: 0, patch: `@@ -0,0 +1,150 @@\n${body(150)}\n` }]);
   await open();
-  expect(await screen.findByText("Large diff: 300 lines not shown.")).toBeInTheDocument();
+  await screen.findByRole("group", { name: "Changed files" });
+  expect(screen.queryByText(/Large diff/)).toBeNull();
 });
 
 it("a comment reads Sent with your next message until the message is sent, then Sent to the agent", async () => {

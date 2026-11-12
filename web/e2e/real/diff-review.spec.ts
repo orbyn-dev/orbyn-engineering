@@ -75,11 +75,11 @@ test("E18: a large uncommitted diff lists every file, and find counts matches ac
   // One file's lines are drawn at a time, so the list never mounts 130 diffs: every file is a row.
   const rows = page.locator("[data-diff-row^='bulk/']");
   await expect(rows.first()).toBeVisible();
-  // The list draws 50 at a time and ends with a row that shows more.
+  // The list draws its first 50 and says how many are not shown; one button adds them all.
   await expect(rows).toHaveCount(50);
+  await expect(page.getByText(/^\d+ more files not shown\.$/)).toBeVisible();
   await page.getByRole("button", { name: /^Show \d+ more files$/ }).click();
-  await expect(rows).toHaveCount(100);
-  await page.getByRole("button", { name: /^Show \d+ more files$/ }).click();
+  await expect(page.getByText(/more files not shown/)).toHaveCount(0);
   await expect(rows).toHaveCount(130);
   await expect(page.locator("[data-diff-file]")).toHaveCount(1);
   await page.getByRole("group", { name: "Patch" }).focus();

@@ -9,22 +9,27 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
+import { Menu } from "../../../ui/Menu";
+import { Presence } from "../../../ui/Presence";
 import { RestoreFilesDialog } from "./RestoreFilesDialog";
 import { GitActionDialog } from "./GitActionDialog";
 import { createPullRequestPlan } from "../../../product/git/plans";
 import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
 import { openInEditor } from "../files/openInEditor";
-import { openChanged } from "./openChanged";
 import { ChangedFiles } from "./ChangedFiles";
 import { ChangesHeader, DIFF_SOURCES, WIDE, type ComparePair, type DiffSource } from "./ChangesHeader";
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
+import { commitItems, turnItems, type TurnTotals } from "./pickers";
 import { findHits, shownLimit, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 
 const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
-const FILE_PAGE = 50;
+/** The list draws this many rows; Show more files adds the rest. */
+const FILE_CAP = 50;
 /** Where an empty scope sends the person: the scope nearest to it that is likelier to have something. */
 const NEAREST: Record<DiffSource, DiffSource> = { worktree: "branch", turn: "worktree", thread: "worktree", branch: "worktree", commit: "branch" };
+/** The picker menus' widths in the design. */
+const PICKER_WIDTH = { turn: 330, commit: 380 } as const;
 const SKELETON = [60, 90, 75, 85, 50, 80, 70];
 
 /** A Jujutsu checkout's working-copy change, as the installed `jj` describes it. */
@@ -71,6 +76,18 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const turns = checkpoints.data ?? [];
   const [pickedRun, setPickedRun] = useState<string | null>(null);
   const latestRun = (pickedRun && turns.some((turn) => turn.run_id === pickedRun) ? pickedRun : turns.at(-1)?.run_id) ?? null;
+  // What each turn changed, for the turn picker's rows. A turn whose diff can't be read shows no totals.
+  const totals = useAsync(`turn-totals:${threadId}:${version}:${turns.map((turn) => turn.run_id).join(",")}`, (signal) =>
+    source === "turn" && turns.length > 0
+      ? Promise.all(turns.map((turn): Promise<TurnTotals | null> =>
+          api.diff(threadId, signal, `turn&run=${encodeURIComponent(turn.run_id)}`).then(
+            (files) => ({ added: files.reduce((sum, file) => sum + file.additions, 0), removed: files.reduce((sum, file) => sum + file.deletions, 0), files: files.length }),
+            () => null,
+          )))
+      : Promise.resolve([]),
+  );
+  // Where the turn or commit picker is open, under the header.
+  const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const thread = useWorkspace((state) => state.threads[threadId]);
   const linkedPulls = useAsync(`diff-linked:${threadId}`, (signal) => pullsApi.linked(threadId, signal));
   // The same read the header's Git menu uses: a checkout that can't answer Git questions hides what needs Git.
@@ -129,12 +146,25 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [shownFully, setShownFully] = useState<ReadonlySet<string>>(new Set());
-  const [pages, setPages] = useState(1);
+  const [allFiles, setAllFiles] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [needle, setNeedle] = useState("");
   const [hitAt, setHitAt] = useState(0);
   const [width, setWidth] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const placePicker = (kind: "turn" | "commit") => {
+    const head = root.current?.querySelector(".ch2")?.getBoundingClientRect();
+    if (head) setPickerAt({ x: Math.max(8, head.right - PICKER_WIDTH[kind] - 8), y: head.bottom + 4 });
+  };
+  const openPicker = () => {
+    if (source === "turn" || source === "commit") placePicker(source);
+  };
+  // Choosing Turn or Commit in the scope menu changes the scope and opens the list to pick which one.
+  const pickSource = (next: DiffSource) => {
+    setSource(next);
+    setPickerAt(null);
+    if (next === "turn" || next === "commit") placePicker(next);
+  };
 
   // The panel's own width decides the header's rows, where the list sits and whether Split is on offer.
   useLayoutEffect(() => {
@@ -184,7 +214,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     if (hitPath) setPickedPath(hitPath);
   }, [hitKey, hitPath]);
   useEffect(() => setHitAt(0), [wanted]);
-  useEffect(() => setPages(1), [source, filter]);
+  useEffect(() => setAllFiles(false), [source, filter]);
 
   useEffect(() => {
     if (!reveal) return;
@@ -215,6 +245,18 @@ export function DiffPanel({ threadId }: { threadId: string }) {
         onBase: setPickedBase,
       }
     : null;
+  const commitList = commits.data ?? [];
+  const turnAt = latestRun ? turns.findIndex((turn) => turn.run_id === latestRun) : -1;
+  // Turn and Commit compare something definite, so their pair names it and opens the picker.
+  const pickerPair: ComparePair | null =
+    source === "turn" && turnAt >= 0
+      ? { base: turnAt > 0 ? `turn ${turnAt}` : "start", head: `turn ${turnAt + 1}`, bases: [], enabled: true, onBase: () => undefined, onOpen: openPicker }
+      : source === "commit" && sha
+        ? { base: `${sha.slice(0, 7)}^`, head: sha.slice(0, 7), bases: [], enabled: true, onBase: () => undefined, onOpen: openPicker }
+        : null;
+  const pickerItems = source === "turn"
+    ? turnItems(turns, totals.data ?? [], latestRun, setPickedRun)
+    : source === "commit" ? commitItems(commitList, sha, setPicked) : [];
   const scopeLabel = DIFF_SOURCES.find((entry) => entry.id === source)?.label ?? "";
   const loading = diff.status === "loading";
   const failed = diff.status === "error";
@@ -250,8 +292,8 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       bar={bar}
     />
   ) : null;
-  // The list draws a page of files at a time, and always the one on show.
-  const upTo = Math.max(pages * FILE_PAGE, listed.findIndex((file) => file.path === selectedPath) + 1);
+  // The list draws its first 50 rows, and always the one on show (a picked file or a find match opens past the cap).
+  const upTo = allFiles ? listed.length : Math.max(FILE_CAP, listed.findIndex((file) => file.path === selectedPath) + 1);
   const list = (
     <ChangedFiles
       files={listed.slice(0, upTo)}
@@ -260,9 +302,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       filter={filter}
       onFilter={setFilter}
       onPick={setPickedPath}
-      onMore={() => setPages((now) => now + 1)}
-      onCopy={(path) => void navigator.clipboard?.writeText(path).then(() => useUi.getState().pushToast("Path copied"))}
-      onOpen={(path) => void openChanged(threadId, thread?.cwd ?? "", path, "editor")}
+      onMore={() => setAllFiles(true)}
     />
   );
 
@@ -281,27 +321,26 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       <JjChange threadId={threadId} version={version} />
       <ChangesHeader
         source={source}
-        onSource={setSource}
+        onSource={pickSource}
         total={loading ? null : failed ? undefined : conflicts > 0 ? { conflicts } : { added, removed }}
         wide={wide}
-        pair={pair}
+        pair={pickerPair ?? pair}
         refreshing={diff.refreshing}
         onRefresh={reload}
       />
-      {source === "commit" ? (
-        <select className="diff-commit" aria-label="Commit" value={sha ?? ""} onChange={(event) => setPicked(event.target.value)}>
-          {(commits.data ?? []).map((commit) => (
-            <option key={commit.sha} value={commit.sha}>{commit.subject}</option>
-          ))}
-        </select>
-      ) : null}
-      {source === "turn" && turns.length > 0 ? (
-        <select className="diff-commit" aria-label="Turn" value={latestRun ?? ""} onChange={(event) => setPickedRun(event.target.value)}>
-          {turns.map((turn, at) => (
-            <option key={turn.run_id} value={turn.run_id}>{`Turn ${at + 1} of ${turns.length}`}</option>
-          ))}
-        </select>
-      ) : null}
+      <Presence>
+        {pickerAt && pickerItems.length > 0 && (source === "turn" || source === "commit") ? (
+          <Menu
+            x={pickerAt.x}
+            y={pickerAt.y}
+            label={source === "turn" ? "Turn" : "Commit"}
+            heading={source === "turn" ? "Turns in this thread" : `Commits on ${branches.data?.find((branch) => branch.current)?.name ?? "this branch"}`}
+            minWidth={PICKER_WIDTH[source]}
+            items={pickerItems}
+            onClose={() => setPickerAt(null)}
+          />
+        ) : null}
+      </Presence>
       {loading ? (
         <Placeholders />
       ) : failed ? (

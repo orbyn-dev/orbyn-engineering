@@ -509,32 +509,41 @@
   margin: 0;
   padding: 6px 12px 0;
 }
-.x2-pbody > .diff-commit {
-  margin: 6px 10px 0;
-  max-width: calc(100% - 20px);
+/* The turn and commit pickers: a row of a commit reads hash, subject, author and time. */
+.popup-menu .pk-hash {
+  flex: none;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
 }
-.flrow {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.flrow .fli {
+.popup-menu .pk-subject {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.flrow .flmore {
-  position: absolute;
-  right: 4px;
-  display: none;
+.popup-menu .pk-who {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--color-rowHover);
+  color: var(--color-muted);
+  font-size: var(--text-caption);
+  font-weight: 500;
 }
-.flrow:hover .flmore,
-.flrow:focus-within .flmore,
-.flrow .flmore[aria-expanded="true"] {
-  display: inline-flex;
+.popup-menu .pk-when {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--text-label);
 }
-.flrow:hover .fli .num,
-.flrow:focus-within .fli .num {
-  visibility: hidden;
+/* The file menu's ⋯ stays pressed while its menu is open. */
+.fh2 .fmore[aria-expanded="true"] {
+  background: var(--color-selected);
+  color: var(--color-selectedText);
 }
 .linkish {
   padding: 0;

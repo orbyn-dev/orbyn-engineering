@@ -303,5 +303,8 @@ test("a link to a commit here opens it in Diff", async ({ page }) => {
   await expect(page).toHaveURL(/#\/threads\//);
   await page.getByRole("link", { name: "this commit" }).click();
   await expect(page.getByRole("button", { name: "Scope: Commit" })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: /commit/i })).toContainText("First");
+  // The commit the link names is the one the pair reads, and the picker lists it checked.
+  await page.getByRole("button", { name: /^Compare \w+\^ to \w+$/ }).click();
+  const picked = page.getByRole("menu", { name: "Commit" }).getByRole("menuitem", { name: /First/ });
+  await expect(picked).toHaveAttribute("aria-current", "true");
 });
