@@ -1,7 +1,9 @@
 name: Release
 
 # Maintainer-triggered only. This workflow runs no pull-request code and does
-# not publish: it uploads signed bundles for a person to review and promote.
+# not publish: it uploads bundles for a person to review and promote. macOS
+# bundles are signed with the Apple secrets only when they exist; otherwise they
+# are ad-hoc signed (no identity, not notarized). Windows bundles are not signed.
 on:
   workflow_dispatch:
 
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   package:
-    name: Signed bundle (${{ matrix.os }})
+    name: Bundle (${{ matrix.os }}, ${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     environment: release
     strategy:
@@ -60,25 +62,57 @@ jobs:
       - name: Build with updater files
         working-directory: desktop
         shell: bash
-        run: >
-          npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-          --config '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"${{ vars.ORBYN_UPDATE_PUBKEY }}"}}}'
+        run: |
+          # With Apple secrets, Tauri signs with them (unchanged). Without them, sign the
+          # whole bundle ad-hoc ("-") during the build so the .app, the dmg and the updater
+          # archive all carry a valid seal. Empty secret variables are cleared first.
+          mac=''
+          if [ "$RUNNER_OS" = macOS ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            mac=',"macOS":{"signingIdentity":"-","hardenedRuntime":false}'
+            echo "No Apple signing identity: ad-hoc signing the macOS bundle."
+          fi
+          npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} \
+            --config '{"bundle":{"createUpdaterArtifacts":true'"$mac"'},"plugins":{"updater":{"pubkey":"${{ vars.ORBYN_UPDATE_PUBKEY }}"}}}'
+      - name: Verify the macOS bundle seal
+        if: runner.os == 'macOS'
+        shell: bash
+        # Fails the job when the .app, or the .app inside the dmg, does not verify, so a
+        # bundle that macOS would call damaged is never uploaded.
+        run: |
+          bundle="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          for app in "$bundle"/macos/*.app; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+          for dmg in "$bundle"/dmg/*.dmg; do
+            mnt="$(mktemp -d)"
+            hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" > /dev/null
+            status=0
+            for app in "$mnt"/*.app; do
+              codesign --verify --deep --strict --verbose=2 "$app" || status=1
+            done
+            hdiutil detach "$mnt" > /dev/null
+            [ "$status" = 0 ] || exit 1
+          done
       - name: Check notarization
         if: runner.os == 'macOS'
         shell: bash
         run: |
           bundle="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           scripts/verify-macos-release.sh "$bundle"/macos/*.app "$bundle"/dmg/*.dmg
-      - name: Sign Windows bundle
+      - name: Report Windows signing state
         if: runner.os == 'Windows'
         shell: bash
+        # This step signs nothing. There is no Authenticode signing step yet, so the
+        # NSIS installer is unsigned whether or not the Azure variables are set.
         env:
           AZURE_CODESIGN_ENDPOINT: ${{ vars.AZURE_CODESIGN_ENDPOINT }}
-          AZURE_CODESIGN_ACCOUNT: ${{ vars.AZURE_CODESIGN_ACCOUNT }}
-          AZURE_CODESIGN_PROFILE: ${{ vars.AZURE_CODESIGN_PROFILE }}
         run: |
-          echo "Azure Trusted Signing must be configured before this job can pass." >&2
-          test -n "$AZURE_CODESIGN_ENDPOINT"
+          if [ -n "$AZURE_CODESIGN_ENDPOINT" ]; then
+            echo "::warning::Azure variables are set, but no signing step exists yet. The Windows installer is NOT signed."
+          else
+            echo "::warning::Azure signing variables are absent. The Windows installer is NOT signed."
+          fi
       - name: Pack the command for install.sh and install.ps1
         shell: bash
         run: node scripts/pack-cli.mjs ${{ matrix.target }} "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
