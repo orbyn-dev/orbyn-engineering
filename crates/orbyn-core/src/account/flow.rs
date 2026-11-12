@@ -355,14 +355,7 @@ impl AccountCenter {
                 Ok(AccountSignInOutcome::SecondFactor)
             }
             Ok(SignInOutcome::AwaitingApproval(pending)) => {
-                self.inner.lock().await.approval = Some(Approval {
-                    request_id: pending.request_id,
-                    asked: Instant::now(),
-                    allowed: false,
-                    tries_left: None,
-                    spent_tries: 0,
-                    answer: None,
-                });
+                self.await_approval(pending.request_id).await;
                 Ok(AccountSignInOutcome::AwaitingApproval)
             }
             Err(error) => {
@@ -373,6 +366,18 @@ impl AccountCenter {
         }
     }
 
+    /// This computer's own request to sign in now waits for a trusted device.
+    async fn await_approval(&self, request_id: String) {
+        self.inner.lock().await.approval = Some(Approval {
+            request_id,
+            asked: Instant::now(),
+            allowed: false,
+            tries_left: None,
+            spent_tries: 0,
+            answer: None,
+        });
+    }
+
     /// A six-digit authenticator code or a recovery code. The fifth wrong one in a row
     /// closes the sign-in, which starts again from the password.
     pub async fn second_factor(&self, code: &str) -> Result<()> {
@@ -381,7 +386,17 @@ impl AccountCenter {
             return Err(invalid("sign_in_closed", "Start signing in again."));
         }
         match backend.account.second_factor(code).await {
-            Ok(session) => self.established(session, true).await,
+            Ok(SignInOutcome::Signed(session)) => self.established(session, true).await,
+            Ok(SignInOutcome::AwaitingApproval(pending)) => {
+                // A new device is still sent to a trusted one; the page follows the view.
+                self.inner.lock().await.second_factor = None;
+                self.await_approval(pending.request_id).await;
+                Ok(())
+            }
+            // The factor is asked once.
+            Ok(SignInOutcome::SecondFactor) => {
+                Err(invalid("sign_in_closed", "Start signing in again."))
+            }
             Err(DeviceError::InvalidCode) => {
                 let mut inner = self.inner.lock().await;
                 let wrong = inner.second_factor.map_or(1, |n| n + 1);

@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use orbyn_contracts::AccountDevice;
@@ -113,7 +114,8 @@ pub struct IncomingApproval {
     pub asked_at: String,
     /// This device allowed it and showed the digits; the new device has not typed them yet.
     pub allowed: bool,
-    /// Seconds the request has left.
+    /// Seconds the request has left, when the Engine says; 0 until it exposes one. The screens
+    /// never show a time left: they say the request expires after ten minutes.
     pub expires_in_secs: u64,
 }
 
@@ -135,8 +137,9 @@ pub trait AccountApi: Send + Sync {
     async fn verify_email_code(&self, code: &str) -> Result<SessionInfo, DeviceError>;
     async fn sign_in(&self, email: &str, password: &Password)
     -> Result<SignInOutcome, DeviceError>;
-    /// An authenticator code (six digits) or a recovery code.
-    async fn second_factor(&self, code: &str) -> Result<SessionInfo, DeviceError>;
+    /// An authenticator code (six digits) or a recovery code. A new device can still be sent on
+    /// to a trusted one ([`SignInOutcome::AwaitingApproval`]).
+    async fn second_factor(&self, code: &str) -> Result<SignInOutcome, DeviceError>;
     /// The new device asks again how its request stands.
     async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError>;
     /// The new device gives its request up.
@@ -146,6 +149,11 @@ pub trait AccountApi: Send + Sync {
     /// On a trusted device: allow the request. It answers with the six digits to show, which the
     /// new device types; the sign-in is not finished until it does.
     async fn approve(&self, request_id: &str) -> Result<ApprovalDigits, DeviceError>;
+    /// The time the Engine says the allowed request has left, asked right after [`Self::approve`].
+    /// A display hint, never used to decide anything; `None` when it is not known.
+    fn time_left(&self, _request_id: &str) -> Option<Duration> {
+        None
+    }
     /// On a trusted device: refuse, or close a request that was allowed.
     async fn deny(&self, request_id: &str) -> Result<(), DeviceError>;
     /// The new device types the six digits. Right ones sign it in, once. Wrong ones are
@@ -207,6 +215,23 @@ pub fn refusal(error: &DeviceError) -> CoreError {
             "Couldn't finish checking this device.",
             None,
         ),
+        DeviceError::ReauthRequired => return CoreError::ReauthRequired,
+        DeviceError::LastTrustedDevice => (
+            "last_trusted_device",
+            "This is the only trusted device on the account.",
+            None,
+        ),
+        DeviceError::AlreadySignedIn => (
+            "already_signed_in",
+            "This computer already belongs to an account.",
+            None,
+        ),
+        DeviceError::KeysNotSaved => (
+            "keys_not_saved",
+            "Couldn't save this device's keys. Try again.",
+            None,
+        ),
+        DeviceError::ApprovalRefused => ("request_gone", "That request has ended.", None),
         DeviceError::Conflict(_)
         | DeviceError::TooLarge
         | DeviceError::InvalidKey

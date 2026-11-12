@@ -7,9 +7,9 @@ import { Dialog } from "../../ui/Dialog";
 import { accountApi } from "./api";
 import { onAccountChange } from "./changes";
 import { Failure } from "./Card";
+import { useCountdown, type Wait } from "./useCountdown";
 import { ConfirmItsYou } from "./ConfirmItsYou";
 import { NETWORK_TEXT, problemOf } from "./problem";
-import { useCountdown, type Wait } from "./useCountdown";
 
 const POLL_MS = 5000;
 const appName = (request: AccountApprovalRequest) => (request.app === "engineering" ? "Orbyn Engineering" : "Orbyn Planner");
@@ -90,7 +90,7 @@ function ApprovePrompt({ request, ended, onClose }: { request: AccountApprovalRe
   const [confirming, setConfirming] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [refusing, setRefusing] = useState(false);
-  const [digits, setDigits] = useState<{ text: string; wait: Wait } | null>(null);
+  const [digits, setDigits] = useState<{ text: string; wait: Wait | null } | null>(null);
   // The dialog closes when its request ends; the password step stays, so what it says about the request is read.
   useEffect(() => {
     if (ended && !confirming) onClose();
@@ -103,7 +103,8 @@ function ApprovePrompt({ request, ended, onClose }: { request: AccountApprovalRe
         subject={`To let ${request.device_name} sign in`}
         onConfirmed={async (nonce) => {
           const allowed = await accountApi.approve(request.id, nonce);
-          setDigits({ text: allowed.digits, wait: { seconds: request.expires_in_secs, at: Date.now() } });
+          // The Engine's count of the time left, when it gives one: shown only, never acted on.
+          setDigits({ text: allowed.digits, wait: allowed.expires_in_secs === undefined ? null : { seconds: allowed.expires_in_secs, at: Date.now() } });
         }}
         onClose={() => setConfirming(false)}
       />
@@ -152,17 +153,18 @@ function ApprovePrompt({ request, ended, onClose }: { request: AccountApprovalRe
 
 /** "418 207" read as digits in two groups: "4 1 8, 2 0 7". */
 const spoken = (digits: string) => `Digits ${digits.split(" ").map((group) => [...group].join(" ")).join(", ")}`;
+
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
-/** The six digits to type on the new device, with the time left. They change each time and are never shown on the new device. */
-function DigitsDialog({ request, digits, wait, refusing, problem, onCancel }: { request: AccountApprovalRequest; digits: string; wait: Wait; refusing: boolean; problem: string | null; onCancel(): void }) {
+/** The six digits to type on the new device. They change each time and are never shown on the new device. */
+function DigitsDialog({ request, digits, wait, refusing, problem, onCancel }: { request: AccountApprovalRequest; digits: string; wait: Wait | null; refusing: boolean; problem: string | null; onCancel(): void }) {
   const left = useCountdown(wait);
   return (
     <Dialog title="Type these digits on the new device" onClose={onCancel} footer={<Button disabled={refusing} onClick={onCancel}>Cancel</Button>}>
       <p>Type these six digits on the {request.device_name} to finish the sign-in. Nothing is signed in until you do.</p>
       <div className="ac-digits">
         <b aria-label={spoken(digits)}>{digits}</b>
-        <small>This request expires in {clock(left ?? 0)}.</small>
+        <small>{left === null ? "This request expires after ten minutes." : `This request expires in ${clock(left)}.`}</small>
       </div>
       {problem ? <Failure>{problem}</Failure> : null}
     </Dialog>

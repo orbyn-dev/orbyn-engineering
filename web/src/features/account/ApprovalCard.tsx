@@ -10,20 +10,17 @@ import { useAfter } from "./useCountdown";
 const POLL_MS = 2000;
 /** Failed looks in a row before the screen stops saying it is waiting. */
 const LOOK_FAILURES = 3;
-const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 const triesText = (left: number) => `${left} ${left === 1 ? "try" : "tries"} left.`;
 
 /**
- * This computer's own request to sign in, while a trusted device decides: a wait that says how long is left, then,
+ * This computer's own request to sign in, while a trusted device decides: a wait that says the request expires after ten
+ * minutes (never a time left: the Engine does not expose one), then,
  * once a trusted device allows it, six boxes for the six digits that device shows. The digits are never shown here and
  * nothing is filled in: only the right ones sign in, and an allowed request never finishes by itself. The service
  * answers each look at the request, and counts the tries.
  */
 export function ApprovalCard({ approval, onChanged, onBack }: { approval: AccountApprovalView; onChanged(): void; onBack(to: "sign-in" | "home"): void }) {
   const [shown, setShown] = useState(approval);
-  // The time left is the service's, taken again on every look and counted down here between looks by ticks, not by
-  // the wall clock: a laptop that slept does not lose or regain minutes.
-  const [left, setLeft] = useState(approval.expires_in_secs);
   const [failures, setFailures] = useState(0);
   const [busy, setBusy] = useState(false);
   const [typed, setTyped] = useState("");
@@ -41,7 +38,6 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
 
   useEffect(() => {
     if (!open) return;
-    const tick = setInterval(() => setLeft((was) => Math.max(0, was - 1)), 1000);
     const look = setInterval(() => {
       void accountApi
         .pollApproval()
@@ -49,14 +45,10 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
           setFailures(0);
           if (!next) return changed.current();
           setShown(next);
-          setLeft(next.expires_in_secs);
         })
         .catch(() => setFailures((count) => count + 1));
     }, POLL_MS);
-    return () => {
-      clearInterval(tick);
-      clearInterval(look);
-    };
+    return () => clearInterval(look);
   }, [open]);
 
   const leave = async (to: "sign-in" | "home") => {
@@ -74,7 +66,6 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
       setFailures(0);
       if (!next) return changed.current();
       setShown(next);
-      setLeft(next.expires_in_secs);
       // Wrong digits clear the boxes: the typed entry is never kept, and a new one starts in the first box.
       setTyped("");
       if (next.state === "enter_digits") setAttempt((count) => count + 1);
@@ -145,7 +136,7 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
               <span className="ac-left">{triesText(shown.tries_left ?? 0)}</span>
             </p>
           ) : null}
-          <p className="ac-wait ac-center">This request expires in {clock(left)}</p>
+          <p className="ac-wait ac-center">This request expires after ten minutes.</p>
           <div className="ac-acts">
             <Button type="submit" tone="primary" busy={busy} disabled={busy || typed.length !== 6}>Continue</Button>
             <Button disabled={busy} onClick={() => void leave("sign-in")}>Cancel</Button>
@@ -158,7 +149,7 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
     <Card focus={!focused.current} title="Approve this sign-in on another device" lead="We asked your other devices to approve this one. Open Orbyn on a device you trust and allow it. That device then shows six digits to type here." label="Sign in · approve this device">
       <p className="ac-wait">
         {spinning ? <Loader2 size={12} className="spin" aria-hidden /> : null}
-        <span role="status">Waiting for approval</span> · this request expires in {clock(left)}
+        <span role="status">Waiting for approval</span> · this request expires after ten minutes
       </p>
       <div className="ac-acts">
         <Button disabled={busy} onClick={() => void leave("sign-in")}>Cancel</Button>

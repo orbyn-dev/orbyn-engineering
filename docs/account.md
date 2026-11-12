@@ -32,12 +32,13 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 `orbyn-core` depends on the Engine's device client:
 
 ```toml
-orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.0" }
-orbyn-engineering = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.0" }
+orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.2" }
 ```
 
-Both name the same tag, so one revision is locked for both. `orbyn-device-client` re-exports only `orbyn-sync`'s merge;
-the record schema comes from `orbyn-engineering`.
+It is the only Engine crate the app names (D6). `orbyn-device-client` re-exports every Engine type its public API
+exposes (`Engine`, `Fields`, `Stamp`, `Device`, `DeviceApp` and the rest), so the app never depends on `orbyn-sync`,
+`orbyn-client`, `orbyn-contracts` of the Engine or `orbyn-engineering`. A test (`account::tests::engine_scan`) fails
+when a manifest or a source file names another one, or when the lock holds more than one Engine revision.
 
 - **Pin.** Cargo allows only one of `tag` or `rev` per dependency (it rejects both). The manifest names the tag and the
   committed `Cargo.lock` records the exact revision, so the build is reproducible and a moved tag changes nothing
@@ -71,27 +72,27 @@ the record schema comes from `orbyn-engineering`.
   - Errors: `Offline`, `Unauthorized`, `InviteRequired`, `WrongPassword`, `RateLimited { retry_after }`, `Conflict`,
     `TooLarge`, `InvalidKey`, `Server { retryable }`, `InvalidCode`, `DeletionScheduled`, `ProtectionAdvanced` and
     `AccountGone`.
-- **Engine pin.** See [Engine pin](#engine-pin). The real client exists at `engine-v0.2.0`; the app does not depend on it
-  yet, and the account module still builds against the fake `DeviceApi` in the app's test support.
+- **Engine pin.** See [Engine pin](#engine-pin). The app depends on the real client at `engine-v0.2.2` and
+  `account::engine` adapts it; real sign-in stays off.
 
 ### Engine pin
 
-The Engine release this design is written against is tag `engine-v0.2.0`, commit
-`32f360016633ae38aebdf913603fa73a66ecfa24` (its main CI is green). It adds the `orbyn-device-client` crate (start,
-confirm and deny an approval; the new device's join, digits, finish and deny; `remove_device`; `devices`) and the v3
-approval message that binds the device's name, platform and `app` label into the approval. The earlier tag
-`engine-v0.1.0` is superseded; the `tag =` lines above name `engine-v0.2.0`.
+The Engine release the app pins is tag `engine-v0.2.2`, commit `52918916d217d125b8f550390085ab579ab76418` (its main CI
+is green). It has the `orbyn-device-client` crate (start, confirm and deny an approval; the new device's join, digits,
+finish and deny; `remove_device`; `devices`), the v3 approval message that binds the device's name, platform and `app`
+label, and the re-exports that let the app depend on that one crate. `engine-v0.1.0` and `engine-v0.2.0` are
+superseded.
 
-**Where the real pin lives.** Nowhere in code yet: no Engine crate is in `Cargo.toml` or `Cargo.lock`. The dependency
-lands with the adapter pull request, once `orbyn-client` re-exports `DevicePlatform` and `DeviceApp` (D6 stands: the app
-never names the Engine's `orbyn-contracts`). Then the pin is the `tag =` in `crates/orbyn-core/Cargo.toml`, the
-revision in `Cargo.lock`, and the tag-resolves-to-locked-revision check described under Pin. Until then this section is
-the record. Sign-in condition 2 below names `engine-v0.1.0`; `engine-v0.2.0` contains that tag's work, and the condition
-is not marked satisfied by this note.
+**Where the pin lives.** The `tag =` in `crates/orbyn-core/Cargo.toml` and the revision in `Cargo.lock`. The scan test
+reads both, so a moved lock or a second Engine crate fails the build. CI builds with `--locked`; that the tag still
+resolves to the locked revision is checked against the Engine repository when the pin is bumped, not offline. Sign-in
+condition 2 below names `engine-v0.1.0`; `engine-v0.2.2` contains that tag's work, and the condition is not marked
+satisfied by this note.
 
 ### The plan for the adapter
 
-Decided with the lead session. Nothing here is built, and real sign-in stays off.
+Decided with the lead session. Built as `account::engine` (see [The adapter as built](#the-adapter-as-built)); real
+sign-in stays off.
 
 - **Sync.** The Engine's per-record sync on `orbyn-engineering::Settings` is the source of truth for the merge. The app's
   whole-record `pull` and `push` with a base version are not carried over. The "offline edit lost" list is rebuilt by
@@ -439,12 +440,14 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
     `approvals/:id/approve`, `approvals/:id/deny`, `sign-in/approval`, `connect`, `connect/use-device`,
     `connect/use-account`, `connect/later` and `connect/seen`. A later "Refused on this computer" activity item for
     them is out of scope.
-12. Contract for engine-v0.2.0, on the trusted side. The app cannot enforce these, so the Engine must: a request that
-    expired (ten minutes), was answered, or was given up by the new device is gone, and `approve(id)` and `deny(id)` on
-    it answer an error and never approve (the stand-in answers `RequestGone`); `approval_requests()` lists only live
-    requests with the time they have left. `deny(id)` carries no reason in the agreed trait, so "Codes don't match"
-    cannot reach the new device and a real mismatch will show there as "This sign-in wasn't allowed" until the Engine
-    adds one.
+12. Approval on the trusted side, at `engine-v0.2.2`. The real client has no `approve(id)`, `deny(id)` or request list, so
+    the app maps its screens onto the Engine's own calls (below). What the Engine guarantees and the app relies on: an
+    approval that expired (ten minutes), was answered, was cancelled by either device or was used is gone, and
+    `approval_state`, `confirm_approval` and `deny_approval` answer `ApprovalExpired` (a 410), which the adapter shows as
+    "this request ended"; and the new device's `finish_approval` accepts only an approver that signed what it accepts
+    (an Engineering-labelled device takes only the v3 message), which makes an out-of-date approver fail as a refusal
+    ([approval mapping](#approval-mapping)). `deny_approval` carries no reason, so "Codes don't match" cannot reach the
+    new device.
 13. **Done.** The "Confirm it's you" confirmation is bound to the caller (issue #435). `/confirm` answers with a
     one-time nonce (16 random bytes, in memory only), and the action request sends it back in the `x-orbyn-confirm`
     header: only the window that typed the password has it, so a caller holding only the service token cannot use a
@@ -533,7 +536,7 @@ invite, the device check, the emailed code), the signed-in page with Sync now, P
 line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
 adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
 popovers, and the code-age hint. **New-device approval and "Connect this computer's settings"** are built behind the account module against the
-stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); they wait for the real device client (engine-v0.2.0) to be swapped in. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); a removed-device notice that names a removal (the Engine answers a removed device and an ended session with the same
+stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); the real device client (engine-v0.2.2) sits behind the same traits (`account::engine`), unselected while sign-in is off. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); a removed-device notice that names a removal (the Engine answers a removed device and an ended session with the same
 401, so `signout-other-device-removed` says neutrally "This device may have been removed, or your sessions ended", once, and
 not after the person's own sign out everywhere: the service keeps that in memory, `ended_notice` and `POST /api/account/ended/seen`);
 the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
@@ -586,3 +589,68 @@ Questions about the snapshot, the dependencies, `LocalOnly`, the local stack and
 folded in above. These remain, with Engineering 1's security reviewer:
 
 1. The threat model's [open questions](account-threat-model.md#open-questions).
+
+
+## The adapter as built
+
+`account::engine` puts one `DeviceClient` behind both app traits: `EngineAccount` answers `AccountApi` and `EngineZones`
+answers `DeviceApi`. Nothing selects it yet, and it is behind the cargo feature `engine-client`, which no normal build (release included)
+enables; the tests switch it on, so a release has neither the adapter nor the dependency. The gate must be `LocalOnly` (debug and test builds only),
+`AccountBackendKind::Engine` exists only there, and `connect` accepts a loopback IP literal only (the client's
+`is_loopback_literal`) with an in-memory key store, never the keychain. Under `Off` nothing is constructed or called
+(tests: `under_the_off_gate_nothing_builds_or_calls_the_real_client`, `only_a_loopback_address_builds_the_real_client`).
+No sign-in condition is satisfied by this change.
+
+Where the Engine's API differs from the traits the screens and the worker were written against:
+
+- **Settings model.** The Engine's per-record model is the source of truth for the merge: `push` stages with
+  `Engine::stage`, whose merge decides, and answers with the Engine's merged record, which the worker takes into the store
+  as a conflict answer. The "offline edit lost" list is the diff of the queued edit against that result. A stamp maps
+  one to one (`(millis, counter, device)` with the device as sixteen hex digits, which the store keeps as the zone's
+  device name through `DeviceApi::device_tag`). The record is `person` of type `person_settings` in
+  `engineering.settings`. `orbyn-engineering::Settings` is not re-exported by the device client and the app may not
+  name that crate, so the app's own record rules (`settings_record`, `policy`, `apply`) still refuse the never-synced keys
+  and bad values; a re-export is a follow-up for the Engine.
+- **Snapshot.** The client does no IO. The Engine's snapshot is held in memory only for now (`SnapshotStore`); sealing it
+  under the vault key is part of the change that turns sign-in on.
+- **Invite.** The client has no call that checks an invite alone: `check_invite` only passes, and a wrong invite is
+  `invite_required` at the password step.
+- **Sign-up.** `begin_sign_up` makes a pending sign-up that is not live until the emailed code; nothing is stored until it
+  is verified, and a computer that already belongs to an account is refused (`already_signed_in`), so no account is
+  replaced (issue 489, item 5; the stand-in does the same: a sign-up for an address with an account is `invalid_code`).
+  A code that was spent when the keys could not be saved is `keys_not_saved`; asking again calls `retry_save` and sends
+  no new code. There is no drawn state for it, so the screen shows the message as an error.
+- **Confirm it's you** is `reauthenticate`, a network login; a network failure is the existing `account_offline` state.
+- **Sign out** forgets the device's keys, as the dialog says; the next sign-in is a new device.
+- **Devices.** No `last_seen`. `trusted_since` is the device's creation time. The `app` label is the device's own claim
+  and is shown as a hint only.
+
+### Approval mapping
+
+- **Trusted side.** The listed request is an untrusted (`Pending`) entry of `devices()`, its id the device's id, hidden
+  after ten minutes (the new device gave up on its own clock). **Allow**, after the password, starts the approval
+  (`start_approval`), waits (bounded, 20 s) until the new device has joined and the digits exist (`approval_state`:
+  `Waiting`, then `Digits`), confirms (`confirm_approval`), sends the zone keys (`send_keys` for every zone; a failure is
+  retried on the next pass) and answers with the digits, which reach the screen only through the approve answer.
+  Confirming comes at Allow, not after the new device types, because the new device's `finish_approval` needs the
+  approver's signature before it can accept anything; the typed digits are the check.
+- **Don't allow** starts an approval and denies it at once (`start_approval`, `deny_approval`), which closes it on the new
+  device immediately and needs no recent sign-in; if one cannot be started the device is removed (`remove_device`). A
+  Don't allow that arrives while an Allow is running wins: it is checked before the signature is made (the approval is
+  denied) and again after (the device is removed). **Cancel on the digits** removes the new device from the account, the
+  only way to close a confirmed approval; the new device then sees "Denied or cancelled." What is kept for a device
+  (hidden, confirmed, time left) is dropped once the Engine no longer lists it as waiting.
+- **New device.** `NeedsApproval` waits with its own device id as the request id. Each look runs `pending_approval`,
+  `join_approval` and `device_digits`; it shows the digits step only once the approver has revealed and signed. The typed
+  digits are compared in the app first, with the three tries and a constant-time compare, because the Engine cancels an
+  approval on one mismatch; only then `finish_approval(typed)` runs, never `finish_approval(None)`. A refusal there
+  (another approver, a signature the new device does not accept, as for an out-of-date approver of an Engineering-labelled
+  device) shows as the existing "Denied or cancelled." state; there is no drawn copy that says "update the other device"
+  (a gap).
+- **Time.** The Engine's `time_left(&approval)` (v0.2.2) is read when Allow confirms and passed on as `expires_in_secs` of
+  the approve answer, so the digits dialog counts down from it. It is display only and decides nothing. Everywhere else
+  (the request list, the new device's waiting and digits screens, which hold no approval on the trusted side) the screens
+  say the request expires after ten minutes. `expires_in_secs` of a listed request is 0.
+- **Reveal and ended approvals.** A network blip during the nonce reveal no longer cancels the approval (the client retries
+  it); a confirm or deny on an expired, answered or denied approval is `ApprovalExpired`, shown as "That request has
+  ended", and never approves.

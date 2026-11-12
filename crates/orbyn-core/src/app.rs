@@ -251,7 +251,7 @@ impl Core {
         let keybinding_writer = Arc::new(Mutex::new(()));
         let account = Arc::new(crate::account::AccountCenter::new(
             config.account_gate,
-            config.account_backend,
+            config.account_backend.clone(),
             store.clone(),
             config.data_dir.join("keybindings.json"),
             keybinding_writer.clone(),

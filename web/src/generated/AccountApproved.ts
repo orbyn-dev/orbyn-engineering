@@ -4,4 +4,9 @@
  * What letting a new device in answers with: the six digits to type on the new device, in two
  * groups ("418 207"). They are the trusted device's to show and are never logged.
  */
-export type AccountApproved = { digits: string, };
+export type AccountApproved = { digits: string, 
+/**
+ * Seconds the approval has left by the Engine's own count, when it says. A display hint
+ * only: the Engine decides, and the app never acts on it. Absent when the Engine did not say.
+ */
+expires_in_secs?: number, };

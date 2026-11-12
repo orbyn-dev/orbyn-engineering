@@ -315,3 +315,21 @@ session lifetime. `default_permission_mode` is never synced (a loosened mode mus
 
 - The "Confirm it's you" password prompt for the four sensitive actions in control 5.
 - Account page copy that says, on Windows, any program you run can act as this device.
+
+## Sign-up never makes a live account before the code, and never replaces one
+
+The Engine's sign-up makes a pending sign-up at the password step; the account is live only when the emailed code is
+verified. The app's adapter stores nothing until then, refuses a computer that already belongs to an account, and a
+sign-up for an address that has an account ends as a wrong code and leaves that account untouched. The development
+stand-in behaves the same. (Issue 489, item 5.)
+
+## Accepted risk: Allow signs without a comparison on the approving device
+
+Allow, behind the password, signs and endorses the pending device without anyone comparing digits on the approving
+device. The digits are checked only on the new device, which takes the typed ones and refuses anything else, so that
+check protects the new device and no one else. A holder of a stolen password, or a device that a dishonest server
+fabricates in the device list, can therefore finish with its own digits and receive the zone keys on the approver's next
+pass. The Engine owner confirms this is the intended design. What limits it: Allow needs the recent password
+confirmation, a person at the approving device must press it for that device, the request shows the device's name and its
+own `app` claim (a hint, never proof), and Cancel or Don't allow closes it (an approval that was not confirmed is denied;
+one that was is removed from the account).
