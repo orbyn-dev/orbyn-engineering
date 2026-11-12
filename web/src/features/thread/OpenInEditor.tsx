@@ -8,7 +8,6 @@ import { IconButton } from "../../ui/controls";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { DRow } from "../../product/ui/DetailRows";
-import { useDismissDetails } from "./details/DetailsDismiss";
 import { launchableEditors, primaryEditor } from "../../product/composer/editorPreferences";
 
 /** Opens the thread's checkout in an editor; a revealed path is not a choice of editor, so it does not become the favorite. */
@@ -54,9 +53,7 @@ export function OpenInEditor({ threadId }: { threadId: string }) {
   const fileManager = list.find((editor) => editor.file_manager);
   const key = commandShortcut(keymap.data?.rules, "editor.openFavorite");
   const shortcut = key ? formatShortcut(key) : null;
-  const launch = useEditorLauncher(threadId, fileManager?.id);
-  const dismiss = useDismissDetails();
-  const open = (id: string) => launch(id).then(dismiss);
+  const open = useEditorLauncher(threadId, fileManager?.id);
 
   if (!primary) return null;
   const items: MenuItem[] = [

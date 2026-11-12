@@ -244,7 +244,10 @@ export function PanelHost({
     // A strip with no width yet (not laid out, or hidden) folds nothing.
     if (head.clientWidth === 0) return setSlots(Number.POSITIVE_INFINITY);
     const end = head.querySelector<HTMLElement>(".ctx-end");
-    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0);
+    // A docked panel's strip also stops short of the title bar's end, so its real padding can exceed the usual 16 px.
+    const style = getComputedStyle(head);
+    const pad = Math.max(STRIP_PAD, (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0));
+    const room = head.clientWidth - pad - (end?.offsetWidth ?? 0);
     setSlots(tabSlots(room, latest.current.count));
   }, []);
   useLayoutEffect(() => {
