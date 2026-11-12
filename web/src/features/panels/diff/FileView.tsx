@@ -1,4 +1,4 @@
-import { SquarePen } from "lucide-react";
+import { MoreHorizontal, SquarePen } from "lucide-react";
 import type { ReactNode } from "react";
 import type { FileDiff } from "../../../api/types";
 import { useAsync } from "../../../lib/useAsync";
@@ -12,6 +12,7 @@ import { checkoutPath, openChanged } from "./openChanged";
 import { FilePreview, previewKind } from "../files/FilePreview";
 import { Patch } from "./DiffPatch";
 import { fileName } from "./ChangedFiles";
+import { MenuButton } from "./ChangesHeader";
 import { changeOf, isBinaryPatch, renameOf, type DiffLine } from "./diffModel";
 
 const count = (value: number) => value.toLocaleString("en-US");
@@ -85,6 +86,20 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
         <IconButton label={binary ? "Open" : "Open in editor"} onClick={() => void openChanged(threadId, cwd, file.path, binary ? "tab" : "editor")}>
           <SquarePen size={14} aria-hidden />
         </IconButton>
+        <MenuButton
+          menuLabel={`Actions for ${file.path}`}
+          align="end"
+          items={[
+            { label: "Open in editor", onSelect: () => void openChanged(threadId, cwd, file.path, "editor") },
+            { label: "Copy path", onSelect: () => void navigator.clipboard?.writeText(file.path).then(() => useUi.getState().pushToast("Path copied")) },
+          ]}
+        >
+          {(props) => (
+            <IconButton label={`Actions for ${file.path}`} className="fmore" {...props}>
+              <MoreHorizontal size={14} aria-hidden />
+            </IconButton>
+          )}
+        </MenuButton>
       </div>
       {bar}
       {rendered ? (
