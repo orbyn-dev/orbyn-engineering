@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { toFailure } from "../../../lib/useAsync";
 import { saveThreadFile } from "../api";
-import { saveFailureReason, withEol } from "./editorModel";
+import { saveFailureReason, withEol, type Eol } from "./editorModel";
 
 /**
  * What an open file holds for the header and the tab strip: the text being edited, the text last saved and the revision
@@ -20,7 +20,9 @@ export interface EditorSession {
   text: string;
   saved: string;
   /** The file's own line ending, put back when it is written. */
-  eol: "LF" | "CRLF";
+  eol: Eol;
+  /** The file used more than one line ending: saving writes them all as `eol`, after asking. */
+  mixed: boolean;
   /** The revision the edit started from; null when the file does not exist (yet). */
   revision: string | null;
   saving: boolean;
@@ -28,7 +30,7 @@ export interface EditorSession {
   trouble: Trouble | null;
 }
 
-type Trouble = { kind: "error"; reason: string } | { kind: "conflict"; revision: string | null };
+type Trouble = { kind: "error"; reason: string } | { kind: "conflict"; revision: string | null } | { kind: "endings" };
 
 interface Store {
   sessions: Record<string, EditorSession>;
@@ -85,17 +87,27 @@ const writing = new Set<string>();
  * what this edit started from, into the thread the session came from. A refusal keeps the text and says why in the
  * session. `against` replaces the revision to start from (Keep mine: the disk's own, so the save overwrites it).
  */
-export async function saveSession(key: string, against?: string | null): Promise<boolean> {
+export async function saveSession(key: string, against?: string | null, endingsOk = false): Promise<boolean> {
   const { sessions, patch } = useEditorSessions.getState();
   const current = sessions[key];
   if (!current || !isDirty(current)) return true;
+  const { locked } = useEditorSessions.getState();
+  // A worktree found to be locked after the edit began is never written to.
+  if (current.tabs.some((tab) => isLocked(locked, current.threadId, tab))) {
+    patch(key, { trouble: { kind: "error", reason: "The worktree is locked." } });
+    return false;
+  }
+  if (current.mixed && !endingsOk) {
+    patch(key, { trouble: { kind: "endings" } });
+    return false;
+  }
   if (writing.has(key)) return false;
   writing.add(key);
   patch(key, { saving: true, trouble: null });
   const sent = current.text;
   try {
     const written = await saveThreadFile(current.threadId, { path: current.path, content: withEol(sent, current.eol), base_revision: against === undefined ? current.revision : against });
-    patch(key, { saved: sent, revision: written.revision, saving: false });
+    patch(key, { saved: sent, revision: written.revision, saving: false, mixed: false });
     return true;
   } catch (failure) {
     const known = toFailure(failure);

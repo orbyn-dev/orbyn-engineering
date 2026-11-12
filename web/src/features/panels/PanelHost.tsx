@@ -307,10 +307,10 @@ export function PanelHost({
   const cwd = useWorkspace((state) => state.threads[thread.id]?.cwd ?? "");
   const sessions = useEditorSessions((state) => state.sessions);
   const sessionFor = (id: RightTab) => (isFileTab(id) ? sessionOfTab(sessions, thread.id, cwd, id) : undefined);
-  const [pending, setPending] = useState<{ ids: RightTab[]; then(): void } | null>(null);
+  const [pending, setPending] = useState<{ ids: RightTab[]; then(): void; discard: string[] } | null>(null);
   const guardClose = (ids: RightTab[], then: () => void) => {
     const dirty = ids.filter((id) => isDirty(sessionFor(id)));
-    if (dirty.length > 0) setPending({ ids: dirty, then });
+    if (dirty.length > 0) setPending({ ids: dirty, then, discard: [] });
     else then();
   };
   const closeWithFocus = (id: RightTab) => guardClose([id], () => closeNow(id));
@@ -388,7 +388,9 @@ export function PanelHost({
     const rest = pending.ids.slice(1);
     if (rest.length > 0) setPending({ ...pending, ids: rest });
     else {
+      // Only now that the whole close goes ahead are the unsaved edits given up.
       setPending(null);
+      for (const key of pending.discard) useEditorSessions.getState().drop(key);
       pending.then();
     }
   };
@@ -583,7 +585,7 @@ export function PanelHost({
           path={askedSession.path}
           onCancel={() => setPending(null)}
           onDiscard={() => {
-            useEditorSessions.getState().drop(askedSession.key);
+            if (pending) pending.discard.push(askedSession.key);
             nextAsked();
           }}
           onSave={() => {

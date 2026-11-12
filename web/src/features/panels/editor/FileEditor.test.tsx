@@ -295,12 +295,81 @@ it("takes a range with Shift and refuses an empty comment", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Remove comment" }));
 });
 
-it("offers the cursor's line for a comment while the code has focus, so it works from the keyboard", async () => {
+it("reaches the + from the keyboard: it stays while focus is anywhere in the editor, and Enter opens the box", async () => {
   serve();
   open();
   const box = await editor();
   act(() => box.focus());
   expect(screen.getByRole("button", { name: "Comment on line 1" })).toBeInTheDocument();
+  await userEvent.tab({ shift: true });
+  const plus = screen.getByRole("button", { name: "Comment on line 1" });
+  expect(plus).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(screen.getByRole("textbox", { name: "File comment" })).toBeInTheDocument();
+});
+
+it("does not comment on a file with unsaved edits: the + is off with a hint, no dots, and no chip can name a line of other text", async () => {
+  serve();
+  const view = open();
+  const box = await editor();
+  pointAt(view.container, 2);
+  await userEvent.click(screen.getByRole("button", { name: "Comment on line 2" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "File comment" }), "x");
+  await userEvent.click(screen.getByRole("button", { name: "Add comment" }));
+  expect(view.container.querySelectorAll(".ed-dot")).toHaveLength(1);
+  // An edit that shifts every line below it.
+  await userEvent.type(box, "\n");
+  pointAt(view.container, 2);
+  const plus = screen.getByRole("button", { name: "Comment on line 2" });
+  expect(plus).toBeDisabled();
+  expect(plus).toHaveAttribute("title", "Save to comment");
+  expect(view.container.querySelectorAll(".ed-dot")).toHaveLength(0);
+  expect(screen.queryByRole("textbox", { name: "File comment" })).toBeNull();
+  expect(useComposerChips.getState().chips["t"]).toHaveLength(1);
+  // Saved, it comments again.
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByText("Saved")).toBeInTheDocument());
+  pointAt(view.container, 2);
+  expect(screen.getByRole("button", { name: "Comment on line 2" })).toBeEnabled();
+});
+
+it("asks before writing a file that mixes line endings, and then writes them all as its commonest (editor-default status)", async () => {
+  const served = serve({ content: "a\r\nb\r\nc\n" });
+  open();
+  const box = await editor();
+  expect(screen.getByText("TypeScript · UTF-8 · CRLF (mixed) · 2 spaces")).toBeInTheDocument();
+  await userEvent.type(box, "x");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This file mixes line endings. Saving writes them all as CRLF.");
+  expect(served.puts).toHaveLength(0);
+  await userEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+  await waitFor(() => expect(served.puts).toHaveLength(1));
+  expect(served.puts[0]?.content).toBe("a\r\nb\r\nc\r\nx");
+  expect(screen.getByText("TypeScript · UTF-8 · CRLF · 2 spaces")).toBeInTheDocument();
+});
+
+it("keeps a CR-only file CR-only, with no question", async () => {
+  const served = serve({ content: "a\rb\r" });
+  open();
+  const box = await editor();
+  expect(screen.getByText("TypeScript · UTF-8 · CR · 2 spaces")).toBeInTheDocument();
+  await userEvent.type(box, "x");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(served.puts).toHaveLength(1));
+  expect(served.puts[0]?.content).toBe("a\rb\rx");
+});
+
+it("refuses to save into a worktree found locked after the edit began, from the header and from a close question", async () => {
+  const served = serve();
+  open();
+  await userEvent.type(await editor(), "x");
+  act(() => useEditorSessions.getState().lock("t", "tab", true));
+  expect(await saveSession(KEY)).toBe(false);
+  expect(served.puts).toHaveLength(0);
+  expect(useEditorSessions.getState().sessions[KEY]?.trouble).toEqual({ kind: "error", reason: "The worktree is locked." });
+  // The header offers no Save for it.
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(screen.getByText("Read-only", { selector: ".ed-pill" })).toBeInTheDocument();
 });
 
 const TAB = fileTabId({ kind: "thread", path: "auth/redirect.ts" });

@@ -598,7 +598,7 @@ describe("tabs that do not fit", () => {
 
 describe("unsaved files and the tab menu", () => {
   const unsaved = (threadId: string): EditorSession => ({
-    key: `k-${threadId}`, threadId, cwd: "", path: "notes.md", tabs: [FILE], text: "edited", saved: "was", eol: "LF", revision: "r", saving: false, trouble: null,
+    key: `k-${threadId}`, threadId, cwd: "", path: "notes.md", tabs: [FILE], text: "edited", saved: "was", eol: "LF", mixed: false, revision: "r", saving: false, trouble: null,
   });
   beforeEach(() => useEditorSessions.setState({ sessions: {}, locked: {} }));
 
@@ -618,6 +618,27 @@ describe("unsaved files and the tab menu", () => {
     await user.click(screen.getByRole("button", { name: "Don’t save" }));
     expect(screen.queryByRole("tab")).toBeNull();
     expect(useEditorSessions.getState().sessions).toEqual({});
+  });
+
+  it("keeps every unsaved edit when Cancel comes partway through Close all tabs", async () => {
+    const user = userEvent.setup();
+    const SECOND = fileTabId({ kind: "thread", path: "other.md" });
+    useUi.setState({ panelTabOrder: ["diff", "browser", "activity", "side", "tools", FILE, SECOND] });
+    useEditorSessions.setState({
+      sessions: {
+        "k-thread-1": unsaved("thread-1"),
+        "k-two": { ...unsaved("thread-1"), key: "k-two", path: "other.md", tabs: [SECOND] },
+      },
+    });
+    panel();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close all tabs" }));
+    // The first file: give it up. The second: Cancel.
+    await user.click(screen.getByRole("button", { name: "Don’t save" }));
+    expect(screen.getByRole("dialog", { name: "Save changes to other.md?" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(Object.keys(useEditorSessions.getState().sessions).sort()).toEqual(["k-thread-1", "k-two"]);
+    expect(names()).toContain("notes.md, unsaved changes");
   });
 
   it("asks before Close other tabs too", async () => {

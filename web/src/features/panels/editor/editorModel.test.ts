@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toLF, withEol, eolOf, findMatches, indentOf, languageOf, lineCount, lineStart, piecesOf, positionOf, saveFailureReason } from "./editorModel";
+import { toLF, withEol, endingsOf, endingLabel, findMatches, indentOf, languageOf, lineCount, lineStart, piecesOf, positionOf, saveFailureReason } from "./editorModel";
 
 describe("editor model", () => {
   it("names the language from the file name and has no grammar for plain text", () => {
@@ -8,9 +8,16 @@ describe("editor model", () => {
     expect(languageOf("Makefile")).toEqual({ label: "Plain text", grammar: null });
   });
 
-  it("reads the line ending and the indent from the text", () => {
-    expect(eolOf("a\r\nb")).toBe("CRLF");
-    expect(eolOf("a\nb\r\n")).toBe("LF");
+  it("reads the line ending, whether it is mixed, and the indent from the text", () => {
+    expect(endingsOf("a\r\nb")).toEqual({ eol: "CRLF", mixed: false });
+    expect(endingsOf("a\r\nb\r\n")).toEqual({ eol: "CRLF", mixed: false });
+    expect(endingsOf("a\nb\n")).toEqual({ eol: "LF", mixed: false });
+    expect(endingsOf("a\rb\rc")).toEqual({ eol: "CR", mixed: false });
+    expect(endingsOf("a\r\nb\r\nc\nd\r")).toEqual({ eol: "CRLF", mixed: true });
+    expect(endingsOf("a\nb\r\n")).toEqual({ eol: "LF", mixed: true });
+    expect(endingsOf("no break")).toEqual({ eol: "LF", mixed: false });
+    expect(endingLabel("CRLF", true)).toBe("CRLF (mixed)");
+    expect(withEol("a\nb", "CR")).toBe("a\rb");
     expect(indentOf("a\n  b\n  c\n    d")).toBe("2 spaces");
     expect(indentOf("a\n    b\n    c")).toBe("4 spaces");
     expect(indentOf("a\n\tb\n\tc")).toBe("Tabs");
@@ -50,7 +57,7 @@ describe("editor model", () => {
     expect(toLF("a\r\nb\rc\n")).toBe("a\nb\nc\n");
     expect(withEol("a\nb\n", "CRLF")).toBe("a\r\nb\r\n");
     expect(withEol("a\nb\n", "LF")).toBe("a\nb\n");
-    expect(withEol(toLF("a\r\nb\r\n"), eolOf("a\r\nb\r\n"))).toBe("a\r\nb\r\n");
+    expect(withEol(toLF("a\r\nb\r\n"), endingsOf("a\r\nb\r\n").eol)).toBe("a\r\nb\r\n");
   });
 
   it("puts a failed save in plain words", () => {

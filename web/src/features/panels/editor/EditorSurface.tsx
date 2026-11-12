@@ -4,7 +4,7 @@ import { Button, IconButton } from "../../../ui/controls";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { CommentForm, CommentList, type LineSelection } from "../files/FileComments";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
-import { eolOf, toLF, findMatches, indentOf, languageOf, lineCount, lineStart } from "./editorModel";
+import { endingLabel, endingsOf, toLF, findMatches, indentOf, languageOf, lineCount, lineStart } from "./editorModel";
 
 const isMac = () => /mac/i.test(navigator.platform || navigator.userAgent);
 
@@ -18,7 +18,7 @@ export type Standing = "saved" | "unsaved" | "read-only";
 export function EditorSurface({
   path,
   text: raw,
-  eol,
+  eolLabel,
   standing,
   banner,
   reveal = null,
@@ -29,7 +29,7 @@ export function EditorSurface({
   path: string;
   text: string;
   /** The file's line ending, when `text` has already had its breaks made line feeds. */
-  eol?: "LF" | "CRLF";
+  eolLabel?: string;
   standing: Standing;
   banner?: ReactNode;
   /** A line a link named: the cursor goes there once, when the file opens. */
@@ -40,6 +40,7 @@ export function EditorSurface({
   onSave?(): void;
 }) {
   const text = toLF(raw);
+  const rawEnding = endingLabel(endingsOf(raw).eol, endingsOf(raw).mixed);
   const root = useRef<HTMLDivElement>(null);
   const editor = useRef<CodeEditorHandle>(null);
   const [bar, setBar] = useState<"find" | "goto" | null>(null);
@@ -49,6 +50,10 @@ export function EditorSurface({
   const [position, setPosition] = useState({ line: 1, col: 1 });
   const offset = useRef(0);
   const [selection, setSelection] = useState<LineSelection | null>(null);
+  // Editing after the box opened: the lines it named are no longer the file's.
+  useEffect(() => {
+    if (standing === "unsaved") setSelection(null);
+  }, [standing]);
   const chips = useComposerChips((state) => (comments ? state.chips[comments.threadId] : undefined));
   const field = useRef<HTMLInputElement>(null);
   const folders = path.split("/").slice(0, -1);
@@ -216,9 +221,11 @@ export function EditorSurface({
         current={shown}
         {...(comments
           ? {
+              // A line number refers to the text on screen, and a comment to the file on disk: with unsaved edits they differ, so nothing is built.
+              ...(standing === "unsaved" ? { commentBlocked: "Save to comment" } : {}),
               onComment: (line: number, extend: boolean) => setSelection((now) => ({ anchor: extend && now ? now.anchor : line, end: line })),
               selected: selection ? { from: Math.min(selection.anchor, selection.end), to: Math.max(selection.anchor, selection.end) } : null,
-              commented: (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && chip.line ? [chip.line] : [])),
+              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && chip.line ? [chip.line] : [])),
             }
           : {})}
         onChange={(next) => onChange?.(next)}
@@ -238,7 +245,7 @@ export function EditorSurface({
           Ln {position.line}, Col {position.col}
         </span>
         <span className="ed-meta">
-          {language.label} · UTF-8 · {eol ?? eolOf(raw)} · {indentOf(text)}
+          {language.label} · UTF-8 · {eolLabel ?? rawEnding} · {indentOf(text)}
         </span>
         <span className="ed-end" data-standing={standing}>
           {standing === "read-only" ? <Lock size={12} aria-hidden /> : null}

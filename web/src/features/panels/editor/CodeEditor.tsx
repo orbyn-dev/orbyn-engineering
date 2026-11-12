@@ -33,13 +33,15 @@ export const CodeEditor = forwardRef<
     current?: number;
     /** Lines may be commented on: a "+" beside the line number under the pointer, or the cursor's line while the code has focus. */
     onComment?(line: number, extend: boolean): void;
+    /** Why commenting is off for now; the + shows, disabled, with this as its hint. */
+    commentBlocked?: string;
     /** The lines a comment is being written for, and the lines that already have one. */
     selected?: { from: number; to: number } | null;
     commented?: readonly number[];
     onChange(text: string): void;
     onCursor(position: { line: number; col: number }, offset: number): void;
   }
->(function CodeEditor({ text, label, grammar, readOnly, matches = [], current = -1, onComment, selected = null, commented = [], onChange, onCursor }, ref) {
+>(function CodeEditor({ text, label, grammar, readOnly, matches = [], current = -1, onComment, commentBlocked, selected = null, commented = [], onChange, onCursor }, ref) {
   const area = useRef<HTMLTextAreaElement>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [cursor, setCursor] = useState(0);
@@ -117,7 +119,14 @@ export const CodeEditor = forwardRef<
   const total = lineCount(text);
 
   return (
-    <div className="ed-body">
+    <div
+      className="ed-body"
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        // Focus moving to the + (or back) stays inside the editor.
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
       <div
         className="ed-gutw"
         onMouseMove={(event) => {
@@ -139,6 +148,8 @@ export const CodeEditor = forwardRef<
             type="button"
             className="ed-plus"
             aria-label={`Comment on line ${hover ?? row}`}
+            disabled={commentBlocked !== undefined}
+            title={commentBlocked}
             style={{ transform: `translateY(${TOP + ((hover ?? row) - 1) * LINE - scroll.top}px)` }}
             onClick={(event) => onComment(hover ?? row, event.shiftKey)}
           >
@@ -196,8 +207,6 @@ export const CodeEditor = forwardRef<
           onSelect={(event) => report(event.currentTarget)}
           onKeyUp={(event) => report(event.currentTarget)}
           onClick={(event) => report(event.currentTarget)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
         />
       </div>
     </div>

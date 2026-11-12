@@ -36,15 +36,29 @@ export function languageOf(path: string): { label: string; grammar: string | nul
   return known ?? { label: "Plain text", grammar: null };
 }
 
-/** CRLF when the file's first line break is one, else LF. */
-export const eolOf = (text: string): "LF" | "CRLF" => {
-  const at = text.indexOf("\n");
-  return at > 0 && text[at - 1] === "\r" ? "CRLF" : "LF";
-};
+export type Eol = "LF" | "CRLF" | "CR";
+
+/** The file's line ending (the commonest of LF, CRLF and CR; LF on a tie) and whether it uses more than one. */
+export function endingsOf(text: string): { eol: Eol; mixed: boolean } {
+  let crlf = 0;
+  let lf = 0;
+  let cr = 0;
+  for (const match of text.matchAll(/\r\n|\n|\r/g)) {
+    if (match[0] === "\r\n") crlf += 1;
+    else if (match[0] === "\n") lf += 1;
+    else cr += 1;
+  }
+  const kinds = [crlf, lf, cr].filter((count) => count > 0).length;
+  const eol: Eol = crlf > lf && crlf >= cr ? "CRLF" : cr > lf && cr > crlf ? "CR" : "LF";
+  return { eol, mixed: kinds > 1 };
+}
+
+/** What the status bar says about the line ending. */
+export const endingLabel = (eol: Eol, mixed: boolean): string => (mixed ? `${eol} (mixed)` : eol);
 
 /** The editor holds every line break as a line feed, as a text field does; the file's own ending is put back on save. */
 export const toLF = (text: string): string => text.replace(/\r\n?/g, "\n");
-export const withEol = (text: string, eol: "LF" | "CRLF"): string => (eol === "CRLF" ? text.replace(/\n/g, "\r\n") : text);
+export const withEol = (text: string, eol: Eol): string => (eol === "CRLF" ? text.replace(/\n/g, "\r\n") : eol === "CR" ? text.replace(/\n/g, "\r") : text);
 
 /** Tabs, or the commonest leading run of spaces (2 or 4) among the first lines. */
 export function indentOf(text: string): string {
