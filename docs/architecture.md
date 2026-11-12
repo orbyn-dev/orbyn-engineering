@@ -2723,6 +2723,16 @@ unpacked into a staging folder under `<data>/acp-agents`, a link leading out or 
 outside the folder refuses it, and only then does it become the install. Removing one
 takes its files and engine, refused during a run, and threads keep their history.
 
+Each install, update and removal that started is kept as an outcome (`engine_installs`,
+the newest twenty per engine): the engine, the kind, when it started and finished, whether
+it worked, the reason in plain words, the command as shown to a person, the installer's exit
+status and its last lines. Text passes the locked redactor before it is written, so no
+setting can keep a secret in it. A refusal before anything ran (a thread is running on the
+engine, an entry this machine cannot install) is not an attempt and is not kept. Orbyn does
+not install a native engine that is not on the computer: `GET /api/engines/:id/installs`
+gives the vendor's own install page for it from a fixed list of https addresses, and never
+a command. No client supplies a command for an install.
+
 ## Command line
 
 `orbyn triage [--agent claude|codex] [--model MODEL]` starts a fresh native
@@ -3014,8 +3024,9 @@ every method, path and which routes need a credential.
 | `POST /api/engines/probe-binary` | `ProbeBinary` `{path}` to `BinaryProbe`: whether an absolute path is a runnable file and the version `--version` printed. No shell, fixed argument, 5 second limit; a relative path is refused with a `problem` |
 | `GET /api/engines/:id/native-sessions/count` | `NativeSessionCount`: conversation files in the engine's own history folder (`claude`, `codex`); counted, never opened; `422 unsupported` for other engines |
 | `POST /api/engines/:id/update` | Run the owning installer (`409 engine_busy`) |
-| `GET /api/engines/update-events` | SSE `EngineUpdateProgress` while an engine update runs |
-| `POST, DELETE /api/engines/custom[/:id]` | ACP, AG-UI and terminal engines |
+| `GET /api/engines/update-events` | SSE `EngineUpdateProgress` while an engine update or an ACP install runs |
+| `GET /api/engines/:id/installs` | `EngineInstalls`: the kept outcomes of installs, updates and removals (newest first, twenty at most) and the vendor's install page while the engine is not installed |
+| `POST, DELETE /api/engines/custom[/:id]` | ACP, AG-UI and terminal engines; remove is `409 engine_busy` while a thread runs on it |
 | `GET /api/acp/registry?q=` | `AcpRegistryEntry[]`, with how this machine can install each; `502` if unreachable |
 | `POST, DELETE /api/acp/registry/:id` | `InstallAcpAgent` to `EngineStatus`, `422` if refused; remove, `409 engine_busy` |
 | `GET /api/skills`, `POST /api/skills/rebuild` | Library skills; rebuild only re-reads them |

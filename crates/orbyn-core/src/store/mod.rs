@@ -21,6 +21,7 @@ mod crew_schema;
 #[cfg(test)]
 mod crew_tests;
 mod hub;
+mod installs;
 mod migrations;
 mod native_sessions;
 mod project_names;

@@ -9,11 +9,15 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use orbyn_contracts::{AcpRegistryEntry, CustomEngine, EngineStatus, EngineTier};
+use orbyn_contracts::{
+    AcpRegistryEntry, CustomEngine, EngineStatus, EngineTier, EngineUpdateProgress, InstallKind,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
+use crate::agents::engines::Finish;
+use crate::agents::engines::outcomes::{Attempt, Ran, hide};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::host::process::resolve;
@@ -138,6 +142,43 @@ fn installable(agent: &Agent) -> Vec<&'static str> {
 
 fn engine_id(agent: &str) -> String {
     format!("acp-{agent}")
+}
+
+/// What an install does, as shown to a person: the launch command an `npx` or `uvx` agent
+/// is registered with, or the address a binary is fetched from, without credentials or query.
+fn launch_line(agent: &Agent, chosen: &str) -> String {
+    let package = match chosen {
+        "npx" => agent
+            .distribution
+            .npx
+            .as_ref()
+            .map(|package| ("npx -y", package)),
+        "uvx" => agent
+            .distribution
+            .uvx
+            .as_ref()
+            .map(|package| ("uvx", package)),
+        _ => None,
+    };
+    if let Some((tool, package)) = package {
+        let args: Vec<&str> = package.args.iter().map(String::as_str).collect();
+        return [&[tool, package.package.as_str()][..], &args[..]]
+            .concat()
+            .join(" ");
+    }
+    let archive = platform_key()
+        .and_then(|key| agent.distribution.binary.get(&key))
+        .and_then(|target| reqwest::Url::parse(&target.archive).ok());
+    match archive {
+        Some(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            format!("Download and verify {url}")
+        }
+        None => "Download and verify the agent's archive".to_owned(),
+    }
 }
 
 /// `https`, or plain `http` to this machine, which only a test or a local mirror uses.
@@ -428,6 +469,16 @@ impl Core {
         .ok_or_else(|| {
             CoreError::Unsupported("This machine cannot install that agent that way.".into())
         })?;
+        let engine = engine_id(&agent.id);
+        // One install of an agent at a time, and none while a thread runs on it: a reinstall
+        // replaces the folder the run would be using. Both are refusals, not attempts.
+        let lock = self.engines.installer_lock(&format!("acp:{}", agent.id));
+        let Ok(_one_at_a_time) = lock.try_lock() else {
+            return Err(CoreError::EngineBusy(engine));
+        };
+        if self.store.active_runs_for_engine(&engine)? > 0 {
+            return Err(CoreError::EngineBusy(engine));
+        }
         self.store.append_audit(&AuditRecord {
             actor: actor.to_owned(),
             action: "acp.install".into(),
@@ -438,6 +489,55 @@ impl Core {
             run_id: None,
             detail: serde_json::json!({ "version": agent.version, "distribution": chosen }),
         })?;
+        let command = launch_line(&agent, chosen);
+        // Anything that went wrong from here on is an attempt that failed, and is kept.
+        let attempt = Attempt::begin(&engine, InstallKind::Install, Some(&command), None);
+        self.engines.emit(EngineUpdateProgress::Started {
+            engine: engine.clone(),
+            command: hide(&command),
+        });
+        // A dropped request still ends the attempt, so nothing is left showing "installing".
+        let mut finish = Finish {
+            engines: &self.engines,
+            id: engine.clone(),
+            attempt: Some(attempt),
+            sent: false,
+        };
+        let result = self.install_chosen(agent, chosen, actor).await;
+        finish.sent = true;
+        if let Some(attempt) = finish.attempt.take() {
+            self.engines.keep_outcome(
+                &attempt.finish(
+                    &Ran::default(),
+                    result.as_ref().err(),
+                    result
+                        .as_ref()
+                        .ok()
+                        .and_then(|status| status.version.clone()),
+                ),
+            );
+        }
+        self.engines.emit(EngineUpdateProgress::Finished {
+            engine,
+            version: result
+                .as_ref()
+                .ok()
+                .and_then(|status| status.version.clone()),
+            error: result
+                .as_ref()
+                .err()
+                .map(|error| hide(&error.public_message())),
+        });
+        result
+    }
+
+    /// Fetches or registers what `chosen` names, and makes it a custom engine.
+    async fn install_chosen(
+        &self,
+        agent: Agent,
+        chosen: &str,
+        actor: &str,
+    ) -> Result<EngineStatus> {
         let (target, args) = match chosen {
             "binary" => self.install_binary(&agent).await?,
             tool => {
@@ -479,7 +579,8 @@ impl Core {
         self.engines.status(&engine.id).await
     }
 
-    /// Removes the engine and any files it installed. Threads keep their history.
+    /// Removes the engine and any files it installed. Threads keep their history. Refused
+    /// while a thread runs on it; a refusal is not an attempt and is not kept.
     pub async fn remove_acp_agent(&self, id: &str, actor: &str) -> Result<()> {
         if !safe_name(id) {
             return Err(CoreError::NotFound("agent".into()));
@@ -493,16 +594,48 @@ impl Core {
         {
             return Err(CoreError::NotFound("agent".into()));
         }
-        if self.store.active_runs_for_engine(&engine)? > 0 {
-            return Err(CoreError::EngineBusy(engine));
+        self.remove_engine(&engine, actor, || {
+            let files = self.config.data_dir.join(AGENTS_DIR).join(id);
+            match std::fs::remove_dir_all(files) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            }
+        })
+        .await
+    }
+
+    /// Removes a custom engine from Orbyn's list. Its own sign-in and sessions stay with it.
+    pub async fn remove_custom_engine(&self, id: &str, actor: &str) -> Result<()> {
+        self.remove_engine(id, actor, || Ok(())).await
+    }
+
+    /// The one removal: the engine's row goes (refused in the same transaction while a thread
+    /// runs on it), then `files`. The attempt is kept whichever way it ended, except a refusal
+    /// or an engine that is not there, which are not attempts.
+    async fn remove_engine(
+        &self,
+        engine: &str,
+        actor: &str,
+        files: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let attempt = Attempt::begin(engine, InstallKind::Remove, None, None);
+        let result = async {
+            self.store.delete_custom_engine(engine, actor)?;
+            self.engines.invalidate().await;
+            files()
         }
-        self.store.delete_custom_engine(&engine, actor)?;
-        self.engines.invalidate().await;
-        let files = self.config.data_dir.join(AGENTS_DIR).join(id);
-        match std::fs::remove_dir_all(files) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
-            _ => Ok(()),
+        .await;
+        if !matches!(
+            result,
+            Err(CoreError::EngineBusy(_) | CoreError::NotFound(_))
+        ) {
+            self.engines.keep_outcome(&attempt.finish(
+                &Ran::default(),
+                result.as_ref().err(),
+                None,
+            ));
         }
+        result
     }
 }
 

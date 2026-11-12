@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 describe("provider update progress", () => {
-  it("shows the installer's latest line while the update runs", async () => {
+  it("shows the installer's command and lines while the update runs, and drops them when it finished", async () => {
     const updates = stream();
     mock.engines = [engine()];
     render(<ProvidersSection />);
@@ -100,15 +100,16 @@ describe("provider update progress", () => {
     expect(await screen.findByRole("button", { name: "Update to 0.167.0" })).toBeVisible();
 
     await updates.event({ kind: "started", engine: "codex", command: "npm install -g @openai/codex@latest" });
-    expect(await screen.findByText("npm install -g @openai/codex@latest")).toBeVisible();
-    expect(screen.getByText("Updating")).toBeVisible();
+    const log = await screen.findByRole("log", { name: "Installer output" });
+    expect(within(log).getByText("npm install -g @openai/codex@latest")).toBeVisible();
+    expect(screen.getByText("Updating…")).toBeVisible();
     await updates.event({ kind: "output", engine: "codex", line: "added 1 package in 3s" });
-    expect(await screen.findByText("added 1 package in 3s")).toBeVisible();
-    expect(screen.queryByText("npm install -g @openai/codex@latest")).toBeNull();
+    expect(await within(log).findByText("added 1 package in 3s")).toBeVisible();
+    // The command stays above the lines.
+    expect(within(log).getByText("npm install -g @openai/codex@latest")).toBeVisible();
 
     await updates.event({ kind: "finished", engine: "codex", version: "0.167.0", error: null });
-    await waitFor(() => expect(screen.queryByText("added 1 package in 3s")).toBeNull());
-    expect(screen.queryByText("Updating")).toBeNull();
+    await waitFor(() => expect(screen.queryByText("Updating…")).toBeNull());
   });
 
   it("keeps the update dialog open with the line, then its error", async () => {
