@@ -96,14 +96,21 @@ test("a hunk is reverted and a line edited through the file route, and the worki
   commit("Hunks base");
   writeFileSync(path, "one\nTWO\nthree\nfour\nFIVE\n");
   const { id } = await thread("Hunk actions");
-  await page.setViewportSize({ width: 1500, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(`${service.page}#/threads/${id}`);
   await (await openDetails(page)).getByRole("button", { name: /^Changes/ }).click();
   const file = page.locator("[data-diff-file='hunks.txt']");
+  // Hunk buttons show for the hunk under the pointer; bring the target into view and hover before pressing it.
+  const press = async (name: string, nth = 0) => {
+    const target = file.getByRole("button", { name, exact: true }).nth(nth);
+    await target.scrollIntoViewIfNeeded();
+    await (name === "Edit this line" ? target.locator("xpath=..") : file.locator(".hh2").first()).hover();
+    await target.click();
+  };
   await expect(file.getByRole("button", { name: "Revert hunk" })).toHaveCount(1);
 
   // Edit one line in place: only that line changes on disk.
-  await file.getByRole("button", { name: "Edit this line" }).nth(1).click({ force: true });
+  await press("Edit this line", 1);
   const field = file.getByRole("textbox", { name: /^Edit line/ });
   await field.fill("TWO!");
   await field.press("Meta+Enter");
@@ -111,7 +118,7 @@ test("a hunk is reverted and a line edited through the file route, and the worki
   expect(readFileSync(path, "utf8")).toBe("one\nTWO!\nthree\nfour\nFIVE\n");
 
   // Revert the hunk after confirming, then undo it.
-  await file.getByRole("button", { name: "Revert hunk" }).first().click({ force: true });
+  await press("Revert hunk");
   const dialog = page.getByRole("dialog", { name: "Revert this hunk?" });
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await dialog.getByRole("button", { name: "Revert hunk" }).click();
@@ -120,9 +127,11 @@ test("a hunk is reverted and a line edited through the file route, and the worki
   await page.getByRole("button", { name: /^Undo/ }).click();
   await expect.poll(() => readFileSync(path, "utf8")).toBe("one\nTWO!\nthree\nfour\nFIVE\n");
 
+  // The diff has read the undone file again before the file is changed under it.
+  await expect(file.getByText("TWO!")).toBeVisible();
   // A file that changed under the diff is left alone.
   writeFileSync(path, "one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
-  await file.getByRole("button", { name: "Revert hunk" }).first().click({ force: true });
+  await press("Revert hunk");
   await page.getByRole("dialog", { name: "Revert this hunk?" }).getByRole("button", { name: "Revert hunk" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Nothing was changed." })).toBeVisible();
   expect(readFileSync(path, "utf8")).toBe("one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
