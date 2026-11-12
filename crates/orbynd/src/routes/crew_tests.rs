@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use orbyn_contracts as wire;
 use orbyn_core::crew::Stamper;
-use orbyn_core::store::MergeRecord;
+use orbyn_core::crew::fixtures::{self, merge_record};
 use orbyn_core::{Core, CoreConfig};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -134,35 +134,6 @@ fn seed_task(core: &Core, label: &str) -> (String, String) {
         .create_crew_task(&brief, &key, &format!("run-{label}"))
         .unwrap();
     (task.id, key_command)
-}
-
-fn merge_record(task: &str, repo: &str, branch: &str, text: &str) -> MergeRecord {
-    MergeRecord {
-        id: 0,
-        task_id: task.to_owned(),
-        crew_id: "crew-1".to_owned(),
-        repo: repo.to_owned(),
-        branch: branch.to_owned(),
-        before_commit: "a".repeat(40),
-        merge_commit: "b".repeat(40),
-        candidate: "c".repeat(40),
-        risk: "high".to_owned(),
-        reasons: json!(["touches CI", text]),
-        areas: vec!["src/app".to_owned()],
-        engine: "claude".to_owned(),
-        mode: "full".to_owned(),
-        files: 3,
-        lines: 30,
-        proof: json!({ "cost": null, "task_checks": [], "note": text }),
-        not_verified: json!([text]),
-        merged_unix: orbyn_core::util::unix_now(),
-        due_unix: None,
-        review_state: "waiting".to_owned(),
-        comment: None,
-        watch: "unknown".to_owned(),
-        reverted_commit: None,
-        needs_person: None,
-    }
 }
 
 #[tokio::test]
@@ -515,16 +486,7 @@ async fn a_revert_is_refused_by_the_core_when_the_branch_is_checked_out_and_when
     let (task, _) = seed_task(&app.core, "revert");
     let repo = app.dir.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(&repo)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}");
-        String::from_utf8(out.stdout).unwrap().trim().to_owned()
-    };
+    let git = |args: &[&str]| fixtures::git(&repo, args);
     git(&["init", "-q"]);
     std::fs::write(repo.join("a.txt"), "a").unwrap();
     git(&["add", "."]);
@@ -576,25 +538,11 @@ async fn no_response_holds_a_secret_or_the_answer_key() {
         .unwrap();
     app.core
         .store
-        .add_merge_entry(&orbyn_core::store::MergeEntry {
-            task_id: task.clone(),
-            crew_id: "crew-1".to_owned(),
-            repo: repo.to_string_lossy().into_owned(),
-            branch: "main".to_owned(),
-            candidate: "c".repeat(40),
-            state: "waiting".to_owned(),
-            risk: "high".to_owned(),
-            reasons: json!([text]),
-            areas: vec!["src".to_owned()],
-            samples: vec![text.clone()],
-            engine: "claude".to_owned(),
-            files: 1,
-            lines: 1,
-            mode: "full".to_owned(),
-            note: Some(text.clone()),
-            released: false,
-            queued_unix: 1,
-        })
+        .add_merge_entry(&fixtures::merge_entry(
+            &task,
+            &repo.to_string_lossy(),
+            &text,
+        ))
         .unwrap();
     // Even a ledger row stored before the scrub existed is cleaned on the way out.
     app.core

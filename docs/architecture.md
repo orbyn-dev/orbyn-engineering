@@ -2369,7 +2369,7 @@ scripts and CI files. Keys that disagree give a denial. Three denials in a row o
 (`too_many_denials`), as does text that reads as injected instructions (`injection_suspected`). Every decision is a row of
 an append-only ledger with no secret and no answer-key text. The mode is `full` by default, `on` or `off` by the person per
 crew or repository. N1 also applies to threads outside Crew: an agent's command or request that names a state-changing account
-route is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
+route, or a Crew route that changes state (`crew::changes`: the person's answers under `/api/crew`), is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
 
 A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
 merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,

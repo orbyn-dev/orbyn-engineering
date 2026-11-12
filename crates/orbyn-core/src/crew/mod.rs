@@ -7,6 +7,8 @@ mod bus;
 pub mod changes;
 mod checks;
 mod filters;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures;
 mod gather;
 mod guard;
 mod index_flags;
