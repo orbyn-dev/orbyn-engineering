@@ -52,7 +52,15 @@ export type Scenario =
   | "pulls-rate-limited"
   | "pulls-signed-out"
   | "pulls-none"
-  | "pulls-unreachable";
+  | "pulls-unreachable"
+  /** The Usage page's Limits tab: Claude Code reads Not reported, Codex reports its windows, and the other providers have no route. */
+  | "limits"
+  | "limits-claude"
+  | "limits-near"
+  | "limits-reached"
+  | "limits-signedout"
+  | "limits-error"
+  | "limits-providers";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -143,6 +151,11 @@ export function createMockApi(options: MockOptions = {}) {
     failStep = null;
     if (next === "no-skills") managed = fixtures.workspaceStatus([], false);
     engines = structuredClone([...fixtures.engines, ...instanceEngines(fixtures.engines)]);
+    if (next.startsWith("limits")) {
+      const keep = next === "limits-providers" ? ["gemini-acp", "aider"] : next === "limits-claude" ? ["claude"] : next === "limits-error" ? ["codex", "gemini-acp"] : ["claude", "codex"];
+      engines = engines.filter((engine) => keep.includes(engine.id));
+      for (const engine of engines) if (engine.id === "codex" && next !== "limits-signedout") engine.auth = "logged_in";
+    }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
@@ -733,8 +746,10 @@ export function createMockApi(options: MockOptions = {}) {
           status: 200,
           body: { host_id: "mock", scanned_at: now(), engines: fixtures.usageEngines() },
         };
-      case "GET /api/limits":
-        return { status: 200, body: { pooled: [], engines: [], unavailable: [] } };
+      case "GET /api/limits": {
+                if (!scenario.startsWith("limits")) return { status: 200, body: { pooled: [], engines: [], unavailable: [] } };
+        return { status: 200, body: fixtures.limits(scenario, now()) };
+      }
       case "PATCH /api/threads": {
         const thread = threads.find((t) => t.id === seg[2]);
         if (!thread) return err(404, "not_found", "Thread not found.");
@@ -831,6 +846,7 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
         }
+        if (seg[3] === "limits") return err(502, "engine_unreachable", "The engine did not answer.");
         if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(seg[2] ?? "claude") };
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure } from "../../api/client";
 import type { UsageReport } from "../../api/types";
+import { useWorkspace } from "../../product/state/workspace";
 import { LIMITS_WAIT_MS } from "./UsageLimits";
 import { UsagePage } from "./UsagePage";
 
@@ -197,12 +198,19 @@ it("says what the local scan read, including engines with no history and unreada
   expect(status).toHaveTextContent("codex: no local history");
 });
 
-it("moves between the Usage and Limits tabs with the arrow keys and reads a meter as what is left", async () => {
-  vi.spyOn(api, "limits").mockResolvedValue({
-    pooled: [{ label: "5 hours", used_percent: 85, resets_at: null }],
-    engines: [],
-    unavailable: [],
-  } as never);
+const engine = (id: string, name: string, over: Record<string, unknown> = {}) =>
+  ({ id, name, installed: true, auth: "logged_in", ...over }) as never;
+const codexWindow = (over: Record<string, unknown> = {}) =>
+  ({ id: "primary", label: "5 hours", used_percent: 85, window_minutes: 300, resets_at: null, ...over });
+const limitsOf = (engines: unknown[], unavailable: unknown[] = []) => ({ pooled: [], engines, unavailable }) as never;
+const openLimits = async () => {
+  render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
+};
+
+it("moves between the Usage and Limits tabs with the arrow keys and reads a meter as what is used", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow()] }]));
   render(<UsagePage />);
   await screen.findByRole("row", { name: /local-model/ });
   const usage = screen.getByRole("tab", { name: "Usage" });
@@ -213,21 +221,146 @@ it("moves between the Usage and Limits tabs with the arrow keys and reads a mete
   await userEvent.keyboard("{ArrowRight}");
   expect(limits).toHaveAttribute("aria-selected", "true");
   expect(limits).toHaveFocus();
-  expect(await screen.findByRole("meter", { name: "5 hours" })).toHaveAttribute("aria-valuetext", "15% left");
+  expect(await screen.findByRole("meter", { name: "5-hour window" })).toHaveAttribute("aria-valuetext", "85% used");
   await userEvent.keyboard("{Home}");
   expect(usage).toHaveAttribute("aria-selected", "true");
 });
 
-it("says an engine does not report its limits in plain words and never shows the engine's own line", async () => {
-  vi.spyOn(api, "limits").mockResolvedValue({
-    pooled: [], engines: [],
-    unavailable: [{ engine: "claude", reason: "Claude Code did not report a usable context response." }],
-  } as never);
+it("reads Not reported for Claude Code even when its driver sends a window, with no bar and no figure", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(
+    limitsOf([{ engine: "claude", checked_at: "", limits: {}, plan: "Personal", windows: [codexWindow({ used_percent: 41 })] }]),
+  );
+  await openLimits();
+  expect(await screen.findByRole("heading", { name: "claude \u00b7 Personal" })).toBeVisible();
+  expect(screen.getByText("Not reported")).toBeVisible();
+  expect(screen.getByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+  expect(screen.queryByRole("meter")).toBeNull();
+  expect(screen.queryByText(/% used/)).toBeNull();
+});
+
+it("shows a Codex window with its percentage and reset time, neutral at the cap and never amber", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const soon = new Date(Date.now() + 38 * 60_000);
+    vi.spyOn(api, "limits").mockResolvedValue(
+      limitsOf([
+        { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] },
+        {
+          engine: "codex", checked_at: "", limits: {}, plan: null,
+          windows: [
+            codexWindow({ used_percent: 93, resets_at: soon.toISOString() }),
+            { id: "secondary", label: "7 days", used_percent: 100, window_minutes: 10080, resets_at: new Date(Date.now() + 3 * 86_400_000).toISOString() },
+          ],
+        },
+      ]),
+    );
+    render(<UsagePage />);
+    await screen.findByRole("row", { name: /local-model/ });
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("tab", { name: "Limits" }));
+    const five = await screen.findByRole("group", { name: "5-hour window" });
+    expect(five).toHaveTextContent("93% used");
+    expect(five).toHaveTextContent("Resets in 38 min");
+    expect(five).toHaveTextContent("Near the limit");
+    const week = screen.getByRole("group", { name: "Weekly limit" });
+    expect(week).toHaveTextContent("100% used");
+    expect(week).toHaveTextContent("Limit reached");
+    expect(week).toHaveTextContent(/Resets (Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2} [A-Z][a-z]{2}/);
+    // Only the one Not reported row is Claude Code's.
+    expect(screen.getAllByText("Not reported")).toHaveLength(1);
+    const css = (await import("node:fs")).readFileSync("src/features/usage/usage.css", "utf8");
+    expect(css.slice(css.indexOf("/* Limits: a group per engine"), css.indexOf("@media (max-width: 899px)"))).not.toMatch(/warn|amber/);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("sends a signed-out Codex to Providers and checks again, engine status included", async () => {
+  const read = vi.spyOn(api, "limits").mockResolvedValue(limitsOf([], [{ engine: "codex", reason: "Not signed in." }]));
+  const refreshEngines = vi.fn(async () => {});
+  useWorkspace.setState({ engines: { data: [engine("claude", "Claude Code"), engine("codex", "Codex", { auth: "logged_out" })], error: null, loading: false }, refreshEngines });
+  await openLimits();
+  expect(await screen.findByText("Codex is signed out. Sign in with the CLI, then check again.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open Providers" })).toHaveAttribute("href", "#/settings/providers");
+  expect(screen.queryByText(/Not signed in/)).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(read).toHaveBeenCalledWith(true));
+  expect(refreshEngines).toHaveBeenCalled();
+});
+
+it("shows signed out, not the cached windows, when the engine is logged out", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 62 })] }]));
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex", { auth: "logged_out" })], error: null, loading: false } });
+  await openLimits();
+  expect(await screen.findByText(/Codex is signed out/)).toBeVisible();
+  expect(screen.queryByRole("meter")).toBeNull();
+  expect(screen.queryByText(/% used/)).toBeNull();
+});
+
+it("says a Codex read failed with no last figure, and Try again asks that engine only", async () => {
+  const all = vi.spyOn(api, "limits").mockResolvedValue(limitsOf([], [{ engine: "codex", reason: "boom" }]));
+  const one = vi.spyOn(api, "engineLimits").mockRejectedValue(new Error("still down"));
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex"), engine("opencode", "OpenCode Go")], error: null, loading: false } });
+  await openLimits();
+  expect(await screen.findByText("Couldn\u2019t read the limit.")).toBeVisible();
+  expect(screen.queryByText(/Last read/)).toBeNull();
+  expect(screen.queryByRole("meter")).toBeNull();
+  expect(screen.queryByText(/boom/)).toBeNull();
+  expect(screen.queryByText("Subscription window")).toBeNull();
+  expect(screen.getByText(/Orbyn reads a limit only through the engine\u2019s own CLI/)).toBeVisible();
+  expect(screen.getByText("OpenCode Go")).toBeVisible();
+  expect(screen.getByText("No supported route yet")).toBeVisible();
+  all.mockClear();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(one).toHaveBeenCalledWith("codex", true));
+  await waitFor(() => expect(all).toHaveBeenCalledTimes(1));
+  expect(all).not.toHaveBeenCalledWith(true);
+});
+
+for (const used of [62, 100]) {
+  it(`keeps the full Claude Code line with Codex at ${used}%`, async () => {
+    const claude = { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] };
+    const codex = { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: used })] };
+    vi.spyOn(api, "limits").mockResolvedValue(limitsOf([claude, codex]));
+    await openLimits();
+    expect(await screen.findByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+  });
+}
+
+it("uses the short Claude Code line when Codex is signed out", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] }]));
+  useWorkspace.setState({ engines: { data: [engine("claude", "Claude Code"), engine("codex", "Codex", { auth: "logged_out" })], error: null, loading: false } });
+  await openLimits();
+  expect(await screen.findByText("Claude Code doesn\u2019t report one.")).toBeVisible();
+});
+
+it("draws Cu for Cursor and X for Codex on the provider tiles", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([]));
+  useWorkspace.setState({ engines: { data: [engine("cursor-agent", "Cursor Agent")], error: null, loading: false } });
+  await openLimits();
+  expect(await screen.findByText("Cu")).toBeInTheDocument();
+});
+
+it("keeps Claude Code's row while Codex is asked, with a placeholder bar and no figure", async () => {
+  vi.spyOn(api, "limits").mockReturnValue(new Promise(() => {}));
+  useWorkspace.setState({ engines: { data: [engine("claude", "Claude Code"), engine("codex", "Codex")], error: null, loading: false } });
   render(<UsagePage />);
   await screen.findByRole("row", { name: /local-model/ });
-  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
-  expect(await screen.findByText(/doesn\u2019t report its limits\./)).toBeVisible();
-  expect(screen.queryByText(/usable context response/)).toBeNull();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("tab", { name: "Limits" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(500)));
+    expect(screen.getByText("Asking Codex\u2026")).toBeVisible();
+    expect(screen.getByText("Not reported")).toBeVisible();
+    expect(screen.queryByText(/% used/)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says nothing reports limits when no engine is installed", async () => {
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([]));
+  await openLimits();
+  expect(await screen.findByText("No engine reports limits.")).toBeVisible();
 });
 
 it("stops loading Limits after the wait and offers to try again", async () => {
@@ -247,14 +380,14 @@ it("stops loading Limits after the wait and offers to try again", async () => {
 });
 
 it("sets Limits 16px below the tabs, with the group label first", async () => {
-  vi.spyOn(api, "limits").mockResolvedValue({ pooled: [{ label: "5 hours", used_percent: 40, resets_at: null }], engines: [], unavailable: [] } as never);
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] }]));
   const { container } = render(<UsagePage />);
   await screen.findByRole("row", { name: /local-model/ });
   await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
-  await screen.findByRole("heading", { name: "Pooled" });
+  await screen.findByRole("heading", { name: "claude" });
   expect(container.querySelector(".usage-body[data-limits]")).not.toBeNull();
   const css = (await import("node:fs")).readFileSync("src/features/usage/usage.css", "utf8");
-  expect(css).toMatch(/\.usage-body\[data-limits\] \{\s*padding-top: 16px/);
+  expect(css).toMatch(/\.limit-group h2 \{\s*padding: 16px 0 4px/);
 });
 
 it("says the history is being read, once: the first visit only, after the wait", async () => {

@@ -90,7 +90,7 @@ async function run(page, step) {
 
 /** One frame in one theme: a fresh page, the frame's network set-up, its route, its steps, a screenshot. */
 async function draw({ browser, app, id, frame, theme, out }) {
-  const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: "reduce" });
+  const context = await browser.newContext({ viewport: { ...VIEWPORT, width: frame.width ?? VIEWPORT.width }, reducedMotion: "reduce" });
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);

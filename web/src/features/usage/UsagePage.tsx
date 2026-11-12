@@ -19,7 +19,7 @@ import { useUsageReport } from "./useUsageReport";
 import { USAGE_PERIODS, type UsageDays, type UsageMetric } from "./usageModel";
 import { UsageView } from "./UsageView";
 import { ScanStatus, Segment } from "./UsageParts";
-import { LIMITS_WAIT_MS, LimitsView } from "./UsageLimits";
+import { LIMITS_WAIT_MS, LimitsAsking, LimitsView } from "./UsageLimits";
 
 const PREFS_KEY = "orbyn.usage.v1";
 
@@ -106,6 +106,19 @@ export function UsagePage() {
     }
   };
 
+  // Asks one engine and shows what the page now holds; the other engines are not asked.
+  const retry = async (engine: string) => {
+    try {
+      await api.engineLimits(engine, true);
+    } catch {
+      /* the page reads the failure again below */
+    }
+    void limits.reload();
+  };
+  const check = async () => {
+    await Promise.all([useWorkspace.getState().refreshEngines(), refresh()]);
+  };
+
   const providers = usage.data?.engines ?? [];
   const pending = metric === "limits" ? refreshing : usage.pending;
 
@@ -180,7 +193,7 @@ export function UsagePage() {
           limits.status === "error" ? (
             <ErrorState title="Couldn't load limits" failure={limits.error} onRetry={limits.reload} />
           ) : limits.status === "ready" && limits.data ? (
-            <LimitsView data={limits.data} nameOf={nameOf} />
+            <LimitsView data={limits.data} nameOf={nameOf} engines={engines} onCheck={() => void check()} onRetry={(engine) => void retry(engine)} />
           ) : limitsSlow ? (
             <div className="usage-body">
               <p className="usage-note" role="status">
@@ -188,6 +201,9 @@ export function UsagePage() {
                 <Button small onClick={limits.reload}>Try again</Button>
               </p>
             </div>
+          ) : limitsChecking && engines?.some((engine) => engine.id === "codex" && engine.installed) ? (
+            // Codex is asked through its own app-server: its row waits, the others stay (usage-claude-windows-loading).
+            <LimitsAsking nameOf={nameOf} engines={engines} />
           ) : limitsChecking ? (
             // Limits can take a few seconds: after the 400 ms wait a line says so (usage-first-load).
             <div className="usage-body usage-first" role="status">

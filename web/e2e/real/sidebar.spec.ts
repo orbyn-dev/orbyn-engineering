@@ -161,7 +161,7 @@ test("usage reads the real report and limits", async ({ page }) => {
   await usage.getByRole("radio", { name: "7 days" }).click();
   await usage.getByRole("button", { name: "Refresh usage" }).click();
   await usage.getByRole("tab", { name: "Limits" }).click();
-  await expect(usage.getByText(/reports limits|left|:/).first()).toBeVisible({ timeout: 15_000 });
+  await expect(usage.getByText(/reports limits|Not reported|% used|signed out/).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test("the composer picks model and effort and sets access", async ({ page }) => {
