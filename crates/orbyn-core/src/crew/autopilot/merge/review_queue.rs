@@ -113,6 +113,9 @@ impl Core {
         target: &MergeTarget,
         now: i64,
     ) -> Result<Option<String>> {
+        // One answer at a time, and the merge is read inside the lock: two reverts, or a "looks good" during a revert, cannot both
+        // act on a record that was true when they started.
+        let _one_at_a_time = self.crew_merges.lock().await;
         let record = self
             .store
             .crew_merge(task_id)?
@@ -135,13 +138,10 @@ impl Core {
                 );
                 Ok(None)
             }
-            ReviewAnswer::Revert => {
-                let _one_at_a_time = self.crew_merges.lock().await;
-                match revert_merge(self, &record, target, now).await? {
-                    Ok(commit) => Ok(Some(commit)),
-                    Err(why) => Err(CoreError::Invalid(why)),
-                }
-            }
+            ReviewAnswer::Revert => match revert_merge(self, &record, target, now).await? {
+                Ok(commit) => Ok(Some(commit)),
+                Err(why) => Err(CoreError::Invalid(why)),
+            },
         }
     }
 }

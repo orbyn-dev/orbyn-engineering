@@ -183,6 +183,40 @@ impl Store {
             .collect())
     }
 
+    /// One page of the queue across targets, in the order queued, with the number of entries in the given states.
+    pub fn merge_entries_page(
+        &self,
+        states: &[&str],
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<MergeEntry>, u32)> {
+        let marks = vec!["?"; states.len()].join(",");
+        let filter = if states.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE state IN ({marks})")
+        };
+        let mut args: Vec<rusqlite::types::Value> = states
+            .iter()
+            .map(|s| rusqlite::types::Value::from((*s).to_owned()))
+            .collect();
+        let conn = self.reader();
+        let total: u32 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM crew_merge_queue {filter}"),
+            rusqlite::params_from_iter(args.iter()),
+            |row| row.get(0),
+        )?;
+        args.push(i64::from(limit).into());
+        args.push(i64::from(offset).into());
+        let mut statement = conn.prepare(&format!(
+            "SELECT * FROM crew_merge_queue {filter} ORDER BY queued_unix, rowid LIMIT ? OFFSET ?"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(args.iter()), entry_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((rows, total))
+    }
+
     /// A person releases a waiting entry: it is queued again, and every later move keeps the release.
     pub fn release_merge_entry(&self, task_id: &str) -> Result<()> {
         self.commit(|tx, _| {
@@ -265,6 +299,30 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// One page of merges, newest first, and the number of merges in all.
+    pub fn crew_merges_page(&self, limit: u32, offset: u32) -> Result<(Vec<MergeRecord>, u32)> {
+        let conn = self.reader();
+        let total: u32 =
+            conn.query_row("SELECT COUNT(*) FROM crew_merges", [], |row| row.get(0))?;
+        let mut statement =
+            conn.prepare("SELECT * FROM crew_merges ORDER BY id DESC LIMIT ?1 OFFSET ?2")?;
+        let rows = statement
+            .query_map(params![limit, offset], merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((rows, total))
+    }
+
+    /// Merges still standing, by what the watch found: `(watch, count)`.
+    pub fn crew_watch_counts(&self) -> Result<Vec<(String, u32)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT watch, COUNT(*) FROM crew_merges WHERE review_state != 'reverted' GROUP BY watch",
+        )?;
+        Ok(statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn crew_merge(&self, task_id: &str) -> Result<Option<MergeRecord>> {
         Ok(self
             .reader()
@@ -276,7 +334,7 @@ impl Store {
             .optional()?)
     }
 
-    /// The person's answer to a merge in the Review queue.
+    /// The person's answer to a merge in the Review queue. A merge that was reverted keeps that: the answer is refused.
     pub fn set_merge_review(
         &self,
         task_id: &str,
@@ -285,11 +343,21 @@ impl Store {
     ) -> Result<()> {
         self.commit(|tx, _| {
             let changed = tx.execute(
-                "UPDATE crew_merges SET review_state = ?2, comment = COALESCE(?3, comment), reviewed_unix = ?4 WHERE task_id = ?1",
+                "UPDATE crew_merges SET review_state = ?2, comment = COALESCE(?3, comment), reviewed_unix = ?4
+                 WHERE task_id = ?1 AND review_state != 'reverted'",
                 params![task_id, state, comment, unix_now()],
             )?;
             if changed == 0 {
-                return Err(CoreError::NotFound(format!("merge of task {task_id}")));
+                let exists: bool = tx.query_row(
+                    "SELECT COUNT(*) FROM crew_merges WHERE task_id = ?1",
+                    [task_id],
+                    |row| row.get::<_, i64>(0).map(|n| n > 0),
+                )?;
+                return Err(if exists {
+                    CoreError::Invalid("this merge was already reverted".into())
+                } else {
+                    CoreError::NotFound(format!("merge of task {task_id}"))
+                });
             }
             Ok(())
         })

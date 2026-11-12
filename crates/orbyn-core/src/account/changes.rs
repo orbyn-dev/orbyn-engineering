@@ -126,20 +126,31 @@ pub fn changes_account_state(path: &str) -> bool {
 /// The account-API paths a piece of text names: each occurrence of `/api/account` up to the end of
 /// its path. A host in front, quotes and a scheme do not matter.
 pub fn account_paths_in(text: &str) -> Vec<String> {
+    paths_with_prefix(text, PREFIX)
+}
+
+/// Each occurrence of `prefix` (lowercase, such as `/api/account`) in `text`, up to the end of its path, found
+/// the way `normalize` reads a path: percent-encoded letters undone, case ignored.
+pub fn paths_with_prefix(text: &str, prefix: &str) -> Vec<String> {
     let text = &decode_unreserved(text);
     let lower = text.to_ascii_lowercase();
     let mut found = Vec::new();
     let mut from = 0;
-    while let Some(at) = lower[from..].find(PREFIX) {
+    while let Some(at) = lower[from..].find(prefix) {
         let start = from + at;
         let rest = &text[start..];
         let end = rest
             .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ')' | ',' | ';'))
             .unwrap_or(rest.len());
         found.push(rest[..end].to_owned());
-        from = start + PREFIX.len();
+        from = start + prefix.len();
     }
     found
+}
+
+/// A `{id}` segment of a route pattern matches any one segment of a path.
+pub fn pattern_matches(pattern: &str, path: &str) -> bool {
+    matches(pattern, path)
 }
 
 #[cfg(test)]

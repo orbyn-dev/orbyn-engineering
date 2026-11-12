@@ -172,6 +172,11 @@ pub struct ServerInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub database_upgrade: Option<DatabaseUpgrade>,
+    /// `true` only when this service runs with the Crew Preview flag on. Absent means off. It is read-only here: the
+    /// flag is set by the service's own start (`ORBYN_CREW_PREVIEW`), never by a request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub crew_preview: Option<bool>,
 }
 }
 
