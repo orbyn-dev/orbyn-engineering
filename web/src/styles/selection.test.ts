@@ -20,7 +20,7 @@ describe("what can be selected", () => {
 
   it("opts the text people copy back in, WebKit spelling included", () => {
     for (const selector of [
-      ".msg-bubble", ".md", ".code-card", ".tool-output", ".tool-inspect", ".command", ".diff-view", ".diff-card",
+      ".msg-bubble", ".md", ".code-card", ".tool-output", ".tool-inspect", ".command", ".d2", ".md2", ".diff-card",
       ".file-preview", ".pull-body", ".pull-comment", ".pull-review-note-text", ".pull-check-name", ".pull-patch",
       ".error-text", ".set-path", ".terminal-host", "input", "textarea", ".approval-target", ".approval-kv",
       ".ask-label", ".skills-description", ".skills-detail", '[contenteditable]:not([contenteditable="false"])',

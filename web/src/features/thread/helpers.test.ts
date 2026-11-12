@@ -182,9 +182,9 @@ describe("touchesOf", () => {
 });
 
 describe("parsePatch", () => {
-  it("classifies lines without treating file headers as changes", () => {
-    const lines = parsePatch("--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n same\n");
-    expect(lines.map((line) => line.kind)).toEqual(["meta", "meta", "hunk", "del", "add", "ctx"]);
+  it("drops the git header and classifies every line inside a hunk by its first character", () => {
+    const lines = parsePatch("diff --git a/a b/a\nindex 1..2 100644\n--- a\n+++ b\n@@ -1,2 +1 @@\n-old\n--- a dashed line\n+new\n same\n");
+    expect(lines.map((line) => line.kind)).toEqual(["hunk", "del", "del", "add", "ctx"]);
   });
 });
 

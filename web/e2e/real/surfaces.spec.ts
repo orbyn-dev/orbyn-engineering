@@ -44,40 +44,66 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => service.stop());
 
-test("the diff surface: status, tests filter, find, split, whitespace, collapse, copy, commit source", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test("the Changes panel: letters, test filter, find, split, whitespace, collapse, wrap, commit scope", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto(`${service.page}#/threads/${threadId}`);
   await openPanelTab(page, "Diff");
-  await expect(page.locator("[data-diff-file='README.md'] .diff-status")).toHaveText("M");
-  await expect(page.locator("[data-diff-file='fresh.txt'] .diff-status")).toHaveText("A");
+  const list = page.getByRole("group", { name: "Changed files" });
+  const row = (name: RegExp) => list.getByRole("button", { name });
+  await expect(row(/README\.md/).getByLabel("Modified")).toHaveText("M");
+  await expect(row(/fresh\.txt/).getByLabel("Added")).toHaveText("A");
+  // Staged is not told apart here: fresh.txt is staged and sits in the one list with the rest.
+  await expect(list.getByText(/^Staged/)).toHaveCount(0);
 
-  await page.getByLabel("Hide tests").check();
-  await expect(page.locator("[data-diff-file='tests/a.test.ts']")).toHaveCount(0);
-  await page.getByLabel("Hide tests").uncheck();
+  /** A View options choice, then the menu closed. */
+  const option = async (role: "menuitemcheckbox" | "menuitemradio", name: string) => {
+    await page.getByRole("button", { name: "View options", exact: true }).click();
+    await page.getByRole("menu", { name: "View options" }).getByRole(role, { name }).click();
+    await page.keyboard.press("Escape");
+  };
 
+  await option("menuitemcheckbox", "Hide test files");
+  await expect(row(/a\.test\.ts/)).toHaveCount(0);
+  await option("menuitemcheckbox", "Hide test files");
+  await expect(row(/a\.test\.ts/)).toHaveCount(1);
+
+  await row(/README\.md/).click();
+  await page.getByRole("group", { name: "Patch" }).focus();
+  await page.keyboard.press("ControlOrMeta+f");
   await page.getByRole("searchbox", { name: "Find in diff" }).fill("repo changed");
-  await expect(page.locator(".diff-find output")).toHaveText("1 match");
-  await expect(page.locator(".patch-line[data-hit]").first()).toBeVisible();
-  await page.getByRole("searchbox", { name: "Find in diff" }).fill("");
+  await expect(page.getByText("1 of 1")).toBeVisible();
+  await expect(page.locator("mark.fhit").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("searchbox", { name: "Find in diff" })).toHaveCount(0);
 
-  await page.getByRole("radio", { name: "Split" }).click();
-  await expect(page.locator(".patch-split").first()).toBeVisible();
-  await page.getByRole("radio", { name: "Unified" }).click();
+  // Split needs a wide panel, so the item is off until the panel is maximised.
+  await page.getByRole("button", { name: "View options", exact: true }).click();
+  await expect(page.getByRole("menuitemradio", { name: "Split" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Maximise panel", exact: true }).first().click();
+  await option("menuitemradio", "Split");
+  await expect(page.locator(".sp2").first()).toBeVisible();
+  await option("menuitemradio", "Unified");
+  await page.getByRole("button", { name: "Restore", exact: true }).first().click();
 
-  await page.getByLabel("Ignore whitespace").check();
-  await expect(page.locator("[data-diff-file='spaced.txt'] .patch-add")).toHaveCount(0);
-  await page.getByLabel("Ignore whitespace").uncheck();
+  await row(/spaced\.txt/).click();
+  await option("menuitemcheckbox", "Ignore whitespace");
+  await expect(page.locator("[data-diff-file='spaced.txt'] .l.add")).toHaveCount(0);
+  await option("menuitemcheckbox", "Ignore whitespace");
 
-  await page.getByLabel("Collapse files").check();
-  await expect(page.locator(".patch")).toHaveCount(0);
-  await page.getByLabel("Collapse files").uncheck();
+  await option("menuitemcheckbox", "Collapse all files");
+  await expect(page.getByRole("group", { name: "Patch" })).toHaveCount(0);
+  await option("menuitemcheckbox", "Collapse all files");
 
-  await page.getByRole("button", { name: "Copy path README.md" }).click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("README.md");
+  await row(/README\.md/).click();
+  await option("menuitemcheckbox", "Wrap long lines");
+  await expect(page.getByRole("group", { name: "Patch" })).toHaveAttribute("data-wrap", "off");
+  await option("menuitemcheckbox", "Wrap long lines");
 
-  await page.getByRole("radiogroup", { name: "Diff source" }).getByRole("radio", { name: "Commit" }).click();
+  await page.getByRole("button", { name: /^Scope: / }).click();
+  await page.getByRole("menuitem", { name: "Commit", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Commit" })).toContainText("Second commit");
+  await row(/notes\.md/).click();
   await expect(page.locator("[data-diff-file='notes.md']")).toBeVisible();
 });
 

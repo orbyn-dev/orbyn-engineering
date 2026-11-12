@@ -20,6 +20,7 @@ import "./styles/documents.css";
 import "./styles/rich-content.css";
 import "./styles/thread-overlays.css";
 import "./styles/diff.css";
+import "./styles/changes.css";
 import "./styles/browser.css";
 import "./styles/toolcalls.css";
 import "./styles/detailsCard.css";

@@ -50,11 +50,13 @@ test("subfolder file links stay local while repository-wide patches remain visib
     await expect(page.getByText("That path is outside this checkout.", { exact: true })).toBeVisible();
     expect(reads.some((path) => path.includes("README.md"))).toBe(false);
     await page.getByRole("button", { name: "View diff", exact: true }).click();
+    // One file shows at a time: both are in the list, and the other opens from it.
+    const rows = page.getByRole("group", { name: "Changed files" });
     const inside = page.locator('[data-diff-file="packages/web/kept.txt"]');
     const outside = page.locator('[data-diff-file="README.md"]');
-    await expect(inside).toBeVisible();
-    await expect(outside).toBeVisible();
-    if (await outside.getByRole("button", { expanded: false }).count()) await outside.getByRole("button", { expanded: false }).click();
+    await expect(rows.locator('[data-diff-row="packages/web/kept.txt"]')).toBeVisible();
+    await expect(rows.locator('[data-diff-row="README.md"]')).toBeVisible();
+    await rows.locator('[data-diff-row="README.md"]').click();
     await expect(outside).toContainText("outside-diff-stays-viewable");
     await page.getByRole("button", { name: "1 file changed", exact: true }).click();
     const resolution = page.waitForResponse((response) => response.url().endsWith("/paths/resolve") && response.request().postDataJSON()?.basis === "repository");

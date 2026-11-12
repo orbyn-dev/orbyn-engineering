@@ -51,5 +51,5 @@ test("a jj checkout shows its working-copy change and diff in the changes panel"
   await expect(change).toContainText("jj change kxqpmzwt");
   await expect(change).toContainText("on feature");
   await expect(change).toContainText("Teach the parser");
-  await expect(page.locator("[data-diff-file='src/parse.rs'] .diff-status")).toHaveText("M");
+  await expect(page.getByRole("group", { name: "Changed files" }).getByRole("button", { name: /src\/parse\.rs/ }).getByLabel("Modified")).toHaveText("M");
 });

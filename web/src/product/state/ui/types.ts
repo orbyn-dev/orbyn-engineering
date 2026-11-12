@@ -114,6 +114,10 @@ export interface Prefs {
   diffFilesCollapsed: boolean;
   diffIgnoreWhitespace: boolean;
   diffHideTests: boolean;
+  /** Wraps long lines in the Changes panel; on unless View options says otherwise. */
+  diffWrapLines: boolean;
+  /** A Markdown file in Changes shows as the reader will see it, not as source. Remembered for the type. */
+  diffMarkdownRendered: boolean;
   /** A named palette over the base theme, for each scheme. */
   lightPreset: string | null;
   darkPreset: string | null;

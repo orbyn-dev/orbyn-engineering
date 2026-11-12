@@ -54,6 +54,8 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   diffFilesCollapsed: state.diffFilesCollapsed,
   diffIgnoreWhitespace: state.diffIgnoreWhitespace,
   diffHideTests: state.diffHideTests,
+  diffWrapLines: state.diffWrapLines,
+  diffMarkdownRendered: state.diffMarkdownRendered,
   lightPreset: state.lightPreset,
   darkPreset: state.darkPreset,
   customColors: state.customColors,

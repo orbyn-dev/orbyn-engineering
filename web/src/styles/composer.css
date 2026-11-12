@@ -416,53 +416,7 @@
   flex: 1;
   min-width: 0;
 }
-.review-comment {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border-radius: var(--radius-md);
-  background: var(--color-raised);
-}
-.review-comment textarea {
-  min-height: 52px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--color-chip);
-  color: var(--color-text);
-  font: inherit;
-  resize: vertical;
-}
-/* The line number is always there: clicking it starts a comment (x-diff-comment). Only the comment icon beside it
-   fades in on hover, keyboard focus or the selected lines, and always shows where there is no hover. The button
-   stays in view at the line's right end while a long line scrolls under it. */
-.patch-line-number {
-  position: sticky;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-background) 85%, transparent);
-}
-.patch-line-number > svg {
-  opacity: 0;
-  transition: opacity var(--m-fast) var(--m-io);
-}
-.patch-line:hover .patch-line-number > svg,
-.patch-line[data-selected] .patch-line-number > svg,
-.patch-line-number:focus-visible > svg,
-.patch-line-number[aria-pressed="true"] > svg {
-  opacity: 1;
-}
-@media (hover: none), (pointer: coarse) {
-  .patch-line-number > svg {
-    opacity: 1;
-  }
-}
+
 .context-action {
   display: inline-flex;
   align-items: center;
