@@ -6,6 +6,7 @@ The operating system side: processes, their environment, terminals and the deskt
 | --- | --- |
 | `process` | Child processes as owned resources that die with their owner |
 | `child_env` | What a spawned program inherits |
+| `confine` | The restriction a crew worker's engine process runs under (macOS), and the refusal elsewhere |
 | `terminal` | PTY sessions with bounded scrollback; ConPTY on Windows |
 | `shell` | The desktop shell's side of the service |
 

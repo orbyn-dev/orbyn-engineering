@@ -946,6 +946,21 @@ reason.
 - Premise check, dependency splitting, cheap-draft escalation
 - Publishing the spec
 
+## Worker confinement (macOS)
+
+Crew runs on macOS in the beta; Windows later. On macOS each worker's engine process starts under a
+profile that denies reading or writing Orbyn's data folder (store, service handle, other runs' files),
+except its own run folder, checkout and library, and denies looking into other processes. On macOS, workers cannot read Orbyn's own service token or database.
+Where that is not possible the worker is refused with a plain line. See
+[the architecture](architecture.md#crew-worker-confinement) and SPEC section 11.
+
+Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
+engines) and tests that run the real tool. Not built: closing the lead's own engine transcript files (next
+change, needed before the answer key is claimed safe) and a Windows or Linux restriction. Known limits: the
+network, the loopback service, the keychain, the engine's own login folders, other same-user files and
+processes a worker leaves running are outside it. Codex workers are refused until the nested-profile
+question is answered.
+
 ## Open risks
 
 - Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".

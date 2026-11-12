@@ -29,7 +29,9 @@ use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::sync::CancellationToken;
 
-use super::pipes::{EngineProcess, one_shot_at, resolve_engine, spawn_engine, spawn_engine_with};
+use super::pipes::{
+    EngineProcess, one_shot_at, resolve_engine, spawn_engine_confined, spawn_engine_with,
+};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, MCP_SERVER_NAME, ModelCatalog,
     ProbeDir, RunHandle, RunSpec, UpdatePlan, WarmProcess,
@@ -381,7 +383,7 @@ impl ClaudeDriver {
             write_private(&run_settings_path(spec), settings.to_string().as_bytes())?;
         }
         let args = run_args(spec, &mcp_config);
-        spawn_engine(&command, &args, &spec.cwd)
+        spawn_engine_confined(&command, &args, &spec.cwd, &[], spec.confine.as_ref())
     }
 
     /// Reads the CLI's `initialize` response from a process that never gets a

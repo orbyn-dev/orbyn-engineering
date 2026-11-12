@@ -396,6 +396,7 @@ impl RunManager {
 
 mod admission;
 mod checkpoints;
+mod confine;
 mod execute;
 mod stops;
 mod turn;

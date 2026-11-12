@@ -2721,6 +2721,35 @@ Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to t
 it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
 wins, and a shim that points at a shell is refused.
 
+## Crew worker confinement
+
+A Crew worker is an engine process that runs as the person, so it could read the data folder
+(the store holds the answer key and the lead's thread text), run `orbyn` against `service.json` or
+open another run's `runs/<id>/mcp.json`. On macOS `host::confine` starts each worker's engine
+through `/usr/bin/sandbox-exec` with a fixed profile. The profile denies reading and writing the data
+folder, then allows the worker's own run folder (read and write), the library (read), its checkout
+(read and write) and an installed agent's own `acp-agents/<id>` folder (read and run). It also denies
+inspecting other processes, the task port and Apple events. Paths reach the profile only as `-D`
+parameters and are canonicalised first, because a rule on `/var/...` does not match `/private/var/...`.
+The child's `ORBYN_DATA_DIR` is removed. `RunSpec.confine` carries the rules from the run manager
+to the claude and acp drivers; a driver that cannot apply them does not start the run. A process
+started ahead of a turn (warm) is not used for a worker.
+
+Hard rule 7 applies: where the restriction cannot be applied, the worker is refused before it exists,
+with a plain line in the task's "refused by the app" item. That covers Windows and Linux ("Crew runs on
+macOS in the beta; Windows later."), a missing `sandbox-exec`, a core that itself runs under a macOS
+restriction (`sandbox-exec` cannot nest), Codex (it starts its own profile per command, so the core
+refuses it until that is checked; one constant, `CODEX_WORKERS_ALLOWED`) and terminal engines (not
+managed, so not restrictable). Tests on macOS run the real tool: the store, the service handle and another
+run's `mcp.json` cannot be read through a symlinked data path, the worker's own run folder and its
+checkout can, `ps` of another process fails, the spawn path drops `ORBYN_DATA_DIR`, and a confined `orbyn status` cannot find a service that an unrestricted one reaches. So on macOS workers cannot read Orbyn's own service token or database.
+
+What it does not cover: the network, the loopback service (its token is the guard), the OS keychain,
+the engine's own login and session folders (the lead's own engine transcript files are closed by a later
+change), other files of the same user, and a process a worker leaves running after its turn. The tests
+prove the read and write denials above, not the answer key as a whole, which waits for the transcript
+change. A worker also cannot write to a second checkout that lives inside the data folder.
+
 ## ACP registry
 
 `GET /api/acp/registry` reads the public registry on request, and installing an agent

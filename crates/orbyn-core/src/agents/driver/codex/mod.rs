@@ -370,6 +370,13 @@ impl EngineDriver for CodexDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
+        // Codex starts its own profile for each command, which cannot nest inside a
+        // restriction (see `host::confine::CODEX_WORKERS_ALLOWED`): never run it unrestricted.
+        if spec.confine.is_some() {
+            return Err(CoreError::EngineUnavailable(
+                "Crew workers on Codex are not available yet.".into(),
+            ));
+        }
         let command = resolve_engine(&self.program)?;
         let args = [OsString::from("app-server")];
         let process = spawn_engine(&command, &args, &spec.cwd)?;

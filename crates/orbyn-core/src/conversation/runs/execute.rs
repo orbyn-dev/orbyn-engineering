@@ -140,6 +140,10 @@ impl RunManager {
         if wanted != json!(true) {
             return Ok(());
         }
+        // A crew worker's process is started under a restriction, which an early start lacks.
+        if self.store.crew_task_for_worker(thread_id)?.is_some() {
+            return Ok(());
+        }
         let thread = self.store.thread(thread_id)?;
         let driver = self.engines.driver(&thread.engine)?;
         let lifecycle = thread.lifecycle.as_ref();
@@ -211,6 +215,7 @@ impl RunManager {
             resume: self.store.engine_session(&thread.id)?,
             mcp_url: Some(url.clone()),
             run_dir: PathBuf::new(),
+            confine: None,
         };
         // No update may begin while this process starts and is parked: it would hold
         // the binary being replaced, which Windows refuses.

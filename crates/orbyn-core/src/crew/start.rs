@@ -343,6 +343,9 @@ impl Core {
         member: &CrewMember,
         prompt: Option<String>,
     ) -> Result<Value, CrewError> {
+        // Before anything is started: a worker that cannot be restricted is refused, and the task
+        // shows the reason in the "refused by the app" item.
+        self.refuse_unrestricted_worker(&decision.engine).await?;
         let prompt = match prompt {
             Some(text) => text,
             None => self.worker_prompt(brief, member)?,
@@ -387,6 +390,30 @@ impl Core {
             .move_crew_task(&task_id, "running", None)
             .map_err(|e| CrewError::new(ErrorCode::InvalidTransition, e.public_message()))?;
         Ok(json!({ "thread": thread.id, "member": member }))
+    }
+
+    /// A worker runs as the person, so its process starts under a restriction that keeps it
+    /// out of the core's data folder (`host::confine`). Where none can be applied, or the
+    /// engine cannot be run under one, the worker is not started.
+    async fn refuse_unrestricted_worker(&self, engine: &CrewToken) -> Result<(), CrewError> {
+        if !self.config.crew_confine_workers {
+            return Ok(());
+        }
+        let refuse = |reason: String| CrewError::new(ErrorCode::NotAuthorized, reason);
+        if let Some(reason) = tokio::task::spawn_blocking(crate::host::confine::unavailable)
+            .await
+            .map_err(|error| invalid(error.to_string()))?
+        {
+            return Err(refuse(reason));
+        }
+        let driver = self
+            .engines
+            .driver(engine.as_str())
+            .map_err(|error| invalid(error.public_message()))?;
+        match crate::host::confine::engine_refusal(driver.descriptor().tier, &driver.family()) {
+            Some(reason) => Err(refuse(reason.to_owned())),
+            None => Ok(()),
+        }
     }
 
     /// What the worker is told: the objects `WorkerObject` allows, as data, with the leak and

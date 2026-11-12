@@ -165,6 +165,7 @@ fn spec() -> RunSpec {
         resume: Some("sess".into()),
         mcp_url: Some("http://127.0.0.1:1/mcp/x".into()),
         run_dir: PathBuf::from("/run"),
+        confine: None,
     }
 }
 
