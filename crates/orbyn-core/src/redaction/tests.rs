@@ -584,7 +584,7 @@ fn a_pattern_that_hides_ordinary_text_needs_a_second_yes() {
             .unwrap_err(),
     );
     assert_eq!(code, "pattern_too_broad");
-    assert!(message.contains("very broad"));
+    assert!(message.contains("characters of the sample"));
     assert!(core.redaction_settings().unwrap().patterns.is_empty());
     let mut again = input("Everything", ".*", PatternKind::Regex);
     again.accept_broad = Some(true);
@@ -615,13 +615,14 @@ fn trying_a_pattern_reports_matches_masks_the_sample_and_measures_recent_lines()
     assert_eq!(tried.masked, format!("STRIPE_KEY={}", "•".repeat(15)));
     let lines: Vec<String> = (0..40).map(|n| format!("line {n}")).collect();
     let broad = core.test_redaction_pattern(&RedactionPatternTestInput {
-        pattern: "line".into(),
-        kind: PatternKind::Text,
+        pattern: ".*".into(),
+        kind: PatternKind::Regex,
         applies_to: PatternScope::Anywhere,
         sample: "line one".into(),
         lines: Some(lines),
     });
-    assert_eq!((broad.lines_matched, broad.lines_total), (40, 40));
+    assert_eq!(broad.hidden_chars, broad.total_chars);
+    assert!(broad.total_chars > 0);
     assert!(broad.broad);
     // Too few lines say nothing: the ordinary text is used instead.
     let few = core.test_redaction_pattern(&RedactionPatternTestInput {
@@ -631,7 +632,7 @@ fn trying_a_pattern_reports_matches_masks_the_sample_and_measures_recent_lines()
         sample: String::new(),
         lines: Some(vec!["line".into(); 3]),
     });
-    assert!(few.lines_total > 3 && !few.broad);
+    assert!(few.total_chars > 12 && !few.broad);
 }
 
 #[test]
@@ -661,7 +662,7 @@ fn text_tried_is_cut_to_the_limits() {
         sample: "z".repeat(MAX_SAMPLE_CHARS * 2),
         lines: Some(vec!["zzz".into(); MAX_CONTEXT_LINES * 2]),
     });
-    assert_eq!(tried.lines_total as usize, MAX_CONTEXT_LINES);
+    assert_eq!(tried.total_chars as usize, MAX_CONTEXT_LINES * 3);
     assert!(tried.masked.chars().count() <= MAX_SAMPLE_CHARS);
 }
 

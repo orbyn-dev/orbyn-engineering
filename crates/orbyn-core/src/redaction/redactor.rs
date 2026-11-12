@@ -205,15 +205,20 @@ impl Redactor {
             })
     }
 
-    /// How many of `lines` a match touches. Lines beyond the limits are cut, not skipped.
-    pub fn lines_hit(&self, lines: &[String]) -> usize {
-        lines
-            .iter()
-            .take(custom::MAX_CONTEXT_LINES)
-            .filter(|line| {
-                let line: String = line.chars().take(custom::MAX_LINE_CHARS).collect();
-                !self.spans(&line).is_empty()
-            })
-            .count()
+    /// How many characters of `lines` this set hides, and how many there are. Lines and line
+    /// lengths beyond the limits are cut, not skipped.
+    pub fn chars_hidden(&self, lines: &[String]) -> (usize, usize) {
+        let mut hidden = 0;
+        let mut total = 0;
+        for line in lines.iter().take(custom::MAX_CONTEXT_LINES) {
+            let line: String = line.chars().take(custom::MAX_LINE_CHARS).collect();
+            total += line.chars().count();
+            hidden += self
+                .spans(&line)
+                .iter()
+                .map(|span| line[span.start..span.end].chars().count())
+                .sum::<usize>();
+        }
+        (hidden, total)
     }
 }

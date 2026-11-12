@@ -138,7 +138,7 @@ async fn a_broad_pattern_is_refused_until_the_person_accepts_it() {
         (code, body["code"].clone()),
         (422, json!("pattern_too_broad"))
     );
-    assert!(body["detail"]["lines_total"].as_u64().unwrap() > 0);
+    assert!(body["detail"]["total_chars"].as_u64().unwrap() > 0);
     let mut accepted = pattern("Everything", ".*", "regex");
     accepted["accept_broad"] = json!(true);
     let (code, view) = call(

@@ -12,9 +12,9 @@ problem: RedactionPatternProblem | null, matches: Array<RedactionSpan>,
  */
 masked: string, 
 /**
- * How many of the lines a match touches, and how many were tried.
+ * How many characters of the text it was tried on the pattern hides, and how many there were.
  */
-lines_matched: number, lines_total: number, 
+hidden_chars: number, total_chars: number, 
 /**
  * The pattern would hide nearly everything it was tried on.
  */

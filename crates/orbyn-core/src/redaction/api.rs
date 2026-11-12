@@ -87,10 +87,10 @@ fn is_broad(hit: usize, total: usize) -> bool {
     total > 0 && hit * 100 >= total * BROAD_PERCENT
 }
 
-/// The share of ordinary text a pattern hides, as (lines hit, lines tried).
+/// The share of ordinary text a pattern hides, as (characters hidden, characters tried).
 fn ordinary_hits(redactor: &Redactor) -> (usize, usize) {
     let lines: Vec<String> = ORDINARY.iter().map(|line| (*line).to_owned()).collect();
-    (redactor.lines_hit(&lines), lines.len())
+    redactor.chars_hidden(&lines)
 }
 
 impl Core {
@@ -250,10 +250,8 @@ impl Core {
             if is_broad(hit, total) {
                 return Err(CoreError::PatternRefused {
                     code: "pattern_too_broad",
-                    message: format!(
-                        "This pattern is very broad. It would hide {hit} of {total} lines of ordinary text."
-                    ),
-                    detail: json!({ "lines_matched": hit, "lines_total": total }),
+                    message: format!("This would hide {hit} of {total} characters of the sample."),
+                    detail: json!({ "hidden_chars": hit, "total_chars": total }),
                 });
             }
         }
@@ -327,8 +325,8 @@ impl Core {
                     }),
                     matches: Vec::new(),
                     masked: String::new(),
-                    lines_matched: 0,
-                    lines_total: 0,
+                    hidden_chars: 0,
+                    total_chars: 0,
                     broad: false,
                 };
             }
@@ -359,7 +357,7 @@ impl Core {
             .cloned()
             .collect();
         let (hit, total) = if context.len() >= MIN_CONTEXT_LINES {
-            (only.lines_hit(&context), context.len())
+            only.chars_hidden(&context)
         } else {
             ordinary_hits(&only)
         };
@@ -367,8 +365,8 @@ impl Core {
             problem: None,
             matches,
             masked: only.dotted(&sample),
-            lines_matched: hit as u32,
-            lines_total: total as u32,
+            hidden_chars: hit as u32,
+            total_chars: total as u32,
             broad: is_broad(hit, total),
         }
     }

@@ -164,9 +164,9 @@ pub struct RedactionPatternTest {
     pub matches: Vec<RedactionSpan>,
     /// The sample with each matched character shown as a dot.
     pub masked: String,
-    /// How many of the lines a match touches, and how many were tried.
-    pub lines_matched: u32,
-    pub lines_total: u32,
+    /// How many characters of the text it was tried on the pattern hides, and how many there were.
+    pub hidden_chars: u32,
+    pub total_chars: u32,
     /// The pattern would hide nearly everything it was tried on.
     pub broad: bool,
 }
