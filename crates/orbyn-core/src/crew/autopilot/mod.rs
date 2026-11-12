@@ -26,7 +26,7 @@ pub use merge::{
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};
 pub use tier::{Grants, Need, tier_of};
-pub use tripwire::{IN_A_ROW, IN_A_RUN, injection_in};
+pub use tripwire::{IN_A_ROW, IN_A_RUN, has_hidden, injection_in};
 
 /// How much Autopilot does for a repository or crew. The person chooses; the default is `Full`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

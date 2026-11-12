@@ -372,6 +372,8 @@ fn reaching_the_budget_stops_the_run_and_queues_a_review() {
             "crew.background.create",
             "crew.background.enable",
             "crew.background.run.start",
+            "crew.background.run.spend",
+            "crew.background.run.spend",
             "crew.background.run.stop"
         ]
     );
@@ -443,7 +445,11 @@ fn turning_a_crew_off_stops_its_run_and_deleting_needs_it_idle() {
     assert!(matches!(error, CoreError::RunsActive), "{error}");
     let off = f.core.background_set_enabled(&crew.id, false).unwrap();
     assert!(!off.enabled);
-    assert_eq!(off.state, wire::BackgroundState::Stopped);
+    assert_eq!(
+        off.state,
+        wire::BackgroundState::Idle,
+        "the person's own switch leaves nothing for them"
+    );
     let runs = f.core.background_runs(&crew.id, page()).unwrap();
     assert_eq!(runs.runs[0].id, run.id);
     assert_eq!(
@@ -506,4 +512,229 @@ fn lists_are_paged_and_a_repository_file_is_never_written() {
     );
     // Rule 4: the project's folder is untouched, and nothing named crew.json exists in the data folder.
     assert!(!std::path::Path::new("/background-project/.orbyn").exists());
+}
+
+fn audit_rows(core: &Core, action: &str) -> Vec<orbyn_contracts::AuditEvent> {
+    let mut rows = core.store.list_audit(None, 200).unwrap();
+    rows.reverse();
+    rows.into_iter()
+        .filter(|row| row.action == action)
+        .collect()
+}
+
+#[test]
+fn hidden_characters_are_refused_in_names_and_trigger_text() {
+    let f = fixture(true);
+    let hidden = [
+        '\u{200b}',
+        '\u{200d}',
+        '\u{202e}',
+        '\u{2066}',
+        '\u{2060}',
+        '\u{feff}',
+        '\u{e0041}',
+        '\u{00ad}',
+        '\u{3164}',
+    ];
+    for c in hidden {
+        let name = format!("fix{c}ci");
+        let error = f
+            .core
+            .background_create(&create_body(&f.project, &name))
+            .unwrap_err();
+        assert!(matches!(error, CoreError::Invalid(_)), "{c:?}: {error}");
+        let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
+            "project_id": f.project,
+            "name": "Trigger",
+            "template": "fix_failing_ci",
+            "trigger": { "kind": "issue_label", "label": format!("bug{c}") },
+            "budget": { "turns": 5, "minutes": 5 }
+        }))
+        .unwrap();
+        assert!(
+            matches!(f.core.background_create(&body), Err(CoreError::Invalid(_))),
+            "{c:?} in a trigger setting"
+        );
+    }
+    // An update is checked the same way, and an emoji with its variation selector is fine.
+    let crew = f
+        .core
+        .background_create(&create_body(&f.project, "Plain"))
+        .unwrap();
+    let update: wire::BackgroundCrewUpdate =
+        serde_json::from_value(json!({ "name": "re\u{200b}named" })).unwrap();
+    assert!(f.core.background_update(&crew.id, &update).is_err());
+    f.core
+        .background_create(&create_body(&f.project, "Heart \u{2764}\u{fe0f}"))
+        .unwrap();
+    assert_eq!(
+        audit_actions(&f.core).len(),
+        2,
+        "only the two accepted writes"
+    );
+}
+
+#[test]
+fn look_alike_names_are_not_two_names() {
+    let f = fixture(true);
+    f.core
+        .background_create(&create_body(&f.project, "fix-ci"))
+        .unwrap();
+    // The zero-width look-alike is refused outright.
+    assert!(
+        f.core
+            .background_create(&create_body(&f.project, "fix\u{200b}-ci"))
+            .is_err()
+    );
+    // Case is folded beyond ASCII.
+    f.core
+        .background_create(&create_body(&f.project, "Écran"))
+        .unwrap();
+    let error = f
+        .core
+        .background_create(&create_body(&f.project, "éCRAN"))
+        .unwrap_err();
+    assert!(error.to_string().contains("already"), "{error}");
+    // A rename onto an existing name is refused, a rename to its own name is not.
+    let other = f
+        .core
+        .background_create(&create_body(&f.project, "other"))
+        .unwrap();
+    let onto = |name: &str| -> wire::BackgroundCrewUpdate {
+        serde_json::from_value(json!({ "name": name })).unwrap()
+    };
+    assert!(
+        f.core
+            .background_update(&other.id, &onto("FIX-CI"))
+            .is_err()
+    );
+    f.core.background_update(&other.id, &onto("OTHER")).unwrap();
+}
+
+#[test]
+fn a_spend_is_audited_and_a_person_s_disable_is_logged_as_the_person() {
+    let f = fixture(true);
+    let crew = f
+        .core
+        .background_create(&create_body(&f.project, "Audit"))
+        .unwrap();
+    f.core.background_set_enabled(&crew.id, true).unwrap();
+    let run = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core.crew_background_spend(&run.id, 3, 7).unwrap();
+    let spends = audit_rows(&f.core, "crew.background.run.spend");
+    assert_eq!(spends.len(), 1);
+    assert_eq!(
+        (spends[0].actor.as_str(), spends[0].source.as_str()),
+        ("crew", "core")
+    );
+    assert_eq!(spends[0].target, crew.id);
+    assert_eq!(spends[0].detail["run"], run.id);
+    assert_eq!(
+        (
+            spends[0].detail["turns"].as_u64(),
+            spends[0].detail["minutes_spent"].as_u64()
+        ),
+        (Some(3), Some(7))
+    );
+    f.core.background_set_enabled(&crew.id, false).unwrap();
+    let disable = audit_rows(&f.core, "crew.background.disable");
+    let stop = audit_rows(&f.core, "crew.background.run.stop");
+    assert_eq!(disable[0].actor, "user");
+    assert_eq!(
+        (stop[0].actor.as_str(), stop[0].source.as_str()),
+        ("user", "user"),
+        "the stop the person caused is the person's"
+    );
+    assert_eq!(stop[0].detail["reason"], "disabled");
+    // A stop the crew caused stays the crew's.
+    f.core.background_set_enabled(&crew.id, true).unwrap();
+    let second = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core.crew_background_spend(&second.id, 10, 0).unwrap();
+    let stop = audit_rows(&f.core, "crew.background.run.stop");
+    assert_eq!(stop[1].actor, "crew");
+}
+
+#[test]
+fn a_delete_records_what_it_removes_and_is_refused_with_a_review_waiting() {
+    let f = fixture(true);
+    let crew = f
+        .core
+        .background_create(&create_body(&f.project, "Gone"))
+        .unwrap();
+    f.core.background_set_enabled(&crew.id, true).unwrap();
+    let first = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core.crew_background_spend(&first.id, 10, 0).unwrap();
+    let error = f.core.background_delete(&crew.id).unwrap_err();
+    assert!(error.to_string().contains("review"), "{error}");
+    assert!(
+        f.core.background_get(&crew.id).is_ok(),
+        "nothing was removed"
+    );
+    assert!(audit_rows(&f.core, "crew.background.delete").is_empty());
+    // Runs with nothing waiting go with the crew, counted in the audit row.
+    let fresh = f
+        .core
+        .background_create(&create_body(&f.project, "Counted"))
+        .unwrap();
+    f.core.background_set_enabled(&fresh.id, true).unwrap();
+    for _ in 0..2 {
+        let run = f.core.crew_background_start_run(&fresh.id).unwrap();
+        f.core
+            .crew_background_end_run(
+                &run.id,
+                BackgroundEnd::Stopped(wire::BackgroundStopReason::EngineError),
+            )
+            .unwrap();
+    }
+    f.core.background_delete(&fresh.id).unwrap();
+    let deletes = audit_rows(&f.core, "crew.background.delete");
+    assert_eq!(deletes.len(), 1);
+    assert_eq!(deletes[0].detail["runs_removed"], 2);
+    assert_eq!(deletes[0].detail["reviews_waiting_removed"], 0);
+}
+
+#[test]
+fn idle_means_nothing_running_nothing_waiting_and_nothing_left_for_the_person() {
+    let f = fixture(true);
+    let crew = f
+        .core
+        .background_create(&create_body(&f.project, "State"))
+        .unwrap();
+    let state = || f.core.background_get(&crew.id).unwrap().state;
+    assert_eq!(state(), wire::BackgroundState::Idle, "never ran");
+    f.core.background_set_enabled(&crew.id, true).unwrap();
+    let run = f.core.crew_background_start_run(&crew.id).unwrap();
+    assert_eq!(state(), wire::BackgroundState::Running);
+    f.core
+        .crew_background_end_run(&run.id, BackgroundEnd::NeedsReview)
+        .unwrap();
+    assert_eq!(state(), wire::BackgroundState::NeedsReview);
+    let run = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core
+        .crew_background_end_run(
+            &run.id,
+            BackgroundEnd::Stopped(wire::BackgroundStopReason::EngineError),
+        )
+        .unwrap();
+    assert_eq!(
+        state(),
+        wire::BackgroundState::Stopped,
+        "a failure needs the person"
+    );
+    let run = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core.crew_background_spend(&run.id, 10, 0).unwrap();
+    assert_eq!(
+        state(),
+        wire::BackgroundState::Stopped,
+        "so does the budget"
+    );
+    // Turned off while a run was going: the person's own switch leaves nothing, but the older reviews still wait.
+    let run = f.core.crew_background_start_run(&crew.id).unwrap();
+    f.core.background_set_enabled(&crew.id, false).unwrap();
+    let _ = run;
+    let now = f.core.background_get(&crew.id).unwrap();
+    assert_eq!(
+        (now.state, now.reviews_waiting),
+        (wire::BackgroundState::NeedsReview, 2)
+    );
 }

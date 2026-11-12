@@ -65,7 +65,9 @@ pub struct BackgroundBudget {
 }
 
 wire_enum! {
-/// Where a background crew stands, read from its newest run: `idle` with no run in progress or waiting.
+/// Where a background crew stands: `running` while a run is in progress, `needs_review` when a run waits for review, `stopped` when
+/// its newest run stopped for the budget or a failure, and `idle` otherwise: nothing running, nothing waiting, and the newest run (if
+/// any) was stopped by the person turning the crew off.
 pub enum BackgroundState {
     Idle,
     Running,

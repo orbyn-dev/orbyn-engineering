@@ -80,14 +80,24 @@ fn compiled() -> &'static [(&'static str, Regex)] {
     })
 }
 
-/// Characters that hide text from a person: zero-width, bidirectional controls and the tag block.
+/// Characters that hide text from a person: zero-width, bidirectional controls, the tag block and other invisible format characters
+/// (soft hyphen, combining grapheme joiner, Arabic letter mark, Hangul and Braille fillers, Mongolian free variation selectors,
+/// the deprecated format controls and interlinear annotation marks). Emoji variation selectors are left alone: they are legitimate.
 fn hidden(c: char) -> bool {
-    matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{e0000}'..='\u{e007f}')
+    matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}'..='\u{1160}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}'
+        | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
+}
+
+/// Whether `text` holds a character that hides text from a person (see `hidden`). Text a person types into a setting is checked with
+/// this before it is stored.
+pub fn has_hidden(text: &str) -> bool {
+    text.chars().any(hidden)
 }
 
 /// The class of the first injection pattern in `text`, if any.
 pub fn injection_in(text: &str) -> Option<&'static str> {
-    if text.chars().any(hidden) {
+    if has_hidden(text) {
         return Some("hidden characters");
     }
     compiled()
