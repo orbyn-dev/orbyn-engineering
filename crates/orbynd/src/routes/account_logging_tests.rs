@@ -15,12 +15,21 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use super::account_tests::{SECRET, serve};
 
+/// The most the capture keeps. Older lines go first, so a runaway logger cannot fill memory and
+/// the lines of the request under test, which are the newest, are the ones that stay.
+const CAPTURE_CAP: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Default)]
 struct Lines(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for Lines {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        let mut kept = self.0.lock().unwrap();
+        kept.extend_from_slice(bytes);
+        if kept.len() > CAPTURE_CAP {
+            let excess = kept.len() - CAPTURE_CAP;
+            kept.drain(..excess);
+        }
         Ok(bytes.len())
     }
 
@@ -38,6 +47,11 @@ impl<'a> MakeWriter<'a> for Lines {
 }
 
 /// One capture for the whole test process: a global subscriber at TRACE, nothing filtered.
+///
+/// `set_global_default` panics if any other test in this binary sets a global subscriber, so none
+/// may. CI runs these with nextest, one process per test, where each test owns its subscriber;
+/// under plain `cargo test` the tests of this file share the one capture, which is harmless
+/// because every value is unique to its test.
 fn captured() -> &'static Lines {
     static LINES: OnceLock<Lines> = OnceLock::new();
     LINES.get_or_init(|| {
@@ -210,5 +224,97 @@ fn the_secret_text_types_print_as_redacted() {
     for printed in [format!("{body:?}"), format!("{body:#?}")] {
         assert!(!printed.contains(&value), "{printed}");
         assert!(printed.contains("[redacted]"), "{printed}");
+    }
+}
+
+/// The line of the capture that carries `needle`, for a failure message.
+fn line_with(logged: &str, needle: &str) -> String {
+    logged
+        .lines()
+        .find(|line| line.contains(needle))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_server_error_is_logged_at_error_level_and_carries_no_request_value() {
+    let _ = captured();
+    let served = serve("logging-5xx", AccountGate::LocalOnly, false).await;
+    let password = canary("password-5xx");
+    let email_code = canary("code-5xx");
+
+    // The stand-in's `down@example.com` is an Engine that cannot be reached: a 503, which is a
+    // server error, so the service logs it with `tracing::error!`.
+    let (status, _) = served
+        .call(
+            "POST",
+            "/api/account/sign-in",
+            json!({ "email": "down@example.com", "password": password, "code": email_code }),
+        )
+        .await;
+    assert_eq!(status, 503, "the request must fail as a server error");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let logged = text();
+    assert!(
+        logged
+            .lines()
+            .any(|line| line.contains("ERROR") && line.contains("request failed")),
+        "no ERROR line for the failed request was captured"
+    );
+    for value in [&password, &email_code] {
+        assert!(
+            !logged.contains(value.as_str()),
+            "a request value is in a log line: {}",
+            line_with(&logged, value)
+        );
+    }
+}
+
+/// A canary string where the body wants another type, and one in the field the service reads as
+/// an enum. `ApiJson` answers with serde's rejection text, which can name the value it refused.
+async fn wrong_shape(label: &str) -> (String, String, String, String) {
+    let _ = captured();
+    let served = serve(label, AccountGate::LocalOnly, false).await;
+    let password = canary("password-shape");
+    let action = canary("action-shape");
+    let (status, body) = served
+        .call(
+            "POST",
+            "/api/account/confirm",
+            json!({ "password": password, "action": action }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    (password, action, body.to_string(), text())
+}
+
+#[tokio::test]
+async fn a_request_of_the_wrong_shape_leaves_no_canary_in_a_log() {
+    let (password, action, _body, logged) = wrong_shape("logging-shape").await;
+    for value in [&password, &action] {
+        assert!(
+            !logged.contains(value.as_str()),
+            "a value of the refused request is in a log line: {}",
+            line_with(&logged, value)
+        );
+    }
+}
+
+/// KNOWN ISSUE (Engineering 2 tracks it): `ApiJson` puts serde's rejection text in the 400 body,
+/// and for an unknown enum value that text names the value it was sent. It goes back to the
+/// caller that sent it, never to a log, so it is not a leak to another party, but a value typed
+/// into the wrong field is echoed. Not fixed here (tests only); this test states the property
+/// that should hold and is ignored until the issue is closed.
+#[tokio::test]
+#[ignore = "known issue: the 400 body for a refused value echoes it (Engineering 2 tracks it)"]
+async fn the_body_of_a_request_of_the_wrong_shape_carries_no_canary() {
+    let (password, action, body, _logged) = wrong_shape("logging-shape-body").await;
+    for value in [&password, &action] {
+        assert!(
+            !body.contains(value.as_str()),
+            "the answer echoes a value: {body}"
+        );
     }
 }

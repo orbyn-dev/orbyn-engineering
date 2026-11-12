@@ -29,29 +29,46 @@ fn center(dir: &TempDir, name: &str, address: &str) -> crate::account::AccountCe
     )
 }
 
-/// Every address that is not a loopback IP literal. The port is never the reason for a refusal.
-const REFUSED: [&str; 14] = [
+/// Every address that is not a loopback IP literal, with the shapes that try to pass for one: an
+/// IPv4-mapped IPv6 address, an IPv6 zone id (the URL parser refuses it), a trailing-dot name, a
+/// loopback prefix on a real name, and a loopback literal used as user info for another host. The
+/// port is never the reason for a refusal.
+const REFUSED: [&str; 20] = [
     "https://api.orbyn.dev",
     "https://api.orbyn.dev:443",
     "http://api.orbyn.dev",
     "http://localhost:1",
     "https://localhost",
     "http://LOCALHOST:1",
+    "http://localhost.:1",
     "http://10.0.0.1:8080",
     "http://172.16.0.1:8080",
     "http://192.168.1.2",
     "http://[fe80::1]:1",
     "http://[fd00::1]:1",
+    "http://[fe80::1%25eth0]:1",
+    "http://[::ffff:127.0.0.1]:1",
     "http://127.0.0.1.example.com:1",
+    "http://127.0.0.1.nip.io:1",
+    "http://127.0.0.1@evil.com:1/",
+    "http://127.0.0.1:9@evil.com",
     "http://0.0.0.0:1",
     "nonsense",
 ];
 
-const ACCEPTED: [&str; 4] = [
+/// Loopback literals. The decimal, octal and hex forms of 127.0.0.1 and the trailing-dot form
+/// are the same address once the URL parser has normalised them, and the client connects to what
+/// the parser made, so they are accepted by design.
+const ACCEPTED: [&str; 9] = [
     "http://127.0.0.1:9",
     "http://127.1.2.3:9",
     "http://[::1]:9",
     "https://127.0.0.1:9",
+    "http://2130706433:9",
+    "http://0177.0.0.1:9",
+    "http://0x7f.0.0.1:9",
+    "http://0x7f000001:9",
+    "http://127.0.0.1.:9",
 ];
 
 #[test]
@@ -118,8 +135,10 @@ async fn redirecting_listener(status: &'static str, target: String) -> (String, 
 async fn the_adapter_never_connects_to_the_target_of_a_redirect() {
     let (target, contacted) = counting_listener().await;
     for status in [
+        "300 Multiple Choices",
         "301 Moved Permanently",
         "302 Found",
+        "303 See Other",
         "307 Temporary Redirect",
         "308 Permanent Redirect",
     ] {
@@ -138,4 +157,25 @@ async fn the_adapter_never_connects_to_the_target_of_a_redirect() {
         0,
         "the redirect target was contacted"
     );
+}
+
+/// `x@127.0.0.1` passes the gate (the host is a loopback literal) and `HttpApi::new` then refuses
+/// it, because user info in the engine address is never allowed. So `connect` refuses it, and no
+/// client is built. The gate and the transport each hold; neither is relied on alone.
+#[test]
+fn user_info_on_a_loopback_literal_passes_the_gate_and_the_transport_refuses_it() {
+    use orbyn_device_client as dc;
+    for address in ["http://x@127.0.0.1:9", "http://user:pass@127.0.0.1:9"] {
+        assert!(
+            dc::is_loopback_literal(address),
+            "{address}: the gate lets it by"
+        );
+        assert!(
+            dc::HttpApi::new(address).is_err(),
+            "{address}: the transport refuses"
+        );
+        let before = connected();
+        assert!(connect(address, "This computer").is_err(), "{address}");
+        assert_eq!(connected(), before, "{address} built a client");
+    }
 }
