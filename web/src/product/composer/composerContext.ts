@@ -239,6 +239,7 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
         path,
         line: number(chip.line),
         ...(number(chip.endLine) !== null ? { endLine: number(chip.endLine)! } : {}),
+        ...(chip.fromDiff === true ? { fromDiff: true } : {}),
         excerpt: text(chip.excerpt),
         language: text(chip.language, 64),
       };

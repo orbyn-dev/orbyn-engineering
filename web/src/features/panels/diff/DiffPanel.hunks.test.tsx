@@ -80,7 +80,7 @@ it("asks once in words that name the lines, with Cancel the default, and Esc can
   await open();
   await user.click(screen.getByRole("button", { name: "Revert hunk" }));
   const dialog = await screen.findByRole("dialog", { name: "Revert this hunk?", hidden: true });
-  expect(dialog).toHaveTextContent("Lines 15 to 16 of auth/redirect.ts go back to the last commit. You can undo it for 10 seconds afterwards; after that the thread’s checkpoints can bring the lines back.");
+  expect(dialog).toHaveTextContent("Lines 15 to 16 of auth/redirect.ts go back to the last commit. You can undo it for 10 seconds afterwards.");
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   // Esc reaches a modal as the native cancel event.
   fireEvent(dialog, new Event("cancel", { cancelable: true }));
@@ -237,4 +237,96 @@ it("a chip made from a selection takes the person back to its file in Changes", 
   const label = screen.getByRole("button", { name: "auth/redirect.ts:15–16" });
   label.click();
   expect(useUi.getState().diffReveal).toMatchObject({ path: "auth/redirect.ts", threadId: "t" });
+});
+
+// must-fix: undo belongs to the thread it was made in
+it("undo never writes into another thread: switching threads drops the message", async () => {
+  const user = userEvent.setup();
+  const { save } = setup();
+  useWorkspace.setState({ threads: {
+    t: { id: "t", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never,
+    u: { id: "u", cwd: "/other", active_run: null, worktree: { path: "/other", branch: "fix/login", base: "main" } } as never,
+  } });
+  const view = render(<DiffPanel threadId="t" />);
+  await screen.findByRole("button", { name: "Scope: Working tree" });
+  await user.click(screen.getByRole("button", { name: "Revert hunk" }));
+  await user.click(within(await screen.findByRole("dialog", { hidden: true })).getByRole("button", { name: "Revert hunk" }));
+  await screen.findByRole("status");
+  expect(save).toHaveBeenCalledTimes(1);
+  view.rerender(<DiffPanel threadId="u" />);
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  expect(screen.queryByRole("button", { name: /^Undo/ })).toBeNull();
+  expect(save).toHaveBeenCalledTimes(1);
+});
+
+it("a failed undo says so and that nothing was changed", async () => {
+  const user = userEvent.setup();
+  const { save } = setup();
+  await open();
+  await user.click(screen.getByRole("button", { name: "Revert hunk" }));
+  await user.click(within(await screen.findByRole("dialog", { hidden: true })).getByRole("button", { name: "Revert hunk" }));
+  const toast = await screen.findByRole("status");
+  save.mockRejectedValueOnce(new ApiFailure("file_conflict", "changed", 409));
+  await user.click(within(toast).getByRole("button", { name: /^Undo/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t undo the revert. Nothing was changed.");
+});
+
+// must-fix: Enter on a toolbar button presses it
+it("Enter on the selection bar's Comment button opens the comment, and sends nothing", async () => {
+  const user = userEvent.setup();
+  setup();
+  await open();
+  const patch = screen.getByRole("group", { name: "Patch" });
+  patch.focus();
+  await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{Shift>}{ArrowDown}{/Shift}");
+  const bar = await screen.findByRole("toolbar", { name: "Selection" });
+  within(bar).getByRole("button", { name: "Comment" }).focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("textbox", { name: /Review comment on/ })).toBeInTheDocument();
+  expect(useComposerChips.getState().chips.t ?? []).toHaveLength(0);
+});
+
+it("a new file has no earlier version to go back to, so it offers no Revert hunk", async () => {
+  setup({ files: [{ path: "new.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+hello\n" }] });
+  await open();
+  await screen.findByRole("group", { name: "Patch" });
+  expect(screen.queryByRole("button", { name: "Revert hunk" })).toBeNull();
+});
+
+it("two reverts keep two undos: Undo takes the newest first", async () => {
+  const user = userEvent.setup();
+  const { save } = setup();
+  await open();
+  for (let again = 0; again < 2; again += 1) {
+    await user.click(screen.getByRole("button", { name: "Revert hunk" }));
+    await user.click(within(await screen.findByRole("dialog", { hidden: true })).getByRole("button", { name: "Revert hunk" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(again + 1));
+    await screen.findByRole("status");
+  }
+  await user.click(screen.getByRole("button", { name: /^Undo/ }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+  // The older revert can still be undone.
+  expect(await screen.findByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+});
+
+it("at the default panel width the hunk offers Revert hunk, Edit a line and Copy hunk in full", async () => {
+  setup({ width: 380 });
+  await open();
+  expect(screen.getByRole("button", { name: "Revert hunk" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Edit a line" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Copy hunk" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Hunk actions" })).toBeNull();
+});
+
+it("Edit a line edits the line the pointer is on, else the hunk's first added line", async () => {
+  const user = userEvent.setup();
+  setup();
+  await open();
+  const patch = screen.getByRole("group", { name: "Patch" });
+  await user.click(screen.getByRole("button", { name: "Edit a line" }));
+  expect(screen.getByRole("textbox", { name: "Edit line 15" })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.hover(within(patch).getByText(/return inside/));
+  await user.click(screen.getByRole("button", { name: "Edit a line" }));
+  expect(screen.getByRole("textbox", { name: "Edit line 16" })).toBeInTheDocument();
 });

@@ -35,7 +35,9 @@ const bare = (text: string) => text.slice(1).replace(/\r$/, "");
 /** What the hunk's lines say on each side: the file as it is now, and as the last commit has it. */
 const sides = (hunk: Hunk) => ({
   now: hunk.rows.filter((row) => row.line.kind === "ctx" || row.line.kind === "add").map((row) => bare(row.line.text)),
-  before: hunk.rows.filter((row) => row.line.kind === "ctx" || row.line.kind === "del").map((row) => bare(row.line.text)),
+  // A line put back keeps the ending git showed it with: a carriage return in the diff line is part of that line.
+  before: hunk.rows.filter((row) => row.line.kind === "ctx" || row.line.kind === "del")
+    .map((row) => `${bare(row.line.text)}${row.line.text.endsWith("\r") ? "\r\n" : "\n"}`),
 });
 
 /** A hunk can be put back when it changes something and every line of it is a plain line: a "no newline" mark is not. */
@@ -47,8 +49,7 @@ export function changedLines(hunk: Hunk): string {
   const added = hunk.rows.filter((row) => row.line.kind === "add" && row.newNo !== null).map((row) => row.newNo!);
   const numbers = added.length > 0 ? added : hunk.rows.filter((row) => row.line.kind === "del" && row.oldNo !== null).map((row) => row.oldNo!);
   const first = numbers[0] ?? hunk.newStart;
-  const last = numbers.at(-1) ?? first;
-  return first === last ? `Line ${first}` : `Lines ${first} to ${last}`;
+  return `Lines ${first} to ${numbers.at(-1) ?? first}`;
 }
 
 /** The hunk as git writes it, for Copy hunk. */
@@ -67,11 +68,12 @@ export function revertedContent(content: string, hunk: Hunk): string | null {
   if (!canRevert(hunk)) return null;
   const { now, before } = sides(hunk);
   const lines = linesOfText(content);
+  // A file emptied by the change has "+0,0": it must be empty now, or this is not the file the diff was read from.
+  if (hunk.newStart === 0 && hunk.newCount === 0 && lines.length > 0) return null;
   const index = hunk.newCount === 0 ? hunk.newStart : hunk.newStart - 1;
   if (index < 0 || index + now.length > lines.length) return null;
   if (!now.every((text, at) => textOf(lines[index + at]!) === text)) return null;
-  const crlf = endingOf(lines[index] ?? lines[index - 1] ?? "") === "\r\n";
-  const put = before.map((text) => `${text}${crlf ? "\r\n" : "\n"}`);
+  const put = [...before];
   // The last line of a file may have no ending of its own; the lines put back keep that.
   const last = lines[index + now.length - 1];
   if (last !== undefined && endingOf(last) === "" && put.length > 0) put[put.length - 1] = textOf(put.at(-1)!);

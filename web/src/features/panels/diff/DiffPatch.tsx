@@ -38,6 +38,8 @@ interface Pick {
 
 /** What a hunk or a line of this file can do to the working tree; absent where the diff is only to read. */
 export interface PatchActions {
+  /** False for a file with no earlier version to go back to (a new file). */
+  revertible: boolean;
   revert(hunk: Hunk): Promise<void>;
   /** Writes line `number` (new side) from `was` to `next`; true when it was written. */
   saveLine(number: number, was: string, next: string): Promise<boolean>;
@@ -87,6 +89,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
   const [saving, setSaving] = useState(false);
   const dragging = useRef(false);
   const dragged = useRef(false);
+  const lastRow = useRef<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const hintId = useId();
   const hunks = useMemo(() => hunksOf(rows), [rows]);
@@ -183,7 +186,10 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
 
   const onKeyDown = (event: KeyboardEvent) => {
     // Typing in the comment box or a line being edited keeps its keys.
-    if ((event.target as HTMLElement).closest("form, textarea, input")) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("form, textarea, input")) return;
+    // Enter on a button of the selection bar or a hunk header presses that button; only the gutter and the diff itself take it as a command.
+    if (event.key === "Enter" && target.closest("button") && !target.classList.contains("gut")) return;
     if (event.key === "Escape" && pick) { event.stopPropagation(); cancel(); return; }
     // Enter on a selection sends it to the engine; on a single line it still opens the comment.
     if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
@@ -267,6 +273,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
         data-row={row.at}
         onDoubleClick={editable(row) && side === "new" ? () => edit(row) : undefined}
         onPointerEnter={() => {
+          lastRow.current = row.at;
           if (hunkOf(row.at)) setOverHunk(hunkOf(row.at)!.at);
           if (!dragging.current || row.newNo === null && row.line.kind !== "del") return;
           dragged.current = true;
@@ -288,12 +295,16 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
     );
   };
 
-  /** The first line of a hunk the person can edit, for Edit a line in the More menu. */
-  const firstEditable = (hunk: Hunk) => hunk.rows.find((row) => row.line.kind === "add" && editable(row));
+  /** The line Edit a line takes: the one the keyboard is on or the pointer last touched in this hunk, else its first added line. */
+  const editTarget = (hunk: Hunk) => {
+    const inHunk = (at: number | null) => (at === null ? undefined : hunk.rows.find((row) => row.at === at && editable(row)));
+    return inHunk(focused ? cursor : null) ?? inHunk(lastRow.current) ?? hunk.rows.find((row) => row.line.kind === "add" && editable(row));
+  };
   const hunkHeader = (row: Row) => {
     const hunk = hunks.find((entry) => entry.at === row.at);
     const active = overHunk === row.at || (focused && cursor !== null && hunkOf(cursor)?.at === row.at);
-    const offered = actions !== undefined && hunk !== undefined && canRevert(hunk);
+    const offered = actions?.revertible === true && hunk !== undefined && canRevert(hunk);
+    const copy = () => void navigator.clipboard?.writeText(hunkPatch(hunk!)).then(() => pushToast("Hunk copied"));
     return (
       <div key={row.at} className={`hh2 pd-hh${active ? " on" : ""}`} data-row={row.at}>
         <span>{hunkLabel(row.line.text)}</span>
@@ -306,8 +317,8 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
                 width={190}
                 items={[
                   { label: "Revert hunk", icon: <Undo2 size={14} aria-hidden />, onSelect: () => setConfirm(hunk) },
-                  ...(firstEditable(hunk) ? [{ label: "Edit a line…", icon: <SquarePen size={14} aria-hidden />, onSelect: () => edit(firstEditable(hunk)!) }] : []),
-                  { label: "Copy hunk", icon: <Copy size={14} aria-hidden />, onSelect: () => void navigator.clipboard?.writeText(hunkPatch(hunk)).then(() => pushToast("Hunk copied")) },
+                  ...(editTarget(hunk) ? [{ label: "Edit a line…", icon: <SquarePen size={14} aria-hidden />, onSelect: () => edit(editTarget(hunk)!) }] : []),
+                  { label: "Copy hunk", icon: <Copy size={14} aria-hidden />, onSelect: copy },
                 ]}
               >
                 {(props) => (
@@ -317,10 +328,20 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
                 )}
               </MenuButton>
             ) : (
-              <button type="button" className="pd-hb" onClick={() => setConfirm(hunk)}>
-                <Undo2 size={12} aria-hidden />
-                Revert hunk
-              </button>
+              <>
+                <button type="button" className="pd-hb" onClick={() => setConfirm(hunk)}>
+                  <Undo2 size={12} aria-hidden />
+                  Revert hunk
+                </button>
+                {editTarget(hunk) ? (
+                  <button type="button" className="pd-hb ic1" aria-label="Edit a line" title="Edit a line" onClick={() => edit(editTarget(hunk)!)}>
+                    <SquarePen size={12} aria-hidden />
+                  </button>
+                ) : null}
+                <button type="button" className="pd-hb ic1" aria-label="Copy hunk" title="Copy hunk" onClick={copy}>
+                  <Copy size={12} aria-hidden />
+                </button>
+              </>
             )}
           </span>
         ) : null}
@@ -461,7 +482,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
           onConfirm={() => actions.revert(confirm)}
         >
           <p>
-            {changedLines(confirm)} of {path} {changedLines(confirm).startsWith("Lines") ? "go" : "goes"} back to the last commit. You can undo it for 10 seconds afterwards; after that the thread’s checkpoints can bring the lines back.
+            {changedLines(confirm)} of {path} go back to the last commit. You can undo it for 10 seconds afterwards.
           </p>
         </ConfirmDialog>
       ) : null}

@@ -76,7 +76,7 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   const conflict = file.status === "conflicted";
   // A deleted or conflicted file has no lines to write back to.
   const actions: PatchActions | undefined = edits && file.status !== "deleted" && !conflict
-    ? { revert: (hunk) => edits.revert(file.path, hunk), saveLine: (number, was, next) => edits.saveLine(file.path, number, was, next) }
+    ? { revertible: file.status !== "added" && file.status !== "copied", revert: (hunk) => edits.revert(file.path, hunk), saveLine: (number, was, next) => edits.saveLine(file.path, number, was, next) }
     : undefined;
   return (
     <div className="x2file" data-diff-file={file.path}>
