@@ -104,6 +104,8 @@ export interface MergeItem {
 export interface BatchRow {
   title: string;
   detail: string;
+  /** What the change cost, in the units of the engine that did it. */
+  cost: string;
   checked: boolean;
 }
 

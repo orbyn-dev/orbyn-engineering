@@ -93,7 +93,7 @@ function TaskCrumb({ title, tier, children }: { title: string; tier: "low" | "me
 }
 
 const TIER_RULE =
-  "A score from the four reasons above, shown with its parts. A tier is never hidden, and you can see why it is what it is.";
+  "A score from the four reasons above, shown with its parts. Changes to login, sessions or permissions, keys, crypto, migrations, CI, dependency changes and large diffs count as High unless the changes are in a path class marked Low in .orbyn/crew.json. Any other file in an auth path only raises the score. A tier is never hidden, and you can see why it is what it is.";
 
 /** risk-reasons: Low, Medium and High side by side. */
 export function RiskReasonsScreen() {

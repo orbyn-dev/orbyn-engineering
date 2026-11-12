@@ -15,7 +15,7 @@ export const mergeItem: MergeItem = {
   summary: "Login now returns people to the page they came from when next points inside the app, and to / otherwise.",
   builtBy: "Claude Code · Sonnet 5.5 · crew/redirect-impl",
   mergedAt: "Sat 7 Nov 2026, 14:32 · commit c7f20b9 on main",
-  spent: "22 min",
+  spent: "22 min · 52k tokens",
   reviewBy: "Sun 8 Nov, 14:32 · 22 h left",
   diff,
   claims: [
@@ -37,7 +37,7 @@ export const mergeItem: MergeItem = {
   revert: {
     commit: "c7f20b9 · Use next in the auth redirect",
     later: "1 (Add a rate limit to the login route): Crew checks it still works without this change",
-    spent: "About 6 min",
+    spent: "About 17k tokens · 6 min",
     together: "",
     reason: "It breaks the legacy login link.",
   },
@@ -57,7 +57,7 @@ export const mergeItemWithDependents: MergeItem = {
       note: "“Add a rate limit to the login route” (14:50) calls the new check this merge added. Reverting this one alone would break it, so Crew asks you before it reverts anything, even under Full.",
     },
   ],
-  revert: { ...mergeItem.revert, together: "2 merges · Crew checks the combined revert on the queue’s state · about 9 min" },
+  revert: { ...mergeItem.revert, together: "2 merges · Crew checks the combined revert on the queue’s state · about 30k tokens · 9 min" },
 };
 
 export const mergeQueue: MergeQueueData = {

@@ -82,7 +82,7 @@ export function CrewFrame({
             );
           })}
         </div>
-        <span className="crew-end">Claude Code 412k of 1M tokens · Codex $3.20 of $10 · 2h 14m</span>
+        <span className="crew-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m</span>
       </div>
       {tool ? (
         <div className="crew-tool">
