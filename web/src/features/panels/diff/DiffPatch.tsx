@@ -1,10 +1,10 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useWorkspace } from "../../../product/state/workspace";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
-import { charactersOver, chipId, chipLabel, promptWithChips, type ReviewChip } from "../../../product/composer/composerContext";
+import { charactersOver, chipId, chipLabel, promptWithChips, type ComposerChip, type ReviewChip } from "../../../product/composer/composerContext";
 import { Button } from "../../../ui/controls";
-import { LINE_LIMIT, LOCK_COLLAPSE, diffCommentRange, gutterNumber, hunkLabel, markers, numberRows, splitRows, type DiffLine, type Row } from "./diffModel";
+import { diffCommentRange, gutterNumber, hunkLabel, markers, numberRows, shownLimit, splitRows, type DiffLine, type Row } from "./diffModel";
 
 const count = (value: number) => value.toLocaleString("en-US");
 
@@ -37,7 +37,7 @@ interface Pick {
  * on for as long as the chip exists. Removing either removes both. `origin` ties it to this diff view,
  * as a file comment is tied to the source it was made on.
  */
-export function Patch({ lines, path, threadId, origin, needle, current, lock, full, split, onShowAll }: {
+export function Patch({ lines, path, threadId, origin, needle, current, full, split, onShowAll }: {
   lines: readonly DiffLine[];
   path: string;
   threadId: string;
@@ -46,8 +46,6 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
   needle: string;
   /** The row and start of the match the find bar is on in this file. */
   current: { row: number; start: number } | null;
-  /** A lock file starts with none of its lines shown. */
-  lock: boolean;
   /** Show anyway was pressed: every line is drawn. */
   full: boolean;
   /** The panel is wide enough for Split; below that it stays Unified whatever is chosen. */
@@ -61,8 +59,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
   const chips = useComposerChips((state) => state.chips[threadId]);
   const rows = useMemo(() => numberRows(lines), [lines]);
-  const limit = full ? rows.length : lock && rows.length > LOCK_COLLAPSE ? 0 : LINE_LIMIT;
-  const shown = rows.length > limit ? rows.slice(0, limit) : rows;
+  const shown = rows.slice(0, shownLimit(rows.length, path, full));
   const hidden = rows.slice(shown.length).filter((row) => row.line.kind === "add" || row.line.kind === "del").length;
   const [pick, setPick] = useState<Pick | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
@@ -72,19 +69,31 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
   const dragging = useRef(false);
   const dragged = useRef(false);
   const root = useRef<HTMLDivElement>(null);
+  const hintId = useId();
 
   useEffect(() => {
     if (!current) return;
     root.current?.querySelector(`[data-row="${current.row}"]`)?.scrollIntoView?.({ block: "nearest" });
   }, [current]);
   useEffect(() => {
+    // The arrow keys carry focus with the cursor to that line's button, so a screen reader announces the line.
+    const element = root.current;
+    if (cursor === null || !element?.contains(document.activeElement)) return;
+    if (document.activeElement instanceof HTMLTextAreaElement) return;
+    element.querySelector<HTMLElement>(`[data-row="${cursor}"] .gut`)?.focus();
+  }, [cursor]);
+  useEffect(() => {
     const stop = () => { dragging.current = false; };
     window.addEventListener("pointerup", stop);
     return () => window.removeEventListener("pointerup", stop);
   }, []);
 
-  const comments = (chips ?? []).filter((chip): chip is ReviewChip => chip.kind === "review" && chip.path === path
-    && chip.sourceRevision === origin && (chip.sourceCwd ?? "") === (cwd ?? ""));
+  const sentChips = useComposerChips((state) => state.sent[threadId]);
+  const here = (chip: ComposerChip): chip is ReviewChip => chip.kind === "review" && chip.path === path
+    && chip.sourceRevision === origin && (chip.sourceCwd ?? "") === (cwd ?? "");
+  const pending = (chips ?? []).filter(here);
+  const sent = (sentChips ?? []).filter(here);
+  const comments = [...sent, ...pending];
   const low = pick ? Math.min(pick.anchor, pick.end) : -1;
   const high = pick ? Math.max(pick.anchor, pick.end) : -1;
   const range = pick ? diffCommentRange(rows, pick.anchor, pick.end) : null;
@@ -116,7 +125,8 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.target !== event.currentTarget) return;
+    // Typing in the comment box keeps its keys.
+    if ((event.target as HTMLElement).closest("form, textarea")) return;
     const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
     if (step) {
       event.preventDefault();
@@ -140,7 +150,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
       <button
         type="button"
         className="gut"
-        tabIndex={-1}
+        tabIndex={cursor === row.at ? 0 : -1}
         aria-label={`Comment on line ${row.newNo}`}
         aria-pressed={pick !== null && row.at >= low && row.at <= high}
         onPointerDown={(event) => {
@@ -197,21 +207,23 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
 
   const after = (row: Row | null) => {
     if (!row || row.newNo === null) return null;
-    const here = comments.filter((chip) => (chip.endLine ?? chip.line) === row.newNo);
+    const under = comments.filter((chip) => (chip.endLine ?? chip.line) === row.newNo);
     const form = pick !== null && row.at === high;
-    if (here.length === 0 && !form) return null;
+    if (under.length === 0 && !form) return null;
     return (
       <>
-        {here.map((chip) => (
+        {under.map((chip) => (
           <div key={chip.id} className="cmt2" role="note" aria-label={`Review comment ${chipLabel(chip)}`}>
             <span>
-              <b>You</b> · {chip.comment} <span className="t3">Sent to the agent</span>
+              <b>You</b> · {chip.comment} <span className="t3">{sent.includes(chip) ? "Sent to the agent" : "Sent with your next message"}</span>
             </span>
-            <div className="row">
-              <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>
-                Remove comment
-              </Button>
-            </div>
+            {sent.includes(chip) ? null : (
+              <div className="row">
+                <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>
+                  Remove comment
+                </Button>
+              </div>
+            )}
           </div>
         ))}
         {form ? (
@@ -236,7 +248,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
             {!range ? <p role="alert" className="t3">Select at most 4,000 characters of the diff for a comment.</p> : null}
             {error ? <p role="alert" className="t3">{error}</p> : null}
             <div className="row">
-              <span className="t3 grow">Sent to the agent</span>
+              <span className="t3 grow">Sent with your next message</span>
               <Button small tone="quiet" onClick={cancel}>Cancel</Button>
               <Button small tone="primary" type="submit" disabled={!range || text.trim() === ""}>Comment</Button>
             </div>
@@ -278,11 +290,13 @@ export function Patch({ lines, path, threadId, origin, needle, current, lock, fu
         data-layout={layout}
         data-wrap={wrap ? "on" : "off"}
         onKeyDown={onKeyDown}
-        onFocus={(event) => { if (event.target === event.currentTarget) setFocused(true); }}
-        onBlur={(event) => { if (event.target === event.currentTarget) setFocused(false); }}
+        aria-describedby={hintId}
+        onFocus={() => setFocused(true)}
+        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}
       >
         {body}
       </div>
+      <span id={hintId} className="sr-only">Arrow keys move between lines, C comments on the line, Shift and an arrow extend the range.</span>
       {rows.length > shown.length ? (
         <div className="x2banner">
           <span>Large diff: {count(hidden)} lines not shown.</span>

@@ -38,6 +38,8 @@ function setup(files: FileDiff[] | (() => Promise<FileDiff[]>) = [REDIRECT, TEST
   return diff;
 }
 
+const rowsOf = () => [...screen.getByRole("group", { name: "Changed files" }).querySelectorAll<HTMLElement>("button.fli")];
+
 const open = async () => {
   render(<DiffPanel threadId="t" />);
   await screen.findByRole("button", { name: "Scope: Working tree" });
@@ -48,7 +50,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  useComposerChips.setState({ chips: {} });
+  useComposerChips.setState({ chips: {}, sent: {} });
 });
 
 // changes-default
@@ -58,8 +60,8 @@ it("draws one header, a file list with change letters and the first file's lines
   expect(screen.getByRole("button", { name: "Scope: Working tree" })).toHaveAttribute("aria-haspopup", "menu");
   expect(screen.getByText(/^\+4/)).toBeInTheDocument();
   const list = screen.getByRole("group", { name: "Changed files" });
-  expect(within(list).getAllByRole("button").map((row) => row.textContent)).toEqual(["Mauth/redirect.ts+2 −1", "Mauth/redirect.test.ts+2 −2"]);
-  expect(within(list).getByRole("button", { name: /auth\/redirect\.ts/ })).toHaveAttribute("aria-current", "true");
+  expect(rowsOf().map((row) => row.textContent)).toEqual(["Mauth/redirect.ts+2 −1", "Mauth/redirect.test.ts+2 −2"]);
+  expect(within(list).getByRole("button", { name: /^Modified auth\/redirect\.ts/ })).toHaveAttribute("aria-current", "true");
   const patch = screen.getByRole("group", { name: "Patch" });
   expect(patch).toHaveTextContent("@@ after(req)");
   expect(patch).not.toHaveTextContent("diff --git");
@@ -75,21 +77,21 @@ it("picking a file in the list shows that file, and the list filter narrows the 
   const user = userEvent.setup();
   setup();
   await open();
-  await user.click(screen.getByRole("button", { name: /auth\/redirect\.test\.ts/ }));
+  await user.click(screen.getByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ }));
   expect(screen.getByRole("group", { name: "Patch" })).toHaveTextContent("new test");
   await user.type(screen.getByRole("searchbox", { name: "Filter files" }), "REDIRECT.TS");
-  expect(within(screen.getByRole("group", { name: "Changed files" })).getAllByRole("button")).toHaveLength(1);
+  expect(rowsOf()).toHaveLength(1);
 });
 
 it("the arrow keys move between rows of the file list", async () => {
   const user = userEvent.setup();
   setup();
   await open();
-  screen.getByRole("button", { name: /auth\/redirect\.ts/ }).focus();
+  screen.getByRole("button", { name: /^Modified auth\/redirect\.ts/ }).focus();
   await user.keyboard("{ArrowDown}");
-  expect(screen.getByRole("button", { name: /auth\/redirect\.test\.ts/ })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ })).toHaveFocus();
   await user.keyboard("{ArrowUp}");
-  expect(screen.getByRole("button", { name: /auth\/redirect\.ts/ })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Modified auth\/redirect\.ts/ })).toHaveFocus();
 });
 
 // scope menu, turn and commit pickers, jj
@@ -161,11 +163,11 @@ it("Hide test files drops test files, and Collapse all files leaves nothing open
   setup();
   useUi.getState().setPrefs({ diffHideTests: true });
   await open();
-  expect(screen.queryByRole("button", { name: /redirect\.test\.ts/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ })).toBeNull();
   useUi.getState().setPrefs({ diffHideTests: false, diffFilesCollapsed: true });
   await waitFor(() => expect(screen.queryByRole("group", { name: "Patch" })).toBeNull());
-  expect(screen.getAllByRole("button", { name: /auth\/redirect/ })).toHaveLength(2);
-  await user.click(screen.getByRole("button", { name: /auth\/redirect\.ts/ }));
+  expect(rowsOf()).toHaveLength(2);
+  await user.click(screen.getByRole("button", { name: /^Modified auth\/redirect\.ts/ }));
   expect(screen.getByRole("group", { name: "Patch" })).toBeInTheDocument();
 });
 
@@ -202,7 +204,7 @@ it("an empty Working tree says so in one line and offers the Branch scope", asyn
   const user = userEvent.setup();
   const diff = setup([]);
   await open();
-  expect(await screen.findByText("No changes in Working tree")).toBeInTheDocument();
+  expect(await screen.findByText("No changes in Working tree.")).toBeInTheDocument();
   expect(screen.getByText("Everything is committed.")).toBeInTheDocument();
   expect(screen.getByText(/^\+0/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Show Branch changes" }));
@@ -264,7 +266,7 @@ it("a rename names the new and the old path with its similarity, and a pure rena
   ]);
   const user = userEvent.setup();
   await open();
-  const rows = within(screen.getByRole("group", { name: "Changed files" })).getAllByRole("button");
+  const rows = rowsOf();
   expect(rows[0]).toHaveTextContent("Rauth/next.ts ← auth/redirect.ts94%");
   await user.click(rows[1]!);
   expect(screen.getByText("Renamed, no changes to the lines")).toBeInTheDocument();
@@ -278,7 +280,7 @@ it("a conflict is listed first with a !, counted in the header and sent to the e
   vi.spyOn(api, "editors").mockResolvedValue([{ id: "code", name: "VS Code", launchable: true } as never]);
   await open();
   expect(await screen.findByText("1 conflict")).toBeInTheDocument();
-  const rows = within(screen.getByRole("group", { name: "Changed files" })).getAllByRole("button");
+  const rows = rowsOf();
   expect(rows[0]).toHaveTextContent("!auth/session.tsconflict");
   expect(within(rows[0]!).getByLabelText("Conflicted")).toHaveClass("xg-bang");
   expect(screen.getByText(/Merge conflict in 1 file\. Resolve them in the editor, then refresh\./)).toBeInTheDocument();
@@ -337,7 +339,7 @@ it("a match in another file opens that file", async () => {
   await user.keyboard("{Control>}f{/Control}");
   await user.type(await screen.findByRole("searchbox", { name: "Find in diff" }), "new test");
   expect(await screen.findByText("1 of 1")).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole("button", { name: /auth\/redirect\.test\.ts/ })).toHaveAttribute("aria-current", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ })).toHaveAttribute("aria-current", "true"));
 });
 
 // changes-markdown-rendered
@@ -381,7 +383,7 @@ it("below 640 px the pair sits on its own row under the list and Split is off wi
   await user.click(screen.getByRole("button", { name: "View options" }));
   const split = await screen.findByRole("menuitemradio", { name: "Split" });
   expect(split).toBeDisabled();
-  expect(split).toHaveAttribute("title", expect.stringContaining("640"));
+  expect(split).toHaveAttribute("title", "Needs about 640 px");
 });
 
 it("from 640 px the pair joins the first row and the file list moves beside the diff", async () => {
@@ -418,7 +420,7 @@ it("a line's number is the button that starts a comment; shift selects a range a
   await user.keyboard("{/Shift}");
   const box = screen.getByRole("textbox", { name: "Review comment on auth/redirect.ts line 15–16" });
   expect(screen.getByText("Comment on lines 15–16")).toBeInTheDocument();
-  expect(screen.getByText("Sent to the agent")).toBeInTheDocument();
+  expect(screen.getByText("Sent with your next message")).toBeInTheDocument();
   expect(box.closest("form")?.previousElementSibling).toHaveTextContent("inside(next)");
   expect(screen.getByRole("group", { name: "Patch" }).querySelectorAll(".l.lsel")).toHaveLength(2);
 });
@@ -452,7 +454,7 @@ it("Comment adds the review chip with its range and excerpt, ⌘↵ sends it, an
     excerpt: "  const next = req.query.next\n  return inside(next) ? next : \"/\"", sourceRevision: "diff:worktree", sourceCwd: "/repo",
   });
   const note = screen.getByRole("note", { name: "Review comment auth/redirect.ts:15–16" });
-  expect(note).toHaveTextContent("You · Does inside() reject //evil.com Sent to the agent");
+  expect(note).toHaveTextContent("You · Does inside() reject //evil.com Sent with your next message");
   act(() => useComposerChips.getState().update("t", { ...chip!, comment: "Edited" } as never));
   expect(screen.getByRole("note", { name: "Review comment auth/redirect.ts:15–16" })).toHaveTextContent("Edited");
   await user.click(within(note).getByRole("button", { name: "Remove comment" }));
@@ -520,7 +522,7 @@ it("offers Create pull request from the branch once the working tree is clean af
   setup(undefined);
   vi.spyOn(api, "diff").mockImplementation(async (_thread, _signal, scope) => (String(scope).startsWith("branch") ? [REDIRECT] : []));
   await open();
-  expect(await screen.findByText("No changes in Working tree")).toBeInTheDocument();
+  expect(await screen.findByText("No changes in Working tree.")).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Create pull request" })).toBeInTheDocument();
 });
 
@@ -538,6 +540,133 @@ it("revealing a file opens it in the view", async () => {
   vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "auth/redirect.test.ts", repository_path: "auth/redirect.test.ts" });
   await open();
   act(() => useUi.getState().revealDiff("auth/redirect.test.ts", { threadId: "t", cwd: "/repo" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: /auth\/redirect\.test\.ts/ })).toHaveAttribute("aria-current", "true"));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ })).toHaveAttribute("aria-current", "true"));
   await waitFor(() => expect(useUi.getState().diffReveal).toBeNull());
+});
+
+// rulings: row actions, paging, empty scopes, lock files, sent comments
+it("a file row's ⋯ menu copies the path and opens the file in the editor", async () => {
+  const user = userEvent.setup();
+  setup();
+  const write = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: write } });
+  vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "auth/redirect.ts", repository_path: "auth/redirect.ts" });
+  vi.spyOn(api, "editors").mockResolvedValue([{ id: "code", name: "VS Code", launchable: true } as never]);
+  const opened = vi.spyOn(api, "openInEditor").mockResolvedValue(undefined);
+  await open();
+  await user.click(screen.getByRole("button", { name: "Actions for auth/redirect.ts" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Copy path" }));
+  expect(write).toHaveBeenCalledWith("auth/redirect.ts");
+  await user.click(screen.getByRole("button", { name: "Actions for auth/redirect.ts" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Open in editor" }));
+  await waitFor(() => expect(opened).toHaveBeenCalledWith("t", expect.objectContaining({ path: "auth/redirect.ts" })));
+});
+
+it("a long list shows 50 files and ends with a row that shows more", async () => {
+  const user = userEvent.setup();
+  setup(Array.from({ length: 120 }, (_, at) => ({ path: `src/f-${String(at).padStart(3, "0")}.ts`, status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n-a\n+b\n" })));
+  await open();
+  await screen.findByRole("group", { name: "Changed files" });
+  expect(rowsOf()).toHaveLength(50);
+  await user.click(screen.getByRole("button", { name: "Show 70 more files" }));
+  expect(rowsOf()).toHaveLength(100);
+  await user.click(screen.getByRole("button", { name: "Show 20 more files" }));
+  expect(rowsOf()).toHaveLength(120);
+  expect(screen.queryByRole("button", { name: /^Show \d+ more/ })).toBeNull();
+});
+
+it("an empty scope says so and links to the nearest scope", async () => {
+  const user = userEvent.setup();
+  const diff = setup([]);
+  await open();
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Commit" }));
+  expect(await screen.findByText("No changes in Commit.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Show Branch changes" }));
+  await waitFor(() => expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "branch&base=main"));
+});
+
+it("a minified file collapses like a lock file when long, and a short one does not", async () => {
+  const body = Array.from({ length: 300 }, (_, at) => `+x${at}`).join("\n");
+  setup([{ path: "dist/app.min.js", status: "modified", additions: 300, deletions: 0, patch: `@@ -0,0 +1,300 @@\n${body}\n` }]);
+  await open();
+  expect(await screen.findByText("Large diff: 300 lines not shown.")).toBeInTheDocument();
+});
+
+it("a comment reads Sent with your next message until the message is sent, then Sent to the agent", async () => {
+  const user = userEvent.setup();
+  setup();
+  await open();
+  await user.click(screen.getByRole("button", { name: "Comment on line 16" }));
+  await user.type(screen.getByRole("textbox", { name: /Review comment on/ }), "Check this");
+  await user.click(screen.getByRole("button", { name: "Comment" }));
+  const note = screen.getByRole("note", { name: "Review comment auth/redirect.ts:16" });
+  expect(note).toHaveTextContent("Sent with your next message");
+  act(() => useComposerChips.getState().consume("t", useComposerChips.getState().chips.t!));
+  const after = screen.getByRole("note", { name: "Review comment auth/redirect.ts:16" });
+  expect(after).toHaveTextContent("Sent to the agent");
+  expect(within(after).queryByRole("button", { name: "Remove comment" })).toBeNull();
+});
+
+// review fixes
+it("picking another file while find has a match keeps that file; only stepping opens the match's file", async () => {
+  const user = userEvent.setup();
+  setup();
+  await open();
+  screen.getByRole("group", { name: "Patch" }).focus();
+  await user.keyboard("{Control>}f{/Control}");
+  await user.type(await screen.findByRole("searchbox", { name: "Find in diff" }), "e");
+  await screen.findByText(/^1 of \d+$/);
+  await user.click(screen.getByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ }));
+  expect(screen.getByRole("button", { name: /^Modified auth\/redirect\.test\.ts/ })).toHaveAttribute("aria-current", "true");
+  await user.click(screen.getByRole("button", { name: "Next match" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Modified auth\/redirect\.ts/ })).toHaveAttribute("aria-current", "true"));
+});
+
+it("⌘F opens the find bar even when Collapse all files leaves no file open", async () => {
+  const user = userEvent.setup();
+  setup();
+  useUi.getState().setPrefs({ diffFilesCollapsed: true });
+  await open();
+  screen.getByRole("group", { name: "Changed files" }).querySelector<HTMLElement>("button.fli")!.focus();
+  await user.keyboard("{Control>}f{/Control}");
+  expect(await screen.findByRole("searchbox", { name: "Find in diff" })).toBeInTheDocument();
+});
+
+it("find does not count lines that are cut off or collapsed until Show anyway draws them", async () => {
+  const user = userEvent.setup();
+  const body = Array.from({ length: 300 }, () => "+needle").join("\n");
+  setup([{ path: "package-lock.json", status: "modified", additions: 300, deletions: 0, patch: `@@ -0,0 +1,300 @@\n${body}\n` }]);
+  await open();
+  screen.getByRole("group", { name: "Changed files" }).querySelector<HTMLElement>("button.fli")!.focus();
+  await user.keyboard("{Control>}f{/Control}");
+  await user.type(await screen.findByRole("searchbox", { name: "Find in diff" }), "needle");
+  expect(await screen.findByText("No matches")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Show anyway" }));
+  expect(await screen.findByText("1 of 300")).toBeInTheDocument();
+});
+
+it("a Branch scope offers no Rendered, since the checkout is not the branch tip", async () => {
+  const user = userEvent.setup();
+  setup([{ path: "docs/login.md", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n # Login\n+Sign in.\n" }]);
+  await open();
+  expect(screen.getByRole("radiogroup", { name: "View" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Branch" }));
+  await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "View" })).toBeNull());
+});
+
+it("comments are reachable by keyboard: the arrows carry focus to a line's button, which Enter opens, and the hint is announced", async () => {
+  const user = userEvent.setup();
+  setup();
+  await open();
+  const patch = screen.getByRole("group", { name: "Patch" });
+  expect(patch).toHaveAccessibleDescription(/Arrow keys move between lines, C comments/);
+  patch.focus();
+  await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
+  const button = screen.getByRole("button", { name: "Comment on line 15" });
+  expect(button).toHaveFocus();
+  expect(button).toHaveAttribute("tabindex", "0");
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("textbox", { name: /Review comment on/ })).toBeInTheDocument();
 });

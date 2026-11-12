@@ -50,8 +50,8 @@ test("the Changes panel: letters, test filter, find, split, whitespace, collapse
   await openPanelTab(page, "Diff");
   const list = page.getByRole("group", { name: "Changed files" });
   const row = (name: RegExp) => list.getByRole("button", { name });
-  await expect(row(/README\.md/).getByLabel("Modified")).toHaveText("M");
-  await expect(row(/fresh\.txt/).getByLabel("Added")).toHaveText("A");
+  await expect(row(/^Modified README\.md/).getByLabel("Modified")).toHaveText("M");
+  await expect(row(/^Added fresh\.txt/).getByLabel("Added")).toHaveText("A");
   // Staged is not told apart here: fresh.txt is staged and sits in the one list with the rest.
   await expect(list.getByText(/^Staged/)).toHaveCount(0);
 
@@ -63,11 +63,11 @@ test("the Changes panel: letters, test filter, find, split, whitespace, collapse
   };
 
   await option("menuitemcheckbox", "Hide test files");
-  await expect(row(/a\.test\.ts/)).toHaveCount(0);
+  await expect(row(/^Modified tests\/a\.test\.ts/)).toHaveCount(0);
   await option("menuitemcheckbox", "Hide test files");
-  await expect(row(/a\.test\.ts/)).toHaveCount(1);
+  await expect(row(/^Modified tests\/a\.test\.ts/)).toHaveCount(1);
 
-  await row(/README\.md/).click();
+  await row(/^Modified README\.md/).click();
   await page.getByRole("group", { name: "Patch" }).focus();
   await page.keyboard.press("ControlOrMeta+f");
   await page.getByRole("searchbox", { name: "Find in diff" }).fill("repo changed");
@@ -86,7 +86,7 @@ test("the Changes panel: letters, test filter, find, split, whitespace, collapse
   await option("menuitemradio", "Unified");
   await page.getByRole("button", { name: "Restore", exact: true }).first().click();
 
-  await row(/spaced\.txt/).click();
+  await row(/^Modified spaced\.txt/).click();
   await option("menuitemcheckbox", "Ignore whitespace");
   await expect(page.locator("[data-diff-file='spaced.txt'] .l.add")).toHaveCount(0);
   await option("menuitemcheckbox", "Ignore whitespace");
@@ -95,7 +95,7 @@ test("the Changes panel: letters, test filter, find, split, whitespace, collapse
   await expect(page.getByRole("group", { name: "Patch" })).toHaveCount(0);
   await option("menuitemcheckbox", "Collapse all files");
 
-  await row(/README\.md/).click();
+  await row(/^Modified README\.md/).click();
   await option("menuitemcheckbox", "Wrap long lines");
   await expect(page.getByRole("group", { name: "Patch" })).toHaveAttribute("data-wrap", "off");
   await option("menuitemcheckbox", "Wrap long lines");
@@ -103,7 +103,7 @@ test("the Changes panel: letters, test filter, find, split, whitespace, collapse
   await page.getByRole("button", { name: /^Scope: / }).click();
   await page.getByRole("menuitem", { name: "Commit", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Commit" })).toContainText("Second commit");
-  await row(/notes\.md/).click();
+  await row(/^\w+ notes\.md/).click();
   await expect(page.locator("[data-diff-file='notes.md']")).toBeVisible();
 });
 

@@ -157,22 +157,16 @@ export function renameOf(patch: string): { from: string; similarity: number | nu
   return { from, similarity: similarity ? Number(similarity) : null };
 }
 
-/** Lock files start collapsed behind the same row as a huge diff; nobody reviews them line by line. */
-const LOCK_FILES = new Set([
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "yarn.lock",
-  "pnpm-lock.yaml",
-  "bun.lock",
-  "bun.lockb",
-  "Cargo.lock",
-  "Gemfile.lock",
-  "poetry.lock",
-  "composer.lock",
-  "go.sum",
-  "Pipfile.lock",
-]);
-export const isLockFile = (path: string) => LOCK_FILES.has(path.split("/").at(-1) ?? "");
+/** Lock files and minified files start collapsed behind the same row as a huge diff; nobody reviews them line by line. */
+const LOCK_FILES = new Set(["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock"]);
+export const isLockFile = (path: string) => {
+  const name = path.split("/").at(-1) ?? "";
+  return LOCK_FILES.has(name) || /\.min\./.test(name);
+};
+
+/** How many of a file's lines are drawn: all after Show anyway, none for a long lock file, else the first screen. */
+export const shownLimit = (count: number, path: string, full: boolean) =>
+  full ? count : isLockFile(path) && count > LOCK_COLLAPSE ? 0 : Math.min(count, LINE_LIMIT);
 
 /** One match of the find bar: the file it is in, the row inside that file's shown lines and where in the text. */
 type FindHit = { path: string; row: number; start: number };

@@ -513,3 +513,35 @@
   margin: 6px 10px 0;
   max-width: calc(100% - 20px);
 }
+.flrow {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.flrow .fli {
+  flex: 1;
+  min-width: 0;
+}
+.flrow .flmore {
+  position: absolute;
+  right: 4px;
+  display: none;
+}
+.flrow:hover .flmore,
+.flrow:focus-within .flmore,
+.flrow .flmore[aria-expanded="true"] {
+  display: inline-flex;
+}
+.flrow:hover .fli .num,
+.flrow:focus-within .fli .num {
+  visibility: hidden;
+}
+.linkish {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

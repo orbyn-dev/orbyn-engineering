@@ -1,41 +1,20 @@
 import { SquarePen } from "lucide-react";
 import type { ReactNode } from "react";
 import type { FileDiff } from "../../../api/types";
-import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { ErrorState } from "../../../product/ui/states";
 import { Button, IconButton } from "../../../ui/controls";
 import { ChangeLetter } from "../../workspace";
-import { api, readThreadFile } from "../api";
-import { openInEditor } from "../files/openInEditor";
+import { readThreadFile } from "../api";
+import { checkoutPath, openChanged } from "./openChanged";
 import { FilePreview, previewKind } from "../files/FilePreview";
 import { Patch } from "./DiffPatch";
 import { fileName } from "./ChangedFiles";
-import { changeOf, isBinaryPatch, isLockFile, renameOf, type DiffLine } from "./diffModel";
+import { changeOf, isBinaryPatch, renameOf, type DiffLine } from "./diffModel";
 
 const count = (value: number) => value.toLocaleString("en-US");
-
-/** The checkout-relative path of a file the diff names from the repository's root, or null when the thread's folder doesn't hold it. */
-async function checkoutPath(threadId: string, cwd: string, path: string, signal?: AbortSignal) {
-  const resolved = await api.resolveThreadPath(threadId, { path, basis: "repository", cwd }, signal);
-  return resolved.checkout_path;
-}
-
-/** Opens the file in the person's editor, or in a file tab when the editor is not what is wanted (a binary file's Open). */
-async function open(threadId: string, cwd: string, path: string, how: "editor" | "tab") {
-  try {
-    const inside = await checkoutPath(threadId, cwd, path);
-    if (inside === null) {
-      useUi.getState().pushToast("Couldn't open it. That file is outside this thread's folder.");
-      return;
-    }
-    if (how === "tab") useUi.getState().openFileTab({ kind: "thread", path: inside });
-    else await openInEditor(threadId, inside);
-  } catch (failure) {
-    useUi.getState().pushToast(`Couldn't open it. ${toFailure(failure).message}`);
-  }
-}
 
 /** A Markdown file as the reader will see it, read from the checkout. */
 function Rendered({ threadId, cwd, path }: { threadId: string; cwd: string; path: string }) {
@@ -103,7 +82,7 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
             +{count(file.additions)} <span className="r">−{count(file.deletions)}</span>
           </span>
         )}
-        <IconButton label={binary ? "Open" : "Open in editor"} onClick={() => void open(threadId, cwd, file.path, binary ? "tab" : "editor")}>
+        <IconButton label={binary ? "Open" : "Open in editor"} onClick={() => void openChanged(threadId, cwd, file.path, binary ? "tab" : "editor")}>
           <SquarePen size={14} aria-hidden />
         </IconButton>
       </div>
@@ -114,7 +93,7 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
         <div className="x2banner">
           <span>Binary file changed.</span>
           <span className="sp" />
-          <Button small tone="quiet" onClick={() => void open(threadId, cwd, file.path, "tab")}>Open</Button>
+          <Button small tone="quiet" onClick={() => void openChanged(threadId, cwd, file.path, "tab")}>Open</Button>
         </div>
       ) : lines.length === 0 ? (
         <p className="x2note t3">
@@ -122,7 +101,7 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
         </p>
       ) : (
         <Patch lines={lines} path={file.path} threadId={threadId} origin={origin} needle={needle} current={current}
-          lock={isLockFile(file.path)} full={full} split={split} onShowAll={onShowAll} />
+          full={full} split={split} onShowAll={onShowAll} />
       )}
     </div>
   );

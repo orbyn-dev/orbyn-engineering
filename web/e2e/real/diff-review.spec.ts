@@ -60,7 +60,8 @@ test("E10: a diff range comment shows inline, follows its chip and reaches the p
   expect(messages).toContain("Review on `review.txt:2`");
   expect(messages).toContain("Sent from the diff");
   expect(messages).toContain("BRAVO");
-  await expect(file.getByRole("note", { name: /Review comment/ })).toHaveCount(0);
+  // A sent comment stays under its line, now read as sent.
+  await expect(file.getByRole("note", { name: /Review comment/ })).toContainText("Sent to the agent");
 });
 
 test("E18: a large uncommitted diff lists every file, and find counts matches across all of them", async ({ page }) => {
@@ -74,6 +75,11 @@ test("E18: a large uncommitted diff lists every file, and find counts matches ac
   // One file's lines are drawn at a time, so the list never mounts 130 diffs: every file is a row.
   const rows = page.locator("[data-diff-row^='bulk/']");
   await expect(rows.first()).toBeVisible();
+  // The list draws 50 at a time and ends with a row that shows more.
+  await expect(rows).toHaveCount(50);
+  await page.getByRole("button", { name: /^Show \d+ more files$/ }).click();
+  await expect(rows).toHaveCount(100);
+  await page.getByRole("button", { name: /^Show \d+ more files$/ }).click();
   await expect(rows).toHaveCount(130);
   await expect(page.locator("[data-diff-file]")).toHaveCount(1);
   await page.getByRole("group", { name: "Patch" }).focus();

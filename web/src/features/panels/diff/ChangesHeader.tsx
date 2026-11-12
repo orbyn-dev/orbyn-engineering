@@ -21,7 +21,7 @@ export const WIDE = 640;
 const count = (value: number) => value.toLocaleString("en-US");
 
 /** A button that opens a menu under it, closing and returning focus as every menu does. */
-function MenuButton({ items, menuLabel, width, align = "start", disabled, children }: {
+export function MenuButton({ items, menuLabel, width, align = "start", disabled, children }: {
   items: MenuItem[];
   menuLabel: string;
   /** The menu's width in the design. */
@@ -81,7 +81,7 @@ function ViewOptions({ wide }: { wide: boolean }) {
       ...toggle("Split", layout === "split" && wide, () => setPrefs({ diffLayout: "split" })),
       radio: true,
       disabled: !wide,
-      ...(wide ? {} : { title: `Split needs a panel about ${WIDE} px wide` }),
+      ...(wide ? {} : { title: `Needs about ${WIDE} px` }),
     },
     { ...toggle("Ignore whitespace", ignoreSpace, () => setPrefs({ diffIgnoreWhitespace: !ignoreSpace })), separatorBefore: true },
     toggle("Hide test files", hideTests, () => setPrefs({ diffHideTests: !hideTests })),

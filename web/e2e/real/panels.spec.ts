@@ -114,7 +114,7 @@ test("a historical turn shows file changes without per-file restore", async ({ p
   await openPanelTab(page, "Diff");
   await page.getByRole("button", { name: /^Scope: / }).click();
   await page.getByRole("menuitem", { name: "Turn", exact: true }).click();
-  await expect(page.getByRole("group", { name: "Changed files" }).getByRole("button", { name: /notes\.txt/ })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Changed files" }).getByRole("button", { name: /^Modified notes\.txt/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Restore notes.txt to before this turn" })).toHaveCount(0);
   expect(readFileSync(notes, "utf8")).toBe("changed by the agent\n");
 });

@@ -14,13 +14,17 @@ import { GitActionDialog } from "./GitActionDialog";
 import { createPullRequestPlan } from "../../../product/git/plans";
 import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
 import { openInEditor } from "../files/openInEditor";
+import { openChanged } from "./openChanged";
 import { ChangedFiles } from "./ChangedFiles";
 import { ChangesHeader, DIFF_SOURCES, WIDE, type ComparePair, type DiffSource } from "./ChangesHeader";
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
-import { findHits, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
+import { findHits, shownLimit, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 
 const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
+const FILE_PAGE = 50;
+/** Where an empty scope sends the person: the scope nearest to it that is likelier to have something. */
+const NEAREST: Record<DiffSource, DiffSource> = { worktree: "branch", turn: "worktree", thread: "worktree", branch: "worktree", commit: "branch" };
 const SKELETON = [60, 90, 75, 85, 50, 80, 70];
 
 /** A Jujutsu checkout's working-copy change, as the installed `jj` describes it. */
@@ -125,6 +129,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [shownFully, setShownFully] = useState<ReadonlySet<string>>(new Set());
+  const [pages, setPages] = useState(1);
   const [findOpen, setFindOpen] = useState(false);
   const [needle, setNeedle] = useState("");
   const [hitAt, setHitAt] = useState(0);
@@ -161,17 +166,25 @@ export function DiffPanel({ threadId }: { threadId: string }) {
 
   const wanted = needle.trim().toLowerCase();
   const hits = useMemo(
-    () => (findOpen && wanted ? findHits(files.map((file) => ({ path: file.path, lines: linesOf(file, ignoreSpace) })), wanted) : []),
-    [findOpen, wanted, files, ignoreSpace],
+    () => (findOpen && wanted ? findHits(files.map((file) => {
+      // Lines cut off or collapsed are not drawn, so find does not count them until Show anyway draws them.
+      const lines = linesOf(file, ignoreSpace);
+      return { path: file.path, lines: lines.slice(0, shownLimit(lines.length, file.path, shownFully.has(file.path))) };
+    }), wanted) : []),
+    [findOpen, wanted, files, ignoreSpace, shownFully],
   );
   const hit = hits.length > 0 ? hits[Math.min(hitAt, hits.length - 1)] ?? null : null;
   // Turning Collapse all files on closes the file that was open.
   useEffect(() => { if (collapsed) setPickedPath(null); }, [collapsed]);
   // Stepping to a match in another file opens that file.
+  // Only stepping to a match does this; picking another file in the list stays where the person put it.
+  const hitKey = hit ? `${hit.path}:${hit.row}:${hit.start}` : "";
+  const hitPath = hit?.path;
   useEffect(() => {
-    if (hit && hit.path !== selectedPath) setPickedPath(hit.path);
-  }, [hit, selectedPath]);
+    if (hitPath) setPickedPath(hitPath);
+  }, [hitKey, hitPath]);
   useEffect(() => setHitAt(0), [wanted]);
+  useEffect(() => setPages(1), [source, filter]);
 
   useEffect(() => {
     if (!reveal) return;
@@ -233,11 +246,25 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       full={shownFully.has(selected.path)}
       split={wide}
       onShowAll={() => setShownFully(new Set(shownFully).add(selected.path))}
-      canRender={source === "worktree" || source === "thread" || source === "branch"}
+      canRender={source === "worktree" || source === "thread"}
       bar={bar}
     />
   ) : null;
-  const list = <ChangedFiles files={listed} selected={selectedPath} filter={filter} onFilter={setFilter} onPick={setPickedPath} />;
+  // The list draws a page of files at a time, and always the one on show.
+  const upTo = Math.max(pages * FILE_PAGE, listed.findIndex((file) => file.path === selectedPath) + 1);
+  const list = (
+    <ChangedFiles
+      files={listed.slice(0, upTo)}
+      more={Math.max(listed.length - upTo, 0)}
+      selected={selectedPath}
+      filter={filter}
+      onFilter={setFilter}
+      onPick={setPickedPath}
+      onMore={() => setPages((now) => now + 1)}
+      onCopy={(path) => void navigator.clipboard?.writeText(path).then(() => useUi.getState().pushToast("Path copied"))}
+      onOpen={(path) => void openChanged(threadId, thread?.cwd ?? "", path, "editor")}
+    />
+  );
 
   return (
     <div
@@ -286,13 +313,11 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       ) : files.length === 0 ? (
         <div className="x2empty">
           <DiffIcon size={22} aria-hidden />
-          <h4>No changes in {scopeLabel}</h4>
-          {source === "worktree" ? (
-            <>
-              <span>Everything is committed.</span>
-              <Button small tone="quiet" onClick={() => setSource("branch")}>Show Branch changes</Button>
-            </>
-          ) : null}
+          <h4>No changes in {scopeLabel}.</h4>
+          {source === "worktree" ? <span>Everything is committed.</span> : null}
+          <button type="button" className="linkish" onClick={() => setSource(NEAREST[source])}>
+            Show {DIFF_SOURCES.find((entry) => entry.id === NEAREST[source])?.label} changes
+          </button>
         </div>
       ) : (
         <>
@@ -305,13 +330,13 @@ export function DiffPanel({ threadId }: { threadId: string }) {
           ) : null}
           {wide ? (
             <div className="x2cols">
-              <div className="x2main">{view}</div>
+              <div className="x2main">{view ?? bar}</div>
               {list}
             </div>
           ) : (
             <>
               {list}
-              <div className="x2main">{view}</div>
+              <div className="x2main">{view ?? bar}</div>
             </>
           )}
         </>
