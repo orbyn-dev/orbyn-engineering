@@ -4,7 +4,7 @@
 //! store, run the `orbyn` command line against the service handle or open another run's MCP
 //! address. On macOS the core starts each worker under a profile that denies reading and
 //! writing the data folder except the worker's own run folder and the few places it needs,
-//! and denies inspecting other processes. Everywhere else no restriction is available and the
+//! and stops the data folder or a folder above it being renamed away. Everywhere else no restriction is available and the
 //! core refuses to start a worker (hard rule 7: never run with less than was promised).
 //!
 //! What this does not cover is listed in `docs/crew.md`: the network and the loopback service,

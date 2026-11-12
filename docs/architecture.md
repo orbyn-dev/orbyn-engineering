@@ -2733,7 +2733,9 @@ equals or contains the data folder would override the denial, so such a rule is 
 it. It also denies
 the task port, Apple events, LaunchServices opens (a program the worker wrote would otherwise run from
 launchd, outside the profile) and signals to other processes. A worker may signal itself and its own
-children. Paths reach the profile only as `-D`
+children. The data folder and every folder above it, up to `/`, cannot be renamed or removed, because a
+renamed ancestor would put the files under a name the path rules do not cover; the folders on the way down to
+the worker's own folders can be looked at (not listed or read), so `cd` into the checkout works. Paths reach the profile only as `-D`
 parameters and are canonicalised first, because a rule on `/var/...` does not match `/private/var/...`.
 The child's `ORBYN_DATA_DIR` is removed. `RunSpec.confine` carries the rules from the run manager
 to the claude and acp drivers; a driver that cannot apply them does not start the run. A process

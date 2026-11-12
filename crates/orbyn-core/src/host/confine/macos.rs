@@ -2,7 +2,7 @@
 //! path travels as a `-D NAME=value` parameter, so a folder name cannot change a rule.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use super::{Confinement, ResolvedCommand};
@@ -42,14 +42,54 @@ pub(super) fn profile(confinement: &Confinement) -> String {
             ));
         }
     }
+    // The folders on the way down to an allowance may be looked at (not listed or read), so
+    // a path through them can be walked, such as `cd` into the checkout.
+    for index in 0..route(confinement).len() {
+        text.push_str(&format!(
+            "(allow file-read-metadata (literal (param \"M{index}\")))\n"
+        ));
+    }
+    // Moving the data folder, or any folder above it, would put its files under a name the
+    // path rules do not cover, so none of them may be renamed or removed.
+    for index in 0..above(confinement).len() {
+        text.push_str(&format!(
+            "(deny file-write-unlink (literal (param \"A{index}\")))\n"
+        ));
+    }
     text.push_str(TAIL);
     text
 }
 
-fn parameters(confinement: &Confinement) -> Vec<(String, &Path)> {
+/// The data folder and every folder above it, up to and including `/`.
+fn above(confinement: &Confinement) -> Vec<PathBuf> {
+    confinement
+        .data
+        .ancestors()
+        .map(Path::to_path_buf)
+        .collect()
+}
+
+/// The data folder and the folders inside it that lead to an allowance.
+fn route(confinement: &Confinement) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    let allowed = std::iter::once(&confinement.run_dir)
+        .chain(&confinement.allow_read)
+        .chain(&confinement.allow_write)
+        .chain(&confinement.allow_exec);
+    for path in allowed {
+        for folder in path.ancestors().skip(1) {
+            if folder.starts_with(&confinement.data) && !found.iter().any(|f| f == folder) {
+                found.push(folder.to_path_buf());
+            }
+        }
+    }
+    found
+}
+
+fn parameters(confinement: &Confinement) -> Vec<(String, PathBuf)> {
     let mut all = vec![
-        ("DATA".to_owned(), confinement.data.as_path()),
-        ("RUN".to_owned(), confinement.run_dir.as_path()),
+        ("DATA".to_owned(), confinement.data.clone()),
+        ("RUN".to_owned(), confinement.run_dir.clone()),
     ];
     for (prefix, paths) in [
         ("R", &confinement.allow_read),
@@ -60,7 +100,15 @@ fn parameters(confinement: &Confinement) -> Vec<(String, &Path)> {
             paths
                 .iter()
                 .enumerate()
-                .map(|(index, path)| (format!("{prefix}{index}"), path.as_path())),
+                .map(|(index, path)| (format!("{prefix}{index}"), path.clone())),
+        );
+    }
+    for (prefix, paths) in [("M", route(confinement)), ("A", above(confinement))] {
+        all.extend(
+            paths
+                .into_iter()
+                .enumerate()
+                .map(|(index, path)| (format!("{prefix}{index}"), path)),
         );
     }
     all
@@ -109,4 +157,9 @@ pub(super) fn check(tool: &Path) -> Option<String> {
                 .to_owned(),
         ),
     }
+}
+
+#[cfg(test)]
+pub(super) fn above_len(confinement: &Confinement) -> usize {
+    above(confinement).len()
 }

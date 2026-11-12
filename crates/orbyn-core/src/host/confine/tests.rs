@@ -351,4 +351,70 @@ mod macos_tests {
         let own = run(&s.rules, &cwd, "sleep 60 & kill -TERM $!");
         assert!(own.status.success(), "{own:?}");
     }
+
+    /// Renaming the data folder or a folder above it would leave its files under a name no
+    /// path rule covers. Only the folders inside the test's own temp folder are tried.
+    #[test]
+    fn the_data_folder_and_every_folder_above_it_cannot_be_renamed() {
+        let base = std::env::temp_dir().join(format!("orbyn-confine-up-{}", crate::util::new_id()));
+        let data = base.join("home/Library/App Support/Orbyn");
+        std::fs::create_dir_all(data.join("runs/mine")).unwrap();
+        std::fs::create_dir_all(base.join("home/unrelated")).unwrap();
+        std::fs::write(data.join("service.json"), "secret").unwrap();
+        let rules = Confinement::new(&data, &data.join("runs/mine"), &[], &[]).unwrap();
+        let base_real = std::fs::canonicalize(&base).unwrap();
+        let data_real = std::fs::canonicalize(&data).unwrap();
+        let cwd = data_real.join("runs/mine");
+        // Every folder from the data folder up to `/` has a rule; none holds a path in the text.
+        assert_eq!(macos::above_len(&rules), data_real.ancestors().count());
+        for ancestor in data_real
+            .ancestors()
+            .take_while(|a| a.starts_with(&base_real))
+        {
+            let out = run(
+                &rules,
+                &cwd,
+                &format!("mv '{0}' '{0}-moved'", ancestor.display()),
+            );
+            assert!(!out.status.success(), "{} was renamed", ancestor.display());
+            assert!(ancestor.exists());
+        }
+        let out = run(
+            &rules,
+            &cwd,
+            &format!("cat '{}/service.json'", data_real.display()),
+        );
+        assert!(!out.status.success() && out.stdout.is_empty());
+        // An unrelated sibling folder still moves.
+        let out = run(
+            &rules,
+            &cwd,
+            &format!(
+                "mv '{0}/home/unrelated' '{0}/home/moved'",
+                base_real.display()
+            ),
+        );
+        assert!(out.status.success(), "{out:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The worker's normal work in its folders keeps working: absolute `cd`, and the renames
+    /// and removals a tool such as git does with lock files.
+    #[test]
+    fn work_inside_the_checkout_and_run_folder_still_renames_and_removes() {
+        let s = setup();
+        let data = std::fs::canonicalize(&s.data).unwrap();
+        let checkout = data.join("workspace/repo/p");
+        let out = run(
+            &s.rules,
+            &data,
+            &format!(
+                "cd '{c}' && mkdir -p .git && touch .git/index.lock && mv .git/index.lock .git/index \\
+                 && rm .git/index && cd '{r}' && touch a.lock && mv a.lock b && rm b",
+                c = checkout.display(),
+                r = data.join("runs/mine").display()
+            ),
+        );
+        assert!(out.status.success(), "{out:?}");
+    }
 }
