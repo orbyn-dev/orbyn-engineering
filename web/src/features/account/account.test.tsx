@@ -125,7 +125,7 @@ describe("sign in", () => {
     await user.type(field, "48a2 91x4");
     expect(field).toHaveValue("482 914");
     await user.click(screen.getByRole("button", { name: "Verify" }));
-    expect(await screen.findByText(/Codes change every 30 seconds, so try the current one\. 4 tries left\./)).toBeVisible();
+    expect(await screen.findByText(/Codes change every 30 seconds\. 4 tries left\./)).toBeVisible();
     expect(field).toHaveValue("482 914");
     for (const left of [3, 2, 1]) {
       await user.click(screen.getByRole("button", { name: "Verify" }));

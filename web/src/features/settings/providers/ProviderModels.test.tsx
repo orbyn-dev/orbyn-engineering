@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import type { EngineStatus } from "../../../api/types";
 import { installMockFetch } from "../../../test-support";
+import { useWorkspace } from "../../../product/state/workspace";
 import { ProviderDetail } from "./ProviderDetail";
 
 const engine = { id: "claude", name: "Claude Code", tier: "native", installed: true, version: "2.1.318", latest: null, auth: "logged_in", path: "/opt/claude",
@@ -41,4 +42,27 @@ it("says which binary couldn't run, in the service's own words, with Check again
   render(<ProviderDetail engine={{ ...engine, problem: "This engine did not respond." }} store={store} onBack={() => undefined} onEdit={() => undefined} />);
   const banner = (await screen.findByText("Couldn’t run /opt/claude. This engine did not respond.")).closest<HTMLElement>("[role=alert]")!;
   expect(within(banner).getByRole("button", { name: "Check again" })).toBeVisible();
+});
+
+it("says which thread runs on the engine and offers it, instead of a Remove that would fail", async () => {
+  installMockFetch();
+  useWorkspace.setState({ threads: { t1: { id: "t1", title: "Fix login redirect", engine: "claude", active_run: { id: "r1" } } as never } });
+  const removable = { ...engine, tier: "acp" } as EngineStatus;
+  render(<ProviderDetail engine={removable} store={store} onBack={() => undefined} onEdit={() => undefined} />);
+  expect(await screen.findByText("A thread is running on Claude Code: “Fix login redirect”. Stop it, then remove it.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove Claude Code" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Open thread" })).toBeVisible();
+  useWorkspace.setState({ threads: {} });
+});
+
+it("asks once, in the design's words, before removing an engine", async () => {
+  installMockFetch();
+  useWorkspace.setState({ threads: {} });
+  const user = userEvent.setup();
+  render(<ProviderDetail engine={{ ...engine, tier: "acp" } as EngineStatus} store={store} onBack={() => undefined} onEdit={() => undefined} />);
+  expect(await screen.findByText("Removes this engine from Orbyn. Its sign-in and sessions stay with the engine.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove Claude Code" }));
+  const dialog = await screen.findByRole("dialog", { name: "Remove Claude Code?" });
+  expect(within(dialog).getByText("It leaves Orbyn’s list. Its sign-in and sessions stay with the engine.")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Remove" })).toBeVisible();
 });

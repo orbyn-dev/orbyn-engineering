@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
-import { installMockFetch } from "../../test-support";
+import { installMockFetch, setViewportWidth } from "../../test-support";
 import { ApiFailure, NETWORK_ERROR } from "../../api/client";
 import { accountApi } from "./api";
 import { AccountSection } from "./AccountSection";
@@ -63,6 +63,20 @@ describe("the devices", () => {
     expect(screen.queryByRole("button", { name: /Rename/ })).toBeNull();
   });
 
+  it("lists three of five on the Account page, two in a narrow window, and all five under Manage devices", async () => {
+    setViewportWidth(1200);
+    const user = await signedInPage(() => mock.setAccount({ devices: { five: true } }));
+    expect(await screen.findByRole("heading", { name: "Devices · 3 of 5" })).toBeVisible();
+    expect(deviceRows()).toHaveLength(3);
+    await openDevices(user);
+    expect(deviceRows()).toHaveLength(5);
+    cleanup();
+    setViewportWidth(640);
+    await signedInPage(() => mock.setAccount({ devices: { five: true } }));
+    expect(await screen.findByRole("heading", { name: "Devices · 2 of 5" })).toBeVisible();
+    expect(deviceRows()).toHaveLength(2);
+  });
+
   it("removes one device only after the password is typed for that device", async () => {
     const user = await signedInPage();
     await openDevices(user);
@@ -107,6 +121,8 @@ describe("the devices", () => {
     act(() => announceAccountChange());
     expect(await screen.findByText("Couldn’t load your devices.")).toBeVisible();
     expect(screen.getByRole("listitem", { name: "iPhone" })).toBeVisible();
+    // The red row says it failed; the stale list keeps full contrast, with its buttons inactive.
+    expect(document.querySelector(".ac-devpage .ac-last")).toHaveAttribute("data-stale", "true");
     expect(screen.queryAllByRole("button", { name: /^Device menu/ })).toHaveLength(0);
     mock.setAccount({ devices: { down: false } });
     await user.click(screen.getByRole("button", { name: "Try again" }));

@@ -108,7 +108,7 @@ test("instance name conflicts retain the draft until Reload and preserve peers o
     expect(seen).toHaveLength(2);
     await page.getByRole("button", { name: "Draft work", exact: true }).click();
     await page.getByRole("button", { name: "Remove Draft work", exact: true }).click();
-    await page.getByRole("dialog", { name: "Remove Draft work?" }).getByRole("button", { name: "Remove provider", exact: true }).click();
+    await page.getByRole("dialog", { name: "Remove Draft work?" }).getByRole("button", { name: "Remove", exact: true }).click();
     await expect.poll(() => instances(service)).toEqual([local("peer")]); expect(seen).toHaveLength(3);
     await expect(page.getByRole("dialog")).toHaveCount(0);
   } finally { await service.stop(); }

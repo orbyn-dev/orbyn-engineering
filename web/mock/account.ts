@@ -165,7 +165,7 @@ export function createAccountMock() {
       inviteRequired?: boolean;
       sync?: [AccountView["sync"]["kind"] | null, AccountView["sync"]["reason"]?];
       down?: boolean;
-      devices?: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean };
+      devices?: { deletionScheduled?: boolean; down?: boolean; onlyThis?: boolean; syncStuck?: boolean; five?: boolean };
       /** What a trusted device answered this computer's request. */
       answer?: AccountApprovalView["state"];
       /** The next sign-in is on a computer that has settings to join. */
@@ -184,6 +184,10 @@ export function createAccountMock() {
         if (knobs.devices.down !== undefined) devicesDown = knobs.devices.down;
         if (knobs.devices.syncStuck !== undefined) syncStuck = knobs.devices.syncStuck;
         if (knobs.devices.onlyThis) deviceList = deviceList.filter((device) => device.current);
+        // Five devices: the Account page lists three of them, Manage devices all five.
+        if (knobs.devices.five) deviceList = [...freshDevices(),
+          { id: "dev-laptop", name: "Work laptop", platform: "Windows 11", app: "engineering", trusted_since: "2026-10-30T09:00:00Z", current: false },
+          { id: "dev-firefox", name: "Firefox on the work PC", platform: "Web", app: "planner", trusted_since: "2026-11-06T09:00:00Z", current: false }];
       }
       if (knobs.answer && approval) approval.answer = knobs.answer;
       if (knobs.connectNeeded !== undefined) connectNeeded = knobs.connectNeeded;

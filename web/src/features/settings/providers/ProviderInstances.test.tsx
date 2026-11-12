@@ -8,7 +8,7 @@ import { ProvidersSection } from "./Providers";
 const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
 vi.mock("../../../api/client", async (original) => ({ ...await original<typeof import("../../../api/client")>(), request: vi.fn() }));
 vi.mock("../../../product/state/workspace", () => ({
-  useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null } }),
+  useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null }, threads: {} }),
 }));
 vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
 const base = { capabilities: {}, installed: true, version: "2.1.318", auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as const;
@@ -205,7 +205,7 @@ describe("provider pages", () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
     await user.click(await screen.findByRole("button", { name: "Claude Code · Work" }));
     await user.click(await screen.findByRole("button", { name: "Remove Claude Code · Work" }));
-    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove provider" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(entries).toEqual([{ id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]));
   });
 });
