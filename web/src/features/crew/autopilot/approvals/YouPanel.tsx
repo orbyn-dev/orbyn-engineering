@@ -29,7 +29,7 @@ function Buttons({ items }: { items: [label: string, run: (() => void) | undefin
 }
 
 const Box = ({ title, children, tone }: { title: string; children: ReactNode; tone?: "am" }) => (
-  <section className={`ap-box${tone ? ` ap-box-${tone}` : ""}`}>
+  <section className={tone === "am" ? "ap-box ap-box-am" : "ap-box"}>
     <h4>{title}</h4>
     {children}
   </section>

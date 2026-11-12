@@ -78,7 +78,7 @@ function Runs({ runs }: { runs: BackgroundRun[] }) {
   return (
     <section className="ap-block" aria-label="Recent runs">
       <header className="ap-set-head"><h3>Recent runs</h3><Chip tone="plain">Preview</Chip></header>
-      <div className="ap-bg ap-runs" role="table" aria-label="Recent runs">
+      <div className="ap-bg" role="table" aria-label="Recent runs">
         <div className="ap-bg-row ap-head" role="row">
           {["Run", "Started by", "Result", "State", "Autopilot"].map((name) => <span key={name} role="columnheader">{name}</span>)}
         </div>
