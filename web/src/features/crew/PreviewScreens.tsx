@@ -1,12 +1,14 @@
 import type { ComponentType } from "react";
 import ReviewPreviewScreens from "./autopilot/review/PreviewScreens";
 import { REVIEW_FRAMES, type ReviewFrameId } from "./autopilot/review/names";
+import { BACKTEST_SCREENS } from "./backtest/screens";
 import { CAPACITY_SCREENS } from "./capacity/screens";
 import { ESCAPE_SCREENS } from "./escape/screens";
+import { ORACLE_SCREENS } from "./oracle/screens";
 import { SETTINGS_SCREENS } from "./settings/screens";
 import "./shared/frame.css";
 
-const DRAWN: Record<string, ComponentType> = { ...ESCAPE_SCREENS, ...CAPACITY_SCREENS, ...SETTINGS_SCREENS };
+const DRAWN: Record<string, ComponentType> = { ...ESCAPE_SCREENS, ...CAPACITY_SCREENS, ...ORACLE_SCREENS, ...BACKTEST_SCREENS, ...SETTINGS_SCREENS };
 
 const isReview = (name: string): name is ReviewFrameId => (REVIEW_FRAMES as readonly string[]).includes(name);
 
