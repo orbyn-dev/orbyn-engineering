@@ -2,7 +2,7 @@
 //! [`AccountApi`](super::AccountApi) the screens use, and [`EngineZones`] answers the
 //! [`DeviceApi`](super::DeviceApi) the sync worker uses, both over one
 //! `orbyn_device_client::DeviceClient`. This is the only place the app names the Engine, and it
-//! names only that one crate (tag `engine-v0.2.3`, docs/account.md "Engine pin"; a test fails
+//! names only that one crate (tag `engine-v0.2.4`, docs/account.md "Engine pin"; a test fails
 //! when anything else is named).
 //!
 //! Nothing here is reachable yet: real sign-in stays off. The gate must be `LocalOnly`, which

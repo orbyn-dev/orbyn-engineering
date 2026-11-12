@@ -32,7 +32,7 @@ precise) or **Corrected** (the decision as written does not hold against the cod
 `orbyn-core` depends on the Engine's device client:
 
 ```toml
-orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.3" }
+orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.4" }
 ```
 
 It is the only Engine crate the app names (D6). `orbyn-device-client` re-exports every Engine type its public API
@@ -72,21 +72,24 @@ when a manifest or a source file names another one, or when the lock holds more 
   - Errors: `Offline`, `Unauthorized`, `InviteRequired`, `WrongPassword`, `RateLimited { retry_after }`, `Conflict`,
     `TooLarge`, `InvalidKey`, `Server { retryable }`, `InvalidCode`, `DeletionScheduled`, `ProtectionAdvanced` and
     `AccountGone`.
-- **Engine pin.** See [Engine pin](#engine-pin). The app depends on the real client at `engine-v0.2.3` and
+- **Engine pin.** See [Engine pin](#engine-pin). The app depends on the real client at `engine-v0.2.4` and
   `account::engine` adapts it; real sign-in stays off.
 
 ### Engine pin
 
-The Engine release the app pins is tag `engine-v0.2.3`, commit `ace5e23874935c2db512106270e4a8c08cc720dc` (its main CI
+The Engine release the app pins is tag `engine-v0.2.4`, commit `db006e3bdf4e5dc411af1464665f63c8679172ce` (its main CI
 is green). It has the `orbyn-device-client` crate (start, confirm and deny an approval; the new device's join, digits,
 finish and deny; `remove_device`; `devices`), the v3 approval message that binds the device's name, platform and `app`
-label, and the re-exports that let the app depend on that one crate. `engine-v0.1.0` and `engine-v0.2.0` are
-superseded.
+label, and the re-exports that let the app depend on that one crate. `engine-v0.1.0`, `engine-v0.2.0` and `engine-v0.2.3` are
+superseded. `engine-v0.2.4` adds one change over `engine-v0.2.3`: `.no_proxy()` on the device client, so
+the client never uses HTTP_PROXY, HTTPS_PROXY or ALL_PROXY; a machine that reaches the engine only through a proxy cannot use the account until an explicit proxy option exists.
+The explicit proxy option will be an Engine setting plus an app control, never read from the environment, and comes
+after the beta and before open sign-up.
 
 **Where the pin lives.** The `tag =` in `crates/orbyn-core/Cargo.toml` and the revision in `Cargo.lock`. The scan test
 reads both, so a moved lock or a second Engine crate fails the build. CI builds with `--locked`; that the tag still
 resolves to the locked revision is checked against the Engine repository when the pin is bumped, not offline. Sign-in
-condition 2 below names `engine-v0.1.0`; `engine-v0.2.3` contains that tag's work, and the condition is not marked
+condition 2 below names `engine-v0.1.0`; `engine-v0.2.4` contains that tag's work, and the condition is not marked
 satisfied by this note.
 
 ### The plan for the adapter
@@ -449,7 +452,7 @@ Follow-ups before the gate can be turned on (tracked, not built in the wiring pu
     `approvals/:id/approve`, `approvals/:id/deny`, `sign-in/approval`, `connect`, `connect/use-device`,
     `connect/use-account`, `connect/later` and `connect/seen`. A later "Refused on this computer" activity item for
     them is out of scope.
-12. Approval on the trusted side, at `engine-v0.2.3`. The real client has no `approve(id)`, `deny(id)` or request list, so
+12. Approval on the trusted side, at `engine-v0.2.4`. The real client has no `approve(id)`, `deny(id)` or request list, so
     the app maps its screens onto the Engine's own calls (below). What the Engine guarantees and the app relies on: an
     approval that expired (ten minutes), was answered, was cancelled by either device or was used is gone, and
     `approval_state`, `confirm_approval` and `deny_approval` answer `ApprovalExpired` (a 410), which the adapter shows as
@@ -545,7 +548,7 @@ invite, the device check, the emailed code), the signed-in page with Sync now, P
 line and popover with the title-bar icon, and the "Confirm it's you" dialog. The next pull request (designs v93)
 adds the device list and Remove device, Sign out and Sign out everywhere through that dialog, the paused-cause
 popovers, and the code-age hint. **New-device approval and "Connect this computer's settings"** are built behind the account module against the
-stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); the real device client (engine-v0.2.3) sits behind the same traits (`account::engine`), unselected while sign-in is off. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); a removed-device notice that names a removal (the Engine answers a removed device and an ended session with the same
+stand-in and have their screens (the Devices page lists the requests; the first sync asks how to join the settings); the real device client (engine-v0.2.4) sits behind the same traits (`account::engine`), unselected while sign-in is off. **Not in it:** renaming a device (the Engine's agreed device client has no rename call); a removed-device notice that names a removal (the Engine answers a removed device and an ended session with the same
 401, so `signout-other-device-removed` says neutrally "This device may have been removed, or your sessions ended", once, and
 not after the person's own sign out everywhere: the service keeps that in memory, `ended_notice` and `POST /api/account/ended/seen`);
 the "Too new for some actions" rule (Planned); and the deletion date in the blocked dialog (the view carries no date).
