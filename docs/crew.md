@@ -573,6 +573,16 @@ show a state ("Not set") that nothing stores yet. The v22 units apply to the v19
 "Codex 62% of its weekly limit", per-merge cost is tokens and minutes in the engine's own unit, and the review-reverted
 card offers "Create a check".
 
+**As built (slice 4f, UI part D):** the independent oracle (Crew Designs v22, 18 frames) and the reviewer backtest (v23, 16
+frames) in `web/src/features/crew/{oracle,backtest}`, on the same stage and with the same rules as part C: drawn sample
+data, no client and no route, every button disabled with "Crew is not connected to this app yet". The oracle gate fails
+when the key kills no mutant, strengthens for two rounds and then asks the person, and a key from the builder's own
+engine always needs the person's approval. A backtest starts only when the person chooses it and only with a budget for
+each engine, in tokens and never added up; it replays the last 180 days of pull requests that are 30 days old or more,
+shows a rate from 5 escapes and from 10 findings, and takes its outcomes from reverts, fixes and the escape log only.
+The lane picker's backtest counts are information and never change what Auto picks. All values the design marks
+Proposed stay Proposed.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with
@@ -837,7 +847,7 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 | W1 | Command blocks | Terminal output grouped per command with exit status and duration. Copy, rerun, filter, find, collapse, and "Send to agent" (as a context chip) or "Ask Crew to fix" (as a brief) | Terminal drawer upgrade; uses shell integration marks |
 | W2 | Smart terminal input | A real multi-line editor with cursor, selection and syntax colour; history search; completions for commands, flags and paths | Completions from Fig's MIT completion specs (check licence and attribution before use); no Warp code |
 | W3 | Plain English in the terminal | Type a sentence and it goes to the thread's engine as a prompt instead of the shell, with a visible toggle and undo | A local classifier, always shown, never silent |
-| W4 | Secret redaction | Secrets are masked in terminal blocks, in context sent to agents and in the Crew ledger. Matches known key formats and the person's own patterns | Feeds Crew's hard rule "no secrets in any object" |
+| W4 | Secret redaction | Secrets are masked in terminal blocks and in context sent to agents (not applied yet: those consumers are not built). Matches known key formats and the person's own patterns, set in Settings › Secrets. Crew keeps its own fixed rule: its scan, ledger, evidence and every Crew object use every built-in format and read no setting, so nothing on that page can put a secret into them. The person's patterns mask ledger and evidence text only when it is shown (read routes), never in what is stored | Feeds Crew's hard rule "no secrets in any object" |
 | W5 | Code editor tab | Files opened from the explorer get an editor: syntax colour, find, go to line, line comments (same comment threads as Changes), save. Language-server diagnostics come after the beta | New panel tab type |
 | W6 | Changes: revert hunk, edit inline, attach to agent | Revert one hunk, edit a line in place, or send a selection to the engine | Extends the shell's Changes view |
 | W7 | Batched review feedback | "Send all to engine" sends all drafts as one message, so the agent fixes everything in one pass | Already designed (Review and comments tab); confirm the behaviour |

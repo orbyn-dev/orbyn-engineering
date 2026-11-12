@@ -326,6 +326,7 @@ assignment.
 | API key | `\bsk-[A-Za-z0-9_-]{20,}` |
 | GitHub token | `\bgh[pousr]_[A-Za-z0-9]{36,}` and `\bgithub_pat_[A-Za-z0-9_]{22,}` |
 | AWS access key | `\bAKIA[0-9A-Z]{16}\b` |
+| AWS secret key | `(?i)\baws_?secret_?(?:access_?)?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}` |
 | Slack token | `\bxox[abprs]-[A-Za-z0-9-]{10,}` |
 | Bearer token | `(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*` |
 | JWT | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}` |

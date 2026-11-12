@@ -108,6 +108,8 @@ export function createMockApi(options: MockOptions = {}) {
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
+  /** The notes of the reviews sent from a pull request page, by number. */
+  const reviewsSent = new Map<number, string[]>();
   let delayMs = 0;
   let idCounter = 0;
   let preferenceValues: Record<string, JsonValue> = {};
@@ -136,6 +138,7 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    reviewsSent.clear();
     delayMs = 0;
     const blank = next === "empty" || next === "first-run" || next === "no-skills";
     projects = blank ? [] : structuredClone(fixtures.projects);
@@ -437,6 +440,10 @@ export function createMockApi(options: MockOptions = {}) {
     const explored = explorerRoute(method, seg, query);
     if (explored) return explored;
 
+    if (method === "POST" && seg[1] === "projects" && seg[3] === "pulls" && seg[5] === "review" && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
+      reviewsSent.set(Number(seg[4]), [...(reviewsSent.get(Number(seg[4])) ?? []), String(data.body ?? "")]);
+      return { status: 204 };
+    }
     if (method === "GET" && seg[1] === "projects" && seg[3] === "pulls" && seg[4] && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
       const state = fixtures.pageStates[Number(seg[4])]!;
       if (!seg[5]) {
@@ -461,7 +468,12 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (seg[5] === "checks") return { status: 200, body: fixtures.pageChecks(Number(seg[4])) };
       if (seg[5] === "files") return { status: 200, body: fixtures.pageFiles() };
-      if (seg[5] === "timeline") return { status: 200, body: [] };
+      // The conversation: three comments, and each review sent from this page after them.
+      if (seg[5] === "timeline") {
+        const comments = [1, 2, 3].map((id) => ({ id: `c${id}`, kind: "commented", actor: "sam", created_at: null, text: `Comment ${id}` }));
+        const sent = (reviewsSent.get(Number(seg[4])) ?? []).map((text, at) => ({ id: `r${at}`, kind: "reviewed", actor: "you", created_at: null, text }));
+        return { status: 200, body: [...comments, ...sent] };
+      }
       if (seg[5] === "comments") return { status: 200, body: { comments: [], threads: [] } };
       if (seg[5] === "stack") return { status: 200, body: { layers: [], position: 0 } };
     }

@@ -63,7 +63,7 @@ async function route(page, spec) {
 async function run(page, step) {
   switch (step.do) {
     case "click":
-      await page.getByRole(step.role, { name: nameOf(step), exact: step.exact }).first().click();
+      await (step.within ? page.getByRole("region", { name: step.within }) : page).getByRole(step.role, { name: nameOf(step), exact: step.exact }).first().click();
       await page.waitForTimeout(400);
       return;
     case "fill":

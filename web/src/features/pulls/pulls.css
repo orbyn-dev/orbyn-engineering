@@ -7,7 +7,7 @@
 
 /* The list. Its toolbar is in pullsToolbar.css. */
 .pulls-table {
-  --c-rev: 96px;
+  --c-rev: 140px;
   --c-yours: 170px;
   --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px 50px;
   display: flex;
@@ -281,6 +281,16 @@
   margin-left: 6px;
   color: var(--color-muted);
   font-size: var(--text-label);
+}
+/* What the reviews say, after the avatars: quiet ink, amber only when it waits on the person (changes on their own pull request). */
+.pull-rword {
+  margin-left: 6px;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+  white-space: nowrap;
+}
+.pull-rword[data-tone="act"] {
+  color: var(--color-warnText);
 }
 /* The tooltip sits under its cell, on hover and on keyboard focus; Escape puts it away. */
 .pull-tip {
@@ -994,8 +1004,8 @@
   margin-left: 8px;
   padding: 0 9px;
   border-radius: var(--radius-pill);
-  background: var(--color-warnSoft);
-  color: var(--color-warnText);
+  background: var(--color-chip);
+  color: var(--color-chipText);
   font-size: var(--text-label);
 }
 .pull-merge[data-dim] {
@@ -1005,6 +1015,8 @@
   color: var(--color-textSoft);
 }
 .pull-review-done {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
 }
 .pull-review-done > b {

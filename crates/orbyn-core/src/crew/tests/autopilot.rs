@@ -307,6 +307,67 @@ async fn the_requester_reads_the_reason_and_never_the_key_or_a_secret() {
 }
 
 #[tokio::test]
+async fn the_ledger_shown_masks_the_persons_patterns_and_the_stored_rows_are_unchanged() {
+    use orbyn_contracts::{PatternKind, PatternScope, RedactionPatternInput};
+    let (w, id) = running().await;
+    let word = format!("{}-{}", "zebra", "stripes");
+    let lead = Scripted::new("alpha", "alpha", move |_| Answer {
+        approve: false,
+        reason: format!("No: the {} file is off limits.", "zebra-stripes"),
+    });
+    w.core.set_crew_approvers(approvers(&lead, &[]));
+    request(&w, &id, ActionKind::Command, "cargo fmt").await;
+    let before: Vec<String> = w
+        .core
+        .store
+        .crew_autopilot_events(&id)
+        .unwrap()
+        .iter()
+        .map(|e| e.body.to_string())
+        .collect();
+    assert!(before.iter().any(|row| row.contains(&word)));
+    w.core
+        .save_redaction_pattern(
+            "local",
+            None,
+            &RedactionPatternInput {
+                name: "Animal".into(),
+                pattern: word.clone(),
+                kind: PatternKind::Text,
+                applies_to: PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let log = w
+        .core
+        .autopilot_log(
+            Some(&id),
+            None,
+            crate::crew::Page {
+                limit: 50,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    let shown = serde_json::to_string(&log.rows).unwrap();
+    assert!(
+        !shown.contains(&word),
+        "the ledger read still shows the text"
+    );
+    assert!(shown.contains("[hidden: Animal]"));
+    let after: Vec<String> = w
+        .core
+        .store
+        .crew_autopilot_events(&id)
+        .unwrap()
+        .iter()
+        .map(|e| e.body.to_string())
+        .collect();
+    assert_eq!(before, after, "stored rows are never rewritten");
+}
+
+#[tokio::test]
 async fn an_approval_without_a_reason_is_a_denial() {
     let (w, id) = running().await;
     let lead = Scripted::new("alpha", "alpha", |_| Answer {
