@@ -71,7 +71,8 @@ export function ConfirmItsYou({ action, deviceId, policy, subject, confirmLabel 
       setProblem(found);
       // The action may have reached the Engine before it failed: read the account and its devices again.
       if (found.kind !== "wrong" && found.kind !== "throttled") announceAccountChange();
-      // A wrong or refused password is cleared; the network failure keeps it typed so Try again repeats it.
+      // A wrong or refused password is cleared. A network failure at the password check keeps it typed, so Try again repeats it;
+      // a failure of the action after a good check finds it cleared already (the confirmation is used up), so it is typed again.
       if (found.kind !== "network") setPassword("");
       if (found.kind === "throttled") setWait({ seconds: found.seconds, at: Date.now() });
       setBusy(false);

@@ -28,6 +28,8 @@ export type ResultKind =
   | "held_expired"
   /** A hold you denied. */
   | "denied_you"
+  /** A hold denied, not by this window. */
+  | "denied_held"
   | "held_second_key"
   | "approved_you"
   | "denied_second_key"
@@ -44,7 +46,7 @@ export type LeadAnswer =
 
 export type SecondAnswer =
   /** `yours`: a guarded command held for the person; `you`: the person approved it once. */
-  | { state: "not_needed" | "not_asked" | "unavailable" | "you" | "yours" | "nobody" | "answered" }
+  | { state: "not_needed" | "not_asked" | "unavailable" | "you" | "yours" | "nobody" | "answered" | "decided" }
   | { state: "yes" | "no"; by: EngineRef; reason: string }
   | { state: "reviewing"; by: EngineRef };
 
@@ -75,6 +77,8 @@ export interface HeldInfo {
   since: string;
   /** "15:20": when it was decided, when this window or the list can tell. */
   decidedAt: string | null;
+  /** False for a denial this window did not send: the list does not say who denied it. */
+  byYou: boolean;
 }
 
 export interface ApprovalRow {

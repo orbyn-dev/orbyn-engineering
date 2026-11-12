@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { navigate } from "../../../../product/state/route";
 import { useConnection } from "../../../../product/state/connection";
 import { useAsync, toFailure } from "../../../../lib/useAsync";
-import { NETWORK_ERROR } from "../../../../api/client";
+import { ApiFailure, NETWORK_ERROR } from "../../../../api/client";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
 import { useAccountStanding } from "../../../account";
@@ -41,9 +41,12 @@ export function phaseOf(held: HeldInfo, closed?: Closed): Phase {
   return "open";
 }
 
-/** Who decided and what, in the designs' words: "Denied by you on this device", with the time when it is known. */
-export function decidedLine(state: HeldInfo["state"], at: string | null): { sentence: string | null; fact: string | null } {
-  const what = state === "denied" ? "Denied by you on this device" : state === "approved" || state === "used" ? "Approved by you" : state === "dismissed" ? "Dismissed by you on this device" : null;
+/**
+ * Who decided and what, in the designs' words, with the time when it is known. The held list does not say who decided, so
+ * "by you on this device" is said only of a denial this window sent (`byYou`); another denial is plainly "Denied".
+ */
+export function decidedLine(state: HeldInfo["state"], at: string | null, byYou: boolean): { sentence: string | null; fact: string | null } {
+  const what = state === "denied" ? (byYou ? "Denied by you on this device" : "Denied") : state === "approved" || state === "used" ? "Approved by you" : state === "dismissed" ? "Dismissed by you on this device" : null;
   if (!what) return { sentence: null, fact: null };
   return { sentence: at ? `${what} at ${at}.` : `${what}.`, fact: at ? `${at} · ${what}` : what };
 }
@@ -55,7 +58,9 @@ export function heldRow(item: AutopilotHeld, approvalSecs: number, now: number, 
   const since = clock(now - item.age_secs * 1000);
   // An approval lasts `approval_secs`; the time left says when it was given.
   const at = decidedAt ?? (state === "approved" ? clock(now - Math.max(0, approvalSecs - item.expires_in_secs) * 1000) : null);
-  const result = state === "held" ? "held_you" : state === "expired" ? "held_expired" : state === "denied" ? "denied_you" : "approved_you";
+  // A denial is "by you" only when this window sent it (it recorded the time); the list does not say who denied.
+  const byYou = state !== "denied" || decidedAt !== null;
+  const result = state === "held" ? "held_you" : state === "expired" ? "held_expired" : state === "denied" ? (byYou ? "denied_you" : "denied_held") : "approved_you";
   const reason = item.reason.trim();
   return {
     id: item.id,
@@ -77,11 +82,11 @@ export function heldRow(item: AutopilotHeld, approvalSecs: number, now: number, 
     rule: null,
     lead: reason ? { state: "reason", reason, short: reason.replace(/\.$/, "") } : { state: "not_asked" },
     leadBy: null,
-    second: state === "held" ? { state: "yours" } : state === "expired" ? { state: "nobody" } : state === "denied" ? { state: "answered" } : { state: "you" },
+    second: state === "held" ? { state: "yours" } : state === "expired" ? { state: "nobody" } : state === "denied" ? (byYou ? { state: "answered" } : { state: "decided" }) : { state: "you" },
     result,
     decidedInMs: null,
     guard: null,
-    held: { id: item.id, state, reason, readable: item.readable, since, decidedAt: at },
+    held: { id: item.id, state, reason, readable: item.readable, since, decidedAt: at, byYou },
   };
 }
 
@@ -179,8 +184,8 @@ export function useHeldCommands(onAnswered: () => void) {
 
   /**
    * Approve once, after "Confirm it's you" made `nonce` for this hold. Resolves `false` when the nonce was not used
-   * (the hold ended, or approving is not available), so the dialog gives it up. A network failure throws: the dialog
-   * says so and offers Try again.
+   * (the hold ended or was refused, or approving is not available), so the dialog gives it up. A failure that leaves the
+   * hold open throws: the dialog says so, and Try again needs the password typed again.
    */
   const approve = useCallback(
     async (id: string, nonce: string): Promise<boolean> => {
@@ -196,6 +201,26 @@ export function useHeldCommands(onAnswered: () => void) {
         if (failure.code === "account_disabled" || (failure.code === "policy_denied" && failure.message.startsWith("Approving once is not available"))) {
           setNoAccount(true);
           return false;
+        }
+        // The always-denied list refused it now: the service already closed the hold as denied, and nothing ran.
+        if (failure.code === "policy_denied") {
+          setClosed((now) => ({ ...now, [id]: "decided" }));
+          void reload();
+          return false;
+        }
+        if (failure.code === NETWORK_ERROR) {
+          // The request may have landed and only the answer been lost: read the list before saying anything about it.
+          const fresh = await crewApi.held().then((list) => list, () => null);
+          if (!fresh) throw new ApiFailure("unexpected", "Couldn’t tell whether it was approved. Check the approval log before trying again.", 0);
+          const now = fresh.items.find((one) => one.id === id)?.state;
+          if (now && now !== "held") {
+            const landed = now === "approved" || now === "used";
+            if (landed) setDecidedAt((state) => ({ ...state, [id]: clock(Date.now()) }));
+            else setClosed((state) => ({ ...state, [id]: now === "expired" ? "expired" : "decided" }));
+            void reload();
+            if (landed) answered.current();
+            return landed;
+          }
         }
         throw caught;
       }

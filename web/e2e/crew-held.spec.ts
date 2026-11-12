@@ -65,12 +65,12 @@ test("a request that expired says nothing ran and keeps only Close", async ({ pa
   await expect(page.getByText("Needs you · 2")).toBeVisible();
 });
 
-test("a request decided elsewhere says who decided and what", async ({ page }) => {
+test("a request decided elsewhere says it was denied, without claiming who did", async ({ page }) => {
   await open(page, "crew-held-account-race");
   await page.getByRole("button", { name: ORDERS }).click();
   await card(page).getByRole("button", { name: "Deny" }).click();
   await expect(card(page)).toContainText("Already decided.");
-  await expect(card(page)).toContainText("Denied by you on this device. Nothing ran.");
+  await expect(card(page)).toContainText("Denied. Nothing ran.");
   await expect(page.getByText("Needs you · 2")).toBeVisible();
 });
 

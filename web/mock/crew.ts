@@ -9,7 +9,7 @@
  * `crew-held-account` (a person is signed in; approving asks "Confirm it's you" with the password in `mock/account.ts`),
  * `crew-held-account-expired` (the first hold has timed out when it is answered: 410), `crew-held-account-race` (it was
  * denied from another window: 409), `crew-held-account-standin` (the development stand-in account is signed in, so
- * approving once is refused as the service refuses it). Three commands are held in every one of them.
+ * approving once is refused as the service refuses it), `crew-held-account-hardrule` (the always-denied list refuses it at approval time: 403, and the hold is closed as denied). Three commands are held in every one of them.
  */
 import type { AutopilotHeld } from "../src/generated/AutopilotHeld.ts";
 import type { AutopilotHeldList } from "../src/generated/AutopilotHeldList.ts";
@@ -208,6 +208,10 @@ export function createCrewMock(door: Door) {
       if (heldScenario === "crew-held-account-expired" && id === "hold-orders") {
         held = held.map((one) => (one.id === id ? { ...one, state: "expired", expires_in_secs: 0 } : one));
         return { status: 410, body: { code: "gone", message: "This command is no longer held: its time ran out or its task ended." } };
+      }
+      if (heldScenario === "crew-held-account-hardrule" && id === "hold-orders" && how === "approve-once") {
+        set("denied");
+        return { status: 403, body: { code: "policy_denied", message: "Denied by Autopilot (N4): Writing or deleting outside the worktree. No approval can change this." } };
       }
       if (heldScenario === "crew-held-account-race" && id === "hold-orders") {
         set("denied");

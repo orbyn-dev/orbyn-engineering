@@ -56,6 +56,8 @@ export function secondText(row: ApprovalRow): string {
       return "Nobody answered";
     case "answered":
       return "Answered by you";
+    case "decided":
+      return "Decided";
     case "reviewing":
       return `${second.by.engine} · reviewing`;
     default:

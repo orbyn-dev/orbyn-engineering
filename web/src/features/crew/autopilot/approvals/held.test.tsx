@@ -54,7 +54,9 @@ describe("a held command as a row", () => {
   it("reads the state: expired, denied by you, approved by you; a dismissed one is not listed", () => {
     expect(heldRow(item({ state: "expired" }), 600, now, null, false)).toMatchObject({ result: "held_expired", second: { state: "nobody" } });
     expect(heldRow(item({ state: "held" }), 600, now, null, true)).toMatchObject({ result: "held_expired" });
-    expect(heldRow(item({ state: "denied" }), 600, now, "15:20", false)).toMatchObject({ result: "denied_you", second: { state: "answered" }, held: { decidedAt: "15:20" } });
+    // Only a denial this window sent (it kept the time) is "by you"; the list does not say who else denied one.
+    expect(heldRow(item({ state: "denied" }), 600, now, "15:20", false)).toMatchObject({ result: "denied_you", second: { state: "answered" }, held: { decidedAt: "15:20", byYou: true } });
+    expect(heldRow(item({ state: "denied" }), 600, now, null, false)).toMatchObject({ result: "denied_held", second: { state: "decided" }, held: { byYou: false } });
     // An approval lasts 600 s; 540 s left means it was given a minute ago.
     expect(heldRow(item({ state: "approved", expires_in_secs: 540 }), 600, now, null, false)).toMatchObject({ result: "approved_you", second: { state: "you" }, held: { decidedAt: "15:03" } });
     expect(heldRow(item({ state: "used", expires_in_secs: 0 }), 600, now, null, false)?.held?.decidedAt).toBeNull();
@@ -62,10 +64,11 @@ describe("a held command as a row", () => {
   });
 
   it("says who decided and what, with the time only when it is known", () => {
-    expect(decidedLine("denied", null)).toEqual({ sentence: "Denied by you on this device.", fact: "Denied by you on this device" });
-    expect(decidedLine("denied", "15:20")).toEqual({ sentence: "Denied by you on this device at 15:20.", fact: "15:20 · Denied by you on this device" });
-    expect(decidedLine("approved", "15:20").sentence).toBe("Approved by you at 15:20.");
-    expect(decidedLine("held", null)).toEqual({ sentence: null, fact: null });
+    expect(decidedLine("denied", null, false)).toEqual({ sentence: "Denied.", fact: "Denied" });
+    expect(decidedLine("denied", "15:20", true)).toEqual({ sentence: "Denied by you on this device at 15:20.", fact: "15:20 · Denied by you on this device" });
+    expect(decidedLine("denied", null, true).sentence).toBe("Denied by you on this device.");
+    expect(decidedLine("approved", "15:20", true).sentence).toBe("Approved by you at 15:20.");
+    expect(decidedLine("held", null, true)).toEqual({ sentence: null, fact: null });
     const held = heldRow(item(), 600, now, null, false)?.held;
     if (!held) throw new Error("no row");
     expect(phaseOf(held)).toBe("open");
@@ -269,9 +272,100 @@ describe("a request that ended or was decided", () => {
     const d = card();
     expect(d).toHaveTextContent("Already decidedGuard");
     expect(d).toHaveTextContent("Already decided.");
-    expect(d).toHaveTextContent("Denied by you on this device. Nothing ran.");
+    // Denied from another window: the list does not say who, so the card does not say "by you".
+    expect(d).toHaveTextContent("Denied. Nothing ran.");
+    expect(d).not.toHaveTextContent("by you");
     expect(within(d).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
-    expect(screen.getByRole("button", { name: ORDERS }).closest('[role="row"]')).toHaveTextContent("Denied by you");
+    expect(screen.getByRole("button", { name: ORDERS }).closest('[role="row"]')).toHaveTextContent("DecidedDenied");
+    expect(screen.getByRole("button", { name: ORDERS }).closest('[role="row"]')).not.toHaveTextContent("by you");
+  });
+
+  it("already decided when Approve once is pressed (409): the nonce is given up and nothing is approved", async () => {
+    const user = await open("crew-held-account-race");
+    await user.click(within(await openCard(user)).getByRole("button", { name: "Approve once" }));
+    await user.type(within(dialog()).getByLabelText("Password"), PASSWORD);
+    await user.click(within(dialog()).getByRole("button", { name: "Approve once" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(card()).toHaveTextContent("Already decided.");
+    expect(card()).toHaveTextContent("Denied. Nothing ran.");
+    expect(within(card()).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
+    await screen.findByText("Needs you · 2");
+    expect(calls("/api/account/confirm/cancel")).toHaveLength(1);
+  });
+
+  it("refused by the always-denied list at approval time: the hold is closed as denied, the dialog closes and the nonce is given up", async () => {
+    const user = await open("crew-held-account-hardrule");
+    await user.click(within(await openCard(user)).getByRole("button", { name: "Approve once" }));
+    await user.type(within(dialog()).getByLabelText("Password"), PASSWORD);
+    await user.click(within(dialog()).getByRole("button", { name: "Approve once" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const d = card();
+    expect(d).toHaveTextContent("Already decided.");
+    expect(d).toHaveTextContent("Denied. Nothing ran.");
+    expect(d).not.toHaveTextContent("by you");
+    expect(within(d).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
+    await screen.findByText("Needs you · 2");
+    expect(calls("/api/account/confirm/cancel")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: ORDERS }).closest('[role="row"]')).toHaveTextContent("Denied");
+  });
+
+  describe("the approve route fails after a good confirmation", () => {
+    /** Fails the first approve-once request at the network; `landed` lets it reach the service first, as a lost answer does. */
+    function dropApprove(landed: boolean) {
+      const real = fetch;
+      let dropped = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+        if (String(input).includes("/approve-once") && !dropped) {
+          dropped = true;
+          if (landed) await real(input, init);
+          throw new TypeError("Failed to fetch");
+        }
+        return real(input, init);
+      }));
+    }
+
+    async function approveAndFail(landed: boolean) {
+      const user = await open("crew-held-account");
+      await user.click(within(await openCard(user)).getByRole("button", { name: "Approve once" }));
+      dropApprove(landed);
+      await user.type(within(dialog()).getByLabelText("Password"), PASSWORD);
+      await user.click(within(dialog()).getByRole("button", { name: "Approve once" }));
+      return user;
+    }
+
+    it("still held: says so, and the password has to be typed again", async () => {
+      const user = await approveAndFail(false);
+      expect(await within(dialog()).findByText(/Couldn’t reach Orbyn\..*The request is still held\./)).toBeVisible();
+      expect(within(dialog()).getByLabelText("Password")).toHaveValue("");
+      expect(within(dialog()).getByRole("button", { name: "Try again" })).toBeDisabled();
+      await user.type(within(dialog()).getByLabelText("Password"), PASSWORD);
+      await user.click(within(dialog()).getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await screen.findByText("Needs you · 2");
+    });
+
+    it("the request landed and only the answer was lost: reads the list and shows it approved, not still held", async () => {
+      await approveAndFail(true);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await screen.findByText("Needs you · 2");
+      expect(screen.getByRole("button", { name: ORDERS }).closest('[role="row"]')).toHaveTextContent("Approved by you");
+      expect(screen.queryByText(/still held/)).toBeNull();
+    });
+
+    it("the list cannot be read either: does not claim it is still held", async () => {
+      const user = await open("crew-held-account");
+      await user.click(within(await openCard(user)).getByRole("button", { name: "Approve once" }));
+      const real = fetch;
+      vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/approve-once") || url.endsWith("/approvals/held")) throw new TypeError("Failed to fetch");
+        return real(input, init);
+      }));
+      await user.type(within(dialog()).getByLabelText("Password"), PASSWORD);
+      await user.click(within(dialog()).getByRole("button", { name: "Approve once" }));
+      expect(await within(dialog()).findByText(/Couldn’t tell whether it was approved/)).toBeVisible();
+      expect(dialog()).not.toHaveTextContent("still held");
+    });
   });
 });
 
@@ -286,7 +380,7 @@ describe("a remote viewer", () => {
 });
 
 describe("Crew Preview off", () => {
-  it("reads no held list and draws nothing of it", async () => {
+  it("reads the held list, finds nothing and draws nothing of it", async () => {
     mock.reset("default");
     const { container } = render(<ApprovalsTab />);
     await waitFor(() => expect(calls("/api/crew/approvals/held").length).toBeGreaterThan(0));

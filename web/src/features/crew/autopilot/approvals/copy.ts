@@ -46,6 +46,7 @@ export const RESULT: Record<ResultKind, { label: string; tone: "ok" | "no" | "am
   held_you: { label: "Held for you", tone: "am" },
   held_expired: { label: "Expired", tone: "dim" },
   denied_you: { label: "Denied by you", tone: "no" },
+  denied_held: { label: "Denied", tone: "no" },
   held_second_key: { label: "Held for a second key", tone: "dim" },
   approved_you: { label: "Approved by you", tone: "ok" },
   denied_second_key: { label: "Denied by the second key", tone: "no" },

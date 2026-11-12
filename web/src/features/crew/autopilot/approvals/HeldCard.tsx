@@ -37,7 +37,7 @@ function approveReason(held: HeldInfo, hold: HoldControl): string | null {
 
 export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: HeldInfo; hold: HoldControl; mode: Mode }) {
   const phase = phaseOf(held, hold.closed ?? undefined);
-  const decided = decidedLine(held.state, held.decidedAt);
+  const decided = decidedLine(held.state, held.decidedAt, held.byYou);
   const none = hold.standing === "none";
   return (
     <>
