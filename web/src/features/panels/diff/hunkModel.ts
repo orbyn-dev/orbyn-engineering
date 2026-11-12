@@ -49,7 +49,8 @@ export function changedLines(hunk: Hunk): string {
   const added = hunk.rows.filter((row) => row.line.kind === "add" && row.newNo !== null).map((row) => row.newNo!);
   const numbers = added.length > 0 ? added : hunk.rows.filter((row) => row.line.kind === "del" && row.oldNo !== null).map((row) => row.oldNo!);
   const first = numbers[0] ?? hunk.newStart;
-  return `Lines ${first} to ${numbers.at(-1) ?? first}`;
+  const last = numbers.at(-1) ?? first;
+  return first === last ? `Line ${first}` : `Lines ${first} to ${last}`;
 }
 
 /** The hunk as git writes it, for Copy hunk. */

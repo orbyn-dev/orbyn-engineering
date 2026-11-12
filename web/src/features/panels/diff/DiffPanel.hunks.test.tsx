@@ -330,3 +330,12 @@ it("Edit a line edits the line the pointer is on, else the hunk's first added li
   await user.click(screen.getByRole("button", { name: "Edit a line" }));
   expect(screen.getByRole("textbox", { name: "Edit line 16" })).toBeInTheDocument();
 });
+
+it("a one-line hunk reads Line 15 goes back, in the same dialog", async () => {
+  const user = userEvent.setup();
+  setup({ files: [{ ...REDIRECT, patch: HEADER + "@@ -15 +15 @@\n-  return \"/home\"\n+  const next = req.query.next\n" }] });
+  await open();
+  await user.click(screen.getByRole("button", { name: "Revert hunk" }));
+  const dialog = await screen.findByRole("dialog", { name: "Revert this hunk?", hidden: true });
+  expect(dialog).toHaveTextContent("Line 15 of auth/redirect.ts goes back to the last commit. You can undo it for 10 seconds afterwards.");
+});

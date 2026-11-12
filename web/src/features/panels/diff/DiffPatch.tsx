@@ -482,7 +482,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
           onConfirm={() => actions.revert(confirm)}
         >
           <p>
-            {changedLines(confirm)} of {path} go back to the last commit. You can undo it for 10 seconds afterwards.
+            {changedLines(confirm)} of {path} {changedLines(confirm).startsWith("Lines") ? "go" : "goes"} back to the last commit. You can undo it for 10 seconds afterwards.
           </p>
         </ConfirmDialog>
       ) : null}

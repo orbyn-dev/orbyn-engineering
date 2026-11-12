@@ -14,7 +14,7 @@ it("reads each hunk with its header numbers and the lines it changes", () => {
   expect(hunks).toHaveLength(2);
   expect(hunks.map((hunk) => [hunk.newStart, hunk.newCount])).toEqual([[2, 4], [11, 1]]);
   expect(changedLines(hunks[0]!)).toBe("Lines 3 to 4");
-  expect(changedLines(hunks[1]!)).toBe("Lines 11 to 11");
+  expect(changedLines(hunks[1]!)).toBe("Line 11");
   expect(hunkPatch(hunks[1]!)).toBe("@@ -10,2 +11,1 @@\n x\n-gone");
 });
 
