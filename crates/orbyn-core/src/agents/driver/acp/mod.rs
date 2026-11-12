@@ -192,7 +192,8 @@ impl EngineDriver for AcpDriver {
         let dir = ProbeDir::new()?;
         let process = spawn_engine_with(&command, &args, dir.path(), self.env)?;
         let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, true);
-        let (id, session, init) = open_raw(&rpc, dir.path(), None, &self.sign_in_slot()).await?;
+        let (id, session, init) =
+            open_raw(&rpc, dir.path(), None, dir.path(), &self.sign_in_slot()).await?;
         let options = parse_session_options(&session);
         let mut models = parse_models(&session);
         let probing = probe_model_options(&rpc, &id, &session, &options, &mut models);
@@ -416,11 +417,12 @@ async fn open_raw(
     rpc: &RpcClient,
     cwd: &std::path::Path,
     mcp_url: Option<&str>,
+    run_dir: &std::path::Path,
     slot: &SignInSlot,
 ) -> Result<(String, Value, Value)> {
     let init = initialize(rpc).await?;
     slot.record(&init);
-    let servers = mcp_servers(&init, mcp_url, cwd);
+    let servers = mcp_servers(&init, mcp_url, run_dir);
     let session = rpc
         .call(
             "session/new",

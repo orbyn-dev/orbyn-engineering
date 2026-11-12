@@ -614,7 +614,16 @@ pub(crate) struct ProbeDir(PathBuf);
 
 impl ProbeDir {
     pub(crate) fn new() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("orbyn-probe-{}", crate::util::new_id()));
+        Self::create(std::env::temp_dir().join(format!("orbyn-probe-{}", crate::util::new_id())))
+    }
+
+    /// A private folder at `path`, for a process that holds a run's token before the run
+    /// exists. `path` is under Orbyn's runs folder, never a shared temporary one: the
+    /// worker profile denies the data folder, and a start-up sweep removes what is left.
+    pub(crate) fn create(path: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         let builder = {
