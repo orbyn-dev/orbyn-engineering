@@ -11,6 +11,9 @@ mod changes;
 mod checkpoints;
 mod crew;
 mod crew_autopilot;
+mod crew_background;
+#[cfg(test)]
+mod crew_background_tests;
 mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
@@ -41,6 +44,10 @@ mod threads;
 pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
+pub use crew_background::{
+    BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
+    RunEnd,
+};
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};

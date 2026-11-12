@@ -578,7 +578,39 @@ class only. The risk, review and queue views read the whole table and then page,
 comment is kept and is not yet a fix brief.
 
 Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
-conflict forecast, bisect progress, production-linked target rules (4i), background crews (they write `.orbyn/crew.json`), and the digest's send time.
+conflict forecast, bisect progress, production-linked target rules (4i), background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+
+**As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
+`crew_background` and `crew_background_runs`, schema 41), behind the Preview flag. **Decision: the state is not a file in the repository.**
+The plan said `.orbyn/crew.json`, but architecture rule 4 (Orbyn writes nothing into a target repository) rules a written file out, so a
+background crew is per device and is not shared through git. A repository's own `.orbyn/crew.json` (read-only for Orbyn) is unchanged.
+
+- **A crew:** id, project, name (1 to 80 characters, unique per project, at most 50 per project), template
+  (`fix_failing_ci`, `flaky_test`, `dependency_bump`, `security_advisory`), trigger kind with its settings, run budget, an enabled flag and
+  times. It is created off; turning it on is its own step. An unknown template, trigger kind or field is refused.
+- **Trigger settings** are strict and belong to the kind: `ci_failure` takes `branch` and `workflow` (optional), `issue_label` needs `label`,
+  `schedule` needs `every_hours` (1 to 720), `dependency_update` takes `ecosystem` (optional). Text settings are 1 to 100 characters. A
+  setting of another kind is refused. Name and text settings go through the locked redactor before they are stored.
+- **Budget:** `turns` 1 to 1000 and `minutes` 1 to 1440 per run, **set at creation and never changed**: an update takes only the name and
+  the trigger, and the table refuses a change of budget, template or project. A template and trigger kind may be combined freely.
+- **Runs and state:** a run is `running`, `stopped` (with a reason: `budget`, `repeated_failure`, `engine_error`, `disabled`) or
+  `needs_review`, with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
+  an enabled crew. A crew's state is its newest run's: `idle`, `running`, `stopped` or `needs_review`. Spending to either number of the
+  budget stops the run with the reason `budget` and puts it in the review queue (`review_waiting`), in one transaction with its audit row.
+  Turning a crew off stops its run with the reason `disabled`; deleting is refused while a run is in progress.
+- **Audit:** create, update, enable, disable, delete, and each run's start, stop and review write an `audit_events` row in the same
+  transaction as the change (rule 6); a failed audit row rolls the change back, and the rows stay after a crew is deleted.
+- **Routes**, all under `/api/crew/background`, behind the Preview flag like every Crew route (404 with it off, 401 without the token, writes
+  refused for a remote viewer and listed in `crew::changes` so N1 refuses an agent's request): reads `GET /` (`project`, `limit`, `offset`),
+  `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
+  There is no route that starts a run, spends, merges or reverts.
+
+What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; slice 4h
+will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
+lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
+review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
+limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
+prompt and checks are not defined yet.
 
 **As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
 v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by

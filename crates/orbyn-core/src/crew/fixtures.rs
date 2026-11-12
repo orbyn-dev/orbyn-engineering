@@ -102,3 +102,27 @@ pub fn hold_command(core: &crate::Core, task_id: &str, checkout: &Path, command:
     )
     .expect("a held command")
 }
+
+/// A live project at `path`, as a background crew's repository. Returns its id.
+pub fn add_project(core: &crate::Core, path: &str) -> String {
+    core.store
+        .add_project(crate::store::NewProject {
+            path,
+            name: "project",
+            is_git: false,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap()
+        .id
+}
+
+/// The actions of the audit rows that start with `prefix`, oldest first.
+pub fn audit_actions(core: &crate::Core, prefix: &str) -> Vec<String> {
+    let mut rows = core.store.list_audit(None, 500).unwrap();
+    rows.reverse();
+    rows.into_iter()
+        .map(|row| row.action)
+        .filter(|action| action.starts_with(prefix))
+        .collect()
+}
