@@ -106,6 +106,10 @@ fn secret_patterns() -> Vec<(&'static str, Regex)> {
         ("github token", r"\bgh[pousr]_[A-Za-z0-9]{36,}"),
         ("github token", r"\bgithub_pat_[A-Za-z0-9_]{22,}"),
         ("aws key", r"\bAKIA[0-9A-Z]{16}\b"),
+        (
+            "aws secret key",
+            r#"(?i)\baws_?secret_?(?:access_?)?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}"#,
+        ),
         ("slack token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
         ("bearer token", r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*"),
         (

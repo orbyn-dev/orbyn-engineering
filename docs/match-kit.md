@@ -40,9 +40,9 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **The shell.** `shell-home`, `shell-new-thread`, `shell-ledger`
 
-**Pull requests, the list and its states.** `pr-row-variants`, `pr-row-pending`, `pr-row-pending-failed`, `pr-list-none`, `pr-list-loading`, `pr-list-error`, `pr-list-signedout`, `pr-list-offline`, `pr-list-filtered`, `pr-tb-filter-waiting`, `pr-tb-filter-failed`
+**Pull requests, the list and its states.** `pr-row-variants`, `pr-row-pending`, `pr-row-pending-failed`, `pr-list-none`, `pr-list-loading`, `pr-list-error`, `pr-list-signedout`, `pr-list-offline`, `pr-list-draft`, `pr-list-filtered`, `pr-tb-filter-waiting`, `pr-tb-filter-failed`
 
-**Pull requests, one page and its states.** `pr-detail-running`, `pr-detail-failed`, `pr-detail-review`, `pr-detail-changes`, `pr-detail-approved`, `pr-detail-conflict`, `pr-detail-merged`, `pr-detail-closed`, `pr-detail-draft`, `pr-detail-conversation`, `pr-detail-files`, `pr-detail-checks`, `pr-detail-merge-menu`, `pr-detail-loading`, `pr-detail-error`, `pr-detail-signedout`, `pr-detail-offline`, `pr-detail-filtered`, `pr-review-open`
+**Pull requests, one page and its states.** `pr-detail-running`, `pr-detail-failed`, `pr-detail-review`, `pr-detail-changes`, `pr-detail-approved`, `pr-detail-conflict`, `pr-detail-merged`, `pr-detail-closed`, `pr-detail-draft`, `pr-detail-conversation`, `pr-detail-files`, `pr-detail-checks`, `pr-detail-merge-menu`, `pr-detail-loading`, `pr-detail-error`, `pr-detail-signedout`, `pr-detail-offline`, `pr-detail-filtered`, `pr-review-open`, `pr-review-filled`, `pr-review-busy`, `pr-review-done`, `pr-review-error`, `pr-review-own`
 
 **Threads.** `thread-approval`, `thread-done`, `thread-failed`, `thread-interrupted`, `thread-empty`, `thread-tools`, `thread-tools-live`, `thread-details`, `details-popover`
 

@@ -306,7 +306,7 @@ The other 23 keys are not synced in v1, so 11 + 28 + 23 = 62:
 | `enable_provider_update_checks`, `continue_threads_after_update`, `warm_next_turn`, `preview_profiles` | Per-computer behaviour or local browser data |
 | `compact_idle_threads`, `idle_compaction`, `snooze_limited_threads`, `auto_resume_limited_threads`, `task_skip_near_limit`, `poll_pull_requests` | Thread and polling behaviour; not requested for v1 |
 
-Also never synced in Phase 1: `ServerSettings` (service-wide: auto-settle, snooze presets, model prices and aliases,
+Also never synced in Phase 1: the secret-redaction settings (Settings › Secrets: which formats are hidden, the person's own patterns and the projects whose agents read values as they are). They sit outside the preference catalog, so the allowlist never reaches them, and turning one off widens what an agent reads; `ServerSettings` (service-wide: auto-settle, snooze presets, model prices and aliases,
 title instructions), every per-project override, the Crew ledger, transcripts, diffs, environment-set values,
 provider keys, join tokens and any secret (D5).
 

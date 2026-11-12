@@ -2331,7 +2331,7 @@ never swapped. The answer key is never an input, and a decision is checked for s
 for the key's text before it is stored.
 
 `crew_start` (the lead only; a worker's call is `depth_exceeded`, or `run_ended` once its run is over) takes a brief
-draft and an answer-key draft. The core stamps both, scans every string for secrets (H2), refuses a brief whose
+draft and an answer-key draft. The core stamps both, scans every string for secrets (H2; the formats are the recognised formats of the core's redaction module, every one and always, whatever Settings › Secrets says), refuses a brief whose
 write files overlap the key's protected paths (H11) or that holds the key's id or a check command (H1), refuses a
 write lease for a reviewer and a lease that overlaps one another member holds now (H10), stores the task `briefed`,
 routes it (a decision stored with its task takes it to `routed`; a brief no engine can take goes to `needs_person` with
