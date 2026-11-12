@@ -115,7 +115,8 @@ async fn two_keys_that_disagree_give_denied_and_the_disagreement_is_logged() {
     );
     assert!(matches!(verdict, Verdict::Deny(_)));
     assert_eq!((lead.calls(), second.calls()), (1, 1));
-    assert_eq!(kinds(&w, &id), ["disagreement", "denied"]);
+    // The denied command is also held for the person, who may approve it once (`autopilot_held`).
+    assert_eq!(kinds(&w, &id), ["held", "disagreement", "denied"]);
     let row = &events(&w, &id, "disagreement")[0].body;
     assert_eq!(row["lead"]["approve"], true);
     assert_eq!(row["second"]["engine"], "beta");

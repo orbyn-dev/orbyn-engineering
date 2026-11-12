@@ -21,6 +21,7 @@ use crate::crew::wire_name;
 use crate::error::Result;
 use crate::governance::approvals::{ActionAsk, ActionReview, Review, RunScope};
 use crate::store::{CrewRun, CrewTask};
+use crate::util::unix_now;
 
 /// Where a mode is chosen. A crew's choice beats its repository's, which beats the default.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +44,43 @@ pub fn scope_key(scope: &ModeScope) -> String {
 #[derive(Default)]
 pub struct Autopilot {
     pub(crate) approvers: Mutex<Approvers>,
+    /// Commands held for a person, in memory only ([`super::held`]).
+    pub(crate) held: Mutex<super::HeldBook>,
+}
+
+/// Where a task's worktree is and what the always-denied list needs to know about it, read once per check.
+pub(super) struct Ground {
+    worktree: PathBuf,
+    hosts: Vec<String>,
+    branch: Option<String>,
+    default: Option<String>,
+    data: PathBuf,
+}
+
+impl Ground {
+    pub(super) async fn read(core: &Core, worktree: &Path, base: Option<&str>) -> Self {
+        Self {
+            worktree: worktree.to_owned(),
+            hosts: read_allowed_hosts(worktree, base).await,
+            branch: current_branch(worktree).await,
+            default: default_branch(worktree).await,
+            data: core.config.data_dir.clone(),
+        }
+    }
+
+    pub(super) fn scene<'a>(
+        &'a self,
+        protected: &'a [orbyn_contracts::CrewPathPattern],
+    ) -> Scene<'a> {
+        Scene {
+            worktree: &self.worktree,
+            protected,
+            allowed_hosts: &self.hosts,
+            data_dir: Some(&self.data),
+            branch: self.branch.as_deref(),
+            default_branch: self.default.as_deref(),
+        }
+    }
 }
 
 /// The gate's side: a weak hold on the core, so the gate does not keep it alive.
@@ -154,18 +192,8 @@ impl Core {
         };
         let project = self.store.thread(&run.lead_thread_id)?.project_id;
         let mode = self.crew_autopilot_mode(&project, &task.crew_id);
-        let hosts = read_allowed_hosts(&worktree, run.base_commit.as_deref()).await;
-        let branch = current_branch(&worktree).await;
-        let default = default_branch(&worktree).await;
-        let data = self.config.data_dir.clone();
-        let scene = Scene {
-            worktree: &worktree,
-            protected: &key.protected_paths,
-            allowed_hosts: &hosts,
-            data_dir: Some(&data),
-            branch: branch.as_deref(),
-            default_branch: default.as_deref(),
-        };
+        let ground = Ground::read(self, &worktree, run.base_commit.as_deref()).await;
+        let scene = ground.scene(&key.protected_paths);
         let ctx = context(ask.kind, &ask.target, &ask.paths, &scene);
         let action =
             json!({ "kind": wire_name(&ask.kind), "target": ask.target, "paths": ask.paths });
@@ -199,6 +227,13 @@ impl Core {
                 &denied_words(refusal.id, refusal.rule),
                 &needles,
             );
+        }
+
+        // A person's one-time approval of exactly this command, now that the list above has passed it again.
+        if let Some(hold) = self.held_take(task, &scope.thread_id, ask, unix_now()) {
+            let body = json!({ "action": action, "decided_by": "person", "hold": hold, "mode": mode.name() });
+            self.autopilot_record(task, "allowed", &body, &needles)?;
+            return Ok(Review::Approved);
         }
 
         let writes: Vec<_> = brief
@@ -240,6 +275,10 @@ impl Core {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let outcome = decide(mode, tiered.need, &summary, &approvers).await;
+        // A command the chain refused is held for a person, who may approve that one command once.
+        if let Outcome::Deny { reason, .. } = &outcome {
+            self.held_make(task, &scope.thread_id, ask, reason, &needles, unix_now());
+        }
         self.settle_review(task, &action, &summary, mode, outcome, &needles)
     }
 

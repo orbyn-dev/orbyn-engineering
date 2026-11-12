@@ -339,7 +339,8 @@ pub struct AutopilotLogRow {
     pub task_id: String,
     pub crew_id: String,
     /// `allowed`, `denied`, `person`, `disagreement`, `tripwire`, `merge_queued`, `merge_waiting`, `merged`,
-    /// `merge_rejected`, `main_broken`, `reverted` or `person_told`.
+    /// `merge_rejected`, `main_broken`, `reverted`, `person_told`, `held`, `approved_once`, `denied_by_person`,
+    /// `dismissed_by_person`, `hold_used` or `hold_ended`.
     pub kind: String,
     pub at: String,
     /// `hard_rule`, `tier`, `lead`, `two_keys`, `person` and so on, when the row says.
@@ -477,5 +478,48 @@ pub struct AutopilotDigest {
     pub tripwires: u32,
     /// Nothing happened, so no notification is due.
     pub quiet: bool,
+}
+}
+
+wire_enum! {
+/// Where a held command stands. A held command is decided once: `approved`, `denied` or `dismissed`. An approval is then
+/// `used` by the one retry it covers, or ends unused as `expired`.
+pub enum AutopilotHeldState {
+    Held,
+    Approved,
+    Denied,
+    Dismissed,
+    Used,
+    Expired,
+}
+}
+
+wire! {
+/// A command Autopilot held for the person. `command` is redacted, with the answer key's text withheld, and is what the person
+/// reads before approving; when it was too long to show whole, `readable` is false and approving once is refused. The hold is
+/// bound to the exact command, its arguments and the worker's thread, which this view does not carry.
+pub struct AutopilotHeld {
+    pub id: String,
+    pub task_id: String,
+    pub crew_id: String,
+    pub kind: String,
+    pub command: String,
+    pub reason: String,
+    pub state: AutopilotHeldState,
+    pub readable: bool,
+    /// Seconds since it was held.
+    pub age_secs: u32,
+    /// Seconds left to decide it (`held`), or to use the approval (`approved`); 0 once it ended.
+    pub expires_in_secs: u32,
+}
+}
+
+wire! {
+/// The held commands that are still open or were decided lately, newest first.
+pub struct AutopilotHeldList {
+    pub items: Vec<AutopilotHeld>,
+    /// How long a hold waits for a decision, and how long an approval lasts, in seconds.
+    pub hold_secs: u32,
+    pub approval_secs: u32,
 }
 }

@@ -22,7 +22,7 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Request, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -62,6 +62,21 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/autopilot/review/{id}/revert",
         "core crew_answer_review revert: scratch checkout removed after, the repository's own checks, later merges, branch held and not checked out, compare-and-swap, nothing pushed; local only",
     ),
+    (
+        "POST",
+        "/api/crew/approvals/{id}/approve-once",
+        "core autopilot_approve_once: the account's confirmation for this hold (x-orbyn-confirm), used up; the hold open, its task running, the command read whole, the always-denied list again, one decision; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/approvals/{id}/deny",
+        "core autopilot_deny_held: one decision per hold, a ledger row; only ever refuses; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/approvals/{id}/dismiss",
+        "core autopilot_dismiss_held: one decision per hold, a ledger row; only ever hides; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -77,6 +92,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(comment),
         )
         .route("/api/crew/autopilot/review/{task_id}/revert", post(revert))
+        .route("/api/crew/approvals/{id}/approve-once", post(approve_once))
+        .route("/api/crew/approvals/{id}/deny", post(deny_held))
+        .route("/api/crew/approvals/{id}/dismiss", post(dismiss_held))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -92,6 +110,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/watch", get(watch))
         .route("/api/crew/autopilot/digest", get(digest))
         .route("/api/crew/approvals", get(approvals))
+        .route("/api/crew/approvals/held", get(held))
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
         .merge(writes)
@@ -267,4 +286,37 @@ async fn approvals(State(state): State<AppState>, query: QueryMap) -> ApiResult<
 
 async fn stops(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_tripwires()?))
+}
+
+/// The commands Autopilot holds for the person, newest first.
+async fn held(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_held()?))
+}
+
+/// The header the confirmation's nonce comes back in: what the account's "Confirm it's you" answered with.
+const CONFIRM_HEADER: &str = "x-orbyn-confirm";
+
+async fn approve_once(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let nonce = headers
+        .get(CONFIRM_HEADER)
+        .and_then(|value| value.to_str().ok());
+    Ok(Json(state.core.autopilot_approve_once(&id, nonce).await?))
+}
+
+async fn deny_held(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_deny_held(&id)?))
+}
+
+async fn dismiss_held(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_dismiss_held(&id)?))
 }

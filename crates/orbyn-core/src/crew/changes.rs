@@ -15,6 +15,9 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/review/{id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{id}/comment"),
     ("POST", "/api/crew/autopilot/review/{id}/revert"),
+    ("POST", "/api/crew/approvals/{id}/approve-once"),
+    ("POST", "/api/crew/approvals/{id}/deny"),
+    ("POST", "/api/crew/approvals/{id}/dismiss"),
 ];
 
 /// The reads: they change nothing.
@@ -29,6 +32,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/autopilot/watch"),
     ("GET", "/api/crew/autopilot/digest"),
     ("GET", "/api/crew/approvals"),
+    ("GET", "/api/crew/approvals/held"),
     ("GET", "/api/crew/stops"),
     ("GET", "/api/crew/trust"),
 ];
