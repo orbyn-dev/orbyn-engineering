@@ -141,7 +141,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       <SettingGroup>
         {hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
         {removable ? (
-          <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this engine from Orbyn. Its sign-in and sessions stay with the engine."}>
+          <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this instance from Orbyn. Its sign-in and sessions stay with the CLI."}>
             <Button small tone="quiet" className="set-remove" aria-label={`Remove ${engine.name}`} disabled={running !== undefined} onClick={() => setRemoving(true)}>Remove…</Button>
             {running ? <Button small onClick={() => navigate({ name: "thread", id: running.id })}>Open thread</Button> : null}
           </SettingRow>

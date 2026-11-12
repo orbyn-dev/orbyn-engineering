@@ -19,7 +19,7 @@ export const COMMAND_LABELS: Record<string, string> = {
   "composer.sendBackground": "Send in the background",
   "composer.stash": "Stash the draft",
   "composer.workspace": "Choose workspace",
-  "diff.toggle": "Toggle diff",
+  "diff.toggle": "Toggle Changes",
   "editor.openFavorite": "Open in editor",
   "filePicker.toggle": "Find a file",
   "modelPicker.toggle": "Choose model",
@@ -28,7 +28,7 @@ export const COMMAND_LABELS: Record<string, string> = {
   "preview.focusUrl": "Focus preview address",
   "preview.refresh": "Refresh preview",
   "preview.resetZoom": "Reset preview zoom",
-  "preview.toggle": "Toggle preview",
+  "preview.toggle": "Toggle Browser",
   "preview.zoomIn": "Zoom in preview",
   "preview.zoomOut": "Zoom out preview",
   "projectSearch.toggle": "Search projects",
@@ -48,6 +48,15 @@ export const COMMAND_LABELS: Record<string, string> = {
   "thread.copyReference": "Copy thread reference",
   "thread.editQueuedMessage": "Edit queued message",
   "thread.new": "New thread",
+  "thread.jump.1": "Go to thread 1",
+  "thread.jump.2": "Go to thread 2",
+  "thread.jump.3": "Go to thread 3",
+  "thread.jump.4": "Go to thread 4",
+  "thread.jump.5": "Go to thread 5",
+  "thread.jump.6": "Go to thread 6",
+  "thread.jump.7": "Go to thread 7",
+  "thread.jump.8": "Go to thread 8",
+  "thread.jump.9": "Go to thread 9",
   "thread.next": "Next thread",
   "thread.nextNeedsYou": "Next thread that needs you",
   "thread.pin": "Pin thread",
@@ -59,6 +68,10 @@ export const COMMAND_LABELS: Record<string, string> = {
   "usage.cost": "Usage by cost",
   "usage.limits": "Usage limits",
   "usage.open": "Open usage",
+  "usage.period.day": "Show usage by day",
+  "usage.period.month": "Show usage by month",
+  "usage.period.quarter": "Show usage by quarter",
+  "usage.period.week": "Show usage by week",
   "usage.tokens": "Usage by tokens",
   "view.reopenClosed": "Reopen closed tab",
   "workspace.focusNext": "Focus next workspace",
@@ -72,6 +85,8 @@ export const CONTEXT_PHRASES: Record<string, { is: string; not: string }> = {
   previewFocus: { is: "the preview is focused", not: "the preview isn’t focused" },
   rightPanelOpen: { is: "the right panel is open", not: "the right panel is closed" },
   terminalFocus: { is: "the terminal is focused", not: "the terminal isn’t focused" },
+  draftRoute: { is: "a new thread is being drafted", not: "a thread is open" },
+  turnRunning: { is: "a turn is running", not: "no turn is running" },
   usagePageOpen: { is: "the Usage page is open", not: "the Usage page isn’t open" },
 };
 
@@ -91,4 +106,11 @@ export function whenPhrase(when: string | null): string {
   });
   if (phrases.some((phrase) => phrase === null)) return when;
   return `When ${phrases.join(" and ")}`;
+}
+
+/** The clause for a sentence: "when the terminal is focused", or "" when the rule applies anywhere. */
+export function whenClause(when: string | null): string {
+  const phrase = whenPhrase(when);
+  if (phrase === "Anywhere") return "";
+  return phrase.startsWith("When ") ? `when ${phrase.slice(5)}` : `when ${phrase}`;
 }

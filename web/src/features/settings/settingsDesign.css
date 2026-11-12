@@ -725,13 +725,133 @@
   background: var(--color-sunken);
   color: var(--color-text);
 }
-.set-naming {
+
+/* Update all: the confirmation's commands, then one row per engine while it runs (updateall-*). */
+.set-update-cmds {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-.set-naming-note {
-  color: var(--color-muted);
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-9);
+  background: var(--color-sunken);
   font-size: var(--text-meta);
+}
+.set-update-cmds b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.set-update-cmds code {
+  display: block;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.set-update-row {
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  min-height: 48px;
+}
+.set-update-row .sub.mono {
+  font-size: var(--text-meta);
+}
+.set-update-fail {
+  color: var(--color-danger);
+}
+.set-update-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.set-pill.good {
+  background: var(--color-greenSoft);
+  color: var(--color-green);
+}
+
+/* Update track: two option cards, the chosen one ringed, the other dimmed (update-tracks). */
+.set-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.set-track {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-borderStrong);
+  border-radius: var(--radius-lg);
+}
+.set-track.on {
+  box-shadow: inset 0 0 0 1.5px var(--color-text);
+}
+.set-track.off {
+  opacity: 0.55;
+}
+.set-track b {
+  display: block;
+  font-weight: 500;
+}
+.set-track small {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.set-track .set-pill {
+  margin-left: auto;
+}
+.set-radio {
+  display: inline-block;
+  position: relative;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  border: 1.5px solid var(--color-borderStrong);
+  border-radius: 50%;
+}
+.set-radio.on {
+  border-color: var(--color-text);
+}
+.set-radio.on::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--color-text);
+}
+.set-pill.dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.set-pill.planned {
+  background: transparent;
+  color: var(--planned-text);
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+}
+
+/* Where Keybindings is stored: the label and the path in a field-sized box. */
+.set-stored {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  font-size: var(--text-small);
+}
+.set-path {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  min-width: 0;
+  max-width: 410px;
+  padding: 0 10px;
+  border: 1px solid var(--color-borderStrong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

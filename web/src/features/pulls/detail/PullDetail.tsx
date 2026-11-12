@@ -28,7 +28,7 @@ import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
-import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
+import { baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
 import { Stack } from "./PullStack";
@@ -377,7 +377,7 @@ export function PullDetail({
   const viewers = (forges.data ?? []).flatMap((one) => (one.signed_in && one.viewer ? [one.viewer] : []));
   const mine = extras.data?.details[0];
   const reviewAsked = reviewAskedOf(mine, viewers);
-  const own = Boolean(pull.author && viewers.some((login) => login.toLowerCase() === (pull.author ?? "").toLowerCase()));
+  const own = ownPull(pull, viewers);
   const state = pageState(pull, mergeable, reviewAsked);
   const failedCheck = (checkList.data ?? []).find((check) => check.state === "fail");
   const gate = mergeGate(pull, mergeable, { offline, auto, forge: forgeLabel });
@@ -518,12 +518,11 @@ export function PullDetail({
               {pull.head} {"\u2192"} {baseBranch}
             </span>
           </Row>
-          <Row name="Review" tone={state === "review" || state === "changes" ? "warn" : undefined}>
-            {reviewWords(pull, current.reviewers)}
+          {/* Amber only where the person is waited on; a conflict and changes the person asked for stay ink. */}
+          <Row name="Review" tone={requested === null && (state === "review" || (state === "changes" && changesNeedYou(pull, viewers))) ? "warn" : undefined}>
+            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested")}
           </Row>
-          <Row name="Conflicts" tone={mergeable === "conflicting" ? "warn" : undefined}>
-            {mergeable === "conflicting" ? "Has conflicts" : mergeable === "mergeable" ? "None" : "\u2014"}
-          </Row>
+          <Row name="Conflicts">{conflictWords(mergeable)}</Row>
           {threadTitle ? (
             <Row name="Thread">
               <a href={`#/threads/${linkedThread}`}>{threadTitle}</a>
@@ -564,6 +563,9 @@ export function PullDetail({
               setRequested(note);
               void detail.reload();
               void extras.reload();
+              // The review is an entry of the conversation: the tab counts it once the activity is read again.
+              if (activityWanted) void activity.reloadNow();
+              else setActivityWanted(true);
             }}
             onUnknown={() => {
               void detail.reload();

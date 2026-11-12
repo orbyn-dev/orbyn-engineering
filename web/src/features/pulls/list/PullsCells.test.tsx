@@ -83,6 +83,19 @@ describe("a row's details cells", () => {
     expect(cells.getByText("riley, @web, sam", { selector: "[role=tooltip]" })).toBeInTheDocument();
   });
 
+  it("leaves Approved or Changes after the avatars, amber only for changes on the person's own pull request", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({
+      pulls: [entry(1, { review_state: "approved" }), entry(2, { review_state: "changes_requested" }), entry(3, { review_state: "changes_requested", author: "me" })],
+      failed: [],
+    });
+    render(<PullsPage />);
+    await settle();
+    const reviewers = { requested_reviewers: [{ name: "riley", kind: "user" }], comment_count: 0, viewer_review_state: "none" };
+    await act(async () => answer({ details: [details(1, reviewers), details(2, reviewers), details(3, reviewers)], paused: [] }));
+    const words = [...document.querySelectorAll(".pull-rword")].map((word) => [word.textContent, word.getAttribute("data-tone")]);
+    expect(words).toEqual([["Approved", "quiet"], ["Changes", "quiet"], ["Changes", "act"]]);
+  });
+
   it("shows nothing for 400 ms from the request, then quiet bars that are replaced by the values", async () => {
     render(<PullsPage />);
     await settle();

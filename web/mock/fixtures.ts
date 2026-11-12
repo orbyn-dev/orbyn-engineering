@@ -1012,7 +1012,7 @@ const listed = (
     ...over,
   },
 });
-/** One pull request page per state, for the screens that draw each: 201 running, 202 failed, 203 review asked of you, 204 changes requested, 205 approved, 206 conflict, 207 merged, 208 closed, 209 draft. */
+/** One pull request page per state, for the screens that draw each: 201 running, 202 failed, 203 review asked of you, 204 changes requested, 205 approved, 206 conflict, 207 merged, 208 closed, 209 draft, 210 opened by the signed-in person. */
 export const pageStates: Record<number, { pull: Record<string, unknown>; mergeable: string; reviewers: string[]; askedYou?: boolean }> = (() => {
   const base = (number: number, over: Record<string, unknown>, mergeable = "mergeable", reviewers = ["sam"], askedYou = false) => ({
     pull: {
@@ -1040,12 +1040,14 @@ export const pageStates: Record<number, { pull: Record<string, unknown>; mergeab
     201: base(201, running),
     202: base(202, { checks_state: "fail", checks: { total: 4, passing: 3, failing: 1, running: 0, failing_names: ["e2e (macOS)"] } }),
     203: base(203, { review_state: "review_required" }, "mergeable", ["you"], true),
-    204: base(204, { review_state: "changes_requested" }),
+    // Changes asked of the signed-in person's own pull request: the one that needs them.
+    204: base(204, { review_state: "changes_requested", author: "you" }),
     205: base(205, { review_state: "approved" }),
     206: base(206, { review_state: "approved" }, "conflicting"),
     207: base(207, { state: "merged", review_state: "approved" }),
     208: base(208, { state: "closed", review_state: "approved" }),
     209: base(209, { draft: true, ...running }, "mergeable", []),
+    210: base(210, { author: "you", review_state: "review_required" }),
   };
 })();
 export const pageChecks = (number: number) => {
@@ -1105,6 +1107,7 @@ export const pullDetails = () => [
   { project_id: "p-site", number: 136, created_at: iso(-500000), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 1, viewer_review_state: "none" },
   { project_id: "p-app", number: 203, requested_reviewers: [{ name: "you", kind: "user" }], comment_count: 3, viewer_review_state: "none" },
   { project_id: "p-app", number: 205, requested_reviewers: [], comment_count: 3, viewer_review_state: "approved" },
+  { project_id: "p-app", number: 210, requested_reviewers: [{ name: "sam", kind: "user" }], comment_count: 3, viewer_review_state: "none" },
   // A forge that gives none of these: every cell shows an en dash.
   { project_id: "p-app", number: 57 },
 ];

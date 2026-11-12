@@ -8,6 +8,7 @@ import { Failure } from "./Card";
 import { ApprovalRequests } from "./ApprovalRequests";
 import { ConfirmItsYou } from "./ConfirmItsYou";
 import { DeviceRows, DevicesNote } from "./DeviceRows";
+import { deviceSyncedAt } from "./syncCopy";
 import { useAfter } from "./useCountdown";
 import { useDevices } from "./useDevices";
 
@@ -23,7 +24,7 @@ export function DevicesPage({ view }: { view: AccountView }) {
   const skeleton = useAfter(devices.status === "loading");
   const failed = devices.status === "error";
   const list = devices.data;
-  const syncedAt = view.sync.last_synced ? view.sync.last_synced * 1000 : null;
+  const syncedAt = deviceSyncedAt(view.sync);
 
   return (
     <div className="ac-devpage">

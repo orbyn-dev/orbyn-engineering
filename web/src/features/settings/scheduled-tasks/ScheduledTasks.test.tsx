@@ -126,6 +126,24 @@ it("names each of the eight outcomes and gives a refused or skipped run its reas
   expect(screen.getByText("Last 50 runs")).toBeVisible();
 });
 
+it("draws Interrupted, Refused and Skipped as neutral marks: only Failed is red and Running blue", async () => {
+  await openIncomingHook();
+  const runs = await screen.findByRole("table", { name: "Runs" });
+  const pill = (label: string) => within(runs).getByText(label).closest(".set-pill");
+  for (const label of ["Interrupted", "Refused", "Skipped", "Cancelled", "Queued"]) expect(pill(label)).toHaveProperty("className", "set-pill");
+  expect(pill("Failed")).toHaveClass("bad");
+  expect(pill("Running")).toHaveClass("blue");
+});
+
+it("lists each task with when it runs and nothing under it but the schedule", async () => {
+  ready();
+  window.location.hash = "#/settings/tasks";
+  installMockFetch();
+  render(<ScheduledTasksSection />);
+  const row = (await screen.findByRole("button", { name: "Open Daily review" })).closest("[role=row]") as HTMLElement;
+  expect(within(row).getAllByRole("cell")[1]).toHaveTextContent(/^Every 30 min$/);
+});
+
 it("shows who sent each delivery as the sender's own claim, cut at 80 characters, and nothing when it names none", async () => {
   const user = await openIncomingHook();
   await user.click(screen.getByRole("tab", { name: "Webhook deliveries" }));
@@ -199,7 +217,7 @@ it("says so when a task has no runs yet", async () => {
   vi.spyOn(api, "taskRuns").mockResolvedValue([]);
   await openIncomingHook();
   expect(await screen.findByText("No runs yet.")).toBeVisible();
-  expect(screen.getByText("Runs appear here after the task first runs.")).toBeVisible();
+  expect(screen.getByText("Runs appear here once the task has run.")).toBeVisible();
 });
 
 it("shows the two task defaults on the settings page, with Run while closed gone", async () => {
@@ -208,7 +226,7 @@ it("shows the two task defaults on the settings page, with Run while closed gone
   installMockFetch();
   render(<ScheduledTasksSection />);
   expect(await screen.findByRole("switch", { name: "Skip a run when a limit is near" })).toBeVisible();
-  expect(screen.getByText("Waits until a limit window has room (90% used or more). Applies to scheduled and follow-up runs.")).toBeVisible();
+  expect(screen.getByText("Waits until Codex’s limit window has room (90% used or more). Engines that report no window are never held. Applies to scheduled and follow-up runs.")).toBeVisible();
   expect(screen.getByRole("switch", { name: "Notify when a run finishes or fails" })).toBeChecked();
   expect(screen.queryByText(/while closed/i)).toBeNull();
 });

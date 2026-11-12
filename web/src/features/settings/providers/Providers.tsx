@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { EngineUpdateOutcome } from "../../../generated/EngineUpdateOutcome";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderInstance } from "../../../generated/ProviderInstance";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useConnection } from "../../../product/state/connection";
 import { useWorkspace } from "../../../product/state/workspace";
-import { Button, CopyCommand } from "../../../ui/controls";
+import { Button } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { SettingRow } from "../rows/SettingRow";
 import { ErrorState, Loading } from "../../../product/ui/states";
@@ -15,7 +14,8 @@ import { ProviderDetail } from "./ProviderDetail";
 import { AcpRegistryView, HistoryImportView } from "./ProviderViews";
 import { ProviderListActions, ProviderTable } from "./ProviderTable";
 import { SettingsBanner } from "../rows/SettingsBanner";
-import { followEngineUpdates, UpdateProgressLine } from "./engineUpdates";
+import { followEngineUpdates } from "./engineUpdates";
+import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
 
 const POLL_WHILE_UPDATING_MS = 1500;
 
@@ -56,7 +56,7 @@ export function ProvidersSection() {
   const updating = engines.data?.some((engine) => engine.updating) ?? false;
   const updatable = (engines.data ?? []).filter(wantsUpdate);
   const [confirmingAll, setConfirmingAll] = useState(false);
-  const [outcomes, setOutcomes] = useState<EngineUpdateOutcome[] | null>(null);
+  const [updatingAll, setUpdatingAll] = useState<EngineStatus[] | null>(null);
   const [view, setView] = useState<View>({ page: "list" });
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -87,6 +87,7 @@ export function ProvidersSection() {
   const base = (engines.data ?? []).filter((engine) => !engine.instance_of);
   const editInstance = store.instances.find((entry) => entry.id === editing);
 
+  if (updatingAll) return <UpdateAllView engines={updatingAll} onBack={() => setUpdatingAll(null)} />;
   if (view.page === "history") return <HistoryImportView onBack={list} />;
   if (view.page === "registry") return <AcpRegistryView onBack={list} />;
   const detail = view.page === "detail" ? engines.data?.find((engine) => engine.id === view.id) : undefined;
@@ -106,35 +107,20 @@ export function ProvidersSection() {
           Providers
         </h1>
         {updatable.length > 1 && !updating ? (
-          <Button small onClick={() => setConfirmingAll(true)}>
+          <Button small disabled={offline} onClick={() => setConfirmingAll(true)}>
             Update all
           </Button>
         ) : null}
       </div>
       {confirmingAll ? (
         <ConfirmDialog
-          title={`Update ${updatable.length} providers?`}
-          confirmLabel="Update all"
+          title={`Update ${updatable.length} engines?`}
+          confirmLabel={`Update ${updatable.length} engines`}
           onClose={() => setConfirmingAll(false)}
-          onConfirm={async () => {
-            setOutcomes(await api.updateAllEngines());
-            await refreshEngines();
-          }}
+          onConfirm={async () => { setUpdatingAll(updatable); }}
         >
-          <p>Orbyn runs the installer that owns each binary, one at a time:</p>
-          {updatable.map((engine) => (
-            <CopyCommand key={engine.id} command={engine.update_command ?? ""} label={`Copy ${engine.name} update command`} />
-          ))}
-          <p className="muted">A provider with an active run is skipped and reported.</p>
-          <UpdateProgressLine />
+          <UpdateAllFacts engines={updatable} skipped={skippedNoInstaller(engines.data ?? [])} />
         </ConfirmDialog>
-      ) : null}
-      {outcomes?.some((outcome) => outcome.error) ? (
-        <ul className="field-error" role="alert">
-          {outcomes.filter((outcome) => outcome.error).map((outcome) => (
-            <li key={outcome.id}>{outcome.name}: {outcome.error}</li>
-          ))}
-        </ul>
       ) : null}
       {error ? <p className="field-error" role="alert">{error}</p> : null}
       {store.error || store.conflict ? (
