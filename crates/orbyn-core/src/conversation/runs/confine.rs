@@ -85,6 +85,7 @@ fn close_transcripts(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
 
     #[cfg(unix)]
