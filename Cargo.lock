@@ -1698,6 +1698,7 @@ dependencies = [
  "orbyn-device-client",
  "portable-pty",
  "regex",
+ "regex-syntax",
  "reqwest",
  "rusqlite",
  "serde",

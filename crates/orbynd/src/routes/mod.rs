@@ -22,6 +22,7 @@ mod pulls;
 mod raw_files;
 mod renders;
 mod runs;
+mod secrets;
 mod settings;
 mod shell;
 mod skills;
@@ -41,6 +42,8 @@ mod account_tests;
 #[cfg(test)]
 mod crew_tests;
 #[cfg(test)]
+mod secrets_tests;
+#[cfg(test)]
 mod tests;
 
 use axum::Router;
@@ -59,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crew::routes(state.clone()))
         .merge(media::routes())
         .merge(settings::routes())
+        .merge(secrets::routes(state.clone()))
         .merge(projects::routes())
         .merge(threads::routes())
         .merge(workspace::routes())

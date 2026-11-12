@@ -113,6 +113,15 @@ pub enum CoreError {
         /// Wrong two-factor codes left before the sign-in closes.
         tries_left: Option<u8>,
     },
+    /// A pattern for Settings › Secrets the service will not save: `code` is `invalid_pattern`
+    /// (it cannot be used) or `pattern_too_broad` (it would hide nearly everything; the
+    /// person can still save it). `detail` carries the position or the numbers.
+    #[error("{message}")]
+    PatternRefused {
+        code: &'static str,
+        message: String,
+        detail: serde_json::Value,
+    },
     #[error("{0}")]
     Internal(String),
 }
@@ -156,7 +165,7 @@ impl CoreError {
             Self::PackTampered(_) => "pack_tampered",
             Self::AccountDisabled => "account_disabled",
             Self::ReauthRequired => "reauth_required",
-            Self::Account { code, .. } => code,
+            Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
@@ -211,7 +220,10 @@ impl CoreError {
             | Self::StaleOwner
             | Self::RunClosed
             | Self::InvalidTransition { .. } => 409,
-            Self::UpdateUnavailable(_) | Self::Unsupported(_) | Self::UnsupportedOption(_) => 422,
+            Self::UpdateUnavailable(_)
+            | Self::Unsupported(_)
+            | Self::UnsupportedOption(_)
+            | Self::PatternRefused { .. } => 422,
             Self::EngineUnavailable(_) | Self::Computer(_) | Self::UpdateFailed(_) => 502,
             _ => 500,
         }
@@ -284,6 +296,15 @@ impl CoreError {
                 message: message.clone(),
                 retry_after_secs: *retry_after_secs,
                 tries_left: *tries_left,
+            },
+            Self::PatternRefused {
+                code,
+                message,
+                detail,
+            } => Self::PatternRefused {
+                code,
+                message: message.clone(),
+                detail: detail.clone(),
             },
             Self::PackTampered(s) => Self::PackTampered(s.clone()),
             Self::Computer(s) => Self::Computer(s.clone()),

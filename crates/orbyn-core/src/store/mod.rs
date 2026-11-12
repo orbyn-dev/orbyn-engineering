@@ -26,6 +26,7 @@ mod native_sessions;
 mod project_names;
 mod questions;
 mod queue;
+mod redaction;
 mod runs;
 pub(crate) mod scoped_settings;
 #[cfg(feature = "engine-client")]

@@ -12,6 +12,7 @@ pub mod governance;
 pub mod host;
 pub mod operations;
 pub mod project;
+pub mod redaction;
 pub mod settings;
 pub mod source_control;
 pub mod store;
