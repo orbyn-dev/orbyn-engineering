@@ -55,7 +55,6 @@ function AutomaticUpdateChecks() {
     <>
       <Toggle
         title={settingsLabel("about-check-for-updates-automatically")}
-        description="Same setting as Background checks in Maintenance"
         on={settings.data?.background_update_checks !== false}
         set={(on) => {
           if (!settings.data) return;
@@ -102,13 +101,26 @@ function AgentClis() {
   );
 }
 
-/** The service reports Rust's OS id, such as `macos`. */
-const PLATFORM_NAMES: Record<string, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
-export const platformName = (id: string) => PLATFORM_NAMES[id] ?? id;
+/** The app update, once downloaded: the card says so and offers a restart, as Maintenance does. Later hides it until the page opens again. */
+function useDownloadedUpdate() {
+  const app = useWorkspace((state) => state.updates.data?.app);
+  const [later, setLater] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const done = !!app?.latest && app.downloaded !== undefined && app.total !== undefined && Number(app.total) > 0
+    && Number(app.downloaded) >= Number(app.total) && !!app.can_apply;
+  if (!done || later) return null;
+  return {
+    latest: app.latest,
+    error,
+    later: () => setLater(true),
+    restart: () => { setError(null); void api.applyAppUpdate().catch((problem: unknown) => setError(toFailure(problem).message)); },
+  };
+}
 
 export function AboutSection() {
   const info = useAsync("about-info", (signal) => api.info(signal), { keep: true });
   const [licences, setLicences] = useState(false);
+  const update = useDownloadedUpdate();
   if (licences) return <><h1 className="sr-only" tabIndex={-1} data-page-title>About</h1><LicenceLists onBack={() => setLicences(false)} /></>;
   return (
     <>
@@ -117,15 +129,25 @@ export function AboutSection() {
         <LogoTile size={40} />
         <div>
           <b>Orbyn Engineering {info.data?.version ?? ""}</b>
-          <br /><span className="t3 sub">Platform {info.data ? platformName(info.data.platform) : "Unknown"}</span>
+          {update ? <><br /><span className="t3 sub">Update {update.latest} downloaded</span></> : null}
         </div>
+        {update ? (
+          <span className="set-card-end">
+            <Button small tone="quiet" onClick={update.later}>Later</Button>
+            <Button small tone="primary" onClick={update.restart}>Restart to update</Button>
+          </span>
+        ) : null}
       </div>
+      {update?.error ? <p className="field-error" role="alert">{update.error}</p> : null}
       <SettingGroup>
         <AutomaticUpdateChecks />
         <AgentClis />
         <TriageRow />
-        <SettingRow title="Open-source licences" description="The app and the service">
-          <Button small onClick={() => setLicences(true)}>View lists</Button>
+        <SettingRow title="Open-source licences">
+          <Button small onClick={() => setLicences(true)}>View</Button>
+        </SettingRow>
+        <SettingRow title="orbyn.dev" description="Website, documentation and release notes">
+          <a className="btn btn-secondary btn-small" href="https://orbyn.dev" target="_blank" rel="noopener noreferrer">Open</a>
         </SettingRow>
       </SettingGroup>
     </>

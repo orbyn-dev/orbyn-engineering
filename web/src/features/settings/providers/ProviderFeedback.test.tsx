@@ -16,11 +16,13 @@ vi.mock("../../../product/state/workspace", () => ({
     refreshEngines: typeof mock.refresh;
     engines: { data: EngineStatus[]; error: null };
     projects: { data: unknown[]; error: null };
+    threads: Record<string, never>;
   }) => unknown) =>
     select({
       refreshEngines: mock.refresh,
       engines: { data: mock.engines, error: null },
       projects: { data: [], error: null },
+      threads: {},
     }),
 }));
 vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));

@@ -7,6 +7,10 @@ import { accountApi } from "./api";
 import { DeviceRows, DevicesNote } from "./DeviceRows";
 import { pauseInfo } from "./pauseCopy";
 import { isSyncing, syncRowText } from "./syncCopy";
+import { useLayoutWidth } from "../../lib/useLayout";
+
+/** The Account page lists a few devices and Manage devices lists them all: three, two in a narrow window. */
+export const shownDevices = (layout: string) => (layout === "phone" || layout === "small" ? 2 : 3);
 
 /** The person's account, and the one sync zone that exists. */
 export function SignedInPage({
@@ -32,6 +36,7 @@ export function SignedInPage({
 }) {
   const session = view.session;
   const [busy, setBusy] = useState(false);
+  const shown = shownDevices(useLayoutWidth());
   if (!session) return null;
   const sync = view.sync;
   const pausedAny = sync.kind === "paused" && sync.reason !== "zone_failed" && sync.reason !== "too_large";
@@ -97,8 +102,8 @@ export function SignedInPage({
         </div>
         <span className="ac-aside">This device only</span>
       </div>
-      <h2 className="ac-grp">Devices{devices ? ` · ${devices.length}` : ""}</h2>
-      {devices ? <DeviceRows devices={devices} syncedAt={view.sync.last_synced ? view.sync.last_synced * 1000 : null} /> : null}
+      <h2 className="ac-grp">Devices{devices ? (devices.length > shown ? ` · ${shown} of ${devices.length}` : ` · ${devices.length}`) : ""}</h2>
+      {devices ? <DeviceRows devices={devices.slice(0, shown)} syncedAt={view.sync.last_synced ? view.sync.last_synced * 1000 : null} /> : null}
       <button type="button" className="ac-lnk ac-manage" onClick={onOpenDevices} disabled={stale}>Manage devices</button>
       <DevicesNote platform={view.platform} />
       <h2 className="ac-grp">Account</h2>

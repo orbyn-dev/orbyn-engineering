@@ -416,6 +416,11 @@
 .set-card .sub {
   font-size: var(--text-meta);
 }
+.set-card-end {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
 
 /* Theme editor: one row per colour token. */
 .tokg {

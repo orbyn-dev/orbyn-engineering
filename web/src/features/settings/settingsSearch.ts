@@ -53,6 +53,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "chat-snooze-until-limits-reset", "title": "Snooze until limits reset", "section": "chat"},
   {"id": "chat-resume-after-usage-limits", "title": "Resume after usage limits", "section": "chat"},
   {"id": "diffs-diff-view", "title": "Diff view", "section": "diffs"},
+  {"id": "diffs-ignore-whitespace-changes", "title": "Ignore whitespace changes", "section": "diffs"},
   {"id": "diffs-open-pull-request-links-here", "title": "Open pull request links here", "section": "diffs"},
   {"id": "diffs-merge-method", "title": "Merge method", "section": "diffs"},
   {"id": "diffs-remove-agent-credits-on-merge", "title": "Remove agent credits on merge", "section": "diffs"},
