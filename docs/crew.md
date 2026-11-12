@@ -568,6 +568,16 @@ show a state ("Not set") that nothing stores yet. The v22 units apply to the v19
 "Codex 62% of its weekly limit", per-merge cost is tokens and minutes in the engine's own unit, and the review-reverted
 card offers "Create a check".
 
+**As built (slice 4f, UI part D):** the independent oracle (Crew Designs v22, 18 frames) and the reviewer backtest (v23, 16
+frames) in `web/src/features/crew/{oracle,backtest}`, on the same stage and with the same rules as part C: drawn sample
+data, no client and no route, every button disabled with "Crew is not connected to this app yet". The oracle gate fails
+when the key kills no mutant, strengthens for two rounds and then asks the person, and a key from the builder's own
+engine always needs the person's approval. A backtest starts only when the person chooses it and only with a budget for
+each engine, in tokens and never added up; it replays the last 180 days of pull requests that are 30 days old or more,
+shows a rate from 5 escapes and from 10 findings, and takes its outcomes from reverts, fixes and the escape log only.
+The lane picker's backtest counts are information and never change what Auto picks. All values the design marks
+Proposed stay Proposed.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with

@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../../../../app/App";
 import { REVIEW_FRAMES, type ReviewFrameId } from "./names";
+import { openFrame } from "../../shared/test-support";
 import { UNAVAILABLE_REASON } from "./Parts";
 
 /** What each frame must show, from Crew Designs v19. */
@@ -43,13 +44,7 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
 };
 
 async function open(name: ReviewFrameId) {
-  const fetchSpy = vi.fn();
-  vi.stubGlobal("fetch", fetchSpy);
-  window.location.hash = `#/preview/crew/${name}`;
-  const view = render(<App />);
-  await act(async () => {});
-  await screen.findByText(/Sample data\./);
-  return { ...view, fetchSpy };
+  return openFrame(name);
 }
 
 describe("Autopilot review frames (Crew Designs v19)", () => {

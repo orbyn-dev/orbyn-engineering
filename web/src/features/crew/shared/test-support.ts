@@ -4,15 +4,28 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
 import { UNAVAILABLE_REASON } from "../autopilot/review/Parts";
 
+/**
+ * The first Preview frame a test file opens loads its lazy chunk cold, which a slow runner can stretch past the default
+ * 1 s wait and 5 s test timeout. Every Crew frame test opens its frame through here, so the wait is one generous
+ * number in one place.
+ */
+export const FRAME_LOAD_TIMEOUT = 15_000;
+vi.setConfig({ testTimeout: 2 * FRAME_LOAD_TIMEOUT });
+
 /** Opens a Preview frame the way a person does: by its hash, with `fetch` watched. */
 export async function openFrame(name: string) {
   const fetchSpy = vi.fn();
   vi.stubGlobal("fetch", fetchSpy);
+  return { ...(await renderPreviewFrame(name)), fetchSpy };
+}
+
+/** Renders the app at a Preview frame's hash and waits, generously, for the frame's notice. */
+export async function renderPreviewFrame(name: string) {
   window.location.hash = `#/preview/crew/${name}`;
   const view = render(createElement(App));
   await act(async () => {});
-  await screen.findByText(/Sample data\./);
-  return { ...view, fetchSpy };
+  await screen.findByText(/Sample data\./, undefined, { timeout: FRAME_LOAD_TIMEOUT });
+  return view;
 }
 
 const USAGE_LINE = "Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m";

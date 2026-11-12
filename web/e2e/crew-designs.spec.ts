@@ -1,13 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
+import { BACKTEST_FRAMES } from "../src/features/crew/backtest/names";
 import { CAPACITY_FRAMES } from "../src/features/crew/capacity/names";
 import { ESCAPE_FRAMES } from "../src/features/crew/escape/names";
+import { ORACLE_FRAMES } from "../src/features/crew/oracle/names";
 import { SETTINGS_FRAMES } from "../src/features/crew/settings/names";
 
 /** The drawn Crew screens of Designs v20 to v23 in the dev build, where the Preview screens exist: sample data, no API request, no live control. */
 const open = (page: Page, frame: string) => page.goto(`/#/preview/crew/${frame}`);
 const REASON = "Crew is not connected to this app yet";
 
-for (const frame of [...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...SETTINGS_FRAMES]) {
+for (const frame of [...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES]) {
   test(`${frame} draws on sample data, makes no Crew request and has no live control`, async ({ page }) => {
     const requests: string[] = [];
     page.on("request", (request) => {
