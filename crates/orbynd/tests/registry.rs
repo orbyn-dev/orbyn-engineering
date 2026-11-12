@@ -158,6 +158,36 @@ async fn a_checked_binary_installs_runs_a_turn_and_removes_cleanly() {
     let listed = service.json("/api/acp/registry?q=good").await;
     assert_eq!(listed[0]["engine"], "acp-good");
 
+    // Each install that started is kept, a refused one is not.
+    let kept = service.json("/api/engines/acp-good/installs").await;
+    let done = &kept["outcomes"][0];
+    assert_eq!(done["kind"], "install", "{kept}");
+    assert_eq!(done["ok"], true);
+    let command = done["command"].as_str().unwrap();
+    assert!(
+        command.starts_with("Download and verify http://127.0.0.1:"),
+        "{command}"
+    );
+    assert!(
+        kept.get("vendor_page").is_none(),
+        "an installed engine needs no vendor page"
+    );
+    let wrong = service.json("/api/engines/acp-wrong/installs").await;
+    assert_eq!(wrong["outcomes"].as_array().unwrap().len(), 1, "{wrong}");
+    assert_eq!(wrong["outcomes"][0]["ok"], false);
+    assert!(
+        wrong["outcomes"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("digest")
+    );
+    for refused in ["acp-unsummed", "acp-none"] {
+        let none = service
+            .json(&format!("/api/engines/{refused}/installs"))
+            .await;
+        assert!(none["outcomes"].as_array().unwrap().is_empty(), "{refused}");
+    }
+
     let body = service.json(&format!("/api/threads/{thread}")).await;
     let run_on = service
         .thread(body["project_id"].as_str().unwrap(), "acp-good")
@@ -165,6 +195,27 @@ async fn a_checked_binary_installs_runs_a_turn_and_removes_cleanly() {
     service.admit(&run_on, "hi").await;
     assert_eq!(service.finished(&run_on).await, "completed");
     assert!(!text_of(&service.all_events(&run_on).await).is_empty());
+
+    // While a thread runs on it, removal is refused and nothing is kept for it.
+    let held = service.admit(&run_on, "[hang]").await;
+    let blocked = service
+        .client
+        .delete(format!("{}/api/acp/registry/good", service.url))
+        .bearer_auth(&service.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 409);
+    assert_eq!(
+        blocked.json::<Value>().await.unwrap()["code"],
+        "engine_busy"
+    );
+    let kept = service.json("/api/engines/acp-good/installs").await;
+    assert_eq!(kept["outcomes"].as_array().unwrap().len(), 1, "{kept}");
+    service
+        .send(&format!("/api/runs/{held}/cancel"), json!({}))
+        .await;
+    service.finished(&run_on).await;
 
     let response = service
         .client
@@ -174,6 +225,10 @@ async fn a_checked_binary_installs_runs_a_turn_and_removes_cleanly() {
         .await
         .unwrap();
     assert_eq!(response.status(), 204);
+    let kept = service.json("/api/engines/acp-good/installs").await;
+    assert_eq!(kept["outcomes"][0]["kind"], "remove", "{kept}");
+    assert_eq!(kept["outcomes"][0]["ok"], true);
+    assert_eq!(kept["outcomes"][1]["kind"], "install");
     assert!(!left.join("good").exists());
     let engines = service.json("/api/engines").await;
     assert!(
@@ -191,6 +246,31 @@ async fn a_checked_binary_installs_runs_a_turn_and_removes_cleanly() {
         .await
         .unwrap();
     assert_eq!(again.status(), 404);
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn an_engine_that_is_not_installed_offers_the_vendors_page_and_nothing_else() {
+    let dir = TempDir::new();
+    // No program of this name is found on any path the service looks at.
+    let empty = dir.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let options = Options {
+        env: vec![("PATH".into(), empty.to_string_lossy().into_owned())],
+        ..Options::default()
+    };
+    let (service, _) = setup(&dir, options, "codex").await;
+    let cursor = service.json("/api/engines/cursor/installs").await;
+    assert_eq!(cursor["vendor_page"]["domain"], "cursor.com", "{cursor}");
+    assert!(
+        cursor["vendor_page"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://")
+    );
+    assert_eq!(cursor["outcomes"], json!([]));
+    let unknown = service.json("/api/engines/nobody/installs").await;
+    assert!(unknown.get("vendor_page").is_none(), "{unknown}");
     service.stop().await;
 }
 

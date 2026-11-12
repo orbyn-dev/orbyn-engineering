@@ -6,7 +6,9 @@ pub mod instances;
 pub mod known;
 pub mod maintenance;
 pub mod manifest;
+pub mod outcomes;
 pub mod probe;
+pub mod vendor_pages;
 pub mod warm;
 
 use std::collections::{HashMap, HashSet};
@@ -17,8 +19,8 @@ use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
     AuthState, CustomEngine, EngineCompatibility, EngineFeedbackReceipt, EngineFeedbackRequest,
-    EngineModels, EngineStatus, EngineTier, EngineUpdateProgress, InstallerKind, ModelSelection,
-    ProviderInstance, VersionSupport,
+    EngineInstalls, EngineModels, EngineStatus, EngineTier, EngineUpdateProgress, InstallKind,
+    InstallOutcome, InstallerKind, ModelSelection, ProviderInstance, VersionSupport,
 };
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
@@ -37,6 +39,7 @@ use crate::util::tail;
 use catalog_cache::{CatalogCache, Entry};
 use known::{KNOWN_ENGINES, known_engine};
 use manifest::TestedManifest;
+use outcomes::{Attempt, Ran};
 
 const LATEST_TIMEOUT: Duration = Duration::from_secs(4);
 pub const UPDATE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -724,13 +727,36 @@ impl EngineManager {
             .map(str::to_owned)
     }
 
+    /// Keeps an outcome for the provider page. Failing to keep it never fails the work it
+    /// describes: the work already happened.
+    pub(crate) fn keep_outcome(&self, outcome: &InstallOutcome) {
+        if let Err(error) = self.store.record_install(outcome) {
+            tracing::warn!(%error, engine = %outcome.engine, "an install outcome was not kept");
+        }
+    }
+
+    /// What a provider page shows of installs: the kept outcomes, newest first, and the
+    /// vendor's install page while the engine is not installed.
+    pub async fn installs(&self, id: &str) -> Result<EngineInstalls> {
+        let outcomes = self.store.engine_installs(id)?;
+        let vendor_page = match vendor_pages::vendor_page(id) {
+            Some(page) if !self.status(id).await.is_ok_and(|status| status.installed) => Some(page),
+            _ => None,
+        };
+        Ok(EngineInstalls {
+            engine: id.to_owned(),
+            vendor_page,
+            outcomes,
+        })
+    }
+
     /// Each step of every update from now on: the installer's command, the lines
     /// it prints, then how it ended.
     pub fn update_events(&self) -> tokio::sync::broadcast::Receiver<EngineUpdateProgress> {
         self.progress.subscribe()
     }
 
-    fn emit(&self, event: EngineUpdateProgress) {
+    pub(crate) fn emit(&self, event: EngineUpdateProgress) {
         // No listener is not an error: progress is only for whoever is watching.
         let _ = self.progress.send(event);
     }
@@ -831,21 +857,43 @@ impl EngineManager {
         let _installer = installer_lock.lock().await;
         self.emit(EngineUpdateProgress::Started {
             engine: id.to_owned(),
-            command: plan.display(),
+            command: outcomes::hide(&plan.display()),
         });
+        let attempt = Attempt::begin(
+            id,
+            if version.is_some() {
+                InstallKind::Install
+            } else {
+                InstallKind::Update
+            },
+            Some(&plan.display()),
+            before.version.clone(),
+        );
         let mut finish = Finish {
             engines: self,
             id: id.to_owned(),
+            attempt: Some(attempt),
             sent: false,
         };
+        let mut ran = Ran::default();
         let result = self
-            .apply_update(id, driver.as_ref(), &plan, before.version, actor)
+            .apply_update(id, driver.as_ref(), &plan, before.version, actor, &mut ran)
             .await;
         finish.sent = true;
+        if let Some(attempt) = finish.attempt.take() {
+            self.keep_outcome(&attempt.finish(
+                &ran,
+                result.as_ref().err(),
+                result.as_ref().ok().and_then(|after| after.version.clone()),
+            ));
+        }
         self.emit(EngineUpdateProgress::Finished {
             engine: id.to_owned(),
             version: result.as_ref().ok().and_then(|after| after.version.clone()),
-            error: result.as_ref().err().map(ToString::to_string),
+            error: result
+                .as_ref()
+                .err()
+                .map(|error| outcomes::hide(&error.to_string())),
         });
         result
     }
@@ -859,18 +907,19 @@ impl EngineManager {
         plan: &UpdatePlan,
         before: Option<String>,
         actor: &str,
+        ran: &mut Ran,
     ) -> Result<EngineStatus> {
         self.store.append_audit(&AuditRecord {
             actor: actor.to_owned(),
             action: "engine.update".into(),
-            target: plan.display(),
+            target: outcomes::hide(&plan.display()),
             decision: None,
             source: "user".into(),
             thread_id: None,
             run_id: None,
             detail: json!({ "engine": id, "from": before }),
         })?;
-        let result = self.run_update(id, plan).await;
+        let result = self.run_update(id, plan, ran).await;
         let after = driver.probe().await;
         self.store.append_audit(&AuditRecord {
             actor: "system:update".into(),
@@ -884,7 +933,10 @@ impl EngineManager {
                 "ok": result.is_ok(),
                 "from": before,
                 "to": after.version,
-                "output": result.as_ref().map_or_else(|error| error.to_string(), Clone::clone),
+                // The audit log is read back too, so it holds the same hidden text.
+                "output": outcomes::hide(
+                    &result.as_ref().map_or_else(|error| error.to_string(), Clone::clone),
+                ),
             }),
         })?;
         result?;
@@ -934,7 +986,7 @@ impl EngineManager {
 
     /// Runs the installer to the end, sending each line it prints as progress. It is
     /// never stopped partway by a person: that could leave a half-written engine.
-    async fn run_update(&self, id: &str, plan: &UpdatePlan) -> Result<String> {
+    async fn run_update(&self, id: &str, plan: &UpdatePlan, ran: &mut Ran) -> Result<String> {
         let command = resolve(&plan.program)
             .ok_or_else(|| CoreError::UpdateFailed(format!("{} was not found.", plan.program)))?;
         let args: Vec<std::ffi::OsString> = plan.args.iter().map(Into::into).collect();
@@ -949,7 +1001,7 @@ impl EngineManager {
             let progress = |line: String| {
                 self.emit(EngineUpdateProgress::Output {
                     engine: id.to_owned(),
-                    line,
+                    line: outcomes::hide(&line),
                 });
             };
             let (_, _, status) = tokio::join!(
@@ -970,9 +1022,17 @@ impl EngineManager {
             String::from_utf8_lossy(&out),
             String::from_utf8_lossy(&err)
         );
+        ran.output = tail(&text, 4096);
+        ran.exit = status
+            .as_ref()
+            .ok()
+            .and_then(std::process::ExitStatus::code);
         match status {
             Ok(status) if status.success() => Ok(tail(&text, 4096)),
-            _ => Err(CoreError::UpdateFailed(tail(&text, 1024))),
+            _ => {
+                ran.failed = true;
+                Err(CoreError::UpdateFailed(tail(&text, 1024)))
+            }
         }
     }
 }
@@ -1129,12 +1189,19 @@ impl Drop for NativeOperation {
 struct Finish<'a> {
     engines: &'a EngineManager,
     id: String,
+    attempt: Option<Attempt>,
     sent: bool,
 }
 
 impl Drop for Finish<'_> {
     fn drop(&mut self) {
         if !self.sent {
+            if let Some(attempt) = self.attempt.take() {
+                let error =
+                    CoreError::UpdateFailed("The update stopped before it finished.".into());
+                self.engines
+                    .keep_outcome(&attempt.finish(&Ran::default(), Some(&error), None));
+            }
             self.engines.emit(EngineUpdateProgress::Finished {
                 engine: std::mem::take(&mut self.id),
                 version: None,

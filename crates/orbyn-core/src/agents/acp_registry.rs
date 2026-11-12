@@ -9,11 +9,14 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use orbyn_contracts::{AcpRegistryEntry, CustomEngine, EngineStatus, EngineTier};
+use orbyn_contracts::{
+    AcpRegistryEntry, CustomEngine, EngineStatus, EngineTier, EngineUpdateProgress, InstallKind,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
+use crate::agents::engines::outcomes::{Attempt, Ran, hide};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::host::process::resolve;
@@ -138,6 +141,43 @@ fn installable(agent: &Agent) -> Vec<&'static str> {
 
 fn engine_id(agent: &str) -> String {
     format!("acp-{agent}")
+}
+
+/// What an install does, as shown to a person: the launch command an `npx` or `uvx` agent
+/// is registered with, or the address a binary is fetched from, without credentials or query.
+fn launch_line(agent: &Agent, chosen: &str) -> String {
+    let package = match chosen {
+        "npx" => agent
+            .distribution
+            .npx
+            .as_ref()
+            .map(|package| ("npx -y", package)),
+        "uvx" => agent
+            .distribution
+            .uvx
+            .as_ref()
+            .map(|package| ("uvx", package)),
+        _ => None,
+    };
+    if let Some((tool, package)) = package {
+        let args: Vec<&str> = package.args.iter().map(String::as_str).collect();
+        return [&[tool, package.package.as_str()][..], &args[..]]
+            .concat()
+            .join(" ");
+    }
+    let archive = platform_key()
+        .and_then(|key| agent.distribution.binary.get(&key))
+        .and_then(|target| reqwest::Url::parse(&target.archive).ok());
+    match archive {
+        Some(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            format!("Download and verify {url}")
+        }
+        None => "Download and verify the agent's archive".to_owned(),
+    }
 }
 
 /// `https`, or plain `http` to this machine, which only a test or a local mirror uses.
@@ -438,6 +478,47 @@ impl Core {
             run_id: None,
             detail: serde_json::json!({ "version": agent.version, "distribution": chosen }),
         })?;
+        let engine = engine_id(&agent.id);
+        let command = launch_line(&agent, chosen);
+        // Anything that went wrong from here on is an attempt that failed, and is kept.
+        let attempt = Attempt::begin(&engine, InstallKind::Install, Some(&command), None);
+        self.engines.emit(EngineUpdateProgress::Started {
+            engine: engine.clone(),
+            command: hide(&command),
+        });
+        let result = self.install_chosen(agent, chosen, actor).await;
+        let ran = Ran::default();
+        self.engines.keep_outcome(
+            &attempt.finish(
+                &ran,
+                result.as_ref().err(),
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|status| status.version.clone()),
+            ),
+        );
+        self.engines.emit(EngineUpdateProgress::Finished {
+            engine,
+            version: result
+                .as_ref()
+                .ok()
+                .and_then(|status| status.version.clone()),
+            error: result
+                .as_ref()
+                .err()
+                .map(|error| hide(&error.public_message())),
+        });
+        result
+    }
+
+    /// Fetches or registers what `chosen` names, and makes it a custom engine.
+    async fn install_chosen(
+        &self,
+        agent: Agent,
+        chosen: &str,
+        actor: &str,
+    ) -> Result<EngineStatus> {
         let (target, args) = match chosen {
             "binary" => self.install_binary(&agent).await?,
             tool => {
@@ -479,7 +560,8 @@ impl Core {
         self.engines.status(&engine.id).await
     }
 
-    /// Removes the engine and any files it installed. Threads keep their history.
+    /// Removes the engine and any files it installed. Threads keep their history. Refused
+    /// while a thread runs on it; a refusal is not an attempt and is not kept.
     pub async fn remove_acp_agent(&self, id: &str, actor: &str) -> Result<()> {
         if !safe_name(id) {
             return Err(CoreError::NotFound("agent".into()));
@@ -493,16 +575,42 @@ impl Core {
         {
             return Err(CoreError::NotFound("agent".into()));
         }
-        if self.store.active_runs_for_engine(&engine)? > 0 {
-            return Err(CoreError::EngineBusy(engine));
+        self.remove_engine(&engine, actor, || {
+            let files = self.config.data_dir.join(AGENTS_DIR).join(id);
+            match std::fs::remove_dir_all(files) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            }
+        })
+        .await
+    }
+
+    /// Removes a custom engine from Orbyn's list. Its own sign-in and sessions stay with it.
+    pub async fn remove_custom_engine(&self, id: &str, actor: &str) -> Result<()> {
+        self.remove_engine(id, actor, || Ok(())).await
+    }
+
+    /// The one removal: refused while a thread runs on the engine, then the engine's row goes,
+    /// then `files`, and the attempt is kept whichever way it ended.
+    async fn remove_engine(
+        &self,
+        engine: &str,
+        actor: &str,
+        files: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        if self.store.active_runs_for_engine(engine)? > 0 {
+            return Err(CoreError::EngineBusy(engine.to_owned()));
         }
-        self.store.delete_custom_engine(&engine, actor)?;
-        self.engines.invalidate().await;
-        let files = self.config.data_dir.join(AGENTS_DIR).join(id);
-        match std::fs::remove_dir_all(files) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
-            _ => Ok(()),
+        let attempt = Attempt::begin(engine, InstallKind::Remove, None, None);
+        let result = async {
+            self.store.delete_custom_engine(engine, actor)?;
+            self.engines.invalidate().await;
+            files()
         }
+        .await;
+        self.engines
+            .keep_outcome(&attempt.finish(&Ran::default(), result.as_ref().err(), None));
+        result
     }
 }
 

@@ -46,7 +46,29 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (37, CREW_REVIEW),
     (38, CREW_AUTOPILOT),
     (39, CREW_MERGES),
+    (40, ENGINE_INSTALLS),
 ];
+
+// What each install, update and removal of an engine did: when, whether it worked, why not, the
+// command shown to a person and the installer's last lines (already redacted). Bounded per engine
+// by the writer, which keeps the newest twenty. Nothing here is secret.
+const ENGINE_INSTALLS: &str = r#"
+CREATE TABLE engine_installs (
+    id TEXT PRIMARY KEY,
+    engine TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    reason TEXT,
+    command TEXT,
+    exit_status INTEGER,
+    from_version TEXT,
+    to_version TEXT,
+    output TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX engine_installs_by_engine ON engine_installs (engine, finished_at DESC);
+"#;
 
 // The account's settings sync, per zone: the cursor and the capture switch, the local copy
 // of the zone's record with each field's stamp (and whether this device applied it: only a field

@@ -27,18 +27,26 @@ test.afterAll(async () => {
   registry.close();
 });
 
-test("an agent is found, added as a provider and removed", async ({ page }) => {
+test("an agent is found, installed as a provider, kept in its history and removed", async ({ page }) => {
   await page.goto(`${service.page}#/settings/providers`);
   await page.getByRole("button", { name: "Browse", exact: true }).click();
   const section = page.getByRole("table", { name: "ACP registry" });
-  await page.getByRole("textbox", { name: "Find an agent" }).fill("pal");
+  await page.getByRole("textbox", { name: "Search the registry" }).fill("pal");
   await expect(section.getByText("Pal Agent")).toBeVisible();
-  await section.getByRole("button", { name: "Add Pal Agent" }).click();
+  await expect(section.getByText("Runs with npx · downloads when you start it")).toBeVisible();
+  await section.getByRole("button", { name: "Install Pal Agent" }).click();
   await expect(section.getByRole("button", { name: "Remove Pal Agent" })).toBeVisible();
   const engines = () => service.api<{ id: string }[]>("GET", "/api/engines");
   await expect.poll(async () => (await engines()).some((engine) => engine.id === "acp-pal")).toBe(true);
 
+  // The service keeps what the install did.
+  const kept = await service.api<{ outcomes: { kind: string; ok: boolean }[] }>("GET", "/api/engines/acp-pal/installs");
+  expect(kept.outcomes.map((outcome) => [outcome.kind, outcome.ok])).toEqual([["install", true]]);
+
   await section.getByRole("button", { name: "Remove Pal Agent" }).click();
-  await expect(section.getByRole("button", { name: "Add Pal Agent" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Remove Pal Agent?" }).getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Install Pal Agent" })).toBeVisible();
   await expect.poll(async () => (await engines()).some((engine) => engine.id === "acp-pal")).toBe(false);
+  const after = await service.api<{ outcomes: { kind: string; ok: boolean }[] }>("GET", "/api/engines/acp-pal/installs");
+  expect(after.outcomes.map((outcome) => outcome.kind)).toEqual(["remove", "install"]);
 });

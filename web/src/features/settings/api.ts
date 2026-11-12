@@ -14,6 +14,7 @@ import type {
 import type { AcpNativeSessionImported } from "../../generated/AcpNativeSessionImported";
 import type { AcpNativeSessionPage } from "../../generated/AcpNativeSessionPage";
 import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilities";
+import type { EngineInstalls } from "../../generated/EngineInstalls";
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
@@ -97,6 +98,11 @@ export function importHistorySession(engine: string, sessionId: string) {
 
 export function listRegistry(query: string, signal?: AbortSignal) {
   return request<AcpRegistryEntry[]>("GET", `/api/acp/registry?q=${q(query)}`, undefined, signal);
+}
+
+/** What installs, updates and removals of one engine did, and the vendor's install page while it is missing. */
+export function engineInstalls(engineId: string, signal?: AbortSignal) {
+  return request<EngineInstalls>("GET", `/api/engines/${q(engineId)}/installs`, undefined, signal);
 }
 
 export function addRegistryEntry(id: string, distribution: string | undefined) {
