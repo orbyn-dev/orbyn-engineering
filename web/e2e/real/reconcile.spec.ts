@@ -223,7 +223,7 @@ test("appearance: presets, editor, typography, contrast and settings search", as
   await page.getByRole("radiogroup", { name: "Contrast", exact: true }).getByRole("radio", { name: "Higher", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-contrast", "more");
   await page.getByRole("button", { name: "Edit…", exact: true }).click();
-  const accent = page.getByLabel("Accent", { exact: true });
+  const accent = page.getByLabel("Button", { exact: true });
   await accent.fill("#ff0000");
   await accent.press("Enter");
   await expect.poll(() => color("--color-primary")).toBe("#ff0000");

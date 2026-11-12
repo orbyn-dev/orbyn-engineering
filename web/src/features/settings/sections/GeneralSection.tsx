@@ -154,7 +154,7 @@ export function GeneralSection() {
           on={working}
           set={(on) => setPrefs({ workingSection: on })}
         />
-        <SettingRow title={settingsLabel("general-rows")} description="Choose what the details card shows. You can also right-click the card.">
+        <SettingRow title={settingsLabel("general-rows")} description="Choose what the Details popover shows. You can also right-click it.">
           <DetailRowsButton />
         </SettingRow>
       </SettingGroup>
@@ -172,7 +172,7 @@ export function GeneralSection() {
       unitRow("automatic_git_fetch_minutes", settingsLabel("general-git-fetch-interval-minutes"), "Background git fetch period"),
       unitRow("provider_health_refresh_minutes", settingsLabel("general-provider-health-interval-minutes"), "How often providers are checked"),
       { key: "enable_provider_update_checks", title: settingsLabel("general-check-providers-for-updates") },
-      { key: "keep_awake_during_runs", title: settingsLabel("general-keep-the-computer-awake-during-runs"), description: "Desktop only. The display can still sleep." },
+      { key: "keep_awake_during_runs", title: settingsLabel("general-keep-the-computer-awake-during-runs"), description: "Desktop app. The display can still sleep." },
       { key: "add_project_base_directory", title: settingsLabel("general-base-directory"), description: "Where new projects are created",
         render: (value, save, control) => <BaseDirectory value={value} save={save} disabled={control.disabled} /> },
       ] }]} />
