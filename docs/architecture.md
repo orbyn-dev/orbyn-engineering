@@ -2785,8 +2785,8 @@ core makes), nothing but the worker's own session can be created there, a linked
 Each of those tests fails if the create allowance is put back. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
 `--session-id` writes its own session, `--resume` of its own session works, and `--resume` of another session in the same
 folder answers "No conversation found", with the folders made beforehand and no create allowed. What that proves: a worker's own file access to
-Orbyn's data folder (store, `service.json`, other runs' files) is denied, and so is its access to another session's Claude
-transcript file.
+Orbyn's data folder (store, `service.json`, other runs' files) is denied, and the Claude lead's transcript is denied to
+confined Claude workers. It says nothing about a lead on another engine.
 
 What it does not cover: the profile does not stop a worker reading other processes' command lines and
 environment (`process-info*` is denied, but `sysctl` reads of another process's arguments and environment still
@@ -2794,7 +2794,7 @@ work, and `pgrep -lf` shows the service's arguments). An ACP lead's bridge proce
 token in its environment (`ORBYN_ACP_MCP_ENDPOINT`, `acp_mcp_bridge.rs`), so a worker could read and use it: a
 known limit, tracked separately. Also not covered: the network, the loopback service (its token is the guard),
 the OS keychain, the engine's own login files (`~/.claude.json`, which Claude must read), other files of the same user,
-and a process a worker leaves running after its turn. The saved conversations of other engines are not covered: Codex keeps
+and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's own session files (`~/.codex/sessions` and the state and logs SQLite files under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused on macOS (`CODEX_WORKERS_ALLOWED` is false) and stay refused until a separate probe is done. Codex keeps
 them in rollout files and in SQLite files under its home, and an ACP agent keeps its own history wherever it chooses, so
 an ACP agent's conversation, including an ACP adapter that writes Claude's folder, is open, and a Claude lead's transcript
 stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe

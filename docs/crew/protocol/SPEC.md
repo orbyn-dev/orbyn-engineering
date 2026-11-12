@@ -414,9 +414,14 @@ These are named so nobody assumes them. They arrive in later versions of this pr
   - It does not stop a worker reading other processes' command lines and environment, and it does not
     cover the network, the loopback service (its token is the guard), the OS keychain, the engine's own
     login files, the saved conversations of engines other than Claude, Claude's per-session files other
-    than its transcripts, or other files of the same user. For a Claude worker the profile also denies the other
-    sessions' saved Claude conversations (the lead's own transcript) and Claude's prompt history, and for any other
-    engine it denies that folder with no exception; Claude's `plans/`, `paste-cache/` and `session-env/` stay open. An ACP lead's bridge process carries its MCP endpoint token
+    than its transcripts, or other files of the same user. The Claude lead's transcript is denied to
+    confined Claude workers: the profile denies every saved Claude conversation but the worker's own, and Claude's prompt
+    history. A worker on any other engine (an ACP agent) gets that folder and the history closed with no exception, so
+    an ACP adapter that wraps Claude Code cannot be a worker for now. Claude's auto memory is closed (a worker starts
+    without it). A worker is refused, with a plain line, when its start folder does not resolve, is non-ASCII or
+    200 or more characters, or when `~/.claude`, `CLAUDE_CONFIG_DIR` or any folder above it is a link. Claude's `plans/`,
+    `paste-cache/` and `session-env/` stay open, and Codex's own session files (`~/.codex/sessions`, the SQLite state
+    and logs under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused. An ACP lead's bridge process carries its MCP endpoint token
     in its environment, so a worker could read and use it: a known limit, tracked separately.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.

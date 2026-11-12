@@ -996,6 +996,14 @@ unable to run as a worker until it can take a `--session-id`. The core makes `pr
 session. A configuration folder, `projects` or `history.jsonl` that goes through a link, or a start folder whose Claude
 name is not certain (non-ASCII, very long), refuses the worker.
 
+Limits on this, by ruling: a worker on any other engine (an ACP agent; Codex is refused) gets Claude's `projects/` and
+`history.jsonl` denied with no allowance, so an ACP adapter wrapping Claude Code cannot be a worker for now; auto memory
+is closed to workers, which start without it; a start folder that does not resolve, is non-ASCII or 200 or more characters,
+or a symlinked `~/.claude`, `CLAUDE_CONFIG_DIR` or any folder above it refuses the worker with a plain line. Codex's own
+session files (`~/.codex/sessions`, the SQLite state and logs under `~/.codex`) are not covered, which is acceptable
+only because `CODEX_WORKERS_ALLOWED` is false and stays so until a separate probe is done. The claim is narrow: the Claude
+lead's transcript is denied to confined Claude workers, and nothing is said about other leads.
+
 Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
 engines), the Claude transcript denial and tests that run the real tool. Not built: a Windows or Linux restriction,
 and a denial of other engines' saved conversations. Not covered: an ACP agent's or Codex's saved conversations (Codex
