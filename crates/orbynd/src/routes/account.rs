@@ -27,7 +27,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post};
 use orbyn_contracts as wire;
 use orbyn_core::CoreError;
-use orbyn_core::account::{ConfirmFor, FirstSync, Password};
+use orbyn_core::account::{ApprovalDigits, ConfirmFor, FirstSync, Password};
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState};
 
@@ -41,7 +41,7 @@ pub const OPEN: &[(&str, &str)] = &[
     ),
     (
         "POST /api/account/sign-up/start",
-        "before there is an account",
+        "the password step: creates the account and emails the code; the password is the proof",
     ),
     (
         "POST /api/account/sign-up/resend",
@@ -49,16 +49,16 @@ pub const OPEN: &[(&str, &str)] = &[
     ),
     (
         "POST /api/account/sign-up/code",
-        "before there is an account",
-    ),
-    (
-        "POST /api/account/sign-up/register",
-        "creates the account; the password is the proof",
+        "the emailed code finishes creating the account",
     ),
     ("POST /api/account/sign-in", "the password is the proof"),
     (
         "POST /api/account/sign-in/second-factor",
         "the second step of signing in",
+    ),
+    (
+        "POST /api/account/sign-in/digits",
+        "the six digits a trusted device showed; a new device types them, with bounded tries, and only the right ones sign in",
     ),
     (
         "POST /api/account/sign-in/cancel",
@@ -127,6 +127,7 @@ fn open_routes() -> Router<AppState> {
         .route("/api/account/approvals", get(approvals))
         .route("/api/account/approvals/{id}/deny", post(deny_approval))
         .route("/api/account/sign-in/approval", post(sign_in_approval))
+        .route("/api/account/sign-in/digits", post(sign_in_digits))
         .route("/api/account/connect", post(connect))
         .route("/api/account/connect/later", post(connect_later))
         .route("/api/account/connect/seen", post(connect_seen))
@@ -135,7 +136,6 @@ fn open_routes() -> Router<AppState> {
         .route("/api/account/sign-up/start", post(start_sign_up))
         .route("/api/account/sign-up/resend", post(resend_code))
         .route("/api/account/sign-up/code", post(verify_code))
-        .route("/api/account/sign-up/register", post(register))
         .route("/api/account/sign-in", post(sign_in))
         .route("/api/account/sign-in/second-factor", post(second_factor))
         .route("/api/account/sign-in/cancel", post(cancel_sign_in))
@@ -296,12 +296,16 @@ async fn check_invite(
 
 async fn start_sign_up(
     State(state): State<AppState>,
-    ApiJson(body): ApiJson<wire::AccountSignUpStart>,
+    ApiJson(body): ApiJson<wire::AccountSignUp>,
 ) -> ApiResult<StatusCode> {
     state
         .core
         .account
-        .start_sign_up(&body.invite, &body.email)
+        .start_sign_up(
+            &body.invite,
+            &body.email,
+            Password::new(body.password.expose().to_owned()),
+        )
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -316,18 +320,6 @@ async fn verify_code(
     ApiJson(body): ApiJson<wire::AccountCode>,
 ) -> ApiResult<StatusCode> {
     state.core.account.verify_email_code(&body.code).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn register(
-    State(state): State<AppState>,
-    ApiJson(body): ApiJson<wire::AccountRegister>,
-) -> ApiResult<StatusCode> {
-    state
-        .core
-        .account
-        .register(Password::new(body.password.expose().to_owned()))
-        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -447,26 +439,40 @@ async fn sign_in_approval(
     Ok(Json(state.core.account.poll_approval().await?))
 }
 
+/// Types the six digits a trusted device showed. A wrong entry answers with the tries left
+/// and keeps the request open; only the right digits sign in. They are never stored or logged.
+async fn sign_in_digits(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::AccountDigits>,
+) -> ApiResult<Json<Option<wire::AccountApprovalView>>> {
+    Ok(Json(
+        state
+            .core
+            .account
+            .submit_digits(ApprovalDigits::new(body.digits.expose().to_owned()))
+            .await?,
+    ))
+}
+
+/// Allows the new device and answers with the digits to show for it.
 async fn approve(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
+) -> ApiResult<Json<wire::AccountApproved>> {
     let confirmed = state
         .core
         .account
         .require_confirmed(ConfirmFor::ApproveDevice(id.clone()), nonce_of(&headers))
         .await?;
-    state.core.account.approve(confirmed, &id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(state.core.account.approve(confirmed, &id).await?))
 }
 
 async fn deny_approval(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    ApiJson(body): ApiJson<wire::AccountDeny>,
 ) -> ApiResult<StatusCode> {
-    state.core.account.deny(&id, body.codes_differ).await?;
+    state.core.account.deny(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

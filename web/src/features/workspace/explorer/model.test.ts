@@ -17,8 +17,8 @@ const entry = (name: string, over: Partial<ExplorerEntry> = {}): ExplorerEntry =
   name, path: name, kind: "file", size: 1, ignored: false, change: null, has_changes: false, ...over,
 });
 const kept = <T,>(data: T): Kept<T> => ({ data, loading: false, error: null });
-const level = (entries: ExplorerEntry[]): Kept<ExplorerTree> =>
-  kept({ worktree_id: "w", path: "", entries, truncated: false, changes: "ready", read_only: false });
+const level = (entries: ExplorerEntry[], over: Partial<ExplorerTree> = {}): Kept<ExplorerTree> =>
+  kept({ worktree_id: "w", path: "", entries, truncated: false, total: entries.length, total_at_least: false, changes: "ready", read_only: false, ...over });
 const thread = (id: string) => ({ id, title: id, project_id: "p" }) as Thread;
 
 const base = (over: Partial<ExplorerInput> = {}): ExplorerInput => ({
@@ -53,6 +53,20 @@ describe("explorer rows", () => {
     expect(keys(rows).some((row) => row.endsWith(":dist"))).toBe(false);
     const empty = buildRows(base({ levels: { [levelKey("p", "w", "")]: level([]) } }));
     expect(keys(empty)).toContain("empty:3:This folder is empty.");
+  });
+
+  it("closes a folder the service cut with one quiet row: what is listed, of how many it holds", () => {
+    const entries = Array.from({ length: 1000 }, (_, at) => entry(`f${at}.png`));
+    const cut = (over: Partial<ExplorerTree>) => buildRows(base({ shown: { [levelKey("p", "w", "")]: 1000 }, levels: { [levelKey("p", "w", "")]: level(entries, { truncated: true, total: 3482, ...over }) } }));
+    const rows = cut({});
+    expect(rows.at(-3)).toMatchObject({ kind: "capped", depth: 3, label: "1,000 of 3,482 shown" });
+    // A floor reads as one: the service stopped counting.
+    expect(cut({ total: 20000, total_at_least: true }).find((row) => row.kind === "capped")?.label).toBe("1,000 of 20,000+ shown");
+    // A folder the service did not cut has no such row, and neither has one still paging its own list.
+    expect(buildRows(base({ levels: { [levelKey("p", "w", "")]: level(entries.slice(0, 5)) } })).some((row) => row.kind === "capped")).toBe(false);
+    const paging = buildRows(base({ levels: { [levelKey("p", "w", "")]: level(entries, { truncated: true, total: 3482 }) } }));
+    expect(paging.some((row) => row.kind === "capped")).toBe(false);
+    expect(paging.some((row) => row.kind === "more")).toBe(true);
   });
 
   it("puts one error row where a folder's files would be, with the reason for its tooltip", () => {
