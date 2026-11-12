@@ -377,6 +377,29 @@ From [design-inventory.md](../design-inventory.md) on main: 160 screens missing,
 | `x-term-maximised` | Terminal: maximised | partial | P2 |
 | `x-term-closed` | Terminal: closed | missing | P2 |
 
+### Terminal blocks, slice 1C (16)
+
+Decided 2026-11-12: a block is one command or script the app itself runs (project scripts, Crew check runs, agent tool commands shown in a terminal), with output and duration kept by the service. The Designer redraws 14 frames as app-run blocks (tab named by its source, no prompt line, read-only, Run again on app-run blocks). Blocks for commands typed in an interactive shell need shell integration (OSC 133 for bash, zsh, fish and pwsh) and are **After the beta**. The service does not yet keep per-command output; that backend slice comes first.
+
+| Frame | Screen | State | Priority |
+| --- | --- | --- | --- |
+| `block-actions` | Block actions on an app-run block | missing | P2 |
+| `block-ask-crew` | Ask Crew about a block | missing | P2 |
+| `block-collapsed` | A collapsed block | missing | P2 |
+| `block-default` | A block | missing | P2 |
+| `block-empty` | No blocks yet: "Commands Orbyn runs appear here as blocks" | missing | P2 |
+| `block-failed` | A failed block | missing | P2 |
+| `block-filter` | Filter blocks | missing | P2 |
+| `block-find` | Find in blocks | missing | P2 |
+| `block-long` | A long block | missing | P2 |
+| `block-menu` | Block menu (no keys on Copy output and Run again) | missing | P2 |
+| `block-narrow` | Blocks at a narrow width | missing | P2 |
+| `block-running` | A running block with Stop | missing | P2 |
+| `block-send-chip` | Send a block to the message | missing | P2 |
+| `block-start-crew` | Start Crew from a block (display-only until the Crew backend) | missing | P2 |
+| `block-fullscreen` | Full-screen program in a block | After the beta | n/a |
+| `block-fullscreen-ended` | A full-screen program ended | After the beta | n/a |
+
 ### Phone, more (2)
 
 | Frame | Screen | State | Priority |
