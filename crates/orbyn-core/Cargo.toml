@@ -9,9 +9,14 @@ license-file.workspace = true
 [features]
 # Rows and a repository for the HTTP tests of orbynd.
 test-support = []
+# The Engine adapter and its dependency. Off in every normal build, release included, because
+# nothing calls it while sign-in is off; the tests switch it on through the dev-dependency below.
+engine-client = ["dep:orbyn-device-client"]
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
+# The Engine's device client, by tag: the one Engine crate the app names (docs/account.md, "Engine pin").
+orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.2", optional = true }
 async-trait.workspace = true
 base64 = "0.22"
 ed25519-dalek.workspace = true
@@ -47,4 +52,5 @@ libc.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+orbyn-core = { path = ".", features = ["engine-client"] }
 tokio = { workspace = true, features = ["test-util"] }

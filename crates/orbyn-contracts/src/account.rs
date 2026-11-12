@@ -171,6 +171,11 @@ pub struct AccountApprovalRequest {
 #[ts(export, export_to = "../../../web/src/generated/")]
 pub struct AccountApproved {
     pub digits: String,
+    /// Seconds the approval has left by the Engine's own count, when it says. A display hint
+    /// only: the Engine decides, and the app never acts on it. Absent when the Engine did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub expires_in_secs: Option<u64>,
 }
 
 impl fmt::Debug for AccountApproved {

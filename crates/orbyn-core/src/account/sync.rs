@@ -259,7 +259,12 @@ impl ZoneWorker {
                 | DeviceError::RequestGone
                 | DeviceError::WrongDigits { .. }
                 | DeviceError::DigitsLocked
-                | DeviceError::ProofFailed,
+                | DeviceError::ProofFailed
+                | DeviceError::ReauthRequired
+                | DeviceError::LastTrustedDevice
+                | DeviceError::AlreadySignedIn
+                | DeviceError::KeysNotSaved
+                | DeviceError::ApprovalRefused,
             ) => pause(PauseReason::ZoneFailed),
             Failure::Local(error) => {
                 tracing::warn!(

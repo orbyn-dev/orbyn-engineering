@@ -1,2 +1,3 @@
-// Front door: the only module outside crew that imports from it.
+// Front door of the Crew feature: the only module outside crew imports from it.
 export { CrewPreview, crewPreviewRoute } from "./previews";
+export * from "./autopilot/approvals";

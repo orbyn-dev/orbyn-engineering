@@ -158,7 +158,7 @@ pub(super) fn mark_applied(tx: &Connection, zone: &str, max_wall: i64) -> Result
 }
 
 /// A removal marker of a set element older than the horizon.
-fn is_old_tombstone(name: &str, field: &Field, now_ms: i64) -> bool {
+pub(crate) fn is_old_tombstone(name: &str, field: &Field, now_ms: i64) -> bool {
     crate::account::settings_record::set_key_of(name).is_some()
         && field.value.get("removed") == Some(&Value::Bool(true))
         && field.stamp.wall_ms < now_ms - crate::account::settings_record::TOMBSTONE_HORIZON_MS
@@ -288,6 +288,7 @@ impl Store {
         zone: &str,
         seed: &[Staged],
         seed_wins: bool,
+        device: Option<&str>,
     ) -> Result<()> {
         let touched = self.commit(|tx, _| {
             let known = clock(tx, zone)?;
@@ -300,7 +301,7 @@ impl Store {
             }
             tx.execute(
                 "INSERT INTO account_sync (zone, capture, device) VALUES (?1, 1, ?2)",
-                params![zone, crate::util::new_id()],
+                params![zone, device.map_or_else(crate::util::new_id, str::to_owned)],
             )?;
             capture(tx, zone, seed, crate::util::unix_now_ms(), true, seed_wins)
         })?;

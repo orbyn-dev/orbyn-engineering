@@ -24,6 +24,7 @@ import type {
   WorkspaceStatus,
 } from "../src/api/types.ts";
 import { createAccountMock } from "./account.ts";
+import { createCrewMock } from "./crew.ts";
 import { createExplorerMock } from "./explorer.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
@@ -46,6 +47,8 @@ export type Scenario =
   | "reference"
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
+  /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. */
+  | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
   | "pulls-details-failed"
@@ -118,12 +121,14 @@ export function createMockApi(options: MockOptions = {}) {
   const now = () => new Date(fixtures.T0 + idCounter * 1000).toISOString();
 
   const accountMock = createAccountMock();
+  const crewMock = createCrewMock();
 
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     scenario = next;
     accountMock.reset(next === "account");
+    crewMock.reset(next);
     signedIn = false;
     idCounter = 0;
     preferenceValues = {};
@@ -1062,6 +1067,7 @@ export function createMockApi(options: MockOptions = {}) {
         return err(failure.status, failure.code, failure.message);
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
+      if (parsed.pathname.startsWith("/api/crew")) return crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */

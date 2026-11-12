@@ -19,11 +19,15 @@ describe("assert-no-previews", () => {
     expect(run({ "index.js": "console.log('app')" }).status).toBe(0);
   });
 
+  it("passes the real Crew screens, which ship behind the service's own flag", () => {
+    const real = `"Crew is not connected to this app yet";"/api/crew/preview";.ap-chip{display:inline-flex}`;
+    expect(run({ "crew.js": real }).status).toBe(0);
+  });
+
   it.each([
     ["the Crew hash route", `const r=/^#\\/preview\\/crew\\/([a-z-]+)$/;`],
     ["the Crew route as text", `location.hash="#/preview/crew/review-queue"`],
     ["a Crew frame id", `["mergequeue-narrow-panel"]`],
-    ["the Crew screen notice", `"Crew is not connected to this app yet"`],
     ["a Crew screen class", `.crew-apq{display:grid}`],
     ["a platform screen", `"Sign in to Orbyn"`],
   ])("fails a production bundle holding %s", (_name, text) => {
