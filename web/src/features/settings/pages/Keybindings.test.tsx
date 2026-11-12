@@ -57,3 +57,19 @@ it("ignores modifier-only presses and cancels Escape without saving", async () =
   expect(screen.queryByRole("button", { name: "Press keys…" })).toBeNull();
   expect(vi.mocked(request).mock.calls.filter(([method]) => method === "POST")).toHaveLength(0);
 });
+
+it("names a clash in plain words, with the context as a phrase", async () => {
+  vi.mocked(request).mockReset().mockResolvedValue({
+    ...initial,
+    conflicts: [
+      { key: "mod+shift+b", when: "terminalFocus", commands: ["terminal.split", "terminal.new"] },
+      { key: "mod+b", when: null, commands: ["sidebar.toggle", "diff.toggle"] },
+      { key: "mod+enter", when: "composerFocus && turnRunning", commands: ["composer.sendAlternate", "composer.sendBackground"] },
+    ],
+  });
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  render(<KeybindingsSection />);
+  expect((await screen.findByText(/Split terminal and New terminal both use/)).textContent).toBe("Split terminal and New terminal both use ⌘⇧B when the terminal is focused.");
+  expect(screen.getByText(/Toggle sidebar and Toggle diff both use/).textContent).toBe("Toggle sidebar and Toggle diff both use ⌘B.");
+  expect(screen.getByText(/Send the other way and/).textContent).toBe("Send the other way and Send in the background both use ⌘↵ when composerFocus && turnRunning.");
+});

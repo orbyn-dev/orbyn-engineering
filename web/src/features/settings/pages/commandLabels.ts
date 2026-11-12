@@ -92,3 +92,10 @@ export function whenPhrase(when: string | null): string {
   if (phrases.some((phrase) => phrase === null)) return when;
   return `When ${phrases.join(" and ")}`;
 }
+
+/** The clause for a sentence: "when the terminal is focused", or "" when the rule applies anywhere. */
+export function whenClause(when: string | null): string {
+  const phrase = whenPhrase(when);
+  if (phrase === "Anywhere") return "";
+  return phrase.startsWith("When ") ? `when ${phrase.slice(5)}` : `when ${phrase}`;
+}
