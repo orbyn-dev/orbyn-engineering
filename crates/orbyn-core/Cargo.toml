@@ -27,6 +27,7 @@ ignore = "=0.4.34"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
 portable-pty.workspace = true
 regex.workspace = true
+regex-syntax.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

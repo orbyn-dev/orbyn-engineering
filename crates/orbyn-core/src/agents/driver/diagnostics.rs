@@ -102,6 +102,9 @@ fn is_opaque(word: &str) -> bool {
 fn looks_secret(line: &str) -> bool {
     let lower = line.to_lowercase();
     KEYED.iter().any(|key| lower.contains(key))
+        || crate::redaction::Redactor::locked()
+            .class_of(line)
+            .is_some()
         || line
             .split(|c: char| c.is_whitespace() || "=:\"'`,;()[]{}<>".contains(c))
             .any(|word| PREFIXES.iter().any(|prefix| word.starts_with(prefix)) || is_opaque(word))

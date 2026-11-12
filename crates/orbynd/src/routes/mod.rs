@@ -22,6 +22,7 @@ mod pulls;
 mod raw_files;
 mod renders;
 mod runs;
+mod secrets;
 mod settings;
 mod shell;
 mod skills;
@@ -59,6 +60,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crew::routes(state.clone()))
         .merge(media::routes())
         .merge(settings::routes())
+        .merge(secrets::routes())
         .merge(projects::routes())
         .merge(threads::routes())
         .merge(workspace::routes())
