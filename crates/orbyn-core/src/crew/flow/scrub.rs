@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::super::guard::{key_needles, redact, refuse_leak, withhold};
+use super::super::guard::{redact, refuse_leak, withhold};
 use crate::app::Core;
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::redaction::Redactor;
 
 /// Longest name, claim or reason a screen is given, in characters.
@@ -19,14 +19,13 @@ pub(super) struct Scrub {
 }
 
 impl Scrub {
-    /// The scrub for one task: its key's text is withheld. Fails when the redaction settings cannot be read, so a row
-    /// is not shown without the patterns the person asked to hide.
-    pub(super) fn of(core: &Core, person: &Arc<Redactor>, task_id: &str) -> Result<Self> {
+    /// The scrub for one crew: the answer keys of all its tasks and the lead's stored repros are withheld, as everywhere
+    /// else in Crew (`crew_key_needles`), because a lead's free-text reason can quote any of them. Read once per call.
+    /// Fails when the redaction settings or the keys cannot be read, so a row is not shown unscrubbed.
+    pub(super) fn of_crew(core: &Core, person: &Arc<Redactor>, crew_id: &str) -> Result<Self> {
         let needles = core
-            .store
-            .crew_answer_key(task_id)?
-            .map(|key| key_needles(&key))
-            .unwrap_or_default();
+            .crew_key_needles(crew_id)
+            .map_err(|_| CoreError::Internal("the crew could not be read".into()))?;
         Ok(Self {
             needles,
             person: Arc::clone(person),

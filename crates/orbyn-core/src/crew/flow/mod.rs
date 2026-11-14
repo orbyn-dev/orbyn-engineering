@@ -11,8 +11,6 @@ mod cells;
 mod facts;
 mod scrub;
 
-use std::sync::Arc;
-
 use orbyn_contracts as wire;
 use serde_json::Value;
 
@@ -23,7 +21,6 @@ use super::lifecycle::is_final;
 use super::{Page, valid_id, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::redaction::Redactor;
 
 /// The most work tasks one list call reads; the newest are kept.
 pub const SCAN_MAX: u32 = 500;
@@ -45,6 +42,30 @@ fn strings(value: &Value) -> Vec<String> {
 
 fn short(id: &str) -> String {
     id.chars().take(12).collect()
+}
+
+fn flow_row(facts: &Facts, line: Vec<wire::FlowCell>, scrub: &Scrub) -> wire::FlowTaskRow {
+    wire::FlowTaskRow {
+        id: facts.task.id.clone(),
+        name: facts
+            .brief
+            .as_ref()
+            .map_or_else(String::new, |b| scrub.text(&b.outcome, 160)),
+        kind: facts
+            .brief
+            .as_ref()
+            .map_or_else(String::new, |b| wire_name(&b.kind)),
+        engine: facts.route.as_ref().map(|r| r.engine.as_str().to_owned()),
+        owner: facts
+            .run
+            .as_ref()
+            .map_or_else(String::new, |r| scrub.text(&r.member, 60)),
+        state: facts.task.state.clone(),
+        round: round(facts),
+        cells: line,
+        created_at: facts.task.created_at.clone(),
+        updated_at: facts.task.updated_at.clone(),
+    }
 }
 
 impl Core {
@@ -99,6 +120,7 @@ impl Core {
             )));
         }
         let person = self.display_redactor()?;
+        let scrub = Scrub::of_crew(self, &person, crew)?;
         let mut tasks = self.store.crew_work_tasks(crew, SCAN_MAX + 1)?;
         let truncated = tasks.len() > SCAN_MAX as usize;
         tasks.truncate(SCAN_MAX as usize);
@@ -124,7 +146,7 @@ impl Core {
             if !in_filter(&line, &state, filter) {
                 continue;
             }
-            let row = self.flow_row(&facts, line, &person)?;
+            let row = flow_row(&facts, line, &scrub);
             if engine.is_some_and(|e| row.engine.as_deref() != Some(e)) {
                 continue;
             }
@@ -157,36 +179,6 @@ impl Core {
         })
     }
 
-    fn flow_row(
-        &self,
-        facts: &Facts,
-        line: Vec<wire::FlowCell>,
-        person: &Arc<Redactor>,
-    ) -> Result<wire::FlowTaskRow> {
-        let scrub = Scrub::of(self, person, &facts.task.id)?;
-        Ok(wire::FlowTaskRow {
-            id: facts.task.id.clone(),
-            name: facts
-                .brief
-                .as_ref()
-                .map_or_else(String::new, |b| scrub.text(&b.outcome, 160)),
-            kind: facts
-                .brief
-                .as_ref()
-                .map_or_else(String::new, |b| wire_name(&b.kind)),
-            engine: facts.route.as_ref().map(|r| r.engine.as_str().to_owned()),
-            owner: facts
-                .run
-                .as_ref()
-                .map_or_else(String::new, |r| scrub.text(&r.member, 60)),
-            state: facts.task.state.clone(),
-            round: round(facts),
-            cells: line,
-            created_at: facts.task.created_at.clone(),
-            updated_at: facts.task.updated_at.clone(),
-        })
-    }
-
     /// One work task zoomed: its lanes, findings, gates and rounds.
     pub fn crew_flow_task(&self, id: &str) -> Result<wire::FlowTaskDetail> {
         self.crew_preview_only()?;
@@ -199,9 +191,9 @@ impl Core {
         let finished = is_final(&task.state);
         let person = self.display_redactor()?;
         let facts = self.flow_facts(task)?;
-        let scrub = Scrub::of(self, &person, id)?;
+        let scrub = Scrub::of_crew(self, &person, &facts.task.crew_id)?;
         let line = cells(&facts);
-        let row = self.flow_row(&facts, line, &person)?;
+        let row = flow_row(&facts, line, &scrub);
         let mut truncated = false;
 
         let findings_all = facts.review["findings"]
@@ -219,6 +211,7 @@ impl Core {
                     .count()
             };
             let route = self.store.crew_route_decisions(&task)?.pop();
+            let shown = scrub.text(&lane, 60);
             lanes.push(wire::FlowLane {
                 group: if is_security(&lane) {
                     "security"
@@ -231,7 +224,7 @@ impl Core {
                 unconfirmed: u32::try_from(of("unconfirmed")).unwrap_or(0),
                 engine: route.as_ref().map(|r| r.engine.as_str().to_owned()),
                 model: route.as_ref().map(|r| scrub.text(r.model.as_str(), 80)),
-                lane,
+                lane: shown,
                 task,
                 round,
                 state,

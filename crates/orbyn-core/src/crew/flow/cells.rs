@@ -7,11 +7,10 @@ use serde_json::Value;
 use super::facts::Facts;
 use crate::crew::lifecycle::is_final;
 
-/// The lanes that count as the Security review; every other lane is the Code review.
-const SECURITY_LANES: [&str; 3] = ["security", "secrets", "keys"];
-
+/// Only the review's own security lane is the Security review; every other lane, a free-form one named `secrets`
+/// included, is the Code review.
 pub(super) fn is_security(lane: &str) -> bool {
-    SECURITY_LANES.contains(&lane)
+    lane == crate::crew::SECURITY_LANE
 }
 
 fn cell(stage: FlowStage, state: FlowCellState) -> FlowCell {

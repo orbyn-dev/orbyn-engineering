@@ -47,7 +47,7 @@ impl Core {
             json!({ "lanes": [], "findings": [], "blocked": false })
         } else {
             self.review_status(&id)
-                .map_err(|e| CoreError::Invalid(e.to_string()))?
+                .map_err(|_| CoreError::Internal("the review could not be read".into()))?
         };
         Ok(Facts {
             run: store.crew_run(&id)?,

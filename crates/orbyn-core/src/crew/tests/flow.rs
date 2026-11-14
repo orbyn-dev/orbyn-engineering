@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::harness::{Turn, brief, key, world};
 use super::review_support::{arc, built, crew, finding, reviewed};
 use crate::crew::Page;
+use crate::store::FindingRepro;
 
 fn page() -> Page {
     Page::new(None, None).unwrap()
@@ -387,4 +388,107 @@ async fn bad_input_is_refused_and_an_empty_crew_is_an_empty_list() {
         w.core.crew_flow_task("sha256:ffff"),
         Err(crate::error::CoreError::NotFound(_))
     ));
+}
+
+/// A runtime value that is unique to this run and appears in no constant.
+fn nonce(label: &str) -> String {
+    format!(
+        "{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
+}
+
+#[tokio::test]
+async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() {
+    let w = crew(arc(|n, root| match n {
+        1 => reviewed(vec![finding(
+            "src/lib.txt",
+            1,
+            "It wraps on a large value.",
+        )]),
+        _ => built(root),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let crew_id = w.task(&subject).crew_id;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+
+    // Another task of the crew has a key whose check is a command of its own.
+    let other_check = format!("echo {}", nonce("other-check"));
+    let other_key = json!({
+        "checks": [{ "id": "chk-other", "kind": "command", "params": { "run": other_check },
+            "proves": "It runs." }],
+        "protected_paths": ["tests/**"]
+    });
+    let other = w.built_with(other_key).await;
+    assert_ne!(other, subject);
+
+    // The lead's repro for the finding is stored apart from any key.
+    let repro_command = format!("echo {}", nonce("repro"));
+    let repro = json!({ "id": "repro-x", "kind": "command", "params": { "run": repro_command },
+        "proves": "It fails." });
+    w.core
+        .store
+        .add_finding_repro(&FindingRepro {
+            finding_id: w.first_finding(&subject),
+            subject_id: subject.clone(),
+            repro: repro.to_string(),
+        })
+        .unwrap();
+
+    // The lead's free-text reason on a Gate is checked for secrets when written, not for key text.
+    let mut gate =
+        CrewObject::Gate(w.core.store.crew_gates(&subject).unwrap().remove(0)).to_value();
+    gate["reason"] = json!(format!("ran {repro_command} and {other_check}"));
+    gate["id"] = json!(object_id(&gate).unwrap());
+    w.core
+        .store
+        .add_crew_object(&subject, &CrewObject::parse(&gate).unwrap())
+        .unwrap();
+    assert_eq!(
+        w.task(&subject).state,
+        "passed",
+        "the task is final, so reasons are read"
+    );
+
+    let text = everything(&w, &crew_id, &subject);
+    assert!(
+        text.contains("ran "),
+        "the reason is read once the task is final"
+    );
+    for secret in [&repro_command, &other_check] {
+        assert!(!text.contains(secret.as_str()), "a read holds {secret}");
+    }
+}
+
+#[tokio::test]
+async fn only_the_security_lane_is_the_security_review() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let crew_id = w.task(&subject).crew_id;
+    let lanes = w.review(&subject, &["secrets", "keys"]).await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
+    let list = w
+        .core
+        .crew_flow_tasks(&crew_id, None, None, None, page())
+        .unwrap();
+    assert_eq!(
+        state(&list, Stage::Security),
+        State::Pending,
+        "a lane named secrets is not the Security review"
+    );
+    assert_eq!(state(&list, Stage::Code), State::Done);
+    let detail = w.core.crew_flow_task(&subject).unwrap();
+    assert!(detail.lanes.iter().all(|l| l.group == "code"));
 }
