@@ -185,13 +185,14 @@ jobs:
 
   # Windows Rust tests, split into shards by test count (nextest --partition). One job took
   # about 22 minutes (3.7 of them compiling, 19 running 1,600 tests on four cores); the test
-  # time divides almost linearly, so six shards bring each to about the macOS lane's time.
+  # time divides almost linearly. Three shards (not six) keep one pull request's hosted-job count
+  # low: the Free plan allows 20 concurrent hosted jobs, so a run that fills them queues every other run.
   # Every shard compiles the same tests, so they share one cache that shard 1 saves.
   # CARGO_PROFILE_DEV_DEBUG=0 drops the debug info the tests never read (the linker writes
   # a large .pdb per test binary otherwise), and rust-lld links the 61 test binaries faster
   # than link.exe. Both apply to this job only; the release profile and release.yml are untouched.
   rust-windows-shard:
-    name: Rust Windows shard ${{ matrix.shard }}/6
+    name: Rust Windows shard ${{ matrix.shard }}/3
     needs: [changes, lint]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true'
     runs-on: windows-2022
@@ -201,7 +202,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -218,7 +219,7 @@ jobs:
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.shard }}/6
+      - run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.shard }}/3
       # Doc tests are 5 seconds; the generated wire types are platform-independent and
       # checked on macOS, where every test has run in one checkout.
       - if: matrix.shard == 1
@@ -309,7 +310,7 @@ jobs:
           [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$BUILD" "$SCOPE"
 
   # The browser suite's service, built once. Every shard downloads these two binaries
-  # instead of compiling them again (about a minute each, twelve times over).
+  # instead of compiling them again (about a minute each, six times over).
   e2e-build:
     name: E2E service build
     needs: [changes, lint]
@@ -335,18 +336,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The browser suite, split by file across twelve runners. web/scripts/e2e-shards.mjs
+  # The browser suite, split by file across six runners (fewer, longer shards keep the run's
+  # hosted-job count low). web/scripts/e2e-shards.mjs
   # gives each shard the files that balance the measured durations in
   # web/e2e/shard-durations.json (refresh steps at the top of that script).
   e2e-shard:
-    name: E2E shard ${{ matrix.shard }}/12
+    name: E2E shard ${{ matrix.shard }}/6
     needs: [changes, lint, e2e-build]
     if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -373,7 +375,7 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ github.workspace }}/e2e-timing/shard-${{ matrix.shard }}.json
         run: |
-          files=$(node scripts/e2e-shards.mjs ${{ matrix.shard }} 12)
+          files=$(node scripts/e2e-shards.mjs ${{ matrix.shard }} 6)
           # An empty list would run the whole suite.
           [ -n "$files" ] || { echo "no spec files for this shard"; exit 1; }
           echo "$files"
