@@ -142,7 +142,7 @@ sit inside the data folder, which a worker running as the same user can read: th
 
 ## Ledger
 
-`crew_autopilot_events` (migration 38) is append-only: `allowed`, `denied`, `person`, `disagreement`, `tripwire`, and the rows of a held command (`held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used`, `hold_ended`),
+`crew_autopilot_events` (migration 38) is append-only: `allowed`, `denied`, `person`, `disagreement`, `tripwire`, and the rows of a held command (`held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used`, `hold_ended`) and, one per routing, `route_class` (the data classes a brief was in and the engines they blocked),
 each with the action, who decided and the rule or reasons. Counters are read from the rows. This is not the hash-chained
 ledger of slice 4c; when that lands these rows move into it.
 

@@ -26,6 +26,7 @@ const markers = [
   "settings-crew",
   // Crew Designs Flow (features/crew/flow): a frame id.
   "flow-narrow-panel",
+  "needsyou-narrow-panel",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

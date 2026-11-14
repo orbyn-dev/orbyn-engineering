@@ -12,7 +12,8 @@ use orbyn_contracts::{
     RouteRejection, RouteRequested, RouteRole, RouteScore,
 };
 
-use super::filters::{Admitted, Want, rejection, screen, short};
+use super::classes::PathClasses;
+use super::filters::{Admitted, Want, class_screen, rejection, screen, short};
 use super::score::{EvalHistory, Scored, score};
 use super::tiers::{RouterConfig, reviews, role_for_kind, role_tier};
 use super::view::EngineView;
@@ -30,6 +31,9 @@ pub struct RouteInput<'a> {
     pub author_engine: Option<CrewToken>,
     /// The person's default engine. It breaks a tie and adds no points.
     pub default_engine: Option<String>,
+    /// What the repository's data classes say about the brief's files, read at the commit the task starts from. `None` is no
+    /// classification at all (a pure route that reads no repository).
+    pub classes: Option<&'a PathClasses>,
 }
 
 /// Why nothing was chosen. Names what was asked for, so the lead can say why.
@@ -86,6 +90,23 @@ fn score_text(view: &EngineView, scored: &Scored, kind: BriefKind) -> String {
         scored.pass_permille,
         scored.headroom_permille
     )
+}
+
+/// The classes that applied and the file they were read from, so the decision can be checked against it later.
+fn classes_text(classes: &PathClasses) -> String {
+    let file = &classes.file;
+    let from = match (&file.commit, &file.blob) {
+        (Some(commit), Some(blob)) => {
+            format!(" Rules from .orbyn/crew.json at commit {commit}, blob {blob}.")
+        }
+        (Some(commit), None) => format!(" Rules read at commit {commit}."),
+        _ => String::new(),
+    };
+    let every = classes
+        .unknown
+        .as_ref()
+        .map_or_else(String::new, |why| format!(" Every class counted: {why}."));
+    format!("Path classes: {}.{every}{from}", classes.names().join(", "))
 }
 
 fn refusal(
@@ -157,6 +178,13 @@ pub fn route(
     let mut admitted: Vec<Admitted<'_>> = Vec::new();
     let mut rejected: Vec<RouteRejection> = Vec::new();
     for view in sorted {
+        // A data class comes before every other filter and before scoring.
+        if let Some(classes) = input.classes
+            && let Err(why) = class_screen(view, classes, engines)
+        {
+            rejected.push(why);
+            continue;
+        }
         let named = request
             .filter(|r| r.id == view.id)
             .and_then(|r| r.model.as_ref())
@@ -233,10 +261,25 @@ pub fn route(
                 );
                 (own, text)
             }
-            None => (
-                rejected,
-                "No engine on this machine can take this brief.".to_owned(),
-            ),
+            None => {
+                let message = match input.classes {
+                    Some(classes)
+                        if !rejected.is_empty()
+                            && rejected.iter().all(|x| x.why == RejectionWhy::PathClass) =>
+                    {
+                        if classes.file.invalid() {
+                            format!("Every engine is blocked: {}", classes.file.problem_text())
+                        } else {
+                            format!(
+                                "No engine is allowed by every rule that covers this brief ({}).",
+                                classes.names().join(", ")
+                            )
+                        }
+                    }
+                    _ => "No engine on this machine can take this brief.".to_owned(),
+                };
+                (rejected, message)
+            }
         };
         return Err(refusal(requested, why, message));
     };
@@ -293,6 +336,9 @@ pub fn route(
             "default_engine_tiebreak",
             "Tied on score; your default engine wins.",
         ));
+    }
+    if let Some(classes) = input.classes.filter(|c| c.applies()) {
+        reasons.push(reason("path_classes", classes_text(classes)));
     }
     reasons.push(reason(
         "model",
