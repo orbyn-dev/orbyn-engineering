@@ -88,7 +88,7 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
   vault key the old file cannot be read. Otherwise a removed device would keep every zone key (D10).
   - *Check:* after each of the three, the keychain has no item for the profile and the snapshot file is gone.
 
-### 2. No account material in any process environment (to build)
+### 2. No account material in any process environment (built)
 
 An engine reads environment variables, so none may carry account material, in `orbynd` or in a child.
 
@@ -106,9 +106,9 @@ An engine reads environment variables, so none may carry account material, in `o
   `project/files.rs:760`, `governance/computer/cdp.rs:335`, `agents/acp_registry.rs:220`). The version probe
   can start with a cleared environment and a short allow-list (`PATH`, `HOME`, `LANG`, `LC_*` and a few Windows names) (`agents/engines/probe.rs:37-52`), which is the
   stronger form.
-- **Two spawns skip it today.** The `kill` and `taskkill` helpers (`browser/preview/servers.rs:213` and
-  `host/process.rs:364`) inherit the environment. They run for a moment and are never engines. The wiring pull request
-  sends them through `for_tool` anyway, so the rule has no exceptions to remember.
+- **No spawn skips it.** The `kill` and `taskkill` helpers (`browser/preview/servers.rs`, `host/process.rs`) and the
+  macOS sandbox probe go through `for_tool` too. The only spawns outside the gate are audited exceptions listed in
+  `SPAWN_EXCEPTIONS` in `scripts/check_rust_arch.py`, each with a comment saying why.
 - *Checks:* a unit test in `child_env.rs` feeds `plan` a set of variables with every reserved name and asserts each is
   removed for tool, engine and terminal; a test starts a child that prints its environment and asserts it holds no
   reserved name; and `scripts/check_rust_arch.py` (the existing text check for spawns, `docs/refactor.md`) gains a
