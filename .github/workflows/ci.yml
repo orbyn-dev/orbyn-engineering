@@ -194,7 +194,7 @@ jobs:
     name: Rust Windows shard ${{ matrix.shard }}/6
     needs: [changes, lint]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true'
-    # Windows legs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. The required check names do not change.
+    # The two Rust jobs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy, and the runner should be a dedicated low-privilege user or VM with no other credentials. Set the variable only after the group serves this repository, and unset it when the machine is down: a job with no runner waits in the queue. The desktop build, cache warm and packaged jobs stay hosted because their smoke test installs the app on the machine.
     runs-on: ${{ (vars.CI_RUNNER_WINDOWS == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","windows","orbyn-win"]') || 'windows-2022' }}
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -230,7 +230,7 @@ jobs:
     name: Rust Windows clippy
     needs: [changes, lint]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true'
-    # Windows legs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. The required check names do not change.
+    # The two Rust jobs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy, and the runner should be a dedicated low-privilege user or VM with no other credentials. Set the variable only after the group serves this repository, and unset it when the machine is down: a job with no runner waits in the queue. The desktop build, cache warm and packaged jobs stay hosted because their smoke test installs the app on the machine.
     runs-on: ${{ (vars.CI_RUNNER_WINDOWS == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","windows","orbyn-win"]') || 'windows-2022' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -429,8 +429,7 @@ jobs:
     if: needs.changes.outputs.desktop == 'true'
     # Counts running time only, not time queued for a runner. Default is 360.
     timeout-minutes: 45
-    # Windows legs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. The required check names do not change.
-    runs-on: ${{ (matrix.os == 'windows-2022' && vars.CI_RUNNER_WINDOWS == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","windows","orbyn-win"]') || matrix.os }}
+    runs-on: ${{ matrix.os }}
     env:
       # A pull request builds the faster `ci-release` profile (no link-time optimisation); main,
       # nightly and manual runs build the real `release` profile. Read by prepare-bundle and smoke-app.
@@ -568,8 +567,7 @@ jobs:
     if: github.event_name == 'push'
     # Counts running time only, not time queued for a runner. Default is 360.
     timeout-minutes: 45
-    # Windows legs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. The required check names do not change.
-    runs-on: ${{ (matrix.os == 'windows-2022' && vars.CI_RUNNER_WINDOWS == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","windows","orbyn-win"]') || matrix.os }}
+    runs-on: ${{ matrix.os }}
     env:
       ORBYN_CARGO_PROFILE: ci-release
     strategy:
