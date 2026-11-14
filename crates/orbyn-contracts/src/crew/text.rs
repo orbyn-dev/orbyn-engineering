@@ -265,63 +265,78 @@ fn long_rule(value: &str) -> Result<(), String> {
 
 crew_string!(
     /// A content address: `sha256:` and 64 lowercase hex digits.
-    CrewHash, hash_rule
+    CrewHash,
+    hash_rule
 );
 crew_string!(
     /// An id the core assigns (crew, run, check). Opaque to members.
-    CrewId, id_rule
+    CrewId,
+    id_rule
 );
 crew_string!(
     /// A crew member. `lead`, `all`, `core` and `person` are reserved.
-    CrewMember, member_rule
+    CrewMember,
+    member_rule
 );
 crew_string!(
     /// Who a message goes to: `lead`, `all` or a member id.
-    CrewAddressee, addressee_rule
+    CrewAddressee,
+    addressee_rule
 );
 crew_string!(
     /// A lowercase identifier such as an engine id, a lane or a code.
-    CrewToken, token_rule
+    CrewToken,
+    token_rule
 );
 crew_string!(
     /// The key of a board fact.
-    CrewFactKey, key_rule
+    CrewFactKey,
+    key_rule
 );
 crew_string!(
     /// A git branch name as the schema allows it.
-    CrewBranch, branch_rule
+    CrewBranch,
+    branch_rule
 );
 crew_string!(
     /// A full git object id in lowercase hex.
-    CrewCommit, commit_rule
+    CrewCommit,
+    commit_rule
 );
 crew_string!(
     /// A repository-relative path with `/`: no leading slash, drive or `..` segment.
-    CrewPath, path_rule
+    CrewPath,
+    path_rule
 );
 crew_string!(
     /// A path, optionally ending in `/**` to cover a tree. v0 has no other glob.
-    CrewPathPattern, pattern_rule
+    CrewPathPattern,
+    pattern_rule
 );
 crew_string!(
     /// An http URL on a loopback address. Probes never leave the machine.
-    CrewLoopbackUrl, loopback_rule
+    CrewLoopbackUrl,
+    loopback_rule
 );
 crew_string!(
     /// An RFC 3339 timestamp.
-    CrewTimestamp, timestamp_rule
+    CrewTimestamp,
+    timestamp_rule
 );
 crew_string!(
     /// A UTC timestamp in whole seconds, as a lease expiry is.
-    CrewUtcSeconds, utc_seconds_rule
+    CrewUtcSeconds,
+    utc_seconds_rule
 );
 crew_string!(
     /// Text of 1 to 1000 characters.
-    CrewShortText, short_rule
+    CrewShortText,
+    short_rule
 );
 crew_string!(
     /// Text of 1 to 8000 characters.
-    CrewLongText, long_rule
+    CrewLongText,
+    long_rule
 );
 
 impl CrewPathPattern {
