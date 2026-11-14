@@ -49,7 +49,7 @@ pub async fn main_branch(repo: &Path) -> String {
 }
 
 /// Starts a task that may write `paths` and waits until it passes.
-async fn passed(w: &World, paths: &[&str], outcome: &str) -> String {
+pub(super) async fn passed(w: &World, paths: &[&str], outcome: &str) -> String {
     let files: Vec<Value> = paths
         .iter()
         .map(|p| json!({ "path": p, "mode": "write" }))
@@ -66,13 +66,13 @@ async fn passed(w: &World, paths: &[&str], outcome: &str) -> String {
     id
 }
 
-struct Merging {
-    w: World,
-    main: String,
-    target: MergeTarget,
+pub(super) struct Merging {
+    pub(super) w: World,
+    pub(super) main: String,
+    pub(super) target: MergeTarget,
 }
 
-async fn merging(
+pub(super) async fn merging(
     mode: Mode,
     files: impl Fn(usize) -> Vec<(&'static str, &'static str)> + Send + Sync + 'static,
 ) -> Merging {
@@ -92,11 +92,11 @@ async fn merging(
 }
 
 impl Merging {
-    async fn tip(&self) -> String {
+    pub(super) async fn tip(&self) -> String {
         gitq(&self.w.repo, &["rev-parse", &self.main]).await
     }
 
-    async fn process(&self, now: i64) -> Vec<MergeOutcome> {
+    pub(super) async fn process(&self, now: i64) -> Vec<MergeOutcome> {
         self.w
             .core
             .crew_process_merges(&self.target, now)

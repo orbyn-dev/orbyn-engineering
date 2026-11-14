@@ -21,7 +21,7 @@ pub struct AutopilotEvent {
 }
 
 /// The kinds a row may have.
-pub const EVENT_KINDS: [&str; 21] = [
+pub const EVENT_KINDS: [&str; 23] = [
     "allowed",
     "denied",
     "person",
@@ -43,6 +43,8 @@ pub const EVENT_KINDS: [&str; 21] = [
     "command_exit",
     "route_class",
     "area_demoted",
+    "area_read_failed",
+    "area_breaker_failed",
 ];
 
 impl Store {
@@ -166,6 +168,47 @@ impl Store {
             })
             .collect::<Result<Vec<_>>>()?;
         Ok((events, total))
+    }
+
+    /// The newest breaker failures after a revert that no later row marks resolved, at most `limit`. Resolved rows are filtered out
+    /// in SQL, so they never crowd the unresolved ones out of the bound.
+    pub fn crew_unresolved_breaker_failures(&self, limit: u32) -> Result<Vec<AutopilotEvent>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events f
+             WHERE kind = 'area_breaker_failed'
+               AND json_extract(body, '$.resolved') = 0
+               AND json_extract(body, '$.stage') = 'revert'
+               AND NOT EXISTS (
+                   SELECT 1 FROM crew_autopilot_events r
+                   WHERE r.kind = 'area_breaker_failed' AND json_extract(r.body, '$.resolved') = 1
+                     AND json_extract(r.body, '$.revert') = json_extract(f.body, '$.revert'))
+             ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map([limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, crew_id, task_id, kind, body, at)| {
+                Ok(AutopilotEvent {
+                    id,
+                    crew_id,
+                    task_id,
+                    kind,
+                    body: serde_json::from_str(&body)?,
+                    at,
+                })
+            })
+            .collect()
     }
 
     /// How many rows of each kind were written at or after `since` (RFC 3339, UTC).

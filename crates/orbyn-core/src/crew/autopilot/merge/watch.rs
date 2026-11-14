@@ -115,10 +115,11 @@ pub(super) async fn revert_merge(
         ));
     }
     core.store.set_merge_reverted(&record.task_id, &commit)?;
-    // Shadow: the circuit breaker records what this revert means for the areas the merge touched. The merge lock is held by both
-    // callers, and a failure here never undoes a revert that already moved the branch.
+    // The circuit breaker records what this revert means for the areas the merge touched. The merge lock is held by both callers, and
+    // a failure here never undoes a revert that already moved the branch: it is written to the ledger and retried at the next merge
+    // or revert.
     if let Err(error) = core.area_breaker_after_revert(record, &commit, now) {
-        tracing::warn!(%error, "could not record the revert against its areas");
+        core.area_breaker_failed(&record.task_id, "revert", Some(&commit), &error);
     }
     core.merge_event(
         &record.task_id,

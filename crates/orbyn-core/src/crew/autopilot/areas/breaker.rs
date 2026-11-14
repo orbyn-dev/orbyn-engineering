@@ -49,14 +49,21 @@ impl Core {
         }
     }
 
-    /// Lowers `area` from the mode the merge was made under to `On`, as one event and one mode row. Returns whether it was recorded (a
-    /// cause already recorded is not recorded twice). The `from` mode is the one the merge actually used (`MergeRecord.mode`), not an
-    /// assumed Full. Part 2 (enforcement) must take each merge's recorded mode as its basis, not only the repository's ceiling used here.
+    /// The ceiling a merge's breaker work reads: the mode in force for the merge's crew and repository (the crew's own choice, else the
+    /// repository's, else the default, else Full), the same one the merge gate used. Not the repository's alone.
+    fn ceiling_of(&self, project: &str, record: &MergeRecord) -> Mode {
+        self.crew_autopilot_mode(project, &record.crew_id)
+    }
+
+    /// Lowers `area` from the ceiling (always Full: the rule lowers nothing else) to `On`, as one event and one mode row. Returns
+    /// whether it was recorded (a cause already recorded is not recorded twice).
+    #[allow(clippy::too_many_arguments)]
     fn demote_area(
         &self,
         project: &str,
         area: &str,
         record: &MergeRecord,
+        ceiling: Mode,
         cause: &str,
         facts: &Facts,
         now: i64,
@@ -74,7 +81,7 @@ impl Core {
             project_id: project,
             area,
             kind: "demoted",
-            from_mode: Some(&record.mode),
+            from_mode: Some(ceiling.name()),
             to_mode: Some(Mode::On.name()),
             decided_by: "breaker",
             cause,
@@ -90,17 +97,29 @@ impl Core {
             self.merge_event(
                 &record.task_id,
                 "area_demoted",
-                &json!({ "area": area, "from": record.mode, "to": "on", "shadow": true, "reason": reason }),
+                &json!({ "area": area, "from": ceiling.name(), "to": "on", "reason": reason }),
             );
         }
         Ok(written)
     }
 
     /// A merge was reverted by `revert_commit` at `now`; the record already says so. For each area the merge touched: a lowered area's
-    /// recovery clock restarts, and an area that follows its ceiling is lowered when its window trips. Each write is the event and
-    /// the mode row in one transaction, and a revert already recorded is not recorded again. Shadow: nothing reads the result.
-    /// A failure is only logged by the caller; part 2 needs a visible ledger event and a rule that fails closed.
+    /// recovery clock restarts (and a person's `keep_ceiling` override ends: this is a new trip), and an area that follows its ceiling
+    /// is lowered when its window trips. Each write is the event and the mode row in one transaction, and a revert already recorded is
+    /// not recorded again. A failure is the caller's to write to the ledger (`area_breaker_failed`), and the revert is retried at the
+    /// next merge or revert; reverts whose breaker failed earlier are looked at first.
     pub(crate) fn area_breaker_after_revert(
+        &self,
+        record: &MergeRecord,
+        revert_commit: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.area_breaker_retry(now);
+        self.area_apply_revert(record, revert_commit, now)
+    }
+
+    /// The breaker's work for one revert, without the retry of earlier failures.
+    pub(super) fn area_apply_revert(
         &self,
         record: &MergeRecord,
         revert_commit: &str,
@@ -110,7 +129,7 @@ impl Core {
             return Ok(());
         };
         let merges = self.store.crew_merges_of_project(&project)?;
-        let ceiling = self.crew_project_mode(&project);
+        let ceiling = self.ceiling_of(&project, record);
         for area in &record.areas {
             let row = self.store.area_mode(&project, area)?;
             let stored = stored_of(row.as_ref());
@@ -118,6 +137,24 @@ impl Core {
             match stored {
                 Stored::Demoted { .. } => {
                     let kept = record_json(facts.window);
+                    if row.as_ref().and_then(|r| r.person_override.as_deref())
+                        == Some("keep_ceiling")
+                    {
+                        // A new trip: the person's keep_ceiling ended with the lowering it ignored. Cleared before the clock
+                        // restarts, so a failure in between leaves the area lowered, never kept.
+                        self.store.record_area_change(&AreaWrite {
+                            project_id: &project,
+                            area,
+                            kind: "override_cleared",
+                            from_mode: Some(ceiling.name()),
+                            to_mode: Some(Mode::On.name()),
+                            decided_by: "breaker",
+                            cause: revert_commit,
+                            record: &kept,
+                            at: now,
+                            change: AreaChange::ClearKeepCeiling { since: now },
+                        })?;
+                    }
                     self.store.record_area_change(&AreaWrite {
                         project_id: &project,
                         area,
@@ -132,7 +169,7 @@ impl Core {
                     })?;
                 }
                 Stored::Follows if decide(&facts, stored, ceiling, now) == Change::Demote => {
-                    self.demote_area(&project, area, record, revert_commit, &facts, now)?;
+                    self.demote_area(&project, area, record, ceiling, revert_commit, &facts, now)?;
                 }
                 Stored::Follows => {}
             }
@@ -144,18 +181,19 @@ impl Core {
     /// is evaluated again: 3 merges with 2 reverted and then 2 clean ones meet the rule at the fifth merge with no further revert. The
     /// cause is `merge:<id>`, so a retry records once. Then lowered areas whose way back is met return.
     pub(crate) fn area_breaker_after_merge(&self, record: &MergeRecord, now: i64) -> Result<()> {
+        self.area_breaker_retry(now);
         let Some(project) = self.project_of_task(&record.task_id)? else {
             return Ok(());
         };
         let merges = self.store.crew_merges_of_project(&project)?;
-        let ceiling = self.crew_project_mode(&project);
+        let ceiling = self.ceiling_of(&project, record);
         for area in &record.areas {
             let row = self.store.area_mode(&project, area)?;
             let stored = stored_of(row.as_ref());
             let facts = facts_of(&merges, area, stored, now);
             if stored == Stored::Follows && decide(&facts, stored, ceiling, now) == Change::Demote {
                 let cause = format!("merge:{}", record.id);
-                self.demote_area(&project, area, record, &cause, &facts, now)?;
+                self.demote_area(&project, area, record, ceiling, &cause, &facts, now)?;
             }
         }
         self.area_restore_check(&record.task_id, now)
@@ -199,6 +237,23 @@ impl Core {
             };
             let kept = record_json(facts.window);
             let cause = format!("restore:{recovery_since}");
+            if row.person_override.as_deref() == Some("keep_ceiling") {
+                // The lowering the person ignored is over, so their override ends with it: the trail shows how.
+                self.store.record_area_change(&AreaWrite {
+                    project_id: &project,
+                    area: &row.area,
+                    kind: "override_cleared",
+                    from_mode: Some(ceiling.name()),
+                    to_mode: Some(ceiling.name()),
+                    decided_by: "breaker",
+                    cause: &cause,
+                    record: &kept,
+                    at: now,
+                    change: AreaChange::ClearKeepCeiling {
+                        since: recovery_since,
+                    },
+                })?;
+            }
             self.store.record_area_change(&AreaWrite {
                 project_id: &project,
                 area: &row.area,

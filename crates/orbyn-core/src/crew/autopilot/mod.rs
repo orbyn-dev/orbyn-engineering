@@ -19,6 +19,7 @@ mod targets;
 mod tier;
 mod tripwire;
 
+pub(crate) use areas::AreaCache;
 pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
 pub use held::{APPROVAL_LIFETIME_SECS, HELD_LIFETIME_SECS, HeldBook, SHOWN_MAX};

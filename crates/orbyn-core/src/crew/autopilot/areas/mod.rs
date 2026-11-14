@@ -1,7 +1,8 @@
-//! Autonomy by area, in shadow (slice 4j, part 1). A circuit breaker per area: an area (the first two folders of the paths merges
-//! touched, [`area_of`](super::area_of)) of a project whose recent merges were reverted too often is recorded as `demoted`, and
-//! returns when it has stayed clean. **Shadow:** the state is recorded and shown; the merge gate, the approval chain and the risk
-//! tier do not read it. Earning a higher mode, a person's override and the screens are not built.
+//! Autonomy by area (slice 4j). A circuit breaker per area: an area (the first two folders of the paths merges touched,
+//! [`area_of`](super::area_of)) of a project whose recent merges were reverted too often is recorded as `demoted`, and returns when
+//! it has stayed clean. **Enforced at the merge gate** (`effective`): a lowered area holds a Full crew to `On` for the diffs that
+//! touch it, and a person can keep the ceiling or set the area to `Off` (`person`). The approval chain and the risk tier do not read
+//! an area. Earning a higher mode and the screens are not built.
 //!
 //! The thresholds below are Engineering's proposal and are served as such (`proposed: true`). The 60-day revert rate in
 //! `merge/risk` is separate and keeps raising the risk tier. A demotion lowers an area from `Full` to `On` only; a ceiling of `On` or
@@ -14,7 +15,12 @@
 
 mod breaker;
 mod decide;
+mod effective;
+mod person;
+mod retry;
 mod view;
+
+pub(crate) use effective::AreaCache;
 
 /// The window the breaker reads, in days. Proposed.
 pub const WINDOW_DAYS: i64 = 14;

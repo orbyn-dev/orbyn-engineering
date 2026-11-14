@@ -2,6 +2,6 @@
 
 /**
  * Where an area stands under the circuit breaker. `demoted` (just lowered, nothing clean yet), `recovering` (lowered, the way back in progress) and
- * `criteria_met` (the way back is met; it returns at the next merge) are recorded, not yet enforced.
+ * `criteria_met` (the way back is met; it returns at the next merge) are read by the merge gate.
  */
 export type AutopilotAreaState = "follows" | "demoted" | "recovering" | "criteria_met" | "not_enough_data" | "ceiling_lower" | "overridden";

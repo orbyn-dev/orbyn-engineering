@@ -135,6 +135,9 @@ pub enum CoreError {
     /// The thing existed and is over: a held command that expired or whose task ended.
     #[error("{0}")]
     Gone(String),
+    /// The person chose on a record that has since changed.
+    #[error("{0}")]
+    Stale(String),
     /// A Crew task that already reached `passed` or `stopped` cannot be cancelled.
     #[error("This task already ended.")]
     TaskEnded,
@@ -185,6 +188,7 @@ impl CoreError {
             Self::DesktopRequired => "desktop_required",
             Self::PresenceRequired => "presence_required",
             Self::Gone(_) => "gone",
+            Self::Stale(_) => "stale",
             Self::TaskEnded => "task_ended",
             Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
@@ -244,6 +248,7 @@ impl CoreError {
             | Self::StaleOwner
             | Self::RunClosed
             | Self::TaskEnded
+            | Self::Stale(_)
             | Self::InvalidTransition { .. } => 409,
             Self::Gone(_) => 410,
             Self::UpdateUnavailable(_)
@@ -262,6 +267,7 @@ impl CoreError {
         match self {
             Self::NotFound(s) => Self::NotFound(s.clone()),
             Self::Gone(s) => Self::Gone(s.clone()),
+            Self::Stale(s) => Self::Stale(s.clone()),
             Self::TaskEnded => Self::TaskEnded,
             Self::Invalid(s) => Self::Invalid(s.clone()),
             Self::SettingsConflict => Self::SettingsConflict,

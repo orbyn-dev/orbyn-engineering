@@ -139,22 +139,19 @@ impl Core {
             recent,
         };
         let scored = score(&facts);
-        let mode = self.merge_mode(task_id)?;
+        // The mode the diff runs under: the crew's mode (recorded as the entry's `mode`) lowered by every area it touches.
+        let effect = self.merge_effect(task_id, &areas, now)?;
+        let mode = effect.ceiling;
         let held = self.merge_holds(task_id, target, &facts.paths).await?;
-        let (state, note) = match (mode, scored.risk) {
-            _ if !held.is_empty() => (
+        let (state, note) = if !held.is_empty() {
+            (
                 "waiting",
                 Some(format!("Held for a person: {}.", held.join("; "))),
-            ),
-            (Mode::Off, _) => (
-                "waiting",
-                Some("Autopilot is off, so a person releases every merge.".to_owned()),
-            ),
-            (Mode::On, Risk::High) => (
-                "waiting",
-                Some("A high-risk diff waits for a person under On.".to_owned()),
-            ),
-            _ => ("queued", None),
+            )
+        } else if let Some(why) = effect.wait_note(scored.risk) {
+            ("waiting", Some(why))
+        } else {
+            ("queued", None)
         };
         let entry = MergeEntry {
             task_id: task_id.to_owned(),
@@ -176,7 +173,11 @@ impl Core {
             queued_unix: now,
         };
         self.store.add_merge_entry(&entry)?;
-        let body = json!({ "risk": entry.risk, "reasons": entry.reasons, "mode": entry.mode, "files": facts.files, "lines": facts.lines, "state": state, "not_measured": scored.not_measured, "samples": scored.samples });
+        let mut body = json!({ "risk": entry.risk, "reasons": entry.reasons, "mode": entry.mode, "files": facts.files, "lines": facts.lines, "state": state, "not_measured": scored.not_measured, "samples": scored.samples });
+        if effect.mode != effect.ceiling {
+            body["effective_mode"] = json!(effect.mode.name());
+            body["area_modes"] = json!(effect.lines.iter().map(|l| &l.line).collect::<Vec<_>>());
+        }
         self.merge_event(task_id, "merge_queued", &body);
         if state == "waiting" {
             self.merge_event(
@@ -303,7 +304,7 @@ impl Core {
         now: i64,
     ) -> Result<MergeOutcome> {
         let task_id = entry.task_id.clone();
-        if let Some(why) = self.merge_hold_now(entry, target).await? {
+        if let Some(why) = self.merge_hold_now(entry, target, now).await? {
             self.store
                 .set_merge_entry_state(&task_id, "waiting", Some(&why))?;
             self.merge_event(
@@ -501,7 +502,7 @@ impl Core {
             ..record.clone()
         };
         if let Err(error) = self.area_breaker_after_merge(&stored, now) {
-            tracing::warn!(%error, "could not evaluate the areas after a merge");
+            self.area_breaker_failed(task_id, "merge", None, &error);
         }
         // A merge a person released was reviewed by that act.
         if entry.released {

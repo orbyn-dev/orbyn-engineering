@@ -207,6 +207,8 @@
     ["POST","/api/crew/approvals/{id}/approve-once"],
     ["POST","/api/crew/approvals/{id}/deny"],
     ["POST","/api/crew/approvals/{id}/dismiss"],
+    ["POST","/api/crew/autopilot/areas/follow"],
+    ["POST","/api/crew/autopilot/areas/override"],
     ["POST","/api/crew/autopilot/confirm"],
     ["POST","/api/crew/autopilot/review/{task_id}/comment"],
     ["POST","/api/crew/autopilot/review/{task_id}/looks-good"],

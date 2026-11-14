@@ -126,3 +126,25 @@ pub fn audit_actions(core: &crate::Core, prefix: &str) -> Vec<String> {
         .filter(|action| action.starts_with(prefix))
         .collect()
 }
+
+/// The breaker's record that `area` of `project` was lowered from Full to On, as `record_area_change` writes it.
+pub fn lower_area(core: &crate::Core, project: &str, area: &str, at: i64) {
+    use crate::store::{AreaChange, AreaWrite};
+    core.store
+        .record_area_change(&AreaWrite {
+            project_id: project,
+            area,
+            kind: "demoted",
+            from_mode: Some("full"),
+            to_mode: Some("on"),
+            decided_by: "breaker",
+            cause: "fixture",
+            record: &json!({ "merges": 5, "reverts": 2, "window_days": 14, "escapes": null }),
+            at,
+            change: AreaChange::Demote {
+                trip_reason: json!({ "merges": 5, "reverts": 2 }),
+                recovery_since: at,
+            },
+        })
+        .unwrap();
+}
