@@ -3,6 +3,7 @@ import { REVIEW_FRAMES } from "./autopilot/review/names";
 import { BACKTEST_FRAMES } from "./backtest/names";
 import { CAPACITY_FRAMES } from "./capacity/names";
 import { ESCAPE_FRAMES } from "./escape/names";
+import { FLOW_FRAMES } from "./flow/names";
 import { ORACLE_FRAMES } from "./oracle/names";
 import { SETTINGS_FRAMES } from "./settings/names";
 
@@ -17,7 +18,7 @@ export function crewPreviewRoute(hash: string): string | null {
   if (!__ORBYN_PREVIEWS__) return null;
   const match = /^#\/preview\/crew\/([a-z-]+)$/.exec(hash);
   // Built here, not at module level, so a production build drops every frame id with this branch.
-  const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES];
+  const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES, ...FLOW_FRAMES];
   return frames.find((name) => name === match?.[1]) ?? null;
 }
 
