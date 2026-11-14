@@ -18,7 +18,7 @@ export type NeedsYouFrameId = (typeof NEEDSYOU_FRAMES)[number];
 
 /**
  * Frames of the group that are not built, and the data each is waiting for (the route does not exist, so nothing is drawn):
- * - needsyou-batch: batched questions from a worker (no route lists a worker's questions or takes answers).
- * - needsyou-conflict: conflicting board writes with their evidence (no route reads the board's facts or records a choice).
+ * - needsyou-batch: batched questions from a worker. Target: no route yet (worker questions are not served in v1).
+ * - needsyou-conflict: conflicting board writes with their evidence. Target: no route yet (board facts are not served in v1).
  */
 export const NEEDSYOU_NOT_BUILT = ["needsyou-batch", "needsyou-conflict"] as const;

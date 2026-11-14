@@ -6,7 +6,7 @@ import { HELD } from "../autopilot/approvals/copy";
 import { UNAVAILABLE_REASON } from "../autopilot/review/Parts";
 import { viewOf, only } from "./assemble";
 import type { NeedsAction, NeedsItem, NeedsKind } from "./model";
-import { kindChips, NeedsBar, NeedsEmpty, NeedsList, RANKED_BY, SourceError, useNarrow, type NeedsActions } from "./NeedsYou";
+import { kindChips, NeedsBar, NeedsEmpty, NeedsList, CHIP_NOTE, useNarrow, type NeedsActions } from "./NeedsYou";
 import { useNeedsYou } from "./useNeedsYou";
 
 /**
@@ -35,7 +35,7 @@ function Inbox() {
     act(item: NeedsItem, action: NeedsAction) {
       if (action.key === "dismiss") state.dismiss(item.id);
       else if (action.key === "deny") state.hold(item.ref)?.deny();
-      else if (action.key === "approve" || action.key === "open") navigate({ name: "crew", tab: item.kind === "review" ? "background" : "approvals" });
+      else if (action.key === "approve" || action.key === "open") navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
     },
     off(item, action) {
       // A break on main has no screen in this app yet to open.
@@ -54,13 +54,12 @@ function Inbox() {
 
   return (
     <section ref={ref} className="ny-root" aria-label="Needs you">
-      {state.partial.length ? <SourceError sources={state.partial} onRetry={state.retry} /> : null}
-      {items.length === 0 ? (
-        <NeedsEmpty title="Nothing needs you">When something needs you, it appears here, ranked, with what waiting costs.</NeedsEmpty>
+      {items.length === 0 && state.partial.length === 0 ? (
+        <NeedsEmpty title="Nothing needs you">When something needs you, it appears here.</NeedsEmpty>
       ) : (
         <>
-          <NeedsBar<NeedsKind | "all"> chips={kindChips(view, items.length)} active={view.filters.some((one) => one.kind === filter) ? filter : "all"} onPick={setFilter} rule={RANKED_BY} />
-          <NeedsList items={shown} narrow={narrow} handlers={handlers} />
+          <NeedsBar<NeedsKind | "all"> chips={kindChips(view, items.length)} active={view.filters.some((one) => one.kind === filter) ? filter : "all"} onPick={setFilter} rule={CHIP_NOTE} />
+          <NeedsList items={shown} narrow={narrow} handlers={handlers} errors={state.partial} onRetry={state.retry} />
           {errors.map((one) => <p key={one.id} className="ny-note" role="alert">{one.message}</p>)}
         </>
       )}

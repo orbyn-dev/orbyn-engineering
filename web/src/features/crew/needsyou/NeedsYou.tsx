@@ -39,11 +39,12 @@ export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: numb
       <div className="ny-tt">
         <b>{item.title}</b>
         <div className="ny-m">
-          {item.risk ? <span className="ny-tag" data-tone={item.risk === "high" || item.overdue ? "amber" : item.risk === "low" ? "lo" : undefined}>Risk · {RISK_WORD[item.risk]}</span> : null}
-          {item.undo ? <span className="ny-tag" data-tone="lo">{UNDO_WORD[item.undo]}</span> : null}
+          {item.kind === "review" && item.risk ? <span className="ny-tag" data-tone={item.risk === "high" || item.overdue ? "amber" : item.risk === "low" ? "lo" : undefined}>Risk · {RISK_WORD[item.risk]}</span> : null}
+          {item.kind === "review" && item.undo ? <span className="ny-tag" data-tone="lo">{UNDO_WORD[item.undo]}</span> : null}
           <span>{item.from}</span>
         </div>
         {item.cost ? <div className="ny-cost">{item.cost}</div> : null}
+        {item.hint ? <div className="ny-m">{item.hint}</div> : null}
       </div>
       <div className="ny-ac">
         {item.actions.map((action) => <ActionButton key={action.key} item={item} action={action} handlers={handlers} />)}
@@ -54,13 +55,16 @@ export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: numb
 
 /** The 320 px panel's card: kind, risk and reversibility, the title, who asked, what waiting costs, and the actions. */
 export function NeedsCard({ item, handlers }: { item: NeedsItem; handlers: NeedsActions }) {
-  const kind = [KIND_ONE[item.kind], item.risk ? RISK_WORD[item.risk] : null, item.undo === "hard" ? "hard to undo" : null].filter(Boolean).join(" · ");
+  // A chip is drawn only for a review item, whose data has a risk and a reversibility.
+  const chips = item.kind === "review";
+  const kind = [KIND_ONE[item.kind], chips && item.risk ? RISK_WORD[item.risk] : null, chips && item.undo === "hard" ? "hard to undo" : null].filter(Boolean).join(" · ");
   return (
     <li className="ny-card" data-kind={item.kind}>
       <span className="ny-k">{kind}</span>
       <span className="ny-t">{item.title}</span>
       <span className="ny-e">{item.engine ?? item.from}</span>
       {item.cost ? <span className="ny-ln">{item.cost}</span> : null}
+      {item.hint ? <span className="ny-k">{item.hint}</span> : null}
       <div className="ny-ca">
         {item.actions.map((action) => <ActionButton key={action.key} item={item} action={action} handlers={handlers} />)}
       </div>
@@ -107,8 +111,8 @@ export function NeedsBar<K extends string>({ chips, active, onPick, rule, label 
   );
 }
 
-/** The sentence under every filter strip. */
-export const RANKED_BY = "Ranked by risk, then by how hard it is to undo, then by what waiting costs";
+/** The sentence at the end of every filter strip. */
+export const CHIP_NOTE = "Risk and reversibility only where the item’s data has them";
 
 /** "Needs you 4" and one chip for each kind that has an item. */
 export function kindChips(view: NeedsView, total: number): Chip<NeedsKind | "all">[] {
@@ -116,13 +120,15 @@ export function kindChips(view: NeedsView, total: number): Chip<NeedsKind | "all
 }
 
 /** The inbox's list, as rows or, in a narrow panel, as cards. */
-export function NeedsList({ items, narrow, handlers, label = "Needs you" }: { items: NeedsItem[]; narrow?: boolean; handlers: NeedsActions; label?: string }) {
+export function NeedsList({ items, narrow, handlers, label = "Needs you", errors = [], onRetry }: { items: NeedsItem[]; narrow?: boolean; handlers: NeedsActions; label?: string; errors?: string[]; onRetry?(): void }) {
   return narrow ? (
     <ol className="ny-cards" aria-label={label}>
+      {errors.map((source) => <SourceErrorRow key={source} source={source} onRetry={onRetry} />)}
       {items.map((item) => <NeedsCard key={item.id} item={item} handlers={handlers} />)}
     </ol>
   ) : (
     <ol className="ny-list" aria-label={label}>
+      {errors.map((source) => <SourceErrorRow key={source} source={source} onRetry={onRetry} />)}
       {items.map((item, index) => <NeedsRow key={item.id} item={item} rank={index + 1} handlers={handlers} />)}
     </ol>
   );
@@ -139,12 +145,21 @@ export function NeedsEmpty({ title, children, action }: { title: string; childre
   );
 }
 
-/** A source that could not be read: the other rows stay, and Try again reads again. With no `onRetry` (a frame) the button is off. */
-export function SourceError({ sources, onRetry }: { sources: string[]; onRetry?(): void }) {
+/**
+ * A source that could not be read: a neutral row at the top of the list (not amber, not red; nothing the person must decide failed),
+ * with the rank left empty because it is not counted. The other rows stay. With no `onRetry` (a frame) the button is off.
+ */
+export function SourceErrorRow({ source, onRetry }: { source: string; onRetry?(): void }) {
   return (
-    <div className="ny-err" role="status">
-      <span>Can’t read {sources.join(", ")}. The rest is shown.</span>
-      <Button small onClick={onRetry} {...(onRetry ? {} : unavailable)}>Try again</Button>
-    </div>
+    <li className="ny-item" data-kind="source-error">
+      <span className="ny-rk" aria-hidden />
+      <div className="ny-tt">
+        <b>Can’t read {source}. The rest is shown.</b>
+        <div className="ny-m"><span>One source of the inbox did not answer</span></div>
+      </div>
+      <div className="ny-ac">
+        <Button small tone="primary" onClick={onRetry} aria-label={`Try again: ${source}`} {...(onRetry ? {} : unavailable)}>Try again</Button>
+      </div>
+    </li>
   );
 }
