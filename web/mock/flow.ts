@@ -7,7 +7,7 @@
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
  *
  * Scenarios: `crew` (two crews), `crew-empty` (no crews), `crew-flow-empty` (a crew with no tasks), `crew-flow-truncated`
- * (the service's cap was hit), `crew-flow-many` (more tasks than one page), `crew-flow-leak` (a service that wrongly sends a gate reason
+ * (the service's cap was hit), `crew-flow-many` (more tasks than one page), `crew-flow-hostile` (extra fields on lanes and findings that no screen may draw), `crew-flow-leak` (a service that wrongly sends a gate reason
  * for a task that is not over, which the screen must not show).
  */
 import type { FlowCell } from "../src/generated/FlowCell.ts";
@@ -20,6 +20,7 @@ import type { FlowTaskDetail } from "../src/generated/FlowTaskDetail.ts";
 import type { FlowTaskList } from "../src/generated/FlowTaskList.ts";
 import type { FlowTaskRow } from "../src/generated/FlowTaskRow.ts";
 import type { MockResponse } from "./api.ts";
+import { HOSTILE } from "./hostile.ts";
 
 export const MOCK_CREW = "crew-redirect-0001";
 export const MOCK_CREW_TWO = "crew-docs-0002";
@@ -63,9 +64,9 @@ function samples(): Sample[] {
         brief,
         route: { engine: "claude", model: "Sonnet 5.5", tier: "builder" },
         lanes: [
-          { lane: "Correctness", group: "code", task: "task-redirect-r1", round: 1, state: "passed", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 },
+          { lane: "Correctness", group: "code", task: "task-redirect-r1", round: 1, state: "passed", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0, tier: "lead", commit: "a41c9e2c0ffee0123456789abcdef0123456789a", same_engine: false },
           { lane: "Performance", group: "code", task: "task-redirect-r2", round: 1, state: "running", engine: "opencode", model: "DeepSeek V4", findings: 0, confirmed: 0, unconfirmed: 0 },
-          { lane: "Docs", group: "code", task: "task-redirect-r3", round: 1, state: "passed", engine: "opencode", model: "DeepSeek V4", findings: 1, confirmed: 0, unconfirmed: 1 },
+          { lane: "Docs", group: "code", task: "task-redirect-r3", round: 1, state: "passed", engine: "opencode", model: "DeepSeek V4", findings: 1, confirmed: 0, unconfirmed: 1, same_engine: true },
           { lane: "security", group: "security", task: "task-redirect-r4", round: 1, state: "running", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 },
         ],
         findings: [{ id: "f-1", lane: "Docs", round: 1, severity: "low", path: "docs/login.md", line: 12, claim: "The example uses //evil.com", check: "unconfirmed", status: "open", blocks: false, fix_task: null }],
@@ -189,7 +190,11 @@ export function flowMock(scenario: string, method: string, path: string, query: 
     const found = [...samples(), ...many()].find((one) => one.row.id === decodeURIComponent(id));
     if (!found) return missing("task");
     const leaked = scenario === "crew-flow-leak" ? found.detail.gates.map((gate) => ({ ...gate, reason: "A reason for a task that is not over" })) : found.detail.gates;
-    const body: FlowTaskDetail = { row: found.row, ...found.detail, gates: leaked, truncated: false };
+    const hostile = scenario === "crew-flow-hostile";
+    const detail = hostile
+      ? { ...found.detail, lanes: found.detail.lanes.map((lane) => ({ ...lane, thread: HOSTILE.thread, worktree: HOSTILE.worktree })), findings: found.detail.findings.map((finding) => ({ ...finding, body: HOSTILE.body, text: HOSTILE.text })) }
+      : found.detail;
+    const body: FlowTaskDetail = { row: found.row, ...detail, gates: leaked, truncated: false };
     return { status: 200, body };
   }
   return null;
