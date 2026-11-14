@@ -45,17 +45,26 @@ where
 
     /// The Engine's state, opened from the snapshot (or empty) the first time it is needed.
     pub(super) async fn engine(&self) -> Result<MutexGuard<'_, Option<dc::Engine>>, DeviceError> {
+        let mut guard = self.engine.lock().await;
+        // Checked under the lock, so a wipe that is running cannot be overtaken by an open.
         if self.wipe_owed.load(std::sync::atomic::Ordering::SeqCst) {
             // The last wipe did not finish: finish it, and open nothing until it has.
-            self.forget().await.map_err(|_| DeviceError::Unauthorized)?;
+            self.wipe_locked(&mut guard)
+                .map_err(|_| DeviceError::Unauthorized)?;
             return Err(DeviceError::Unauthorized);
         }
-        let mut guard = self.engine.lock().await;
         if guard.is_none() {
-            let mut opened = self
-                .client
-                .open_engine(self.snapshots.load())
-                .map_err(map)?;
+            let mut opened = match self.client.open_engine(self.snapshots.load()) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    if matches!(error, dc::DeviceError::NotSignedIn) {
+                        // No keys: a sealed snapshot left behind (a wipe finished by the store
+                        // after a restart) can never be opened, so it goes too.
+                        self.snapshots.clear();
+                    }
+                    return Err(map(error));
+                }
+            };
             let now = u64::try_from(unix_secs()).unwrap_or(0).saturating_mul(1000);
             let _ = self.tag.set(format!("{:016x}", opened.tick(now).device));
             *guard = Some(opened);
@@ -75,9 +84,15 @@ where
     /// A failed key delete is returned and remembered: `wipe_owed` stays set, so `engine` keeps
     /// refusing and the next call retries, instead of a signed-in client opening again.
     pub(super) async fn forget(&self) -> Result<(), dc::StoreError> {
+        // The engine lock is held through the whole wipe, so nothing opens the client half way.
+        let mut guard = self.engine.lock().await;
+        self.wipe_locked(&mut guard)
+    }
+
+    fn wipe_locked(&self, engine: &mut Option<dc::Engine>) -> Result<(), dc::StoreError> {
         self.wipe_owed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        *self.engine.lock().await = None;
+        *engine = None;
         self.owed().clear();
         self.snapshots.clear();
         let cleared = self.client.store().clear();

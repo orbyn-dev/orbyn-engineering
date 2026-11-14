@@ -200,6 +200,13 @@ fn decode<const N: usize>(text: &str) -> Result<dc::Zeroizing<[u8; N]>, dc::Stor
 impl dc::KeyStore for FileKeyStore {
     fn load(&self) -> Result<Option<dc::StoredIdentity>, dc::StoreError> {
         let _held = self.guard();
+        if self.marker().exists() {
+            // A wipe was owed when the last run ended. Every sign-in and every start of the Engine
+            // loads first, so this is where it is finished: either the key file is gone and there
+            // is nothing signed in, or the error says it is still there.
+            self.wipe_files()?;
+            return Ok(None);
+        }
         let Some(disk) = self.read()? else {
             return Ok(None);
         };
@@ -252,7 +259,12 @@ impl dc::KeyStore for FileKeyStore {
     /// Deletes the file: the keys, the token, the vault key and the anchor go together. The
     /// marker goes down first and the file is overwritten with nothing before it is removed,
     /// so a delete that fails half way leaves no readable key. A failure is returned, and the
-    /// next `clear` (or `save`) finishes it.
+    /// next `load`, `clear` or `save` finishes it, also after a restart.
+    ///
+    /// Limit: if the marker cannot be written and the delete also fails (a disk or folder that
+    /// refuses every write), nothing on disk says a wipe is owed. The failure is returned and
+    /// `Shared` keeps the wipe owed in memory for this run only; after a restart that key file is
+    /// a signed-in device again. No store can promise more than the file system lets it.
     fn clear(&self) -> Result<(), dc::StoreError> {
         let _held = self.guard();
         if self.failing() == 2 {

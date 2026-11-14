@@ -275,20 +275,25 @@ fn a_delete_that_fails_half_way_leaves_no_readable_key_and_the_next_one_finishes
     assert!(marker(&f.key_file).exists());
     assert!(f.keys.load().is_err());
     assert!(f.keys.vault_key().is_none() && f.keys.anchor().is_none());
-    // A new process sees the same.
+    // A whole, readable key file and a marker, as a crash leaves them, stay shut: nothing could be
+    // overwritten or removed.
     f.keys.fail_deletes(0);
-    f.keys.clear().unwrap();
     f.keys.save(&identity(&label("token"), FIRST)).unwrap();
-    // The marker alone keeps a whole, readable file shut: nothing could be overwritten or removed.
     f.keys.fail_deletes(3);
     assert!(f.keys.clear().is_err());
     assert!(std::fs::metadata(&f.key_file).unwrap().len() > 0);
     assert!(f.keys.load().is_err() && f.keys.vault_key().is_none());
     f.keys.fail_deletes(1);
     assert!(f.keys.clear().is_err());
+    // A new process, once deleting works, finishes the owed wipe on its first load.
     let fresh = FileKeyStore::new(&f.key_file);
-    assert!(fresh.load().is_err());
-    // Saving a new identity finishes the old wipe first.
+    assert!(fresh.load().unwrap().is_none());
+    assert!(!f.key_file.exists() && !marker(&f.key_file).exists());
+    // Saving a new identity over an owed wipe finishes the old wipe first.
+    f.keys.fail_deletes(0);
+    f.keys.save(&identity(&label("token"), FIRST)).unwrap();
+    f.keys.fail_deletes(1);
+    assert!(f.keys.clear().is_err());
     f.keys.fail_deletes(0);
     let next = identity(&label("token"), SECOND);
     f.keys.save(&next).unwrap();
@@ -595,4 +600,70 @@ async fn a_failed_key_delete_blocks_the_client_and_is_retried() {
             failed_delete_then_retry(trigger, mode).await;
         }
     }
+}
+
+/// The same files, a new run: a new key store, a new client and a new `Shared`, as after a restart.
+fn restarted(server: &Arc<Server>, d: &Device, name: &str) -> Device {
+    let store = FileKeyStore::new(&d.files.key_file);
+    let snaps = Arc::new(SealedSnapshots::new(
+        &d.files.snap_file,
+        "profile",
+        Arc::new(store.clone()),
+    ));
+    let client = dc::DeviceClient::new(
+        Wire(server.clone()),
+        store.clone(),
+        dc::SystemClock,
+        dc::ClientConfig {
+            device_name: name.to_owned(),
+            platform: dc::DevicePlatform::Macos,
+            app: Some(dc::DeviceApp::Engineering),
+        },
+    );
+    let (account, zones) = parts_with(
+        client,
+        snaps.clone(),
+        Duration::from_millis(300),
+        Duration::from_millis(10),
+    );
+    Device {
+        account,
+        zones,
+        files: Files {
+            keys: store,
+            snaps,
+            key_file: d.files.key_file.clone(),
+            snap_file: d.files.snap_file.clone(),
+        },
+    }
+}
+
+#[tokio::test]
+async fn an_owed_wipe_is_finished_by_the_first_use_after_a_restart() {
+    let dir = TempDir::new();
+    let server = Server::new();
+    let d = synced(&server, dir.path(), FIRST, "one").await;
+    // The run ended with the wipe owed: the marker is down and the key file is still whole.
+    std::fs::write(marker(&d.files.key_file), b"wipe owed").unwrap();
+    assert!(std::fs::metadata(&d.files.key_file).unwrap().len() > 0);
+    let calls = server.calls("/v1/");
+
+    // The sync worker's first pass finishes it, and nothing reaches the Engine.
+    let again = restarted(&server, &d, "one");
+    assert_eq!(
+        again.zones.pull(ZONE).await.err(),
+        Some(DeviceError::Unauthorized)
+    );
+    assert!(gone(&again), "the first pass did not finish the wipe");
+    assert_eq!(server.calls("/v1/"), calls, "{:?}", server.calls("/v1/"));
+
+    // A sign-in loads the store first; the same marker is finished there.
+    let d = synced(&server, dir.path(), FIRST, "two").await;
+    std::fs::write(marker(&d.files.key_file), b"wipe owed").unwrap();
+    let again = restarted(&server, &d, "two");
+    assert!(again.files.keys.load().unwrap().is_none());
+    assert!(!again.files.key_file.exists() && !marker(&again.files.key_file).exists());
+    // The sealed file the store cannot know about stays until the client next opens, but with
+    // its vault key gone it cannot be opened.
+    assert!(again.files.snaps.load().is_none());
 }
