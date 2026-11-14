@@ -718,14 +718,34 @@ test), `exit.rs` (the exit-status watch).
   engine, `exit_code` is the number; when nothing arrives in 10 minutes it is exactly `unknown`, which the app draws as "Exit status unknown". The watch starts only for a guard hold that was used or a guarded command both keys allowed, and matches the engine's record by thread and by the exact command (whitespace collapsed, one shell wrapper such as `zsh -lc` removed), never by substring. It is
   **best effort and in memory**: some engines report no exit code, and a restart drops the watch (no row is written then). One background task reaps expired watches for all of them.
 
-**Not built:** the screens (Settings > Crew lists, the test box, the held card's guard detail and the ledger rows: slice 4i PR C); the desktop shell's
-dialog for loosening; any read of `.orbyn/crew.json` for the guard (deliberately none).
+**Not built:** the desktop shell's dialog for loosening; any read of `.orbyn/crew.json` for the guard (deliberately none). The screens are below, "As built (slice 4i, screens)".
 
 **Known limits (heuristic, not secure).** Not detected, by design of a text reader: `dropdb`, `mysqladmin drop`, `git send-pack --force`, a destructive command run through `kubectl exec` or `docker exec ... -- psql`, a loopback tunnel (`ssh -L 5433:prod:5432` and then `psql -h localhost -p 5433`: the target reads as local; list `localhost` as `prod` while you use one), and static keys in a config file that override a safe-listed AWS profile (keys on the command line are guarded). `docker` with no `-H`, `--context`, `DOCKER_HOST` or `DOCKER_CONTEXT` in the command is read as the local daemon, which is wrong if `docker context use` pointed the CLI at a remote host earlier; prefix the command or list the context. An engine that wraps a command in something other than a plain shell is not matched for its exit status. **Heuristics can never be complete.** The guard reads a command's text and names what it knows; new tools, new flags and new ways to hide a command appear faster than a list can follow, so treat every rule here as a speed bump that catches the common and the careless, never as a boundary. The re-resolve of a held command's targets happens when the person approves and when the worker retries, not when the command executes, so a target that changes inside the command line after those checks is not seen (an in-command time-of-check gap). Wrappers are unwrapped for `sudo`, `doas`, `env` (including `-S`), `nohup`, `time`, `nice`, `ionice`, `exec`, `timeout`, `stdbuf`, `xargs`, `caffeinate`, `setsid`, `chroot`, `unshare`, `flock`, `watch`, `parallel`, `aws-vault exec`, `script -c` and `sh -c`; for any other program followed by the name of a tool the guard knows (`mytool --fast ssh prod ...`) the later word is read as a command, which can over-guard. Not closed: `rm -f` without `-r`; code handed to an interpreter (`ssh prod python3 -c "shutil.rmtree(...)"`), whatever it deletes; a remote shell under `sudo`, `su` or `env` is read as a shell when a pipe, here-doc or redirect feeds it, but other ways to start one are not all covered; `git push --force-with-lease` to a GitHub remote is held by default, and exempting it means safe-listing `github.com`, which also exempts a production repository there; `docker compose` with a project file that points at a remote host, `ssh` commands built from variables or `$(...)`, an `ssh` command that reads its commands from a file given by the shell, `ssh` aliases and config the guard cannot read, MySQL `#` comments (read as unsure: every keyword counts), SQL in a file (`psql -f`) and any program that runs one of these tools inside itself. It does not parse a shell wrapper it does not unwrap, an alias or a function, or a script
 that a command runs (`psql -f drop.sql`, `bash cleanup.sh`, `make nuke`): the file is not read. A tool outside the categories (`sqlite3`, a custom CLI, an HTTP call to
 a deletion API) is not guarded; the network rule N3 and the tiers still apply. A remote's URL is read from the repository's git config, which an earlier command
 of the worker could have changed; so is an `ssh` alias that points to production under a name the person never listed. The lists decide what is local and safe,
 and a wrong entry is the person's to fix. Nothing here is tamper-proof: a process of the same OS user can still read the data folder and change the table.
+
+**As built (slice 4i, screens):** read-only web screens for the guard, the path classes and routing, from the Crew Designs frames `guard-*`, `classes-*`, `route-class-*` and
+`route-log*`. Code: `web/src/features/crew/autopilot/approvals/` (`ProductionTargets.tsx`, `PathClasses.tsx`, `RouteCard.tsx`, `RoutingLog.tsx`, `ledger.ts`). `data-frame` names the frame a state is in.
+
+- **Guard rows come from the ledger.** A row with `body.guard` is drawn as a guarded command: `allowed` by the person is "Approved by you", by two keys "Approved by two keys",
+  a disagreement "Denied by the second key", `needs_second_engine` "Denied · no second key". The exit status is the `command_exit` row whose `body.row` is the allowed row:
+  a number, or exactly `unknown` ("Exit status unknown", neutral), or nothing yet. The `denied` row a hold writes under On and Off (`decided_by: guard`) is not listed:
+  the hold, from `GET /api/crew/approvals/held`, is the request, and takes the target from the `held` row with the same `body.hold`. A "no second key" row takes the live hold
+  with the same task and command, so Approve it myself answers it; a disagreement has no hold, so it offers none.
+- **Approving is the desktop app's.** The web shows state and the held card; Approve once and Approve it myself ask the shell's native dialog and send its one-time nonce in
+  `x-orbyn-confirm`. There is no web path that approves without it. In a browser tab the card says "Approving once needs the Orbyn desktop app."
+- **Settings › Crew** lists this device's `prod_targets` and `safe_targets` (`GET /api/crew/guard/targets`), the built-in categories and the path classes. The screen has no
+  thread: it sends `project` (the project Settings shows: the checkout's project when one is selected, else the first, named on the panel). The service takes `project` as the alternative to
+  `thread` in a separate change; until that merges, `GET /api/crew/classes` and `/classes/test` answer 400 "thread is required" and the panel shows the error. The test box takes a path list, one per line (1 to 10), and a command box asks `GET /api/crew/guard/test`
+  (thread optional there); both read once typing stops. Engines are named by id as served. Nothing writes: no Mark a target (loosening needs the shell's dialog,
+  not built), no Save, no Open in editor.
+- **Route card** (`RouteCard` for a task id, `GET /api/crew/route/{task}`) has three states: an engine blocked by a class, the file invalid (with Check again) and no engine
+  allowed. Where it is mounted in Flow and the Board is Engineering 1's. The Approval log has a Routing view over the `route_class` ledger rows, offered once one exists.
+- **Not served, so not drawn:** a class's lock and its Sensitive or Open label (no column drawn), whether the file is in another worktree, a task's title and kind, an engine's model and vendor
+  on a ledger row, the allowed engines per class in a route row, a held-for-a-second-key state while the second key is still reviewing, Split the task, Change the rule, Ask me
+  to choose, Open the rule, Pin an allowed engine, Open in editor.
 
 **As built (slice 4j, shadow):** autonomy by area, part 1: a circuit breaker per area that *records* a demotion. **This part was shadow; part 2
 ([enforcement](#as-built-slice-4j-enforcement), below) now makes the merge gate read it.** `crew_autopilot_mode` is still what the person chose. Code:
@@ -891,8 +911,8 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   `GET /api/crew/classes/test?thread=&path=` (1 to 10 paths, `path` repeated or one per line, each validated: classes, matched pattern, allowed engines, the
   route-card sentence), `GET /api/crew/route/{task}` (the decision or the refusal, and the `route_class` rows).
 
-What is not built: the guard that watches a worker against its classes (PR B); the Settings screens, the route card and Needs you screens
-(PR C); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
+What is not built: the guard that watches a worker against its classes (PR B); the route card's mount in Flow and the Board and the Needs you item
+(Engineering 1's surfaces); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
 until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
 (ruling pending). Known limits: **the file is read at the checkout's HEAD at task start; an agent that can run git can move HEAD or commit a change, and the next task reads it; an
 agent that can push to the base branch can change the rules for later tasks** (the N7 check only blocks a git command whose path argument is

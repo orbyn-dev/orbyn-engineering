@@ -10,6 +10,13 @@
  * was denied from another window: 409), `crew-held-hardrule` (the always-denied list refuses it at approval time: 403, and the hold is
  * closed as denied) and `crew-held-unconfirmed` (the service did not see the desktop shell's confirmation: 403 `presence_required`).
  * Three commands are held in every one of them.
+ *
+ * The guard (slice 4i): `crew-guard` (Autopilot On: a hold for the person, and the person's one approval with an exit status), `crew-guard-unknown` (the same, and no exit status came: `unknown`),
+ * `crew-guard-full` (Autopilot Full: both keys, a second key that said no, no second vendor with its live hold),
+ * `crew-guard-empty` (this device lists no target). The lists answer in every Crew scenario. Path classes: `crew-classes`, `crew-classes-invalid`
+ * (the file has problems and every engine is blocked), `crew-classes-note` (the checkout's copy differs from the committed one). Routing:
+ * `crew-route-blocked`, `crew-route-invalid`, `crew-route-none` (the ledger's `route_class` rows and `GET /api/crew/route/task-redirect`).
+ * `classes` and `classes/test` take `thread` or `project` (the service takes `project` once its change merges); with neither they answer 400 "thread or project is required", an id that is not an id 400, and an id ending `-gone` 404. `classes/test` takes 1 to 10 paths and says what is wrong with each, and an unknown task is 404.
  */
 import type { AutopilotHeld } from "../src/generated/AutopilotHeld.ts";
 import type { AutopilotHeldList } from "../src/generated/AutopilotHeldList.ts";
@@ -21,6 +28,16 @@ import type { AutopilotModeEntry } from "../src/generated/AutopilotModeEntry.ts"
 import type { AutopilotModes } from "../src/generated/AutopilotModes.ts";
 import type { AutopilotTripwires } from "../src/generated/AutopilotTripwires.ts";
 import type { AutopilotTrust } from "../src/generated/AutopilotTrust.ts";
+import type { CrewClassEngine } from "../src/generated/CrewClassEngine.ts";
+import type { CrewClassRule } from "../src/generated/CrewClassRule.ts";
+import type { CrewClassesView } from "../src/generated/CrewClassesView.ts";
+import type { CrewClassTest } from "../src/generated/CrewClassTest.ts";
+import type { CrewClassTestPath } from "../src/generated/CrewClassTestPath.ts";
+import type { CrewRouteClassRow } from "../src/generated/CrewRouteClassRow.ts";
+import type { CrewRouteView } from "../src/generated/CrewRouteView.ts";
+import type { GuardTest } from "../src/generated/GuardTest.ts";
+import type { GuardTargets } from "../src/generated/GuardTargets.ts";
+import type { RouteRejection } from "../src/generated/RouteRejection.ts";
 import type { MockResponse } from "./api.ts";
 
 const row = (id: number, time: string, kind: string, over: Partial<AutopilotLogRow>): AutopilotLogRow => ({
@@ -128,7 +145,201 @@ const holds = (): AutopilotHeld[] => [
   { id: "hold-sessions", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"', reason: "A second key is missing.", state: "held", readable: true, age_secs: 420, expires_in_secs: 180 },
 ];
 
+const TRUNCATE = 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"';
+const AUDIT = 'psql "$PROD_DATABASE_URL" -c "DELETE FROM audit_log WHERE created_at < now() - interval \'90 days\'"';
+const DROP = 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users DROP COLUMN legacy_id"';
+const SESSIONS = 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"';
+const guard = (target = "prod-db-1", list = "prod") => ({ category: "database", target, matched_by: "psql: DROP", list });
+
+/**
+ * What a guarded command leaves in the ledger, newest first: the exit status a later `command_exit` row gives the row that let the command through
+ * (`body.row`), both keys' yes, a second key that said no (stored twice, as a disagreement and the denial it caused), no second vendor signed in,
+ * the person's one approval, and the `held` row a live hold writes. A denial under On or Off (`decided_by: guard`) is the hold's own record.
+ */
+const approvedByYou = (unknown: boolean): AutopilotLogRow[] => [
+  row(3003, "16:03", "command_exit", { task_id: "task-redirect", decided_by: "autopilot", body: { hold: "hold-audit", row: 3002, exit_code: unknown ? "unknown" : 0, guard: guard() } }),
+  row(3002, "16:02", "allowed", { decided_by: "person", action_kind: "command", target: AUDIT, body: { hold: "hold-audit", guard: guard() } }),
+];
+
+/** Under On (or Off) nobody is asked: the guard denies and holds, and the person answers. */
+const guardRowsOn = (unknown: boolean): AutopilotLogRow[] => [
+  ...approvedByYou(unknown),
+  row(3001, "15:02", "held", { decided_by: "autopilot", action_kind: "command", target: ORDERS, body: { hold: "hold-orders", guard: guard() } }),
+  row(3000, "15:02", "denied", { decided_by: "guard", tier: "guard", action_kind: "command", target: ORDERS, body: { guard: guard() } }),
+];
+
+/** Under Full the lead decides and a second vendor's key is needed. */
+const guardRowsFull = (): AutopilotLogRow[] => [
+  ...approvedByYou(false),
+  row(2992, "13:58", "held", { decided_by: "autopilot", action_kind: "command", target: TRUNCATE, body: { hold: "hold-audit-2", guard: guard() } }),
+  row(2991, "14:21", "command_exit", { decided_by: "autopilot", body: { hold: null, row: 2990, exit_code: 0, guard: guard() } }),
+  row(2990, "14:05", "allowed", {
+    decided_by: "two_keys",
+    tier: "guard",
+    action_kind: "command",
+    target: SESSIONS,
+    lead: { approve: true, reason: "expired sessions, and the brief names them." },
+    second: { engine: "codex", approve: true, reason: "the filter matches rows past expires_at." },
+    body: { guard: guard() },
+  }),
+  row(2985, "14:20", "disagreement", {
+    decided_by: "two_keys",
+    tier: "guard",
+    action_kind: "command",
+    target: DROP,
+    lead: { approve: true, reason: "The column isn’t used in the diff." },
+    second: { engine: "codex", approve: false, reason: "a report still reads users.legacy_id." },
+    body: { guard: guard() },
+  }),
+  row(2986, "14:20", "denied", {
+    decided_by: "two_keys",
+    tier: "guard",
+    action_kind: "command",
+    target: DROP,
+    lead: { approve: true, reason: "The column isn’t used in the diff." },
+    second: { engine: "codex", approve: false, reason: "a report still reads users.legacy_id." },
+    body: { guard: guard() },
+  }),
+  row(2980, "13:58", "denied", { decided_by: "two_keys", tier: "guard", action_kind: "command", target: TRUNCATE, needs_second_engine: true, lead: { approve: true, reason: "It is a cleanup in the brief." }, body: { guard: guard() } }),
+];
+
+/** The guard's lists on this device, as `GET /api/crew/guard/targets` answers. */
+const TARGETS: GuardTargets = {
+  max_entries: 200,
+  items: [
+    { id: "g1", list: "prod", pattern: "prod-db-1", kind: "host", note: "Remote database", added_at: "2026-11-01T09:00:00" },
+    { id: "g2", list: "prod", pattern: "orbyn-assets-prod", kind: "bucket", note: "Storage bucket", added_at: "2026-11-01T09:05:00" },
+    { id: "g3", list: "safe", pattern: "staging-db.internal", kind: "host", note: "A throwaway staging database", added_at: "2026-11-02T09:00:00" },
+  ],
+};
+
+const COMMIT = "a1c4e7d9f0b2c3d4e5f60718293a4b5c6d7e8f90";
+const BLOB = "5be90f2c1d3a4b5c6d7e8f9012345678abcdef01";
+const ENGINES: Record<string, CrewClassEngine> = {
+  claude: { id: "claude", name: "Claude Code", on_this_machine: true },
+  codex: { id: "codex", name: "Codex", on_this_machine: true },
+  opencode: { id: "opencode", name: "OpenCode", on_this_machine: true },
+  cursor: { id: "cursor", name: "Cursor", on_this_machine: false },
+};
+const RULES: CrewClassRule[] = [
+  { name: "auth-paths", paths: ["**/auth/**", "**/keys/**"], engines: [ENGINES.claude as CrewClassEngine], reason: "Sign-in code stays on one vendor." },
+  { name: "billing", paths: ["**/billing/**"], engines: [ENGINES.codex as CrewClassEngine], reason: "Money code stays on one vendor." },
+  { name: "docs", paths: ["docs/**", "*.md"], engines: [ENGINES.claude, ENGINES.codex, ENGINES.opencode] as CrewClassEngine[], reason: "Anyone may edit the docs." },
+];
+const PROBLEMS = ["Rule 4 (keys): the path pattern **/keys/[ isn’t valid: the bracket isn’t closed.", "Rule 4 (keys): no engine is chosen.", "Rule 5 (billing): the name billing is already used by rule 2."];
+
+/** The file's globs as the service reads them: `/`-separated, `*` inside a part, a part that is `**` for any number of parts, case ignored. */
+export function globMatch(pattern: string, path: string): boolean {
+  const walk = (p: string[], s: string[]): boolean => {
+    if (p.length === 0) return s.length === 0;
+    const [head, ...rest] = p;
+    if (head === "**") return walk(rest, s) || (s.length > 0 && walk(p, s.slice(1)));
+    if (s.length === 0) return false;
+    const re = new RegExp(`^${(head as string).split("*").map((part) => part.replace(/[.+^${}()|\\]/g, "\\$&")).join(".*")}$`, "i");
+    return re.test(s[0] as string) && walk(rest, s.slice(1));
+  };
+  return walk(pattern.split("/"), path.split("/"));
+}
+
+/** What the service says is wrong with a path that is not a repository path (`path_problem` in the classes glob), or null. */
+function pathProblem(path: string): string | null {
+  if (path === "") return "is empty";
+  if (path.includes("\\")) return "has a backslash; paths use /";
+  if (path.startsWith("/")) return "starts with /; paths are relative to the repository";
+  if (/^[A-Za-z]:/.test(path)) return "starts with a drive letter";
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(path)) return "has a control character";
+  for (const part of path.split("/")) {
+    if (part === "") return "has an empty part (a double or trailing /)";
+    if (part === "." || part === "..") return "has a . or .. part";
+  }
+  return null;
+}
+
+const PATH_MAX = 512;
+const words = (engines: CrewClassEngine[]) => (engines.length ? engines.map((one) => (one.on_this_machine ? one.name : `${one.id} (not on this machine)`)).join(", ") : "none");
+
+/** The route card sentence, in the service's words (`route_card` in `classes/api.rs`). */
+function routeCard(hits: { rule: CrewClassRule }[], allowed: CrewClassEngine[] | null, problems: string[]): string {
+  if (problems.length) return `crew.json invalid: ${problems.join(" ")}. Every engine is blocked until the file is fixed and committed.`;
+  if (hits.length === 0 || allowed === null) return "Everything else: any signed-in engine can take this.";
+  const [only] = hits;
+  if (hits.length === 1 && only) return `${only.rule.name}: ${only.rule.reason} Allowed engines: ${words(allowed)}.`;
+  const names = hits.map((hit) => hit.rule.name).join(" and ");
+  return allowed.length === 0 ? `In ${names}: no engine is allowed by all of them, so nothing can take this.` : `In ${names}: the engines all of them allow are ${words(allowed)}.`;
+}
+
+function testPath(path: string, rules: CrewClassRule[], problems: string[]): CrewClassTestPath {
+  const problem = path.length > PATH_MAX ? `is longer than ${PATH_MAX} characters` : pathProblem(path);
+  if (problem) return { path: path.slice(0, PATH_MAX), valid: false, problem: `This path ${problem}.`, classes: [], allowed_engines: null, route_card: "Not a repository path, so nothing was checked." };
+  if (problems.length) return { path, valid: true, problem: null, classes: [], allowed_engines: [], route_card: routeCard([], [], problems) };
+  const hits = rules.flatMap((rule) => rule.paths.filter((pattern) => globMatch(pattern, path)).slice(0, 1).map((pattern) => ({ rule, pattern })));
+  let allowed: CrewClassEngine[] | null = null;
+  for (const { rule } of hits) allowed = allowed === null ? rule.engines : allowed.filter((one) => rule.engines.some((other) => other.id === one.id));
+  return { path, valid: true, problem: null, classes: hits.map((hit) => ({ name: hit.rule.name, pattern: hit.pattern })), allowed_engines: allowed, route_card: routeCard(hits, allowed, []) };
+}
+
+/** What `valid_id` and the store say of the thread or project id a classes route is given: 400 when it is not an id, 404 when nothing has it. */
+function scopeId(query: URLSearchParams): MockResponse | { id: string } {
+  const id = query.get("thread") ?? query.get("project");
+  if (!id) return { status: 400, body: { code: "invalid", message: "thread or project is required" } };
+  if (id.length > 96 || !/^[A-Za-z0-9_:.-]+$/.test(id) || id.startsWith(".")) return { status: 400, body: { code: "invalid", message: "that id is not valid" } };
+  if (id.endsWith("-gone")) return { status: 404, body: { code: "not_found", message: "not found" } };
+  return { id };
+}
+
+const reject = (engine: string, text: string, why: RouteRejection["why"] = "path_class"): RouteRejection => ({ engine, why, text });
+
+/** The `route_class` row a routing writes, as `GET /api/crew/route/{task}` lists it. */
+function routeRow(kind: "blocked" | "invalid" | "none"): CrewRouteClassRow {
+  const base = { id: "7001", at: "2026-11-07T14:20:00", commit: COMMIT, blob: BLOB };
+  if (kind === "invalid") {
+    const blocked = ["claude", "codex", "opencode"].map((engine) => ({ engine, rule: "crew.json invalid", reason: "The file isn’t valid." }));
+    return { ...base, problem: "Rule 3 has no engines listed.", classes: [], blocked, chosen: null, rejected: blocked.map((one) => reject(one.engine, "Blocked by rule: the file isn’t valid")), message: ".orbyn/crew.json isn’t valid, so no engine was started" };
+  }
+  if (kind === "none") {
+    const classes = [{ name: "auth-paths", pattern: "**/auth/**", samples: ["auth/redirect.ts"] }, { name: "billing", pattern: "**/billing/**", samples: ["billing/invoice.ts"] }];
+    const blocked = [
+      { engine: "claude", rule: "billing", reason: "Money code stays on one vendor." },
+      { engine: "codex", rule: "auth-paths", reason: "Sign-in code stays on one vendor." },
+      { engine: "opencode", rule: "auth-paths", reason: "Sign-in code stays on one vendor." },
+      { engine: "opencode", rule: "billing", reason: "Money code stays on one vendor." },
+    ];
+    return { ...base, classes, blocked, chosen: null, rejected: [reject("claude", "Blocked by rule: billing — allowed engines: Codex"), reject("codex", "Blocked by rule: auth-paths — allowed engines: Claude"), reject("opencode", "Blocked by both rules: auth-paths and billing"), reject("cursor", "Not signed in.", "not_signed_in")], message: "No engine is allowed for these paths." };
+  }
+  const classes = [{ name: "auth-paths", pattern: "**/auth/**", samples: ["auth/redirect.ts", "auth/redirect.test.ts", "auth/session.ts"] }];
+  return { ...base, classes, blocked: [{ engine: "codex", rule: "auth-paths", reason: "Sign-in code stays on one vendor." }, { engine: "opencode", rule: "auth-paths", reason: "Sign-in code stays on one vendor." }], chosen: "claude", rejected: [] };
+}
+
+function routeView(kind: "blocked" | "invalid" | "none"): CrewRouteView {
+  const row = routeRow(kind);
+  if (kind === "blocked") {
+    return {
+      task: "task-redirect",
+      state: "running",
+      rows: [row],
+      decision: {
+        v: 0, id: "sha256:0", crew_id: "crew-redirect", author: { role: "core", engine: "orbyn" }, created_at: "2026-11-07T14:20:00", run_id: "run-1", brief: "sha256:1", engine: "claude", model: "Sonnet 5.5", effort: "medium", tier: "worker", role: "builder", assigned_by: "router",
+        reasons: [{ code: "path_class", text: "The rule auth-paths allows claude for the paths this task touches, and it is signed in." }],
+        rejected: [reject("codex", "Blocked by rule: auth-paths, allowed engines: Claude. Sign-in code stays on one vendor."), reject("opencode", "Blocked by rule: auth-paths, allowed engines: Claude. Sign-in code stays on one vendor."), reject("cursor", "Not signed in.", "not_signed_in")],
+        scores: [],
+      },
+    };
+  }
+  return { task: "task-redirect", state: "needs_you", rows: [row], refusal: { message: row.message ?? "", rejected: row.rejected } };
+}
+
+/** `crew-guard` (On): one hold, for the person. `crew-guard-full`: the command no second vendor could back. */
+const guardHolds = (full: boolean): AutopilotHeld[] => full ? [
+  { id: "hold-audit-2", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: TRUNCATE, reason: "A second key is missing.", state: "held", readable: true, age_secs: 300, expires_in_secs: 300 },
+] : [
+  { id: "hold-orders", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: ORDERS, reason: "This command can destroy data on a production-linked target. Autopilot does not approve it in this mode; it is held for you.", state: "held", readable: true, age_secs: 120, expires_in_secs: 480 },
+];
+
 export function createCrewMock() {
+  let guardsEmpty = false;
+  let classes: "valid" | "invalid" | "note" = "valid";
+  let route: "blocked" | "invalid" | "none" | null = null;
   let held: AutopilotHeld[] = [];
   let heldScenario = "";
   let on = false;
@@ -150,10 +361,17 @@ export function createCrewMock() {
       ? [{ scope: "crew", id: "login-redirect", mode: "on", updated_at: "2026-11-07T10:00:00" }, { scope: "crew", id: "dependency-bump", mode: "full", updated_at: "2026-11-06T10:00:00" }]
       : [];
     young = scenario === "crew-young";
+    guardsEmpty = scenario === "crew-guard-empty";
+    classes = scenario === "crew-classes-invalid" ? "invalid" : scenario === "crew-classes-note" ? "note" : "valid";
+    route = scenario === "crew-route-blocked" ? "blocked" : scenario === "crew-route-invalid" ? "invalid" : scenario === "crew-route-none" ? "none" : null;
     heldScenario = scenario.startsWith("crew-held") ? scenario : "";
-    held = heldScenario ? holds() : [];
+    held = scenario === "crew-guard-full" ? guardHolds(true) : scenario === "crew-guard" || scenario === "crew-guard-unknown" ? guardHolds(false) : heldScenario ? holds() : [];
+    if (scenario === "crew-guard" || scenario === "crew-guard-unknown") mode = "on";
     failPaging = scenario === "crew-many-fails";
     all = scenario === "crew-empty" ? [] : scenario === "crew-many" || scenario === "crew-many-fails" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
+    if (scenario === "crew-guard" || scenario === "crew-guard-unknown") all = [...guardRowsOn(scenario === "crew-guard-unknown"), ...all];
+    if (scenario === "crew-guard-full") all = [...guardRowsFull(), ...all];
+    if (route) all = [row(7001, "14:20", "route_class", { body: routeRow(route) as unknown as AutopilotLogRow["body"] }), ...all];
     const wire: Record<string, string | number> = scenario === "crew-injected" ? { wire: "injection", class: "instructions" } : { wire: "denials", in_a_row: 3, in_a_run: 3 };
     tripwire = scenario === "crew-tripwire" || scenario === "crew-injected" ? [row(90, "14:27", "tripwire", { task_id: "task-client", body: wire })] : [];
     if (tripwire.length) {
@@ -232,6 +450,52 @@ export function createCrewMock() {
       return { status: 200, body: modes() };
     }
     if (method === "GET" && head === "trust") return { status: 200, body: trust(young) };
+    if (method === "GET" && head === "guard" && id === "targets") return { status: 200, body: guardsEmpty ? { ...TARGETS, items: [] } : TARGETS };
+    if (method === "GET" && head === "classes" && !id) {
+      const scope = scopeId(query);
+      if (!("id" in scope)) return scope;
+      const bad = classes === "invalid";
+      const view: CrewClassesView = {
+        thread: scope.id,
+        commit: COMMIT,
+        blob: BLOB,
+        worktree: "feat/crew-map",
+        built_in: "Everything else",
+        rules: bad ? [] : RULES,
+        problems: bad ? PROBLEMS : [],
+        notes: [],
+        working_copy_differs: classes === "note",
+        working_copy_note: classes === "note" ? "This checkout's copy of the file differs from the committed one. An edit is not in force until it is committed." : null,
+      };
+      return { status: 200, body: view };
+    }
+    if (method === "GET" && head === "classes" && id === "test") {
+      const scope = scopeId(query);
+      if (!("id" in scope)) return scope;
+      // `path` repeated, or one per line.
+      const paths = query.getAll("path").flatMap((one) => one.split("\n"));
+      if (paths.length < 1 || paths.length > 10) return { status: 400, body: { code: "invalid", message: "give 1 to 10 paths" } };
+      const bad = classes === "invalid";
+      const test: CrewClassTest = { thread: scope.id, commit: COMMIT, blob: BLOB, problems: bad ? PROBLEMS : [], paths: paths.map((one) => testPath(one, bad ? [] : RULES, bad ? PROBLEMS : [])) };
+      return { status: 200, body: test };
+    }
+    if (method === "GET" && head === "guard" && id === "test") {
+      const command = query.get("command");
+      if (!command || command.length > 2000) return { status: 400, body: { code: "invalid", message: "give a command of 1 to 2000 characters" } };
+      const destructive = /\b(DROP|TRUNCATE|DELETE)\b/i.test(command);
+      const staging = /staging-db/.test(command);
+      const out: GuardTest = destructive
+        ? staging
+          ? { command, verdict: "exempt", category: "database", matched_by: "psql: DELETE", target: "staging-db.internal", local: false, production_linked: false, matched_entry: TARGETS.items[2] }
+          : { command, verdict: "guarded", category: "database", matched_by: "psql: DROP", target: "prod-db-1", local: false, production_linked: true, matched_entry: TARGETS.items[0] }
+        : { command, verdict: "not_destructive", local: false, production_linked: false };
+      return { status: 200, body: out };
+    }
+    if (method === "GET" && head === "route" && id) {
+      if (id.length > 96 || !/^[A-Za-z0-9_:.-]+$/.test(id) || id.startsWith(".")) return { status: 400, body: { code: "invalid", message: "that id is not valid" } };
+      if (id !== "task-redirect") return { status: 404, body: { code: "not_found", message: "task not found" } };
+      return { status: 200, body: routeView(route ?? "blocked") };
+    }
     return { status: 404, body: { code: "not_found", message: `No mock for ${method} ${path}.` } };
   }
 

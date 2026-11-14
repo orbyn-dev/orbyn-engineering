@@ -63,6 +63,8 @@ export interface GuardFacts {
   /** "16:02": when the held command is waiting since, or when it was decided or run. */
   at: string | null;
   exit: number | null;
+  /** The engine never reported an exit status within the watch: the ledger says exactly `unknown`. */
+  exitUnknown?: boolean;
 }
 
 /** A command the guard holds for the person, as `GET /api/crew/approvals/held` lists it. */
