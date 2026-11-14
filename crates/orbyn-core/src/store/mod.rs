@@ -23,6 +23,7 @@ mod crew_bus_tests;
 mod crew_cancel;
 mod crew_guard;
 mod crew_merges;
+mod crew_rerun;
 mod crew_review;
 mod crew_runs;
 mod crew_schema;

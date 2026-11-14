@@ -79,6 +79,9 @@ pub enum CoreError {
     /// A write against a run that already reached a terminal state.
     #[error("run has ended")]
     RunClosed,
+    /// A Crew task is busy or in a state that refuses this request: another re-run of its checks, a verification, a worker.
+    #[error("{0}")]
+    CrewTaskBusy(String),
     #[error("run cannot move from {from} to {to}")]
     InvalidTransition { from: String, to: String },
     #[error("database schema {found} is newer than supported schema {supported}")]
@@ -172,6 +175,7 @@ impl CoreError {
             Self::PolicyDenied(_) => "policy_denied",
             Self::StaleOwner => "stale_owner",
             Self::RunClosed => "run_closed",
+            Self::CrewTaskBusy(_) => "task_busy",
             Self::InvalidTransition { .. } => "invalid_transition",
             Self::DatabaseTooNew { .. } => "database_too_new",
             Self::DataDirLocked => "data_dir_locked",
@@ -217,7 +221,8 @@ impl CoreError {
                 | "digits_locked" => 409,
                 _ => 502,
             },
-            Self::SettingsConflict
+            Self::CrewTaskBusy(_)
+            | Self::SettingsConflict
             | Self::SettingsScopeUnavailable
             | Self::ThreadBusy
             | Self::ConsoleOpen
@@ -262,6 +267,7 @@ impl CoreError {
             Self::SettingsConflict => Self::SettingsConflict,
             Self::SettingsScopeUnavailable => Self::SettingsScopeUnavailable,
             Self::ThreadBusy => Self::ThreadBusy,
+            Self::CrewTaskBusy(s) => Self::CrewTaskBusy(s.clone()),
             Self::ConsoleOpen => Self::ConsoleOpen,
             Self::FolderUntrusted => Self::FolderUntrusted,
             Self::AlreadyDecided(a) => Self::AlreadyDecided(a.clone()),
