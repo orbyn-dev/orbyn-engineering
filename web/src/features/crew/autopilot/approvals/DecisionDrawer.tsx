@@ -31,6 +31,24 @@ export interface DrawerActions {
 
 const isGuarded = (row: ApprovalRow) => row.hard === "guard" || row.hard === "guard_two_keys";
 
+/** The Crew Designs frame a guarded command's card is in, for `data-frame`. */
+export function guardFrame(row: ApprovalRow, asking: boolean): string | undefined {
+  switch (row.result) {
+    case "held_you":
+      return "guard-held";
+    case "no_second_key":
+      return asking ? "guard-approve-myself" : "guard-denied-no-second";
+    case "denied_second_key":
+      return "guard-denied";
+    case "approved_two_keys":
+      return "guard-approved";
+    case "approved_you":
+      return row.guard?.exitUnknown ? "guard-approved-person-unknown" : "guard-approved-person";
+    default:
+      return undefined;
+  }
+}
+
 function StepCard({ step }: { step: Step }) {
   return (
     <div className={`ap-step ap-step-${step.tone}`}>
@@ -66,20 +84,24 @@ function Side({ keys }: { keys: { head: string; who: string; text: string }[] })
   );
 }
 
+/** The engine as the card names it: the stored row has the engine id, and the model and vendor only when something knows them. */
+const whoLine = (engine: { engine: string; model: string; vendor: string }) => [engine.engine, engine.model, engine.vendor].filter(Boolean).join(" · ");
+
 function sideBySide(row: ApprovalRow): { head: string; who: string; text: string }[] {
   const lead = row.leadBy;
-  const leadReason = row.lead.state === "yes" ? row.lead.reason : "";
   const second = row.second;
+  // The ledger row of an approval by the person holds no answer of the lead's, so that card is drawn only when there is one.
+  const leadKey = (head: string) => (row.lead.state === "yes" ? [{ head, who: lead ? whoLine(lead) : "", text: `Yes: ${row.lead.reason}` }] : []);
   if (row.result === "approved_you") {
     return [
-      { head: "The lead", who: lead ? `${lead.engine} · ${lead.model} · ${lead.vendor}` : "", text: `Yes: ${leadReason}` },
+      ...leadKey("The lead"),
       { head: "You", who: "Approved once, on this computer", text: "You read the command and the target, and approved this one command." },
     ];
   }
   return [
-    { head: "Key 1 · the lead", who: lead ? `${lead.engine} · ${lead.model} · ${lead.vendor}` : "", text: `Yes: ${leadReason}` },
+    ...leadKey("Key 1 · the lead"),
     second.state === "yes"
-      ? { head: "Key 2 · a second vendor", who: `${engineLine(second.by)} · ${second.by.vendor}`, text: `Yes: ${second.reason}` }
+      ? { head: "Key 2 · a second vendor", who: whoLine(second.by), text: `Yes: ${second.reason}` }
       : { head: "Key 2 · a second vendor", who: "", text: "" },
   ];
 }
@@ -151,6 +173,7 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
       ref={ref}
       tabIndex={-1}
       className="ap-drawer"
+      data-frame={guarded ? guardFrame(row, act.asking === true) : undefined}
       aria-label={row.title}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -164,6 +187,7 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
         <div className="ap-chips">
           {answers ? <HeldChip held={answers.held} hold={answers.hold} result={row.result} /> : <ResultChip result={row.result} />}
           {guarded ? <Chip tone="dim">Guard</Chip> : row.risk ? <Chip tone="plain">{RISK_LABEL[row.risk]}</Chip> : row.hard === "denied" ? <Chip tone="plain">Hard limit</Chip> : row.hard === "person_only" ? <Chip tone="plain">Person-only</Chip> : null}
+          {guard?.exitUnknown ? <Chip tone="dim">Exit status unknown</Chip> : null}
         </div>
       </header>
       {answers ? (
@@ -178,9 +202,9 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
         </p>
         {guard ? (
           <Facts rows={[
-            { label: "Target", text: `${guard.target} · ${guard.kind}${held ? " · guarded" : guard.markedBy ? `, marked by the rule ${guard.markedBy}` : ""}` },
+            { label: "Target", text: `${guard.target} · ${guard.kind}${held ? " · guarded" : guard.markedBy ? `, listed in this device’s ${guard.markedBy}` : ""}` },
             ...(held ? [{ label: "Autopilot", text: `${MODE_NAME[mode]}: the guard holds this command for you` }] : []),
-            ...(guard.at ? [{ label: held ? "Waiting since" : row.result === "approved_you" ? "Approved at" : row.result === "approved_two_keys" ? "Ran at" : "Decided at", text: guard.exit !== null ? `${guard.at} · exit ${guard.exit}` : guard.at }] : []),
+            ...(guard.at ? [{ label: held ? "Waiting since" : row.result === "approved_you" ? "Approved at" : row.result === "approved_two_keys" ? "Ran at" : "Decided at", text: guard.exit !== null ? `${guard.at} · exit ${guard.exit}` : guard.exitUnknown ? `${guard.at} · exit status unknown` : guard.at }] : []),
           ]} />
         ) : facts.length ? <Facts rows={facts} /> : null}
         {row.block ? <pre className="ap-cmd"><code>{row.block}</code></pre> : null}
@@ -197,7 +221,9 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
             <Side keys={sideBySide(row)} />
             <p className="ap-muted">
               {row.result === "approved_you"
-                ? "You are the final authority; this isn’t counted as a second key. The ledger keeps your approval with the command and its exit status."
+                ? guard?.exitUnknown
+                  ? "You are the final authority; this isn’t counted as a second key. The ledger keeps your approval with the command. The engine never reported an exit status for it, so the ledger says “Exit status unknown” instead of a number; that isn’t a failure and isn’t a success."
+                  : "You are the final authority; this isn’t counted as a second key. The ledger keeps your approval with the command and its exit status."
                 : "Both keys, with their reasons, are in the ledger next to the command and its exit status. The guard applies the same way in every mode."}
             </p>
           </>

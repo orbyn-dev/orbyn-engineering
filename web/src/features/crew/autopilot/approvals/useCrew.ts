@@ -12,3 +12,4 @@ export function useCrewPreview(): boolean {
 
 export const useAutopilotModes = () => useAsync("crew-autopilot", (signal) => crewApi.modes(signal), { keep: true });
 export const useAutopilotGuards = () => useAsync("crew-guards", (signal) => crewApi.guards(signal), { keep: true });
+export const useGuardTargets = () => useAsync("crew-guard-targets", (signal) => crewApi.guardTargets(signal));

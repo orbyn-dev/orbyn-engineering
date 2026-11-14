@@ -13,7 +13,7 @@ const CODEX: EngineRef = { engine: "Codex", model: "GPT-5.5", vendor: "OpenAI" }
 const OPENCODE: EngineRef = { engine: "OpenCode", model: "DeepSeek V4", vendor: "DeepSeek" };
 const CLAUDE: EngineRef = { engine: "Claude Code", model: "Sonnet 5.5", vendor: "Anthropic" };
 
-const target = (name: string, kind: string, at: string, short: string, exit: number | null = null, markedBy: string | null = "prod-targets") => ({
+const target = (name: string, kind: string, at: string, short: string, exit: number | null = null, markedBy: string | null = "prod_targets") => ({
   short, target: name, kind, markedBy, reason: "This command deletes data in a production-linked target.", at, exit,
 });
 
@@ -83,7 +83,7 @@ describe("the guard under Full", () => {
   it("denies when the second key says no, with its reason, and offers to approve it yourself", () => {
     const d = show(hold(denied));
     expect(d).toHaveTextContent("Denied by the second keyGuard");
-    expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, marked by the rule prod-targets");
+    expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, listed in this device’s prod_targets");
     expect(d).toHaveTextContent("Key 2: noCodex · GPT-5.5, a different vendor: a report still reads users.legacy_id.");
     expect(d).toHaveTextContent("Denied, because one key said no");
     expect(within(d).getByRole("button", { name: "Approve it myself" })).toBeVisible();
@@ -116,7 +116,7 @@ describe("the guard under Full", () => {
     expect(myself.mock.calls[0]?.[0]).toBe(row);
     expect(myself.mock.calls[0]?.[1]).toHaveProperty("nativeEvent");
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, marked by the rule prod-targets");
+    expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, listed in this device’s prod_targets");
     expect(d).toHaveTextContent('psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"');
   });
 

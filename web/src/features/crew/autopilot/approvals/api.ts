@@ -9,7 +9,11 @@ import type { AutopilotMode } from "../../../../generated/AutopilotMode";
 import type { AutopilotModes } from "../../../../generated/AutopilotModes";
 import type { AutopilotTripwires } from "../../../../generated/AutopilotTripwires";
 import type { AutopilotTrust } from "../../../../generated/AutopilotTrust";
+import type { CrewClassesView } from "../../../../generated/CrewClassesView";
+import type { CrewClassTest } from "../../../../generated/CrewClassTest";
 import type { CrewPreviewState } from "../../../../generated/CrewPreviewState";
+import type { CrewRouteView } from "../../../../generated/CrewRouteView";
+import type { GuardTargets } from "../../../../generated/GuardTargets";
 
 export const PAGE = 18;
 
@@ -40,4 +44,16 @@ export const crewApi = {
   setMode: (mode: AutopilotMode) => request<AutopilotModes>("PUT", "/api/crew/autopilot/mode", { scope: "default", mode }),
   confirmMode: () => request<AutopilotModes>("POST", "/api/crew/autopilot/confirm", {}),
   trust: (signal?: AbortSignal) => request<AutopilotTrust>("GET", "/api/crew/trust", undefined, signal),
+  /** This device's two lists of targets the guard watches. Read-only here: adding or removing is not drawn. */
+  guardTargets: (signal?: AbortSignal) => request<GuardTargets>("GET", "/api/crew/guard/targets", undefined, signal),
+  /** The rules of `.orbyn/crew.json` at the commit a task started in this thread would start from. The service never writes the file. */
+  classes: (thread: string, signal?: AbortSignal) => request<CrewClassesView>("GET", `/api/crew/classes?${new URLSearchParams({ thread })}`, undefined, signal),
+  /** 1 to 10 paths against those rules. Nothing is saved. */
+  classesTest: (thread: string, paths: string[], signal?: AbortSignal) => {
+    const params = new URLSearchParams({ thread });
+    for (const path of paths) params.append("path", path);
+    return request<CrewClassTest>("GET", `/api/crew/classes/test?${params}`, undefined, signal);
+  },
+  /** How one task was routed: the decision or the refusal, and the `route_class` rows. */
+  route: (task: string, signal?: AbortSignal) => request<CrewRouteView>("GET", `/api/crew/route/${encodeURIComponent(task)}`, undefined, signal),
 };

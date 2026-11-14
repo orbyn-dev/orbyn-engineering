@@ -178,3 +178,65 @@ h4.ap-sub { margin: 0; }
 /* A held command's card: a neutral line with an icon (expired, already decided, no account). */
 .ap-said { display: flex; gap: 8px; align-items: flex-start; color: var(--color-text); line-height: 1.45; }
 .ap-said svg { flex: none; margin-top: 2px; color: var(--color-muted); }
+
+/* Path classes (Settings › Crew): the rules of .orbyn/crew.json, read-only. */
+.ap-class-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1.2fr); gap: 0 12px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--color-border); min-width: 0; }
+.ap-class-row.ap-sel { background: var(--color-chip); }
+.ap-class-row b { display: block; font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
+.ap-class-row small { display: block; color: var(--color-muted); font-size: 11px; }
+.ap-class-problem { padding: 9px 12px; border-top: 1px solid var(--color-border); color: var(--color-text); overflow-wrap: anywhere; }
+.ap-glyphs { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.ap-glyphs code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; padding: 1px 6px; border-radius: 6px; background: var(--color-chip); color: var(--color-text); overflow-wrap: anywhere; }
+.ap-class-split { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+.ap-class-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ap-class-detail { flex: 0 0 340px; max-width: 100%; }
+.ap-class-acts { display: flex; gap: 6px; }
+.ap-class-input { width: 100%; max-width: 420px; }
+@media (max-width: 640px) {
+  /* In a narrow window each class is a card: name, patterns, the engines allowed. */
+  .ap-class-split { flex-direction: column; }
+  .ap-class-detail { flex-basis: auto; width: 100%; }
+  .ap-class-row.ap-head { display: none; }
+  .ap-class-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .ap-class-row [data-label]::before { content: attr(data-label) ": "; color: var(--color-muted); }
+}
+
+/* The Route card where a path class decided, and the Routing view of the log. The card sits in a side panel of 320 px as well as a page. */
+.ap-route { container-type: inline-size; display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 20px; }
+.ap-route-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ap-route-head b { font-weight: 500; color: var(--color-text); }
+.ap-route-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+@container (min-width: 640px) { .ap-route-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ap-route-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ap-route-col h5 { margin: 0; font-size: 12px; font-weight: 500; color: var(--color-text); }
+.ap-route-acts { display: flex; gap: 6px; }
+.ap-rej { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ap-rej li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--color-borderStrong); min-width: 0; }
+.ap-rej li.ap-rej-chosen { background: var(--color-greenSoft); box-shadow: none; }
+.ap-rej b { font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
+.ap-rej small { color: var(--color-muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.ap-rtag { align-self: flex-start; font-size: 11px; padding: 1px 7px; border-radius: 8px; background: var(--color-chip); color: var(--color-textSoft); }
+.ap-link { background: none; border: 0; padding: 0; font: inherit; color: var(--color-text); text-decoration: underline; cursor: pointer; }
+.ap-route-row { grid-template-columns: 50px minmax(0, 1.6fr) minmax(0, 1.4fr) minmax(0, 1fr) 90px 130px; align-items: start; }
+.ap-route-row small { white-space: normal; }
+.ap-routing { min-width: 880px; }
+
+/* The Route card where a path class decided, and the Routing view of the log. The card sits in a side panel of 320 px as well as a page. */
+.ap-route { container-type: inline-size; display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 20px; }
+.ap-route-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ap-route-head b { font-weight: 500; color: var(--color-text); }
+.ap-route-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+@container (min-width: 640px) { .ap-route-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ap-route-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ap-route-col h5 { margin: 0; font-size: 12px; font-weight: 500; color: var(--color-text); }
+.ap-route-acts { display: flex; gap: 6px; }
+.ap-rej { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ap-rej li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--color-borderStrong); min-width: 0; }
+.ap-rej li.ap-rej-chosen { background: var(--color-greenSoft); box-shadow: none; }
+.ap-rej b { font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
+.ap-rej small { color: var(--color-muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.ap-rtag { align-self: flex-start; font-size: 11px; padding: 1px 7px; border-radius: 8px; background: var(--color-chip); color: var(--color-textSoft); }
+.ap-link { background: none; border: 0; padding: 0; font: inherit; color: var(--color-text); text-decoration: underline; cursor: pointer; }
+.ap-route-row { grid-template-columns: 50px minmax(0, 1.6fr) minmax(0, 1.4fr) minmax(0, 1fr) 90px 130px; align-items: start; }
+.ap-route-row small { white-space: normal; }
+.ap-routing { min-width: 880px; }

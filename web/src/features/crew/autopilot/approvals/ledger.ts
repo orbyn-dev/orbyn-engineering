@@ -5,7 +5,8 @@
 import type { AutopilotLogRow } from "../../../../generated/AutopilotLogRow";
 import type { AutopilotRule } from "../../../../generated/AutopilotRule";
 import { HARD_DENIED } from "./copy";
-import type { ApprovalRow, EngineRef, HardKind, LeadAnswer, ResultKind, SecondAnswer, TripwireStop } from "./model";
+import { titleOfCommand } from "./held";
+import type { ApprovalRow, EngineRef, GuardFacts, HardKind, LeadAnswer, ResultKind, SecondAnswer, TripwireStop } from "./model";
 
 /** The kinds the approval log lists. The ledger also holds merge rows and trip wires. */
 export const APPROVAL_KINDS = ["allowed", "denied", "person", "disagreement"];
@@ -57,11 +58,69 @@ export function relative(path: string, roots: string[]): string {
   return (root ? path.slice(root.replace(/\/$/, "").length + 1) : path).replace(/^\.\//, "");
 }
 
+/** What a guarded command's ledger rows carry in `body.guard`: the category, the redacted target, what matched and which list forced it. */
+export interface GuardBody {
+  category: string;
+  target: string;
+  matchedBy: string | null;
+  /** `prod` when this device's prod list forced it, else `none`. */
+  list: string | null;
+}
+
+const text = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
+
+export function guardBody(row: AutopilotLogRow): GuardBody | null {
+  const body = row.body as { guard?: { category?: unknown; target?: unknown; matched_by?: unknown; list?: unknown } } | null;
+  const guard = body?.guard;
+  if (!guard || typeof guard !== "object") return null;
+  const target = text(guard.target);
+  return target ? { category: text(guard.category) ?? "", target, matchedBy: text(guard.matched_by), list: text(guard.list) } : null;
+}
+
+/** The exit status of a command the guard let through, by the id of the ledger row that let it through. `unknown` is what the ledger says when none came. */
+export type Exit = number | "unknown";
+
+/** What the pages read so far know about other rows: exit statuses, and the guard facts of each hold. */
+export interface Side {
+  exits: ReadonlyMap<number, Exit>;
+  holds: ReadonlyMap<string, { guard: GuardBody; at: string }>;
+}
+
+/** Reads the rows a page adds to `side`: a `command_exit` row (`body.row` is the row that let the command through) and a `held` row (`body.hold`). */
+export function learn(rows: AutopilotLogRow[], exits: Map<number, Exit>, holds: Map<string, { guard: GuardBody; at: string }>): void {
+  for (const row of rows) {
+    const body = (row.body ?? {}) as { row?: unknown; hold?: unknown; exit_code?: unknown };
+    if (row.kind === "command_exit" && typeof body.row === "number") {
+      exits.set(body.row, typeof body.exit_code === "number" ? body.exit_code : "unknown");
+    } else if (row.kind === "held" && typeof body.hold === "string") {
+      const guard = guardBody(row);
+      if (guard) holds.set(body.hold, { guard, at: row.at });
+    }
+  }
+}
+
+/** The facts the card shows of a guarded command. A target that is a variable or cannot be read says so in the service's own words. */
+export function guardFacts(guard: GuardBody, command: string, at: string, exit: Exit | undefined): GuardFacts {
+  return {
+    short: titleOfCommand(command),
+    target: guard.target,
+    kind: guard.category === "database" ? "remote database" : "production-linked",
+    markedBy: guard.list === "prod" ? "prod_targets" : null,
+    reason: "This command deletes data in a production-linked target.",
+    at: clock(at) || null,
+    exit: typeof exit === "number" ? exit : null,
+    exitUnknown: exit === "unknown",
+  };
+}
+
 const TIERS = ["always_allowed", "low", "medium"] as const;
 const MODES = ["off", "on", "full"] as const;
 
-export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: string[] = []): ApprovalRow | null {
+export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: string[] = [], side?: Side): ApprovalRow | null {
   if (!APPROVAL_KINDS.includes(row.kind)) return null;
+  const guard = guardBody(row);
+  // Under On and Off the guard denies and holds: the hold is the request, and it is drawn from the held list.
+  if (guard && row.kind === "denied" && row.decided_by === "guard") return null;
   // A disagreement is stored twice: as its own row and as the denial it caused. The log lists it once.
   if (row.kind === "denied" && row.lead?.approve === true && row.second?.approve === false) return null;
   const tier = TIERS.find((one) => one === row.tier) ?? null;
@@ -82,10 +141,11 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: strin
   let result: ResultKind;
   let hard: HardKind = "passed";
   if (row.kind === "allowed") {
-    result = "allowed";
+    // A guarded command that ran: the person approved it once, or both keys said yes.
+    result = guard ? (row.decided_by === "person" ? "approved_you" : "approved_two_keys") : "allowed";
     hard = tier === "always_allowed" ? "always_allowed" : "passed";
   } else if (row.kind === "disagreement") {
-    result = "keys_disagree";
+    result = guard ? "denied_second_key" : "keys_disagree";
   } else if (row.kind === "person") {
     result = "person_only";
     hard = "person_only";
@@ -97,7 +157,9 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: strin
   } else {
     result = "denied_lead";
   }
-  const title = titleOf(row, roots);
+  if (guard) hard = row.decided_by === "person" ? "guard" : "guard_two_keys";
+  const person = guard !== null && result === "approved_you";
+  const title = guard && row.target ? titleOfCommand(row.target) : titleOf(row, roots);
   return {
     id: String(row.id),
     time: clock(row.at),
@@ -108,12 +170,12 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: strin
     branch: null,
     risk: tier === "low" ? "low" : tier === "medium" ? "medium" : null,
     notes: [],
-    facts: [
+    facts: guard ? [] : [
       ...(row.action_kind ? [{ label: "Action", text: row.action_kind.replace(/_/g, " ") }] : []),
       ...(row.target ? [{ label: "Target", text: relative(row.target, roots) }] : []),
       { label: "Task", text: row.task_id },
     ],
-    block: null,
+    block: guard ? (row.target ?? null) : null,
     note: null,
     needsYou: row.needs_second_engine ? `Sign in to a second engine to allow: ${lower(title)}` : null,
     mode,
@@ -122,10 +184,10 @@ export function rowOf(row: AutopilotLogRow, rules: AutopilotRule[], roots: strin
     rule: rule ? sentence(rule) : null,
     lead,
     leadBy: null,
-    second,
+    second: person ? { state: "you" } : second,
     result,
     decidedInMs: null,
-    guard: null,
+    guard: guard ? guardFacts(guard, row.target ?? "", row.at, result === "approved_you" || result === "approved_two_keys" ? side?.exits.get(row.id) : undefined) : null,
   };
 }
 

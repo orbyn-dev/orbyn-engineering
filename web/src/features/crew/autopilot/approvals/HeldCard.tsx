@@ -43,6 +43,7 @@ export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: He
     <>
       <p className="ap-asked">Task <b>{row.taskId}</b></p>
       <Facts rows={[
+        ...(row.guard ? [{ label: "Target", text: `${row.guard.target} · ${row.guard.kind} · guarded` }] : []),
         ...(phase === "open" ? [{ label: "Autopilot", text: `${MODE_COPY[mode].name}: the guard holds this command for you` }] : []),
         { label: "Waiting since", text: held.since },
         ...(phase === "decided" && decided.fact ? [{ label: "Decided", text: decided.fact }] : []),

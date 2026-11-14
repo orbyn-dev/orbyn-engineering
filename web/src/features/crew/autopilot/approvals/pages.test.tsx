@@ -8,7 +8,6 @@ import { SettingsPage } from "../../../settings/SettingsPage";
 import { AutopilotSettings } from "./AutopilotSettings";
 import { BackgroundCards, BackgroundPageView, BackgroundTab, type BackgroundCrew, type BackgroundView } from "./Background";
 import { CrewSurface } from "./CrewSurface";
-import { CrewSettingsSection } from "./CrewSettings";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { StoppedBudgetItem } from "./StoppedItem";
 import { TrustTab } from "./Trust";
@@ -175,19 +174,6 @@ describe("Settings › Crew › Autopilot", () => {
     expect(within(banner).getByRole("button", { name: "Change" })).toBeVisible();
     await user.click(within(banner).getByRole("button", { name: "Keep Full" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Autopilot" })).toBeNull());
-  });
-
-  it("describes the production-linked targets the guard watches, read-only, with the lists unavailable", async () => {
-    on("crew");
-    render(<CrewSettingsSection />);
-    expect(await screen.findByRole("heading", { name: "Production-linked targets" })).toBeVisible();
-    expect(screen.getByText("Always on, in every mode")).toBeVisible();
-    expect(screen.getByRole("table", { name: "Always guarded" })).toHaveTextContent("Crew is not connected to this app yet");
-    expect(screen.getByRole("table", { name: "Exempt (safe)" })).toHaveTextContent("Crew is not connected to this app yet");
-    expect(screen.getByRole("table", { name: "What counts as destructive" })).toHaveTextContent("DataDROP, TRUNCATE, DELETE without a WHERE");
-    expect(screen.getByText(/Engines that can be a second key: opencode and codex\./)).toBeVisible();
-    // Editing .orbyn/crew.json is not built, so no control offers it.
-    expect(screen.queryByRole("button", { name: /Mark a target|Open \.orbyn\/crew\.json/ })).toBeNull();
   });
 });
 

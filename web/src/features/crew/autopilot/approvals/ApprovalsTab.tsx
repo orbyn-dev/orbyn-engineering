@@ -11,9 +11,10 @@ import { DecisionDrawer, type DrawerActions } from "./DecisionDrawer";
 import { HardDeniedDialog } from "./HardDenied";
 import { useHeldCommands } from "./held";
 import { LEDGER_NOTE, LEGEND, MODE_LINE, GUARD_LINE } from "./copy";
-import { dayLine, rowOf } from "./ledger";
+import { dayLine, guardFacts, learn, rowOf, type Exit, type GuardBody } from "./ledger";
 import type { ApprovalFilter, ApprovalRow } from "./model";
 import { Chip, ResultChip } from "./parts";
+import { ROUTING_LINE, RoutingView, useRoutingRows } from "./RoutingLog";
 import { StopsList } from "./Tripwire";
 import { useAutopilotGuards, useAutopilotModes } from "./useCrew";
 
@@ -31,23 +32,30 @@ interface Loaded {
   total: number;
   /** Where the next read starts; null once the ledger is read to its end. */
   next: number | null;
+  /** What the pages say of other rows: a guarded command's exit status by the row that let it through, and a hold's guard facts by its id. */
+  exits: Map<number, Exit>;
+  holds: Map<string, { guard: GuardBody; at: string }>;
 }
 
 /**
  * Reads the ledger until `PAGE` more rows can be drawn or it ends: the ledger also holds merge rows and trip
  * wires that this log leaves out, so one page of it may show few rows or none.
  */
-async function fill(from: number, rules: AutopilotRule[], roots: string[], signal?: AbortSignal): Promise<Loaded> {
+async function fill(from: number, rules: AutopilotRule[], roots: string[], known?: Loaded, signal?: AbortSignal): Promise<Loaded> {
   const rows: ApprovalRow[] = [];
+  const exits = new Map(known?.exits);
+  const holds = new Map(known?.holds);
   let next: number | null = from;
   let total = 0;
   while (next !== null && rows.length < PAGE) {
     const page = await crewApi.approvals({ offset: next }, signal);
-    rows.push(...page.rows.flatMap((row) => rowOf(row, rules, roots) ?? []));
+    // The ledger is newest first, so an exit status comes before the row it belongs to: read the page's own first.
+    learn(page.rows, exits, holds);
+    rows.push(...page.rows.flatMap((row) => rowOf(row, rules, roots, { exits, holds }) ?? []));
     total = page.total;
     next = page.next_offset ?? null;
   }
-  return { rows, total, next };
+  return { rows, total, next, exits, holds };
 }
 
 function useApprovalLog(rules: AutopilotRule[] | null, roots: string[]) {
@@ -65,7 +73,7 @@ function useApprovalLog(rules: AutopilotRule[] | null, roots: string[]) {
   useEffect(() => {
     if (waiting) return;
     const abort = new AbortController();
-    void fill(0, rulesRef.current, rootsRef.current, abort.signal).then(
+    void fill(0, rulesRef.current, rootsRef.current, undefined, abort.signal).then(
       (loaded) => setState({ status: "ready", ...loaded }),
       (error: unknown) => {
         if (!abort.signal.aborted) setState({ status: "error", failure: toFailure(error) });
@@ -77,9 +85,9 @@ function useApprovalLog(rules: AutopilotRule[] | null, roots: string[]) {
     if (state.status !== "ready" || busy.current || state.next === null) return;
     busy.current = true;
     setMore({ busy: true, failure: null });
-    void fill(state.next, rulesRef.current, rootsRef.current).then(
+    void fill(state.next, rulesRef.current, rootsRef.current, state).then(
       (loaded) => {
-        setState((now) => (now.status === "ready" ? { status: "ready", rows: [...now.rows, ...loaded.rows], total: loaded.total, next: loaded.next } : now));
+        setState((now) => (now.status === "ready" ? { status: "ready", rows: [...now.rows, ...loaded.rows], total: loaded.total, next: loaded.next, exits: loaded.exits, holds: loaded.holds } : now));
         setMore({ busy: false, failure: null });
       },
       (error: unknown) => setMore({ busy: false, failure: toFailure(error) }),
@@ -88,6 +96,28 @@ function useApprovalLog(rules: AutopilotRule[] | null, roots: string[]) {
     });
   }, [state]);
   return { state, more, loadMore, reload: () => setTick((n) => n + 1) };
+}
+
+/**
+ * A hold is drawn with the guard facts its `held` ledger row carries. Under Full a guarded command with no second vendor is also a
+ * ledger row, "Denied · no second key", for the same task and the same command: that row is the request, and it takes the hold, so
+ * Approve it myself answers it. The hold's own row would say the same thing twice.
+ */
+export function withHolds(held: ApprovalRow[], loaded: Pick<Loaded, "rows" | "holds"> | null): ApprovalRow[] {
+  const rows = loaded?.rows ?? [];
+  const taken = new Set<string>();
+  const joined = rows.map((row) => {
+    if (row.result !== "no_second_key" || !row.guard) return row;
+    const hold = held.find((one) => one.held?.state === "held" && !taken.has(one.id) && one.taskId === row.taskId && one.block === row.block);
+    if (!hold) return row;
+    taken.add(hold.id);
+    return { ...row, held: hold.held };
+  });
+  const live = held.filter((one) => !taken.has(one.id)).map((one) => {
+    const known = loaded?.holds.get(one.id);
+    return known ? { ...one, guard: guardFacts(known.guard, one.block ?? "", known.at, undefined) } : one;
+  });
+  return [...live, ...joined];
 }
 
 const matches = (row: ApprovalRow, filter: ApprovalFilter, q: string) => {
@@ -105,6 +135,8 @@ export function ApprovalsTab() {
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [hardList, setHardList] = useState(false);
+  const routing = useRoutingRows();
+  const [picked, setShown] = useState<"requests" | "routing">("requests");
   const rowsRef = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => {
@@ -115,7 +147,7 @@ export function ApprovalsTab() {
 
   const held = useHeldCommands(close);
   // Held commands are newest, and wait for you: they come first, then the ledger.
-  const rows = useMemo(() => [...held.rows, ...(state.status === "ready" ? state.rows : [])], [held.rows, state]);
+  const rows = useMemo(() => withHolds(held.rows, state.status === "ready" ? state : null), [held.rows, state]);
   const shown = useMemo(() => rows.filter((row) => matches(row, filter, q)), [rows, filter, q]);
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((one) => [one.id, rows.filter((row) => matches(row, one.id, "")).length])) as Record<ApprovalFilter, number>, [rows]);
 
@@ -139,9 +171,24 @@ export function ApprovalsTab() {
   const line = (rows.some((one) => one.result === "held_you" || one.held) ? GUARD_LINE : MODE_LINE)[mode];
   const long = state.next !== null || rows.length > PAGE;
 
+  // The Routing view is offered once a routing decision is in the ledger.
+  const routed = routing.status === "ready" ? routing.data.rows.length : 0;
+  const view = routed > 0 && picked === "routing" ? "routing" : "requests";
   return (
     <section className="ap-page" aria-label="Approvals">
       <StopsList />
+      {routed > 0 ? (
+        <div className="ap-tool">
+          <span>Show</span>
+          <div role="group" aria-label="Show" className="ap-filters">
+            <button type="button" className="ap-fil" aria-pressed={view === "requests"} onClick={() => setShown("requests")}>Requests <span className="ap-num">{rows.length}</span></button>
+            <button type="button" className="ap-fil" aria-pressed={view === "routing"} onClick={() => setShown("routing")}>Routing <span className="ap-num">{routed}</span></button>
+          </div>
+          {view === "routing" ? <span className="ap-showing">{ROUTING_LINE}</span> : null}
+        </div>
+      ) : null}
+      {view === "routing" ? <RoutingView read={routing} /> : null}
+      {view === "routing" ? null : <>
       <div className="ap-bar">
         {held.waiting > 0 ? <Chip tone="am">Needs you · {held.waiting}</Chip> : null}
         <Chip tone="plain">{line}</Chip>
@@ -195,9 +242,10 @@ export function ApprovalsTab() {
               <span>{LEDGER_NOTE}</span>
             </div>
           </div>
-          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held ? held.control(row) : undefined} /> : null}
+          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held && row.result !== "no_second_key" ? held.control(row) : undefined} /> : null}
         </div>
       )}
+      </>}
       {hardList ? <HardDeniedDialog onClose={() => setHardList(false)} /> : null}
     </section>
   );
