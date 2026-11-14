@@ -17,6 +17,7 @@ mod crew_background_tests;
 mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
+mod crew_flow;
 mod crew_merges;
 mod crew_review;
 mod crew_runs;

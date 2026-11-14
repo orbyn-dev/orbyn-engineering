@@ -161,6 +161,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
         .merge(writes)
+        .merge(super::crew_tasks::routes())
         .layer(from_fn_with_state(state, preview_gate))
 }
 

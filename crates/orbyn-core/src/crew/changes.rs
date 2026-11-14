@@ -43,6 +43,9 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/background"),
     ("GET", "/api/crew/background/{id}"),
     ("GET", "/api/crew/background/{id}/runs"),
+    ("GET", "/api/crew/flow/crews"),
+    ("GET", "/api/crew/flow/tasks"),
+    ("GET", "/api/crew/flow/tasks/{id}"),
 ];
 
 const PREFIX: &str = "/api/crew";
