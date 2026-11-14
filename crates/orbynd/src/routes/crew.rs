@@ -224,8 +224,13 @@ async fn classes(State(state): State<AppState>, query: QueryMap) -> ApiResult<im
 /// Up to 10 paths against those rules. `path` may be repeated, and each value may hold several paths, one per line.
 async fn classes_test(
     State(state): State<AppState>,
-    axum::extract::Query(pairs): axum::extract::Query<Vec<(String, String)>>,
+    pairs: Result<
+        axum::extract::Query<Vec<(String, String)>>,
+        axum::extract::rejection::QueryRejection,
+    >,
 ) -> ApiResult<impl IntoResponse> {
+    let axum::extract::Query(pairs) =
+        pairs.map_err(|_| CoreError::Invalid("the query is not valid".into()))?;
     let thread = pairs
         .iter()
         .find(|(name, _)| name == "thread")

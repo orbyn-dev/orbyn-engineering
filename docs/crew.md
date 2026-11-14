@@ -666,11 +666,11 @@ What is not built: the guard that watches a worker against its classes (PR B); t
 until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
 (ruling pending). Known limits: **the file is read at the checkout's HEAD at task start; an agent that can run git can move HEAD or commit a change, and the next task reads it; an
 agent that can push to the base branch can change the rules for later tasks** (the N7 check only blocks a git command whose path argument is
-`.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot move, such as the default branch, is follow-up #535. A lease spelled in a different case from the folder (`Docs/**` for `docs`) lists nothing, so it
+`.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot move, such as the default branch, is follow-up #535. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
 counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
 that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
-async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) used to start with no base commit; it is now
-refused with "no commit to read it at", because the rules cannot be read and not knowing is never a reason to allow. Review briefs always have
+async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) is refused
+with "no commit to read it at": the rules cannot be read, and not knowing is never a reason to allow. Review briefs always have
 `files: []`, so they count as every class: a rule with `engines: []` blocks every review in the repository, and a class that allows one engine plus
 "the reviewer differs from the builder" means no reviewer can start. The class set is whatever the committed file says, so a person who edits it uncommitted sees "not in force until
 committed" and nothing else changes; the lease walk widens on purpose, so a broad lease can be tied to a class it never touches; a class names

@@ -948,3 +948,43 @@ async fn a_recorded_routing_keeps_its_commit_blob_and_classes_when_head_and_the_
     assert_eq!(row.classes[0].name, "keep");
     assert_eq!(view.decision.unwrap().engine.as_str(), "bravo");
 }
+
+#[tokio::test]
+async fn an_exact_path_spelled_in_another_case_counts_as_every_class() {
+    let w = two().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![
+            rule("keys", &["crates/keys/**"], &["bravo"]),
+            rule("secret", &["crates/secret/**"], &[]),
+        ]),
+    );
+    stage(&w.repo, "100644", "crates/keys/k.txt", "k\n");
+    stage(&w.repo, "120000", "docs/key", "../crates/keys/k.txt");
+    stage(&w.repo, "120000", "docs/link", "../crates/keys");
+    commit(&w.repo, "links");
+    // Spelled as tracked, the link is followed into the class.
+    assert_eq!(names(&classes_of(&w, &["docs/key"]).await), ["keys"]);
+    assert_eq!(names(&classes_of(&w, &["docs/link/k.txt"]).await), ["keys"]);
+    // Spelled in another case it lists nothing, yet opens the same file on a case-folding file system.
+    for spelled in ["DOCS/key", "docs/KEY", "DOCS/link/k.txt", "Docs/Link/k.txt"] {
+        let out = classes_of(&w, &[spelled]).await;
+        assert!(
+            out.unknown
+                .as_deref()
+                .unwrap()
+                .contains("only when case is ignored"),
+            "{spelled}: {:?}",
+            out.unknown
+        );
+        assert_eq!(names(&out), ["keys", "secret"], "{spelled}");
+    }
+    // A new file in a tracked folder is still just a new file.
+    let fresh = classes_of(&w, &["docs/new.txt"]).await;
+    assert!(
+        fresh.hits.is_empty(),
+        "{:?} {:?}",
+        fresh.unknown,
+        fresh.hits
+    );
+}

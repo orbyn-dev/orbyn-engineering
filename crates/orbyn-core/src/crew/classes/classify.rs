@@ -392,7 +392,8 @@ impl Walk<'_> {
             Some(listed) => {
                 for entry in listed {
                     found_any |= entry.path == probe.path;
-                    if entry.mode == "120000" {
+                    // Only a link on the path itself: git may list a folder's contents when its name is a prefix.
+                    if entry.mode == "120000" && ancestors.contains(&entry.path) {
                         links.push((entry.path, entry.sha));
                     }
                 }
@@ -412,19 +413,19 @@ impl Walk<'_> {
                 return;
             }
         }
-        if !probe.tree {
-            self.match_paths(None, vec![probe.path.clone()]).await;
-            return;
-        }
-        // A lease spelled in another case lists nothing here but names a folder on a case-folding file system: what is under
-        // it cannot be listed, so every class counts.
+        // A path or lease spelled in another case lists nothing here but names a tracked path on a case-folding file system: what
+        // it reaches (a link, a folder) cannot be listed, so every class counts.
         if !found_any && let Some(real) = self.case_variant(&probe.path).await {
             if self.unknown.is_none() {
                 self.unknown = Some(format!(
-                    "the lease `{}/**` names `{real}` only when case is ignored",
+                    "`{}` names `{real}` only when case is ignored",
                     probe.path
                 ));
             }
+            return;
+        }
+        if !probe.tree {
+            self.match_paths(None, vec![probe.path.clone()]).await;
             return;
         }
         // The files tracked under it: each is matched, and each symlink is followed.

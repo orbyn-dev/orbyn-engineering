@@ -74,6 +74,10 @@ async fn the_class_routes_refuse_what_names_nothing_and_change_nothing() {
             .0,
         404
     );
+    // A malformed query answers in the app's error shape, not plain text.
+    let (status, body) = get(port, "/api/crew/classes/test?thread=t&path=%FF%FE&x=%").await;
+    assert!(status == 400 || status == 404, "{status}");
+    assert!(body.get("code").is_some() || status == 404, "{body}");
     // A task that does not exist, and an id that is not one.
     assert_eq!(get(port, "/api/crew/route/nope").await.0, 404);
     assert_eq!(get(port, "/api/crew/route/a%20b").await.0, 400);
