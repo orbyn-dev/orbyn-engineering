@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CrewTabs } from "./CrewTabs";
@@ -17,7 +18,7 @@ function layout(strip: number) {
     return this.getAttribute("role") === "tab" ? 80 : 0;
   });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-    return this.getAttribute("role") === "tablist" ? strip : 0;
+    return this.classList.contains("ap-tabs") ? strip : 0;
   });
 }
 afterEach(() => vi.restoreAllMocks());
@@ -39,8 +40,10 @@ describe("the Crew view tabs at a narrow width", () => {
     const view = render(<CrewTabs tabs={TABS} active="flow" onSelect={onSelect} base="t" />);
     expect(shown()).toEqual(["Approvals", "Flow"]);
     expect(screen.getByRole("tab", { name: "Flow" })).toHaveAttribute("aria-selected", "true");
+    // The ⋯ is a button beside the tab list, not an element inside it.
     const more = screen.getByRole("button", { name: "More Crew views" });
     expect(more).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.getByRole("tablist", { name: "Crew" })).not.toContainElement(more);
     await user.click(more);
     const menu = await screen.findByRole("menu", { name: "More Crew views" });
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Trust", "Background", "Inbox"]);
@@ -48,6 +51,19 @@ describe("the Crew view tabs at a narrow width", () => {
     expect(onSelect).toHaveBeenCalledWith("inbox");
     view.rerender(<CrewTabs tabs={TABS} active="inbox" onSelect={onSelect} base="t" />);
     expect(shown()).toContain("Inbox");
+  });
+
+  it("puts focus on the tab chosen from the menu, not on the page", async () => {
+    layout(300);
+    const user = userEvent.setup();
+    function Harness() {
+      const [active, setActive] = useState<(typeof TABS)[number]["id"]>("approvals");
+      return <CrewTabs tabs={TABS} active={active} onSelect={setActive} base="t" />;
+    }
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "More Crew views" }));
+    await user.click(within(await screen.findByRole("menu", { name: "More Crew views" })).getByRole("menuitem", { name: "Flow" }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Flow" })));
   });
 
   it("moves between the visible tabs with the arrow keys", async () => {

@@ -45,6 +45,31 @@ describe("the Crew row of the left bar", () => {
     expect(screen.queryByRole("link", { name: /^Crew/ })).toBeNull();
   });
 
+  it("follows a service restarted with Crew Preview switched: the next focus reads the info again", async () => {
+    mock.reset("crew");
+    render(createElement(App));
+    expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
+    mock.reset("default");
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(screen.queryByRole("link", { name: /^Crew\s*Preview/ })).toBeNull());
+    expect(useConnection.getState().crewPreview).toBe(false);
+    mock.reset("crew");
+    window.dispatchEvent(new Event("focus"));
+    expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
+  });
+
+  it("turns the Crew row off when the re-check on focus fails, and does not keep the old flag", async () => {
+    mock.reset("crew");
+    render(createElement(App));
+    expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
+    expect(useConnection.getState().crewPreview).toBe(true);
+    // Other readers of the info may take the first failure; the re-check gets one of them.
+    mock.fail("/api/info", 4);
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(useConnection.getState().crewPreview).toBe(false));
+    await waitFor(() => expect(screen.queryByRole("link", { name: /^Crew\s*Preview/ })).toBeNull());
+  });
+
   it("fails closed: a start whose info cannot be read shows no Crew row, and the flag stays off", async () => {
     mock.reset("crew");
     mock.fail("/api/info", 20);

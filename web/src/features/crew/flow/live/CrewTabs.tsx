@@ -21,6 +21,7 @@ const GAP = 2;
  */
 export function CrewTabs<T extends Tab>({ tabs, active, onSelect, base }: { tabs: readonly T[]; active: T["id"]; onSelect(id: T["id"]): void; base: string }) {
   const strip = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLButtonElement>(null);
   const widths = useRef<Record<string, number>>({});
   const [room, setRoom] = useState(Infinity);
@@ -59,6 +60,12 @@ export function CrewTabs<T extends Tab>({ tabs, active, onSelect, base }: { tabs
   const hidden = tabs.filter((tab) => !shown.has(tab.id));
   const visible = tabs.filter((tab) => shown.has(tab.id));
 
+  // The ⋯ may disappear once a tab is chosen from its menu: focus goes to the chosen tab, never to the page.
+  const chooseFromMenu = (id: T["id"]) => {
+    onSelect(id);
+    setTimeout(() => document.getElementById(`${base}-${id}`)?.focus(), 0);
+  };
+
   const keys = (event: React.KeyboardEvent<HTMLElement>) => {
     const at = visible.findIndex((tab) => `${base}-${tab.id}` === (document.activeElement as HTMLElement | null)?.id);
     if (at < 0) return;
@@ -71,27 +78,29 @@ export function CrewTabs<T extends Tab>({ tabs, active, onSelect, base }: { tabs
   };
 
   return (
-    <div ref={strip} className="ap-tabs" role="tablist" aria-label="Crew" onKeyDown={keys}>
-      {tabs.map((tab) => {
-        const off = !shown.has(tab.id);
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            id={`${base}-${tab.id}`}
-            data-tab={tab.id}
-            aria-controls={`${base}-panel`}
-            aria-selected={active === tab.id}
-            tabIndex={active === tab.id && !off ? 0 : -1}
-            className={off ? "fv-tab-off" : undefined}
-            aria-hidden={off || undefined}
-            onClick={() => onSelect(tab.id)}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
+    <div ref={strip} className="ap-tabs">
+      <div ref={list} className="fv-tablist" role="tablist" aria-label="Crew" onKeyDown={keys}>
+        {tabs.map((tab) => {
+          const off = !shown.has(tab.id);
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`${base}-${tab.id}`}
+              data-tab={tab.id}
+              aria-controls={`${base}-panel`}
+              aria-selected={active === tab.id}
+              tabIndex={active === tab.id && !off ? 0 : -1}
+              className={off ? "fv-tab-off" : undefined}
+              aria-hidden={off || undefined}
+              onClick={() => onSelect(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
       {hidden.length > 0 ? (
         <button
           ref={more}
@@ -110,7 +119,7 @@ export function CrewTabs<T extends Tab>({ tabs, active, onSelect, base }: { tabs
       ) : null}
       <Presence>
         {menu && hidden.length > 0 ? (
-          <Menu x={menu.x} y={menu.y} label="More Crew views" items={hidden.map((tab) => ({ label: tab.label, onSelect: () => onSelect(tab.id) }))} onClose={() => setMenu(null)} />
+          <Menu x={menu.x} y={menu.y} label="More Crew views" items={hidden.map((tab) => ({ label: tab.label, onSelect: () => chooseFromMenu(tab.id) }))} onClose={() => setMenu(null)} />
         ) : null}
       </Presence>
     </div>
