@@ -600,8 +600,19 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   best effort. Errors are stable strings: `cancelled` (nothing was sent), `busy`, `timeout`, `unavailable` (no service), `invalid_hold`,
   `invalid_answer`, `forbidden`, `dialog_failed`, `nonce_failed` and `presence_refused:<code>` for the service's refusal codes above. The page words
   them; for a refusal or a timeout the Designer's text is "Orbyn couldn't confirm it was you. Try again from the desktop app."
-  Cancel is the first button, which macOS and Windows make the default; the dialog plugin has no setting for it, so on Linux that is not checked. The
-  dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
+  **Which button is which.** Approve once is the dialog plugin's OK slot and Cancel its cancel slot, so Escape, the close box, Alt+F4, a failed dialog
+  call and a GTK delete-event all come back as the Cancel label; only an explicit click on Approve once equals the Approve label, and the code
+  refuses to build with the two labels equal (`dismissals_never_read_as_approval` copies the plugin's mapping per platform). The price: on macOS (the
+  first button is the default) and Windows, **Return approves**. So the dialog may only be opened as the direct result of the person's own click.
+  The shell cannot tell a click from a script that calls `crew_presence` (devtools is on in release builds, issue #532), so this rests on the page:
+  PR3's card must call it only from a trusted click (`event.isTrusted`, no keydown, no automatic retry). In the shell, `crew_presence` is the only
+  way a dialog opens; nothing retries, reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`). Linux's default button is
+  not checked.
+  The dialog is a child of the main window, which is shown and focused first; if it cannot be shown the answer is `unavailable`. A native dialog cannot
+  be closed from the shell, so the person has 10 minutes (a hold waits that long); after that the call ends with `timeout` and a late click is thrown away,
+  but the dialog stays up and a new call answers `busy` until it is dismissed. The shell also refuses (`invalid_answer`) text with a control,
+  bidirectional, zero-width or format character, the same set the service marks.
+  The dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
   **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
   from the app's window stays held.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),

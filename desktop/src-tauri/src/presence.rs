@@ -14,7 +14,8 @@
 //! to the page and the line to the service are not ours to wipe).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -36,6 +37,26 @@ const CODE_LIMIT: usize = 32;
 pub const DIALOG_TITLE: &str = "Approve this command once?";
 pub const APPROVE_LABEL: &str = "Approve once";
 pub const CANCEL_LABEL: &str = "Cancel";
+/// How long the person has to answer an open dialog. A hold waits 10 minutes for the person, so a later answer would be refused anyway.
+pub const PERSON_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+const fn same_text(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < a.len() {
+        if a[at] != b[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+// A dismissal reads as the Cancel label, so the two labels must never be the same.
+const _: () = assert!(!same_text(APPROVE_LABEL, CANCEL_LABEL));
+
 const DIALOG_FOOTER: &str = "This approves this one command. It cannot be reused.";
 
 /// Why `crew_presence` gave no nonce. The page gets [`PresenceError::code`]; no variant holds a nonce.
@@ -112,6 +133,19 @@ pub fn valid_id(text: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// A character that draws nothing or changes how the text around it draws: controls, soft hyphen, zero-width and bidi marks, line and
+/// paragraph separators, invisible operators, Hangul fillers, variation selectors, the byte order mark, tag characters. The same set the
+/// service turns into a visible mark (copied, not shared), so one arriving here means the text was not made for a plain dialog.
+fn invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(c,
+            '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFC}' | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}')
+}
+
 /// What the service says a hold is. The dialog shows these and the grant is bound to the ids and the hash.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hold {
@@ -126,12 +160,12 @@ pub struct Hold {
 }
 
 impl Hold {
-    /// Whether this is a hold the shell may show: the ids and the hash have the shape of the service's, the text has no control
-    /// character (the service turns them into visible marks, so one here would be a line it did not mean) and nothing is too long
+    /// Whether this is a hold the shell may show: the ids and the hash have the shape of the service's, the text has no control,
+    /// bidirectional, zero-width or format character (the service turns them into visible marks, so one here would be a line or an order it did not mean) and nothing is too long
     /// for a dialog.
     pub fn is_showable(&self) -> bool {
         let fits = |text: &str, limit: usize| text.chars().count() <= limit;
-        let plain = |text: &str| !text.chars().any(char::is_control);
+        let plain = |text: &str| !text.chars().any(invisible);
         valid_id(&self.hold_id)
             && valid_id(&self.thread_id)
             && valid_id(&self.task_id)
@@ -310,6 +344,8 @@ impl Drop for Pending<'_> {
 pub struct Presence {
     requests: Requests,
     open: Mutex<bool>,
+    /// True while a dialog is on screen, even after its answer stopped being waited for.
+    dialog: Arc<AtomicBool>,
 }
 
 /// Held while an approval is open. Dropping it lets the next one start.
@@ -319,7 +355,7 @@ impl Presence {
     /// Starts the one approval that may be open, or says `busy`.
     pub fn begin(&self) -> Result<Flight<'_>, PresenceError> {
         let mut open = locked(&self.open);
-        if *open {
+        if *open || self.dialog.load(Ordering::SeqCst) {
             return Err(PresenceError::Busy);
         }
         *open = true;
@@ -328,6 +364,40 @@ impl Presence {
 
     pub fn requests(&self) -> &Requests {
         &self.requests
+    }
+
+    fn dialog_flag(&self) -> Arc<AtomicBool> {
+        self.dialog.clone()
+    }
+}
+
+/// Runs a blocking dialog off this thread and waits for the person at most `limit`. A native dialog cannot be closed from here, so when
+/// the limit passes the approval ends with `timeout` and a click that comes later is thrown away, but `flag` stays set until the dialog
+/// is really gone: a new approval answers `busy` rather than stacking a second dialog on the first.
+pub fn ask_with_limit(
+    flag: &Arc<AtomicBool>,
+    limit: Duration,
+    show: impl FnOnce() -> bool + Send + 'static,
+) -> Result<bool, PresenceError> {
+    if flag.swap(true, Ordering::SeqCst) {
+        return Err(PresenceError::Busy);
+    }
+    struct Release(Arc<AtomicBool>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let (sender, receiver) = channel();
+    let release = Release(flag.clone());
+    std::thread::spawn(move || {
+        let _release = release;
+        let _ = sender.send(show());
+    });
+    match receiver.recv_timeout(limit) {
+        Ok(approved) => Ok(approved),
+        Err(RecvTimeoutError::Timeout) => Err(PresenceError::Timeout),
+        Err(RecvTimeoutError::Disconnected) => Err(PresenceError::Dialog),
     }
 }
 
@@ -389,11 +459,14 @@ pub fn approve(
 }
 
 /// The app's own shell: the service pipe and the native dialog.
-struct AppShell(AppHandle);
+struct AppShell {
+    app: AppHandle,
+    window: WebviewWindow,
+}
 
 impl Shell for AppShell {
     fn service_running(&self) -> bool {
-        self.0
+        self.app
             .state::<crate::Core>()
             .0
             .lock()
@@ -401,23 +474,37 @@ impl Shell for AppShell {
     }
 
     fn send(&self, line: &Value) {
-        crate::tell_core(&self.0, line.clone());
+        crate::tell_core(&self.app, line.clone());
     }
 
     fn confirm(&self, hold: &Hold) -> Result<bool, PresenceError> {
-        // Cancel is the first button, which is the default one where the system makes the first button the default (macOS and
-        // Windows), and only an exact click on Approve once counts: a closed dialog, Escape or anything else is a cancel.
-        let result = self
-            .0
-            .dialog()
-            .message(dialog_body(hold))
-            .title(DIALOG_TITLE)
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                CANCEL_LABEL.into(),
-                APPROVE_LABEL.into(),
-            ))
-            .blocking_show_with_result();
-        Ok(approved(&result))
+        // The dialog belongs to the main window: bring it forward first, and never open one over a window the person cannot see.
+        let window = self.window.clone();
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(true) {
+            return Err(PresenceError::Unavailable);
+        }
+        let app = self.app.clone();
+        let body = dialog_body(hold);
+        let flag = self.app.state::<Presence>().dialog_flag();
+        // Approve once is the OK slot and Cancel the cancel slot, so what the plugin returns for Escape, the close box or a failed
+        // call is the Cancel label (see `dismissals_never_read_as_approval`). On macOS and Windows the first button, Approve once, is
+        // the default one: Return approves, so this dialog may only be opened for the person's own click.
+        ask_with_limit(&flag, PERSON_LIMIT, move || {
+            let result = app
+                .dialog()
+                .message(body)
+                .title(DIALOG_TITLE)
+                .parent(&window)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    APPROVE_LABEL.into(),
+                    CANCEL_LABEL.into(),
+                ))
+                .blocking_show_with_result();
+            approved(&result)
+        })
     }
 }
 
@@ -425,6 +512,9 @@ impl Shell for AppShell {
 pub fn approved(result: &MessageDialogResult) -> bool {
     matches!(result, MessageDialogResult::Custom(label) if label == APPROVE_LABEL)
 }
+
+// The dialog is opened from exactly one place: `AppShell::confirm`, which `approve` calls once per `crew_presence`. Nothing retries,
+// reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`).
 
 /// Hands the service's answer to the request that waits for it.
 pub fn deliver(app: &AppHandle, request_id: &str, answer: Answer) {
@@ -458,7 +548,10 @@ pub async fn crew_presence(
     tauri::async_runtime::spawn_blocking(move || {
         approve(
             &app.state::<Presence>(),
-            &AppShell(app.clone()),
+            &AppShell {
+                app: app.clone(),
+                window,
+            },
             &hold_id,
             ANSWER_TIMEOUT,
         )
@@ -538,6 +631,185 @@ mod tests {
     }
 
     const SHORT: Duration = Duration::from_millis(60);
+
+    #[test]
+    fn approve_never_reopens_the_dialog() {
+        let presence = Arc::new(Presence::default());
+        // Cancelled: one dialog, no second one, nothing sent after.
+        let shell = Fake::new(&presence);
+        *locked(&shell.click) = Ok(false);
+        assert!(approve(&presence, &shell, "h-1", SHORT).is_err());
+        assert_eq!(locked(&shell.shown).len(), 1);
+        assert_eq!(locked(&shell.sent).len(), 1);
+        // The service refuses the grant: still one dialog.
+        let shell = Fake::new(&presence);
+        *locked(&shell.grant) = Some(Answer::Refused("gone".into()));
+        assert!(approve(&presence, &shell, "h-1", SHORT).is_err());
+        assert_eq!(locked(&shell.shown).len(), 1);
+        // The grant times out: still one dialog.
+        let shell = Fake::new(&presence);
+        *locked(&shell.grant) = None;
+        assert_eq!(
+            approve(&presence, &shell, "h-1", SHORT),
+            Err(PresenceError::Timeout)
+        );
+        assert_eq!(locked(&shell.shown).len(), 1);
+        // Refused or silent before the dialog: none at all.
+        for describe in [Some(Answer::Refused("gone".into())), None] {
+            let shell = Fake::new(&presence);
+            *locked(&shell.describe) = describe;
+            assert!(approve(&presence, &shell, "h-1", SHORT).is_err());
+            assert!(locked(&shell.shown).is_empty());
+        }
+        // A dialog that failed to show is not shown again.
+        let shell = Fake::new(&presence);
+        *locked(&shell.click) = Err(PresenceError::Unavailable);
+        assert!(approve(&presence, &shell, "h-1", SHORT).is_err());
+        assert_eq!(locked(&shell.shown).len(), 1);
+    }
+
+    /// What `rfd` 0.17.2 hands the plugin and what `tauri-plugin-dialog` 2.8.4 (`desktop.rs`, `show_message_dialog`) makes of it for
+    /// `OkCancelCustom(ok, cancel)`: its `Ok` becomes `Custom(ok)`, its `Cancel` becomes `Custom(cancel)`, anything else passes on.
+    #[derive(Clone, Debug)]
+    enum Rfd {
+        Ok,
+        Cancel,
+        Custom(String),
+    }
+
+    fn plugin(result: Rfd, ok: &str, cancel: &str) -> MessageDialogResult {
+        match result {
+            Rfd::Ok => MessageDialogResult::Custom(ok.into()),
+            Rfd::Cancel => MessageDialogResult::Custom(cancel.into()),
+            Rfd::Custom(label) => MessageDialogResult::Custom(label),
+        }
+    }
+
+    #[test]
+    fn dismissals_never_read_as_approval() {
+        let (ok, cancel) = (APPROVE_LABEL, CANCEL_LABEL);
+        // (platform, what the person did, what rfd returns for OkCancelCustom(ok, cancel), is an approval)
+        let table = [
+            // macOS: first button -> Custom(first label), second -> Custom(second label), Escape and anything else -> Cancel.
+            ("macos", "click first", Rfd::Custom(ok.into()), true),
+            ("macos", "click second", Rfd::Custom(cancel.into()), false),
+            ("macos", "escape", Rfd::Cancel, false),
+            ("macos", "other modal response", Rfd::Cancel, false),
+            // Windows: the OK button -> Custom(ok), the cancel button -> Custom(cancel), close box, Alt+F4, a failed call -> Cancel.
+            ("windows", "click ok", Rfd::Custom(ok.into()), true),
+            ("windows", "click cancel", Rfd::Custom(cancel.into()), false),
+            ("windows", "close box", Rfd::Cancel, false),
+            ("windows", "alt+f4", Rfd::Cancel, false),
+            ("windows", "failed call", Rfd::Cancel, false),
+            // Linux (GTK): rfd gives Ok or Cancel and the plugin maps them to the labels; delete-event is Cancel.
+            ("linux", "click ok", Rfd::Ok, true),
+            ("linux", "click cancel", Rfd::Cancel, false),
+            ("linux", "close or escape", Rfd::Cancel, false),
+        ];
+        for (platform, event, result, expected) in table {
+            let seen = plugin(result, ok, cancel);
+            assert_eq!(approved(&seen), expected, "{platform}: {event}: {seen:?}");
+        }
+        // Whatever else could come back, only a click on the Approve label approves.
+        for other in [
+            MessageDialogResult::Cancel,
+            MessageDialogResult::Ok,
+            MessageDialogResult::Custom(CANCEL_LABEL.into()),
+            MessageDialogResult::Custom(String::new()),
+            MessageDialogResult::Custom(format!("{APPROVE_LABEL} ")),
+        ] {
+            assert!(!approved(&other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn invisible_characters_in_the_text_are_refused() {
+        for c in [
+            '\u{0}',
+            '\u{7}',
+            '\u{1B}',
+            '\u{85}',
+            '\t',
+            '\n',
+            '\u{00AD}',
+            '\u{200B}',
+            '\u{200E}',
+            '\u{200F}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202A}',
+            '\u{202E}',
+            '\u{2066}',
+            '\u{2067}',
+            '\u{2069}',
+            '\u{2060}',
+            '\u{3164}',
+            '\u{FE0F}',
+            '\u{FEFF}',
+            '\u{E0041}',
+            '\u{FFA0}',
+        ] {
+            for bad in [
+                Hold {
+                    command_shown: format!("a{c}b"),
+                    ..hold()
+                },
+                Hold {
+                    worker_name: format!("a{c}b"),
+                    ..hold()
+                },
+                Hold {
+                    task_title: format!("a{c}b"),
+                    ..hold()
+                },
+            ] {
+                assert!(!bad.is_showable(), "U+{:04X}", c as u32);
+            }
+        }
+        // The service's visible marks and other scripts are fine.
+        let ok = Hold {
+            command_shown: "echo \u{23CE}\u{FFFD} \u{65E5}\u{672C} \u{1F680}".into(),
+            ..hold()
+        };
+        assert!(ok.is_showable());
+    }
+
+    #[test]
+    fn a_dialog_nobody_answers_ends_the_approval_but_not_the_dialog() {
+        let presence = Presence::default();
+        let flag = presence.dialog_flag();
+        let (release, held) = channel::<()>();
+        let result = ask_with_limit(&flag, Duration::from_millis(30), move || {
+            let _ = held.recv();
+            true
+        });
+        // The late click is thrown away: the person's wait ended in a timeout, not an approval.
+        assert_eq!(result, Err(PresenceError::Timeout));
+        // The dialog is still up: nothing new starts, and no second dialog opens.
+        assert_eq!(presence.begin().err(), Some(PresenceError::Busy));
+        assert_eq!(
+            ask_with_limit(&flag, SHORT, || true),
+            Err(PresenceError::Busy)
+        );
+        // Once it is gone, the next approval can.
+        drop(release);
+        let mut free = false;
+        for _ in 0..100 {
+            if presence.begin().is_ok() {
+                free = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(free);
+        assert_eq!(ask_with_limit(&flag, SHORT, || true), Ok(true));
+    }
+
+    #[test]
+    fn the_labels_differ_and_the_limit_is_generous() {
+        assert_ne!(APPROVE_LABEL, CANCEL_LABEL);
+        assert!(PERSON_LIMIT >= Duration::from_secs(300));
+    }
 
     #[test]
     fn approving_returns_the_nonce_the_service_was_given_bound_to_its_own_hold() {
