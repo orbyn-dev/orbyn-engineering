@@ -38,6 +38,29 @@ pub enum ServiceMessage {
     ChooseProjectImage {
         request_id: String,
     },
+    /// The service's description of a held command, for the approval dialog.
+    PresenceHold {
+        request_id: String,
+        hold_id: String,
+        thread_id: String,
+        task_id: String,
+        command_shown: String,
+        command_sha256: String,
+        worker_name: String,
+        task_title: String,
+        /// Absent from a service that never cut the command.
+        #[serde(default)]
+        truncated: bool,
+    },
+    /// The service recorded the person's approval.
+    PresenceReady {
+        request_id: String,
+    },
+    /// The service will not describe or record it, with its reason.
+    PresenceRefused {
+        request_id: String,
+        code: String,
+    },
 }
 
 /// Running work, and whether the machine should stay awake for it.

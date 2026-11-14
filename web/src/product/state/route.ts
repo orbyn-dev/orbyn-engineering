@@ -25,7 +25,7 @@ export const SETTINGS_SECTIONS = [
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /** The Crew screens built so far; the rest join as they land. */
-export const CREW_TABS = ["approvals", "trust", "background"] as const;
+export const CREW_TABS = ["approvals", "trust", "background", "inbox"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
 export type Route =

@@ -185,7 +185,8 @@
               "missing_capability",
               "quota_exhausted",
               "tier_below_lead",
-              "same_engine_refused"
+              "same_engine_refused",
+              "path_class"
             ]
           },
           "text": {

@@ -7,6 +7,7 @@ mod background;
 mod bus;
 pub mod changes;
 mod checks;
+mod classes;
 mod filters;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
@@ -47,6 +48,10 @@ pub use background::{
     BackgroundEnd, EVERY_HOURS_MAX, MINUTES_MAX, NAME_MAX, SETTING_MAX, TURNS_MAX,
 };
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
+pub use classes::{
+    BUILT_IN as CLASS_BUILT_IN, ClassFile, Glob, PathClasses, base_commit, classify,
+    classify_paths, read_class_file,
+};
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
 pub use leases::refuse_protected;
