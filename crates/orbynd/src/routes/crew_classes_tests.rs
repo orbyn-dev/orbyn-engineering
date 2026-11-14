@@ -51,6 +51,8 @@ async fn the_class_routes_are_hidden_with_the_flag_off() {
     let (_, absent) = get(port, "/api/crew-nothing").await;
     for path in [
         "/api/crew/classes?thread=t1",
+        "/api/crew/classes?project=p1",
+        "/api/crew/classes/test?project=p1&path=src/a.rs",
         "/api/crew/classes/test?thread=t1&path=src/a.rs",
         "/api/crew/route/t1",
     ] {
@@ -66,6 +68,31 @@ async fn the_class_routes_refuse_what_names_nothing_and_change_nothing() {
     let (port, dir) = serve("on", true).await;
     // No thread named, and a thread that does not exist.
     assert_eq!(get(port, "/api/crew/classes").await.0, 400);
+    // Either id, never both and never neither; a malformed id is refused; an unknown project is not found.
+    assert_eq!(get(port, "/api/crew/classes?project=nope").await.0, 404);
+    assert_eq!(get(port, "/api/crew/classes?project=a%20b").await.0, 400);
+    assert_eq!(get(port, "/api/crew/classes?thread=a%20b").await.0, 400);
+    let (status, body) = get(port, "/api/crew/classes?thread=t&project=p").await;
+    assert_eq!(status, 400);
+    assert!(
+        body.to_string()
+            .contains("give thread or project, not both")
+    );
+    let (status, body) = get(port, "/api/crew/classes/test?path=a").await;
+    assert_eq!(status, 400);
+    assert!(body.to_string().contains("thread or project is required"));
+    assert_eq!(
+        get(port, "/api/crew/classes/test?project=nope&path=a")
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        get(port, "/api/crew/classes/test?thread=t&project=p&path=a")
+            .await
+            .0,
+        400
+    );
     assert_eq!(get(port, "/api/crew/classes?thread=nope").await.0, 404);
     assert_eq!(get(port, "/api/crew/classes/test?path=a").await.0, 400);
     assert_eq!(

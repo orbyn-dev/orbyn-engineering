@@ -269,10 +269,16 @@ fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
 }
 
-/// The repository's data classes at the commit a task started in this thread would start from. Read-only.
+/// The repository's data classes at the commit a task started in this thread would start from, or at the project's own checkout
+/// with `project=`. One of the two, never both. Read-only.
 async fn classes(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
-    let thread = thread_of(&query)?;
-    Ok(Json(state.core.crew_classes_view(&thread).await?))
+    let (thread, project) = (query.0.get("thread"), query.0.get("project"));
+    Ok(Json(
+        state
+            .core
+            .crew_classes_view(thread.map(String::as_str), project.map(String::as_str))
+            .await?,
+    ))
 }
 
 /// Up to 10 paths against those rules. `path` may be repeated, and each value may hold several paths, one per line.
@@ -285,11 +291,13 @@ async fn classes_test(
 ) -> ApiResult<impl IntoResponse> {
     let axum::extract::Query(pairs) =
         pairs.map_err(|_| CoreError::Invalid("the query is not valid".into()))?;
-    let thread = pairs
-        .iter()
-        .find(|(name, _)| name == "thread")
-        .map(|(_, value)| value.clone())
-        .ok_or_else(|| CoreError::Invalid("thread is required".into()))?;
+    let first = |key: &str| {
+        pairs
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
+    };
+    let (thread, project) = (first("thread"), first("project"));
     let paths: Vec<String> = pairs
         .iter()
         .filter(|(name, _)| name == "path")
@@ -298,7 +306,9 @@ async fn classes_test(
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect();
-    Ok(Json(state.core.crew_class_test(&thread, &paths).await?))
+    Ok(Json(
+        state.core.crew_class_test(thread, project, &paths).await?,
+    ))
 }
 
 /// How one task was routed: the decision or the refusal, and the ledger rows of the routing.
@@ -315,14 +325,6 @@ fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {
         .get(name)
         .cloned()
         .ok_or_else(|| CoreError::Invalid(format!("{name} is required")))
-}
-
-fn thread_of(query: &QueryMap) -> Result<String, CoreError> {
-    query
-        .0
-        .get("thread")
-        .cloned()
-        .ok_or_else(|| CoreError::Invalid("thread is required".into()))
 }
 
 async fn preview(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
