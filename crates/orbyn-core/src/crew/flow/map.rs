@@ -109,7 +109,10 @@ impl Core {
         };
 
         // Who was told what and is still waiting, and how long each worker has been silent: one bounded query each.
-        let held: BTreeMap<String, u32> = self.store.crew_held_counts(crew)?.into_iter().collect();
+        let (held, delivery_cut) = self
+            .store
+            .crew_held_counts(crew, crate::store::DELIVERY_WINDOW)?;
+        let held: BTreeMap<String, u32> = held.into_iter().collect();
         let mut threads = Vec::new();
         let mut rows = Vec::new();
         for task in tasks {
@@ -211,17 +214,38 @@ impl Core {
             });
         }
 
-        let mut edges: Vec<wire::FlowEdge> = self
-            .store
-            .crew_message_edges(crew, (EDGES_MAX + 1) as u32)?
+        let (raw_edges, message_cut) = self.store.crew_message_edges(
+            crew,
+            (EDGES_MAX + 1) as u32,
+            crate::store::MESSAGE_WINDOW,
+        )?;
+        truncated |= delivery_cut || message_cut;
+        let members = if raw_edges.iter().any(|e| e.recipient == "all") {
+            self.store.crew_member_times(crew, 200)?
+        } else {
+            Vec::new()
+        };
+        let mut edges: Vec<wire::FlowEdge> = raw_edges
             .into_iter()
-            .map(|e| wire::FlowEdge {
-                from: scrub.text(&e.sender, 60),
-                to: scrub.text(&e.recipient, 60),
-                label: label_of(&e.kind).to_owned(),
-                kind: scrub.text(&e.kind, 20),
-                count: e.count,
-                delivery: delivery_of(e.mode.as_deref()),
+            .map(|e| {
+                let expected = super::messages::expected_recipients(
+                    &members,
+                    &e.sender,
+                    e.newest_at.as_deref(),
+                );
+                wire::FlowEdge {
+                    from: scrub.text(&e.sender, 60),
+                    to: scrub.text(&e.recipient, 60),
+                    label: label_of(&e.kind).to_owned(),
+                    kind: scrub.text(&e.kind, 20),
+                    count: e.count,
+                    delivery: super::messages::settled(
+                        delivery_of(e.mode.as_deref()),
+                        &e.recipient,
+                        e.recipients,
+                        expected,
+                    ),
+                }
             })
             .collect();
         if edges.len() > EDGES_MAX {
