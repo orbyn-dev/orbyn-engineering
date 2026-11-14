@@ -723,6 +723,12 @@ mod tests {
             ("macos", "click first", Rfd::Custom(ok.into()), true),
             ("macos", "click second", Rfd::Custom(cancel.into()), false),
             ("macos", "escape", Rfd::Cancel, false),
+            (
+                "macos",
+                "return (default button)",
+                Rfd::Custom(ok.into()),
+                true,
+            ),
             ("macos", "other modal response", Rfd::Cancel, false),
             // Windows: the OK button -> Custom(ok), the cancel button -> Custom(cancel), close box, Alt+F4, a failed call -> Cancel.
             ("windows", "click ok", Rfd::Custom(ok.into()), true),
@@ -730,6 +736,12 @@ mod tests {
             ("windows", "close box", Rfd::Cancel, false),
             ("windows", "alt+f4", Rfd::Cancel, false),
             ("windows", "failed call", Rfd::Cancel, false),
+            (
+                "windows",
+                "return (default button)",
+                Rfd::Custom(ok.into()),
+                true,
+            ),
             // Linux (GTK): rfd gives Ok or Cancel and the plugin maps them to the labels; delete-event is Cancel.
             ("linux", "click ok", Rfd::Ok, true),
             ("linux", "click cancel", Rfd::Cancel, false),
