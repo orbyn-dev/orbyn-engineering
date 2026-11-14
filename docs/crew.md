@@ -1200,6 +1200,57 @@ reason.
 - Premise check, dependency splitting, cheap-draft escalation
 - Publishing the spec
 
+## As built (re-run checks)
+
+The person's "Re-run checks" for a Crew task (Preview). Backend only: the card that calls it is Engineering 1's.
+
+- **What exists:** core `Core::crew_rerun_checks(task, reason, actor)` and `POST /api/crew/tasks/{id}/rerun-checks` (body empty, or
+  `{ "reason": "..." }`, 1 to 200 characters, redacted). It runs the answer key's checks again through the verifier
+  (`Core::judge`, the code behind `crew_verify`), which adds Evidence and a Gate and **changes no state** (SPEC.md H7). With the Preview
+  flag off the route is 404.
+- **What runs.** The key's checks only, in the task's own checkout: its command kinds, `file_scope` and `diff_size`; any other kind
+  is `skipped`, as in a live verification. It does **not** run the repository's own checks (`.orbyn/crew.json`), and it does not
+  touch the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose
+  protected files changed runs nothing and adds no Gate, as a live verification does (N7, H9).
+- **Person only, as far as it is enforced.** No MCP or crew tool calls it (tested: no tool spec mentions it). The route is `local_only`
+  (a remote viewer is 403), behind the Preview gate, and listed in `crew::changes::STATE_CHANGING` and the route table's `GUARDS`, so
+  Autopilot's N1 refuses an agent's request by the command text it sees. The limits are the cancel route's: an unconfined engine or any
+  process holding the launch token can `POST` it, and the audit row says `user` whoever sent it.
+- **Which tasks.** An unknown id is `404 not_found`. A task with no key or no checkout is `422 unsupported`. `passed` and `stopped`
+  (and `failed`, which is never at rest) may be checked again. Anything else is `409 task_busy` with a plain reason, and nothing
+  runs: a task being worked on (`briefed`, `routed`, `running`, `changed_approach`, `needs_person`), one being verified, a `cancelled`
+  one, one whose worker still has an engine run open (the worker may be writing the checkout), and one whose checks are being run
+  again already. One re-run per task: the claim is `crew_runs.verifying_since`, the column a live verification uses, so a re-run and a
+  verification can never run together, and the second of two requests is `409 task_busy`. A start of the service clears every claim.
+- **Order, failing closed.** (1) One transaction checks the task, takes the claim and writes the intent row `crew.task.rerun_checks`
+  (actor, task id, state, the redacted reason): the row comes before any command (architecture rule 6), and a refused request writes
+  nothing. (2) Every command of the key is **screened**. (3) The verifier runs the rest. (4) One transaction writes
+  `crew.task.rerun_checks_done` (counts only: total, ran, passed, refused, skipped, the gate) or `crew.task.rerun_checks_failed` (the
+  error code) and lets the claim go. A crash after (1) leaves the intent row with no outcome row, and the next start frees the claim.
+  The work runs on its own task, so a caller that hangs up does not leave the claim set or the outcome row unwritten.
+- **Command screen (new).** Before this, the core's own check commands were not screened: the verifier ran a key's commands as written,
+  and the merge queue still runs a repository's. The re-run screens each command of the key with the same reading a worker's command gets
+  at the gate: the always-denied list N1 to N10 (`autopilot::screen`, which calls `refuse_in`) and then the blast-radius guard (`guard_of`
+  with this device's two lists). A command that fails either is **not run**; its check is recorded as an `error` (its Evidence says that the guard
+  refused it and holds no command text), so the Gate cannot pass on the others. It fails closed: an empty command, one with a quote left
+  open, one the parser finds no command in, or a guard list that cannot be read is refused (`unreadable` or `blast`). The screen is
+  heuristic like the gate (docs/crew.md, "As built (slice 4i, guard)"): a script the command runs, an alias or a `psql -f` file is not read.
+  There is no approve-once for a refused check here.
+- **Answer.** `{ task, state, total, ran, passed, refused, skipped, gate: pass|fail|none, evidence_ids, refused_checks? }`. No check
+  command, output, excerpt, `proves` or `does_not_prove` is in it (H1): counts and outcomes only. `refused_checks` (check id and rule, never
+  the command) is there only for a task that is final; a task that is not final gets the count. `gate` is the Gate this run added, or
+  `none` when it added none (every check skipped, or a protected file changed). The state is the task's own, unchanged.
+- **Bounds.** The whole run gets the shorter of the task's time budget (fresh, not what was left when it ended) and 30 minutes
+  (`RERUN_MAX`); a check past it is stopped and recorded as an `error`. Output is the existing bound: an Evidence excerpt is its last 4000
+  characters, redacted, and the log is kept as a hash. Evidence is addressed by content, so a re-run in the same second with the same
+  output adds no second row.
+- **Not built:** the card (Engineering 1); reassign, message into a lane, add a lane and a person's answer, which are out of the beta;
+  naming which Evidence a re-run made in the Review queue; re-running the repository's own checks; re-running a task that is not over.
+- **Known limits.** A re-run's own commands run with the person's permissions in the worker's checkout, so a key whose command writes
+  there changes the checkout (the live verification does too); the screen narrows what it may do and does not sandbox it. A task cancelled
+  while its re-run runs is not stopped by the cancel: the commands finish or time out first. A re-run does not re-decide a task:
+  a `stopped` task whose checks now pass is still `stopped`, and merge still needs a `passed` one.
+
 ## Worker confinement (macOS)
 
 Crew runs on macOS in the beta; Windows later. On macOS each worker's engine process starts under a

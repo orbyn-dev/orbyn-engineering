@@ -55,7 +55,7 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
     })
 }
 
-fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
+pub(super) fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
     tx.query_row(
         "SELECT * FROM crew_runs WHERE task_id = ?1",
         [task_id],

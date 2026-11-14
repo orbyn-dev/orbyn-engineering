@@ -20,6 +20,7 @@ mod persist;
 mod protect;
 mod recover;
 mod report;
+pub mod rerun;
 mod review;
 mod router;
 mod score;

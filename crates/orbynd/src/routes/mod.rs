@@ -49,6 +49,8 @@ mod crew_classes_tests;
 mod crew_guard_tests;
 #[cfg(test)]
 mod crew_held_tests;
+#[cfg(all(test, unix))]
+mod crew_rerun_tests;
 #[cfg(test)]
 mod crew_tests;
 #[cfg(test)]

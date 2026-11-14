@@ -23,6 +23,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/enable"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
+    ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
 ];
