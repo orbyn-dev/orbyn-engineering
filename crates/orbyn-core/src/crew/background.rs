@@ -39,7 +39,19 @@ fn parse_wire<T: DeserializeOwned>(text: &str) -> Result<T> {
         .map_err(|_| CoreError::Internal(format!("a stored background value is unknown: {text}")))
 }
 
-/// Text a person typed: trimmed, 1 to `max` characters, no control characters, then redacted by the locked redactor. A redaction
+/// Characters that hide text from a person, a wider set than the Autopilot tripwire's: zero-width, bidirectional controls and the tag
+/// block, plus soft hyphen, combining grapheme joiner, Arabic letter mark, Hangul and Braille fillers, Mongolian free variation
+/// selectors, line and paragraph separators, the deprecated format controls and interlinear annotation marks. A name or trigger text
+/// the person types has no use for any of them; the tripwire reads agent text, where some are legitimate, so it keeps its own list.
+/// Emoji variation selectors are allowed.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}'..='\u{1160}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}'
+        | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
+}
+
+/// Text a person typed: trimmed, 1 to `max` characters, no control characters and none that hide text (zero-width, bidirectional,
+/// tag-block and other invisible format characters, see `invisible`), then redacted by the locked redactor. A redaction
 /// that makes it too long is refused rather than cut.
 fn text(label: &str, value: &str, max: usize) -> Result<String> {
     let value = value.trim();
@@ -52,6 +64,11 @@ fn text(label: &str, value: &str, max: usize) -> Result<String> {
     if value.chars().any(char::is_control) {
         return Err(CoreError::Invalid(format!(
             "{label} has a character that cannot be shown"
+        )));
+    }
+    if value.chars().any(invisible) {
+        return Err(CoreError::Invalid(format!(
+            "{label} has a hidden character"
         )));
     }
     let redacted = redact(value);
@@ -162,12 +179,20 @@ fn next_offset(page: Page, total: u32) -> Option<u32> {
 impl Core {
     fn background_wire(&self, crew: BackgroundRow) -> Result<wire::BackgroundCrew> {
         let (newest, waiting) = self.store.background_standing(&crew.id)?;
-        let state = match newest.as_ref().map(|run| run.state.as_str()) {
-            None => wire::BackgroundState::Idle,
-            Some("running") => wire::BackgroundState::Running,
-            Some("stopped") => wire::BackgroundState::Stopped,
-            Some("needs_review") => wire::BackgroundState::NeedsReview,
-            Some(other) => {
+        // `idle`: nothing is running, nothing waits for the person, and the newest run did not stop for a reason that still needs them.
+        // A run stopped by the person's own switch (`disabled`) needs nothing; a stop for the budget or a failure does.
+        let state = match newest
+            .as_ref()
+            .map(|run| (run.state.as_str(), run.stop_reason.as_deref()))
+        {
+            Some(("running", _)) => wire::BackgroundState::Running,
+            Some(("needs_review", _)) => wire::BackgroundState::NeedsReview,
+            Some(("stopped", Some("disabled"))) | None if waiting == 0 => {
+                wire::BackgroundState::Idle
+            }
+            Some(("stopped", Some("disabled"))) | None => wire::BackgroundState::NeedsReview,
+            Some(("stopped", _)) => wire::BackgroundState::Stopped,
+            Some((other, _)) => {
                 return Err(CoreError::Internal(format!(
                     "a stored background run state is unknown: {other}"
                 )));
@@ -288,7 +313,7 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`.
+    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`, logged as the person.
     pub fn background_set_enabled(&self, id: &str, enabled: bool) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
@@ -296,7 +321,7 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Deletes a crew and its runs. Refused while a run is in progress.
+    /// Deletes a crew and its runs. Refused only while a run is in progress; waiting reviews go with the crew.
     pub fn background_delete(&self, id: &str) -> Result<()> {
         self.crew_preview_only()?;
         self.background_row(id)?;
