@@ -26,6 +26,11 @@ fn options(desktop: bool, preview: bool) -> Options {
     }
 }
 
+/// A nonce as the shell mints one: 16 random bytes, hex, drawn at run time.
+fn fresh_nonce() -> String {
+    orbyn_core::util::random_token().unwrap()[..32].to_owned()
+}
+
 fn say(service: &mut Service, line: &Value) {
     let stdin = service.child.stdin.as_mut().unwrap();
     writeln!(stdin, "{line}").unwrap();
@@ -65,13 +70,13 @@ async fn the_shell_is_answered_on_stdout_and_a_missing_hold_is_refused() {
     );
     say(
         &mut service,
-        &json!({ "type": "presence_grant", "request_id": "r-2", "nonce": "short", "hold_id": "hold-nope",
+        &json!({ "type": "presence_grant", "request_id": "r-2", "nonce": fresh_nonce()[..8], "hold_id": "hold-nope",
                 "thread_id": "t", "task_id": "k", "command_sha256": "x" }),
     );
     assert_eq!(answer(&mut service)["code"], "invalid");
     say(
         &mut service,
-        &json!({ "type": "presence_grant", "request_id": "r-3", "nonce": "0123456789abcdef0123456789abcdef",
+        &json!({ "type": "presence_grant", "request_id": "r-3", "nonce": fresh_nonce(),
                 "hold_id": "hold-nope", "thread_id": "t", "task_id": "k", "command_sha256": "x" }),
     );
     assert_eq!(answer(&mut service)["code"], "not_found");
@@ -105,7 +110,8 @@ async fn without_the_preview_flag_the_shell_is_told_it_is_unavailable() {
 async fn a_service_started_without_a_shell_answers_desktop_required() {
     let dir = TempDir::new();
     let service = Service::start(&dir.path().join("data"), options(false, true));
-    for nonce in [None, Some("0123456789abcdef0123456789abcdef")] {
+    let drawn = fresh_nonce();
+    for nonce in [None, Some(drawn.as_str())] {
         let mut request = service
             .post("/api/crew/approvals/hold-nope/approve-once")
             .json(&json!({}));

@@ -69,7 +69,19 @@ impl Drop for Served {
     }
 }
 
-const NONCE: &str = "0123456789abcdef0123456789abcdef";
+/// A nonce as the shell mints one: 16 random bytes, hex. Tests draw theirs at run time, never from a literal.
+fn fresh_nonce() -> String {
+    orbyn_core::util::random_token().unwrap()[..32].to_owned()
+}
+
+/// Another nonce of the same shape, different from `other` by construction.
+fn different_from(other: &str) -> String {
+    let mut nonce = fresh_nonce();
+    while nonce == other {
+        nonce = fresh_nonce();
+    }
+    nonce
+}
 
 impl Served {
     async fn call(
@@ -106,7 +118,8 @@ impl Served {
     }
 
     /// What the desktop app does after the person clicks Approve: describe the hold, grant what was described.
-    fn grant(&self, hold: &str, nonce: &str) -> String {
+    fn grant(&self, hold: &str) -> String {
+        let nonce = fresh_nonce();
         let shown = self.shell_says(
             &json!({ "type": "presence_describe", "request_id": "r-1", "hold_id": hold }),
         );
@@ -117,7 +130,7 @@ impl Served {
             "command_sha256": shown["command_sha256"],
         }));
         assert_eq!(ready["type"], "presence_ready", "{ready}");
-        nonce.to_owned()
+        nonce
     }
 
     /// A stored task with a worker, holding `command`: the hold's id.
@@ -187,18 +200,19 @@ async fn a_person_approves_once_with_the_desktop_grant_and_it_is_used_up() {
     // The service token alone is not enough: no nonce, a wrong one, and one granted for another hold.
     let (status, body) = app.call("POST", &path, json!({}), None).await;
     assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
-    let (status, body) = app.call("POST", &path, json!({}), Some(NONCE)).await;
+    let unknown = fresh_nonce();
+    let (status, body) = app.call("POST", &path, json!({}), Some(&unknown)).await;
     assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
     let (_, other) = app.held("b", "make ship");
-    let for_other = app.grant(&other, "fedcba9876543210fedcba9876543210");
+    let for_other = app.grant(&other);
     let (status, body) = app.call("POST", &path, json!({}), Some(&for_other)).await;
     assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
     assert_eq!(app.state(&hold), "held", "nothing was approved");
 
     // A wrong nonce does not burn the grant.
-    let nonce = app.grant(&hold, NONCE);
+    let nonce = app.grant(&hold);
     let (status, _) = app
-        .call("POST", &path, json!({}), Some("not-a-nonce"))
+        .call("POST", &path, json!({}), Some(&different_from(&nonce)))
         .await;
     assert_eq!(status, 403);
     let (status, body) = app.call("POST", &path, json!({}), Some(&nonce)).await;
@@ -225,7 +239,7 @@ async fn a_person_approves_once_with_the_desktop_grant_and_it_is_used_up() {
 async fn a_grant_made_before_a_deny_does_not_approve_and_the_deny_stands() {
     let app = serve("race", false).await;
     let (_, hold) = app.held("a", "make deploy");
-    let nonce = app.grant(&hold, NONCE);
+    let nonce = app.grant(&hold);
     let (status, _) = app
         .call(
             "POST",
@@ -248,7 +262,7 @@ async fn a_grant_made_before_a_deny_does_not_approve_and_the_deny_stands() {
 
     // The other order: approved first, the deny then loses.
     let (_, hold) = app.held("b", "make ship");
-    let nonce = app.grant(&hold, NONCE);
+    let nonce = app.grant(&hold);
     let (status, _) = app
         .call(
             "POST",
@@ -329,7 +343,7 @@ async fn deny_and_dismiss_need_no_grant_and_are_decided_once() {
 async fn a_hold_whose_task_ended_answers_gone() {
     let app = serve("gone", false).await;
     let (task, hold) = app.held("a", "make deploy");
-    let nonce = app.grant(&hold, NONCE);
+    let nonce = app.grant(&hold);
     app.core
         .store
         .move_crew_task(&task, "cancelled", None)
@@ -358,7 +372,8 @@ async fn a_hold_whose_task_ended_answers_gone() {
 async fn a_service_without_a_desktop_shell_approves_nothing_with_or_without_the_token() {
     let app = serve_with("noshell", false, false).await;
     let (_, hold) = app.held("a", "make deploy");
-    for nonce in [None, Some(NONCE)] {
+    let drawn = fresh_nonce();
+    for nonce in [None, Some(drawn.as_str())] {
         let (status, body) = app
             .call(
                 "POST",
@@ -390,7 +405,7 @@ async fn a_remote_viewer_can_read_the_holds_and_answer_none() {
                 "POST",
                 &format!("/api/crew/approvals/{hold}/{verb}"),
                 json!({}),
-                Some(NONCE),
+                Some(&fresh_nonce()),
             )
             .await;
         let code = if verb == "approve-once" {

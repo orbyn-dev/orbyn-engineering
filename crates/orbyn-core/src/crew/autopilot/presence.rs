@@ -46,11 +46,11 @@ struct Facts {
 fn invisible(c: char) -> bool {
     c.is_control()
         || matches!(c,
-            '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
+            '\u{00AD}' | '\u{034F}' | '\u{0600}'..='\u{0605}' | '\u{061C}' | '\u{06DD}' | '\u{070F}' | '\u{08E2}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
             | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
             | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}'
             | '\u{FFF9}'..='\u{FFFC}' | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}'
-            | '\u{E0000}'..='\u{E0FFF}')
+            | '\u{13430}'..='\u{1343F}' | '\u{E0000}'..='\u{E0FFF}')
 }
 
 /// Text a dialog can show as plain text without it faking a line or reordering: a newline becomes a visible `⏎` and any other
@@ -256,6 +256,13 @@ mod tests {
             '\u{FEFF}',
             '\u{E0041}',
             '\u{FFA0}',
+            '\u{0600}',
+            '\u{0605}',
+            '\u{06DD}',
+            '\u{070F}',
+            '\u{08E2}',
+            '\u{13430}',
+            '\u{1343F}',
         ] {
             assert_eq!(plain(&format!("a{c}b")), "a\u{FFFD}b", "U+{:04X}", c as u32);
         }

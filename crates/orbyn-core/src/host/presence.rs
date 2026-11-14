@@ -120,7 +120,19 @@ impl PresenceBook {
 mod tests {
     use super::*;
 
-    const NONCE: &str = "0123456789abcdef0123456789abcdef";
+    /// A nonce as the shell mints one, drawn at run time.
+    fn nonce() -> String {
+        crate::util::random_token().unwrap()[..32].to_owned()
+    }
+
+    /// Another nonce of the same shape, different from `other` by construction.
+    fn different_from(other: &str) -> String {
+        let mut nonce = nonce();
+        while nonce == other {
+            nonce = self::nonce();
+        }
+        nonce
+    }
 
     fn what(hold: &str) -> PresenceFor {
         PresenceFor::CrewApproveOnce {
@@ -146,63 +158,71 @@ mod tests {
     #[test]
     fn a_grant_is_used_once_and_only_with_its_nonce() {
         let book = PresenceBook::default();
-        book.put(what("h-1"), NONCE.into(), 100);
+        let right = nonce();
+        book.put(what("h-1"), right.clone(), 100);
         assert!(!book.confirmed_for(&what("h-1"), None, 101));
-        assert!(!book.confirmed_for(&what("h-1"), Some("0123456789abcdef0123456789abcdee"), 101));
-        assert!(!book.take(&what("h-1"), Some("short"), 101));
+        assert!(!book.confirmed_for(&what("h-1"), Some(&different_from(&right)), 101));
+        assert!(!book.take(&what("h-1"), Some(&right[..8]), 101));
         assert_eq!(book.len(), 1, "a wrong nonce does not burn the grant");
-        assert!(book.confirmed_for(&what("h-1"), Some(NONCE), 101));
+        assert!(book.confirmed_for(&what("h-1"), Some(&right), 101));
         assert!(
-            book.confirmed_for(&what("h-1"), Some(NONCE), 102),
+            book.confirmed_for(&what("h-1"), Some(&right), 102),
             "asking does not use it"
         );
-        assert!(book.take(&what("h-1"), Some(NONCE), 102));
-        assert!(!book.take(&what("h-1"), Some(NONCE), 103), "used up");
+        assert!(book.take(&what("h-1"), Some(&right), 102));
+        assert!(!book.take(&what("h-1"), Some(&right), 103), "used up");
     }
 
     #[test]
     fn a_grant_matches_only_the_fields_it_was_made_with() {
         let book = PresenceBook::default();
-        book.put(what("h-1"), NONCE.into(), 100);
+        let right = nonce();
+        book.put(what("h-1"), right.clone(), 100);
         for other in [
             with(|thread, _, _| *thread = "w-2".into()),
             with(|_, task, _| *task = "t-2".into()),
             with(|_, _, hash| *hash = "changed".into()),
             what("h-2"),
         ] {
-            assert!(!book.confirmed_for(&other, Some(NONCE), 101), "{other:?}");
+            assert!(!book.confirmed_for(&other, Some(&right), 101), "{other:?}");
         }
-        assert!(book.confirmed_for(&what("h-1"), Some(NONCE), 101));
+        assert!(book.confirmed_for(&what("h-1"), Some(&right), 101));
     }
 
     #[test]
     fn a_grant_expires_and_a_later_grant_replaces_the_earlier() {
         let book = PresenceBook::default();
-        book.put(what("h-1"), NONCE.into(), 100);
+        let first = nonce();
+        book.put(what("h-1"), first.clone(), 100);
         let live = 100 + PRESENCE_LIFETIME_SECS - 1;
-        assert!(book.confirmed_for(&what("h-1"), Some(NONCE), live));
-        assert!(!book.confirmed_for(&what("h-1"), Some(NONCE), live + 1));
-        let second = "fedcba9876543210fedcba9876543210";
-        book.put(what("h-1"), NONCE.into(), 200);
-        book.put(what("h-1"), second.into(), 201);
+        assert!(book.confirmed_for(&what("h-1"), Some(&first), live));
+        assert!(!book.confirmed_for(&what("h-1"), Some(&first), live + 1));
+        let second = different_from(&first);
+        book.put(what("h-1"), first.clone(), 200);
+        book.put(what("h-1"), second.clone(), 201);
         assert_eq!(book.len(), 1);
         assert!(
-            !book.confirmed_for(&what("h-1"), Some(NONCE), 202),
+            !book.confirmed_for(&what("h-1"), Some(&first), 202),
             "the older one is gone"
         );
-        assert!(book.confirmed_for(&what("h-1"), Some(second), 202));
+        assert!(book.confirmed_for(&what("h-1"), Some(&second), 202));
     }
 
     #[test]
     fn grants_are_bounded_and_nonces_have_one_shape() {
         let book = PresenceBook::default();
+        let right = nonce();
         for n in 0..KEPT + 5 {
-            book.put(what(&format!("h-{n}")), NONCE.into(), 100);
+            book.put(what(&format!("h-{n}")), right.clone(), 100);
         }
         assert_eq!(book.len(), KEPT);
-        assert!(is_nonce(NONCE));
-        assert!(!is_nonce("0123456789ABCDEF0123456789ABCDEF"));
-        assert!(!is_nonce("0123456789abcdef"));
-        assert!(!is_nonce(&format!("{NONCE}0")));
+        assert!(is_nonce(&right));
+        assert!(!is_nonce(
+            &right
+                .to_uppercase()
+                .replace(|c: char| c.is_ascii_digit(), "G")
+        ));
+        assert!(!is_nonce(&right[..16]));
+        assert!(!is_nonce(&format!("{right}0")));
     }
 }
