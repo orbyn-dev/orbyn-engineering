@@ -12,7 +12,8 @@ jobs:
   title:
     name: Pull request title
     if: github.event.pull_request.user.login != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     timeout-minutes: 2
     steps:
       # Check out `scripts/` from the pull request to test and run its checker.
