@@ -15,6 +15,8 @@
 //   wait      ms to wait after load, for states that show only after a delay (default 1500)
 // Only data and a few verbs: nothing here imports the app. Add a screen by adding an entry, and its id to docs/match-kit.md.
 
+/** Settings › Crew › Autopilot by area, for the mock's first repository. */
+const AREAS = "#/settings/crew/areas?repo=p-app";
 const pull = (n) => `#/pulls/p-app/${n}`;
 const click = (role, name, more = {}) => ({ do: "click", role, name, ...more });
 const note = [{ do: "fill", label: "What needs to change?", value: "Should this reject //evil.com? The check also accepts //evil.com/x." }];
@@ -578,4 +580,26 @@ export const FRAMES = {
       click("button", "Sign in"),
     ],
   },
+
+  // Crew, Autopilot by area (Crew Designs v39). Settings › Crew only draws while the mock has Crew Preview on.
+  "autonomy-table": { route: AREAS, scenario: "crew-areas" },
+  "autonomy-tripped": { route: AREAS, scenario: "crew-areas-tripped" },
+  "autonomy-demoted-ceiling-lowered": { route: AREAS, scenario: "crew-areas-ceiling-off" },
+  "autonomy-recovering": { route: AREAS, scenario: "crew-areas-recovering" },
+  "autonomy-criteria-met": { route: AREAS, scenario: "crew-areas-criteria-met" },
+  "autonomy-restored": { route: AREAS, scenario: "crew-areas-restored" },
+  "autonomy-lowdata": { route: AREAS, scenario: "crew-areas-lowdata" },
+  "autonomy-override": { route: AREAS, scenario: "crew-areas-tripped", steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" })] },
+  "autonomy-override-warning": {
+    route: AREAS,
+    scenario: "crew-areas-tripped",
+    steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" }), click("menuitem", "Keep the ceiling"), click("checkbox", "I understand", { prefix: true })],
+  },
+  "autonomy-override-off-warning": {
+    route: AREAS,
+    scenario: "crew-areas-tripped",
+    steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" }), click("menuitem", "Off"), click("checkbox", "I understand", { prefix: true })],
+  },
+  "autonomy-thresholds": { route: "#/settings/crew/areas/thresholds?repo=p-app", scenario: "crew-areas" },
+  "autonomy-narrow": { route: AREAS, scenario: "crew-areas-tripped", width: 640 },
 };

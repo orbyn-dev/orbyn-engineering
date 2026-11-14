@@ -28,6 +28,9 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds"] as const;
+export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
+
 export type Route =
   | { name: "home" }
   | { name: "thread"; id: string }
@@ -43,6 +46,9 @@ export type Route =
       task?: string;
       /** With `task`: open the editor instead of the task page. */
       edit?: boolean;
+      /** Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent). */
+      crewPage?: CrewSettingsPage;
+      repo?: string;
     }
   | { name: "usage" }
   | { name: "skills"; skill?: string }
@@ -77,11 +83,13 @@ export function routeHref(route: Route): string {
     case "pulls":
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "settings": {
-      const path = route.section ? `#/settings/${route.section}` : "#/settings";
+      const base = route.section ? `#/settings/${route.section}` : "#/settings";
+      const path = route.section === "crew" && route.crewPage ? `${base}/areas${route.crewPage === "thresholds" ? "/thresholds" : ""}` : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
       if (route.selection?.kind === "checkout") params.set("checkout", route.selection.project_id);
+      if (route.repo !== undefined && route.crewPage) params.set("repo", route.repo);
       if (route.task !== undefined) params.set("task", route.task);
       if (route.task !== undefined && route.edit) params.set("edit", "1");
       return params.size ? `${path}?${params}` : path;
@@ -105,7 +113,7 @@ export function parseRoute(hash: string): Route {
         return part;
       }
     });
-  const [head, first, second] = parts;
+  const [head, first, second, third] = parts;
   switch (head) {
     case "threads":
       return first ? { name: "thread", id: first } : { name: "home" };
@@ -137,6 +145,7 @@ export function parseRoute(hash: string): Route {
         section: SETTINGS_SECTIONS.find((section) => section === first) ?? null,
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),
+        ...(first === "crew" && second === "areas" ? { crewPage: third === "thresholds" ? ("thresholds" as const) : ("areas" as const), ...(params.has("repo") ? { repo: params.get("repo") ?? "" } : {}) } : {}),
         ...(params.has("task") ? { task: params.get("task") ?? "", ...(params.get("edit") === "1" ? { edit: true } : {}) } : {}),
       };
     }

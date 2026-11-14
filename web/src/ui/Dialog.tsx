@@ -81,6 +81,8 @@ interface ConfirmProps {
   keepOpen?: boolean;
   /** Cancel takes focus, for a confirm that should not be one keystroke from done. */
   cancelFocus?: boolean;
+  /** Extra classes on the dialog element, for a surface wider than a form. */
+  className?: string;
   onConfirm(): Promise<void>;
   onClose(): void;
 }
@@ -93,6 +95,7 @@ export function ConfirmDialog({
   confirmDisabled,
   keepOpen,
   cancelFocus,
+  className,
   onConfirm,
   onClose,
 }: ConfirmProps) {
@@ -115,6 +118,7 @@ export function ConfirmDialog({
       title={title}
       onClose={onClose}
       busy={busy}
+      className={className}
       footer={
         <>
           <Button onClick={onClose} disabled={busy} data-dialog-focus={cancelFocus || undefined}>
