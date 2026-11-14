@@ -2,8 +2,9 @@
 //! and is recorded in `schema_migrations`. Published entries never change.
 
 use super::crew_schema::{
-    CREW_AUTOPILOT, CREW_BACKGROUND, CREW_BACKGROUND_RUN_BUDGET, CREW_BUS, CREW_BUS_EVENTS,
-    CREW_MERGES, CREW_PROTECTED, CREW_REVIEW, CREW_ROUTES, CREW_RUNS, CREW_TABLES,
+    CREW_AUTONOMY, CREW_AUTOPILOT, CREW_BACKGROUND, CREW_BACKGROUND_RUN_BUDGET, CREW_BUS,
+    CREW_BUS_EVENTS, CREW_GUARD_TARGETS, CREW_MERGES, CREW_PROTECTED, CREW_REVIEW, CREW_ROUTES,
+    CREW_RUNS, CREW_TABLES,
 };
 
 pub const MIGRATIONS: &[(i64, &str)] = &[
@@ -49,6 +50,8 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (40, ENGINE_INSTALLS),
     (41, CREW_BACKGROUND),
     (42, CREW_BACKGROUND_RUN_BUDGET),
+    (43, CREW_GUARD_TARGETS),
+    (44, CREW_AUTONOMY),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the

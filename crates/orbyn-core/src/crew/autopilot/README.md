@@ -18,6 +18,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |
 | `presence` | The shell messages that carry a person's approval of a hold (`presence_describe`, `presence_grant`) and what they check |
 | `review` | `Core`'s side: the mode, the approvers, and `ActionReview` for the gate |
+| `areas` | Autonomy by area, in shadow (slice 4j): the circuit breaker's pure rule, its writes after a revert and its reads. Nothing reads the result for a decision yet |
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
 | `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
@@ -49,6 +50,10 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
    text, arguments, paths, thread and task; one retry; 10 minutes), deny it or dismiss it, from the app's window only. The retry is checked
    against the always-denied list first and then lets the one approval through, with a ledger row (`decided_by: person`). Approving needs
    the person's click in the desktop app's own dialog (`presence`). Nothing on the always-denied list is ever held.
+5c. **Blast-radius guard** ([`blast`](blast.rs), [`targets`](targets.rs), [`exit`](exit.rs)): a destructive command (file deletion, database, cloud, containers, git) against a
+   production-linked target is tier `guard`, above the check commands and leases and below N3 and N8. Under On or Off it is denied and held for the person; under Full the lead and a
+   second key on another vendor must both say yes. The person's one-time approval covers it. The lists of `prod` and `safe` targets are a table on this device, never a repository
+   file; loosening them needs the desktop presence grant (the dialog is not built yet). A `command_exit` row records the exit status, or `unknown`. See docs/crew.md, "As built (slice 4i, guard)".
 6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
@@ -152,7 +157,8 @@ ledger of slice 4c; when that lands these rows move into it.
   a production-linked target, so it needs two keys under Full too. Path classes and the router's blocking filter go in
   `crew::filters`, reading `.orbyn/crew.json` at the base commit as `hosts` does.
 - **4j, autonomy by area:** `Core::crew_autopilot_mode` is the one place the mode in force is resolved. An area's
-  demotion is a lower value taken there, with the person's chosen mode as the ceiling.
+  demotion is a lower value taken there, with the person's chosen mode as the ceiling. Part 1 (shadow) records the
+  demotion in [`areas/`](areas); nothing takes it into `crew_autopilot_mode` yet, which is part 2.
 
 ## Limits of Preview
 

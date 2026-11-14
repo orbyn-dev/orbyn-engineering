@@ -53,7 +53,7 @@ fn invisible(c: char) -> bool {
 /// Text a person typed: trimmed, 1 to `max` characters, no control characters and none that hide text (zero-width, bidirectional,
 /// tag-block and other invisible format characters, see `invisible`), then redacted by the locked redactor. A redaction
 /// that makes it too long is refused rather than cut.
-fn text(label: &str, value: &str, max: usize) -> Result<String> {
+pub(super) fn text(label: &str, value: &str, max: usize) -> Result<String> {
     let value = value.trim();
     let count = value.chars().count();
     if !(1..=max).contains(&count) {

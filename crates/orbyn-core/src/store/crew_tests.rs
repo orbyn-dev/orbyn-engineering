@@ -341,6 +341,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
         tables(&store.reader()),
         [
             "crew_answer_keys",
+            "crew_area_events",
+            "crew_area_modes",
             "crew_autopilot_events",
             "crew_autopilot_modes",
             "crew_background",
@@ -354,6 +356,7 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_findings",
             "crew_fixes",
             "crew_gates",
+            "crew_guard_targets",
             "crew_leases",
             "crew_merge_queue",
             "crew_merges",

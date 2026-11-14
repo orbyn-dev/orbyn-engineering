@@ -384,19 +384,23 @@ impl Core {
         self.set_crew_autopilot_mode(&ModeScope::Default, mode)
     }
 
-    /// Revert rates by area and engine over the window the risk score reads.
-    pub fn autopilot_trust(&self, now: i64) -> Result<wire::AutopilotTrust> {
+    /// Revert rates by area and engine over the window the risk score reads. With `project` only the merges made for that repository
+    /// are counted; with none, every repository on this device is (the total of the device).
+    pub fn autopilot_trust(&self, now: i64, project: Option<&str>) -> Result<wire::AutopilotTrust> {
         self.crew_preview_only()?;
+        let merges = match project {
+            Some(id) => {
+                valid_id(id)?;
+                self.store.project(id)?;
+                self.store.crew_merges_of_project(id)?
+            }
+            None => self.store.crew_all_merges()?,
+        };
         let since = now - WINDOW_DAYS * 86_400;
         let mut total = Rate::default();
         let mut areas: BTreeMap<String, Rate> = BTreeMap::new();
         let mut engines: BTreeMap<String, Rate> = BTreeMap::new();
-        for merge in self
-            .store
-            .crew_all_merges()?
-            .iter()
-            .filter(|m| m.merged_unix >= since)
-        {
+        for merge in merges.iter().filter(|m| m.merged_unix >= since) {
             let reverted = u32::from(merge.review_state == "reverted");
             let bump = |rate: &mut Rate| {
                 rate.merges += 1;
@@ -428,7 +432,7 @@ impl Core {
             total: rate_wire(total),
             areas,
             engines,
-            autonomy_by_area: false,
+            autonomy_by_area: true,
             truncated: more_areas || more_engines,
         })
     }

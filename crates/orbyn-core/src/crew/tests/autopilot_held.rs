@@ -16,14 +16,14 @@ use crate::testing::run_git;
 use crate::util::unix_now;
 
 /// Plays the desktop shell: sends one line the way the shell does and returns the service's answer.
-fn shell_says(w: &World, line: &Value, now: i64) -> Value {
+pub(super) fn shell_says(w: &World, line: &Value, now: i64) -> Value {
     let (lines, mut answers) = mpsc::unbounded_channel();
     w.core.shell.attach(lines);
     assert!(w.core.presence_line_at(&line.to_string(), now));
     answers.try_recv().expect("the service answered")
 }
 
-fn describe(w: &World, hold: &str, now: i64) -> Value {
+pub(super) fn describe(w: &World, hold: &str, now: i64) -> Value {
     shell_says(
         w,
         &json!({ "type": "presence_describe", "request_id": "r-1", "hold_id": hold }),
@@ -32,12 +32,12 @@ fn describe(w: &World, hold: &str, now: i64) -> Value {
 }
 
 /// A nonce as the shell mints one: 16 random bytes, hex. Tests draw theirs at run time, never from a literal.
-fn fresh_nonce() -> String {
+pub(super) fn fresh_nonce() -> String {
     crate::util::random_token().unwrap()[..32].to_owned()
 }
 
 /// Another nonce of the same shape, different from `other` by construction.
-fn different_from(other: &str) -> String {
+pub(super) fn different_from(other: &str) -> String {
     let mut nonce = fresh_nonce();
     while nonce == other {
         nonce = fresh_nonce();
@@ -46,7 +46,7 @@ fn different_from(other: &str) -> String {
 }
 
 /// The whole of what the shell does after a click on Approve: describe, then grant what was described. Returns the nonce.
-fn grant_at(w: &World, hold: &str, nonce: &str, now: i64) -> String {
+pub(super) fn grant_at(w: &World, hold: &str, nonce: &str, now: i64) -> String {
     let shown = describe(w, hold, now);
     assert_eq!(shown["type"], "presence_hold", "{shown}");
     let ready = shell_says(
@@ -65,12 +65,12 @@ fn grant_at(w: &World, hold: &str, nonce: &str, now: i64) -> String {
     nonce.to_owned()
 }
 
-fn grant_for(w: &World, hold: &str) -> String {
+pub(super) fn grant_for(w: &World, hold: &str) -> String {
     grant_at(w, hold, &fresh_nonce(), unix_now())
 }
 
 /// A running task whose lead says no to everything, with a desktop shell attached.
-async fn held_world() -> (World, String) {
+pub(super) async fn held_world() -> (World, String) {
     let (w, id) = running().await;
     let lead = Scripted::no("alpha", "alpha");
     w.core.set_crew_approvers(approvers(&lead, &[]));
@@ -81,7 +81,7 @@ async fn held_world() -> (World, String) {
     (w, id)
 }
 
-async fn hold_of(w: &World, id: &str, command: &str) -> String {
+pub(super) async fn hold_of(w: &World, id: &str, command: &str) -> String {
     let verdict = request(w, id, ActionKind::Command, command).await;
     assert!(matches!(verdict, Verdict::Deny(_)), "the lead said no");
     let list = w.core.autopilot_held().unwrap();
@@ -92,7 +92,7 @@ async fn hold_of(w: &World, id: &str, command: &str) -> String {
         .expect("the denied command is held")
 }
 
-fn state_of(w: &World, hold: &str) -> State {
+pub(super) fn state_of(w: &World, hold: &str) -> State {
     w.core
         .autopilot_held()
         .unwrap()

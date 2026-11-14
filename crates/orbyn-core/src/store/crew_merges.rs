@@ -299,6 +299,20 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Every merge made for tasks led from `project_id`, oldest first: the project's own record, whatever the repository path.
+    pub fn crew_merges_of_project(&self, project_id: &str) -> Result<Vec<MergeRecord>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT m.* FROM crew_merges m
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE t.project_id = ?1 ORDER BY m.id",
+        )?;
+        Ok(statement
+            .query_map([project_id], merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// One page of merges, newest first, and the number of merges in all.
     pub fn crew_merges_page(&self, limit: u32, offset: u32) -> Result<(Vec<MergeRecord>, u32)> {
         let conn = self.reader();

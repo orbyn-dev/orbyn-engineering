@@ -532,7 +532,7 @@ read, never set, over HTTP. **The Preview flag stays for development only until 
 is fixed:** a worker runs as the person and can read the service token and the data folder, so it could reach these routes.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
-`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires) and `/trust` (revert rates by area and engine).
+`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
 Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
 `PUT /autopilot/mode`, `POST /autopilot/confirm`, and `POST /autopilot/review/{task}/{looks-good,comment,revert}`.
 
@@ -630,13 +630,28 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   the main window. A native dialog cannot be closed from the shell, so the person has 10 minutes (a hold waits that long); after that the call ends with
   `timeout` and a late click is thrown away, but the dialog stays up and a new call answers `busy` until it is dismissed.
   **Text refused** (`invalid_answer`) in the command, worker name or task title: control characters; U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5,
-  U+180B-180F, U+200B-200F, U+2028-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0, U+FFF9-FFFC, U+1BCA0-1BCA3, U+1D173-1D17A, U+E0000-E0FFF (the
-  service's set, copied), and also U+0600-0605, U+06DD, U+070F, U+08E2 and U+13430-1343F, which the shell refuses and the service does not map yet.
+  U+180B-180F, U+200B-200F, U+2028-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0, U+FFF9-FFFC, U+1BCA0-1BCA3, U+1D173-1D17A, U+E0000-E0FFF (the service's set, copied; the service now maps U+0600-0605, U+06DD, U+070F, U+08E2 and U+13430-1343F too).
   **Linux text.** rfd's GTK 3 backend reads the dialog text as a printf format, so on every platform but macOS and Windows the shell doubles each `%`
   in the text it shows (`double_percent`); on macOS and Windows the text is plain and is shown as given.
   The dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
-  **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
-  from the app's window stays held.
+  **As built (PR3, the web card):** the held card's Approve once (Crew Designs v34: approval-confirm, -browser, -refused-presence, -decided, -expired and
+  guard-approve-myself) calls `crew_presence(hold_id)` through one typed function, `askPresence` in `web/src/api/shell.ts`, which reads the window's Tauri
+  bridge (`__TAURI_INTERNALS__`) and calls that one command by name. The page imports no Tauri package. The call is made only from a click handler that
+  checks `isTrusted` and `type === "click"`; no key handler, effect, page load, retry or replay calls it, and the button is off while a dialog is open
+  (the shell also answers `busy`). A script's `dispatchEvent` or `click()` is untrusted and does nothing. **A click made by pressing Enter or Space on the
+  focused button is trusted** (Chromium and WebKit both report it with `detail` 0, a mouse press with 1), and it is allowed: refusing it would shut out
+  keyboard and screen reader users, so "never on a key event" holds for the card's key handlers, not for the button's own activation. When the
+  shell returns the nonce, the page posts the approve-once route once with it in `x-orbyn-confirm` and shows the decision. A refusal from the shell or
+  `403 presence_required` / `desktop_required` from the service shows "Orbyn couldn't confirm it was you. Try again from the desktop app." and the card stays
+  held; `cancelled` shows nothing; nothing asks again by itself. A plain browser tab (no shell) does not offer Approve once and says "Approving once needs
+  the Orbyn desktop app."; Deny and Dismiss still work. "Approve it myself" from a denied command or a Needs you item is the same flow, with no dialog of
+  the page's own. The account password flow is gone from approve-once.
+  **What the click check does not cover.** It covers the page's own code paths and synthetic events. It does not stop a hostile script running in the app's
+  origin (devtools stay on in release builds, issue #532): that script can call `window.__TAURI_INTERNALS__.invoke("crew_presence", {holdId})` directly and
+  open the native dialog. Because Return approves on macOS and Windows, a person pressing Enter elsewhere while such a dialog opens could approve. This is a
+  known exposure. **Key repeat:** when the click came from the keyboard (`detail` 0), the page waits for the Enter key to be released (up to 2 seconds) before
+  it asks the shell, so a held Enter's repeats are over before the dialog opens; mouse clicks are not delayed. "Approve it myself" is offered only for a
+  row that is a hold, never for a ledger row. Refusals are announced to screen readers, and focus returns to Approve once after a cancel or refusal.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the
@@ -648,8 +663,102 @@ ledger rows hold the lead's and second key's reasons but not the asker's model, 
 class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
 comment is kept and is not yet a fix brief.
 
-Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
-conflict forecast, bisect progress, production-linked target rules (4i), background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), the
+conflict forecast, bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+
+**As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
+a second key, even in Full, and the person can always approve it alone, once. It extends the always-denied list (N8 stays above it) and the
+two-key rule. Code: `crates/orbyn-core/src/crew/autopilot/blast.rs` (reading), `chain.rs` (the `Guarded` tier), `targets.rs` (the lists and the
+test), `exit.rs` (the exit-status watch).
+
+- **Order.** Trip wire, always-denied list (N1 to N10, so N3 and N8 first), the person's one-time approval, then the guard, then the chain. A
+  guarded command's tier is `guard` whatever else it would be: a lease or a check command does not exempt it.
+- **What the chain does with it.** Under **On** or **Off** nobody is asked: the command is denied and **held for the person** (a `held` row, the
+  worker goes on); there are no two keys under On or Off. Under **Full** the lead decides, then a second key from a *different vendor family*.
+  No second vendor signed in: denied for now, held, `needs_second_engine` set. The two keys disagree: denied, with a `disagreement` row. Both agree:
+  allowed, and the ledger row keeps both reasons. The lead is told the category, the target and what matched, never the raw page.
+- **An approval is bound to the targets.** A guard hold keeps the targets it resolved (the host list, every git push URL by hash). When the person approves, and again when the worker retries, the command is resolved afresh; if the targets differ (`git remote set-url origin ...` in between) the approval is refused or does not apply (`The target changed since this command was held`).
+- **Approve once.** The held command is approved exactly as in "approve once" above: the person's click in the desktop app's own dialog, one retry, 10
+  minutes, the always-denied list checked again. The row is `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`; the app draws it as
+  "Approved by you" with the command (`action.target`), the target (`guard.target`), the time (`at`) and the exit status (the `command_exit` row).
+- **Categories (built in; no repository file can add or remove one).** File deletion (`rm -r`, `find -delete` and `find -exec rm`, `rsync --delete|--del|--remove-source-files`, `shred`,
+  `truncate`, also inside `ssh host '...'`); database (`psql`, `mysql`, `mariadb`, `mongosh`, `redis-cli`, `cqlsh` with DROP, TRUNCATE, DELETE, an
+  UPDATE with no WHERE, FLUSHALL, dropDatabase, Mongo `deleteMany`, `updateMany({})` or `drop()`, in `-c`/`-e`/`--eval` or on the input); cloud (`aws s3 rm|rb`,
+  `aws * delete-*|terminate-*`; any `aws ... sync` is refused outright by N8, stricter than the guard, `gcloud ... delete`, `gcloud storage rm`, `az ... delete` and `delete-*`, `gsutil rm|rb` and `rsync -d`); containers (`docker rm|rmi|prune` and the
+  `container|image|volume|network|system|builder|stack|service|secret|config|node|plugin` forms, and `docker compose down -v|--volumes|--rmi` and `compose rm`, against `-H`, `DOCKER_HOST`, `--context` or `DOCKER_CONTEXT`); git (`push --force`,
+  `--force-with-lease`, `-f`, `--delete`, `-d`, `--mirror`, a `+refspec` or `:ref`, to a remote that is not local); and `unparsed`, a command the guard
+  could not read that holds a destructive word and a non-local word. kubectl delete, terraform destroy and helm uninstall, delete and del are **N8** and stay always
+  denied: they are never held and no approval can change that.
+- **How a target is classified.** *Local* is loopback (`localhost`, or an IP literal in 127.0.0.0/8 or `::1`: `127.evil.com` is a host), a unix socket or an empty database host, a file or path, the
+  local Docker socket or the `default` context, an endpoint URL on loopback (a local stack), or a git remote whose URL is a local path. Everything else
+  is **production-linked** unless this device's `safe` list names it. The `prod` list forces a target production-linked, even a local-looking
+  name, and wins when a target is in both. A command with several targets is exempt only if every one is local or safe, and a comma-separated host list (`psql -h a,b`, `postgresql://127.0.0.1:1,db.prod/app`, `host=a,b`) is local only if every host in it is. A connection string or URL host is read as well as `-h`; `service=` and `PGSERVICE` name a host the guard cannot read, so they are unknown and guarded. Targets are read from `shell::hosts`-style
+  URLs, `-h`/`--host`, `PGHOST`/`MYSQL_HOST`/`DATABASE_URL`/`REDIS_URL`/`MONGODB_URI`, `--profile`/`AWS_PROFILE`, `--project`/`CLOUDSDK_CORE_PROJECT`, `--subscription`,
+  `--context`/`DOCKER_CONTEXT`, `s3://` and `gs://` names (a bucket only describes the command; it matters only if the `prod` list names it) and, for
+  a push, **every** push URL of the remote (hardened `git remote get-url --push --all`, which applies `pushurl`, `insteadOf` and `pushInsteadOf`): any non-local URL guards the push. A push the command itself could redirect (`-c`, `-C`, `--git-dir`, `GIT_CONFIG_*`, `GIT_DIR`) is guarded as unresolvable. SQL is read with comments removed and case folded: DROP, TRUNCATE, DELETE (with or without FROM), and an UPDATE with no WHERE outside a string or comment, statement by statement; where the reader cannot be sure (an open quote or comment, a dollar-quoted body, a backslash) any of those words, or ALTER, anywhere in the SQL guards, and SQL fed on the input (a pipe, here-doc, `-f -`) is read even beside `-c`. **Fail closed:** a target that is a variable, a tool whose default is remote
+  and that names no target (`psql` with no host, `aws` with no profile, `gcloud` with no project), an unreadable command with a destructive word and a
+  non-local word (an open quote, or a program that is a variable) and an `ssh` remote command that holds a destructive word the guard did not read are all guarded. An `ssh` with `-J`, `-o ProxyJump|HostName`, `-L/-R/-W` forwards is judged against every host it names, one with `-o ProxyCommand|LocalCommand` or `-F` is always guarded, and `-o RemoteCommand` is read as the remote command. A script fed to a remote shell (`echo '...' | ssh host bash`, a here-doc, `< file`, `cat f | ssh host sh`) is read for destructive words, and guarded when its source is not a literal `echo` or `printf`. Backslash-newline is joined before a command is read. This is a best-effort reading, not a proof: it can be fooled, and the person's approval is the real control.
+- **The two lists live on this device**, in the table `crew_guard_targets` (schema **43**) in the data folder, never in a repository file, so a file a worker
+  or teammate commits cannot loosen the guard. `.orbyn/crew.json` is not read for it. An entry is a list (`prod` or `safe`), a pattern (an exact name or
+  `*.suffix`, lowercase, letters, digits, `.`, `_`, `-`, at most 253 characters; a URL, user, port, path or anything the secret scan objects to is
+  refused), a kind (`host`, `profile`, `project`, `context`, `workspace`, `bucket`: an entry matches only a target of its kind) and an optional note (at most 200
+  characters; a note with a secret is refused, not stored redacted). At most 200 entries in all. Add and remove write an audit row in the same transaction, before the change.
+- **Routes** (Preview-gated: 404 with the flag off for every method; all are in `crew::changes`, so an agent's request to one is refused by path, N1):
+  `GET /api/crew/guard/targets`; `GET /api/crew/guard/test?command=...&thread=...` (what the guard says: category, target, local or production-linked,
+  the list entry that decided it, a verdict of `not_destructive`, `local`, `exempt` or `guarded`; read-only, nothing runs, the command is bounded to 2000
+  characters and shown redacted); person-only writes, local only, `POST /api/crew/guard/targets/add` and `/{id}/remove`.
+- **Loosening needs the person's presence.** Adding a `safe` target or removing a `prod` one loosens the guard, so it needs the same proof as approving
+  once: a grant the desktop app records after the person clicks in its own dialog, sent in `x-orbyn-confirm`, bound to `PresenceFor::GuardLoosen {action, kind, pattern}`
+  (`add_safe` or `remove_prod`, the entry's kind and the exact pattern), 60 seconds, used up by one change. Adding a `prod` target or removing a `safe` one tightens and needs none.
+  **The shell's dialog for loosening is not built yet** (PR2 only knows approve-once), so until it is, loosening answers `403 desktop_required` (no shell) or
+  `403 presence_required` (a shell, and nothing can mint the grant) for every caller. Tightening works now.
+- **Ledger.** The `held`, `approved_once`, `hold_used`, `denied`, `disagreement` and `allowed` rows of a guarded command carry `guard: {category, target, matched_by, list}`
+  (`list` is `prod` when the prod list forced it, else `none`; the target has no credentials and is redacted). A new kind, `command_exit`, records
+  `{hold, row, exit_code, action, guard}`: when a command the guard let through (a used approval, or Full with both keys) is later reported finished by the
+  engine, `exit_code` is the number; when nothing arrives in 10 minutes it is exactly `unknown`, which the app draws as "Exit status unknown". The watch starts only for a guard hold that was used or a guarded command both keys allowed, and matches the engine's record by thread and by the exact command (whitespace collapsed, one shell wrapper such as `zsh -lc` removed), never by substring. It is
+  **best effort and in memory**: some engines report no exit code, and a restart drops the watch (no row is written then). One background task reaps expired watches for all of them.
+
+**Not built:** the screens (Settings > Crew lists, the test box, the held card's guard detail and the ledger rows: slice 4i PR C); the desktop shell's
+dialog for loosening; any read of `.orbyn/crew.json` for the guard (deliberately none).
+
+**Known limits (heuristic, not secure).** Not detected, by design of a text reader: `dropdb`, `mysqladmin drop`, `git send-pack --force`, a destructive command run through `kubectl exec` or `docker exec ... -- psql`, a loopback tunnel (`ssh -L 5433:prod:5432` and then `psql -h localhost -p 5433`: the target reads as local; list `localhost` as `prod` while you use one), and static keys in a config file that override a safe-listed AWS profile (keys on the command line are guarded). `docker` with no `-H`, `--context`, `DOCKER_HOST` or `DOCKER_CONTEXT` in the command is read as the local daemon, which is wrong if `docker context use` pointed the CLI at a remote host earlier; prefix the command or list the context. An engine that wraps a command in something other than a plain shell is not matched for its exit status. **Heuristics can never be complete.** The guard reads a command's text and names what it knows; new tools, new flags and new ways to hide a command appear faster than a list can follow, so treat every rule here as a speed bump that catches the common and the careless, never as a boundary. The re-resolve of a held command's targets happens when the person approves and when the worker retries, not when the command executes, so a target that changes inside the command line after those checks is not seen (an in-command time-of-check gap). Wrappers are unwrapped for `sudo`, `doas`, `env` (including `-S`), `nohup`, `time`, `nice`, `ionice`, `exec`, `timeout`, `stdbuf`, `xargs`, `caffeinate`, `setsid`, `chroot`, `unshare`, `flock`, `watch`, `parallel`, `aws-vault exec`, `script -c` and `sh -c`; for any other program followed by the name of a tool the guard knows (`mytool --fast ssh prod ...`) the later word is read as a command, which can over-guard. Not closed: `rm -f` without `-r`; code handed to an interpreter (`ssh prod python3 -c "shutil.rmtree(...)"`), whatever it deletes; a remote shell under `sudo`, `su` or `env` is read as a shell when a pipe, here-doc or redirect feeds it, but other ways to start one are not all covered; `git push --force-with-lease` to a GitHub remote is held by default, and exempting it means safe-listing `github.com`, which also exempts a production repository there; `docker compose` with a project file that points at a remote host, `ssh` commands built from variables or `$(...)`, an `ssh` command that reads its commands from a file given by the shell, `ssh` aliases and config the guard cannot read, MySQL `#` comments (read as unsure: every keyword counts), SQL in a file (`psql -f`) and any program that runs one of these tools inside itself. It does not parse a shell wrapper it does not unwrap, an alias or a function, or a script
+that a command runs (`psql -f drop.sql`, `bash cleanup.sh`, `make nuke`): the file is not read. A tool outside the categories (`sqlite3`, a custom CLI, an HTTP call to
+a deletion API) is not guarded; the network rule N3 and the tiers still apply. A remote's URL is read from the repository's git config, which an earlier command
+of the worker could have changed; so is an `ssh` alias that points to production under a name the person never listed. The lists decide what is local and safe,
+and a wrong entry is the person's to fix. Nothing here is tamper-proof: a process of the same OS user can still read the data folder and change the table.
+
+**As built (slice 4j, shadow):** autonomy by area, part 1: a circuit breaker per area that *records* a demotion. **Shadow: recorded and shown, not yet
+enforced.** No merge, approval, tier or queue reads an area's state; the mode in force is still what the person chose (`crew_autopilot_mode`). Code:
+`crates/orbyn-core/src/crew/autopilot/areas/` (`decide` the pure rule, `breaker` the writes and the hook, `view` the reads), `store/crew_autonomy.rs`.
+
+- **Area.** The first two folders of a path (`risk::area_of`), or the one folder, or the file at the root. The key is `(project, area)`, and the record
+  counts only merges whose run's lead thread belongs to that project, so the same name in two repositories is counted for each repository on its own.
+- **Rule (all Proposed, Engineering's constants in `areas/mod.rs`, served by `GET /api/crew/autopilot/thresholds` with `proposed: true`).** Window 14 days; fewer than
+  5 merges in it is "not enough data" and nothing changes. **Demote** when 2 or more of the merges made in the window were reverted ("merged in the window, now
+  reverted", the same meaning as the 60-day rate). It is evaluated when a revert passes through and when a merge is recorded (3 merges with 2 reverted, then 2 clean ones, trips at the fifth merge; cause `merge:<id>`). **Return** when both hold: 14 days since the recovery clock started with no revert, and 5 merges since then, none reverted.
+  The clock starts at the demotion and restarts at every later revert in the area (a `recovery_reset` row). Escapes (a defect that no revert shows) are
+  **not measured**: there is no source for them, `escapes` is always `null` and no count includes one. The 60-day, 10-merge, 20% rule in `merge/risk.rs` is
+  unchanged and keeps raising the risk tier.
+- **Ceiling.** The ceiling is the person's mode for the repository, else the default, else Full, read live. A demotion lowers an area from Full to On only; a ceiling of
+  On or Off is never changed and the record is still shown (`ceiling_lower`). A crew's own choice is not read for this (a known limit).
+- **Stored on this device** (schema **44**, `CREW_AUTONOMY`), never in a repository file (architecture rule 4): `crew_area_modes` (state `follows` or `demoted`, when and why,
+  the recovery clock, a person's override column that nothing writes yet) and `crew_area_events`, append-only (a trigger refuses UPDATE and DELETE), unique per
+  `(project, area, kind, cause)`. The record and the recovery counts are never stored: they are counted from `crew_merges` each time. Each breaker write adds its event row and
+  then changes the mode row **in one transaction** (rule 6: the audit row first; a row the table refuses leaves the mode as it was). A demotion also appends an `area_demoted` row to the
+  approval ledger on the task whose revert tripped it, so Flow shows it.
+- **When it acts.** `revert_merge` is the one place every revert passes (the watch's bisect revert and the person's Revert). Right after the merge row says reverted, still under the merge lock, the
+  breaker runs for each area the merge touched. The same revert is recorded once. A failure there is logged and never undoes a revert that already moved the branch. Queuing checks the way back only if the merge lock is free (it never waits for a long check or a bisect); recording a merge checks it too. The way back is checked
+  when a merge is recorded and at the start of queuing one, so it waits for at most one merge; no GET writes, and the view says "Criteria met; returns at the next merge."
+- **Routes** (Preview-gated, 404 with the flag off; all GET, all in `crew::changes::READS`, nothing writes): `GET /api/crew/autopilot/areas?project=&limit&offset` (the ceiling, `enforced: false`,
+  and per area the record, a state of `follows`, `demoted` (just lowered), `recovering` (lowered, with the days and merges so far), `criteria_met` (returns at the next merge), `not_enough_data`, `ceiling_lower` or `overridden`, an `area_key` to pass to the history route, a sentence, when it was lowered and what recovery still needs),
+  `GET /api/crew/autopilot/areas/history?project=&area=` (the trail, newest first, at most 100; the area is in the query because it contains `/`) and `GET /api/crew/autopilot/thresholds`.
+  `GET /api/crew/trust` now sets `autonomy_by_area: true` and takes an optional `project`, so the revert rates and the risk score's `merge_rates` count one repository's merges instead of all of them.
+
+**Not built (4j):** enforcement (the merge gate, the chain and the tier reading an area's state); a person's override and its writes; the screens (Crew Designs v38 frames
+`autonomy-*`); earning a higher mode for an area; escapes.
+
+**Known limits (4j).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. The area is two folders deep, so a large folder and a small one weigh the same and a change spread over many areas counts in each. A return waits for the next
+merge. A project's ceiling is read for the breaker (repository, then default), but a merge's real mode is the crew's, then the repository's: part 2 (enforcement) must take each `MergeRecord.mode`, the mode actually used, as its basis. The demotion event already records that mode as `from_mode`. Merges whose lead thread was hard-deleted drop out of the rates, the trust record and the breaker (the join needs the thread; the run rows stay). A breaker failure after a revert is only logged: part 2 needs a visible ledger or Flow event and a rule that fails closed. The thresholds are a proposal and may change.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**
@@ -1158,6 +1267,55 @@ lists, file history, debug logs, shell snapshots, `sessions/`), the network, the
 and processes a worker leaves running. A worker can learn which project folder names exist under `projects` (their metadata may be read), not what is in them. The lead's Claude transcript is closed for a Claude worker; the answer key as a
 whole is not claimed safe. Codex workers are refused until the nested-profile question is answered, and Codex's
 conversation files are a second reason to keep it so.
+
+## As built (cancel)
+
+The person's stop button for a Crew task (Preview). Backend only: the card action that calls it is Engineering 1's.
+
+- **What exists:** core `Core::crew_cancel_task(task, reason, actor)` and `POST /api/crew/tasks/{id}/cancel` (body empty, or
+  `{ "reason": "..." }`, 1 to 200 characters, redacted). The answer is `{ task, state: "cancelled", already }`. With the Preview flag off the
+  route is 404.
+- **Person only, as far as it is enforced.** *Enforced:* no MCP tool and no crew tool cancels a task; a remote viewer is refused
+  (`local_only` is the whole-process `--remote` flag, 403); Autopilot's N1 refuses an agent's request to the route by the *command
+  text* it sees (path spelling variants are covered, it is in `crew::changes::STATE_CHANGING`); a confined macOS worker cannot read the
+  launch token. *Not enforced:* an unconfined engine, the lead, or any process of the same user that has the launch token (from
+  `service.json`) can `POST` it, and a path assembled at run time is invisible to N1; the audit row says `user` whoever sent it. If real
+  enforcement is wanted later, approve-once's desktop grant is the model. This is not an Autopilot stop: `GET /api/crew/stops` lists
+  Autopilot's, and a cancel is the person's own act.
+- **Answers.** An unknown id is `not_found`. A task already `cancelled` is `already: true`: no second row, no second effect. A task that
+  `passed` or `stopped` is `409 task_ended` ("This task already ended."). Every other state (briefed, routed, running, verifying,
+  failed, changed_approach, needs_person) can be cancelled, as the lifecycle table says.
+- **Order, failing closed.** (1) One transaction checks the task and writes the intent row `crew.task.cancel` (actor, source, task id,
+  previous state, whether a verification was claimed, the reason): the row comes before every effect (architecture rule 6). (2) The
+  worker's engine is stopped through `RunManager::force_stop`, which also kills the engine's process tree and closes a run that will not
+  stop; its queue is emptied first, so no new turn starts, and the core checks the worker has no run and nothing queued. (3) One
+  transaction moves the task to `cancelled` (clearing a verification claim) together with the row `crew.task.cancelled`; then the
+  existing end of a task runs (leases released, a final `cancelled` result, the lead told).
+- **Two cancels of one task** run one after the other (a lock per task): the second finds it cancelled and answers `already: true`
+  with no row. If the service dies after the intent row, `crew.task.cancel` stands with no outcome row; the state is unchanged and a
+  retry works (it writes its own intent row).
+- **A second stop after the state change.** Start and retry do not take the cancel's lock, so a worker may have been recorded, or a
+  message queued, after the cancel read the task. Once the task is `cancelled` the worker is read again and stopped once more (with
+  its queue emptied); a later start or retry meets its own final-state guard. If that second stop fails, **the task stays
+  `cancelled` with a worker that may still run**: a `crew.task.cancel_failed` row flags it and the caller gets `502
+  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel answers `already: true`,
+  so the person stops that worker from its thread.
+- **Wording.** When the worker's run end moves the task first, its final result still says the person cancelled it if the cancel's
+  intent row exists.
+- **Races with a start or a retry.** A task cannot get a worker once it ended (`set_crew_worker` refuses in its transaction, the thread
+  just made is removed and no engine starts), and a retry prompt is not queued for an ended task (the state is read again before and
+  after queueing; a message that slipped in is taken back and its run stopped).
+- **If the engine cannot be confirmed stopped,** the task keeps its state, a `crew.task.cancel_failed` row records the attempt and the
+  caller gets `502 engine_unavailable`. A retry is a new attempt with its own intent row. A task that ended some other way during the
+  stop (it passed, say) is `409 task_ended`, with a `cancel_failed` row.
+- **Verification.** Cancelling a `verifying` task clears its claim. A verification still running stops before its next check and cannot
+  settle the task: `passed`, `failed` and the loop guard refuse a cancelled task.
+- **No merge.** Only a `passed` task is queued for merge, and a cancelled one is refused there (tested).
+- **Not built:** the card action (Engineering 1); reassign, message into a lane, add a lane and a person's answer, which are out of the
+  beta. No new event on the bus or the Autopilot ledger: the audit rows and the final `cancelled` result are the record.
+- **Known limits.** A cancel cannot undo what the worker already wrote in its worktree, and commits already merged stay merged; the
+  worktree itself is left as the existing end of a task leaves it. A check command already running when the cancel lands finishes
+  first (its result is discarded). The stop waits up to four seconds for the engine before it closes the run by force.
 
 ## Open risks
 

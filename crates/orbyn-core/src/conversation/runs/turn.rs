@@ -426,6 +426,12 @@ impl RunManager {
                             if let Err(error) = self.store.record_item(&scope.run_id, &item) {
                                 tracing::debug!(%error, "could not keep an engine item");
                             }
+                            // A guarded Crew command the engine reports finished gets its exit status in the ledger.
+                            if item.exit_code.is_some()
+                                && let Some(core) = self.crew.get().and_then(std::sync::Weak::upgrade)
+                            {
+                                core.guard_exit_seen(&scope.thread_id, &item);
+                            }
                         }
                         EngineEvent::Files(paths) => {
                             crate::conversation::file_changes::finished(&self.store, scope, &paths).await;

@@ -17,6 +17,11 @@
 //! request, and the request must name the whole merge commit it was shown. Writes are refused for a remote viewer, as the account's
 //! are. The Preview flag is never settable from here.
 //!
+//! **The blast-radius guard's lists** (`/api/crew/guard/targets`, `.../add`, `.../{id}/remove`, and the read-only `/api/crew/guard/test`)
+//! live on this device. Adding a `safe` target or removing a `prod` one loosens the guard and needs the desktop presence grant
+//! approving once needs; until the shell's dialog for it exists every caller gets `desktop_required` or `presence_required` for
+//! those two. Tightening needs no grant. A remote viewer reads and is refused the writes.
+//!
 //! The same marker makes Autopilot refuse an agent's request to any of these paths (N1), so a worker cannot answer for the person.
 //!
 //! **No agent approves; a person may approve once.** A command the chain denied is held (`GET /api/crew/approvals/held`). The person
@@ -32,6 +37,7 @@
 
 use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
@@ -113,6 +119,21 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/background/{id}/delete",
         "core background_delete: refused only while a run is in progress; its runs and waiting reviews are removed with the crew and counted in the audit row, which stays; local only",
     ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/cancel",
+        "core crew_cancel_task: the person's stop button; the intent audit row before any effect, the worker's engine stopped and confirmed (else the state is kept and a failed-attempt row is written), then the state and its row in one transaction; already cancelled answers already and writes nothing; passed or stopped is a conflict; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/guard/targets/add",
+        "core guard_target_add: a bare name or *.suffix, no secret, at most 200 entries, audited in the same transaction before the entry; adding a safe target loosens the guard and needs the person's presence grant (x-orbyn-confirm); local only",
+    ),
+    (
+        "POST",
+        "/api/crew/guard/targets/{id}/remove",
+        "core guard_target_remove: audited in the same transaction before the removal; removing a prod target loosens the guard and needs the person's presence grant (x-orbyn-confirm); local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -139,6 +160,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(background_disable),
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
+        .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
+        .route("/api/crew/guard/targets/add", post(guard_add))
+        .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -153,6 +177,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/merge-queue", get(merge_queue))
         .route("/api/crew/autopilot/watch", get(watch))
         .route("/api/crew/autopilot/digest", get(digest))
+        .route("/api/crew/autopilot/areas", get(areas))
+        .route("/api/crew/autopilot/areas/history", get(area_history))
+        .route("/api/crew/autopilot/thresholds", get(thresholds))
         .route("/api/crew/approvals", get(approvals))
         .route("/api/crew/approvals/held", get(held))
         .route("/api/crew/stops", get(stops))
@@ -160,6 +187,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
+        .route("/api/crew/guard/targets", get(guard_targets))
+        .route("/api/crew/guard/test", get(guard_test))
         .route("/api/crew/classes", get(classes))
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
@@ -261,6 +290,14 @@ async fn route_view(
     Ok(Json(state.core.crew_route_view(&task_id)?))
 }
 
+fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {
+    query
+        .0
+        .get(name)
+        .cloned()
+        .ok_or_else(|| CoreError::Invalid(format!("{name} is required")))
+}
+
 fn thread_of(query: &QueryMap) -> Result<String, CoreError> {
     query
         .0
@@ -294,8 +331,37 @@ async fn guards(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_guards()?))
 }
 
-async fn trust(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.autopilot_trust(unix_now())?))
+/// Revert rates; `project` limits them to one repository's merges.
+async fn trust(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_trust(
+        unix_now(),
+        query.0.get("project").map(String::as_str),
+    )?))
+}
+
+/// The areas of a project under the circuit breaker (shadow): `project`, `limit`, `offset`. Read-only.
+async fn areas(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_areas(
+        &required(&query, "project")?,
+        page(&query)?,
+        unix_now(),
+    )?))
+}
+
+/// The trail of one area: `project` and `area` (in the query, as it contains `/`). Read-only.
+async fn area_history(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_area_history(
+        &required(&query, "project")?,
+        &required(&query, "area")?,
+    )?))
+}
+
+/// The breaker's constants, proposed.
+async fn thresholds(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_thresholds()?))
 }
 
 async fn risk(
@@ -488,4 +554,72 @@ async fn background_delete(
 ) -> ApiResult<impl IntoResponse> {
     state.core.background_delete(&id)?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// The person's stop button: cancels a task. The body may be empty, or `{ "reason": "..." }`.
+async fn cancel_task(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off, a malformed body is still "no such route".
+    state.core.crew_preview_state()?;
+    let body: wire::CrewTaskCancel = if body.iter().all(u8::is_ascii_whitespace) {
+        wire::CrewTaskCancel { reason: None }
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|_| CoreError::Invalid("the body is { \"reason\": text } or empty".into()))?
+    };
+    Ok(Json(
+        state
+            .core
+            .crew_cancel_task(&id, body.reason.as_deref(), "user")
+            .await?,
+    ))
+}
+
+/// The blast-radius guard's two lists, on this device.
+async fn guard_targets(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.guard_targets()?))
+}
+
+/// What the guard says about a command (`command`, and `thread` for a worker's worktree): read-only, nothing runs.
+async fn guard_test(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let command = query
+        .0
+        .get("command")
+        .ok_or_else(|| CoreError::Invalid("command is required".into()))?;
+    Ok(Json(
+        state
+            .core
+            .guard_test(command, query.0.get("thread").map(String::as_str))
+            .await?,
+    ))
+}
+
+/// Adding a `safe` target loosens the guard: it needs the same grant approving once does, in `x-orbyn-confirm`.
+async fn guard_add(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiJson(body): ApiJson<wire::GuardTargetAdd>,
+) -> ApiResult<impl IntoResponse> {
+    let nonce = headers
+        .get(CONFIRM_HEADER)
+        .and_then(|value| value.to_str().ok());
+    Ok(Json(state.core.guard_target_add(&body, nonce)?))
+}
+
+/// Removing a `prod` target loosens the guard: it needs the same grant, in `x-orbyn-confirm`.
+async fn guard_remove(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let nonce = headers
+        .get(CONFIRM_HEADER)
+        .and_then(|value| value.to_str().ok());
+    Ok(Json(state.core.guard_target_remove(&id, nonce)?))
 }

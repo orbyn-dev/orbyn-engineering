@@ -4,6 +4,8 @@
 //! `starts` for what a start refuses, `runs` for a task from its first turn to its end.
 
 mod autopilot;
+mod autopilot_areas;
+mod autopilot_guard;
 mod autopilot_held;
 mod autopilot_merge;
 mod autopilot_risk;
@@ -16,6 +18,7 @@ mod bus_flood;
 mod bus_guards;
 mod bus_review;
 mod bus_support;
+mod cancel;
 mod classes;
 mod confined;
 mod core;

@@ -5,6 +5,7 @@
 mod autopilot;
 mod background;
 mod bus;
+mod cancel;
 pub mod changes;
 mod checks;
 mod classes;

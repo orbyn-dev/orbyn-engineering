@@ -101,6 +101,9 @@ pub(super) struct Held {
     pub stage: Stage,
     /// The exact request, only while it is held: it is dropped when the hold is decided or ends.
     pub ask: Option<ActionAsk>,
+    /// Why the blast-radius guard held it (`{category, target, matched_by, list}`, already redacted at the source), when it did.
+    /// Every ledger row of the hold carries it.
+    pub guard: Option<Value>,
 }
 
 /// What a new hold is made from.
@@ -112,6 +115,13 @@ pub(super) struct NewHold {
     pub shown: String,
     pub readable: bool,
     pub reason: String,
+    pub guard: Option<Value>,
+}
+
+/// An approval used by its retry: the hold and why it was guarded, if it was.
+pub(super) struct Taken {
+    pub id: String,
+    pub guard: Option<Value>,
 }
 
 /// Why a decision did not happen.
@@ -225,6 +235,7 @@ impl HeldBook {
             until: 0,
             stage: Stage::Held,
             ask: Some(new.ask),
+            guard: new.guard,
         });
         // Past the limit the oldest finished holds go. An approval waiting for its retry, an open hold and a denial still in
         // force (it keeps the same command from being held again) stay until they end.
@@ -313,6 +324,33 @@ impl HeldBook {
         Some(item.clone())
     }
 
+    /// Whether an approval waiting for this request still names the targets it was held for. A hold the guard made keeps the
+    /// targets it resolved; the request now resolves to `current`, and a difference voids the approval. No such approval, or a hold
+    /// the guard did not make, agrees.
+    pub(super) fn targets_agree(
+        &self,
+        task_id: &str,
+        thread_id: &str,
+        bound: &str,
+        current: &[String],
+        now: i64,
+    ) -> bool {
+        self.items
+            .iter()
+            .find(|i| {
+                i.stage == Stage::Approved
+                    && i.until > now
+                    && i.bound == bound
+                    && i.task_id == task_id
+                    && i.thread_id == thread_id
+            })
+            .is_none_or(|i| {
+                i.guard
+                    .as_ref()
+                    .is_none_or(|g| g.get("resolved") == Some(&json!(current)))
+            })
+    }
+
     fn view(item: &Held, now: i64) -> wire::AutopilotHeld {
         let left = match item.stage {
             Stage::Held => item.deadline - now,
@@ -361,7 +399,7 @@ impl Core {
 
     /// One ledger row for a hold. A row that cannot be written is logged: the in-memory decision stands, as the hold itself is
     /// not a record.
-    fn held_row(&self, held: &Held, kind: &str, extra: &Value) {
+    fn held_row(&self, held: &Held, kind: &str, extra: &Value) -> Option<i64> {
         let needles = self.held_needles(&held.task_id);
         let mut body = json!({
             "hold": held.id,
@@ -377,13 +415,20 @@ impl Core {
         if let (Some(into), Some(from)) = (body.as_object_mut(), extra.as_object()) {
             into.extend(from.clone());
         }
-        if let Err(error) = self.store.add_crew_autopilot_event(
+        if let Some(guard) = &held.guard {
+            body["guard"] = guard.clone();
+        }
+        match self.store.add_crew_autopilot_event(
             &held.task_id,
             &held.crew_id,
             kind,
             &ledger::safe(&body, &needles),
         ) {
-            tracing::warn!(%error, "autopilot could not write a ledger row for a held command");
+            Ok(row) => Some(row),
+            Err(error) => {
+                tracing::warn!(%error, "autopilot could not write a ledger row for a held command");
+                None
+            }
         }
     }
 
@@ -395,6 +440,7 @@ impl Core {
 
     /// Holds a chain-denied command for the person, unless it is not a command, was denied by the person a moment ago or this
     /// task holds too many. Returns the hold's id.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn held_make(
         &self,
         task: &CrewTask,
@@ -402,6 +448,21 @@ impl Core {
         ask: &ActionAsk,
         reason: &str,
         needles: &[String],
+        now: i64,
+    ) -> Option<String> {
+        self.held_make_guarded(task, thread_id, ask, reason, needles, None, now)
+    }
+
+    /// As [`Self::held_make`], for a command the blast-radius guard held: `guard` is what the ledger rows of the hold say about why.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn held_make_guarded(
+        &self,
+        task: &CrewTask,
+        thread_id: &str,
+        ask: &ActionAsk,
+        reason: &str,
+        needles: &[String],
+        guard: Option<&Value>,
         now: i64,
     ) -> Option<String> {
         if ask.kind != ActionKind::Command {
@@ -427,6 +488,7 @@ impl Core {
             shown,
             readable,
             reason: ledger::shown(reason, needles),
+            guard: guard.cloned(),
         };
         let (added, ended) = {
             let mut book = self.held_book();
@@ -456,18 +518,28 @@ impl Core {
         task: &CrewTask,
         thread_id: &str,
         ask: &ActionAsk,
+        current: &[String],
         now: i64,
-    ) -> Option<String> {
+    ) -> Option<Taken> {
         let bound = bind(&task.id, thread_id, ask);
         let (taken, ended) = {
             let mut book = self.held_book();
             let ended = book.sweep(now);
-            (book.take(&task.id, thread_id, &bound, now), ended)
+            let agree = book.targets_agree(&task.id, thread_id, &bound, current, now);
+            (
+                agree
+                    .then(|| book.take(&task.id, thread_id, &bound, now))
+                    .flatten(),
+                ended,
+            )
         };
         self.held_ended(ended);
         let held = taken?;
         self.held_row(&held, "hold_used", &json!({ "used": true }));
-        Some(held.id)
+        Some(Taken {
+            id: held.id,
+            guard: held.guard,
+        })
     }
 
     /// Holds still open or decided lately, newest first. A hold whose task has ended is closed here.
@@ -611,6 +683,12 @@ impl Core {
                 refusal.0, refusal.1
             )));
         }
+        if self.targets_changed(&task, &run, &held).await? {
+            return Err(CoreError::PolicyDenied(
+                "The target changed since this command was held, so it cannot be approved. Ask the worker to run it again."
+                    .into(),
+            ));
+        }
         // The grant is used up here, then the one decision is made: a racing deny or a second approve loses.
         if !self.presence.take(&want(Some(&held)), nonce, now) {
             return Err(CoreError::PresenceRequired);
@@ -623,6 +701,32 @@ impl Core {
             &json!({ "via": "desktop_presence", "expires_in_secs": APPROVAL_LIFETIME_SECS }),
         );
         Ok(HeldBook::view(&held, now))
+    }
+
+    /// Whether the guard now resolves the held command to other targets than it did when it was held (a git remote that was pointed
+    /// elsewhere, say). A hold the guard did not make never changes.
+    async fn targets_changed(&self, task: &CrewTask, run: &CrewRun, held: &Held) -> Result<bool> {
+        let Some(then) = held.guard.as_ref().map(|g| g.get("resolved").cloned()) else {
+            return Ok(false);
+        };
+        let (Some(ask), Some(key), Some(worktree)) = (
+            held.ask.as_ref(),
+            self.store.crew_answer_key(&task.id)?,
+            run.worktree.as_deref().map(std::path::PathBuf::from),
+        ) else {
+            return Err(CoreError::Gone(
+                "This command can no longer be checked.".into(),
+            ));
+        };
+        let ground = super::review::Ground::read(self, &worktree, run.base_commit.as_deref()).await;
+        let scene: Scene<'_> = ground.scene(&key.protected_paths);
+        let ctx = hard::context(ask.kind, &ask.target, &ask.paths, &scene);
+        let now: Vec<String> = self
+            .guard_of(&ctx, &worktree)
+            .await?
+            .map(|g| g.resolved)
+            .unwrap_or_default();
+        Ok(then != Some(json!(now)))
     }
 
     /// The always-denied list, against the exact request, as it stands now.
@@ -704,6 +808,7 @@ mod tests {
             shown: command.into(),
             readable: true,
             reason: "no".into(),
+            guard: None,
         }
     }
 

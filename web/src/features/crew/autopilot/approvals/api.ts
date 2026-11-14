@@ -27,7 +27,7 @@ export const crewApi = {
   },
   /** The commands the guard holds for the person, and the ones decided lately. */
   held: (signal?: AbortSignal) => request<AutopilotHeldList>("GET", "/api/crew/approvals/held", undefined, signal),
-  /** Needs the nonce "Confirm it's you" answered with for exactly this hold, sent once in `x-orbyn-confirm`. */
+  /** Needs the nonce the desktop shell made after the person clicked Approve once in its native dialog, for exactly this hold, sent once in `x-orbyn-confirm`. */
   approveOnce: (id: string, nonce: string) =>
     request<AutopilotHeld>("POST", `/api/crew/approvals/${encodeURIComponent(id)}/approve-once`, {}, undefined, { headers: { "x-orbyn-confirm": nonce } }),
   /** No password: it only ever refuses. */

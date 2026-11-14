@@ -119,7 +119,7 @@ export function useNeedsYou(): NeedsState {
 
   const hold = useCallback((id: string) => {
     const row = heldRows.find((one) => one.id === id);
-    return row ? held.control(row, () => undefined) : null;
+    return row ? held.control(row) : null;
   }, [heldRows, held]);
 
   const reads = [

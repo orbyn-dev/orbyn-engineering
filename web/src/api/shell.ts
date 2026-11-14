@@ -20,6 +20,47 @@ export async function readShellStatus(signal?: AbortSignal) {
   return status;
 }
 
+/** What the desktop shell hands a page: the Tauri bridge the window has. No other module reads it for this. */
+type Bridge = { invoke?: (command: string, args?: Record<string, unknown>) => unknown };
+
+const bridge = (): Bridge | undefined => (window as unknown as { __TAURI_INTERNALS__?: Bridge }).__TAURI_INTERNALS__;
+
+/**
+ * True when this page can ask the desktop shell to confirm a person is there: the service says the window belongs
+ * to the desktop app, and the window has the shell's bridge. A plain browser tab has neither.
+ */
+export const canAskPresence = () => attached && typeof bridge()?.invoke === "function";
+
+/** Why the shell gave no nonce: the stable code it failed with (`cancelled`, `busy`, `timeout`, `presence_refused:<code>`, ...). */
+export class PresenceFailure extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "PresenceFailure";
+  }
+}
+
+/**
+ * Asks the person, in the desktop shell's own native dialog, to approve one held Crew command, and returns the one-time
+ * nonce the approve route needs in `x-orbyn-confirm`. This is the only shell command the page calls, and the name is not a
+ * parameter: nothing here can reach another command.
+ *
+ * The caller must call this only from the person's own click (see `approvals/presence.ts`): the dialog's default
+ * button approves, so a call the person did not make could be answered by a stray key. Nothing here retries, and the
+ * nonce is returned once and not kept, logged or put anywhere.
+ */
+export async function askPresence(holdId: string): Promise<string> {
+  const invoke = bridge()?.invoke;
+  if (!attached || typeof invoke !== "function") throw new PresenceFailure("unavailable");
+  let nonce: unknown;
+  try {
+    nonce = await invoke.call(bridge(), "crew_presence", { holdId });
+  } catch (caught) {
+    throw new PresenceFailure(typeof caught === "string" && caught ? caught : "unavailable");
+  }
+  if (typeof nonce !== "string" || nonce === "" || nonce.length > 256) throw new PresenceFailure("invalid_answer");
+  return nonce;
+}
+
 const changeListeners = new Set<() => void>();
 
 /** Calls back when the shell's facts change. Returns a stop function. */

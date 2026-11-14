@@ -1,9 +1,9 @@
-// The held-command card: what the drawer shows for a command the guard holds for you, and the dialog behind
-// Approve once. The words and states are the Crew designs' (v31): approval-confirm, -wrong, -network, -noaccount,
-// approval-expired and approval-decided.
+// The held-command card: what the drawer shows for a command the guard holds for you. Approve once opens the
+// desktop app's own native dialog (not drawn here); in a browser tab it is not offered. The words and states are
+// the Crew designs' (v34): approval-confirm, -browser, -refused-presence, -expired and -decided.
+import { useEffect, useRef } from "react";
 import { Info } from "lucide-react";
 import { Button } from "../../../../ui/controls";
-import { ConfirmItsYou } from "../../../account";
 import { GUARD_WORKERS, HELD, MODE_COPY } from "./copy";
 import { decidedLine, phaseOf, type HoldControl } from "./held";
 import type { ApprovalRow, HeldInfo, Mode } from "./model";
@@ -11,11 +11,9 @@ import { Facts } from "./parts";
 
 const UNREADABLE = "This command is too long to read whole, so it cannot be approved once.";
 
-const confirmId = (id: string) => `crew-approve-once:${id}`;
-
-function Said({ children, note }: { children: string; note?: string | null }) {
+export function Said({ children, note, live }: { children: string; note?: string | null; live?: boolean }) {
   return (
-    <section className="ap-box" data-quiet>
+    <section className="ap-box" data-quiet role={live ? "status" : undefined}>
       <div className="ap-said"><Info size={14} aria-hidden /><span>{children}</span></div>
       {note ? <p>{note}</p> : null}
     </section>
@@ -31,6 +29,7 @@ const why = (reason: string) => {
 /** Why Approve once is off, when it is: the one reason a person can act on. */
 function approveReason(held: HeldInfo, hold: HoldControl): string | null {
   if (hold.remote) return HELD.remote;
+  if (!hold.desktop) return null;
   if (!held.readable) return UNREADABLE;
   return null;
 }
@@ -38,7 +37,8 @@ function approveReason(held: HeldInfo, hold: HoldControl): string | null {
 export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: HeldInfo; hold: HoldControl; mode: Mode }) {
   const phase = phaseOf(held, hold.closed ?? undefined);
   const decided = decidedLine(held.state, held.decidedAt, held.byYou);
-  const none = hold.standing === "none";
+  // A browser tab cannot approve once; a remote window is answered at the computer the app runs on.
+  const browserTab = !hold.desktop && !hold.remote;
   return (
     <>
       <p className="ap-asked">Task <b>{row.taskId}</b></p>
@@ -50,14 +50,9 @@ export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: He
       {row.block ? <pre className="ap-cmd"><code>{row.block}</code></pre> : null}
       {phase === "expired" ? <Said>{HELD.expired}</Said> : null}
       {phase === "decided" ? <Said note={decided.sentence ? `${decided.sentence}${held.state === "denied" || held.state === "dismissed" ? " Nothing ran." : ""}` : null}>{HELD.decided}</Said> : null}
-      {phase === "open" && none ? (
-        <section className="ap-box" data-quiet>
-          <div className="ap-said"><Info size={14} aria-hidden /><span>{HELD.noAccount}</span></div>
-          <p>{HELD.noAccountNote}</p>
-          <div><Button small onClick={hold.signIn}>Sign in</Button></div>
-        </section>
-      ) : null}
-      {phase === "open" && !none ? (
+      {phase === "open" && browserTab ? <Said note={HELD.desktopOnlyNote}>{HELD.desktopOnly}</Said> : null}
+      {phase === "open" && hold.refused ? <Said live note={HELD.refusedNote}>{HELD.refused}</Said> : null}
+      {phase === "open" && !browserTab && !hold.refused ? (
         <section className="ap-box">
           <h4>Why it is held</h4>
           <p>{why(held.reason)}</p>
@@ -70,40 +65,28 @@ export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: He
 }
 
 export function HeldFooter({ held, hold, close }: { held: HeldInfo; hold: HoldControl; close(): void }) {
+  const foot = useRef<HTMLElement>(null);
+  // The button is off while its attempt runs, so focus would drop to the page: give it back when the attempt ends.
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !hold.asked) foot.current?.querySelector<HTMLButtonElement>("[data-approve]")?.focus();
+    was.current = hold.asked;
+  }, [hold.asked]);
   const phase = phaseOf(held, hold.closed ?? undefined);
   if (phase !== "open") return <footer className="ap-drawer-foot"><Button small tone="quiet" onClick={close}>Close</Button></footer>;
   const reason = approveReason(held, hold);
   const idle = hold.busy;
-  const approveOff = idle || hold.standing !== "signed_in" || reason !== null;
+  // Approve once is the desktop app's. A browser tab does not offer it; a remote window shows it off, with the reason.
+  const offered = hold.desktop || hold.remote;
+  const approveOff = idle || hold.asking || hold.remote || reason !== null;
   const answerOff = idle || hold.remote;
   return (
-    <footer className="ap-drawer-foot">
-      <Button small tone="primary" disabled={approveOff} title={reason ?? undefined} aria-description={reason ?? undefined} onClick={hold.approve}>Approve once</Button>
+    <footer ref={foot} className="ap-drawer-foot">
+      {offered ? <Button data-approve small tone="primary" disabled={approveOff} title={reason ?? undefined} aria-description={reason ?? undefined} onClick={hold.approve}>Approve once</Button> : null}
       <Button small disabled={answerOff} title={hold.remote ? HELD.remote : undefined} onClick={hold.deny}>Deny</Button>
       <Button small tone="quiet" disabled={answerOff} title={hold.remote ? HELD.remote : undefined} onClick={hold.dismiss}>Dismiss</Button>
       {reason ? <small className="ap-muted ap-reason">{reason}</small> : null}
       {hold.error ? <small className="ap-muted ap-reason" role="alert">{hold.error}</small> : null}
     </footer>
-  );
-}
-
-/** "Confirm it's you" for one held command: the password, then the nonce goes to the route once. */
-export function ApproveOnceDialog({ row, approve, onClose }: { row: ApprovalRow; approve(id: string, nonce: string): Promise<boolean>; onClose(): void }) {
-  return (
-    <ConfirmItsYou
-      action="approve_device"
-      deviceId={confirmId(row.id)}
-      confirmLabel="Approve once"
-      networkNote={HELD.networkNote}
-      cancelOnEmptyEnter
-      subject={
-        <>
-          <Facts rows={[{ label: "Asked by", text: `Task ${row.taskId ?? ""}`.trim() }]} />
-          <pre className="ap-cmd"><code>{row.block}</code></pre>
-        </>
-      }
-      onConfirmed={(nonce) => approve(row.id, nonce)}
-      onClose={onClose}
-    />
   );
 }
