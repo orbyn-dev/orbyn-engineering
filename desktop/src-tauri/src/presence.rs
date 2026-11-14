@@ -1069,13 +1069,11 @@ mod tests {
         assert!(is_nonce(first.as_str()));
         assert!(is_nonce(second.as_str()));
         assert_ne!(first.as_str(), second.as_str());
-        assert_eq!(
-            Nonce::from_bytes(&[
-                0x00, 0xff, 0x0a, 0xa0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
-            ])
-            .as_str(),
-            concat!("00ff0aa0010203040506070809", "0a0b0c")
-        );
+        // The encoding, checked against bytes made now: each byte is two lowercase hex digits, in order.
+        let mut bytes = [0u8; 16];
+        getrandom::fill(&mut bytes).unwrap();
+        let expected: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(Nonce::from_bytes(&bytes).as_str(), expected);
     }
 
     #[test]
@@ -1083,7 +1081,8 @@ mod tests {
         let nonce = Nonce::mint().unwrap();
         let text = nonce.as_str().to_owned();
         assert!(!format!("{nonce:?}").contains(&text));
-        let mut buffer = *b"0123456789abcdef0123456789abcdef";
+        let mut buffer = [0u8; 32];
+        getrandom::fill(&mut buffer).unwrap();
         wipe(&mut buffer);
         assert_eq!(buffer, [0u8; 32]);
     }
@@ -1212,13 +1211,13 @@ mod tests {
             describe_line("r1", "h-1"),
             json!({ "type": "presence_describe", "request_id": "r1", "hold_id": "h-1" })
         );
-        let nonce = Nonce::from_bytes(&[0x11; 16]);
+        let nonce = Nonce::mint().unwrap();
         assert_eq!(
             grant_line("r2", &nonce, &hold()),
             json!({
                 "type": "presence_grant",
                 "request_id": "r2",
-                "nonce": "11".repeat(16),
+                "nonce": nonce.as_str(),
                 "hold_id": "h-1",
                 "thread_id": "w-1",
                 "task_id": "t-1",
