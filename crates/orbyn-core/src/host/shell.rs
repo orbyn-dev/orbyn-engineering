@@ -89,6 +89,11 @@ impl ShellBridge {
         *lock(&self.lines) = Some(lines);
     }
 
+    /// Whether a desktop shell is connected: the service was started with the parent channel.
+    pub fn attached(&self) -> bool {
+        lock(&self.lines).is_some()
+    }
+
     /// Sends one line. False means no shell is listening.
     pub fn send(&self, line: Value) -> bool {
         lock(&self.lines)
@@ -392,7 +397,7 @@ impl Core {
     }
 }
 
-fn is_id(text: &str) -> bool {
+pub(crate) fn is_id(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= ID_LIMIT
         && text

@@ -122,6 +122,13 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// An action that only a person at the desktop app may give: the service has no desktop shell (it was started without one, or
+    /// as a remote service), so nothing can be approved.
+    #[error("Approving a command needs the Orbyn desktop app on this computer.")]
+    DesktopRequired,
+    /// The desktop app has not recorded a person's approval for this hold, or it is used, expired or for something else.
+    #[error("Approve this command in the Orbyn desktop app first.")]
+    PresenceRequired,
     /// The thing existed and is over: a held command that expired or whose task ended.
     #[error("{0}")]
     Gone(String),
@@ -168,6 +175,8 @@ impl CoreError {
             Self::PackTampered(_) => "pack_tampered",
             Self::AccountDisabled => "account_disabled",
             Self::ReauthRequired => "reauth_required",
+            Self::DesktopRequired => "desktop_required",
+            Self::PresenceRequired => "presence_required",
             Self::Gone(_) => "gone",
             Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
@@ -188,7 +197,9 @@ impl CoreError {
             | Self::PolicyDenied(_)
             | Self::WorkspaceRefused(_)
             | Self::AccountDisabled
-            | Self::ReauthRequired => 403,
+            | Self::ReauthRequired
+            | Self::DesktopRequired
+            | Self::PresenceRequired => 403,
             Self::Account { code, .. } => match *code {
                 "account_offline" => 503,
                 "rate_limited" => 429,
@@ -292,6 +303,8 @@ impl CoreError {
             Self::DataDirLocked => Self::DataDirLocked,
             Self::AccountDisabled => Self::AccountDisabled,
             Self::ReauthRequired => Self::ReauthRequired,
+            Self::DesktopRequired => Self::DesktopRequired,
+            Self::PresenceRequired => Self::PresenceRequired,
             Self::Account {
                 code,
                 message,

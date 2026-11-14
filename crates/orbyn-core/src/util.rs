@@ -97,6 +97,16 @@ pub fn secrets_match(presented: &str, expected_sha256_hex: &str) -> bool {
         == 0
 }
 
+/// Compares two secrets of the same text form without stopping at the first difference.
+pub(crate) fn same_secret(left: &str, right: &str) -> bool {
+    left.len() == right.len()
+        && left
+            .bytes()
+            .zip(right.bytes())
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
 /// Writes a file readable only by the current user.
 ///
 /// On Unix the mode is set at creation. Windows has no mode bits: the file

@@ -37,11 +37,11 @@ mod tests;
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
     APPROVAL_LIFETIME_SECS, Answer, Answering, Approver, Approvers, Autopilot, COMMENT_MAX,
-    CONFIRM_PREFIX, DIGEST_HOURS_MAX, DiffFacts, Grants, HELD_LIFETIME_SECS, IN_A_ROW, IN_A_RUN,
-    MergeOutcome, MergeTarget, Mode, ModeScope, Need, OFFSET_MAX, Outcome, PAGE_DEFAULT, PAGE_MAX,
-    Page, RULES, Rate, RecentTotals, Refusal, ReviewAnswer, ReviewItem, Risk, SHOWN_MAX, Scene,
-    Scored, Summary, WatchOutcome, area_of, areas_of, check_words, injection_in, lane_ran,
-    owed_lanes, refuse, review_window, score, sensitive, tier_of, valid_id,
+    DIGEST_HOURS_MAX, DiffFacts, Grants, HELD_LIFETIME_SECS, IN_A_ROW, IN_A_RUN, MergeOutcome,
+    MergeTarget, Mode, ModeScope, Need, OFFSET_MAX, Outcome, PAGE_DEFAULT, PAGE_MAX, Page, RULES,
+    Rate, RecentTotals, Refusal, ReviewAnswer, ReviewItem, Risk, SHOWN_MAX, Scene, Scored, Summary,
+    WatchOutcome, area_of, areas_of, check_words, injection_in, lane_ran, owed_lanes, refuse,
+    review_window, score, sensitive, tier_of, valid_id,
 };
 pub use background::{
     BackgroundEnd, EVERY_HOURS_MAX, MINUTES_MAX, NAME_MAX, SETTING_MAX, TURNS_MAX,

@@ -132,6 +132,8 @@ pub struct Core {
     pub(crate) setups: Arc<SetupManager>,
     pub updates: Arc<UpdateCenter>,
     pub shell: ShellBridge,
+    /// A person's approvals given in the desktop app, in memory only.
+    pub(crate) presence: crate::host::presence::PresenceBook,
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
@@ -276,6 +278,7 @@ impl Core {
             setups,
             updates,
             shell: ShellBridge::default(),
+            presence: crate::host::presence::PresenceBook::default(),
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
