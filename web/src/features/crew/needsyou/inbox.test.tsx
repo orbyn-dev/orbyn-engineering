@@ -156,6 +156,8 @@ describe("the Needs you inbox on live data", () => {
     expect(await list()).toBeVisible();
     await user.click(screen.getByRole("button", { name: /^Try again/ }));
     await waitFor(() => expect(screen.queryByText(/Can’t read/)).toBeNull());
+    // Try again only reads: no request that changes anything is sent.
+    expect(writes()).toHaveLength(0);
   });
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
