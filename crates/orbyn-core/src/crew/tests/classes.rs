@@ -114,7 +114,9 @@ fn rows(w: &World, task: &str) -> Vec<crate::store::AutopilotEvent> {
 fn the_file_is_parsed_strictly() {
     let ok = |rules: Vec<Value>| parse_file(&file(rules));
     let bad = |text: String, words: &str| {
-        let why = parse_file(&text).expect_err(&text);
+        let Err(why) = parse_file(&text) else {
+            panic!("a file that should be refused was accepted");
+        };
         assert!(why.contains(words), "{why:?} should mention {words:?}");
     };
     let (rules, notes) = ok(vec![
@@ -199,9 +201,9 @@ fn the_file_is_parsed_strictly() {
     let why = parse_file(&file(vec![secret])).unwrap_err();
     assert!(
         why.contains("secret") || why.contains("key") || why.contains("token"),
-        "{why}"
+        "the refusal names the class of secret"
     );
-    assert!(!why.contains("aaaaaaaa"), "{why}");
+    assert!(!why.contains("aaaaaaaa"), "the refusal repeats the secret");
 }
 
 #[tokio::test]
