@@ -361,11 +361,14 @@ impl ProcessTree {
             job.terminate();
             return;
         }
-        let _ = std::process::Command::new("taskkill")
+        let mut command = std::process::Command::new("taskkill");
+        command
             .args(["/PID", &self.pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        // A short-lived helper, but every spawn goes through the one gate: it never sees account secrets.
+        crate::host::child_env::for_tool(&mut command);
+        let _ = command.status();
     }
 }
 
