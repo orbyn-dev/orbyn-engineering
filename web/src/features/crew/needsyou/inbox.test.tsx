@@ -198,15 +198,23 @@ describe("answering from the inbox", () => {
     await waitFor(() => expect(calls("/api/crew/approvals/hold-orders/deny")).toHaveLength(1));
   });
 
-  it("a row already answered elsewhere has Deny off with the reason", async () => {
-    const { user } = await open("crew-held-account-race");
+  it("a row already answered elsewhere keeps its place with Deny off and the reason (409)", async () => {
+    // The service answers 409 but its list still has the hold open, so the row stays on screen as the window reloads.
+    const { user } = await open("crew-held-account");
     const orders = await row(/DELETE FROM orders/);
+    mock.fail("/api/crew/approvals/hold-orders/deny", 1, 409, "conflict");
     await user.click(within(orders).getByRole("button", { name: /^Deny/ }));
     await waitFor(() => expect(calls("/api/crew/approvals/hold-orders/deny")).toHaveLength(1));
-    await waitFor(() => {
-      const again = screen.queryByText(/DELETE FROM orders/)?.closest("li");
-      if (again) expect(within(again as HTMLElement).getByRole("button", { name: /^Deny/ })).toBeDisabled();
+    const deny = await waitFor(() => {
+      const button = within(screen.getByText(/DELETE FROM orders/).closest("li") as HTMLElement).getByRole("button", { name: /^Deny/ });
+      expect(button).toBeDisabled();
+      return button;
     });
+    expect(deny).toHaveAttribute("title", "Already decided.");
+    expect(deny).toHaveAttribute("aria-description", "Already decided.");
+    // No second request can be sent from it.
+    await user.click(deny);
+    expect(calls("/api/crew/approvals/hold-orders/deny")).toHaveLength(1);
   });
 
   it("from another computer, Deny is off with the reason; Approve only opens a tab", async () => {

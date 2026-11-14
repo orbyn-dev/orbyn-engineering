@@ -26,6 +26,8 @@ const scope = () => {
     return window.location.origin;
   }
 };
+// The scope is the service origin. A desktop service that restarts on another port is another origin, so its dismissed stops come back:
+// that fails safe (a stop shows again, none is hidden). Pruning drops the old entries on the next load.
 const dismissKey = (id: string) => `${scope()}|${id}`;
 
 function readDismissed(): Set<string> {
