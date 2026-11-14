@@ -210,7 +210,7 @@ async fn hostile_evidence_fields_reach_a_card_only_as_two_counts() {
         .unwrap();
     assert_eq!(was.of as usize, ran);
 
-    // A failing row on the same commit, with hostile text in every field a check has, built at run time.
+    // A failing row, with hostile text in every field a check has, built at run time.
     let marker = nonce("count");
     let mut value: Value = CrewObject::Evidence(base).to_value();
     value["outcome"] = json!("fail");
@@ -227,8 +227,40 @@ async fn hostile_evidence_fields_reach_a_card_only_as_two_counts() {
     let view = board(&w, &crew_id);
     let card = &column(&view, Column::Passed).cards[0];
     let counts = card.checks.clone().expect("counts");
-    assert_eq!(counts.of, was.of + 1, "the failing row is counted");
-    assert_eq!(counts.passed, was.passed, "and is not a pass");
+    // No finished verification named the grafted row, so it is not part of the one the task passed on.
+    assert_eq!(
+        (counts.passed, counts.of),
+        (was.passed, was.of),
+        "a row no verification named changed the count"
+    );
+
+    // A retry: a later verification names the hostile row alone. The count is that verification's, not both attempts' together.
+    let gate = w
+        .core
+        .store
+        .crew_gates(&done)
+        .unwrap()
+        .into_iter()
+        .find(|g| g.stage == orbyn_contracts::GateStage::Checks)
+        .expect("the task's own checks gate");
+    let mut later: Value = CrewObject::Gate(gate).to_value();
+    later["evidence"] = json!([value["id"]]);
+    later["decision"] = json!("fail");
+    later["id"] = json!(object_id(&later).unwrap());
+    w.core
+        .store
+        .add_crew_object(&done, &CrewObject::parse(&later).unwrap())
+        .unwrap();
+    let view = board(&w, &crew_id);
+    let counts = column(&view, Column::Passed).cards[0]
+        .checks
+        .clone()
+        .expect("counts");
+    assert_eq!(
+        (counts.passed, counts.of),
+        (0, 1),
+        "the newest verification is the one counted"
+    );
     let text = serde_json::to_string(&view).unwrap();
     assert!(
         !text.contains(&marker) && !text.contains("<script>"),

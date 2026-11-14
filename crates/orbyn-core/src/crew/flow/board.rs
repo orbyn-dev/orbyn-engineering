@@ -146,8 +146,12 @@ impl Core {
                     checkout,
                     !facts.evidence.is_empty(),
                 ),
-                checks: check_counts(build_state(facts), &facts.run_id, &facts.evidence)
-                    .map(|(passed, of)| wire::FlowChecks { passed, of }),
+                checks: check_counts(
+                    build_state(facts),
+                    &facts.build_evidence,
+                    &facts.build_gates,
+                )
+                .map(|(passed, of)| wire::FlowChecks { passed, of }),
             },
         ))
     }

@@ -18,9 +18,10 @@ pub(super) struct Facts {
     pub fixes: Vec<(CrewFix, String)>,
     /// Evidence of the build now under way: the latest fix when it has any, else the task's own.
     pub evidence: Vec<Evidence>,
-    /// The run the build now under way belongs to: the latest fix task's when there is one, else the task's own. Only evidence
-    /// written under it is the current verification; the rest is an earlier round's.
-    pub run_id: String,
+    /// The evidence and the gates of the task that is building now (the latest fix, else the task itself), and no other: the two
+    /// the current verification is read from.
+    pub build_evidence: Vec<Evidence>,
+    pub build_gates: Vec<Gate>,
     pub gates: Vec<Gate>,
     /// `Core::review_status`, or an empty review when no lane ran.
     pub review: Value,
@@ -33,13 +34,10 @@ impl Core {
         let store = &self.store;
         let id = task.id.clone();
         let mut fixes = Vec::new();
-        let mut run_id = task.run_id.clone();
         for fix in store.crew_fixes_of(&id)? {
-            let fix_task = store.crew_task(&fix.fix_task_id)?;
-            if let Some(t) = &fix_task {
-                run_id.clone_from(&t.run_id);
-            }
-            let state = fix_task.map_or_else(String::new, |t| t.state);
+            let state = store
+                .crew_task(&fix.fix_task_id)?
+                .map_or_else(String::new, |t| t.state);
             fixes.push((fix, state));
         }
         let mut evidence = store.crew_evidence(&id)?;
@@ -49,6 +47,11 @@ impl Core {
                 evidence = latest;
             }
         }
+        let building = fixes
+            .last()
+            .map_or_else(|| id.clone(), |(fix, _)| fix.fix_task_id.clone());
+        let build_evidence = store.crew_evidence(&building)?;
+        let build_gates = store.crew_gates(&building)?;
         let review = if store.crew_reviews_of(&id)?.is_empty() {
             json!({ "lanes": [], "findings": [], "blocked": false })
         } else {
@@ -61,7 +64,8 @@ impl Core {
             route: store.crew_route_decisions(&id)?.pop(),
             fixes,
             evidence,
-            run_id,
+            build_evidence,
+            build_gates,
             gates: store.crew_gates(&id)?,
             review,
             entry: store.merge_entry(&id)?,
