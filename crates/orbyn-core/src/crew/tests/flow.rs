@@ -14,7 +14,7 @@ use crate::store::FindingRepro;
 
 /// A second finished task in the same crew. A task's id is the hash of its brief, which carries the second it was written
 /// in, so two identical briefs started together are one task; this one has an outcome of its own.
-async fn built_another(w: &super::harness::World, outcome: &str, key: Value) -> String {
+pub(super) async fn built_another(w: &super::harness::World, outcome: &str, key: Value) -> String {
     let (answer, error) = w
         .start(
             brief(
@@ -29,7 +29,7 @@ async fn built_another(w: &super::harness::World, outcome: &str, key: Value) -> 
     id
 }
 
-fn page() -> Page {
+pub(super) fn page() -> Page {
     Page::new(None, None).unwrap()
 }
 
@@ -43,7 +43,7 @@ fn state(list: &FlowTaskList, stage: Stage) -> State {
 }
 
 /// Every row of every crew table, by table, read from the store's own connection.
-fn crew_rows(w: &super::harness::World) -> Vec<(String, i64)> {
+pub(super) fn crew_rows(w: &super::harness::World) -> Vec<(String, i64)> {
     let conn = w.core.store.reader();
     let names: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'crew\\_%' ESCAPE '\\' ORDER BY name")
@@ -411,7 +411,7 @@ async fn bad_input_is_refused_and_an_empty_crew_is_an_empty_list() {
 }
 
 /// A runtime value that is unique to this run and appears in no constant.
-fn nonce(label: &str) -> String {
+pub(super) fn nonce(label: &str) -> String {
     format!(
         "{label}-{}-{}",
         std::process::id(),

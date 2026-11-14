@@ -14,13 +14,13 @@ use super::router;
 use crate::http::AppState;
 use crate::http::access::Access;
 
-struct Served {
-    port: u16,
-    core: Arc<Core>,
+pub(super) struct Served {
+    pub(super) port: u16,
+    pub(super) core: Arc<Core>,
     dir: std::path::PathBuf,
 }
 
-async fn serve(name: &str, preview: bool, remote: bool) -> Served {
+pub(super) async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-flow-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -42,7 +42,7 @@ async fn serve(name: &str, preview: bool, remote: bool) -> Served {
 }
 
 impl Served {
-    async fn get(&self, path: &str) -> (u16, Value) {
+    pub(super) async fn get(&self, path: &str) -> (u16, Value) {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
         let response = reqwest::Client::new()
             .get(url)
@@ -63,7 +63,7 @@ impl Drop for Served {
 }
 
 /// A task with a stored brief and key, and the text of the key's check.
-fn seed_task(core: &Core, label: &str) -> (String, String) {
+pub(super) fn seed_task(core: &Core, label: &str) -> (String, String) {
     let stamper = Stamper {
         crew_id: wire::CrewId::new("crew-1").unwrap(),
         engine: wire::CrewToken::new("claude").unwrap(),
