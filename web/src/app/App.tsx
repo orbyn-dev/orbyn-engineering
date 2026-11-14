@@ -88,14 +88,14 @@ function BootedApp() {
   const ready = boot.state === "ready";
   useEffect(() => {
     if (!ready) return;
-    // A theme set from the command line reaches an open window when it next takes focus.
-    const recheck = () => void api.info().then((info) => adoptEnvironmentTheme(info.environment_theme), () => undefined);
+    // A theme set from the command line, or Crew Preview switched by a restarted service, reaches an open window when it next takes focus.
+    const recheck = () => void api.info().then((info) => { adoptEnvironmentTheme(info.environment_theme); useConnection.setState({ crewPreview: info.crew_preview === true }); }, () => undefined);
     window.addEventListener("focus", recheck);
     return () => window.removeEventListener("focus", recheck);
   }, [ready]);
   useEffect(() => {
     if (!ready) return;
-    return watchConnection((signal) => api.info(signal));
+    return watchConnection((signal) => api.info(signal).then((info) => useConnection.setState({ crewPreview: info.crew_preview === true })));
   }, [ready]);
   useEffect(() => {
     if (!ready) return;

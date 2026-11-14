@@ -45,6 +45,19 @@ describe("the Crew row of the left bar", () => {
     expect(screen.queryByRole("link", { name: /^Crew/ })).toBeNull();
   });
 
+  it("follows a service restarted with Crew Preview switched: the next focus reads the info again", async () => {
+    mock.reset("crew");
+    render(createElement(App));
+    expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
+    mock.reset("default");
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(screen.queryByRole("link", { name: /^Crew\s*Preview/ })).toBeNull());
+    expect(useConnection.getState().crewPreview).toBe(false);
+    mock.reset("crew");
+    window.dispatchEvent(new Event("focus"));
+    expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
+  });
+
   it("fails closed: a start whose info cannot be read shows no Crew row, and the flag stays off", async () => {
     mock.reset("crew");
     mock.fail("/api/info", 20);
