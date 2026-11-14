@@ -147,7 +147,28 @@ fn running_in(tx: &Transaction<'_>, crew: &str) -> Result<Option<BackgroundRunRo
         .optional()?)
 }
 
-/// Ends a run in the transaction, with the audit row first. The caller has checked that it is running.
+/// Whether `name` is taken by another crew of the project: compared without regard to case for any script, which the unique index
+/// does for ASCII only. A project holds at most `PER_PROJECT_MAX` crews, so reading their names is cheap.
+fn name_taken(
+    tx: &Transaction<'_>,
+    project: &str,
+    name: &str,
+    except: Option<&str>,
+) -> Result<bool> {
+    let folded = name.to_lowercase();
+    let mut statement = tx.prepare("SELECT id, name FROM crew_background WHERE project_id = ?1")?;
+    let names = statement
+        .query_map([project], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(names
+        .iter()
+        .any(|(id, other)| Some(id.as_str()) != except && other.to_lowercase() == folded))
+}
+
+/// Ends a run in the transaction, with the audit row first. The caller has checked that it is running. When this stop ends a spend, the
+/// run has spent: `run` carries the totals, written in the same statement as the state.
 fn end_run(
     tx: &Transaction<'_>,
     run: &BackgroundRunRow,
@@ -180,14 +201,16 @@ fn end_run(
     let stamp = now();
     tx.execute(
         "UPDATE crew_background_runs SET state = ?2, stop_reason = ?3, review_waiting = ?4, review_reason = ?5,
-             updated_at = ?6, ended_at = ?6 WHERE id = ?1 AND state = 'running'",
+             turns_spent = ?7, minutes_spent = ?8, updated_at = ?6, ended_at = ?6 WHERE id = ?1 AND state = 'running'",
         params![
             run.id,
             state,
             reason,
             i64::from(review.is_some()),
             review,
-            stamp
+            stamp,
+            run.turns_spent,
+            run.minutes_spent
         ],
     )?;
     Ok(())
@@ -214,12 +237,7 @@ impl Store {
                     "a project has at most {PER_PROJECT_MAX} background crews"
                 )));
             }
-            let same: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM crew_background WHERE project_id = ?1 AND name = ?2 COLLATE NOCASE)",
-                params![new.project_id, new.name],
-                |row| row.get(0),
-            )?;
-            if same {
+            if name_taken(tx, new.project_id, new.name, None)? {
                 return Err(CoreError::Invalid(
                     "this project already has a background crew with that name".into(),
                 ));
@@ -269,17 +287,12 @@ impl Store {
     ) -> Result<BackgroundRow> {
         self.commit(|tx, _| {
             let current = crew_in(tx, id)?;
-            if let Some(name) = name {
-                let same: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM crew_background WHERE project_id = ?1 AND name = ?2 COLLATE NOCASE AND id <> ?3)",
-                    params![current.project_id, name, id],
-                    |row| row.get(0),
-                )?;
-                if same {
-                    return Err(CoreError::Invalid(
-                        "this project already has a background crew with that name".into(),
-                    ));
-                }
+            if let Some(name) = name
+                && name_taken(tx, &current.project_id, name, Some(id))?
+            {
+                return Err(CoreError::Invalid(
+                    "this project already has a background crew with that name".into(),
+                ));
             }
             audit(
                 tx,
@@ -308,7 +321,8 @@ impl Store {
         })
     }
 
-    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`. Audited in the same transaction.
+    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`, its stop row written as `actor` (the person who turned it off).
+    /// Audited in the same transaction.
     pub fn set_background_enabled(
         &self,
         id: &str,
@@ -329,7 +343,7 @@ impl Store {
                 json!({ "name": current.name, "was_enabled": current.enabled }),
             )?;
             if !enabled && let Some(run) = running_in(tx, id)? {
-                end_run(tx, &run, RunEnd::Stopped("disabled"), None, "crew")?;
+                end_run(tx, &run, RunEnd::Stopped("disabled"), None, actor)?;
             }
             tx.execute(
                 "UPDATE crew_background SET enabled = ?2, updated_at = ?3 WHERE id = ?1",
@@ -339,19 +353,30 @@ impl Store {
         })
     }
 
-    /// Deletes a crew and its runs. Refused while a run is in progress. The audit row stays.
+    /// Deletes a crew and its runs. Refused only while a run is in progress. Waiting reviews go with the crew; the audit row stays and
+    /// records how many runs, and how many waiting reviews, the delete removed.
     pub fn delete_background_crew(&self, id: &str, actor: &str) -> Result<()> {
         self.commit(|tx, _| {
             let current = crew_in(tx, id)?;
             if running_in(tx, id)?.is_some() {
                 return Err(CoreError::RunsActive);
             }
+            let (runs, waiting): (u32, u32) = tx.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(review_waiting), 0) FROM crew_background_runs WHERE background_id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
             audit(
                 tx,
                 actor,
                 "crew.background.delete",
                 id,
-                json!({ "name": current.name, "project": current.project_id }),
+                json!({
+                    "name": current.name,
+                    "project": current.project_id,
+                    "runs_removed": runs,
+                    "reviews_waiting_removed": waiting,
+                }),
             )?;
             tx.execute("DELETE FROM crew_background WHERE id = ?1", [id])?;
             Ok(())
@@ -470,7 +495,7 @@ impl Store {
     }
 
     /// Adds what a running run spent. Reaching either number of its budget stops it with the reason `budget` and puts it in the review
-    /// queue, in the same transaction as the audit row. A run that is not running is refused.
+    /// queue. A spend writes its audit row (and a stop its own) before the run row changes, in the same transaction. A run that is not running is refused.
     pub fn add_background_spend(
         &self,
         run: &str,
@@ -491,9 +516,20 @@ impl Store {
             }
             let turns_spent = current.turns_spent.saturating_add(turns);
             let minutes_spent = current.minutes_spent.saturating_add(minutes);
-            tx.execute(
-                "UPDATE crew_background_runs SET turns_spent = ?2, minutes_spent = ?3, updated_at = ?4 WHERE id = ?1",
-                params![run, turns_spent, minutes_spent, now()],
+            // The spend's audit row comes before the run row changes; a stop it causes writes its own audit row before the one update
+            // that records both the spend and the stop.
+            audit(
+                tx,
+                "crew",
+                "crew.background.run.spend",
+                &current.background_id,
+                json!({
+                    "run": run,
+                    "turns": turns,
+                    "minutes": minutes,
+                    "turns_spent": turns_spent,
+                    "minutes_spent": minutes_spent,
+                }),
             )?;
             let spent = BackgroundRunRow {
                 turns_spent,
@@ -507,6 +543,11 @@ impl Store {
                     RunEnd::Stopped("budget"),
                     Some("The run reached its budget and stopped."),
                     "crew",
+                )?;
+            } else {
+                tx.execute(
+                    "UPDATE crew_background_runs SET turns_spent = ?2, minutes_spent = ?3, updated_at = ?4 WHERE id = ?1",
+                    params![run, turns_spent, minutes_spent, now()],
                 )?;
             }
             Ok(tx.query_row(

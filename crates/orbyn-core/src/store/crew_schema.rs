@@ -398,7 +398,15 @@ CREATE UNIQUE INDEX crew_background_one_running ON crew_background_runs(backgrou
 CREATE INDEX crew_background_runs_by_crew ON crew_background_runs(background_id, started_at);
 "#;
 
-// Schema 42 on this branch (43 once #531's 42 is in the tree): the blast-radius guard's two lists (docs/crew.md, "As built (slice 4i, guard)"). `crew_guard_targets` holds the names the
+// Schema 42: a run keeps the budget it was given. `crew_background_runs.budget_turns` and `budget_minutes` are copied from the crew
+// when the run opens, and the crew's own budget is fixed by a trigger; this fixes the copy the same way, so a stopped run can never
+// be edited to look as if it stayed within a budget it exceeded. The core never writes these columns after the insert.
+pub(super) const CREW_BACKGROUND_RUN_BUDGET: &str = r#"
+CREATE TRIGGER crew_background_runs_budget_fixed BEFORE UPDATE OF budget_turns, budget_minutes ON crew_background_runs
+BEGIN SELECT RAISE(ABORT, 'a background run keeps the budget it was given'); END;
+"#;
+
+// Schema 43: the blast-radius guard's two lists (docs/crew.md, "As built (slice 4i, guard)"). `crew_guard_targets` holds the names the
 // person marked `prod` (always production-linked) or `safe` (exempt from the second key), on this device only: never a file in a
 // repository, so a repository file cannot loosen the guard. A pattern is a bare name or `*.suffix`, 1 to 253 characters; the
 // writer checks the charset and holds no more than 200 entries, and writes an audit row in the same transaction before the change.

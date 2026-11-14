@@ -19,6 +19,22 @@ const TOOL: &str = "/usr/bin/sandbox-exec";
 const HEAD: &str = "(version 1)\n(allow default)\n\
     (deny file-read* file-write* (subpath (param \"DATA\")))\n\
     (allow file-read* file-write* (subpath (param \"RUN\")))\n";
+/// A saved-conversations folder is denied whole, and so is the prompt history. A worker of
+/// another engine gets nothing back. A Claude worker then gets the one session it owns,
+/// allowed by pattern: `<id>.jsonl` or anything under `<id>/` in a project folder directly
+/// under the root. The core has already made `projects` and the project folder for the
+/// worker's start folder, so nothing may be created at either: a rename moves a prepared
+/// tree in under a new name, which the profile cannot tell from a new directory, so no
+/// create is allowed there at all. The pattern keeps working for a folder named in a way this
+/// code does not repeat, and a session another thread creates later stays denied. The folder
+/// and the pattern's own parts arrive as parameters (`TQ` is the folder with its pattern
+/// characters escaped).
+const TRANSCRIPTS: &str = r#"(deny file-read* file-write* (subpath (param "TR")))
+(deny file-read* file-write* (literal (param "TH")))
+"#;
+const OWN_SESSION: &str = r#"(allow file-read-metadata (literal (param "TR")) (regex (string-append "^" (param "TQ") "/[^/]+$")))
+(allow file-read* file-write* (regex (string-append "^" (param "TQ") "/[^/]+/" (param "TS") "(\\.jsonl|/.*)?$")))
+"#;
 const TAIL: &str = "(deny mach-priv-task-port)\n\
     (deny process-info* (target others))\n\
     (deny appleevent-send)\n\
@@ -42,6 +58,16 @@ pub(super) fn profile(confinement: &Confinement) -> String {
             ));
         }
     }
+    if confinement.transcripts.is_some() {
+        text.push_str(TRANSCRIPTS);
+        if confinement
+            .transcripts
+            .as_ref()
+            .is_some_and(|t| t.session.is_some())
+        {
+            text.push_str(OWN_SESSION);
+        }
+    }
     // The folders on the way down to an allowance may be looked at (not listed or read), so
     // a path through them can be walked, such as `cd` into the checkout.
     for index in 0..route(confinement).len() {
@@ -60,13 +86,35 @@ pub(super) fn profile(confinement: &Confinement) -> String {
     text
 }
 
-/// The data folder and every folder above it, up to and including `/`.
+/// The data folder and every folder above it, up to and including `/`, then the same for the
+/// saved-conversations folder: renaming `~/.claude` would put the transcripts under a name
+/// the rules do not cover.
 fn above(confinement: &Confinement) -> Vec<PathBuf> {
-    confinement
-        .data
-        .ancestors()
-        .map(Path::to_path_buf)
-        .collect()
+    let mut found: Vec<PathBuf> = Vec::new();
+    let roots =
+        std::iter::once(&confinement.data).chain(confinement.transcripts.iter().map(|t| &t.root));
+    for root in roots {
+        for folder in root.ancestors() {
+            if !found.iter().any(|f| f == folder) {
+                found.push(folder.to_path_buf());
+            }
+        }
+    }
+    found
+}
+
+/// `path` as text for a pattern: every character the pattern language reads as an operator
+/// gets a backslash, so a folder named `a+b (1)` matches itself and nothing else.
+fn pattern_text(path: &Path) -> OsString {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let mut out = Vec::new();
+    for &byte in path.as_os_str().as_bytes() {
+        if b".^$*+?()[]{}|\\".contains(&byte) {
+            out.push(b'\\');
+        }
+        out.push(byte);
+    }
+    OsString::from_vec(out)
 }
 
 /// The data folder and the folders inside it that lead to an allowance.
@@ -102,6 +150,17 @@ fn parameters(confinement: &Confinement) -> Vec<(String, PathBuf)> {
                 .enumerate()
                 .map(|(index, path)| (format!("{prefix}{index}"), path.clone())),
         );
+    }
+    if let Some(transcripts) = &confinement.transcripts {
+        all.push(("TR".to_owned(), transcripts.root.clone()));
+        if let Some(session) = &transcripts.session {
+            all.push((
+                "TQ".to_owned(),
+                PathBuf::from(pattern_text(&transcripts.root)),
+            ));
+            all.push(("TS".to_owned(), PathBuf::from(session)));
+        }
+        all.push(("TH".to_owned(), transcripts.history.clone()));
     }
     for (prefix, paths) in [("M", route(confinement)), ("A", above(confinement))] {
         all.extend(

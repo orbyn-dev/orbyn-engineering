@@ -1199,3 +1199,58 @@ fn error_result_reports_its_reason() {
         Some(EngineOutcome::Failed("Not logged in".into()))
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
+    let dir = crate::testing::TempDir::new();
+    let data = dir.path().join("data");
+    let config = dir.path().join("claude");
+    std::fs::create_dir_all(data.join("runs/w")).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let rules =
+        crate::host::confine::Confinement::new(&data, &data.join("runs/w"), &[], &[]).unwrap();
+    let mut first = spec();
+    first.resume = None;
+    first.confine = Some(
+        rules
+            .clone()
+            .with_claude_transcripts(&config.join("projects"), None, dir.path())
+            .unwrap(),
+    );
+    let id = first
+        .confine
+        .as_ref()
+        .unwrap()
+        .fresh_session()
+        .unwrap()
+        .to_owned();
+    let args: Vec<String> = run_args(&first, Path::new("/m"))
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let at = args
+        .iter()
+        .position(|a| a == "--session-id")
+        .expect("named");
+    assert_eq!(args[at + 1], id);
+    assert!(!args.iter().any(|a| a == "--resume"));
+    let mut later = spec();
+    later.resume = Some("sess".into());
+    later.confine = Some(
+        rules
+            .with_claude_transcripts(&config.join("projects"), Some("sess"), dir.path())
+            .unwrap(),
+    );
+    let args: Vec<String> = run_args(&later, Path::new("/m"))
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(args.windows(2).any(|w| w == ["--resume", "sess"]));
+    assert!(!args.iter().any(|a| a == "--session-id"));
+    // An unconfined first turn is unchanged: Claude picks the id.
+    let mut free = spec();
+    free.resume = None;
+    let args = run_args(&free, Path::new("/m"));
+    assert!(!args.iter().any(|a| a == "--session-id"));
+}
