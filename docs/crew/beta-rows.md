@@ -37,7 +37,7 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 | C19 | partial | Media in messages: image gallery, video, save/copy path | a sent attachment opens in the dialog on its own instead of joining its message's gallery, remote video, HTTP images and unsupported remote image formats remain unavailable under the closed… |
 | C31 | partial | Right panel tabs: add-tab menu (Browser, Terminal, Files, Diff, Pull request, Linked pull requests, Device, Side chat), mute tab, close, maximize, resize handle, sheet on small screens | checked: no Device surface exists anywhere (H20 is open), so the disabled Device entry is correct and was not built; browser mute is refused because a previewed page is streamed JPEG frames with… |
 | C37 | partial | Sentence tool trace: each tool call is a verb-object row with kind icon; calls group in fives with a count summary; live view bounded to 30 rows; turn folds to a summary at the end | native qualification on a provider other than the observed Codex 0.160.0, still needs a hands-on run in the packaged app; the packaged CI jobs start no turn and drive no webview; the real Codex… |
-| C40 | partial | Rich question content: agent questions render Markdown, charts and sanitised SVG or static HTML in an isolated root; remote images become links | live-provider question and native qualification. A real Codex 0.166.0 turn through the real service on 5 November 2026 answered the request to ask a question with "I can't use AskUserQuestion here… |
+| C40 | partial | Rich question content: agent questions render Markdown, strict Mermaid diagrams and checkout images through the thread's files route; remote images become links; raw HTML and SVG stay text (no charts, no rendered SVG or HTML in an isolated root) | live-provider question and native qualification. A real Codex 0.166.0 turn through the real service on 5 November 2026 answered the request to ask a question with "I can't use AskUserQuestion here… |
 
 ### D. Files, search and attachments (2)
 
@@ -601,7 +601,7 @@ Checked 2026-11-11 against the 573 frame ids in `engineer-designs.html` in `orby
 | K35 | Welcome wizard steps for computers and agents | `welcome-*` (project steps only) |
 | F3 | Multi-account host picker (an account per host, host off) | none |
 | L27 | Scoped access: the 16 permission scopes and guarded actions | none |
-| C10, C40 | Claude task lists row; rich question content (Markdown, charts, SVG/HTML in an isolated root, remote images as links) | `question`, `tc-plan` |
+| C10, C40 | Claude task lists row; rich question content (Markdown, Mermaid, checkout images, remote images as links; raw HTML and SVG stay text, no charts or isolated root) | `question`, `tc-plan` |
 | C4 | Orchestrator summaries: action-specific wording, failures not counted | `tc-group-counts` |
 | P6 | Update tracks: Stable and Nightly switching | `update-*`, `s-x-maint-updates*` |
 | K25, P23, P24 | Dock badge and native View/Edit/Window menus: a short spec sheet, not full frames | none |
