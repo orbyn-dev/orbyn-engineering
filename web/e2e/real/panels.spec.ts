@@ -24,6 +24,18 @@ async function wheelBothEnds(page: Page, target: Locator) {
   }
 }
 
+/** Parks the chat at 600px once a finished turn has folded, which would otherwise move the position set here. */
+async function parkChat(page: Page) {
+  await expect(async () => {
+    const height = await chat(page).evaluate((element) => element.scrollHeight);
+    await page.waitForTimeout(400);
+    expect(await chat(page).evaluate((element) => element.scrollHeight)).toBe(height);
+  }).toPass();
+  await chat(page).evaluate((element) => {
+    element.scrollTop = 600;
+  });
+}
+
 async function expectChatUntouched(page: Page, target: Locator) {
   const before = await chatTop(page);
   await wheelBothEnds(page, target);
@@ -52,9 +64,7 @@ test("each panel scrolls alone, past both ends, with the chat parked mid-way", a
   await longThread(page);
   await settled(service, threadIdOf(page));
   await expect(page.getByText("Paragraph 120 of a long answer.")).toBeVisible();
-  await chat(page).evaluate((element) => {
-    element.scrollTop = 600;
-  });
+  await parkChat(page);
   await page.waitForTimeout(100);
 
   const parked = await chatTop(page);
@@ -123,15 +133,7 @@ test("a historical turn shows file changes without per-file restore", async ({ p
 test("the details card and terminal keep the wheel to themselves", async ({ page }) => {
   await longThread(page);
   await settled(service, threadIdOf(page));
-  // A turn folds as it ends, which would move the position this test sets.
-  await expect(async () => {
-    const height = await chat(page).evaluate((element) => element.scrollHeight);
-    await page.waitForTimeout(400);
-    expect(await chat(page).evaluate((element) => element.scrollHeight)).toBe(height);
-  }).toPass();
-  await chat(page).evaluate((element) => {
-    element.scrollTop = 600;
-  });
+  await parkChat(page);
   await expectChatUntouched(page, await openDetails(page));
 
   await page.keyboard.press("ControlOrMeta+j");
@@ -158,9 +160,7 @@ test("the Browser panel and the sidebar keep the wheel to themselves", async ({ 
     });
   }
   await expect(page.locator("li[data-thread-item]").filter({ hasText: "Filler 29" })).toBeVisible({ timeout: 10_000 });
-  await chat(page).evaluate((element) => {
-    element.scrollTop = 600;
-  });
+  await parkChat(page);
   await expectChatUntouched(page, page.locator(".sidebar-scroll"));
 
   await openPanelTab(page, "Browser");

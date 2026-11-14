@@ -129,10 +129,13 @@ test("a hunk is reverted and a line edited through the file route, and the worki
 
   // The diff has read the undone file again before the file is changed under it.
   await expect(file.getByText("TWO!")).toBeVisible();
-  // A file that changed under the diff is left alone.
-  writeFileSync(path, "one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
+  // A file that changed under the diff is left alone. The open dialog holds the hunk as it was drawn, so a refresh of
+  // the diff after this write cannot turn it into the new text.
   await press("Revert hunk");
-  await page.getByRole("dialog", { name: "Revert this hunk?" }).getByRole("button", { name: "Revert hunk" }).click();
+  const stale = page.getByRole("dialog", { name: "Revert this hunk?" });
+  await expect(stale).toBeVisible();
+  writeFileSync(path, "one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
+  await stale.getByRole("button", { name: "Revert hunk" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Nothing was changed." })).toBeVisible();
   expect(readFileSync(path, "utf8")).toBe("one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
 });
