@@ -10,6 +10,7 @@ use orbyn_contracts::{
 
 use crate::agents::provider_facts::{Unavailable, WriteBlock};
 
+use super::classes::{PathClasses, engine_words};
 use super::tiers::{RouterConfig, Unfit, model_for_tier, model_named, tier_of_model};
 use super::view::EngineView;
 
@@ -117,6 +118,33 @@ fn unfit_text(
             ),
         ),
     }
+}
+
+/// The data-class rule of the repository, ahead of every other filter and of scoring: an engine a matching class does not allow
+/// is out, and so is every engine while the repository's `.orbyn/crew.json` cannot be trusted. `engines` are the views the
+/// message names the allowed engines from.
+pub fn class_screen(
+    view: &EngineView,
+    classes: &PathClasses,
+    engines: &[EngineView],
+) -> Result<(), RouteRejection> {
+    let Some(block) = classes.block_of(&view.id) else {
+        return Ok(());
+    };
+    let text = if classes.file.invalid() {
+        format!(
+            "Blocked by rule: {} \u{2014} {}. Every engine waits until the file is fixed and committed.",
+            block.rule, block.reason
+        )
+    } else {
+        format!(
+            "Blocked by rule: {} \u{2014} allowed engines: {}. {}",
+            block.rule,
+            engine_words(&block.allowed, engines),
+            block.reason
+        )
+    };
+    Err(rejection(view, RejectionWhy::PathClass, text))
 }
 
 /// Runs every filter in order. `named` is the model the lead or person asked for on this

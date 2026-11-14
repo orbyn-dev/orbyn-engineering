@@ -333,7 +333,8 @@ async fn repo_rules_add_lanes() {
     );
 }
 
-/// A broken rule file at the base commit is an error, never an empty rule set.
+/// A broken rule file at the base commit is an error, never an empty rule set. The file is valid JSON, so the build starts:
+/// an unreadable file would block every engine first (see `classes`).
 #[tokio::test]
 async fn a_broken_rule_file_fails_closed() {
     let w = crew(arc(|n, root| match n {
@@ -341,7 +342,7 @@ async fn a_broken_rule_file_fails_closed() {
         _ => reviewed(vec![]),
     }))
     .await;
-    commit_rules(&w, "{ not json");
+    commit_rules(&w, r#"{"lanes":[{"lane":"Not A Token"}]}"#);
     let subject = w.built_work().await;
     let (broken, error) = w
         .lead(

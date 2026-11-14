@@ -694,6 +694,70 @@ review, wait for the slice that brings a run's result through the merge queue, s
 limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
 prompt and checks are not defined yet.
 
+**As built (slice 4i, routing):** a repository can say which engines may take which paths, in `classes` of `.orbyn/crew.json`. The router
+uses it as a hard filter. Preview only; Orbyn reads the file and never writes it (architecture rule 4).
+
+```json
+{ "classes": { "version": 1, "rules": [
+  { "name": "auth-paths", "paths": ["**/auth/**", "crates/keys/**"], "engines": ["claude"], "reason": "Sign-in code stays on one vendor." }
+] } }
+```
+
+- **Read at the commit the task starts from, not from the checkout's files.** The commit is the lead checkout's HEAD, read once before
+  routing, and the file is read at it through hardened git (`ls-tree` then `cat-file`). The decision and the ledger row record the commit and
+  the file's blob id. A running task's routing uses the crew.json recorded when it started (the commit and blob id are in the `route_class` row); a later change has no effect on it, and an uncommitted edit of the file is not read. The `.orbyn` entry must be a tree or
+  absent (a symlink there would read as a missing file), the file must be a plain blob (mode 100644: a symlink or submodule is invalid), and its
+  size (64 KiB at most) is read before its content. No file, or none with `classes`, means one class, "Everything else": any signed-in engine.
+- **Strict inside `classes`.** `version` must be 1; at most 64 rules, 32 paths and 16 engines per rule; `name` 1 to 40 characters of `a-z`, `0-9`,
+  `-`, unique; `reason` 1 to 200 characters; unknown keys inside `classes` are refused. `engines: []` is valid and blocks every engine. An engine id this
+  machine does not have is kept and shown as "not on this machine". Unknown keys at the top of the file belong to other slices: they are noted
+  and ignored. A file holding a secret (the shared detector) is refused.
+- **An invalid file fails closed.** If the file cannot be read, does not parse or breaks a rule above, every engine is blocked by the rule
+  "crew.json invalid" with the problem in plain words, and the task waits in Needs you. It is never read as "no rules". The same file also holds
+  review `lanes` and `allowed_hosts`, so a file that is not JSON at all blocks every start now, not only the review; a file whose `lanes` are wrong
+  but which is valid JSON still starts and fails at the review as before. The dry run (`crew_route`) says nothing about classes for a thread with no
+  commit to read, and a start there is refused on its own terms.
+- **Grammar (v1).** `/`-separated parts. `*` matches any run of characters inside one part; a part that is exactly `**` matches any number of
+  parts, none included. `?`, `[`, `]`, `{` and `}` are refused so a pattern means one thing everywhere. A pattern with a backslash, a leading
+  `/`, a drive letter, an empty part or a `.` or `..` part is invalid. Matching ignores case and Unicode normalisation (NFC, lowercase, NFC):
+  on a case-folding file system two spellings are one file, so a pattern matches the spellings the file system would, which tightens the rule.
+  It is not the file system's own table: a final sigma is a sigma, but `ss` and the sharp s stay different names (as on APFS), and Turkish dotted and
+  dotless i are lowercased only, so a name that is one file only under some locale or file system can be missed.
+- **Which classes a brief is in.** Every pattern of `brief.files` counts, read and write alike; a brief with no files is unknown and is checked
+  against every class. For a lease (`dir/**`) the glob is walked against the directory (a worker with the lease may create a matching path, so
+  `**/auth/**` may match under `src/**`: narrow the lease to avoid it), and the tracked files under it, listed from git at the same commit
+  (50,000 at most, more counts as unknown), are matched too. A tracked symlink under a lease is followed inside the tree and what it reaches
+  is classified as leased; one that points outside the tree, is absolute or has no target counts as every class. When several classes match, the
+  allowed engines are the intersection; if it is empty nothing starts.
+- **In the router.** `filters::class_screen` runs inside `route()` before every other filter and before scoring. A blocked engine is
+  rejected with `path_class` ("Blocked by rule: auth-paths, allowed engines: Claude. <reason>"). An explicit engine tag on a blocked engine is
+  refused and never swapped. The decision gains a `path_classes` reason with the class names, the commit and the blob. The dry run
+  (`crew_route`) reads the classes too, so it never says yes to what a start refuses. Engines that are not installed are also listed as blocked,
+  because the class filter comes first.
+- **Ledger.** Each routing appends one `route_class` row to `crew_autopilot_events` (no migration: `kind` is free text), through the ledger's
+  redaction: the classes matched with their pattern and up to 20 sample paths, each blocked engine with the rule and its reason, the engine
+  chosen or none, the commit and blob, and the time. On a refusal the row also keeps the whole `rejected` list, the requested engine and the
+  message, which is where the Needs you item reads its structured rows. A routing whose row cannot be written does not go on.
+- **Routes** (Preview, 404 with the flag off, reads only, listed in `crew::changes` `READS`): `GET /api/crew/classes?thread=` (commit, blob,
+  rules, problems, notes, the worktree label, and whether the checkout's copy differs: "not in force until committed"),
+  `GET /api/crew/classes/test?thread=&path=` (1 to 10 paths, `path` repeated or one per line, each validated: classes, matched pattern, allowed engines, the
+  route-card sentence), `GET /api/crew/route/{task}` (the decision or the refusal, and the `route_class` rows).
+
+What is not built: the guard that watches a worker against its classes (PR B); the Settings screens, the route card and Needs you screens
+(PR C); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
+until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
+(ruling pending). Known limits: **the file is read at the checkout's HEAD at task start; an agent that can run git can move HEAD or commit a change, and the next task reads it; an
+agent that can push to the base branch can change the rules for later tasks** (the N7 check only blocks a git command whose path argument is
+`.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot move, such as the default branch, is follow-up #535. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
+counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
+that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
+async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) is refused
+with "no commit to read it at": the rules cannot be read, and not knowing is never a reason to allow. Review briefs always have
+`files: []`, so they count as every class: a rule with `engines: []` blocks every review in the repository, and a class that allows one engine plus
+"the reviewer differs from the builder" means no reviewer can start. The class set is whatever the committed file says, so a person who edits it uncommitted sees "not in force until
+committed" and nothing else changes; the lease walk widens on purpose, so a broad lease can be tied to a class it never touches; a class names
+engines by id only (an instance of an engine is its own id); the tracked-file listing is read whole before the 50,000 cap is applied.
+
 **As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
 v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by
 `#/preview/crew/<frame>` in dev builds only. They run on sample data: no HTTP route or generated binding exists for the

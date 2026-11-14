@@ -54,6 +54,8 @@ pub enum RejectionWhy {
     QuotaExhausted,
     TierBelowLead,
     SameEngineRefused,
+    /// A rule of the repository's data classes does not allow this engine for these paths.
+    PathClass,
 }
 }
 

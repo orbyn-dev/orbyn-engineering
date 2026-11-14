@@ -150,6 +150,7 @@ pub fn run(
             lane: ask.lane.map(|l| CrewToken::new(l).unwrap()),
             author_engine: ask.author.map(|a| CrewToken::new(a).unwrap()),
             default_engine: ask.default_engine.map(str::to_owned),
+            classes: None,
         },
         engines,
         &RouterConfig::default(),

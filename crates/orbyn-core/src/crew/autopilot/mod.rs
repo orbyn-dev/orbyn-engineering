@@ -6,7 +6,7 @@ mod hard;
 mod hard_tools;
 mod held;
 mod hosts;
-mod ledger;
+pub(super) mod ledger;
 mod merge;
 mod presence;
 mod review;
