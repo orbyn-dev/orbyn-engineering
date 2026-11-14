@@ -1112,7 +1112,7 @@ export function createMockApi(options: MockOptions = {}) {
     fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.") {
       failures.push({ path, remaining: times, status, code, message });
     },
-    handle(method: string, url: string, body?: unknown): MockResponse {
+    handle(method: string, url: string, body?: unknown, confirm?: string): MockResponse {
       const parsed = new URL(url, "http://mock.local");
       if (scenario === "offline" && parsed.pathname.startsWith("/api")) {
         return err(503, "unavailable", "The service is unavailable.");
@@ -1124,7 +1124,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
+      if (parsed.pathname.startsWith("/api/crew")) return crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */

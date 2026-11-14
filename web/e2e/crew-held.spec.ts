@@ -43,7 +43,10 @@ test("a click on Approve once asks the shell once with the hold id, then the car
   await open(page, "crew-held");
   await openCard(page);
   await expect(card(page).getByRole("button")).toHaveText(["Approve once", "Deny", "Dismiss"]);
+  const sent = page.waitForRequest((request) => request.url().endsWith("/hold-orders/approve-once"));
   await card(page).getByRole("button", { name: "Approve once" }).click();
+  // The nonce the shell made goes in the header (the mock answers 403 presence_required without it).
+  expect((await sent).headers()["x-orbyn-confirm"]).toMatch(/^[0-9a-f]{32}$/);
   await expect(page.getByText("Needs you · 2")).toBeVisible();
   await expect(page.getByRole("table", { name: "Approval log" }).getByRole("row").filter({ hasText: ORDERS })).toContainText("Approved by you");
   const { calls, clicks } = await seen(page);

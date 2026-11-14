@@ -12,7 +12,7 @@ import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
 import { crewApi } from "./api";
 import type { ApprovalRow, HeldInfo } from "./model";
-import { isPersonsClick, useDesktopApp, type Gesture } from "./presence";
+import { afterKeyboardRelease, isPersonsClick, useDesktopApp, type Gesture } from "./presence";
 
 /** How often the open list is read again while the window is shown: a hold appears, expires or is answered elsewhere. */
 export const HELD_REFRESH_MS = 15_000;
@@ -101,8 +101,10 @@ export interface HoldControl {
   closed: Closed | null;
   /** An answer is on its way. */
   busy: boolean;
-  /** The shell's dialog is open (for any hold: one at a time). */
+  /** An approval is under way anywhere (the dialog or its request): one at a time. */
   asking: boolean;
+  /** It is this hold's approval that is under way or just ended, so its button can take focus back. */
+  asked: boolean;
   /** The last approval was not confirmed as the person's: the card says so and stays held. */
   refused: boolean;
   /** Why the last answer did not happen, other than a refusal to confirm. */
@@ -204,16 +206,16 @@ export function useHeldCommands(onAnswered: () => void) {
       approving.current = id;
       setRefused(null);
       setError(null);
+      // Set for the whole attempt (dialog and request), so every card's Approve once is off until it ends.
       setAsking(id);
       try {
         let nonce: string;
         try {
+          await afterKeyboardRelease(gesture);
           nonce = await askPresence(id);
         } catch (caught) {
           if (!(caught instanceof PresenceFailure && caught.code === "cancelled")) refuse(id);
           return;
-        } finally {
-          setAsking(null);
         }
         setBusy(id);
         try {
@@ -257,6 +259,7 @@ export function useHeldCommands(onAnswered: () => void) {
         }
       } finally {
         approving.current = null;
+        setAsking(null);
       }
     },
     [ended, refuse, reload],
@@ -269,6 +272,7 @@ export function useHeldCommands(onAnswered: () => void) {
       closed: closed[row.id] ?? null,
       busy: busy === row.id,
       asking: asking !== null,
+      asked: asking === row.id,
       refused: refused === row.id,
       error: error?.id === row.id ? error.message : null,
       approve: (gesture) => void approve(row.id, gesture),

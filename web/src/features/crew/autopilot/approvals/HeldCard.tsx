@@ -1,6 +1,7 @@
 // The held-command card: what the drawer shows for a command the guard holds for you. Approve once opens the
 // desktop app's own native dialog (not drawn here); in a browser tab it is not offered. The words and states are
 // the Crew designs' (v34): approval-confirm, -browser, -refused-presence, -expired and -decided.
+import { useEffect, useRef } from "react";
 import { Info } from "lucide-react";
 import { Button } from "../../../../ui/controls";
 import { GUARD_WORKERS, HELD, MODE_COPY } from "./copy";
@@ -10,9 +11,9 @@ import { Facts } from "./parts";
 
 const UNREADABLE = "This command is too long to read whole, so it cannot be approved once.";
 
-export function Said({ children, note }: { children: string; note?: string | null }) {
+export function Said({ children, note, live }: { children: string; note?: string | null; live?: boolean }) {
   return (
-    <section className="ap-box" data-quiet>
+    <section className="ap-box" data-quiet role={live ? "status" : undefined}>
       <div className="ap-said"><Info size={14} aria-hidden /><span>{children}</span></div>
       {note ? <p>{note}</p> : null}
     </section>
@@ -50,7 +51,7 @@ export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: He
       {phase === "expired" ? <Said>{HELD.expired}</Said> : null}
       {phase === "decided" ? <Said note={decided.sentence ? `${decided.sentence}${held.state === "denied" || held.state === "dismissed" ? " Nothing ran." : ""}` : null}>{HELD.decided}</Said> : null}
       {phase === "open" && browserTab ? <Said note={HELD.desktopOnlyNote}>{HELD.desktopOnly}</Said> : null}
-      {phase === "open" && hold.refused ? <Said note={HELD.refusedNote}>{HELD.refused}</Said> : null}
+      {phase === "open" && hold.refused ? <Said live note={HELD.refusedNote}>{HELD.refused}</Said> : null}
       {phase === "open" && !browserTab && !hold.refused ? (
         <section className="ap-box">
           <h4>Why it is held</h4>
@@ -64,6 +65,13 @@ export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: He
 }
 
 export function HeldFooter({ held, hold, close }: { held: HeldInfo; hold: HoldControl; close(): void }) {
+  const foot = useRef<HTMLElement>(null);
+  // The button is off while its attempt runs, so focus would drop to the page: give it back when the attempt ends.
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !hold.asked) foot.current?.querySelector<HTMLButtonElement>("[data-approve]")?.focus();
+    was.current = hold.asked;
+  }, [hold.asked]);
   const phase = phaseOf(held, hold.closed ?? undefined);
   if (phase !== "open") return <footer className="ap-drawer-foot"><Button small tone="quiet" onClick={close}>Close</Button></footer>;
   const reason = approveReason(held, hold);
@@ -73,8 +81,8 @@ export function HeldFooter({ held, hold, close }: { held: HeldInfo; hold: HoldCo
   const approveOff = idle || hold.asking || hold.remote || reason !== null;
   const answerOff = idle || hold.remote;
   return (
-    <footer className="ap-drawer-foot">
-      {offered ? <Button small tone="primary" disabled={approveOff} title={reason ?? undefined} aria-description={reason ?? undefined} onClick={hold.approve}>Approve once</Button> : null}
+    <footer ref={foot} className="ap-drawer-foot">
+      {offered ? <Button data-approve small tone="primary" disabled={approveOff} title={reason ?? undefined} aria-description={reason ?? undefined} onClick={hold.approve}>Approve once</Button> : null}
       <Button small disabled={answerOff} title={hold.remote ? HELD.remote : undefined} onClick={hold.deny}>Deny</Button>
       <Button small tone="quiet" disabled={answerOff} title={hold.remote ? HELD.remote : undefined} onClick={hold.dismiss}>Dismiss</Button>
       {reason ? <small className="ap-muted ap-reason">{reason}</small> : null}

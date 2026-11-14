@@ -176,7 +176,7 @@ export function createCrewMock() {
     return { rows: list.slice(offset, offset + limit), total: list.length, next_offset: next };
   }
 
-  function handle(method: string, path: string, body: unknown, query: URLSearchParams): MockResponse {
+  function handle(method: string, path: string, body: unknown, query: URLSearchParams, confirm?: string): MockResponse {
     if (!on) return { status: 404, body: { code: "not_found", message: "Crew is not on." } };
     const seg = path.split("/").filter(Boolean); // api crew ...
     const [, , head, id] = seg;
@@ -193,7 +193,8 @@ export function createCrewMock() {
         held = held.map((one) => (one.id === id ? { ...one, state, expires_in_secs: state === "approved" ? 600 : 0 } : one));
         return { status: 200, body: held.find((one) => one.id === id) };
       };
-      if (how === "approve-once" && heldScenario === "crew-held-unconfirmed") {
+      // The service checks the nonce in `x-orbyn-confirm` first; the mock only checks that one was sent.
+      if (how === "approve-once" && (heldScenario === "crew-held-unconfirmed" || !confirm)) {
         return { status: 403, body: { code: "presence_required", message: "Approving needs the person's confirmation from the desktop app." } };
       }
       if (heldScenario === "crew-held-expired" && id === "hold-orders") {

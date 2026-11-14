@@ -25,6 +25,8 @@ const held: ApprovalRow = { ...base, title: "Delete test orders in prod-db-1", h
 const secondKey: ApprovalRow = { ...base, title: "Delete test orders in prod-db-1", block: held.block, lead: { state: "yes", reason: "It matches the brief’s cleanup of test orders, and the filter names test rows.", short: "it matches the brief’s cleanup of test orders" }, second: { state: "reviewing", by: OPENCODE }, guard: target("prod-db-1", "production-linked", "15:02", "DELETE FROM orders WHERE is_test = true") };
 const denied: ApprovalRow = { ...base, id: "d", title: "Drop users.legacy_id on prod-db-1", asker: CLAUDE, branch: "crew/redirect-impl", result: "denied_second_key", block: 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users DROP COLUMN legacy_id"', lead: { state: "yes", reason: "The column isn’t used in the diff.", short: "the column isn’t used in the diff" }, second: { state: "no", by: CODEX, reason: "a report still reads users.legacy_id." }, note: "The worker was told the second key’s reason and can ask again with a narrower command or after the report changes.", guard: target("prod-db-1", "production-linked", "14:20", "ALTER TABLE users DROP COLUMN legacy_id") };
 const noSecond: ApprovalRow = { ...base, id: "n", title: "Truncate audit_log on prod-db-1", asker: CLAUDE, result: "no_second_key", block: 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"', lead: { state: "yes", reason: "It is a cleanup in the brief.", short: "it is a cleanup in the brief" }, second: { state: "unavailable" }, guard: target("prod-db-1", "production-linked", "13:58", "TRUNCATE audit_log") };
+/** A row that is a hold the service knows (only these can be asked about). */
+const hold = (row: ApprovalRow): ApprovalRow => ({ ...row, held: { id: row.id, state: "held", reason: "", readable: true, since: "15:02", decidedAt: null, byYou: false } });
 const twoKeys: ApprovalRow = { ...base, id: "t", title: "Delete expired sessions in prod-db-1", asker: OPENCODE, result: "approved_two_keys", block: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"', lead: { state: "yes", reason: "expired sessions, and the brief names them.", short: "expired sessions, in the brief" }, second: { state: "yes", by: CODEX, reason: "the filter matches rows past expires_at." }, guard: target("prod-db-1", "production-linked", "14:05", "DELETE FROM sessions WHERE expires_at < now()", 0) };
 const byYou: ApprovalRow = { ...twoKeys, id: "y", hard: "guard", result: "approved_you", leadBy: CLAUDE, second: { state: "you" }, guard: target("prod-db-1", "remote database", "14:05", "DELETE FROM sessions WHERE expires_at < now()", 0) };
 
@@ -79,7 +81,7 @@ describe("the guard under Full", () => {
   });
 
   it("denies when the second key says no, with its reason, and offers to approve it yourself", () => {
-    const d = show(denied);
+    const d = show(hold(denied));
     expect(d).toHaveTextContent("Denied by the second keyGuard");
     expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, marked by the rule prod-targets");
     expect(d).toHaveTextContent("Key 2: noCodex · GPT-5.5, a different vendor: a report still reads users.legacy_id.");
@@ -88,7 +90,7 @@ describe("the guard under Full", () => {
   });
 
   it("denies for now when no second vendor is signed in, next to Approve it myself", () => {
-    const d = show(noSecond);
+    const d = show(hold(noSecond));
     expect(d).toHaveTextContent("Denied · no second keyGuard");
     expect(d).toHaveTextContent("Key 2: not availableA second key needs a different vendor from the lead. Claude Code is the one vendor signed in.");
     expect(d).toHaveTextContent("Denied for now, and you can approve it yourself");
@@ -107,14 +109,23 @@ describe("the guard under Full", () => {
   it("hands Approve it myself to the system dialog: no dialog of its own, and the target and reason stay on the card", async () => {
     const user = userEvent.setup();
     const myself = vi.fn();
-    const d = show(noSecond, "full", { approveMyself: myself });
+    const row = hold(noSecond);
+    const d = show(row, "full", { approveMyself: myself });
     await user.click(within(d).getByRole("button", { name: "Approve it myself" }));
     expect(myself).toHaveBeenCalledTimes(1);
-    expect(myself.mock.calls[0]?.[0]).toBe(noSecond);
+    expect(myself.mock.calls[0]?.[0]).toBe(row);
     expect(myself.mock.calls[0]?.[1]).toHaveProperty("nativeEvent");
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, marked by the rule prod-targets");
     expect(d).toHaveTextContent('psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"');
+  });
+
+  it("is never offered for a ledger row that is not a hold, so its id never reaches the shell", () => {
+    for (const row of [noSecond, denied]) {
+      const { unmount } = render(<DecisionDrawer row={row} act={{ approveMyself: () => undefined, desktop: true, signInSecondEngine: () => undefined, close: () => undefined }} mode="full" />);
+      expect(within(screen.getByRole("complementary", { name: row.title })).queryByRole("button", { name: "Approve it myself" })).toBeNull();
+      unmount();
+    }
   });
 
   it("in a browser tab does not offer Approve it myself and says the desktop app is needed, keeping the other buttons", () => {
@@ -129,7 +140,7 @@ describe("the guard under Full", () => {
   });
 
   it("is off while the system dialog is open, and says it could not confirm you when it was refused", () => {
-    const d = show(noSecond, "full", { asking: true, refused: "n" });
+    const d = show(hold(noSecond), "full", { asking: true, refused: "n" });
     expect(within(d).getByRole("button", { name: "Approve it myself" })).toBeDisabled();
     expect(d).toHaveTextContent("Orbyn couldn’t confirm it was you. Try again from the desktop app.Nothing ran.");
     expect(d).toHaveTextContent("Targetprod-db-1");

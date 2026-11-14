@@ -125,7 +125,8 @@ export function ApprovalsTab() {
   const row = rows.find((one) => one.id === selected) ?? null;
   const act: DrawerActions = {
     // The same flow as Approve once, on the row's own hold: the shell's dialog says what it approves, and the target and reason stay on the card behind it.
-    approveMyself: (one, event) => void held.approve(one.held?.id ?? one.id, event),
+    // A ledger row that is not a hold is never sent to the shell.
+    approveMyself: (one, event) => { if (one.held) void held.approve(one.held.id, event); },
     desktop: held.presence.desktop,
     asking: held.presence.asking,
     refused: held.presence.refused,

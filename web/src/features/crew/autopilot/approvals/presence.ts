@@ -5,7 +5,7 @@ import { canAskPresence, onShellChange, readShellStatus } from "../../../../api/
 
 /** The click a handler got: the part of a React click event this file reads. */
 export interface Gesture {
-  nativeEvent: Pick<Event, "isTrusted" | "type">;
+  nativeEvent: Pick<UIEvent, "isTrusted" | "type" | "detail">;
 }
 
 /**
@@ -15,6 +15,38 @@ export interface Gesture {
  */
 export const isPersonsClick = (gesture: Gesture): boolean =>
   gesture.nativeEvent.isTrusted === true && gesture.nativeEvent.type === "click";
+
+let enterDown = false;
+let enterWaiters: (() => void)[] = [];
+if (typeof window !== "undefined") {
+  // Only a flag: nothing here asks the shell. It lets a keyboard click wait until Enter is up.
+  window.addEventListener("keydown", (event) => { if (event.key === "Enter") enterDown = true; }, true);
+  window.addEventListener("keyup", (event) => {
+    if (event.key !== "Enter") return;
+    enterDown = false;
+    const waiting = enterWaiters;
+    enterWaiters = [];
+    waiting.forEach((resolve) => resolve());
+  }, true);
+  window.addEventListener("blur", () => { enterDown = false; });
+}
+
+/** How long to wait for Enter to come up before going on anyway. */
+export const ENTER_WAIT_MS = 2000;
+
+/**
+ * A click made by pressing Enter fires on the key's press, and a held key repeats. The shell's dialog approves on Return, so
+ * the page waits for the key to come up before it asks, and the repeats are over when the dialog opens. A mouse click
+ * (`detail` 1 or more) and Space (which clicks on release) go straight on.
+ */
+export function afterKeyboardRelease(gesture: Gesture, wait = ENTER_WAIT_MS): Promise<void> {
+  if (gesture.nativeEvent.detail !== 0 || !enterDown) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); enterWaiters = enterWaiters.filter((one) => one !== done); resolve(); };
+    const timer = setTimeout(done, wait);
+    enterWaiters.push(done);
+  });
+}
 
 /**
  * Whether this page is in the desktop app and can ask. It starts from what is known and reads the shell's status once,

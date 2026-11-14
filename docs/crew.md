@@ -604,7 +604,7 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   call and a GTK delete-event all come back as the Cancel label; only an explicit click on Approve once equals the Approve label, and the code
   refuses to build with the two labels equal (`dismissals_never_read_as_approval` copies the plugin's mapping per platform). The price: on macOS (the
   first button is the default) and Windows, **Return approves**. So the dialog may only be opened as the direct result of the person's own click.
-  The shell cannot tell a click from a script that calls `crew_presence` (devtools is on in release builds, issue #532), so this rests on the page:
+  The shell cannot tell a click from a script that calls `crew_presence` (devtools is on in release builds, issue #532), so the page is the first line, not a guarantee:
   PR3's card must call it only from a trusted click (`event.isTrusted`, no keydown, no automatic retry). In the shell, `crew_presence` is the only
   way a dialog opens; nothing retries, reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`). Linux's default button is
   not checked.
@@ -630,6 +630,12 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   held; `cancelled` shows nothing; nothing asks again by itself. A plain browser tab (no shell) does not offer Approve once and says "Approving once needs
   the Orbyn desktop app."; Deny and Dismiss still work. "Approve it myself" from a denied command or a Needs you item is the same flow, with no dialog of
   the page's own. The account password flow is gone from approve-once.
+  **What the click check does not cover.** It covers the page's own code paths and synthetic events. It does not stop a hostile script running in the app's
+  origin (devtools stay on in release builds, issue #532): that script can call `window.__TAURI_INTERNALS__.invoke("crew_presence", {holdId})` directly and
+  open the native dialog. Because Return approves on macOS and Windows, a person pressing Enter elsewhere while such a dialog opens could approve. This is a
+  known exposure. **Key repeat:** when the click came from the keyboard (`detail` 0), the page waits for the Enter key to be released (up to 2 seconds) before
+  it asks the shell, so a held Enter's repeats are over before the dialog opens; mouse clicks are not delayed. "Approve it myself" is offered only for a
+  row that is a hold, never for a ledger row. Refusals are announced to screen readers, and focus returns to Approve once after a cancel or refusal.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the

@@ -96,7 +96,7 @@ function Button2({ children, onClick, tone = "secondary", disabled }: { children
 function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
   const close = <Button2 key="close" onClick={act.close} tone="quiet">Close</Button2>;
   const ledger = act.openLedger ? <Button2 key="ledger" onClick={() => act.openLedger?.(row)}>Open in the ledger</Button2> : null;
-  const self = act.desktop ? <Button2 key="self" disabled={act.asking} onClick={(event) => act.approveMyself(row, event)}>Approve it myself</Button2> : null;
+  const self = act.desktop && row.held ? <Button2 key="self" disabled={act.asking} onClick={(event) => act.approveMyself(row, event)}>Approve it myself</Button2> : null;
   const signIn = act.signInSecondEngine ? <Button2 key="signin" onClick={() => act.signInSecondEngine?.()}>Sign in to a second engine</Button2> : null;
   let needsApp = false;
   const list: (ReactNode | null)[] = (() => {
@@ -210,7 +210,7 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
           </>
         )}
         {guarded ? <p className="ap-muted">{GUARD_WORKERS}</p> : null}
-        {act.refused === row.id ? <Said note={HELD.refusedNoteOther}>{HELD.refused}</Said> : null}
+        {act.refused === row.id ? <Said live note={HELD.refusedNoteOther}>{HELD.refused}</Said> : null}
       </div>
       <Footer row={row} act={act} />
       </>)}

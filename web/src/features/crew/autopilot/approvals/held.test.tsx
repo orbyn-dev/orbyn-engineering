@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
@@ -170,14 +170,78 @@ describe("the held-command card (approval-confirm)", () => {
     expect(calls("approve-once")).toHaveLength(0);
   });
 
-  it("counts a click the browser makes from a keyboard press as the person's own: the button is the only way in", async () => {
-    // A focused button pressed with Enter or Space makes a trusted click with detail 0. That is a gesture on the button itself, and blocking
-    // it would shut out keyboard and screen reader users, so it is allowed; the card's own key handlers never reach the shell.
+  it("counts a click the browser makes from a keyboard press as the person's own, and waits for Enter to come up first", async () => {
+    // A focused button pressed with Enter or Space makes a trusted click with detail 0. That is the button's own activation, and blocking it
+    // would shut out keyboard users, so it is allowed. Enter clicks on the press and repeats while held, and Return approves in the dialog,
+    // so the page waits for the key to come up before it asks. Space clicks on release, so nothing is held then.
     const user = await open("crew-held");
     await openCard(user);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     await trustedClick(approveButton(), 0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(invoke).not.toHaveBeenCalled();
+    expect(approveButton()).toBeDisabled();
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter" })); });
     await screen.findByText("Needs you · 2");
     expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wait for a keyboard click without Enter down (Space), nor for a mouse click", async () => {
+    const user = await open("crew-held");
+    await openCard(user);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    // A mouse press is not held back, whatever a key is doing.
+    await trustedClick(approveButton(), 1);
+    await screen.findByText("Needs you · 2");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter" }));
+    await user.click(screen.getByRole("button", { name: /aws s3 rb/ }));
+    await trustedClick(within(screen.getByRole("complementary", { name: /aws s3 rb/ })).getByRole("button", { name: "Approve once" }), 0);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+  });
+
+  it("gives focus back to Approve once after a cancel and after a refusal", async () => {
+    invoke.mockRejectedValueOnce("cancelled").mockRejectedValueOnce("timeout");
+    const user = await open("crew-held");
+    await openCard(user);
+    await trustedClick(approveButton());
+    await waitFor(() => expect(approveButton()).toHaveFocus());
+    (document.activeElement as HTMLElement).blur();
+    await trustedClick(approveButton());
+    await waitFor(() => expect(card()).toHaveTextContent(REFUSED));
+    await waitFor(() => expect(approveButton()).toHaveFocus());
+  });
+
+  it("announces a refusal to screen readers", async () => {
+    invoke.mockRejectedValue("timeout");
+    const user = await open("crew-held");
+    await openCard(user);
+    await trustedClick(approveButton());
+    expect(await within(card()).findByRole("status")).toHaveTextContent(REFUSED);
+  });
+
+  it("turns every card's Approve once off while one request is under way, including after the dialog", async () => {
+    const user = await open("crew-held");
+    await openCard(user);
+    const real = fetch;
+    let release: () => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      if (String(input).includes("/approve-once")) await new Promise<void>((resolve) => { release = resolve; });
+      return real(input, init);
+    }));
+    await trustedClick(approveButton());
+    await waitFor(() => expect(calls("approve-once")).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: /aws s3 rb/ }));
+    expect(within(screen.getByRole("complementary", { name: /aws s3 rb/ })).getByRole("button", { name: "Approve once" })).toBeDisabled();
+    await act(async () => release());
+    await screen.findByText("Needs you · 2");
+  });
+
+  it("the mock service refuses approve-once without the confirmation header", async () => {
+    await open("crew-held");
+    const sent = await fetch("/api/crew/approvals/hold-orders/approve-once", { method: "POST" });
+    expect(sent.status).toBe(403);
+    expect(((await sent.json()) as { code: string }).code).toBe("presence_required");
   });
 
   it("asks one at a time: the button is off while the dialog is open, and a second click starts nothing", async () => {
@@ -321,7 +385,7 @@ describe("the old password flow is gone", () => {
 
 describe("Deny and Dismiss", () => {
   it("never ask for a password: Deny answers at once and the row says Denied by you", async () => {
-    const user = await open("crew-held-account");
+    const user = await open("crew-held");
     await user.click(within(await openCard(user)).getByRole("button", { name: "Deny" }));
     await screen.findByText("Needs you · 2");
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -333,7 +397,7 @@ describe("Deny and Dismiss", () => {
   });
 
   it("Dismiss closes the request: it leaves the log and the count", async () => {
-    const user = await open("crew-held-account");
+    const user = await open("crew-held");
     await user.click(within(await openCard(user)).getByRole("button", { name: "Dismiss" }));
     await screen.findByText("Needs you · 2");
     expect(screen.queryByRole("button", { name: ORDERS })).toBeNull();
@@ -341,7 +405,7 @@ describe("Deny and Dismiss", () => {
   });
 
   it("opening an answered row afterwards says it was already decided, with who and when this window knows", async () => {
-    const user = await open("crew-held-account");
+    const user = await open("crew-held");
     await user.click(within(await openCard(user)).getByRole("button", { name: "Deny" }));
     await screen.findByText("Needs you · 2");
     const d = await openCard(user);
@@ -465,7 +529,7 @@ describe("a request that ended or was decided", () => {
 describe("a remote viewer", () => {
   it("cannot answer: the three buttons are off with the service's own words", async () => {
     useConnection.setState({ remote: true });
-    const user = await open("crew-held-account");
+    const user = await open("crew-held");
     const d = await openCard(user);
     for (const name of ["Approve once", "Deny", "Dismiss"]) expect(within(d).getByRole("button", { name })).toBeDisabled();
     expect(d).toHaveTextContent("Do this from the computer the app runs on.");
