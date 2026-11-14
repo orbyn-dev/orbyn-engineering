@@ -178,3 +178,58 @@ h4.ap-sub { margin: 0; }
 /* A held command's card: a neutral line with an icon (expired, already decided, no account). */
 .ap-said { display: flex; gap: 8px; align-items: flex-start; color: var(--color-text); line-height: 1.45; }
 .ap-said svg { flex: none; margin-top: 2px; color: var(--color-muted); }
+
+/* Autopilot by area (Crew designs v39). The design's t13 rules on the app's tokens. */
+.ar { container: ar / inline-size; }
+.ar-narrow { display: none; }
+.ar-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ar-mk { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 10px; background: var(--color-chip); color: var(--color-textSoft); font-size: 11.5px; }
+.ar-sub { color: var(--color-muted); font-size: 11.5px; }
+.ar-table { display: flex; flex-direction: column; min-width: 0; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--color-borderStrong); overflow: hidden; }
+.ar-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 76px 92px 72px; gap: 0 10px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--color-border); min-width: 0; }
+.ar-row.ap-head { border-top: 0; }
+.ar-row b { display: block; font-weight: 500; color: var(--color-text); overflow-wrap: break-word; }
+.ar-row small { display: block; color: var(--color-muted); font-size: 11px; line-height: 1.4; }
+.ar-now { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
+.ar-n { display: none; }
+.ar-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.ar-who { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; color: var(--color-text); line-height: 1.45; }
+.ar-dialog { display: flex; flex-direction: column; gap: 12px; }
+.ar-dialog p { margin: 0; line-height: 1.5; }
+.ar-ack { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.45; color: var(--color-text); cursor: pointer; }
+.ar-ack input { margin: 2px 0 0; flex: none; }
+.ar-ack input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.ar-note { margin: 2px 0 0; display: flex; gap: 6px; align-items: flex-start; color: var(--color-muted); font-size: 12px; line-height: 1.45; }
+.ar-note svg { flex: none; margin-top: 1px; }
+.ar-opt { display: flex; flex-direction: column; gap: 1px; min-width: 0; text-align: left; }
+.ar-opt b { font-weight: 500; }
+.ar-opt small { color: var(--color-muted); font-size: 11px; white-space: normal; }
+.ar-set { display: flex; flex-direction: column; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--color-borderStrong); overflow: hidden; }
+.ar-setrow { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 10px 12px; border-top: 1px solid var(--color-border); }
+.ar-setrow:first-child { border-top: 0; }
+.ar-setrow b { display: block; font-weight: 500; color: var(--color-text); }
+.ar-setrow small { display: block; margin-top: 2px; color: var(--color-muted); font-size: 12px; line-height: 1.45; }
+.ar-val { flex: none; color: var(--color-text); text-align: right; }
+
+/* In a narrow window each area is a card: path, ceiling and mode on top, then the reason, then the record. */
+@container ar (max-width: 560px) {
+  .ar-table { gap: 8px; box-shadow: none; border-radius: 0; overflow: visible; }
+  .ar-row.ap-head { display: none; }
+  .ar-row { grid-template-columns: auto auto minmax(0, 1fr); grid-template-areas: "area area chip" "why why why" "rev esc win"; gap: 4px 8px; border: 0; border-radius: 10px; background: var(--color-chip); padding: 10px 12px; justify-content: start; }
+  .ar-area { grid-area: area; }
+  .ar-now { display: contents; }
+  .ar-now .ap-chip { grid-area: chip; justify-self: end; }
+  .ar-why { grid-area: why; color: var(--color-textSoft); font-size: 12px; }
+  .ar-rev, .ar-esc, .ar-win { color: var(--color-muted); font-size: 11px; display: inline; }
+  .ar-rev { grid-area: rev; } .ar-esc { grid-area: esc; } .ar-win { grid-area: win; }
+  .ar-row b { display: inline; font-weight: 400; color: inherit; }
+  .ar-win small { display: inline; font-size: inherit; }
+  .ar-win small::before { content: " · "; }
+  .ar-esc::before { content: "· "; }
+  .ar-n { display: inline; }
+  .ar-wide { display: none; }
+  .ar-narrow { display: inline; }
+  .ar-setrow { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .ar-val { text-align: left; }
+}
+

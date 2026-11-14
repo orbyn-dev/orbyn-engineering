@@ -10,7 +10,17 @@
  * was denied from another window: 409), `crew-held-hardrule` (the always-denied list refuses it at approval time: 403, and the hold is
  * closed as denied) and `crew-held-unconfirmed` (the service did not see the desktop shell's confirmation: 403 `presence_required`).
  * Three commands are held in every one of them.
+ *
+ * Autopilot by area (slice 4j): `crew-areas` (every area follows its ceiling, one is held at On by its own ceiling, one has too few merges),
+ * `crew-areas-tripped`, `crew-areas-ceiling-off` (web/auth demoted, then its ceiling lowered to Off), `crew-areas-recovering`,
+ * `crew-areas-criteria-met`, `crew-areas-restored` (web/auth came back, with the trail's `restored` row) and `crew-areas-lowdata`. The override
+ * and follow routes change the area as the service does and answer 409 `stale` when the record the person saw is not the current one;
+ * `crew-areas-stale` makes the first choice stale. The ceiling is per repository, as in the service: no area has its own.
  */
+import type { AutopilotAreaEvent } from "../src/generated/AutopilotAreaEvent.ts";
+import type { AutopilotAreaRow } from "../src/generated/AutopilotAreaRow.ts";
+import type { AutopilotAreas } from "../src/generated/AutopilotAreas.ts";
+import type { AutopilotThresholds } from "../src/generated/AutopilotThresholds.ts";
 import type { AutopilotHeld } from "../src/generated/AutopilotHeld.ts";
 import type { AutopilotHeldList } from "../src/generated/AutopilotHeldList.ts";
 import type { AutopilotGuards } from "../src/generated/AutopilotGuards.ts";
@@ -128,6 +138,63 @@ const holds = (): AutopilotHeld[] => [
   { id: "hold-sessions", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"', reason: "A second key is missing.", state: "held", readable: true, age_secs: 420, expires_in_secs: 180 },
 ];
 
+/** The sample's clock, in the machine's own zone, so the dates the screens print do not move with the time zone. */
+const at = (day: number, hour: number, minute: number) => Math.floor(new Date(2026, 10, day, hour, minute).getTime() / 1000);
+
+const THRESHOLDS: AutopilotThresholds = { window_days: 14, min_merges: 5, trip_reverts: 2, recovery_days: 14, recovery_merges: 5, proposed: true };
+
+const areaRow = (area: string, merges: number, reverts: number, over: Partial<AutopilotAreaRow> = {}): AutopilotAreaRow => ({
+  area,
+  area_key: area,
+  ceiling: "full",
+  now: "full",
+  state: merges < 5 ? "not_enough_data" : "follows",
+  line: merges < 5 ? `Not enough data: ${merges} of 5 merges in 14 days.` : `Follows the ceiling. ${reverts} of ${merges} merges reverted in 14 days.`,
+  record: { merges, reverts, window_days: 14 },
+  ...over,
+});
+
+const steady = (): AutopilotAreaRow[] => [
+  areaRow("docs/guides", 12, 0),
+  areaRow("web/app", 7, 0),
+  areaRow("crates/orbyn-core", 6, 0),
+  areaRow("crates/orbyn-keys", 6, 2, { ceiling: "on", now: "on", state: "ceiling_lower", line: "The ceiling is On, so the breaker has nothing to lower. The record is shown only." }),
+  areaRow(".github/workflows", 3, 0),
+];
+
+const lowered = (state: "demoted" | "recovering" | "criteria_met", over: Partial<AutopilotAreaRow>): AutopilotAreaRow =>
+  areaRow("web/auth", 9, 2, { now: "on", state, since: at(7, 15, 36), line: "Lowered after 2 of 9 merges were reverted in 14 days.", ...over });
+
+function areaScenario(scenario: string): { ceiling: AutopilotAreas["ceiling"]; asOf: number; rows: AutopilotAreaRow[]; trail: AutopilotAreaEvent[] } {
+  const rest = steady();
+  const full = "full" as const;
+  const web = (row: AutopilotAreaRow) => [row, ...rest];
+  const restored: AutopilotAreaEvent = { id: 3, kind: "restored", from_mode: "on", to_mode: "full", decided_by: "breaker", cause: `restore:${at(7, 15, 34)}`, record: { merges: 6, reverts: 0, window_days: 14 }, at: at(21, 16, 10) };
+  switch (scenario) {
+    case "crew-areas-tripped":
+      return { ceiling: full, asOf: at(7, 15, 36), rows: web(lowered("demoted", {})), trail: [] };
+    case "crew-areas-stale":
+      return { ceiling: full, asOf: at(7, 15, 36), rows: web(lowered("demoted", {})), trail: [] };
+    case "crew-areas-ceiling-off":
+      return {
+        ceiling: "off",
+        asOf: at(7, 17, 5),
+        rows: web(lowered("demoted", {})).map((row) => ({ ...row, ceiling: "off", now: "off", ...(row.state === "follows" || row.state === "not_enough_data" ? { state: "ceiling_lower" as const } : {}) })),
+        trail: [],
+      };
+    case "crew-areas-recovering":
+      return { ceiling: full, asOf: at(14, 10, 0), rows: web(lowered("recovering", { record: { merges: 3, reverts: 0, window_days: 14 }, recovery: { clean_days: 7, days_needed: 14, merges: 3, merges_needed: 5 } })), trail: [] };
+    case "crew-areas-criteria-met":
+      return { ceiling: full, asOf: at(21, 15, 40), rows: web(lowered("criteria_met", { record: { merges: 6, reverts: 0, window_days: 14 }, recovery: { clean_days: 14, days_needed: 14, merges: 6, merges_needed: 5 } })), trail: [] };
+    case "crew-areas-restored":
+      return { ceiling: full, asOf: at(21, 16, 10), rows: web(areaRow("web/auth", 6, 0)), trail: [restored] };
+    case "crew-areas-lowdata":
+      return { ceiling: full, asOf: at(2, 9, 0), rows: [areaRow("web/auth", 3, 0), areaRow("crates/orbyn-core", 4, 0), areaRow("web/app", 2, 0), areaRow(".github/workflows", 3, 0)], trail: [] };
+    default:
+      return { ceiling: full, asOf: at(6, 17, 0), rows: web(areaRow("web/auth", 8, 1)), trail: [] };
+  }
+}
+
 export function createCrewMock() {
   let held: AutopilotHeld[] = [];
   let heldScenario = "";
@@ -139,6 +206,9 @@ export function createCrewMock() {
   let all: AutopilotLogRow[] = [];
   let tripwire: AutopilotLogRow[] = [];
   let young = false;
+  let areas = areaScenario("crew-areas");
+  let staleOnce = false;
+  let tripped: Record<string, number> = {};
 
   const modes = (): AutopilotModes => ({ confirmed, effective_default: mode, entries, truncated: false });
 
@@ -150,6 +220,9 @@ export function createCrewMock() {
       ? [{ scope: "crew", id: "login-redirect", mode: "on", updated_at: "2026-11-07T10:00:00" }, { scope: "crew", id: "dependency-bump", mode: "full", updated_at: "2026-11-06T10:00:00" }]
       : [];
     young = scenario === "crew-young";
+    areas = areaScenario(scenario);
+    tripped = Object.fromEntries(areas.rows.flatMap((one) => (one.since ? [[one.area_key, one.since] as const] : [])));
+    staleOnce = scenario === "crew-areas-stale";
     heldScenario = scenario.startsWith("crew-held") ? scenario : "";
     held = heldScenario ? holds() : [];
     failPaging = scenario === "crew-many-fails";
@@ -174,6 +247,41 @@ export function createCrewMock() {
     const list = all.filter((one) => (!kind || one.kind === kind) && (!task || one.task_id === task));
     const next = offset + limit < list.length ? offset + limit : null;
     return { rows: list.slice(offset, offset + limit), total: list.length, next_offset: next };
+  }
+
+  function areasRoute(method: string, tail: string | undefined, body: unknown, query: URLSearchParams): MockResponse {
+    if (method === "GET" && !tail) {
+      const out: AutopilotAreas = { project: query.get("project") ?? "", ceiling: areas.ceiling, as_of: areas.asOf, enforced: true, total: areas.rows.length, rows: areas.rows };
+      return { status: 200, body: out };
+    }
+    if (method === "GET" && tail === "history") return { status: 200, body: { project: query.get("project") ?? "", area: query.get("area") ?? "", events: query.get("area") === "web/auth" ? areas.trail : [], truncated: false } };
+    if (method !== "POST" || (tail !== "override" && tail !== "follow")) return { status: 404, body: { code: "not_found", message: "No such route." } };
+    const asked = body as { area: string; choice?: string; acknowledged?: boolean; seen?: { merges: number; reverts: number; tripped_at?: number | null } };
+    const row = areas.rows.find((one) => one.area_key === asked.area);
+    if (!row) return { status: 404, body: { code: "not_found", message: "That area is not on this repository." } };
+    // As the service: `since` is shown only while the area is lowered, but the stored trip time stays through an override, and a stale check compares against it.
+    const stored = tripped[row.area_key] ?? null;
+    const moved = asked.seen !== undefined && asked.seen !== null && (staleOnce || asked.seen.merges !== row.record.merges || asked.seen.reverts !== row.record.reverts || (asked.seen.tripped_at ?? null) !== stored);
+    if (moved) {
+      staleOnce = false;
+      return { status: 409, body: { code: "stale", message: "The record changed since you looked. Read it again before choosing." } };
+    }
+    let next: AutopilotAreaRow;
+    if (tail === "follow") {
+      const kept = { ...row };
+      delete kept.override;
+      next = stored ? { ...kept, since: stored, state: row.recovery ? "recovering" : "demoted", now: row.ceiling === "full" ? "on" : row.ceiling } : { ...kept, state: "follows", now: row.ceiling };
+    } else if (asked.choice === "off" && asked.acknowledged) {
+      const kept = { ...row };
+      delete kept.since;
+      next = { ...kept, state: "overridden", now: "off", override: { choice: "off", at: areas.asOf }, line: "A person set this area to off." };
+    } else if (asked.choice === "keep_ceiling" && asked.acknowledged && stored) {
+      const kept = { ...row };
+      delete kept.since;
+      next = { ...kept, state: "overridden", now: row.ceiling, override: { choice: "keep_ceiling", at: areas.asOf }, line: "A person set this area to keep ceiling." };
+    } else return { status: 400, body: { code: "invalid", message: "That choice is not allowed for this area." } };
+    areas = { ...areas, rows: areas.rows.map((one) => (one.area_key === row.area_key ? next : one)) };
+    return { status: 200, body: next };
   }
 
   function handle(method: string, path: string, body: unknown, query: URLSearchParams, confirm?: string): MockResponse {
@@ -218,6 +326,8 @@ export function createCrewMock() {
       const out: AutopilotTripwires = { in_a_row_limit: 3, in_a_run_limit: 20, running: [], recent: tripwire };
       return { status: 200, body: out };
     }
+    if (head === "autopilot" && id === "areas") return areasRoute(method, seg[4], body, query);
+    if (method === "GET" && head === "autopilot" && id === "thresholds") return { status: 200, body: THRESHOLDS };
     if (method === "GET" && head === "autopilot" && !id) return { status: 200, body: modes() };
     if (method === "GET" && head === "autopilot" && id === "guards") return { status: 200, body: GUARDS };
     if (method === "PUT" && head === "autopilot" && id === "mode") {
