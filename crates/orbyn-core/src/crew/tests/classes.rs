@@ -117,7 +117,7 @@ fn the_file_is_parsed_strictly() {
         let Err(why) = parse_file(&text) else {
             panic!("a file that should be refused was accepted");
         };
-        assert!(why.contains(words), "{why:?} should mention {words:?}");
+        assert!(why.contains(words), "the refusal should mention {words:?}");
     };
     let (rules, notes) = ok(vec![
         rule("auth-paths", &["**/auth/**", "crates/keys/**"], &["claude"]),
