@@ -7,6 +7,6 @@ import type { AutopilotRateRow } from "./AutopilotRateRow";
  */
 export type AutopilotTrust = { window_days: number, min_sample: number, high_revert_permille: number, total: AutopilotRate, areas: Array<AutopilotRateRow>, engines: Array<AutopilotRateRow>, 
 /**
- * There is no per-area promotion or demotion yet (slice 4j): areas are scored, never moved up or down.
+ * The circuit breaker records a per-area demotion (slice 4j, shadow: recorded, not yet enforced). Earning a higher mode is not built.
  */
 autonomy_by_area: boolean, truncated: boolean, };

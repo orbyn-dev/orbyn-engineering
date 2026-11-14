@@ -532,7 +532,7 @@ read, never set, over HTTP. **The Preview flag stays for development only until 
 is fixed:** a worker runs as the person and can read the service token and the data folder, so it could reach these routes.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
-`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires) and `/trust` (revert rates by area and engine).
+`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
 Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
 `PUT /autopilot/mode`, `POST /autopilot/confirm`, and `POST /autopilot/review/{task}/{looks-good,comment,revert}`.
 
@@ -663,7 +663,7 @@ ledger rows hold the lead's and second key's reasons but not the asker's model, 
 class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
 comment is kept and is not yet a fix brief.
 
-Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), the
 conflict forecast, bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
 
 **As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
@@ -726,6 +726,39 @@ that a command runs (`psql -f drop.sql`, `bash cleanup.sh`, `make nuke`): the fi
 a deletion API) is not guarded; the network rule N3 and the tiers still apply. A remote's URL is read from the repository's git config, which an earlier command
 of the worker could have changed; so is an `ssh` alias that points to production under a name the person never listed. The lists decide what is local and safe,
 and a wrong entry is the person's to fix. Nothing here is tamper-proof: a process of the same OS user can still read the data folder and change the table.
+
+**As built (slice 4j, shadow):** autonomy by area, part 1: a circuit breaker per area that *records* a demotion. **Shadow: recorded and shown, not yet
+enforced.** No merge, approval, tier or queue reads an area's state; the mode in force is still what the person chose (`crew_autopilot_mode`). Code:
+`crates/orbyn-core/src/crew/autopilot/areas/` (`decide` the pure rule, `breaker` the writes and the hook, `view` the reads), `store/crew_autonomy.rs`.
+
+- **Area.** The first two folders of a path (`risk::area_of`), or the one folder, or the file at the root. The key is `(project, area)`, and the record
+  counts only merges whose run's lead thread belongs to that project, so the same name in two repositories is counted twice, apart.
+- **Rule (all Proposed, Engineering's constants in `areas/mod.rs`, served by `GET /api/crew/autopilot/thresholds` with `proposed: true`).** Window 14 days; fewer than
+  5 merges in it is "not enough data" and nothing changes. **Demote** when 2 or more of the merges made in the window were reverted ("merged in the window, now
+  reverted", the same meaning as the 60-day rate). **Return** when both hold: 14 days since the recovery clock started with no revert, and 5 merges since then, none reverted.
+  The clock starts at the demotion and restarts at every later revert in the area (a `recovery_reset` row). Escapes (a defect that no revert shows) are
+  **not measured**: there is no source for them, `escapes` is always `null` and no count includes one. The 60-day, 10-merge, 20% rule in `merge/risk.rs` is
+  unchanged and keeps raising the risk tier.
+- **Ceiling.** The ceiling is the person's mode for the repository, else the default, else Full, read live. A demotion lowers an area from Full to On only; a ceiling of
+  On or Off is never changed and the record is still shown (`ceiling_lower`). A crew's own choice is not read for this (a known limit).
+- **Stored on this device** (schema **44**, `CREW_AUTONOMY`), never in a repository file (architecture rule 4): `crew_area_modes` (state `follows` or `demoted`, when and why,
+  the recovery clock, a person's override column that nothing writes yet) and `crew_area_events`, append-only (a trigger refuses UPDATE and DELETE), unique per
+  `(project, area, kind, cause)`. The record and the recovery counts are never stored: they are counted from `crew_merges` each time. Each breaker write adds its event row and
+  then changes the mode row **in one transaction** (rule 6: the audit row first; a row the table refuses leaves the mode as it was). A demotion also appends an `area_demoted` row to the
+  approval ledger on the task whose revert tripped it, so Flow shows it.
+- **When it acts.** `revert_merge` is the one place every revert passes (the watch's bisect revert and the person's Revert). Right after the merge row says reverted, still under the merge lock, the
+  breaker runs for each area the merge touched. The same revert is recorded once. A failure there is logged and never undoes a revert that already moved the branch. The way back is checked
+  when a merge is recorded and at the start of queuing one, so it waits for at most one merge; no GET writes, and the view says "Criteria met; returns at the next merge."
+- **Routes** (Preview-gated, 404 with the flag off; all GET, all in `crew::changes::READS`, nothing writes): `GET /api/crew/autopilot/areas?project=&limit&offset` (the ceiling, `enforced: false`,
+  and per area the record, a state of `follows`, `demoted`, `recovering`, `not_enough_data`, `ceiling_lower` or `overridden`, a sentence, when it was lowered and what recovery still needs),
+  `GET /api/crew/autopilot/areas/history?project=&area=` (the trail, newest first, at most 100; the area is in the query because it contains `/`) and `GET /api/crew/autopilot/thresholds`.
+  `GET /api/crew/trust` now sets `autonomy_by_area: true` and takes an optional `project`, so the revert rates and the risk score's `merge_rates` count one repository's merges instead of all of them.
+
+**Not built (4j):** enforcement (the merge gate, the chain and the tier reading an area's state); a person's override and its writes; the screens (Crew Designs v38 frames
+`autonomy-*`); earning a higher mode for an area; escapes.
+
+**Known limits (4j).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. The area is two folders deep, so a large folder and a small one weigh the same and a change spread over many areas counts in each. A return waits for the next
+merge. A project's ceiling is read for the breaker, so a crew set higher than its repository is not lowered. The thresholds are a proposal and may change.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**

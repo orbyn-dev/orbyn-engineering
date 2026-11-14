@@ -118,20 +118,29 @@ impl Core {
 
     /// The mode in force: the crew's, else the repository's, else the default, else `Full`.
     pub fn crew_autopilot_mode(&self, project_id: &str, crew_id: &str) -> Mode {
-        [
+        self.mode_in(&[
             ModeScope::Crew(crew_id.to_owned()),
             ModeScope::Repo(project_id.to_owned()),
             ModeScope::Default,
-        ]
-        .iter()
-        .find_map(|scope| {
-            self.store
-                .crew_autopilot_mode_of(&scope_key(scope))
-                .ok()
-                .flatten()
-                .and_then(|text| Mode::parse(&text))
-        })
-        .unwrap_or_default()
+        ])
+    }
+
+    /// The ceiling of a repository as a whole: its choice, else the default, else `Full`. A crew's own choice is not read.
+    pub fn crew_project_mode(&self, project_id: &str) -> Mode {
+        self.mode_in(&[ModeScope::Repo(project_id.to_owned()), ModeScope::Default])
+    }
+
+    fn mode_in(&self, scopes: &[ModeScope]) -> Mode {
+        scopes
+            .iter()
+            .find_map(|scope| {
+                self.store
+                    .crew_autopilot_mode_of(&scope_key(scope))
+                    .ok()
+                    .flatten()
+                    .and_then(|text| Mode::parse(&text))
+            })
+            .unwrap_or_default()
     }
 
     fn account_only(&self, ask: &ActionAsk) -> Review {

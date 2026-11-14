@@ -108,6 +108,13 @@ impl Core {
             .and_then(|r| r.commit.as_ref())
             .map(|c| c.as_str().to_owned())
             .ok_or_else(|| CoreError::Invalid("the passed task names no commit to merge".into()))?;
+        // A lowered area whose way back has been met returns here (at most one merge late). Under the merge lock; no GET does this.
+        {
+            let _one_at_a_time = self.crew_merges.lock().await;
+            if let Err(error) = self.area_restore_check(task_id, now) {
+                tracing::warn!(%error, "could not check the areas for a return");
+            }
+        }
         let repo = target.repo.clone();
         gitops::rev(&repo, &candidate).await.map_err(|_| {
             CoreError::Invalid("the commit to merge is not in the target repository".into())
@@ -120,7 +127,10 @@ impl Core {
             .map(|d| d.engine.as_str().to_owned())
             .unwrap_or_default();
         let areas = areas_of(&paths);
-        let (by_area, by_engine) = self.merge_rates(&areas, &engine, now)?;
+        let project = self
+            .project_of_task(task_id)?
+            .ok_or_else(|| CoreError::NotFound(format!("crew run {task_id}")))?;
+        let (by_area, by_engine) = self.merge_rates(&project, &areas, &engine, now)?;
         let recent = self.merge_recent(target, now)?;
         let facts = DiffFacts {
             files: u32::try_from(paths.len()).unwrap_or(u32::MAX),
@@ -487,6 +497,10 @@ impl Core {
             needs_person: None,
         };
         self.store.add_crew_merge(&record)?;
+        // Under the merge lock `crew_process_merges` holds. The merge just recorded counts toward the way back.
+        if let Err(error) = self.area_restore_check(task_id, now) {
+            tracing::warn!(%error, "could not check the areas for a return");
+        }
         // A merge a person released was reviewed by that act.
         if entry.released {
             self.store.set_merge_review(task_id, "looks_good", None)?;
