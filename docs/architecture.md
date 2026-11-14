@@ -3185,3 +3185,5 @@ every method, path and which routes need a credential.
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |
+
+Throwaway scope proof.
