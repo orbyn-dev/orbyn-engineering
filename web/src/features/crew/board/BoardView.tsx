@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FlowCard } from "../../../generated/FlowCard";
 import type { FlowColumnId } from "../../../generated/FlowColumnId";
 import { ErrorState, Empty, Loading } from "../../../product/ui/states";
@@ -7,6 +7,7 @@ import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useFlowCrews } from "../flow/live/useFlow";
 import { useTaskWrite, WriteStatus } from "../writes/TaskWrite";
 import { CardMenu } from "./CardMenu";
+import { useBoardFocus } from "./focus";
 import { ago, COLUMNS, modelLine, moreOf, type ColumnSpec } from "./model";
 import { useBoard } from "./useBoard";
 import { useNarrow } from "./useWidth";
@@ -23,7 +24,8 @@ export function BoardView() {
 
 function Board() {
   const crews = useFlowCrews();
-  const [picked, setPicked] = useState<string | null>(null);
+  // A map node may have asked for one of its crew's cards: that crew is the one shown first.
+  const [picked, setPicked] = useState<string | null>(() => useBoardFocus.getState().crew);
   if (crews.status === "loading") return <Loading label="Reading the board" rows={4} />;
   if (crews.status === "error" && !crews.data) return <ErrorState title="Can’t read the board" failure={crews.error} onRetry={() => void crews.reload()} />;
   const list = crews.data ?? [];
@@ -52,6 +54,29 @@ function CrewBoard({ crew }: { crew: string }) {
   const [overrides, setOverrides] = useState<Partial<Record<FlowColumnId, boolean>>>({});
   const [ref, narrow] = useNarrow();
   const { first, board, cardsOf, nextOf, showMore, busy, failure } = useBoard({ crew, engine, kind });
+  const asked = useBoardFocus((state) => (state.crew === crew ? state.task : null));
+  const [missing, setMissing] = useState(false);
+
+  // A card asked for by a map node: open its column, scroll to it and focus it; if it is not on the page read, say so.
+  useEffect(() => {
+    if (!asked || !board) return;
+    const found = COLUMNS.find((spec) => cardsOf(spec.id).some((card) => card.id === asked));
+    if (!found) {
+      setMissing(true);
+      useBoardFocus.getState().clear();
+      return;
+    }
+    setOverrides((now) => ({ ...now, [found.id]: true }));
+    const frame = requestAnimationFrame(() => {
+      const element = [...document.querySelectorAll<HTMLElement>("[data-task]")].find((one) => one.getAttribute("data-task") === asked);
+      element?.scrollIntoView?.({ block: "center" });
+      element?.focus();
+      useBoardFocus.getState().clear();
+    });
+    return () => cancelAnimationFrame(frame);
+    // `cardsOf` is rebuilt every render; the cards are in `board`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, board]);
 
   if (first.status === "loading") return <Loading label="Reading the board" rows={4} />;
   if (first.status === "error" && !board) return <ErrorState title="Can’t read the board" failure={first.error} onRetry={() => void first.reload()} />;
@@ -77,6 +102,11 @@ function CrewBoard({ crew }: { crew: string }) {
           </button>
         ))}
       </div>
+      {missing ? (
+        <p className="bd-note-line" role="status">
+          That task’s card isn’t on the current page of its column. Use “+N more” in its column to find it.
+        </p>
+      ) : null}
       {board.truncated ? (
         <p className="bd-note-line" role="note">
           This crew has more tasks than one read covers; the newest are shown.
@@ -132,7 +162,7 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
   const needs = card.state === "needs_person";
   const model = modelLine(card);
   return (
-    <li className="bd-card" data-needs={needs || undefined}>
+    <li className="bd-card" data-needs={needs || undefined} data-task={card.id} tabIndex={-1}>
       <div className="bd-k">
         <b>{card.kind || "task"}</b>
         <span>updated {ago(card.updated_at)}</span>

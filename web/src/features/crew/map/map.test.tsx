@@ -6,6 +6,8 @@ import { HOSTILE_BODY, HOSTILE_VALUE } from "../../../../mock/map";
 import { MOCK_CREW } from "../../../../mock/flow";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
+import { CrewSurface } from "../autopilot/approvals/CrewSurface";
+import { useBoardFocus } from "../board/focus";
 import { LanesView } from "./LanesView";
 import { MapView } from "./MapView";
 import { useCrewMessages } from "./useMap";
@@ -98,8 +100,8 @@ describe("the Crew map on the map route", () => {
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
       "Open thread After the beta",
-      "Cancel Use the card on the Board",
-      "Re-run checks Use the card on the Board",
+      "Cancel Use the Board card",
+      "Re-run checks Use the Board card",
       "Reassign engine After the beta",
       "Message into a lane After the beta",
       "Add reviewer lane After the beta",
@@ -267,5 +269,73 @@ describe("the conversation lanes on the message and fact routes", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("list", { name: "Lanes" })).toBeVisible();
     expect(nonGets()).toHaveLength(0);
+  });
+});
+
+describe("all five registry states", () => {
+  it("draws each engine's registry word in the list, on its row and, for the four that cannot take work, in a banner", async () => {
+    mock.reset("crew-map-engine-states");
+    render(<MapView />);
+    await screen.findByRole("list", { name: "Crew" });
+    const engines = within(screen.getByRole("list", { name: "Engines" })).getAllByRole("listitem").map((one) => one.textContent);
+    expect(engines).toEqual(["claude · Ready", "codex · Not installed", "opencode · Signed out", "cursor · Sign-in unconfirmed", "kimi · Broken"]);
+    expect(within(row(/Work on cursor/)).getByText("Sign-in unconfirmed")).toBeVisible();
+    expect(within(row(/Work on kimi/)).getByText("Broken")).toBeVisible();
+    expect(within(row(/Work on codex/)).getByText("Not installed")).toBeVisible();
+    expect(within(row(/Work on opencode/)).getByText("Signed out")).toBeVisible();
+    const banners = screen.getAllByRole("status").map((one) => one.textContent);
+    expect(banners).toEqual(["codex isn’t running.", "opencode isn’t signed in.", "cursor: Sign-in unconfirmed", "kimi: Broken"]);
+  });
+});
+
+describe("Open on Board", () => {
+  beforeEach(() => useBoardFocus.getState().clear());
+
+  async function surface(scenario: "crew" | `crew-${string}` = "crew") {
+    mock.reset(scenario);
+    const user = userEvent.setup();
+    render(<CrewSurface tab="map" />);
+    await screen.findByRole("list", { name: "Crew" });
+    return user;
+  }
+
+  it("switches to the Board tab and puts focus on the node's card, with no write and no read but the board's", async () => {
+    const user = await surface();
+    await user.click(row(/Add tests for the redirect/));
+    const before = fetched().length;
+    await user.click(await screen.findByRole("button", { name: "Open on Board" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Board" })).toHaveAttribute("aria-selected", "true"));
+    await screen.findByRole("region", { name: /^Verifying/ });
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-task")).toBe("b-verifying"));
+    expect(urls().slice(before).every((url) => url.includes("/api/crew/flow/board") || url.includes("/api/crew/flow/crews") || url.includes("/api/crew/preview"))).toBe(true);
+    expect(nonGets()).toHaveLength(0);
+    expect(useBoardFocus.getState().task).toBeNull();
+  });
+
+  it("says plainly when the card is not on the current page of its column", async () => {
+    const user = await surface("crew-map-many");
+    await user.click(row(/Task 2/));
+    await user.click(await screen.findByRole("button", { name: "Open on Board" }));
+    expect(await screen.findByText("That task’s card isn’t on the current page of its column. Use “+N more” in its column to find it.")).toBeVisible();
+    expect(nonGets()).toHaveLength(0);
+  });
+
+  it("keeps Cancel and Re-run checks inert on the node", async () => {
+    const user = await surface();
+    await user.click(row(/Use next in the auth redirect/));
+    await user.click(await screen.findByRole("button", { name: "Actions for this member" }));
+    const menu = await screen.findByRole("menu", { name: "Member actions" });
+    expect(within(menu).getByRole("menuitem", { name: /^Cancel/ })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: /^Re-run checks/ })).toBeDisabled();
+  });
+
+  it("refuses a task id the shared id check refuses, so it never becomes a route, a hash or an element id", () => {
+    for (const id of ["..", ".", "a/b", "a?b", "a#b", "", ".x", "x".repeat(97), "<img src=x>"]) {
+      expect(useBoardFocus.getState().ask("crew", id)).toBe(false);
+      expect(useBoardFocus.getState().task).toBeNull();
+    }
+    expect(useBoardFocus.getState().ask("", "b-running")).toBe(false);
+    expect(useBoardFocus.getState().ask("crew", "b-running")).toBe(true);
+    expect(window.location.hash).toBe("");
   });
 });

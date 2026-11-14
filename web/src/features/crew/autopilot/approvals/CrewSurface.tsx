@@ -1,7 +1,8 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { CREW_TABS as TABS, routeHref, type CrewTab } from "../../../../product/state/route";
 import { PageBar } from "../../../../product/ui/PageBar";
 import { BoardView } from "../../board/BoardView";
+import { useBoardFocus } from "../../board/focus";
 import { LanesView } from "../../map/LanesView";
 import { MapView } from "../../map/MapView";
 import { CrewTabs } from "../../flow/live/CrewTabs";
@@ -30,6 +31,13 @@ export function CrewSurface({ tab: opened }: { tab: CrewTab }) {
     window.history.replaceState(window.history.state, "", routeHref({ name: "crew", tab: next }));
   };
   const id = useId();
+  // A map node asked for its Board card: the Board tab opens (a click on its own link, never a load).
+  const wantsBoard = useBoardFocus((state) => state.task !== null);
+  useEffect(() => {
+    if (wantsBoard) select("board");
+    // `select` is rebuilt every render and only sets this screen's own tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsBoard]);
   if (!on) return null;
   return (
     <div className="ap-surface">
