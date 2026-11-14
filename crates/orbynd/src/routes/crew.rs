@@ -144,6 +144,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/guard/targets/{id}/remove",
         "core guard_target_remove: audited in the same transaction before the removal; removing a prod target loosens the guard and needs the person's presence grant (x-orbyn-confirm); local only",
     ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/rerun-checks",
+        "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -174,6 +179,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
+        .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -632,4 +638,28 @@ async fn guard_remove(
         .get(CONFIRM_HEADER)
         .and_then(|value| value.to_str().ok());
     Ok(Json(state.core.guard_target_remove(&id, nonce)?))
+}
+
+/// The person's re-run of a task's key checks. The body may be empty, or `{ "reason": "..." }`. The answer is counts and outcomes.
+async fn rerun_checks(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off nothing here exists, and the body is not even read.
+    if !state.core.config.crew_preview {
+        return Err(CoreError::NotFound("route".into()).into());
+    }
+    let body: wire::CrewTaskRerun = if body.iter().all(u8::is_ascii_whitespace) {
+        wire::CrewTaskRerun { reason: None }
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|_| CoreError::Invalid("the body is { \"reason\": text } or empty".into()))?
+    };
+    Ok(Json(
+        state
+            .core
+            .crew_rerun_checks(&id, body.reason.as_deref(), "user")
+            .await?,
+    ))
 }

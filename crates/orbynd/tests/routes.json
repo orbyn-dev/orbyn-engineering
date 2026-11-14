@@ -217,6 +217,7 @@
     ["POST","/api/crew/guard/targets/add"],
     ["POST","/api/crew/guard/targets/{id}/remove"],
     ["POST","/api/crew/tasks/{id}/cancel"],
+    ["POST","/api/crew/tasks/{id}/rerun-checks"],
     ["POST","/api/diagnostics/otlp"],
     ["POST","/api/diagnostics/processes/{pid}/stop"],
     ["POST","/api/diagnostics/repair"],

@@ -83,11 +83,36 @@ impl Judgement {
     }
 }
 
+/// How the core runs the key again for a person (`rerun`): checks the screen refused are not run, the whole run has an upper
+/// bound of its own, and **nothing is stored**: Review and the merge proof count every Evidence and Gate of a task as the task's own
+/// verification, and the protocol's Evidence has no field that says "a person's re-run", so a re-run's rows would change what a
+/// reviewer is told and the commit it reads. The re-run's record is its audit rows (`rerun`).
+pub(super) struct Rerun<'a> {
+    /// The checks not to run, by id, with the rule that refused each.
+    pub refused: &'a [(String, &'static str)],
+    /// The longest the whole run may take, whatever the task's budget was.
+    pub cap: std::time::Duration,
+}
+
 /// What is left of a task's time budget: its start plus its minutes, less `now`.
 pub(super) fn budget_left(created_at: &str, minutes: u64, now: i64) -> std::time::Duration {
     let start = crate::util::parse_time(created_at).unwrap_or(now);
     let end = start.saturating_add(i64::try_from(minutes * 60).unwrap_or(i64::MAX));
     std::time::Duration::from_secs(u64::try_from(end - now).unwrap_or(0))
+}
+
+/// What a refused check records: that it did not run, and the rule, never the command.
+fn refused_check(check: &orbyn_contracts::CrewCheck, rule: &str) -> Ran {
+    let why = format!("The check was not run: the command guard refused it ({rule}).");
+    Ran {
+        outcome: CheckOutcome::Error,
+        exit_code: None,
+        command: format!("refused: {}", check.id),
+        log: why.clone(),
+        duration_ms: 0,
+        reason: Some(why),
+        names: Vec::new(),
+    }
 }
 
 pub(super) fn short(text: &str) -> Result<CrewShortText, CrewError> {
@@ -139,7 +164,7 @@ impl Core {
             .worktree
             .as_deref()
             .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no checkout"))?;
-        self.judge(task, run, &key, Path::new(worktree), false)
+        self.judge(task, run, &key, Path::new(worktree), false, None)
             .await
     }
 
@@ -160,16 +185,18 @@ impl Core {
             .worktree
             .as_deref()
             .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no checkout"))?;
-        self.judge(task, run, &key, Path::new(worktree), true).await
+        self.judge(task, run, &key, Path::new(worktree), true, None)
+            .await
     }
 
-    async fn judge(
+    pub(super) async fn judge(
         &self,
         task: &CrewTask,
         run: &CrewRun,
         key: &AnswerKey,
         worktree: &Path,
         live: bool,
+        rerun: Option<&Rerun<'_>>,
     ) -> Result<Judgement, CrewError> {
         let minutes = self
             .store
@@ -183,6 +210,7 @@ impl Core {
         } else {
             std::time::Duration::from_secs(minutes * 60)
         };
+        let left = rerun.map_or(left, |r| left.min(r.cap));
         let site = Site {
             worktree,
             deadline: std::time::Instant::now() + left,
@@ -291,7 +319,13 @@ impl Core {
                     "the task is no longer being verified",
                 ));
             }
-            let ran = run_check(check, &site).await;
+            let ran = match rerun
+                .and_then(|r| r.refused.iter().find(|(id, _)| id == check.id.as_str()))
+            {
+                // A check the screen refused is never run. It counts as an error, so the Gate cannot pass on the rest.
+                Some((_, rule)) => refused_check(check, rule),
+                None => run_check(check, &site).await,
+            };
             let mut evidence = Evidence {
                 v: 0,
                 id: key.id.clone(),
@@ -332,9 +366,11 @@ impl Core {
             evidence.id = CrewObject::Evidence(evidence.clone()).computed_id()?;
             let object = CrewObject::Evidence(evidence.clone());
             refuse_secret(&object.to_value())?;
-            self.store
-                .add_crew_object(&task.id, &object)
-                .map_err(internal)?;
+            if rerun.is_none() {
+                self.store
+                    .add_crew_object(&task.id, &object)
+                    .map_err(internal)?;
+            }
             verdict.checks.push(ResultCheck {
                 check: check.id.clone(),
                 evidence: evidence.id.clone(),
@@ -353,7 +389,7 @@ impl Core {
                 }),
             }
         }
-        if !verdict.undecided() && !verdict.evidence.is_empty() {
+        if rerun.is_none() && !verdict.undecided() && !verdict.evidence.is_empty() {
             self.store_checks_gate(task, key, &run_id, &verdict)?;
         }
         Ok(verdict)

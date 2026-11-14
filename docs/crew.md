@@ -1272,6 +1272,64 @@ reason.
 - Premise check, dependency splitting, cheap-draft escalation
 - Publishing the spec
 
+## As built (re-run checks)
+
+The person's "Re-run checks" for a Crew task (Preview). Backend only: the card that calls it is Engineering 1's.
+
+- **What exists:** core `Core::crew_rerun_checks(task, reason, actor)` and `POST /api/crew/tasks/{id}/rerun-checks` (body empty, or
+  `{ "reason": "..." }`, 1 to 200 characters, redacted). It runs the answer key's checks again through the verifier (`Core::judge`, the
+  code behind `crew_verify`) and changes no state (SPEC.md H7). With the Preview flag off the route is 404 and the body is not read.
+- **It stores no Evidence and no Gate.** Review counts every Evidence of a task as its own verification ("N of M checks passed on the
+  work", and the reviewer's commit is the last Evidence's), the merge proof reads the same rows, and the protocol's Evidence has no
+  field that says "a person's re-run", which this PR does not change. So a re-run's record is its two audit rows, counts only; its
+  logs are not kept. A later Flow route that shows a re-run needs its own table or a protocol field.
+- **What runs.** The key's checks only, in the task's own checkout: its command kinds, `file_scope` and `diff_size`; any other kind
+  is `skipped`, as in a live verification. It does **not** run the repository's own checks (`.orbyn/crew.json`), and it does not touch
+  the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
+  files changed runs nothing, as a live verification does (N7, H9).
+- **Which tasks.** An unknown id is `404 not_found`. A task with no key or no checkout is `422 unsupported`. Allowed: a `passed` task,
+  and a `stopped` task whose reason is `repeated_failure`, `budget` or `engine_error` **and** whose checks ran live at least once (it
+  has Evidence). Refused with `409 task_busy` and a plain reason, and nothing runs: a task stopped for `injection_suspected` or
+  `too_many_denials` (Autopilot stops a task for those from `running`, so the key never ran in that checkout and the worker may have
+  planted what the key's commands execute), for `lead_stopped` (the lead's reason is not known), for any reason not on the allow-list,
+  or never verified; a task being worked on, being verified, `cancelled`, or whose worker still has an engine run open; and one whose
+  checks are being run again. The table admits six stop reasons today; the allow-list means a seventh is refused until someone names it.
+- **Limits against spam.** At most one re-run at a time on the device, across all tasks, and 10 seconds between the end of one re-run
+  of a task and the next (`409 task_busy`, "Try again in N seconds"). The claim is `crew_runs.verifying_since`, the column a live
+  verification uses, so a re-run and a verification never run together; a claim on a `passed` or `stopped` task can only be a re-run's,
+  so the device-wide check is one query. A start of the service clears every claim. This is not a presence grant: none was asked for.
+- **Order, failing closed.** (1) One transaction checks the task, takes the claim and writes the intent row `crew.task.rerun_checks`
+  (actor, task id, state, the redacted reason): the row comes before any command (architecture rule 6), and a refused request writes
+  nothing. (2) Every command of the key is **screened**. (3) The verifier runs the rest. (4) One transaction writes
+  `crew.task.rerun_checks_done` (counts only: total, ran, passed, refused, skipped, the gate) or `crew.task.rerun_checks_failed` (the
+  error code) and lets the claim go. The run is a task inside a task: a panic in it ends as the `_failed` row and a free claim, and a
+  caller that hangs up changes nothing. A crash of the process after (1) leaves the intent row with no outcome row, and the next start
+  frees the claim.
+- **Command screen (new).** Before this, the core's own check commands were not screened: the verifier ran a key's commands as written,
+  and the merge queue still runs a repository's. The re-run screens each command of the key with the same reading a worker's command
+  gets at the gate: the always-denied list N1 to N10 (`autopilot::screen`, which calls `refuse_in`), then the blast-radius guard
+  (`guard_of`, with this device's two lists). A command that fails either is **not run**; its check is an `error`, so the verdict cannot
+  pass on the others. It fails closed: an empty command, one with a quote left open, one the parser finds no command in, or a guard list
+  that cannot be read is refused. The screen is heuristic like the gate (see "As built (slice 4i, guard)"): a script the command runs,
+  an alias or a `psql -f` file is not read. There is no approve-once for a refused check.
+- **Answer.** `{ task, state, total, ran, passed, refused, skipped, gate: pass|fail|none, refused_checks? }`. No check command, output,
+  excerpt, `proves` or `does_not_prove`, no rule name and no Evidence id is in it (H1). `refused_checks` is the ids of the refused checks,
+  only for a task that is final (every task allowed today is); the count is always there. `gate` is the verdict of this run, or `none`
+  when it decided nothing (every check skipped, or a protected file changed). The state is the task's own, unchanged.
+- **Bounds.** The whole run gets the shorter of the task's time budget (fresh, not what was left when it ended) and 30 minutes
+  (`RERUN_MAX`); a check past it is stopped and counts as an `error`. Nothing of a check's output leaves the verifier.
+- **Not built:** the card (Engineering 1); reassign, message into a lane, add a lane and a person's answer, which are out of the beta;
+  showing a re-run in Review or the Flow routes; re-running the repository's own checks; re-running a task that is not over.
+- **Known limits.** *A person is not required.* The route is `local_only` (a remote viewer is 403) and in the N1 marker, but any local
+  process holding the launch token (the lead, an unconfined engine) can `POST` it, as with cancel; the audit row says `user` whoever
+  sent it. The device-wide and per-task limits bound it; the presence grant is not used. *Worker-written files.* A `passed` task's
+  checkout, and a `stopped` one stopped for `budget`, `repeated_failure` or `engine_error` (a worker can bring those stops about on purpose after one live verification and then write files the key's commands execute), can still hold files the worker wrote outside the protected paths that the key's commands execute (`package.json` scripts,
+  `conftest.py`, `build.rs`, a Makefile target): the live verification had the same exposure, and the re-run adds the person's trigger,
+  not a new kind. If the outcome row cannot be written, the claim stays set and blocks every re-run on this device until the service restarts (rare: it needs a database write error; a warning is logged). The screen narrows what a command may do and does not sandbox it; the commands run with the person's permissions in
+  the worker's checkout, and may write there. *Cancel.* The cancel route refuses a task that ended (`409 task_ended`), so a cancel cannot
+  land on a task being re-run; a task being verified or worked on is not re-run. A re-run does not re-decide a task: a `stopped` task
+  whose checks now pass is still `stopped`, and merge still needs a `passed` one.
+
 ## Worker confinement (macOS)
 
 Crew runs on macOS in the beta; Windows later. On macOS each worker's engine process starts under a

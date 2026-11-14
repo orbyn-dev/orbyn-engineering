@@ -13,6 +13,7 @@ pub(super) mod ledger;
 mod merge;
 mod presence;
 mod review;
+mod screen;
 mod shell;
 mod targets;
 mod tier;
@@ -31,6 +32,7 @@ pub use merge::{
 };
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};
+pub(crate) use screen::Screened;
 pub use tier::{Grants, Need, tier_of};
 pub use tripwire::{IN_A_ROW, IN_A_RUN, injection_in};
 
