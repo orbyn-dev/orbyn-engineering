@@ -135,7 +135,7 @@ pub struct AutopilotRiskReport {
     pub not_measured: Vec<String>,
     /// The mode each touched area is on, with the record behind it (slice 4j, enforcement).
     #[serde(default)]
-    #[ts(type = "Array<AutopilotAreaMode>", optional)]
+    #[ts(optional, as = "Option<Vec<AutopilotAreaMode>>")]
     pub area_modes: Vec<AutopilotAreaMode>,
 }
 }
@@ -181,7 +181,7 @@ pub struct AutopilotReviewItem {
     pub needs_person: Option<String>,
     /// The areas of this merge that are lowered by the circuit breaker now, each with its record. Empty when none is.
     #[serde(default)]
-    #[ts(type = "Array<AutopilotAreaMode>", optional)]
+    #[ts(optional, as = "Option<Vec<AutopilotAreaMode>>")]
     pub area_modes: Vec<AutopilotAreaMode>,
 }
 }
@@ -497,7 +497,7 @@ pub struct AutopilotDigest {
     pub tripwires: u32,
     /// Areas whose mode changed in the window: lowered, returned, or a person's override set or cleared. Newest first.
     #[serde(default)]
-    #[ts(type = "Array<AutopilotAreaChanged>", optional)]
+    #[ts(optional, as = "Option<Vec<AutopilotAreaChanged>>")]
     pub areas_changed: Vec<AutopilotAreaChanged>,
     /// Nothing happened, so no notification is due.
     pub quiet: bool,

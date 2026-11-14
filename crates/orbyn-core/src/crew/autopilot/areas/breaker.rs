@@ -237,6 +237,23 @@ impl Core {
             };
             let kept = record_json(facts.window);
             let cause = format!("restore:{recovery_since}");
+            if row.person_override.as_deref() == Some("keep_ceiling") {
+                // The lowering the person ignored is over, so their override ends with it: the trail shows how.
+                self.store.record_area_change(&AreaWrite {
+                    project_id: &project,
+                    area: &row.area,
+                    kind: "override_cleared",
+                    from_mode: Some(ceiling.name()),
+                    to_mode: Some(ceiling.name()),
+                    decided_by: "breaker",
+                    cause: &cause,
+                    record: &kept,
+                    at: now,
+                    change: AreaChange::ClearKeepCeiling {
+                        since: recovery_since,
+                    },
+                })?;
+            }
             self.store.record_area_change(&AreaWrite {
                 project_id: &project,
                 area: &row.area,

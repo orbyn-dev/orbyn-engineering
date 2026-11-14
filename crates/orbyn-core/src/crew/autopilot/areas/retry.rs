@@ -5,12 +5,12 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::app::Core;
 use crate::error::CoreError;
 
-/// The newest failures one retry reads.
+/// The most unresolved failures one retry looks at.
 const READ: u32 = 200;
 
 impl Core {
@@ -30,7 +30,11 @@ impl Core {
                 "stage": stage,
                 "revert": revert,
                 "why": error.public_message(),
-                "retry": "at the next merge or revert",
+                "retry": if revert.is_some() {
+                    "at the next merge or revert"
+                } else {
+                    "not retried: the next evaluation reads the whole window"
+                },
                 "resolved": false,
             }),
         );
@@ -39,28 +43,15 @@ impl Core {
     /// Looks again at every revert whose breaker failed and has not since worked. Called under the merge lock before a merge or a
     /// revert is evaluated. A failure here is logged only: the first failure is already in the ledger.
     pub(crate) fn area_breaker_retry(&self, now: i64) {
-        let Ok((events, _)) =
-            self.store
-                .crew_autopilot_events_page(None, &["area_breaker_failed"], READ, 0)
-        else {
+        let Ok(events) = self.store.crew_unresolved_breaker_failures(READ) else {
             return;
         };
-        let commit = |body: &Value| -> Option<String> {
-            (body["stage"] == "revert")
-                .then(|| body["revert"].as_str().map(str::to_owned))
-                .flatten()
-        };
-        let resolved: BTreeSet<String> = events
-            .iter()
-            .filter(|e| e.body["resolved"] == json!(true))
-            .filter_map(|e| commit(&e.body))
-            .collect();
         let mut seen = BTreeSet::new();
-        for event in events.iter().filter(|e| e.body["resolved"] != json!(true)) {
-            let Some(revert) = commit(&event.body) else {
+        for event in &events {
+            let Some(revert) = event.body["revert"].as_str().map(str::to_owned) else {
                 continue;
             };
-            if resolved.contains(&revert) || !seen.insert(revert.clone()) {
+            if !seen.insert(revert.clone()) {
                 continue;
             }
             let Ok(Some(record)) = self.store.crew_merge(&event.task_id) else {

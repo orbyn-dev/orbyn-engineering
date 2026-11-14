@@ -164,20 +164,20 @@ fn a_mode_update_that_fails_after_the_event_commits_nothing() {
     assert!(store.area_mode("p1", "src/a").unwrap().is_none());
 }
 
-fn person<'a>(
-    choice: Option<&'a str>,
-    trip: Option<i64>,
-    record: &'a serde_json::Value,
-) -> PersonWrite<'a> {
+fn person<'a>(choice: Option<&'a str>, trip: Option<i64>) -> PersonWrite<'a> {
     PersonWrite {
         project_id: "p1",
         area: "src/a",
         choice,
-        seen: Some(SeenTrip(trip)),
+        seen: Some(Seen {
+            merges: 0,
+            reverts: 0,
+            tripped_at: trip,
+        }),
+        window_since: 0,
         reason: Some("checked"),
         from_mode: "on",
         to_mode: "full",
-        record,
         at: 300,
     }
 }
@@ -198,7 +198,6 @@ fn a_persons_choice_writes_the_audit_row_first_and_a_refused_event_undoes_it() {
     let dir = TempDir::new();
     let store = Store::open(&dir.path().join("orbyn.db"), "a").unwrap();
     assert!(demote(&store, "cause-1", 100));
-    let record = json!({ "merges": 5, "reverts": 2, "window_days": 14, "escapes": null });
     store
         .writer()
         .execute_batch(
@@ -206,7 +205,7 @@ fn a_persons_choice_writes_the_audit_row_first_and_a_refused_event_undoes_it() {
              BEGIN SELECT RAISE(ABORT, 'refused'); END;",
         )
         .unwrap();
-    let write = person(Some("keep_ceiling"), Some(100), &record);
+    let write = person(Some("keep_ceiling"), Some(100));
     assert!(store.record_area_override(&write).is_err());
     assert_eq!(
         audit_rows(&store),
@@ -245,14 +244,14 @@ fn a_persons_choice_writes_the_audit_row_first_and_a_refused_event_undoes_it() {
     );
 
     // A person who saw an older trip is stale, and a follow ends the override and nothing else.
-    let old = person(None, Some(99), &record);
+    let old = person(None, Some(99));
     assert!(matches!(
         store.record_area_override(&old),
         Err(crate::error::CoreError::Stale(_))
     ));
     assert!(
         store
-            .record_area_override(&person(None, Some(100), &record))
+            .record_area_override(&person(None, Some(100)))
             .unwrap()
     );
     let mode = store.area_mode("p1", "src/a").unwrap().unwrap();

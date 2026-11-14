@@ -10,7 +10,7 @@ use super::autopilot_merge::{Merging, merging, passed};
 use super::autopilot_support::events;
 use super::autopilot_watch::NOW;
 use super::harness::World;
-use crate::crew::{MergeOutcome, Mode, ModeScope, Page, ReviewAnswer};
+use crate::crew::{MergeOutcome, Mode, Page, ReviewAnswer};
 use crate::error::CoreError;
 
 fn project_of(w: &World) -> String {
@@ -194,6 +194,7 @@ async fn keep_ceiling_lets_a_high_diff_through_the_full_path_and_off_makes_every
                 &choose(&project, "src/db", "keep_ceiling", seen(0, 0, Some(NOW))),
                 NOW,
             )
+            .await
             .unwrap();
     assert_eq!(row.state, wire::AutopilotAreaState::Overridden);
     let high = passed(&m.w, &[HIGH], "Add a migration.").await;
@@ -230,6 +231,7 @@ async fn keep_ceiling_lets_a_high_diff_through_the_full_path_and_off_makes_every
             &choose(&project, "src/db", "off", seen(0, 0, Some(NOW))),
             NOW,
         )
+        .await
         .unwrap();
     for (paths, what) in [(HIGH, "high"), (MEDIUM, "medium"), (LOW, "low")] {
         let id = passed(&off.w, &[paths], what).await;
@@ -271,6 +273,7 @@ async fn the_lowest_area_of_the_diff_decides() {
     let project = project_of(&m.w);
     m.w.core
         .autopilot_area_override(&choose(&project, "src/web", "off", seen(0, 0, None)), NOW)
+        .await
         .unwrap();
     let second = passed(
         &m.w,
@@ -320,31 +323,31 @@ async fn an_area_lowered_after_queuing_holds_the_merge_when_it_is_processed() {
 }
 
 #[tokio::test]
-async fn an_unreadable_area_fails_closed_with_a_ledger_event() {
+async fn an_unreadable_area_fails_closed_as_off_with_a_ledger_event() {
     let m = db(Mode::Full).await;
     let high = passed(&m.w, &[HIGH], "Add a migration.").await;
     let medium = passed(&m.w, &[MEDIUM], "Tune a query.").await;
+    let low = passed(&m.w, &[LOW], "Write a note.").await;
     m.w.core.store.break_area_modes_for_test();
     let entry =
         m.w.core
             .crew_queue_merge(&high, &m.target, NOW)
             .await
             .unwrap();
-    assert_eq!(
-        entry.state, "waiting",
-        "treated as lowered, so a high diff waits for a person"
-    );
+    assert_eq!(entry.state, "waiting");
     assert!(entry.note.unwrap().contains("could not be read"));
     let rows = events(&m.w, &high, "area_read_failed");
     assert_eq!(rows.len(), 1, "visible in the ledger, not only the log");
-    assert_eq!(rows[0].body["treated_as"], "lowered");
-    // Lowered means On, nothing stricter: a medium diff is not held by the failure.
-    let entry =
-        m.w.core
-            .crew_queue_merge(&medium, &m.target, NOW)
-            .await
-            .unwrap();
-    assert_eq!(entry.state, "queued");
+    assert_eq!(rows[0].body["treated_as"], "off");
+    // Off, not On: a person may have set the area to Off, so a failure to read never lets even a low diff through.
+    for task in [&medium, &low] {
+        let entry =
+            m.w.core
+                .crew_queue_merge(task, &m.target, NOW)
+                .await
+                .unwrap();
+        assert_eq!(entry.state, "waiting", "{task}");
+    }
 }
 
 #[tokio::test]
@@ -425,7 +428,11 @@ async fn a_person_keeps_the_ceiling_and_the_trail_names_the_audit_row() {
     let seen = seen(5, 2, Some(NOW));
     let mut body = choose(&r.project, "src/a", "keep_ceiling", seen.clone());
     body.reason = Some("The two reverts were one bad deploy.".into());
-    let row = r.w.core.autopilot_area_override(&body, NOW + 60).unwrap();
+    let row =
+        r.w.core
+            .autopilot_area_override(&body, NOW + 60)
+            .await
+            .unwrap();
     assert_eq!(row.state, wire::AutopilotAreaState::Overridden);
     assert_eq!(row.now, wire::AutopilotMode::Full);
     assert_eq!(row.person_override.as_ref().unwrap().choice, "keep_ceiling");
@@ -463,7 +470,10 @@ async fn a_person_keeps_the_ceiling_and_the_trail_names_the_audit_row() {
     );
     assert!(detail.contains("one bad deploy"), "{detail}");
     // The same choice twice records nothing the second time.
-    r.w.core.autopilot_area_override(&body, NOW + 120).unwrap();
+    r.w.core
+        .autopilot_area_override(&body, NOW + 120)
+        .await
+        .unwrap();
     assert_eq!(r.kinds("src/a"), ["demoted", "override_set"]);
 }
 
@@ -474,13 +484,20 @@ async fn a_choice_is_refused_above_the_ceiling_without_an_acknowledgement_or_on_
     for choice in ["full", "on", "", "keep ceiling"] {
         let mut body = good();
         body.choice = choice.to_owned();
-        let error = r.w.core.autopilot_area_override(&body, NOW).unwrap_err();
+        let error =
+            r.w.core
+                .autopilot_area_override(&body, NOW)
+                .await
+                .unwrap_err();
         assert!(matches!(error, CoreError::Invalid(_)), "{choice}: {error}");
     }
     let mut body = good();
     body.acknowledged = false;
     assert!(matches!(
-        r.w.core.autopilot_area_override(&body, NOW).unwrap_err(),
+        r.w.core
+            .autopilot_area_override(&body, NOW)
+            .await
+            .unwrap_err(),
         CoreError::Invalid(_)
     ));
     for old in [
@@ -493,23 +510,22 @@ async fn a_choice_is_refused_above_the_ceiling_without_an_acknowledgement_or_on_
         body.seen = old;
         assert!(
             matches!(
-                r.w.core.autopilot_area_override(&body, NOW).unwrap_err(),
+                r.w.core
+                    .autopilot_area_override(&body, NOW)
+                    .await
+                    .unwrap_err(),
                 CoreError::Stale(_)
             ),
             "a record the person did not see"
         );
     }
-    // Nothing is lowered under a ceiling of On, and an area the breaker never touched has nothing to keep.
-    r.w.core
-        .set_crew_autopilot_mode(&ModeScope::Repo(r.project.clone()), Mode::On)
-        .unwrap();
-    assert!(matches!(
-        r.w.core.autopilot_area_override(&good(), NOW).unwrap_err(),
-        CoreError::Invalid(_)
-    ));
+    // An area the breaker never touched has nothing to keep.
     let other = choose(&r.project, "src/z", "keep_ceiling", seen(0, 0, None));
     assert!(matches!(
-        r.w.core.autopilot_area_override(&other, NOW).unwrap_err(),
+        r.w.core
+            .autopilot_area_override(&other, NOW)
+            .await
+            .unwrap_err(),
         CoreError::Invalid(_)
     ));
     assert_eq!(
@@ -529,6 +545,7 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
             &choose(&r.project, "src/a", "keep_ceiling", seen(5, 2, Some(NOW))),
             NOW + 10,
         )
+        .await
         .unwrap();
     // Another merge in the area is reverted: a new trip.
     let later = r.merge(&["src/a"], NOW + DAY).await;
@@ -573,6 +590,7 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
             &choose(&r.project, "src/a", "off", current.clone()),
             NOW + DAY,
         )
+        .await
         .unwrap();
     let again = r.merge(&["src/a"], NOW + 2 * DAY).await;
     r.revert(&again, NOW + 2 * DAY);
@@ -585,6 +603,7 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
     let row =
         r.w.core
             .autopilot_area_follow(&follow, NOW + 3 * DAY)
+            .await
             .unwrap();
     assert!(row.person_override.is_none());
     assert_eq!(
@@ -595,6 +614,7 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
     let count = r.kinds("src/a").len();
     r.w.core
         .autopilot_area_follow(&follow, NOW + 4 * DAY)
+        .await
         .unwrap();
     assert_eq!(
         r.kinds("src/a").len(),
@@ -609,6 +629,7 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
     assert!(matches!(
         r.w.core
             .autopilot_area_follow(&old, NOW + 5 * DAY)
+            .await
             .unwrap_err(),
         CoreError::Stale(_)
     ));
@@ -642,4 +663,64 @@ async fn the_risk_report_the_review_queue_and_the_digest_carry_the_areas() {
     let quiet = rig().await;
     let digest = quiet.w.core.autopilot_digest(NOW, Some(24)).unwrap();
     assert!(digest.areas_changed.is_empty());
+}
+
+#[tokio::test]
+async fn a_revert_that_lands_while_the_person_waits_makes_the_choice_stale() {
+    let (r, tasks) = lowered_rig().await;
+    let core = r.w.core.clone();
+    let holder = r.w.core.clone();
+    let body = choose(&r.project, "src/a", "keep_ceiling", seen(5, 2, Some(NOW)));
+    // A merge is being checked: it holds the merge lock while the person's choice waits for it.
+    let guard = holder.crew_merges.lock().await;
+    let waiting = tokio::spawn(async move { core.autopilot_area_override(&body, NOW + 1).await });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    r.revert(&tasks[2], NOW + 2);
+    drop(guard);
+    let error = waiting.await.unwrap().unwrap_err();
+    assert!(matches!(error, CoreError::Stale(_)), "{error}");
+    assert_eq!(
+        r.kinds("src/a"),
+        ["demoted", "recovery_reset"],
+        "no override was written"
+    );
+}
+
+#[tokio::test]
+async fn a_return_ends_keep_ceiling_in_the_trail_and_an_area_name_is_checked() {
+    let (r, tasks) = lowered_rig().await;
+    r.w.core
+        .autopilot_area_override(
+            &choose(&r.project, "src/a", "keep_ceiling", seen(5, 2, Some(NOW))),
+            NOW + 1,
+        )
+        .await
+        .unwrap();
+    let mut r = r;
+    for d in 1..=5 {
+        r.merge(&["src/a"], NOW + d * DAY).await;
+    }
+    r.w.core
+        .area_restore_check(&tasks[0], NOW + 14 * DAY)
+        .unwrap();
+    assert_eq!(
+        r.kinds("src/a"),
+        ["demoted", "override_set", "override_cleared", "restored"]
+    );
+    assert!(r.mode("src/a").unwrap().person_override.is_none());
+    for bad in [
+        "", "/src/a", "src/a/", "src//a", "src/a/b", "../a", "src/..", "a\u{7}b",
+    ] {
+        let body = choose(&r.project, bad, "off", seen(0, 0, None));
+        assert!(
+            matches!(
+                r.w.core
+                    .autopilot_area_override(&body, NOW)
+                    .await
+                    .unwrap_err(),
+                CoreError::Invalid(_)
+            ),
+            "{bad:?}"
+        );
+    }
 }

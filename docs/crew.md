@@ -772,18 +772,20 @@ writes, `retry` a failed breaker), `store/crew_autonomy_person.rs`, `orbynd/src/
 - **Effect.** A high-risk diff in a lowered area **waits for a person** with the rule On has (`waiting`, released by a person as any waiting merge). The risk tier does not change,
   the entry's `mode` stays the crew's, and the queue's note and the `merge_queued` row name the area, its mode and its record. A medium or low diff in the same area still merges. An area on Off holds every diff in it.
   The chain and the tier do not read an area in version 1.
-- **Fails closed (rule 7).** If an area's state cannot be read, each touched area is treated as lowered (a Full ceiling to On: a high-risk diff waits) and an `area_read_failed` row goes to the approval ledger on the
-  task, not only the log. A breaker that fails after a revert writes `area_breaker_failed` on the merge's task (Flow shows it); the revert stands. The revert is looked at again at the next merge or revert
-  (every breaker write is idempotent: one row per cause and kind), and a retry that works is marked `resolved: true` on the same kind and not tried again. A failure after a merge is written the same way and is
-  covered by the next evaluation, which reads the whole window.
+- **Fails closed (rule 7).** If an area's state cannot be read, each touched area is treated as **Off**: every diff in it waits for a person, whatever its risk (Off, not On, so a failure to read can never
+  let through a diff in an area the person set to Off). An `area_read_failed` row goes to the approval ledger on the task, not only the log. A breaker that fails after a revert writes `area_breaker_failed` on the merge's task (Flow shows it); the revert stands. The revert is looked at again at the next merge or revert
+  (every breaker write is idempotent: one row per cause and kind; up to 200 unresolved failures are read, resolved rows filtered out in SQL), and a retry that works is marked `resolved: true` on the same kind and not tried again.
+  A failure after a **merge** is written the same way but is **not retried**: the next evaluation reads the whole window, and the gate counts an area whose window trips as lowered meanwhile.
 - **A person's override** (Preview-gated, `local_only`, in `crew::changes::STATE_CHANGING` and `GUARDS`, so Autopilot's N1 refuses an agent's request by path):
   `POST /api/crew/autopilot/areas/override` `{project, area, choice: "keep_ceiling" | "off", acknowledged: true, seen: {merges, reverts, tripped_at}, reason?}` and
   `POST /api/crew/autopilot/areas/follow` `{project, area, seen?}`. Both answer with the area as it now stands. Rules: only those two choices exist, so a choice never raises an area above its ceiling, and
-  `keep_ceiling` is refused when nothing is lowered; `acknowledged` must be true; `seen` must match the current record (the window's merges and reverts, and when the breaker lowered the area), else **409 `stale`**
-  (the person saw an old record); the same choice twice records nothing the second time; `follow` ends the override and changes nothing else (the breaker's state stands). **An override ends at the next trip:** a new revert in
-  an area under `keep_ceiling` clears it (`override_cleared`, decided by the breaker, then the recovery clock restarts) and the area shows lowered again; a lowered area that returns also drops it. `off` stays until the person follows.
+  `keep_ceiling` is refused when the area is not lowered; `acknowledged` must be true; `seen` must match the current record (the window's merges and reverts, and when the breaker lowered the area), else **409 `stale`**
+  (the person saw an old record). The comparison is made inside the write's transaction and the merge lock is held around it, like the breaker's writes, so a revert cannot land between the person's look and the write;
+  if a merge is being checked the write waits up to 5 seconds, then answers `stale`. The trail's `from_mode` and `to_mode` use the ceiling of the crew that merged into the area last (the gate's own function), else the repository's; the same choice twice records nothing the second time; `follow` ends the override and changes nothing else (the breaker's state stands). **An override ends at the next trip:** a new revert in
+  an area under `keep_ceiling` clears it (`override_cleared`, decided by the breaker, then the recovery clock restarts) and the area shows lowered again; a lowered area that returns also drops it, and the trail shows it (`override_cleared` before `restored`). `off` stays until the person follows.
   The audit row (`crew.area.override` or `crew.area.follow`, actor `user`) is written first, in the same transaction as the `crew_area_events` row (`override_set` or `override_cleared`, `decided_by` person, cause `person:<audit id>`) and the
-  mode row; a row the table refuses leaves all three as they were. Plain local write, no presence grant: its power is below `PUT /autopilot/mode`, which can already set a whole repository to Full.
+  mode row; a row the table refuses leaves all three as they were. Plain local write, no presence grant. **`keep_ceiling` loosens:** it returns the area to the ceiling the crew has, so a lead that holds the service token could call it to defeat the breaker. That is no stronger than
+  `PUT /autopilot/mode` setting the repository to Full, which the same token can already do, but it is a loosening and not a safeguard. An area is one or two folders (or a root file), without an empty or `..` segment.
 - **Effect fields.** `GET /autopilot/risk/{task}` gains `area_modes: [{area, mode, line}]` ("Area web/app is on On: 2 reverts in 14 days · 9 merges"); each Review queue item gains the same marker for the areas
   the breaker has lowered or a person set to Off; the digest gains `areas_changed` (lowered, returned, override set or cleared, in the window). `GET /autopilot/areas` now says `enforced: true`. The Needs you line for a lowered area is assembled by
   the web from the areas read; there is no new route for it.
@@ -795,7 +797,7 @@ are **not measured**: nothing counts them. The chain and the tier do not read an
 
 **Known limits (4j, enforcement).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. Any local process that holds the service token can post an override, the limit `set_mode` and the other Crew writes have, and the audit row
 says `user`, not which process. A lowered area returns at the next merge or queuing, not at the moment its criteria are met. The area is two folders deep, so a large and a small folder weigh the same. A ledger event cannot be written when the
-ledger itself is unreadable: the log then holds the only trace, and the gate still waits.
+ledger itself is unreadable: the log then holds the only trace, though the gate still treats an unreadable area as Off. An `off` posted while merge checks are running does not stop the merge already in flight (the same as `set_mode`).
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**

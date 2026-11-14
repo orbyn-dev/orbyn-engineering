@@ -4,7 +4,8 @@
 //! - an area that follows its ceiling is on the ceiling;
 //! - an area the breaker has lowered is on `On`, but **only when the ceiling is `Full`**: a ceiling of `On` or `Off` is never changed;
 //! - a person's `keep_ceiling` override ignores that lowering for the area, and `off` makes it `Off` (stricter than any ceiling);
-//! - an area whose state cannot be read is treated as lowered and the failure is written to the approval ledger (rule 7).
+//! - an area whose state cannot be read is treated as `Off`, so every diff in it waits for a person, and the failure is written to the
+//!   approval ledger (rule 7). Off, not On: a person may have set the area to Off, and a failure to read must never loosen that.
 //!
 //! The risk tier is not touched: a high-risk diff in a lowered area waits under the same rule `On` has, and nothing else changes.
 //! The chain and the tier do not read an area in version 1.
@@ -44,7 +45,7 @@ pub(crate) enum Why {
     Kept,
     /// A person set it to `Off`.
     SetOff,
-    /// Its state could not be read.
+    /// Its state could not be read, so it is treated as Off.
     Unreadable,
 }
 
@@ -98,7 +99,7 @@ fn sentence(area: &str, mode: Mode, why: Why, merges: u32, reverts: u32) -> Stri
         ),
         Why::SetOff => format!("Area {area} is on {on}: a person set it · {record}"),
         Why::Unreadable => format!(
-            "Area {area} is on {on}: its state could not be read, so it is treated as lowered"
+            "Area {area} is on {on}: its state could not be read, so a person releases every merge here"
         ),
     }
 }
@@ -136,6 +137,10 @@ impl Effect {
             (Mode::Off, _) if holding.is_empty() => {
                 Some("Autopilot is off, so a person releases every merge.".to_owned())
             }
+            (Mode::Off, _) if holding.iter().any(|l| l.why == Why::Unreadable) => Some(format!(
+                "An area could not be read, so a person releases every merge here. {}.",
+                areas()
+            )),
             (Mode::Off, _) => Some(format!(
                 "An area is set to Off, so a person releases every merge here. {}.",
                 areas()
@@ -152,23 +157,21 @@ impl Effect {
     }
 }
 
-impl Core {
-    /// The mode of each of `areas` of `project` under `ceiling` at `now`. An error means the state could not be read.
-    pub(crate) fn area_lines(
-        &self,
-        project: &str,
-        areas: &[String],
-        ceiling: Mode,
-        now: i64,
-    ) -> Result<Vec<AreaLine>> {
-        let merges: Vec<MergeRecord> = self.store.crew_merges_of_project(project)?;
-        let rows = self.store.area_modes(project)?;
-        Ok(areas
+/// What the area modes of one project are computed from, read once: its merges and its stored area rows.
+pub(crate) struct AreaSnapshot {
+    merges: Vec<MergeRecord>,
+    rows: Vec<AreaMode>,
+}
+
+impl AreaSnapshot {
+    /// The mode of each of `areas` under `ceiling` at `now`.
+    pub(crate) fn lines(&self, areas: &[String], ceiling: Mode, now: i64) -> Vec<AreaLine> {
+        areas
             .iter()
             .map(|area| {
-                let row = rows.iter().find(|r| &r.area == area);
+                let row = self.rows.iter().find(|r| &r.area == area);
                 let stored = stored_of(row);
-                let facts = facts_of(&merges, area, stored, now);
+                let facts = facts_of(&self.merges, area, stored, now);
                 let trips_now = decide(&facts, stored, ceiling, now) == Change::Demote;
                 let (mode, why) = area_mode(row, ceiling, trips_now);
                 AreaLine {
@@ -178,11 +181,51 @@ impl Core {
                     line: sentence(area, mode, why, facts.window.merges, facts.window.reverts),
                 }
             })
-            .collect())
+            .collect()
+    }
+
+    /// The ceiling that applies to an area: the mode of the crew whose merge touched it last, else the repository's. Used for the trail of
+    /// a person's choice, which belongs to no single merge.
+    pub(crate) fn latest_crew_of(&self, area: &str) -> Option<&str> {
+        self.merges
+            .iter()
+            .filter(|m| m.areas.iter().any(|a| a == area))
+            .max_by_key(|m| (m.merged_unix, m.id))
+            .map(|m| m.crew_id.as_str())
+    }
+}
+
+impl Core {
+    /// The merges and area rows of `project`, read once. An error means the state could not be read.
+    pub(crate) fn area_snapshot(&self, project: &str) -> Result<AreaSnapshot> {
+        Ok(AreaSnapshot {
+            merges: self.store.crew_merges_of_project(project)?,
+            rows: self.store.area_modes(project)?,
+        })
+    }
+
+    /// The mode of each of `areas` of `project` under `ceiling` at `now`. An error means the state could not be read.
+    pub(crate) fn area_lines(
+        &self,
+        project: &str,
+        areas: &[String],
+        ceiling: Mode,
+        now: i64,
+    ) -> Result<Vec<AreaLine>> {
+        Ok(self.area_snapshot(project)?.lines(areas, ceiling, now))
+    }
+
+    /// The ceiling of an area for a person's choice: the crew that merged into it last (`crew_autopilot_mode`, the same function the gate
+    /// uses), else the repository's.
+    pub(crate) fn area_ceiling(&self, project: &str, snapshot: &AreaSnapshot, area: &str) -> Mode {
+        match snapshot.latest_crew_of(area) {
+            Some(crew) => self.crew_autopilot_mode(project, crew),
+            None => self.crew_project_mode(project),
+        }
     }
 
     /// The mode a task's merge runs under: its ceiling (the crew's mode) lowered by every area its diff touches. **Fails closed:** when
-    /// the areas cannot be read, each is treated as lowered and the failure is written to the approval ledger, where the person sees it.
+    /// the areas cannot be read, each is treated as `Off` and the failure is written to the approval ledger, where the person sees it.
     pub(crate) fn merge_effect(&self, task_id: &str, areas: &[String], now: i64) -> Result<Effect> {
         let ceiling = self.merge_mode(task_id)?;
         let project = self
@@ -191,30 +234,23 @@ impl Core {
         let lines = match self.area_lines(&project, areas, ceiling, now) {
             Ok(lines) => lines,
             Err(error) => {
-                tracing::warn!(%error, "could not read the areas of a merge; treating them as lowered");
+                tracing::warn!(%error, "could not read the areas of a merge; treating them as Off");
                 self.merge_event(
                     task_id,
                     "area_read_failed",
                     &json!({
                         "areas": areas,
                         "why": error.public_message(),
-                        "treated_as": "lowered",
+                        "treated_as": "off",
                     }),
                 );
                 areas
                     .iter()
-                    .map(|area| {
-                        let (mode, why) = if ceiling == Mode::Full {
-                            (Mode::On, Why::Unreadable)
-                        } else {
-                            (ceiling, Why::Unreadable)
-                        };
-                        AreaLine {
-                            area: area.clone(),
-                            mode,
-                            why,
-                            line: sentence(area, mode, why, 0, 0),
-                        }
+                    .map(|area| AreaLine {
+                        area: area.clone(),
+                        mode: Mode::Off,
+                        why: Why::Unreadable,
+                        line: sentence(area, Mode::Off, Why::Unreadable, 0, 0),
                     })
                     .collect()
             }
@@ -236,15 +272,39 @@ impl Core {
         ceiling: Mode,
         now: i64,
     ) -> Vec<AreaLine> {
-        let read = self
-            .project_of_task(task_id)
-            .and_then(|project| match project {
-                Some(project) => self.area_lines(&project, areas, ceiling, now),
-                None => Ok(Vec::new()),
-            });
-        read.unwrap_or_else(|error| {
-            tracing::warn!(%error, "could not read the areas of a merge for a view");
-            Vec::new()
-        })
+        self.area_modes_cached(&mut AreaCache::new(), task_id, areas, ceiling, now)
+    }
+
+    /// [`Self::area_modes_of`] reading each project's merges and area rows once for a whole page, not once per item.
+    pub(crate) fn area_modes_cached(
+        &self,
+        cache: &mut AreaCache,
+        task_id: &str,
+        areas: &[String],
+        ceiling: Mode,
+        now: i64,
+    ) -> Vec<AreaLine> {
+        let project = match self.project_of_task(task_id) {
+            Ok(Some(project)) => project,
+            Ok(None) => return Vec::new(),
+            Err(error) => {
+                tracing::warn!(%error, "could not read the areas of a merge for a view");
+                return Vec::new();
+            }
+        };
+        let snapshot = cache.entry(project.clone()).or_insert_with(|| {
+            self.area_snapshot(&project)
+                .map_err(|error| {
+                    tracing::warn!(%error, "could not read the areas of a merge for a view");
+                })
+                .ok()
+        });
+        snapshot
+            .as_ref()
+            .map(|s| s.lines(areas, ceiling, now))
+            .unwrap_or_default()
     }
 }
+
+/// The snapshots one page of a view reads, by project.
+pub(crate) type AreaCache = std::collections::HashMap<String, Option<AreaSnapshot>>;

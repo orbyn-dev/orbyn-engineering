@@ -50,7 +50,7 @@ mod threads;
 pub use changes::{KeptChange, Snapshot};
 pub use crew::CrewTask;
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
-pub use crew_autonomy_person::{PersonWrite, SeenTrip};
+pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
     BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,

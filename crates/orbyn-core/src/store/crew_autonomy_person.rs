@@ -4,15 +4,20 @@
 //! local process that holds the service token can post the same request, the limit `set_mode` and the other Crew writes have.
 
 use rusqlite::{OptionalExtension, Transaction, params};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::crew_autonomy::mode_row;
 use super::{AreaMode, AuditRecord, Store, insert_audit};
 use crate::error::{CoreError, Result};
 
-/// What the person saw when they chose: the area's `tripped_at` (the record's counts are compared by the caller).
+/// What the person saw when they chose: the window's counts and when the breaker lowered the area. Compared **inside** the transaction
+/// that writes, so a revert that lands in between makes the choice stale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SeenTrip(pub Option<i64>);
+pub struct Seen {
+    pub merges: u32,
+    pub reverts: u32,
+    pub tripped_at: Option<i64>,
+}
 
 /// One choice of a person. `choice` is `keep_ceiling` or `off`; `None` returns the area to following the record.
 #[derive(Clone, Debug)]
@@ -20,14 +25,14 @@ pub struct PersonWrite<'a> {
     pub project_id: &'a str,
     pub area: &'a str,
     pub choice: Option<&'a str>,
-    /// The trip the person saw. A different one is `stale`. `None` skips the check (a follow need not carry one).
-    pub seen: Option<SeenTrip>,
+    /// The record the person saw. A different one is `stale`. `None` skips the check (a follow need not carry one).
+    pub seen: Option<Seen>,
+    /// The start of the window the counts are read over.
+    pub window_since: i64,
     pub reason: Option<&'a str>,
     /// The mode the area was on and will be on, for the trail.
     pub from_mode: &'a str,
     pub to_mode: &'a str,
-    /// The window's counts when the person chose, kept in the event.
-    pub record: &'a Value,
     pub at: i64,
 }
 
@@ -41,19 +46,38 @@ fn current(tx: &Transaction<'_>, project: &str, area: &str) -> Result<Option<Are
         .optional()?)
 }
 
+/// The merges of the project in the window that touched the area, and how many of them are reverted now. The same count the breaker
+/// makes from `crew_merges_of_project`, done in the transaction.
+fn window_counts(tx: &Transaction<'_>, write: &PersonWrite<'_>) -> Result<(u32, u32)> {
+    Ok(tx.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(m.review_state = 'reverted'), 0) FROM crew_merges m
+         JOIN crew_runs r ON r.task_id = m.task_id
+         JOIN threads t ON t.id = r.lead_thread_id
+         WHERE t.project_id = ?1 AND m.merged_unix >= ?2
+           AND EXISTS (SELECT 1 FROM json_each(m.areas) j WHERE j.value = ?3)",
+        params![write.project_id, write.window_since, write.area],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)
+}
+
 impl Store {
     /// Sets or clears a person's override. Returns whether anything changed: the same choice twice records nothing the second time.
     pub fn record_area_override(&self, write: &PersonWrite<'_>) -> Result<bool> {
-        let record = serde_json::to_string(write.record)?;
         self.commit(|tx, _| {
             let row = current(tx, write.project_id, write.area)?;
+            let (merges, reverts) = window_counts(tx, write)?;
             if let Some(seen) = write.seen
-                && seen.0 != row.as_ref().and_then(|r| r.tripped_at)
+                && (
+                    seen.merges,
+                    seen.reverts,
+                    seen.tripped_at,
+                ) != (merges, reverts, row.as_ref().and_then(|r| r.tripped_at))
             {
                 return Err(CoreError::Stale(
                     "This area changed since you looked. Reload it and choose again.".into(),
                 ));
             }
+            let record = json!({ "merges": merges, "reverts": reverts, "window_days": 14, "escapes": null }).to_string();
             let held = row.as_ref().and_then(|r| r.person_override.as_deref());
             if held == write.choice {
                 return Ok(false);

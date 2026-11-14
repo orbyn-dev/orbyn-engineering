@@ -20,6 +20,8 @@ mod person;
 mod retry;
 mod view;
 
+pub(crate) use effective::AreaCache;
+
 /// The window the breaker reads, in days. Proposed.
 pub const WINDOW_DAYS: i64 = 14;
 /// Merges the window needs before the breaker decides anything. Proposed.

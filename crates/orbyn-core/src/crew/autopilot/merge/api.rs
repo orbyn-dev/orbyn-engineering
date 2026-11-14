@@ -516,6 +516,7 @@ impl Core {
         self.crew_preview_only()?;
         let all = self.crew_review_queue(now)?;
         let mut scrubs = Scrubs::new(self)?;
+        let mut areas = crate::crew::autopilot::AreaCache::new();
         let items = slice(&all, page)
             .into_iter()
             .map(|item| {
@@ -529,7 +530,7 @@ impl Core {
                     .as_ref()
                     .map(|m| {
                         let ceiling = Mode::parse(&m.mode).unwrap_or_default();
-                        self.area_modes_of(&m.task_id, &m.areas, ceiling, now)
+                        self.area_modes_cached(&mut areas, &m.task_id, &m.areas, ceiling, now)
                             .iter()
                             .filter(|l| l.marked())
                             .map(|l| wire::AutopilotAreaMode {
