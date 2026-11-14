@@ -217,6 +217,7 @@ pub(super) mod tests_panic {
 
     static TASKS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn arm(task: &str) {
         TASKS.lock().unwrap().push(task.to_owned());
     }
