@@ -3,13 +3,16 @@ import type { ApiFailure } from "../../../api/client";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import type { FlowMessage } from "../../../generated/FlowMessage";
 import { mapApi } from "./api";
+import { memberFilterable } from "./model";
 
 export const useCrewMap = (crew: string) => useAsync(`crew-map:${crew}`, (signal) => mapApi.map(crew, signal));
 export const useCrewFacts = (crew: string) => useAsync(`crew-facts:${crew}`, (signal) => mapApi.facts(crew, signal));
 
 /** One crew's messages (all of them, or one member's) and the pages "+N more" added. A page is a read. */
 export function useCrewMessages(crew: string, member: string | null) {
-  const first = useAsync(`crew-messages:${crew}|${member ?? ""}`, (signal) => mapApi.messages(crew, member, 0, signal));
+  // A member whose name the service would refuse is never sent: nothing is read, and the list says it cannot be filtered.
+  const filterable = member === null || memberFilterable(member);
+  const first = useAsync(`crew-messages:${crew}|${member ?? ""}`, (signal) => (filterable ? mapApi.messages(crew, member, 0, signal) : Promise.resolve({ messages: [], total: 0, next_offset: null })));
   const [more, setMore] = useState<{ of: unknown; rows: FlowMessage[]; next: number | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<ApiFailure | null>(null);
@@ -20,7 +23,7 @@ export function useCrewMessages(crew: string, member: string | null) {
   const rows = [...(page?.messages ?? []), ...(mine?.rows ?? [])];
   const next = mine ? mine.next : (page?.next_offset ?? null);
   const showMore = async () => {
-    if (!page || next === null || inFlight.current) return;
+    if (!page || next === null || inFlight.current || !filterable) return;
     inFlight.current = true;
     setBusy(true);
     setFailed(null);
@@ -34,5 +37,5 @@ export function useCrewMessages(crew: string, member: string | null) {
       setBusy(false);
     }
   };
-  return { first, rows, total: page?.total ?? 0, next, showMore, busy, failed };
+  return { first, rows, total: page?.total ?? 0, next, showMore, busy, failed, filterable };
 }

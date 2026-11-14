@@ -7,7 +7,7 @@
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
  *
  * Scenarios: `crew` (two crews), `crew-empty` (no crews), `crew-flow-empty` (a crew with no tasks), `crew-flow-truncated`
- * (the service's cap was hit), `crew-flow-many` (more tasks than one page), `crew-flow-leak` (a service that wrongly sends a gate reason
+ * (the service's cap was hit), `crew-flow-many` (more tasks than one page), `crew-flow-hostile` (extra fields on lanes and findings that no screen may draw), `crew-flow-leak` (a service that wrongly sends a gate reason
  * for a task that is not over, which the screen must not show).
  */
 import type { FlowCell } from "../src/generated/FlowCell.ts";
@@ -20,6 +20,7 @@ import type { FlowTaskDetail } from "../src/generated/FlowTaskDetail.ts";
 import type { FlowTaskList } from "../src/generated/FlowTaskList.ts";
 import type { FlowTaskRow } from "../src/generated/FlowTaskRow.ts";
 import type { MockResponse } from "./api.ts";
+import { HOSTILE } from "./hostile.ts";
 
 export const MOCK_CREW = "crew-redirect-0001";
 export const MOCK_CREW_TWO = "crew-docs-0002";
@@ -189,7 +190,11 @@ export function flowMock(scenario: string, method: string, path: string, query: 
     const found = [...samples(), ...many()].find((one) => one.row.id === decodeURIComponent(id));
     if (!found) return missing("task");
     const leaked = scenario === "crew-flow-leak" ? found.detail.gates.map((gate) => ({ ...gate, reason: "A reason for a task that is not over" })) : found.detail.gates;
-    const body: FlowTaskDetail = { row: found.row, ...found.detail, gates: leaked, truncated: false };
+    const hostile = scenario === "crew-flow-hostile";
+    const detail = hostile
+      ? { ...found.detail, lanes: found.detail.lanes.map((lane) => ({ ...lane, thread: HOSTILE.thread, worktree: HOSTILE.worktree })), findings: found.detail.findings.map((finding) => ({ ...finding, body: HOSTILE.body, text: HOSTILE.text })) }
+      : found.detail;
+    const body: FlowTaskDetail = { row: found.row, ...detail, gates: leaked, truncated: false };
     return { status: 200, body };
   }
   return null;

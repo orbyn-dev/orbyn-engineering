@@ -121,6 +121,8 @@ const inert = (label: string, note: string): MenuItem => ({
 
 function Detail({ crew, node, onClose }: { crew: string; node: FlowNode; onClose(): void }) {
   const messages = useCrewMessages(crew, node.member);
+  // The same shared refresh as the other lists: every 30 s while the window is visible, paused while hidden, only for what is shown.
+  useRefresh(messages.first.reload, messages.first.status !== "ready" || !messages.filterable || messages.rows.length > (messages.first.data?.messages.length ?? 0));
   const state = stateWord(node);
   const model = modelWord(node);
   const button = useRef<HTMLButtonElement>(null);
@@ -190,7 +192,8 @@ function Detail({ crew, node, onClose }: { crew: string; node: FlowNode; onClose
       <h4>Messages</h4>
       {messages.first.status === "loading" ? <Loading label="Reading messages" rows={2} /> : null}
       {messages.first.status === "error" && !messages.first.data ? <ErrorState compact title="Can’t read messages" failure={messages.first.error} onRetry={() => void messages.first.reload()} /> : null}
-      {messages.first.data ? <MessageLines rows={messages.rows} total={messages.total} /> : null}
+      {!messages.filterable ? <p className="mp-muted">Messages can’t be filtered for this member: its name is withheld.</p> : null}
+      {messages.first.data && messages.filterable ? <MessageLines rows={messages.rows} total={messages.total} /> : null}
       {messages.next !== null ? (
         <Button small busy={messages.busy} onClick={() => void messages.showMore()}>
           +{Math.max(0, messages.total - messages.rows.length)} more

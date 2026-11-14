@@ -2,7 +2,7 @@ import { act, render, renderHook, screen, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
-import { HOSTILE_BODY, HOSTILE_VALUE } from "../../../../mock/map";
+import { HOSTILE_MARKERS } from "../../../../mock/hostile";
 import { MOCK_CREW } from "../../../../mock/flow";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
@@ -175,13 +175,50 @@ describe("the Crew map on the map route", () => {
     expect(nonGets()).toHaveLength(0);
   });
 
-  it("never draws a message body, a fact value or a thread a hostile service adds to its answers", async () => {
+  it("never draws a message body, a thread, a worktree, tokens or a level a hostile service adds, as text or in any attribute", async () => {
     const user = await openMap("crew-map-hostile");
     await user.click(row(/Add tests for the redirect/));
     await screen.findByRole("list", { name: "Messages" });
-    expect(document.body.textContent).not.toContain(HOSTILE_BODY);
-    expect(document.body.textContent).not.toContain(HOSTILE_VALUE);
-    expect(document.body.innerHTML).not.toContain(HOSTILE_BODY);
+    // The whole serialised page: text, titles, aria-*, data-* and every other attribute.
+    for (const marker of HOSTILE_MARKERS) expect(document.body.innerHTML, marker).not.toContain(marker);
+  });
+
+  it("does not send a member filter for a name the service scrubbed, and says it cannot be filtered", async () => {
+    const user = await openMap("crew-map-scrubbed");
+    await user.click(row(/Work whose member name was scrubbed/));
+    expect(await screen.findByText("Messages can’t be filtered for this member: its name is withheld.")).toBeVisible();
+    await user.click(row(/Work whose member name was withheld/));
+    expect(await screen.findByText("Messages can’t be filtered for this member: its name is withheld.")).toBeVisible();
+    expect(urls().some((url) => url.includes("/flow/messages"))).toBe(false);
+    // A member with a real name is still filtered.
+    await user.click(row(/Add tests for the redirect/));
+    await screen.findByRole("list", { name: "Messages" });
+    expect(urls().filter((url) => url.includes("/flow/messages") && url.includes("member=tests"))).toHaveLength(1);
+  });
+
+  it("reads the details' messages again every 30 seconds while the window is visible, and not while it is hidden", async () => {
+    const user = await openMap();
+    await user.click(row(/Add tests for the redirect/));
+    await screen.findByRole("list", { name: "Messages" });
+    const reads = () => urls().filter((url) => url.includes("/flow/messages") && url.includes("member=tests")).length;
+    expect(reads()).toBe(1);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      // The interval was set under real timers; a new selection sets one under the fake clock.
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await user.click(row(/Add tests for the redirect/));
+      await screen.findByRole("list", { name: "Messages" });
+      const base = reads();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await waitFor(() => expect(reads()).toBe(base + 1));
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(reads()).toBe(base + 1);
+    } finally {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      vi.useRealTimers();
+    }
+    expect(nonGets()).toHaveLength(0);
   });
 });
 
@@ -251,11 +288,20 @@ describe("the conversation lanes on the message and fact routes", () => {
     expect(calls("offset=50")).toHaveLength(1);
   });
 
-  it("never draws a message body or a fact value a hostile service adds", async () => {
+  it("never draws a message body, a fact value, a thread or a worktree a hostile service adds, as text or in any attribute", async () => {
     await openLanes("crew-map-hostile");
     await screen.findByRole("list", { name: "Facts" });
-    expect(document.body.textContent).not.toContain(HOSTILE_BODY);
-    expect(document.body.textContent).not.toContain(HOSTILE_VALUE);
+    await screen.findByRole("list", { name: "Messages" });
+    for (const marker of HOSTILE_MARKERS) expect(document.body.innerHTML, marker).not.toContain(marker);
+  });
+
+  it("does not offer a scrubbed member name as a filter", async () => {
+    await openLanes("crew-map-scrubbed");
+    await screen.findByRole("list", { name: "Lanes" });
+    const option = screen.getByRole("option", { name: "[redacted] (can’t be filtered)" });
+    expect(option).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Withheld. (can’t be filtered)" })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "tests" })).toBeEnabled();
   });
 
   it("names an unreadable service and retries with reads only", async () => {
