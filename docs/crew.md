@@ -1235,6 +1235,37 @@ and processes a worker leaves running. A worker can learn which project folder n
 whole is not claimed safe. Codex workers are refused until the nested-profile question is answered, and Codex's
 conversation files are a second reason to keep it so.
 
+## As built (cancel)
+
+The person's stop button for a Crew task (Preview). Backend only: the card action that calls it is Engineering 1's.
+
+- **What exists:** core `Core::crew_cancel_task(task, reason, actor)` and `POST /api/crew/tasks/{id}/cancel` (body empty, or
+  `{ "reason": "..." }`, 1 to 200 characters, redacted). The answer is `{ task, state: "cancelled", already }`. With the Preview flag off the
+  route is 404.
+- **Person only.** The route is `local_only` (a remote viewer gets 403) and is in `crew::changes::STATE_CHANGING`, so Autopilot's N1
+  refuses an agent's request to it by path. There is no MCP tool for it and no crew tool takes it. This is not an Autopilot stop:
+  `GET /api/crew/stops` lists Autopilot's, and a cancel is the person's own act.
+- **Answers.** An unknown id is `not_found`. A task already `cancelled` is `already: true`: no second row, no second effect. A task that
+  `passed` or `stopped` is `409 task_ended` ("This task already ended."). Every other state (briefed, routed, running, verifying,
+  failed, changed_approach, needs_person) can be cancelled, as the lifecycle table says.
+- **Order, failing closed.** (1) One transaction checks the task and writes the intent row `crew.task.cancel` (actor, source, task id,
+  previous state, whether a verification was claimed, the reason): the row comes before every effect (architecture rule 6). (2) The
+  worker's engine is stopped through `RunManager::force_stop`, which also kills the engine's process tree and closes a run that will not
+  stop; its queue is emptied first, so no new turn starts, and the core checks the worker has no run and nothing queued. (3) One
+  transaction moves the task to `cancelled` (clearing a verification claim) together with the row `crew.task.cancelled`; then the
+  existing end of a task runs (leases released, a final `cancelled` result, the lead told).
+- **If the engine cannot be confirmed stopped,** the task keeps its state, a `crew.task.cancel_failed` row records the attempt and the
+  caller gets `502 engine_unavailable`. A retry is a new attempt with its own intent row. A task that ended some other way during the
+  stop (it passed, say) is `409 task_ended`, with a `cancel_failed` row.
+- **Verification.** Cancelling a `verifying` task clears its claim. A verification still running stops before its next check and cannot
+  settle the task: `passed`, `failed` and the loop guard refuse a cancelled task.
+- **No merge.** Only a `passed` task is queued for merge, and a cancelled one is refused there (tested).
+- **Not built:** the card action (Engineering 1); reassign, message into a lane, add a lane and a person's answer, which are out of the
+  beta. No new event on the bus or the Autopilot ledger: the audit rows and the final `cancelled` result are the record.
+- **Known limits.** A cancel cannot undo what the worker already wrote in its worktree, and commits already merged stay merged; the
+  worktree itself is left as the existing end of a task leaves it. A check command already running when the cancel lands finishes
+  first (its result is discarded). The stop waits up to four seconds for the engine before it closes the run by force.
+
 ## Open risks
 
 - Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".
