@@ -45,3 +45,5 @@ if (root) {
     </StrictMode>,
   );
 }
+
+// throwaway scope proof
