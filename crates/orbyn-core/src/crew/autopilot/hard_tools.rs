@@ -201,7 +201,8 @@ pub(super) fn n5(ctx: &Ctx<'_>) -> bool {
                     }))
             }
             "branch" => {
-                flags(&["-f", "--force", "-D", "-d", "-m", "-M", "--delete"])
+                (flags(&["--force", "--delete"])
+                    || super::hard::short_has(rest.iter().copied(), &['f', 'D', 'd', 'm', 'M']))
                     && named.iter().any(|w| main(w))
             }
             "checkout" => flags(&["-B"]) && named.iter().any(|w| main(w)),

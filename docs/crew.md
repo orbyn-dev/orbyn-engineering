@@ -894,9 +894,24 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
 What is not built: the guard that watches a worker against its classes (PR B); the Settings screens, the route card and Needs you screens
 (PR C); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
 until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
-(ruling pending). Known limits: **the file is read at the checkout's HEAD at task start; an agent that can run git can move HEAD or commit a change, and the next task reads it; an
-agent that can push to the base branch can change the rules for later tasks** (the N7 check only blocks a git command whose path argument is
-`.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot move, such as the default branch, is follow-up #535. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
+(ruling pending). Known limits: **the rules are read at two places and the stricter applies: the checkout's HEAD at task start, and the project's default
+branch as of the last fetch** (`refs/remotes/origin/HEAD`, else `origin/main`, `origin/master` or `origin/trunk`, else a local `init.defaultBranch`, `main`,
+`master` or `trunk`; with none of them the rules are read at HEAD alone, as before). An engine must be allowed by both, a file that cannot be read on either
+side blocks every engine, and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
+looser one, does not loosen the next task. A remote-tracking ref is moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit in any
+worktree; a local branch is moved by a commit or `git branch -f` on it, so it is the weaker fallback. **Neither is out of an agent's reach:** a worker runs as the person, the
+macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs git plumbing
+or edits `.git` can still move either ref. N7 holds `git update-ref`, `fast-import`, `send-pack`, a writing `symbolic-ref`, any fetch or push whose refspec ends under
+`refs/remotes/` (also spelled `remotes/` or `origin/`, in any case) and `fetch --stdin`, the `git remote` commands that repoint or remove the remote (`set-head`, `rename`, `remove`,
+`add`, `set-url`, `set-branches`), `branch -r` with a delete, move or copy, and a checkout, restore, reset, stash, rm, add, commit and the like that names `.orbyn/crew.json` or `.orbyn`,
+or a revision with a whole checkout (`git checkout <rev> .`). It reads command text, so a path built in a script, a hand edit of `.git`, or a command the parser does not
+recognise is not seen; a bare `git checkout <rev>` names no path and is not held, because the default branch's copy is the check for it. **A project with an `origin` remote blocks every engine, under the rule name `default branch unreadable` (a git setup problem, not a rules file one), until a remote-tracking
+default-branch ref resolves.** A local branch no longer stands in once `origin` is configured, because an agent could have deleted the ref and left the local branch to read. Two cases, with their fixes, which a person
+runs (N7 holds them for an agent): nothing of `origin` is fetched, so run `git fetch origin` (for a new remote with no branches yet, push the default branch first); or `origin` has branches but none is
+`main`, `master`, `trunk` or the one `origin/HEAD` names, so run `git remote set-head origin --auto` (or `git fetch origin <default>`). **A brand-new project whose remote is empty is blocked until its first push (fail closed, by
+design).** With no `origin` remote at all, the local default branch is the ref read, and with none of those either HEAD alone is read, as before; Orbyn does not remember the last pinned commit between tasks, so a repository
+with no `origin` that loses its local default branch is read at HEAD alone again (follow-up #574). **A person or an agent that can push to the
+base branch can still change the rules for later tasks.** A rule that is tighter at HEAD applies at once, because an engine must be allowed by both; a loosening takes effect only once it is on the default branch's tip. `review` lanes, `checks`, `required` and `allowed_hosts` are still read at the base commit only. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
 counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
 that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
 async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) is refused

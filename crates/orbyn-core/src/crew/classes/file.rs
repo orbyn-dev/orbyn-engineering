@@ -25,6 +25,8 @@ pub const REASON_MAX: usize = 200;
 pub const BUILT_IN: &str = "Everything else";
 /// The name of the rule that blocks every engine when the file cannot be trusted.
 pub const INVALID_RULE: &str = "crew.json invalid";
+/// The name of the rule that blocks every engine when the default branch cannot be read: a git setup problem, not a rules file one.
+pub const UNREADABLE_RULE: &str = "default branch unreadable";
 
 /// Keys other slices read. Anything else is reported and ignored.
 const KNOWN_KEYS: [&str; 5] = ["required", "lanes", "checks", "allowed_hosts", "classes"];
@@ -53,6 +55,8 @@ pub struct ClassFile {
     /// Why the file cannot be trusted. Any problem blocks every engine.
     pub problems: Vec<String>,
     pub notes: Vec<String>,
+    /// The problem is the repository's git setup (the default branch cannot be read), not the content of the file.
+    pub setup: bool,
 }
 
 impl ClassFile {
@@ -63,6 +67,14 @@ impl ClassFile {
     /// The words that block every engine while the file is invalid.
     pub fn problem_text(&self) -> String {
         self.problems.first().cloned().unwrap_or_default()
+    }
+
+    /// A file that cannot be read, for a reason that is not about its content.
+    pub fn refused(problem: String) -> Self {
+        Self {
+            setup: true,
+            ..Self::broken(None, None, problem)
+        }
     }
 
     fn broken(commit: Option<&str>, blob: Option<String>, problem: String) -> Self {
@@ -82,6 +94,105 @@ pub async fn base_commit(root: &Path) -> Option<String> {
         .ok()?;
     let sha = text(&out);
     is_object_id(&sha).then_some(sha)
+}
+
+/// A ref the rules are also read at: the project's default branch, which a checkout or a commit on the way does not move.
+#[derive(Clone, Debug)]
+pub struct PinnedRef {
+    /// The ref in short words, such as `origin/main`.
+    pub name: String,
+    /// The commit it pointed at when it was read.
+    pub commit: String,
+}
+
+/// The default branch tip as of the last fetch, or `None` when the repository has no default-branch ref to read. In order: the
+/// remote-tracking ref `origin/HEAD` points at (set by `git clone` or `git remote set-head`); `origin/main`, `origin/master`
+/// or `origin/trunk`; then a local branch named by `init.defaultBranch`, `main`, `master` or `trunk`. A remote-tracking ref is
+/// moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit, in any worktree. A local branch is
+/// moved by a commit or `git branch -f` on it, so it is the weaker fallback, used only when there is no remote-tracking ref.
+/// Neither is out of reach of an agent that runs `git update-ref` in the repository, which the hard rule N7 holds.
+pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(out) = git(root, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).await {
+        let target = text(&out);
+        if target.starts_with("refs/remotes/origin/") && target != "refs/remotes/origin/HEAD" {
+            candidates.push(target);
+        }
+    }
+    candidates.extend(
+        ["main", "master", "trunk"]
+            .iter()
+            .map(|b| format!("refs/remotes/origin/{b}")),
+    );
+    if let Ok(out) = git(root, &["config", "--get", "init.defaultBranch"]).await {
+        let name = text(&out);
+        // A value such as `main~3` or `@{-1}` is not a branch name: git's own check must give the same name back.
+        if !name.is_empty()
+            && !name.starts_with('-')
+            && git(root, &["check-ref-format", "--branch", &name])
+                .await
+                .is_ok_and(|checked| text(&checked) == name)
+        {
+            candidates.push(format!("refs/heads/{name}"));
+        }
+    }
+    candidates.extend(
+        ["main", "master", "trunk"]
+            .iter()
+            .map(|b| format!("refs/heads/{b}")),
+    );
+    for full in candidates {
+        let spec = format!("{full}^{{commit}}");
+        let Ok(out) = git(root, &["rev-parse", "--verify", "-q", &spec]).await else {
+            continue;
+        };
+        let commit = text(&out);
+        if is_object_id(&commit) {
+            let name = full
+                .strip_prefix("refs/remotes/")
+                .or_else(|| full.strip_prefix("refs/heads/"))
+                .unwrap_or(&full)
+                .to_owned();
+            return Some(PinnedRef { name, commit });
+        }
+    }
+    None
+}
+
+/// The default branch and the file at it. When `origin` is a configured remote and none of its branches has been fetched, the
+/// default branch cannot be read: that is a file that cannot be trusted, never a repository with no default branch. With no
+/// `origin` remote and no default-branch ref there is nothing to read, and `None` leaves HEAD alone.
+pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
+    let url = git(root, &["config", "--get", "remote.origin.url"])
+        .await
+        .map(|out| text(&out))
+        .unwrap_or_default();
+    let pin = pinned_ref(root).await;
+    if url.is_empty() {
+        let pin = pin?;
+        let file = read_class_file(root, Some(&pin.commit)).await;
+        return Some((pin, file));
+    }
+    let fetched = git(root, &["for-each-ref", "--count=1", "refs/remotes/origin/"])
+        .await
+        .map(|out| !text(&out).is_empty())
+        .unwrap_or(false);
+    // A remote-tracking ref that resolved is the default branch. Anything else, with `origin` configured, is not readable: a
+    // local branch would stand in for a ref an agent could have deleted.
+    if let Some(pin) = pin.filter(|p| fetched && p.name.starts_with("origin/")) {
+        let file = read_class_file(root, Some(&pin.commit)).await;
+        return Some((pin, file));
+    }
+    let pin = PinnedRef {
+        name: "origin".to_owned(),
+        commit: "none".to_owned(),
+    };
+    let why = if fetched {
+        "the default branch of the remote origin cannot be told: it has branches here but none is main, master or trunk, and origin/HEAD is not set. Run `git remote set-head origin --auto` (or `git fetch origin <default>`) yourself; an agent is not allowed to"
+    } else {
+        "the project has a remote named origin but none of its branches has been fetched, so the default branch cannot be read. Run `git fetch origin`; for a new remote with no branches yet, push the default branch first"
+    };
+    Some((pin, ClassFile::refused(why.to_owned())))
 }
 
 fn is_object_id(text: &str) -> bool {
@@ -232,6 +343,7 @@ pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
             rules,
             problems: Vec::new(),
             notes,
+            setup: false,
         },
         Err(problem) => fail(Some(blob), problem),
     }

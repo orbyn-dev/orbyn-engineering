@@ -102,11 +102,23 @@ fn classes_text(classes: &PathClasses) -> String {
         (Some(commit), None) => format!(" Rules read at commit {commit}."),
         _ => String::new(),
     };
+    let from = match &classes.pinned {
+        Some(pinned) => format!(
+            "{from} Also read at {} (the default branch), commit {}.",
+            pinned.name, pinned.commit
+        ),
+        None => from,
+    };
     let every = classes
-        .unknown
-        .as_ref()
+        .unknown_why()
         .map_or_else(String::new, |why| format!(" Every class counted: {why}."));
-    format!("Path classes: {}.{every}{from}", classes.names().join(", "))
+    let differ = classes
+        .differs()
+        .map_or_else(String::new, |words| format!(" {words}"));
+    format!(
+        "Path classes: {}.{every}{from}{differ}",
+        classes.names().join(", ")
+    )
 }
 
 fn refusal(

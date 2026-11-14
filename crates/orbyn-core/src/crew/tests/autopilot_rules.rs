@@ -264,6 +264,115 @@ fn n7_answer_keys_check_files_and_the_crew_rules() {
 }
 
 #[test]
+fn n7_holds_a_checkout_or_commit_that_removes_or_changes_the_crew_rules() {
+    for text in [
+        "git checkout HEAD~1 -- .orbyn/crew.json",
+        "git checkout abc1234 .orbyn",
+        "git restore --source=abc1234 .orbyn/crew.json",
+        "git restore --source abc1234 .",
+        "git rm .orbyn/crew.json",
+        "git rm -r .orbyn",
+        "git rm -r -q .",
+        "git commit -m x -- .orbyn/crew.json",
+        "git add .orbyn/crew.json",
+        "git reset abc1234 -- .orbyn/crew.json",
+        "git reset abc1234 -- .",
+        "git stash push -- .orbyn/crew.json",
+        "git -C . checkout main -- ./.orbyn/crew.json",
+        "git checkout abc1234 .",
+        "git checkout abc1234 -- .",
+        "rm -rf .orbyn",
+    ] {
+        assert_eq!(command(text), Some("N7"), "{text}");
+    }
+}
+
+#[test]
+fn n7_holds_every_way_to_move_the_ref_the_rules_are_also_read_at() {
+    for text in [
+        "git update-ref refs/remotes/origin/main abc1234",
+        "git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/old",
+        "git symbolic-ref HEAD refs/heads/other",
+        "git symbolic-ref -d refs/remotes/origin/HEAD",
+        "git fetch origin +abc1234:refs/remotes/origin/main",
+        "git fetch . +abc1234:remotes/origin/main",
+        "git push . HEAD:remotes/origin/main",
+        "git push . HEAD:refs/REMOTES/origin/main",
+        "git push . HEAD:origin/main",
+        "git send-pack . abc1234:refs/remotes/origin/main",
+        "git fast-import",
+        "git fetch --stdin",
+        "git remote set-head origin loose",
+        "git remote rename origin old",
+        "git remote remove origin",
+        "git remote rm origin",
+        "git remote add origin /elsewhere",
+        "git remote set-url origin /elsewhere",
+        "git remote set-branches origin x",
+        "git branch -r -D origin/main",
+        "git branch -rd origin/main",
+        "git branch -dr origin/main",
+        "git branch -rD origin/main",
+        "git branch -a -d origin/main",
+        "git branch --remotes --delete origin/main",
+        "git fetch origin loose --refmap=+refs/heads/loose:refs/remotes/origin/main",
+        "git fetch . --refmap=+x:remotes/origin/main x",
+        "git push . HEAD:origin",
+        "git push . HEAD:ORIGIN",
+    ] {
+        assert_eq!(command(text), Some("N7"), "{text}");
+    }
+}
+
+#[test]
+fn n5_reads_bundled_short_flags_of_branch() {
+    for text in [
+        "git branch -Dq main",
+        "git branch -qd main",
+        "git branch -fm other main",
+    ] {
+        assert_eq!(command(text), Some("N5"), "{text}");
+    }
+    assert_eq!(command("git branch -vv main"), None);
+}
+
+#[test]
+fn n7_leaves_reads_and_everyday_git_alone() {
+    for text in [
+        "git show HEAD:.orbyn/crew.json",
+        "git log -- .orbyn/crew.json",
+        "git diff origin/main -- .orbyn/crew.json",
+        "git commit -m fix",
+        "git commit -m msg .",
+        "git commit -m 'fix a b' src/x.rs",
+        "git add src/lib.rs",
+        "git add src/a.rs src/b.rs",
+        "git checkout feature",
+        "git checkout .",
+        "git switch -c topic",
+        "git rm src/old.rs",
+        "git symbolic-ref --short HEAD",
+        "git symbolic-ref -q refs/remotes/origin/HEAD",
+        "git remote -v",
+        "git remote show origin",
+        "git fetch origin",
+        "git fetch origin main",
+        "git push origin feature/x",
+        "git push origin HEAD:feature",
+        "git branch -r",
+        "git branch -d topic",
+        "git branch -a",
+        "git branch -v",
+        "git branch -rv",
+        "git branch -vv",
+        "git push origin HEAD:origin-fix",
+        "git fetch origin loose --refmap=+refs/heads/loose:refs/heads/loose",
+    ] {
+        assert_eq!(command(text), None, "{text}");
+    }
+}
+
+#[test]
 fn n8_production_deploys() {
     for text in [
         "kubectl apply -f x.yaml",
