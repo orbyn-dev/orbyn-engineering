@@ -85,13 +85,37 @@ describe("Flow frames (Crew Designs)", () => {
     const pruned = await openFrame("flow-artifact-pruned");
     expect(pruned.container.textContent).not.toContain("after 30 days");
     pruned.unmount();
-    const task = await openFrame("flow-task");
+    const task = await openFrame("flow-check-failed");
     expect(task.container.textContent).not.toContain("Planned");
   });
 
   it.each(FLOW_FRAMES)("#/preview/crew/%s: shows no check command, exit code or Proves text (v38)", async (name) => {
     const { container } = await openFrame(name);
     for (const text of ["npm test auth", "tsc --noEmit", "Proves", "exit 0 ·"]) expect(container.textContent).not.toContain(text);
+  });
+
+  it.each([
+    "flow-task", "flow-task-loop", "flow-check-failed", "flow-artifact-diff", "flow-replay", "flow-running", "flow-lanes-many", "flow-long-loop", "flow-skipped",
+    "flow-offline", "flow-pr-review", "flow-you-ready", "flow-you-rule", "flow-you-blocked", "flow-you-waiting-on", "flow-you-off", "flow-artifact-pruned",
+  ])("#/preview/crew/%s follows Crew Designs v41: Add reviewer is After the beta", async (name) => {
+    const { container } = await openFrame(name);
+    expect(container.textContent).toContain("Add reviewerAfter the beta");
+  });
+
+  it("follows Crew Designs v41: the PR parts are Planned and the re-run buttons say when the write route ships", async () => {
+    for (const name of ["flow-task", "flow-artifact-diff", "flow-lanes-many", "flow-offline", "flow-pr-review", "flow-artifact-pruned"]) {
+      const view = await openFrame(name);
+      expect(view.container.textContent, name).toContain("PRPlanned");
+      view.unmount();
+    }
+    const skipped = await openFrame("flow-skipped");
+    expect(skipped.container.textContent).toContain("Optional by defaultPlanned");
+    skipped.unmount();
+    const artifacts = await openFrame("flow-artifacts");
+    expect(artifacts.container.textContent).toContain("Re-run all: Available when the write route ships");
+    artifacts.unmount();
+    const pruned = await openFrame("flow-artifact-pruned");
+    expect(pruned.container.textContent).toContain("Re-run the check: Available when the write route ships");
   });
 
   it("draws the narrow variants at the designed widths", async () => {

@@ -58,6 +58,7 @@ export function FlowArtifacts() {
                   <b>File scope · passed</b>
                 </div>
                 <div className="cx-ra"><Btn className="cx-btn">Open results</Btn><Btn className="cx-ghost">Re-run all</Btn></div>
+                <div style={{ marginTop: "6px" }}><span className="cx-cwpv" style={{ marginLeft: "0" }}>Re-run all: Available when the write route ships</span></div>
               </div>
               <div className="cx-fpop" style={{ width: "320px" }}>
                 <h6><Ic n="bug" sm />Findings · Code review → Security review</h6>

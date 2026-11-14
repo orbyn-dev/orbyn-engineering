@@ -256,7 +256,7 @@ describe("the Inbox tab of the Crew page", () => {
     const user = userEvent.setup();
     render(<CrewSurface tab="approvals" />);
     const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((one) => one.textContent)).toEqual(["Approvals", "Trust", "Background", "Inbox"]);
+    expect(tabs.map((one) => one.textContent)).toEqual(["Approvals", "Trust", "Background", "Inbox", "Flow"]);
     await user.click(screen.getByRole("tab", { name: "Inbox" }));
     expect(await screen.findByRole("list", { name: "Needs you" })).toBeVisible();
   });

@@ -17,7 +17,7 @@ export function FlowArtifactPruned() {
               <Ic n="right" sm />
               <b>Use next in the auth redirect</b>
               <span className="cx-fbadge">Replay · 41 days ago</span>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer</span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "322px", width: "1110px" }}>
               <span className="cx-fh" style={{ left: "0px", top: "22px", width: "93px" }}><Ic n="brief" sm />Brief</span>
@@ -158,7 +158,7 @@ export function FlowArtifactPruned() {
               <span><i className="cx-fgt cx-done"><Ic n="diff" sm /></i>diff</span>
               <span><i className="cx-fgt cx-done"><Ic n="check2" sm /></i>check results</span>
               <span><i className="cx-fgt cx-done"><Ic n="bug" sm /></i>findings</span>
-              <span><i className="cx-fgt cx-done"><Ic n="pr" sm /></i>PR</span>
+              <span><i className="cx-fgt cx-done"><Ic n="pr" sm /></i>PR<span className="cx-cwpv">Planned</span></span>
               <span style={{ marginLeft: "8px" }}>Gate decided by:</span>
               <span><i className="cx-fgt cx-done"><Ic n="cpu" sm /></i>code</span>
               <span><i className="cx-fgt cx-done"><Ic n="bug" sm /></i>a confirmed finding</span>
@@ -179,6 +179,7 @@ export function FlowArtifactPruned() {
               </div>
               <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned once a retention window exists; v1 has none yet. The hash stays in the hash-chained ledger, so the log can be checked if you still have a copy. Replay is never truncated: every event stays.</p>
               <div className="cx-ra"><Btn className="cx-ghost">Verify a copy…</Btn><Btn className="cx-ghost">Re-run the check</Btn></div>
+              <div style={{ marginTop: "6px" }}><span className="cx-cwpv" style={{ marginLeft: "0" }}>Re-run the check: Available when the write route ships</span></div>
             </div>
       </div>
     </Frame>
