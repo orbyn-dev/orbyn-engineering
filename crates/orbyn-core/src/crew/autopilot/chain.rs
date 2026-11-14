@@ -96,6 +96,11 @@ fn checked(answer: Answer) -> Answer {
 
 /// Decides an action that needs `need`.
 pub async fn decide(mode: Mode, need: Need, summary: &Summary, approvers: &Approvers) -> Outcome {
+    // The guard comes before the Off short-circuit: a person is never asked in a way that skips it, and no approver is asked at all
+    // unless the mode is Full. The command is held for the person, who may approve it once.
+    if need == Need::Guarded {
+        return guarded(mode, summary, approvers).await;
+    }
     // Off: no one is approved by code, so a person answers as before. The always-denied list has already run.
     if mode == Mode::Off {
         return Outcome::Person {
@@ -156,6 +161,68 @@ pub async fn decide(mode: Mode, need: Need, summary: &Summary, approvers: &Appro
             _ => Outcome::Person {
                 why: "no second approver on another vendor",
             },
+        };
+    };
+    let second = checked(key.decide(summary).await);
+    let name = key.engine().to_owned();
+    if second.approve {
+        Outcome::Allow {
+            decided_by: "two_keys",
+            lead: Some(first),
+            second: Some((name, second)),
+        }
+    } else {
+        Outcome::Deny {
+            decided_by: "two_keys",
+            reason: format!("The second approver disagreed: {}", second.reason),
+            lead: Some(first),
+            second: Some((name, second)),
+            disagreement: true,
+            needs_second_engine: false,
+        }
+    }
+}
+
+/// A destructive command against a production-linked target. Under On and Off nobody is asked: it is denied, and the caller holds it
+/// for the person (no two keys under On or Off). Under Full the lead decides, then a second key on another vendor; with no second
+/// vendor signed in it is denied for now, and when the two keys disagree it is denied.
+async fn guarded(mode: Mode, summary: &Summary, approvers: &Approvers) -> Outcome {
+    if mode != Mode::Full {
+        return deny(
+            "guard",
+            "This command can destroy data on a production-linked target. Autopilot does not approve it in this mode; it is held for you.",
+        );
+    }
+    let Some(lead) = &approvers.lead else {
+        return deny(
+            "no_approver",
+            "No lead is available to approve this, so it was denied.",
+        );
+    };
+    let first = checked(lead.decide(summary).await);
+    if !first.approve {
+        return Outcome::Deny {
+            decided_by: "lead",
+            reason: first.reason.clone(),
+            lead: Some(first),
+            second: None,
+            disagreement: false,
+            needs_second_engine: false,
+        };
+    }
+    let Some(key) = approvers
+        .others
+        .iter()
+        .find(|o| o.family() != lead.family())
+    else {
+        return Outcome::Deny {
+            decided_by: "two_keys",
+            reason: "This can destroy data on a production-linked target and needs a second approver on another vendor. None is signed in, so it was denied for now."
+                .to_owned(),
+            lead: Some(first),
+            second: None,
+            disagreement: false,
+            needs_second_engine: true,
         };
     };
     let second = checked(key.decide(summary).await);

@@ -101,6 +101,9 @@ pub(super) struct Held {
     pub stage: Stage,
     /// The exact request, only while it is held: it is dropped when the hold is decided or ends.
     pub ask: Option<ActionAsk>,
+    /// Why the blast-radius guard held it (`{category, target, matched_by, list}`, already redacted at the source), when it did.
+    /// Every ledger row of the hold carries it.
+    pub guard: Option<Value>,
 }
 
 /// What a new hold is made from.
@@ -112,6 +115,13 @@ pub(super) struct NewHold {
     pub shown: String,
     pub readable: bool,
     pub reason: String,
+    pub guard: Option<Value>,
+}
+
+/// An approval used by its retry: the hold and why it was guarded, if it was.
+pub(super) struct Taken {
+    pub id: String,
+    pub guard: Option<Value>,
 }
 
 /// Why a decision did not happen.
@@ -225,6 +235,7 @@ impl HeldBook {
             until: 0,
             stage: Stage::Held,
             ask: Some(new.ask),
+            guard: new.guard,
         });
         // Past the limit the oldest finished holds go. An approval waiting for its retry, an open hold and a denial still in
         // force (it keeps the same command from being held again) stay until they end.
@@ -361,7 +372,7 @@ impl Core {
 
     /// One ledger row for a hold. A row that cannot be written is logged: the in-memory decision stands, as the hold itself is
     /// not a record.
-    fn held_row(&self, held: &Held, kind: &str, extra: &Value) {
+    fn held_row(&self, held: &Held, kind: &str, extra: &Value) -> Option<i64> {
         let needles = self.held_needles(&held.task_id);
         let mut body = json!({
             "hold": held.id,
@@ -377,13 +388,20 @@ impl Core {
         if let (Some(into), Some(from)) = (body.as_object_mut(), extra.as_object()) {
             into.extend(from.clone());
         }
-        if let Err(error) = self.store.add_crew_autopilot_event(
+        if let Some(guard) = &held.guard {
+            body["guard"] = guard.clone();
+        }
+        match self.store.add_crew_autopilot_event(
             &held.task_id,
             &held.crew_id,
             kind,
             &ledger::safe(&body, &needles),
         ) {
-            tracing::warn!(%error, "autopilot could not write a ledger row for a held command");
+            Ok(row) => Some(row),
+            Err(error) => {
+                tracing::warn!(%error, "autopilot could not write a ledger row for a held command");
+                None
+            }
         }
     }
 
@@ -395,6 +413,7 @@ impl Core {
 
     /// Holds a chain-denied command for the person, unless it is not a command, was denied by the person a moment ago or this
     /// task holds too many. Returns the hold's id.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn held_make(
         &self,
         task: &CrewTask,
@@ -402,6 +421,21 @@ impl Core {
         ask: &ActionAsk,
         reason: &str,
         needles: &[String],
+        now: i64,
+    ) -> Option<String> {
+        self.held_make_guarded(task, thread_id, ask, reason, needles, None, now)
+    }
+
+    /// As [`Self::held_make`], for a command the blast-radius guard held: `guard` is what the ledger rows of the hold say about why.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn held_make_guarded(
+        &self,
+        task: &CrewTask,
+        thread_id: &str,
+        ask: &ActionAsk,
+        reason: &str,
+        needles: &[String],
+        guard: Option<&Value>,
         now: i64,
     ) -> Option<String> {
         if ask.kind != ActionKind::Command {
@@ -427,6 +461,7 @@ impl Core {
             shown,
             readable,
             reason: ledger::shown(reason, needles),
+            guard: guard.cloned(),
         };
         let (added, ended) = {
             let mut book = self.held_book();
@@ -457,7 +492,7 @@ impl Core {
         thread_id: &str,
         ask: &ActionAsk,
         now: i64,
-    ) -> Option<String> {
+    ) -> Option<Taken> {
         let bound = bind(&task.id, thread_id, ask);
         let (taken, ended) = {
             let mut book = self.held_book();
@@ -467,7 +502,10 @@ impl Core {
         self.held_ended(ended);
         let held = taken?;
         self.held_row(&held, "hold_used", &json!({ "used": true }));
-        Some(held.id)
+        Some(Taken {
+            id: held.id,
+            guard: held.guard,
+        })
     }
 
     /// Holds still open or decided lately, newest first. A hold whose task has ended is closed here.
@@ -704,6 +742,7 @@ mod tests {
             shown: command.into(),
             readable: true,
             reason: "no".into(),
+            guard: None,
         }
     }
 

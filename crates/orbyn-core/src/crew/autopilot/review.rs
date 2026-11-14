@@ -10,9 +10,10 @@ use async_trait::async_trait;
 use orbyn_contracts::{ActionKind, BriefEffect, LeaseMode, ResultState, StopReason};
 use serde_json::{Value, json};
 
+use super::blast::{self, Blast, Facts, read_remotes};
 use super::chain::{Approvers, Outcome, Summary, decide};
-use super::hard::{self, Scene, context, refuse_in};
-use super::tier::{Grants, tier};
+use super::hard::{self, Ctx, Scene, context, refuse_in};
+use super::tier::{Grants, Need, tier};
 use super::tripwire::{injection_in, injection_in_value, tripped};
 use super::{Mode, ledger, read_allowed_hosts};
 use crate::app::Core;
@@ -46,6 +47,8 @@ pub struct Autopilot {
     pub(crate) approvers: Mutex<Approvers>,
     /// Commands held for a person, in memory only ([`super::held`]).
     pub(crate) held: Mutex<super::HeldBook>,
+    /// Guarded commands let through, waiting for their exit status ([`super::exit`]), in memory only.
+    pub(crate) exits: super::exit::ExitWatches,
 }
 
 /// Where a task's worktree is and what the always-denied list needs to know about it, read once per check.
@@ -230,9 +233,21 @@ impl Core {
         }
 
         // A person's one-time approval of exactly this command, now that the list above has passed it again.
-        if let Some(hold) = self.held_take(task, &scope.thread_id, ask, unix_now()) {
-            let body = json!({ "action": action, "decided_by": "person", "hold": hold, "mode": mode.name() });
-            self.autopilot_record(task, "allowed", &body, &needles)?;
+        if let Some(taken) = self.held_take(task, &scope.thread_id, ask, unix_now()) {
+            let mut body = json!({ "action": action, "decided_by": "person", "hold": taken.id, "mode": mode.name() });
+            if let Some(guard) = &taken.guard {
+                body["guard"] = guard.clone();
+            }
+            let row = self.autopilot_record(task, "allowed", &body, &needles)?;
+            self.exit_watch(
+                task,
+                &scope.thread_id,
+                ask,
+                Some(&taken.id),
+                Some(row),
+                taken.guard.as_ref(),
+                unix_now(),
+            );
             return Ok(Review::Approved);
         }
 
@@ -247,14 +262,20 @@ impl Core {
             .iter()
             .filter_map(orbyn_contracts::CrewCheck::command)
             .collect();
-        let tiered = tier(
+        let mut tiered = tier(
             &ctx,
             &Grants {
                 writes: &writes,
                 check_commands: &commands,
             },
         );
-        let summary = Summary {
+        // The blast-radius guard: a destructive command against a production-linked target needs a second key, even in Full. It is
+        // above the tier (a check command or a lease does not exempt it) and below N3 and N8, which have already refused.
+        let guard = self.guard_of(&ctx, &worktree).await?;
+        if guard.is_some() {
+            tiered.need = Need::Guarded;
+        }
+        let mut summary = Summary {
             kind: wire_name(&ask.kind),
             target: ledger::shown(&ask.target, &needles),
             paths: ask
@@ -268,6 +289,18 @@ impl Core {
             tier: tiered.need.tier().to_owned(),
             reasons: tiered.reasons.iter().map(|r| (*r).to_owned()).collect(),
         };
+        if let Some(found) = &guard {
+            summary.reasons.insert(
+                0,
+                format!(
+                    "it can destroy data on a production-linked target ({}: {}, target {})",
+                    wire_name(&found.category),
+                    found.matched_by,
+                    found.target
+                ),
+            );
+        }
+        let guard_body = guard.as_ref().map(guard_body);
         let approvers = self
             .crew_autopilot
             .approvers
@@ -277,22 +310,62 @@ impl Core {
         let outcome = decide(mode, tiered.need, &summary, &approvers).await;
         // A command the chain refused is held for a person, who may approve that one command once.
         if let Outcome::Deny { reason, .. } = &outcome {
-            self.held_make(task, &scope.thread_id, ask, reason, &needles, unix_now());
+            self.held_make_guarded(
+                task,
+                &scope.thread_id,
+                ask,
+                reason,
+                &needles,
+                guard_body.as_ref(),
+                unix_now(),
+            );
         }
-        self.settle_review(task, &action, &summary, mode, outcome, &needles)
+        let settled = Settled {
+            ask,
+            thread: &scope.thread_id,
+            action: &action,
+            guard: guard_body.as_ref(),
+        };
+        self.settle_review(task, &settled, &summary, mode, outcome, &needles)
+    }
+
+    /// What the blast-radius guard holds in this command, if anything. It reads this device's two lists and, for a push, the
+    /// worktree's own remotes. A list that cannot be read is an error, so the action is denied: not knowing is never a reason to allow.
+    async fn guard_of(&self, ctx: &Ctx<'_>, worktree: &Path) -> Result<Option<Blast>> {
+        if ctx.commands.is_empty() {
+            return Ok(None);
+        }
+        let pushes = ctx
+            .commands
+            .iter()
+            .any(|c| c.program == "git" && c.args.iter().any(|a| a == "push"));
+        let remotes = if pushes {
+            read_remotes(worktree).await
+        } else {
+            std::collections::HashMap::new()
+        };
+        let facts = Facts::new(self.store.crew_guard_targets()?, remotes);
+        Ok(blast::blast(ctx, &facts))
     }
 
     fn settle_review(
         self: &Arc<Self>,
         task: &CrewTask,
-        action: &Value,
+        settled: &Settled<'_>,
         summary: &Summary,
         mode: Mode,
         outcome: Outcome,
         needles: &[String],
     ) -> Result<Review> {
+        let action = settled.action;
         let answer = |a: &super::Answer| json!({ "approve": a.approve, "reason": a.reason });
-        let base = |decided_by: &str| json!({ "action": action, "decided_by": decided_by, "tier": summary.tier, "reasons": summary.reasons, "mode": mode.name() });
+        let base = |decided_by: &str| {
+            let mut body = json!({ "action": action, "decided_by": decided_by, "tier": summary.tier, "reasons": summary.reasons, "mode": mode.name() });
+            if let Some(guard) = settled.guard {
+                body["guard"] = guard.clone();
+            }
+            body
+        };
         match outcome {
             Outcome::Allow {
                 decided_by,
@@ -305,7 +378,18 @@ impl Core {
                     Value::Null,
                     |(engine, a)| json!({ "engine": engine, "answer": answer(a) }),
                 );
-                self.autopilot_record(task, "allowed", &body, needles)?;
+                let row = self.autopilot_record(task, "allowed", &body, needles)?;
+                if settled.guard.is_some() {
+                    self.exit_watch(
+                        task,
+                        settled.thread,
+                        settled.ask,
+                        None,
+                        Some(row),
+                        settled.guard,
+                        unix_now(),
+                    );
+                }
                 Ok(Review::Approved)
             }
             Outcome::Person { why } => {
@@ -382,6 +466,25 @@ impl Core {
             Err(error) => tracing::debug!(%error, "autopilot found the task already moved"),
         }
     }
+}
+
+/// What a settled review needs besides the outcome.
+struct Settled<'a> {
+    ask: &'a ActionAsk,
+    thread: &'a str,
+    action: &'a Value,
+    guard: Option<&'a Value>,
+}
+
+/// The ledger's account of why the guard held a command: its category, the target (redacted when the row is stored), what matched
+/// and the list that forced it, if one did.
+fn guard_body(found: &Blast) -> Value {
+    json!({
+        "category": wire_name(&found.category),
+        "target": found.target,
+        "matched_by": found.matched_by,
+        "list": found.list,
+    })
 }
 
 fn denied_words(id: &str, rule: &str) -> String {

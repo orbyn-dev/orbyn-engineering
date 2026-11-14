@@ -10,7 +10,7 @@ export type AutopilotLogRow = { id: number, task_id: string, crew_id: string,
 /**
  * `allowed`, `denied`, `person`, `disagreement`, `tripwire`, `merge_queued`, `merge_waiting`, `merged`,
  * `merge_rejected`, `main_broken`, `reverted`, `person_told`, `held`, `approved_once`, `denied_by_person`,
- * `dismissed_by_person`, `hold_used` or `hold_ended`.
+ * `dismissed_by_person`, `hold_used`, `hold_ended` or `command_exit`.
  */
 kind: string, at: string, 
 /**

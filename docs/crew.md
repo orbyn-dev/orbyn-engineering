@@ -603,7 +603,67 @@ class only. The risk, review and queue views read the whole table and then page,
 comment is kept and is not yet a fix brief.
 
 Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
-conflict forecast, bisect progress, production-linked target rules (4i), background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+conflict forecast, bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+
+**As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
+a second key, even in Full, and the person can always approve it alone, once. It extends the always-denied list (N8 stays above it) and the
+two-key rule. Code: `crates/orbyn-core/src/crew/autopilot/blast.rs` (reading), `chain.rs` (the `Guarded` tier), `targets.rs` (the lists and the
+test), `exit.rs` (the exit-status watch).
+
+- **Order.** Trip wire, always-denied list (N1 to N10, so N3 and N8 first), the person's one-time approval, then the guard, then the chain. A
+  guarded command's tier is `guard` whatever else it would be: a lease or a check command does not exempt it.
+- **What the chain does with it.** Under **On** or **Off** nobody is asked: the command is denied and **held for the person** (a `held` row, the
+  worker goes on); there are no two keys under On or Off. Under **Full** the lead decides, then a second key from a *different vendor family*.
+  No second vendor signed in: denied for now, held, `needs_second_engine` set. The two keys disagree: denied, with a `disagreement` row. Both agree:
+  allowed, and the ledger row keeps both reasons. The lead is told the category, the target and what matched, never the raw page.
+- **Approve once.** The held command is approved exactly as in "approve once" above: the person's click in the desktop app's own dialog, one retry, 10
+  minutes, the always-denied list checked again. The row is `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`; the app draws it as
+  "Approved by you" with the command (`action.target`), the target (`guard.target`), the time (`at`) and the exit status (the `command_exit` row).
+- **Categories (built in; no repository file can add or remove one).** File deletion (`rm -r`, `find -delete`, `rsync --delete`, `shred`,
+  `truncate`, also inside `ssh host '...'`); database (`psql`, `mysql`, `mariadb`, `mongosh`, `redis-cli`, `cqlsh` with DROP, TRUNCATE, DELETE, an
+  UPDATE with no WHERE, FLUSHALL or dropDatabase, in `-c`/`-e`/`--eval` or on the input); cloud (`aws s3 rm|rb`, `aws s3 sync --delete`,
+  `aws * delete-*|terminate-*`, `gcloud ... delete`, `gcloud storage rm`, `az ... delete`, `gsutil rm`); containers (`docker rm|rmi|prune` and the
+  `container|image|volume|network|system|builder` forms, against `-H`, `DOCKER_HOST`, `--context` or `DOCKER_CONTEXT`); git (`push --force`,
+  `--force-with-lease`, `-f`, `--delete`, `-d`, `--mirror`, a `+refspec` or `:ref`, to a remote that is not local); and `unparsed`, a command the guard
+  could not read that holds a destructive word and a non-local word. kubectl delete, terraform destroy and helm uninstall are **N8** and stay always
+  denied: they are never held and no approval can change that.
+- **How a target is classified.** *Local* is loopback (`localhost`, `127.x`, `::1`), a unix socket or an empty database host, a file or path, the
+  local Docker socket or the `default` context, an endpoint URL on loopback (a local stack), or a git remote whose URL is a local path. Everything else
+  is **production-linked** unless this device's `safe` list names it. The `prod` list forces a target production-linked, even a local-looking
+  name, and wins when a target is in both. A command with several targets is exempt only if every one is local or safe. Targets are read from `shell::hosts`-style
+  URLs, `-h`/`--host`, `PGHOST`/`MYSQL_HOST`/`DATABASE_URL`/`REDIS_URL`/`MONGODB_URI`, `--profile`/`AWS_PROFILE`, `--project`/`CLOUDSDK_CORE_PROJECT`, `--subscription`,
+  `--context`/`DOCKER_CONTEXT`, `s3://` and `gs://` names (a bucket only describes the command; it matters only if the `prod` list names it) and, for
+  a push, the remote resolved with a hardened `git remote get-url --push`. **Fail closed:** a target that is a variable, a tool whose default is remote
+  and that names no target (`psql` with no host, `aws` with no profile, `gcloud` with no project), and an unreadable command with a destructive word and a
+  non-local word are all guarded.
+- **The two lists live on this device**, in the table `crew_guard_targets` (schema **42** on this branch; **43** once #531's migration 42 is in the same tree) in the data folder, never in a repository file, so a file a worker
+  or teammate commits cannot loosen the guard. `.orbyn/crew.json` is not read for it. An entry is a list (`prod` or `safe`), a pattern (an exact name or
+  `*.suffix`, lowercase, letters, digits, `.`, `_`, `-`, at most 253 characters; a URL, user, port, path or anything the secret scan objects to is
+  refused), a kind (`host`, `profile`, `project`, `context`, `workspace`, `bucket`: an entry matches only a target of its kind) and an optional note (at most 200
+  characters; a note with a secret is refused, not stored redacted). At most 200 entries in all. Add and remove write an audit row in the same transaction, before the change.
+- **Routes** (Preview-gated: 404 with the flag off for every method; all are in `crew::changes`, so an agent's request to one is refused by path, N1):
+  `GET /api/crew/guard/targets`; `GET /api/crew/guard/test?command=...&thread=...` (what the guard says: category, target, local or production-linked,
+  the list entry that decided it, a verdict of `not_destructive`, `local`, `exempt` or `guarded`; read-only, nothing runs, the command is bounded to 2000
+  characters and shown redacted); person-only writes, local only, `POST /api/crew/guard/targets/add` and `/{id}/remove`.
+- **Loosening needs the person's presence.** Adding a `safe` target or removing a `prod` one loosens the guard, so it needs the same proof as approving
+  once: a grant the desktop app records after the person clicks in its own dialog, sent in `x-orbyn-confirm`, bound to `PresenceFor::GuardLoosen {action, pattern}`
+  (`add_safe` or `remove_prod`, and the exact pattern), 60 seconds, used up by one change. Adding a `prod` target or removing a `safe` one tightens and needs none.
+  **The shell's dialog for loosening is not built yet** (PR2 only knows approve-once), so until it is, loosening answers `403 desktop_required` (no shell) or
+  `403 presence_required` (a shell, and nothing can mint the grant) for every caller. Tightening works now.
+- **Ledger.** The `held`, `approved_once`, `hold_used`, `denied`, `disagreement` and `allowed` rows of a guarded command carry `guard: {category, target, matched_by, list}`
+  (`list` is `prod` when the prod list forced it, else `none`; the target has no credentials and is redacted). A new kind, `command_exit`, records
+  `{hold, row, exit_code, action, guard}`: when a command the guard let through (a used approval, or Full with both keys) is later reported finished by the
+  engine, `exit_code` is the number; when nothing arrives in 10 minutes it is exactly `unknown`, which the app draws as "Exit status unknown". The watch is
+  **best effort and in memory**: some engines report no exit code, a command the engine wrapped is matched by its text, and a restart drops the watch (no row is written then).
+
+**Not built:** the screens (Settings > Crew lists, the test box, the held card's guard detail and the ledger rows: slice 4i PR C); the desktop shell's
+dialog for loosening; any read of `.orbyn/crew.json` for the guard (deliberately none).
+
+**Known limits (heuristic, not secure).** The guard reads a command's text. It does not parse a shell wrapper it does not unwrap, an alias or a function, or a script
+that a command runs (`psql -f drop.sql`, `bash cleanup.sh`, `make nuke`): the file is not read. A tool outside the categories (`sqlite3`, a custom CLI, an HTTP call to
+a deletion API) is not guarded; the network rule N3 and the tiers still apply. A remote's URL is read from the repository's git config, which an earlier command
+of the worker could have changed; so is an `ssh` alias that points to production under a name the person never listed. The lists decide what is local and safe,
+and a wrong entry is the person's to fix. Nothing here is tamper-proof: a process of the same OS user can still read the data folder and change the table.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41), behind the Preview flag. **Decision: the state is not a file in the repository.**

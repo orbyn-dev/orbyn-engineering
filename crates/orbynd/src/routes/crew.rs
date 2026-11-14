@@ -16,6 +16,11 @@
 //! request, and the request must name the whole merge commit it was shown. Writes are refused for a remote viewer, as the account's
 //! are. The Preview flag is never settable from here.
 //!
+//! **The blast-radius guard's lists** (`/api/crew/guard/targets`, `.../add`, `.../{id}/remove`, and the read-only `/api/crew/guard/test`)
+//! live on this device. Adding a `safe` target or removing a `prod` one loosens the guard and needs the desktop presence grant
+//! approving once needs; until the shell's dialog for it exists every caller gets `desktop_required` or `presence_required` for
+//! those two. Tightening needs no grant. A remote viewer reads and is refused the writes.
+//!
 //! The same marker makes Autopilot refuse an agent's request to any of these paths (N1), so a worker cannot answer for the person.
 //!
 //! **No agent approves; a person may approve once.** A command the chain denied is held (`GET /api/crew/approvals/held`). The person
@@ -112,6 +117,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/background/{id}/delete",
         "core background_delete: refused while a run is in progress, the audit row stays; local only",
     ),
+    (
+        "POST",
+        "/api/crew/guard/targets/add",
+        "core guard_target_add: a bare name or *.suffix, no secret, at most 200 entries, audited in the same transaction before the entry; adding a safe target loosens the guard and needs the person's presence grant (x-orbyn-confirm); local only",
+    ),
+    (
+        "POST",
+        "/api/crew/guard/targets/{id}/remove",
+        "core guard_target_remove: audited in the same transaction before the removal; removing a prod target loosens the guard and needs the person's presence grant (x-orbyn-confirm); local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -138,6 +153,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(background_disable),
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
+        .route("/api/crew/guard/targets/add", post(guard_add))
+        .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -159,6 +176,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
+        .route("/api/crew/guard/targets", get(guard_targets))
+        .route("/api/crew/guard/test", get(guard_test))
         .merge(writes)
         .layer(from_fn_with_state(state, preview_gate))
 }
@@ -435,4 +454,50 @@ async fn background_delete(
 ) -> ApiResult<impl IntoResponse> {
     state.core.background_delete(&id)?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// The blast-radius guard's two lists, on this device.
+async fn guard_targets(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.guard_targets()?))
+}
+
+/// What the guard says about a command (`command`, and `thread` for a worker's worktree): read-only, nothing runs.
+async fn guard_test(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let command = query
+        .0
+        .get("command")
+        .ok_or_else(|| CoreError::Invalid("command is required".into()))?;
+    Ok(Json(
+        state
+            .core
+            .guard_test(command, query.0.get("thread").map(String::as_str))
+            .await?,
+    ))
+}
+
+/// Adding a `safe` target loosens the guard: it needs the same grant approving once does, in `x-orbyn-confirm`.
+async fn guard_add(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiJson(body): ApiJson<wire::GuardTargetAdd>,
+) -> ApiResult<impl IntoResponse> {
+    let nonce = headers
+        .get(CONFIRM_HEADER)
+        .and_then(|value| value.to_str().ok());
+    Ok(Json(state.core.guard_target_add(&body, nonce)?))
+}
+
+/// Removing a `prod` target loosens the guard: it needs the same grant, in `x-orbyn-confirm`.
+async fn guard_remove(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    let nonce = headers
+        .get(CONFIRM_HEADER)
+        .and_then(|value| value.to_str().ok());
+    Ok(Json(state.core.guard_target_remove(&id, nonce)?))
 }

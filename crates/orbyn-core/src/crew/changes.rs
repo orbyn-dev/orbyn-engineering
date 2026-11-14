@@ -23,6 +23,8 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/enable"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
+    ("POST", "/api/crew/guard/targets/add"),
+    ("POST", "/api/crew/guard/targets/{id}/remove"),
 ];
 
 /// The reads: they change nothing.
@@ -43,6 +45,8 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/background"),
     ("GET", "/api/crew/background/{id}"),
     ("GET", "/api/crew/background/{id}/runs"),
+    ("GET", "/api/crew/guard/targets"),
+    ("GET", "/api/crew/guard/test"),
 ];
 
 const PREFIX: &str = "/api/crew";
