@@ -623,7 +623,7 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
 
 - **Read at the commit the task starts from, not from the checkout's files.** The commit is the lead checkout's HEAD, read once before
   routing, and the file is read at it through hardened git (`ls-tree` then `cat-file`). The decision and the ledger row record the commit and
-  the file's blob id. A change made after the start has no effect on that task, and an uncommitted edit of the file is not read. The `.orbyn` entry must be a tree or
+  the file's blob id. A running task's routing uses the crew.json recorded when it started (the commit and blob id are in the `route_class` row); a later change has no effect on it, and an uncommitted edit of the file is not read. The `.orbyn` entry must be a tree or
   absent (a symlink there would read as a missing file), the file must be a plain blob (mode 100644: a symlink or submodule is invalid), and its
   size (64 KiB at most) is read before its content. No file, or none with `classes`, means one class, "Everything else": any signed-in engine.
 - **Strict inside `classes`.** `version` must be 1; at most 64 rules, 32 paths and 16 engines per rule; `name` 1 to 40 characters of `a-z`, `0-9`,
@@ -664,9 +664,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
 What is not built: the guard that watches a worker against its classes (PR B); the Settings screens, the route card and Needs you screens
 (PR C); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
 until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
-(ruling pending). Known limits: **the rules are read at the checkout's HEAD; an agent that can run git can move HEAD to a commit without the file** (the N7 check only
-blocks a git command whose path argument is `.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot
-move, such as the default branch, is a later change. A lease spelled in a different case from the folder (`Docs/**` for `docs`) lists nothing, so it
+(ruling pending). Known limits: **the file is read at the checkout's HEAD at task start; an agent that can run git can move HEAD or commit a change, and the next task reads it; an
+agent that can push to the base branch can change the rules for later tasks** (the N7 check only blocks a git command whose path argument is
+`.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot move, such as the default branch, is follow-up #535. A lease spelled in a different case from the folder (`Docs/**` for `docs`) lists nothing, so it
 counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
 that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
 async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) used to start with no base commit; it is now

@@ -1,7 +1,7 @@
 //! Data classes (docs/crew.md, "As built (slice 4i, routing)"): `.orbyn/crew.json` says which engines may take which paths.
 //! The file is read at the checkout's HEAD when a task starts, through hardened git and never from the checkout's files, and
 //! the task keeps that commit: an edit made after the start has no effect on it. An agent that can run git can still move HEAD
-//! to a commit without the file, so this is not a guarantee against an agent (see the known limits in docs/crew.md). The router uses the result as a hard filter before scoring
+//! to a commit without the file, so this is not a guarantee against an agent (see the known limits in docs/crew.md, issue #535). The router uses the result as a hard filter before scoring
 //! ([`class_screen`](super::filters::class_screen)); each routing writes one `route_class` row to the approval ledger; and
 //! three read-only views serve the routes. Orbyn never writes the file.
 

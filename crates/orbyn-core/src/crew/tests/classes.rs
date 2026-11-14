@@ -926,3 +926,25 @@ async fn a_routing_that_fails_leaves_no_row_naming_an_engine() {
         .unwrap();
     assert_eq!(chosen, 0);
 }
+
+#[tokio::test]
+async fn a_recorded_routing_keeps_its_commit_blob_and_classes_when_head_and_the_file_move() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    let head = git_out(&w.repo, &["rev-parse", "HEAD"]);
+    let blob = git_out(&w.repo, &["rev-parse", "HEAD:.orbyn/crew.json"]);
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    // The file changes in the checkout, is committed, and HEAD then goes back to an earlier commit.
+    std::fs::write(w.repo.join(".orbyn/crew.json"), file(vec![])).unwrap();
+    run_git(&w.repo, &["add", "-f", ".orbyn/crew.json"]);
+    commit(&w.repo, "drop the rules");
+    run_git(&w.repo, &["reset", "-q", "--hard", "HEAD~2"]);
+    let view = w.core.crew_route_view(&id).unwrap();
+    let row = &view.rows[0];
+    assert_eq!(row.commit.as_deref(), Some(head.as_str()));
+    assert_eq!(row.blob.as_deref(), Some(blob.as_str()));
+    assert_eq!(row.classes[0].name, "keep");
+    assert_eq!(view.decision.unwrap().engine.as_str(), "bravo");
+}
