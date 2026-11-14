@@ -403,3 +403,215 @@ async fn a_nodes_outcome_and_lease_are_scrubbed_of_the_crews_key_text() {
         "a check's text reached the map through an outcome or a lease"
     );
 }
+
+/// A task of a second crew, live and with a worker, and `count` messages stored under it, each with a delivery row: traffic of its own.
+fn other_crews_traffic(d: &Duo, count: usize) {
+    let stamper = crate::crew::Stamper {
+        crew_id: orbyn_contracts::CrewId::new("crew-2").unwrap(),
+        engine: orbyn_contracts::CrewToken::new("claude").unwrap(),
+        member: orbyn_contracts::CrewMember::new("lead-02").unwrap(),
+        now: orbyn_contracts::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let brief = stamper
+        .brief(&json!({
+            "kind": "implement", "outcome": "Another crew's task.", "inputs": [],
+            "files": [{ "path": "other/**", "mode": "write" }],
+            "allowed_effects": ["read_repo", "write_leased", "run_checks"],
+            "stop_when": ["Done."], "budget": { "turns": 20, "minutes": 30 }
+        }))
+        .unwrap();
+    let key = stamper
+        .answer_key(
+            &json!({ "checks": [{ "id": "chk-run", "kind": "command", "params": { "run": "true" }, "proves": "It runs." }],
+                     "protected_paths": ["tests/**"] }),
+            &brief.id,
+        )
+        .unwrap();
+    let store = &d.w.core.store;
+    let task = store.create_crew_task(&brief, &key, "run-other").unwrap();
+    store
+        .add_crew_run(&task.id, "lead-thread-2", "worker-other")
+        .unwrap();
+    let crew = d.w.task(&d.a).crew_id;
+    let (_, template) = store.crew_messages_in_crew(&crew).unwrap().remove(0);
+    for n in 0..count {
+        let mut value = CrewObject::Message(template.clone()).to_value();
+        value["crew_id"] = json!("crew-2");
+        value["run_id"] = json!(task.run_id);
+        value["body"] = json!(format!("other {n}"));
+        value["id"] = json!(object_id(&value).unwrap());
+        let object = CrewObject::parse(&value).unwrap();
+        store.add_crew_member_object(&task.id, &object).unwrap();
+        store
+            .record_crew_delivery(
+                object.id().as_str(),
+                "worker-other",
+                "thread-other",
+                "held",
+                None,
+            )
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn another_crews_traffic_never_cuts_a_crews_window_and_a_cut_is_reported() {
+    let marker = nonce("window");
+    let (d, crew) = talked(&marker).await;
+    other_crews_traffic(&d, 3);
+    let store = &d.w.core.store;
+    // The crew has two messages and two deliveries. A window of exactly that holds them all, whatever another crew wrote since.
+    let (edges, cut) = store.crew_message_edges(&crew, 200, 2).unwrap();
+    assert_eq!((edges.len(), cut), (2, false));
+    assert!(edges.iter().all(|e| e.count == 1));
+    let (held, cut) = store.crew_held_counts(&crew, 2).unwrap();
+    assert_eq!((held, cut), (vec![(d.mb.clone(), 1)], false));
+    // The other crew's own counts are its own.
+    let (other, cut) = store.crew_message_edges("crew-2", 200, 5000).unwrap();
+    assert_eq!(
+        (other.iter().map(|e| e.count).sum::<u32>(), cut),
+        (3, false)
+    );
+
+    // A window of one cuts the crew's older message, and the read says so: the newest message's edge is the one left.
+    let (edges, cut) = store.crew_message_edges(&crew, 200, 1).unwrap();
+    assert_eq!((edges.len(), cut), (1, true));
+    assert_eq!(edges[0].sender, d.ma);
+    let (_, cut) = store.crew_held_counts(&crew, 1).unwrap();
+    assert!(cut, "the delivery window cut the crew's older rows");
+    // The map reads with the real windows, which these few rows do not reach.
+    assert!(!d.w.core.crew_flow_map(&crew).await.unwrap().truncated);
+}
+
+#[tokio::test]
+async fn a_fan_out_that_has_not_reached_every_recipient_reports_no_delivery() {
+    let marker = nonce("fanout");
+    let (d, crew) = talked(&marker).await;
+    // The lead writes to everyone: both workers were running, so two recipients.
+    let (_, error) =
+        d.w.lead(
+            "crew_post",
+            json!({ "to": "all", "kind": "fact", "body": format!("all {marker}") }),
+        )
+        .await;
+    assert!(!error, "the broadcast was refused");
+    let store = &d.w.core.store;
+    let (task, lead_message) = store
+        .crew_messages_in_crew(&crew)
+        .unwrap()
+        .into_iter()
+        .find(|(_, m)| m.to.as_str() == "all")
+        .unwrap();
+    // The same message again with no delivery row yet, as a fan-out would be part-way through its loop.
+    let mut value = CrewObject::Message(lead_message).to_value();
+    value["body"] = json!(format!("again {marker}"));
+    value["id"] = json!(object_id(&value).unwrap());
+    let object = CrewObject::parse(&value).unwrap();
+    store.add_crew_member_object(&task, &object).unwrap();
+    let id = object.id().as_str().to_owned();
+    let newest = |d: &Duo| {
+        d.w.core
+            .crew_flow_messages(&crew, None, page())
+            .unwrap()
+            .messages
+            .remove(0)
+    };
+
+    assert_eq!(newest(&d).id, id);
+    assert_eq!(newest(&d).delivery, None, "no recipient has a row yet");
+    store
+        .record_crew_delivery(&id, &d.ma, "thread-a", "live", None)
+        .unwrap();
+    assert_eq!(
+        newest(&d).delivery,
+        None,
+        "one of two recipients has a row, so nothing is reported"
+    );
+    assert_eq!(newest(&d).delivered_at, None);
+    store
+        .record_crew_delivery(&id, &d.mb, "thread-b", "live", None)
+        .unwrap();
+    assert_eq!(
+        newest(&d).delivery,
+        Some(FlowDeliveryMode::Live),
+        "every recipient has the same row"
+    );
+}
+
+/// A message to everyone with a delivery row for each of the two workers: delivered, as far as the rows go.
+async fn delivered_broadcast(marker: &str) -> (Duo, String) {
+    let (d, crew) = talked(marker).await;
+    let (_, error) =
+        d.w.lead(
+            "crew_post",
+            json!({ "to": "all", "kind": "fact", "body": format!("all {marker}") }),
+        )
+        .await;
+    assert!(!error, "the broadcast was refused");
+    let store = &d.w.core.store;
+    let (task, lead_message) = store
+        .crew_messages_in_crew(&crew)
+        .unwrap()
+        .into_iter()
+        .find(|(_, m)| m.to.as_str() == "all")
+        .unwrap();
+    let mut value = CrewObject::Message(lead_message).to_value();
+    value["body"] = json!(format!("again {marker}"));
+    value["id"] = json!(object_id(&value).unwrap());
+    let object = CrewObject::parse(&value).unwrap();
+    store.add_crew_member_object(&task, &object).unwrap();
+    let id = object.id().as_str().to_owned();
+    store
+        .record_crew_delivery(&id, &d.ma, "thread-a", "live", None)
+        .unwrap();
+    store
+        .record_crew_delivery(&id, &d.mb, "thread-b", "live", None)
+        .unwrap();
+    (d, crew)
+}
+
+#[tokio::test]
+async fn a_crew_with_more_tasks_than_were_read_reports_no_broadcast_delivery() {
+    let (d, crew) = delivered_broadcast(&nonce("cap")).await;
+    let newest = |cap: u32| {
+        d.w.core
+            .flow_messages_with(&crew, None, page(), cap)
+            .unwrap()
+            .messages
+            .remove(0)
+    };
+    // Both workers were read: two recipients, two rows.
+    assert_eq!(newest(200).delivery, Some(FlowDeliveryMode::Live));
+    assert_eq!(
+        newest(2).delivery,
+        Some(FlowDeliveryMode::Live),
+        "exactly as many tasks as the cap is not a cut"
+    );
+    // One task was left out: who else could have been sent to is unknown, so no delivery is reported whatever the rows say.
+    assert_eq!(newest(1).delivery, None);
+    assert_eq!(newest(1).delivered_at, None);
+}
+
+#[tokio::test]
+async fn the_map_says_truncated_when_either_window_cuts_the_crews_traffic() {
+    let (d, crew) = talked(&nonce("cuts")).await;
+    let truncated = |messages: u32, deliveries: u32| {
+        let core = d.w.core.clone();
+        let crew = crew.clone();
+        async move {
+            core.flow_map_with(&crew, messages, deliveries)
+                .await
+                .unwrap()
+                .truncated
+        }
+    };
+    assert!(!truncated(5000, 20000).await, "nothing is cut");
+    assert!(
+        truncated(1, 20000).await,
+        "the message window cut a message"
+    );
+    assert!(
+        truncated(5000, 1).await,
+        "the delivery window cut a delivery, and only that"
+    );
+}
