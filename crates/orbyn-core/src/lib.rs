@@ -24,3 +24,5 @@ mod testing;
 
 pub use app::{Core, CoreConfig};
 pub use error::{CoreError, Result};
+
+// throwaway scope proof
