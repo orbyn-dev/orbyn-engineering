@@ -210,6 +210,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
         .merge(writes)
+        .merge(super::crew_tasks::routes())
         .layer(from_fn_with_state(state, preview_gate))
 }
 
