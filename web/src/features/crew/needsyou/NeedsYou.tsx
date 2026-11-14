@@ -34,12 +34,12 @@ function ActionButton({ item, action, handlers }: { item: NeedsItem; action: Nee
 /** One item of the inbox as a row: rank, what it is, who asked, the risk in words, what waiting costs, and its actions. */
 export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: number; handlers: NeedsActions }) {
   return (
-    <li className="ny-item" data-hi={item.hi || undefined} data-kind={item.kind}>
+    <li className="ny-item" data-kind={item.kind}>
       <span className="ny-rk" aria-hidden>{rank}</span>
       <div className="ny-tt">
         <b>{item.title}</b>
         <div className="ny-m">
-          {item.risk ? <span className="ny-tag" data-tone={item.risk === "high" ? "hi" : item.risk === "low" ? "lo" : undefined}>Risk · {RISK_WORD[item.risk]}</span> : null}
+          {item.risk ? <span className="ny-tag" data-tone={item.risk === "high" || item.overdue ? "amber" : item.risk === "low" ? "lo" : undefined}>Risk · {RISK_WORD[item.risk]}</span> : null}
           {item.undo ? <span className="ny-tag" data-tone="lo">{UNDO_WORD[item.undo]}</span> : null}
           <span>{item.from}</span>
         </div>
@@ -56,7 +56,7 @@ export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: numb
 export function NeedsCard({ item, handlers }: { item: NeedsItem; handlers: NeedsActions }) {
   const kind = [KIND_ONE[item.kind], item.risk ? RISK_WORD[item.risk] : null, item.undo === "hard" ? "hard to undo" : null].filter(Boolean).join(" · ");
   return (
-    <li className="ny-card" data-hi={item.hi || undefined} data-kind={item.kind}>
+    <li className="ny-card" data-kind={item.kind}>
       <span className="ny-k">{kind}</span>
       <span className="ny-t">{item.title}</span>
       <span className="ny-e">{item.engine ?? item.from}</span>
@@ -135,6 +135,16 @@ export function NeedsEmpty({ title, children, action }: { title: string; childre
       <b>{title}</b>
       <p>{children}</p>
       {action}
+    </div>
+  );
+}
+
+/** A source that could not be read: the other rows stay, and Try again reads again. With no `onRetry` (a frame) the button is off. */
+export function SourceError({ sources, onRetry }: { sources: string[]; onRetry?(): void }) {
+  return (
+    <div className="ny-err" role="status">
+      <span>Can’t read {sources.join(", ")}. The rest is shown.</span>
+      <Button small onClick={onRetry} {...(onRetry ? {} : unavailable)}>Try again</Button>
     </div>
   );
 }

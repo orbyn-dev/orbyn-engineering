@@ -6,13 +6,12 @@ import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 
-const PASSWORD = "correct horse battery";
-
 let mock: MockApi;
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
   window.location.hash = "";
+  window.localStorage.clear();
 });
 
 const calls = (part: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes(part));
@@ -44,9 +43,14 @@ describe("the Needs you inbox on live data", () => {
     expect(items).toHaveLength(5);
     expect(items[0]).toHaveTextContent("Main broke and the cause isn’t certain");
     expect(items[0]).toHaveTextContent("Risk · High");
+    // The chip is amber because the row is High risk; no row is amber for its place, and rows with no stated risk have no chip.
+    expect(items[0]?.querySelector(".ny-tag")).toHaveAttribute("data-tone", "amber");
+    expect(items[0]).not.toHaveAttribute("data-hi");
+    for (const row of items.slice(1)) expect(row.querySelector(".ny-tag")).toBeNull();
     expect(items[0]).toHaveTextContent("Watch on main · 9be4410");
     expect(items[0]).toHaveTextContent("Nothing has been reverted. Main stays as it is until you choose.");
-    expect(items[1]).toHaveTextContent("Review: It used its whole turn budget before the checks passed");
+    expect(items[1]).toHaveTextContent("Paused: budget reached");
+    expect(items[1]).toHaveTextContent("It used its whole turn budget before the checks passed");
     expect(items[1]).toHaveTextContent("Background · Fix failing CI");
     expect(items[2]).toHaveTextContent("DELETE FROM sessions");
     expect(items[3]).toHaveTextContent("aws s3 rb");
@@ -73,9 +77,34 @@ describe("the Needs you inbox on live data", () => {
     expect(window.location.hash).toBe("#/crew/approvals");
   });
 
+  it("Dismiss hides a stop in this browser only: it is remembered locally, nothing is sent, and another read does not bring it back", async () => {
+    const { user, view } = await open("crew-tripwire");
+    const item = (await screen.findByText("Stopped · too many denials")).closest("li") as HTMLElement;
+    expect(item).toHaveTextContent("It was denied 3 times in a row, so Crew stopped it.");
+    await user.click(within(item).getByRole("button", { name: /^Dismiss/ }));
+    expect(screen.queryByText("Stopped · too many denials")).toBeNull();
+    expect(writes()).toHaveLength(0);
+    expect(JSON.parse(window.localStorage.getItem("orbyn.needsyou.dismissedStops") ?? "[]")).toHaveLength(1);
+    view.unmount();
+    render(<NeedsYouInbox />);
+    await screen.findByRole("list", { name: "Needs you" });
+    expect(screen.queryByText("Stopped · too many denials")).toBeNull();
+  });
+
+  it("still works with storage unavailable: the stop is hidden for this window", async () => {
+    const { user } = await open("crew-tripwire");
+    const item = (await screen.findByText("Stopped · too many denials")).closest("li") as HTMLElement;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    await user.click(within(item).getByRole("button", { name: /^Dismiss/ }));
+    expect(screen.queryByText("Stopped · too many denials")).toBeNull();
+    vi.restoreAllMocks();
+  });
+
   it("a background run's Open goes to the Background tab; the break on main has no screen to open yet", async () => {
     const { user } = await open("crew");
-    const run = (await screen.findByText(/^Review: It used its whole turn budget/)).closest("li") as HTMLElement;
+    const run = (await screen.findByText("Paused: budget reached")).closest("li") as HTMLElement;
     await user.click(within(run).getByRole("button", { name: /^Open/ }));
     expect(window.location.hash).toBe("#/crew/background");
     const main = screen.getByText("Main broke and the cause isn’t certain").closest("li") as HTMLElement;
@@ -91,12 +120,15 @@ describe("the Needs you inbox on live data", () => {
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull();
   });
 
-  it("names the source it could not read and shows the rest", async () => {
+  it("names the source it could not read, keeps the rest, and Try again reads again", async () => {
     mock.reset("crew");
     mock.fail("/api/crew/stops", 1, 503, "unavailable");
+    const user = userEvent.setup();
     render(<NeedsYouInbox />);
     expect(await screen.findByText("Can’t read stops. The rest is shown.")).toBeVisible();
     expect(await list()).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByText(/Can’t read/)).toBeNull());
   });
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
@@ -122,47 +154,39 @@ describe("answering from the inbox", () => {
     await waitFor(() => expect(screen.queryByText(/DELETE FROM orders/)).toBeNull());
   });
 
-  it("Approve asks Confirm it’s you first; the nonce goes on the existing route, once, and the password goes nowhere else", async () => {
+  it("Approve opens the Approvals tab where the approve-once flow runs: no dialog, no request, no inline flow", async () => {
     const { user } = await open("crew-held-account");
     await user.click(within(await row(/DELETE FROM orders/)).getByRole("button", { name: /^Approve/ }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm it’s you" });
+    expect(window.location.hash).toBe("#/crew/approvals");
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(calls("approve-once")).toHaveLength(0);
-    await user.type(within(dialog).getByLabelText("Password"), PASSWORD);
-    await user.click(within(dialog).getByRole("button", { name: "Approve once" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const sent = calls("/api/crew/approvals/hold-orders/approve-once");
-    expect(sent).toHaveLength(1);
-    expect(new Headers(sent[0]?.[1]?.headers).get("x-orbyn-confirm")).toMatch(/^nonce-/);
-    expect(writes().map(([url]) => String(url)).filter((url) => url.includes("/api/crew"))).toEqual([expect.stringContaining("approve-once")]);
+    expect(calls("/api/account/confirm")).toHaveLength(0);
+    expect(writes()).toHaveLength(0);
   });
 
-  it("Approve is off without a signed-in account, with the reason; Deny still works", async () => {
+  it("Approve stays on without an account, since the Approvals tab says what is needed; Deny still works", async () => {
     const { user } = await open("crew-held");
     const orders = await row(/DELETE FROM orders/);
-    const approve = within(orders).getByRole("button", { name: /^Approve/ });
-    expect(approve).toBeDisabled();
-    expect(approve).toHaveAttribute("title", "Approving needs a signed-in account.");
-    expect(within(orders).getByRole("button", { name: /^Deny/ })).toBeEnabled();
+    expect(within(orders).getByRole("button", { name: /^Approve/ })).toBeEnabled();
     await user.click(within(orders).getByRole("button", { name: /^Deny/ }));
     await waitFor(() => expect(calls("/api/crew/approvals/hold-orders/deny")).toHaveLength(1));
   });
 
-  it("from another computer, both answers are off with the reason", async () => {
+  it("from another computer, Deny is off with the reason; Approve only opens a tab", async () => {
     useConnection.setState({ remote: true });
     await open("crew-held-account");
     const orders = await row(/DELETE FROM orders/);
-    for (const name of [/^Approve/, /^Deny/]) {
-      const button = within(orders).getByRole("button", { name });
-      expect(button).toBeDisabled();
-      expect(button).toHaveAttribute("title", "Do this from the computer the app runs on.");
-    }
+    const deny = within(orders).getByRole("button", { name: /^Deny/ });
+    expect(deny).toBeDisabled();
+    expect(deny).toHaveAttribute("title", "Do this from the computer the app runs on.");
+    expect(within(orders).getByRole("button", { name: /^Approve/ })).toBeEnabled();
   });
 
   it("offers no merge, revert or other write: only Approve, Deny and Open exist", async () => {
     await open("crew-held-account");
     await list();
     const labels = screen.getAllByRole("button").map((one) => (one.textContent ?? "").trim());
-    for (const label of labels) expect(label).toMatch(/^(Open|Approve|Deny|Needs you \d+|Approvals \d+|Reviews \d+|Main \d+|Stopped \d+)$/);
+    for (const label of labels) expect(label).toMatch(/^(Open|Approve|Deny|Dismiss|Try again|Needs you \d+|Approvals \d+|Reviews \d+|Main \d+|Stopped \d+)$/);
   });
 });
 
@@ -174,5 +198,27 @@ describe("the live frame", () => {
     const items = within(await screen.findByRole("list", { name: "Needs you" })).getAllByRole("listitem");
     expect(items).toHaveLength(5);
     expect(screen.getByText("Inbox")).toBeVisible();
+  });
+});
+
+describe("the Inbox tab of the Crew page", () => {
+  it("is a tab beside Approvals, Trust and Background while Crew Preview is on, and mounts the inbox", async () => {
+    const { CrewSurface } = await import("../autopilot/approvals/CrewSurface");
+    mock.reset("crew-held-account");
+    const user = userEvent.setup();
+    render(<CrewSurface tab="approvals" />);
+    const tabs = await screen.findAllByRole("tab");
+    expect(tabs.map((one) => one.textContent)).toEqual(["Approvals", "Trust", "Background", "Inbox"]);
+    await user.click(screen.getByRole("tab", { name: "Inbox" }));
+    expect(await screen.findByRole("list", { name: "Needs you" })).toBeVisible();
+  });
+
+  it("is not drawn while Crew Preview is off: no tab list at all", async () => {
+    const { CrewSurface } = await import("../autopilot/approvals/CrewSurface");
+    mock.reset("default");
+    const { container } = render(<CrewSurface tab="inbox" />);
+    await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(container).toBeEmptyDOMElement();
   });
 });

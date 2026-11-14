@@ -8,6 +8,9 @@ export const NEEDSYOU_FRAMES = [
   "needsyou-narrow-panel",
   "needsyou-budget",
   "needsyou-demoted",
+  "needsyou-stop",
+  "needsyou-background",
+  "needsyou-source-error",
   "needsyou-live",
 ] as const;
 

@@ -55,8 +55,8 @@ export interface NeedsItem {
   cost: string | null;
   /** Milliseconds since the epoch when it began waiting; null when the source does not say. */
   since: number | null;
-  /** Amber: high on the ranking. */
-  hi: boolean;
+  /** Past its review time. With High risk, the only reason a risk chip is amber. */
+  overdue?: boolean;
   actions: NeedsAction[];
   /** The crew's name, for the narrow card's second line. */
   engine?: string;

@@ -3,7 +3,6 @@ import type { ApiFailure } from "../../../api/client";
 import { useAsync } from "../../../lib/useAsync";
 import { crewApi } from "../autopilot/approvals/api";
 import { useHeldCommands, type HoldControl } from "../autopilot/approvals/held";
-import type { ApprovalRow } from "../autopilot/approvals/model";
 import { backgroundItems, heldItems, mainItems, rank, stopItems } from "./assemble";
 import { needsApi } from "./api";
 import type { NeedsItem } from "./model";
@@ -11,18 +10,35 @@ import type { NeedsItem } from "./model";
 /** How often the inbox reads its routes again while the window is shown. Held commands refresh on their own timer. */
 export const NEEDS_REFRESH_MS = 30_000;
 
+/**
+ * "Stop answered", for the beta, is client-side only: no route says a trip-wire stop was dealt with, so a stop the person dismisses is
+ * remembered in this browser's local storage and hidden here. It changes nothing on the service and is not shared with other
+ * windows or devices. A new route would replace this.
+ */
+const DISMISSED_KEY = "orbyn.needsyou.dismissedStops";
+
+function readDismissed(): Set<string> {
+  try {
+    const list: unknown = JSON.parse(window.localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    return new Set(Array.isArray(list) ? list.filter((one): one is string => typeof one === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 export type NeedsState =
   | { status: "loading" }
   | { status: "error"; failure: ApiFailure; retry(): void }
-  | { status: "ready"; items: NeedsItem[]; hold(id: string): { control: HoldControl; readable: boolean } | null; approve(id: string, nonce: string): Promise<boolean>; confirming: ApprovalRow | null; ask(id: string): void; closeAsk(): void; partial: string[] };
+  | { status: "ready"; items: NeedsItem[]; hold(id: string): HoldControl | null; partial: string[]; retry(): void; dismiss(id: string): void };
 
 /**
  * The inbox from the routes that exist. Mount it only while Crew Preview is on (`NeedsYouInbox` does): it reads at once. One source failing does not hide the others: the ones that read are listed, and the ones
  * that did not are named in `partial`. All four failing is an error.
  */
 export function useNeedsYou(): NeedsState {
-  const [confirming, setConfirming] = useState<ApprovalRow | null>(null);
-  const held = useHeldCommands(() => setConfirming(null));
+  // Approving a held command is the Approvals tab's own flow; the inbox only denies (and opens).
+  const [dismissed, setDismissed] = useState(readDismissed);
+  const held = useHeldCommands(() => undefined);
   const stops = useAsync("needs-stops", (signal) => crewApi.stops(signal));
   const review = useAsync("needs-review", (signal) => needsApi.reviewQueue(signal));
   const background = useAsync("needs-background", (signal) => needsApi.backgroundWaiting(signal));
@@ -53,17 +69,26 @@ export function useNeedsYou(): NeedsState {
     const now = Date.now();
     return rank([
       ...heldItems(heldRows, now),
-      ...(stops.data ? stopItems(stops.data.recent, { inARow: stops.data.in_a_row_limit, inARun: stops.data.in_a_run_limit }) : []),
+      ...(stops.data ? stopItems(stops.data.recent, { inARow: stops.data.in_a_row_limit, inARun: stops.data.in_a_run_limit }).filter((one) => !dismissed.has(one.id)) : []),
       ...(review.data ? mainItems(review.data) : []),
       ...(background.data ? backgroundItems(background.data) : []),
     ]);
-  }, [heldRows, stops.data, review.data, background.data]);
+  }, [heldRows, stops.data, review.data, background.data, dismissed]);
+  const dismiss = useCallback((id: string) => {
+    setDismissed((now) => {
+      const next = new Set(now).add(id);
+      try {
+        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
+      } catch {
+        // Storage is off: the stop is hidden until the window is closed.
+      }
+      return next;
+    });
+  }, []);
 
-  const ask = useCallback((id: string) => setConfirming(heldRows.find((row) => row.id === id) ?? null), [heldRows]);
-  const closeAsk = useCallback(() => setConfirming(null), []);
   const hold = useCallback((id: string) => {
     const row = heldRows.find((one) => one.id === id);
-    return row ? { control: held.control(row, () => setConfirming(row)), readable: row.held?.readable ?? false } : null;
+    return row ? held.control(row, () => undefined) : null;
   }, [heldRows, held]);
 
   const reads = [
@@ -77,5 +102,5 @@ export function useNeedsYou(): NeedsState {
   const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading";
   if (failed.length === reads.length) return { status: "error", failure: failed[0]!.error as ApiFailure, retry };
   if (loading) return { status: "loading" };
-  return { status: "ready", items, hold, approve: held.approve, confirming, ask, closeAsk, partial: failed.map((one) => one.name) };
+  return { status: "ready", items, hold, partial: failed.map((one) => one.name), retry, dismiss };
 }

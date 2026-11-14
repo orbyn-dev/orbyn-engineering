@@ -47,7 +47,7 @@ describe("Crew Preview off", () => {
     const user = userEvent.setup();
     render(<CrewSurface tab="approvals" />);
     const tabs = await screen.findByRole("tablist", { name: "Crew" });
-    expect(within(tabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Approvals", "Trust", "Background"]);
+    expect(within(tabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Approvals", "Trust", "Background", "Inbox"]);
     within(tabs).getByRole("tab", { name: "Approvals" }).focus();
     await user.keyboard("{ArrowRight}");
     expect(window.location.hash).toBe("#/crew/trust");

@@ -5,19 +5,18 @@
 .ny-fil[aria-pressed="true"] { background: var(--color-selected); color: var(--color-text); }
 .ny-fil:focus-visible, .ny-group:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
 .ny-rule { margin-left: auto; }
-.ny-list { list-style: none; margin: 0; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; overflow: auto; min-height: 0; }
+.ny-list { list-style: none; margin: 0; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; overflow: auto; min-height: 0; flex: 1; }
 .ny-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 6px 12px; align-items: start; padding: 11px 14px; border-radius: 12px; background: var(--color-surface); box-shadow: inset 0 0 0 1px var(--color-borderStrong); min-width: 0; }
-.ny-item[data-hi] { background: var(--color-warnSoft); box-shadow: inset 0 0 0 1px var(--color-warnBorder); }
 .ny-rk { width: 26px; height: 26px; border-radius: 50%; background: var(--color-sunken); display: grid; place-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--color-textSoft); }
-.ny-item[data-hi] .ny-rk { background: var(--color-surface); color: var(--color-warnText); }
 .ny-tt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ny-tt b { font-weight: 500; color: var(--color-text); line-height: 1.35; overflow-wrap: anywhere; }
 .ny-m { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; color: var(--color-muted); font-size: 11.5px; }
 .ny-cost { color: var(--color-textSoft); font-size: 12px; }
 .ny-ac { display: flex; gap: 6px; align-items: center; white-space: nowrap; flex-wrap: wrap; justify-content: flex-end; }
 .ny-tag { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; white-space: nowrap; background: var(--color-sunken); color: var(--color-textSoft); }
-.ny-tag[data-tone="hi"] { background: var(--color-selected); color: var(--color-text); font-weight: 500; }
+.ny-tag[data-tone="amber"] { background: var(--color-warnSoft); color: var(--color-warnText); box-shadow: inset 0 0 0 1px var(--color-warnBorder); font-weight: 500; }
 .ny-tag[data-tone="lo"] { background: transparent; box-shadow: inset 0 0 0 1px var(--color-borderStrong); color: var(--color-muted); }
+.ny-err { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 20px; margin: 0; color: var(--color-textSoft); font-size: 12px; background: var(--color-warnSoft); border-bottom: 1px solid var(--color-warnBorder); }
 .ny-note { padding: 6px 20px 0; margin: 0; color: var(--color-muted); font-size: 12px; }
 .ny-reason { grid-column: 2 / -1; color: var(--color-muted); font-size: 11.5px; margin: 0; }
 .ny-group { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: var(--color-sunken); color: var(--color-text); font: inherit; font-size: 12.5px; text-align: left; }
@@ -29,12 +28,10 @@
 /* A 320 px panel: each item is a compact card. */
 .ny-cards { list-style: none; margin: 0; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; overflow: auto; min-height: 0; }
 .ny-card { display: flex; flex-direction: column; gap: 4px; padding: 7px 9px; border-radius: var(--radius-11); background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); min-width: 0; font-size: 12px; color: var(--color-textSoft); }
-.ny-card[data-hi] { background: var(--color-warnSoft); box-shadow: 0 0 0 1px var(--color-warnBorder); }
 .ny-card .ny-k { color: var(--color-muted); font-size: 11.5px; }
 .ny-card .ny-t { color: var(--color-text); line-height: 1.35; font-weight: 500; font-size: 12.5px; overflow-wrap: anywhere; }
 .ny-card .ny-e { color: var(--color-textSoft); min-width: 0; overflow-wrap: anywhere; }
 .ny-card .ny-ln { color: var(--color-muted); font-size: 11.5px; }
-.ny-card[data-hi] .ny-ln { color: var(--color-warnText); }
 .ny-card .ny-ca { display: flex; gap: 5px; margin-top: 2px; flex-wrap: wrap; }
 /* The attention budget (needsyou-budget): a plain table of the rules. */
 .ny-sheet { padding: 18px 26px; display: flex; flex-direction: column; gap: 14px; min-width: 0; max-width: 760px; }

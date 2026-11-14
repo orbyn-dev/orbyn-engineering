@@ -43,20 +43,24 @@ describe("each source becomes one inbox row", () => {
       ["stop:7", "Stopped · too many denials", "Task task-client"],
       ["stop:8", "Stopped · possible injected instructions", "Task task-client"],
     ]);
-    expect(items[0]?.actions).toEqual([{ key: "open", label: "Open", primary: true }]);
+    expect(items[0]?.actions).toEqual([{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }]);
+    expect(items[0]?.cost).toBe("It was denied 3 times in a row, so Crew stopped it. Nothing was lost; its worktree is intact.");
+    expect(items[1]?.cost).toBe("It read text that looks like instructions to the agent, so Crew stopped it. Nothing was lost; its worktree is intact.");
+    expect(stopItems([wire({ body: { wire: "denials", in_a_row: 1, in_a_run: 20 } })], limits)[0]?.cost).toContain("20 times in one run");
   });
 
   it("only a break the crew was not certain about reaches Needs you; a plain after-merge review stays in the Review tab", () => {
     const items = mainItems([review(), review({ task_id: "t-plain", needs_person: null }), review({ task_id: "t-empty", needs_person: "" })]);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ id: "main:t-main", kind: "main", risk: "high", from: "Watch on main · 9be4410", cost: "Nothing has been reverted. Main stays as it is until you choose.", since: 1_000_000 });
+    expect(items[0]).toMatchObject({ id: "main:t-main", kind: "main", risk: "high", from: "Watch on main · 9be4410", cost: "Nothing has been reverted. Main stays as it is until you choose.", since: 1_000_000, overdue: false });
   });
 
-  it("a background run waiting for review is a Review row named for its reason, or the crew; a run not waiting is not", () => {
-    const items = backgroundItems([{ crew, runs: [bgRun(), bgRun({ id: "r2", review_reason: null }), bgRun({ id: "r3", review_waiting: false })] }]);
-    expect(items.map((one) => [one.id, one.title, one.from, one.ref])).toEqual([
-      ["background:r1", "Review: Budget reached", "Background · Fix failing CI", "bg"],
-      ["background:r2", "Review: Fix failing CI", "Background · Fix failing CI", "bg"],
+  it("a background run waiting on you says it is paused for its budget, what it waits for, or that it needs approval; a run not waiting is not an item", () => {
+    const items = backgroundItems([{ crew, runs: [bgRun({ stop_reason: "budget" }), bgRun({ id: "r2", review_reason: null }), bgRun({ id: "r4", review_reason: "Checks failed twice" }), bgRun({ id: "r3", review_waiting: false })] }]);
+    expect(items.map((one) => [one.id, one.title, one.cost, one.from, one.ref])).toEqual([
+      ["background:r1", "Paused: budget reached", "Budget reached", "Background · Fix failing CI", "bg"],
+      ["background:r2", "Needs approval", null, "Background · Fix failing CI", "bg"],
+      ["background:r4", "Review: Checks failed twice", null, "Background · Fix failing CI", "bg"],
     ]);
     expect(items.every((one) => one.kind === "review" && one.risk === null)).toBe(true);
   });
@@ -68,7 +72,7 @@ describe("each source becomes one inbox row", () => {
   });
 });
 
-const make = (id: string, over: Partial<NeedsItem>): NeedsItem => ({ id, kind: "approval", title: id, risk: null, undo: null, from: "", cost: null, since: null, hi: false, actions: [], ref: id, ...over });
+const make = (id: string, over: Partial<NeedsItem>): NeedsItem => ({ id, kind: "approval", title: id, risk: null, undo: null, from: "", cost: null, since: null, actions: [], ref: id, ...over });
 
 describe("ranking", () => {
   it("puts a stated risk first (High, Medium, Low), then the items without one, each oldest first, an unknown time last", () => {
@@ -87,9 +91,8 @@ describe("ranking", () => {
     expect(rank([make("b", { since: 1 }), make("a", { since: 1 })]).map((one) => one.id)).toEqual(["a", "b"]);
   });
 
-  it("marks the top two amber, unless they are Low risk", () => {
-    expect(rank([make("a", { since: 1 }), make("b", { since: 2 }), make("c", { since: 3 })]).map((one) => one.hi)).toEqual([true, true, false]);
-    expect(rank([make("a", { risk: "low" }), make("b", { risk: "low", id: "b" })]).map((one) => one.hi)).toEqual([false, false]);
+  it("adds nothing to an item: no row is marked by its place in the list", () => {
+    expect(rank([make("a", { since: 1 }), make("b", { since: 2 })]).map((one) => Object.keys(one).sort())).toEqual([Object.keys(make("a", {})).sort(), Object.keys(make("b", {})).sort()]);
   });
 
   it("does not change the items it was given", () => {

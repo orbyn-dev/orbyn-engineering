@@ -3,10 +3,10 @@ import { unavailable } from "../autopilot/review/Parts";
 import { Frame } from "../shared/Frame";
 import { Btn, Ic, PageHead, Seg } from "../shared/parts";
 import { viewOf } from "./assemble";
-import { kindChips, NeedsBar, NeedsCard, NeedsEmpty, NeedsList, RANKED_BY, type Chip } from "./NeedsYou";
+import { kindChips, NeedsBar, NeedsCard, NeedsEmpty, NeedsList, RANKED_BY, SourceError, type Chip } from "./NeedsYou";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import type { NeedsItem } from "./model";
-import { DEMOTED_ITEMS, FULL_ITEMS, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS } from "./samples";
+import { BACKGROUND_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
 import type { NeedsYouFrameId } from "./names";
 
 const SUB = "Login redirect crew · Lead: Fix login redirect on Claude Code";
@@ -38,52 +38,23 @@ function List({ items }: { items: NeedsItem[] }) {
   );
 }
 
-const listFrame = (items: NeedsItem[], dialog?: ReactNode): ComponentType => function NeedsYouList() {
+const listFrame = (items: NeedsItem[], error?: string[]): ComponentType => function NeedsYouList() {
   return (
-    <Frame height={dialog ? 560 : undefined}>
+    <Frame>
       <Page inbox={inboxOf(items)}>
+        {error ? <SourceError sources={error} /> : null}
         <List items={items} />
       </Page>
-      {dialog}
     </Frame>
   );
 };
-
-function ApproveDialog() {
-  return (
-    <div className="cx-cwov">
-      <div className="cx-cwdlg" role="dialog" aria-modal="true" aria-label="Approve a command" style={{ width: 460 }}>
-        <h4>
-          Approve a command <span className="cx-cwpv">Preview</span>
-        </h4>
-        <p>Claude Code · Sonnet 5.5 asks to run a command in its worktree crew/redirect-impl.</p>
-        <pre className="ny-guard"><code>npm publish --dry-run --workspace auth</code></pre>
-        <div className="cx-fbx">
-          <div className="cx-fkv">
-            <span>Risk</span>
-            <b>High: it talks to a package registry, even in dry-run mode</b>
-            <span>Undo</span>
-            <b>Hard: nothing is sent in dry-run mode, but the next command might</b>
-            <span>Waiting holds</span>
-            <b>1 task and its lease on auth/redirect.ts</b>
-          </div>
-        </div>
-        <div className="cx-ra">
-          <Btn className="cx-ghost">Deny</Btn>
-          <Btn className="cx-ghost">Approve once</Btn>
-          <Btn className="cx-btn">Approve for this crew</Btn>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function Empty() {
   return (
     <Frame>
       <Page inbox="Inbox">
         <NeedsEmpty title="Nothing needs you" action={<Btn className="cx-ghost">Open the Flow view</Btn>}>
-          3 workers are running, and every question so far has been answered. When one of them needs you, it appears here, ranked, with what waiting costs.
+          When something needs you, it appears here, ranked, with what waiting costs.
         </NeedsEmpty>
       </Page>
     </Frame>
@@ -99,7 +70,7 @@ function Many() {
   return (
     <Frame height={560}>
       <Page inbox="Inbox · 27" workers={9}>
-        <NeedsBar chips={chips} active="all" rule="Showing the top 4 of 27 · the rest are grouped below" label="Filter by project" />
+        <NeedsBar chips={chips} active="all" rule={RANKED_BY} label="Filter by project" />
         <NeedsList items={MANY_ITEMS} handlers={{}} />
         <ul className="ny-groups" aria-label="The rest, by crew">
           {MANY_GROUPS.map((group) => (
@@ -216,11 +187,14 @@ function Live() {
 export const NEEDSYOU_SCREENS: Record<NeedsYouFrameId, ComponentType> = {
   "needsyou-inbox": listFrame(FULL_ITEMS),
   "needsyou-inbox-off": listFrame(OFF_ITEMS),
-  "needsyou-approval": listFrame(OFF_ITEMS, <ApproveDialog />),
+  "needsyou-approval": listFrame(OFF_ITEMS),
   "needsyou-empty": Empty,
   "needsyou-many": Many,
   "needsyou-narrow-panel": NarrowPanel,
   "needsyou-budget": Budget,
   "needsyou-demoted": listFrame(DEMOTED_ITEMS),
+  "needsyou-stop": listFrame(STOP_ITEMS),
+  "needsyou-background": listFrame(BACKGROUND_ITEMS),
+  "needsyou-source-error": listFrame(OFF_ITEMS.slice(0, 3), ["stops"]),
   "needsyou-live": Live,
 };

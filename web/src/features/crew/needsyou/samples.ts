@@ -8,7 +8,6 @@ const item = (over: Partial<NeedsItem> & Pick<NeedsItem, "id" | "kind" | "title"
   from: "",
   cost: null,
   since: null,
-  hi: false,
   ref: over.id,
   ...over,
 });
@@ -22,7 +21,6 @@ const DENIED = item({
   from: "Claude Code · Sonnet 5.5 · person-only",
   engine: "Claude Code · Sonnet 5.5",
   cost: "The task went on without it. Nothing is blocked; do it yourself when you choose.",
-  hi: true,
   actions: [{ key: "open", label: "Open the request", primary: true }, { key: "dismiss", label: "Dismiss" }],
 });
 const CONFLICT = item({
@@ -34,7 +32,6 @@ const CONFLICT = item({
   from: "Codex · OpenCode · conflicting board writes",
   engine: "Codex · OpenCode",
   cost: "Waiting holds 2 tasks. The choice is yours; the evidence is side by side.",
-  hi: true,
   actions: [{ key: "decide", label: "Decide", primary: true }, { key: "open-both", label: "Open both" }],
 });
 const QUESTIONS = item({
@@ -67,7 +64,6 @@ const APPROVAL = item({
   from: "Claude Code · Sonnet 5.5 · approval",
   engine: "Claude Code · Sonnet 5.5",
   cost: "Waiting holds 1 task and its lease on auth/redirect.ts. Nothing else is blocked.",
-  hi: true,
   actions: [{ key: "approve", label: "Approve", primary: true }, { key: "deny", label: "Deny" }],
 });
 const REVIEW = item({
@@ -94,12 +90,37 @@ const AUTONOMY = item({
 /** needsyou-inbox: Autopilot Full, the default. */
 export const FULL_ITEMS: NeedsItem[] = [DENIED, CONFLICT, QUESTIONS, MAIN];
 /** needsyou-inbox-off and needsyou-approval: Autopilot Off. */
-export const OFF_ITEMS: NeedsItem[] = [APPROVAL, { ...CONFLICT, hi: true }, QUESTIONS, REVIEW];
+export const OFF_ITEMS: NeedsItem[] = [APPROVAL, CONFLICT, QUESTIONS, REVIEW];
 /** needsyou-demoted: the circuit breaker's line ranks first, below what waits on you in the frame's own order. */
-export const DEMOTED_ITEMS: NeedsItem[] = [{ ...AUTONOMY, hi: false }, DENIED, CONFLICT, QUESTIONS];
+export const DEMOTED_ITEMS: NeedsItem[] = [AUTONOMY, DENIED, CONFLICT, QUESTIONS];
 
 const line = (id: string, kind: NeedsItem["kind"], title: string, risk: NeedsItem["risk"], from: string, cost: string): NeedsItem =>
   item({ id, kind, title, risk, undo: "easy", from, cost, actions: [{ key: "open", label: "Open" }] });
+
+const STOP_DENIALS = item({
+  id: "s-stop-denials",
+  kind: "stopped",
+  title: "Stopped · too many denials",
+  from: "Task task-client",
+  cost: "It was denied 3 times in a row, so Crew stopped it. Nothing was lost; its worktree is intact.",
+  actions: [{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }],
+});
+const STOP_INJECTED = item({
+  id: "s-stop-injected",
+  kind: "stopped",
+  title: "Stopped · possible injected instructions",
+  from: "Task task-docs",
+  cost: "It read text that looks like instructions to the agent, so Crew stopped it. Nothing was lost; its worktree is intact.",
+  actions: [{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }],
+});
+/** needsyou-stop: a task stopped by a trip wire, for each reason. */
+export const STOP_ITEMS: NeedsItem[] = [STOP_DENIALS, STOP_INJECTED];
+
+/** needsyou-background: a background run waiting on the person, paused for its budget or needing approval. */
+export const BACKGROUND_ITEMS: NeedsItem[] = [
+  item({ id: "s-bg-budget", kind: "review", title: "Paused: budget reached", from: "Background · Fix failing CI", cost: "It used its whole turn budget before the checks passed", actions: [{ key: "open", label: "Open", primary: true }] }),
+  item({ id: "s-bg-approval", kind: "review", title: "Needs approval", from: "Background · Dependency bump", actions: [{ key: "open", label: "Open", primary: true }] }),
+];
 
 /** needsyou-many: the top four of 27, one line each. */
 export const MANY_ITEMS: NeedsItem[] = [

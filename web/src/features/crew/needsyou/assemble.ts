@@ -28,7 +28,6 @@ export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
         from: `Task ${row.taskId ?? ""}`.trim(),
         cost: null,
         since: row.at ? (time(row.at) ?? now) : null,
-        hi: false,
         actions: [
           { key: "approve" as const, label: "Approve", primary: true },
           { key: "deny" as const, label: "Deny" },
@@ -52,10 +51,13 @@ export function stopItems(recent: AutopilotLogRow[], limits: { inARow: number; i
         risk: null,
         undo: null,
         from: `Task ${row.task_id}`,
-        cost: null,
+        // The reason in words, from the Approvals tab's own sentences.
+        cost:
+          stop.reason === "injected_instructions"
+            ? "It read text that looks like instructions to the agent, so Crew stopped it. Nothing was lost; its worktree is intact."
+            : `It was denied ${stop.denialCount} times ${stop.inARun ? "in one run" : "in a row"}, so Crew stopped it. Nothing was lost; its worktree is intact.`,
         since: time(row.at),
-        hi: false,
-        actions: [{ key: "open" as const, label: "Open", primary: true }],
+        actions: [{ key: "open" as const, label: "Open", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
         ref: row.task_id,
       };
     });
@@ -73,8 +75,8 @@ export function mainItems(queue: AutopilotReviewItem[]): NeedsItem[] {
       undo: null,
       from: `Watch on main · ${item.merge_commit.slice(0, 7)}`,
       cost: "Nothing has been reverted. Main stays as it is until you choose.",
+      overdue: item.overdue,
       since: item.merged_unix ? item.merged_unix * 1000 : null,
-      hi: false,
       actions: [{ key: "open" as const, label: "Open", primary: true }],
       ref: item.task_id,
     }));
@@ -88,13 +90,13 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
       .map((run) => ({
         id: `background:${run.id}`,
         kind: "review" as const,
-        title: `Review: ${run.review_reason?.trim() || crew.name}`,
+        // A run that spent its budget is paused; any other run waiting on the person says what it waits for, or that it needs approval.
+        title: run.stop_reason === "budget" ? "Paused: budget reached" : run.review_reason?.trim() ? `Review: ${run.review_reason.trim()}` : "Needs approval",
         risk: null,
         undo: null,
         from: `Background · ${crew.name}`,
-        cost: null,
+        cost: run.stop_reason === "budget" ? (run.review_reason?.trim() ?? null) : null,
         since: time(run.ended_at ?? run.updated_at),
-        hi: false,
         actions: [{ key: "open" as const, label: "Open", primary: true }],
         ref: crew.id,
       })),
@@ -109,14 +111,12 @@ const RISK_RANK: Record<Risk, number> = { high: 0, medium: 1, low: 2 };
  * ranked by no source today.
  */
 export function rank(items: NeedsItem[]): NeedsItem[] {
-  const sorted = [...items].sort((a, b) => {
+  return [...items].sort((a, b) => {
     const risk = (a.risk ? RISK_RANK[a.risk] : 3) - (b.risk ? RISK_RANK[b.risk] : 3);
     if (risk) return risk;
     if (a.since !== b.since) return (a.since ?? Number.POSITIVE_INFINITY) - (b.since ?? Number.POSITIVE_INFINITY);
     return a.id.localeCompare(b.id);
   });
-  // Amber marks what is high on the ranking: the top two, unless they are Low risk.
-  return sorted.map((item, index) => ({ ...item, hi: index < 2 && item.risk !== "low" }));
 }
 
 /** The filter chips: one for each kind that has an item, in the designs' order. */
