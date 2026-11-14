@@ -9,6 +9,7 @@ mod automations;
 mod checkpoints;
 mod composer;
 mod crew;
+mod crew_board;
 mod crew_tasks;
 mod engines;
 mod explorer;
@@ -44,6 +45,8 @@ mod account_logging_tests;
 mod account_tests;
 #[cfg(test)]
 mod crew_background_tests;
+#[cfg(test)]
+mod crew_board_tests;
 #[cfg(test)]
 mod crew_cancel_tests;
 #[cfg(test)]

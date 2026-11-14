@@ -21,7 +21,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/crew/flow/tasks/{id}", get(task))
 }
 
-fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
+pub(super) fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
     query
         .0
         .get(name)
@@ -32,7 +32,7 @@ fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
         .transpose()
 }
 
-fn page(query: &QueryMap) -> Result<Page, CoreError> {
+pub(super) fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
 }
 
