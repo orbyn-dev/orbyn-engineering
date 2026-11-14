@@ -55,15 +55,15 @@ impl Core {
         let mut stored = Stored {
             commit: classes.file.commit.clone(),
             blob: classes.file.blob.clone(),
-            problem: classes.file.invalid().then(|| classes.file.problem_text()),
-            unknown: classes.unknown.clone(),
+            problem: classes.invalid().then(|| classes.problem_text()),
+            unknown: classes.unknown_why().map(str::to_owned),
             classes: classes
-                .hits
-                .iter()
+                .matched()
+                .into_iter()
                 .map(|hit| CrewRouteClassHit {
-                    name: classes.rule(hit).name.clone(),
-                    pattern: hit.pattern.clone(),
-                    samples: hit.samples.clone(),
+                    name: hit.name,
+                    pattern: hit.pattern,
+                    samples: hit.samples,
                 })
                 .collect(),
             ..Stored::default()

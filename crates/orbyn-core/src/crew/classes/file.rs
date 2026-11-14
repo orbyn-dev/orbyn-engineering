@@ -84,6 +84,63 @@ pub async fn base_commit(root: &Path) -> Option<String> {
     is_object_id(&sha).then_some(sha)
 }
 
+/// A ref the rules are also read at: the project's default branch, which a checkout or a commit on the way does not move.
+#[derive(Clone, Debug)]
+pub struct PinnedRef {
+    /// The ref in short words, such as `origin/main`.
+    pub name: String,
+    /// The commit it pointed at when it was read.
+    pub commit: String,
+}
+
+/// The default branch tip as of the last fetch, or `None` when the repository has no default-branch ref to read. In order: the
+/// remote-tracking ref `origin/HEAD` points at (set by `git clone` or `git remote set-head`); `origin/main`, `origin/master`
+/// or `origin/trunk`; then a local branch named by `init.defaultBranch`, `main`, `master` or `trunk`. A remote-tracking ref is
+/// moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit, in any worktree. A local branch is
+/// moved by a commit or `git branch -f` on it, so it is the weaker fallback, used only when there is no remote-tracking ref.
+/// Neither is out of reach of an agent that runs `git update-ref` in the repository, which the hard rule N7 holds.
+pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(out) = git(root, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).await {
+        let target = text(&out);
+        if target.starts_with("refs/remotes/origin/") && target != "refs/remotes/origin/HEAD" {
+            candidates.push(target);
+        }
+    }
+    candidates.extend(
+        ["main", "master", "trunk"]
+            .iter()
+            .map(|b| format!("refs/remotes/origin/{b}")),
+    );
+    if let Ok(out) = git(root, &["config", "--get", "init.defaultBranch"]).await {
+        let name = text(&out);
+        if !name.is_empty() && !name.starts_with('-') {
+            candidates.push(format!("refs/heads/{name}"));
+        }
+    }
+    candidates.extend(
+        ["main", "master", "trunk"]
+            .iter()
+            .map(|b| format!("refs/heads/{b}")),
+    );
+    for full in candidates {
+        let spec = format!("{full}^{{commit}}");
+        let Ok(out) = git(root, &["rev-parse", "--verify", "-q", &spec]).await else {
+            continue;
+        };
+        let commit = text(&out);
+        if is_object_id(&commit) {
+            let name = full
+                .strip_prefix("refs/remotes/")
+                .or_else(|| full.strip_prefix("refs/heads/"))
+                .unwrap_or(&full)
+                .to_owned();
+            return Some(PinnedRef { name, commit });
+        }
+    }
+    None
+}
+
 fn is_object_id(text: &str) -> bool {
     matches!(text.len(), 40 | 64) && text.chars().all(|c| c.is_ascii_hexdigit())
 }

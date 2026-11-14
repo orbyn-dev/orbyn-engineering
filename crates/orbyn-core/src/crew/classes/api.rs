@@ -7,8 +7,8 @@ use orbyn_contracts as wire;
 
 use super::record::{ROUTE_CLASS, Stored};
 use super::{
-    BUILT_IN, ClassFile, INVALID_RULE, PathClasses, base_commit, classify_paths, path_problem,
-    read_class_file,
+    BUILT_IN, ClassFile, INVALID_RULE, PathClasses, PinnedRef, base_commit, classify_paths,
+    path_problem, pinned_ref, read_class_file,
 };
 use crate::app::Core;
 use crate::crew::EngineView;
@@ -54,23 +54,38 @@ pub(in crate::crew) fn engine_words(ids: &[String], views: &[EngineView]) -> Str
         .join(", ")
 }
 
+/// The default branch and the file at it, when the repository has one.
+async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
+    let pin = pinned_ref(root).await?;
+    let file = read_class_file(root, Some(&pin.commit)).await;
+    Some((pin, file))
+}
+
 /// What a route card says about a set of classes.
 fn route_card(classes: &PathClasses, views: &[EngineView]) -> String {
-    if classes.file.invalid() {
+    let card = route_card_base(classes, views);
+    match classes.differs() {
+        Some(words) => format!("{card} {words}"),
+        None => card,
+    }
+}
+
+fn route_card_base(classes: &PathClasses, views: &[EngineView]) -> String {
+    if classes.invalid() {
         return format!(
             "{INVALID_RULE}: {}. Every engine is blocked until the file is fixed and committed.",
-            classes.file.problem_text()
+            classes.problem_text()
         );
     }
     let allowed = classes.allowed();
-    match (classes.hits.as_slice(), allowed) {
+    let hits = classes.matched();
+    match (hits.as_slice(), allowed) {
         ([], _) | (_, None) => format!("{BUILT_IN}: any signed-in engine can take this."),
         ([hit], Some(ids)) => {
-            let rule = classes.rule(hit);
             format!(
                 "{}: {} Allowed engines: {}.",
-                rule.name,
-                rule.reason,
+                hit.name,
+                hit.reason,
                 engine_words(&ids, views)
             )
         }
@@ -112,6 +127,15 @@ impl Core {
         let file = read_class_file(root, base.as_deref()).await;
         let views = self.class_machine(&thread.project_id).await;
         let differs = working_copy_differs(root, &file).await;
+        let mut notes = file.notes.clone();
+        if let Some((pin, there)) = read_pinned(root).await {
+            let both = PathClasses::of_file(file.clone()).with_pinned(
+                pin.name,
+                pin.commit,
+                PathClasses::of_file(there),
+            );
+            notes.extend(both.differs());
+        }
         let worktree = match &thread.worktree {
             Some(tree) => tree.branch.clone(),
             None => root
@@ -135,7 +159,7 @@ impl Core {
                 })
                 .collect(),
             problems: file.problems.clone(),
-            notes: file.notes.clone(),
+            notes,
             working_copy_differs: differs,
             working_copy_note: differs.then(|| {
                 "This checkout's copy of the file differs from the committed one. An edit is not in force until it is committed."
@@ -160,6 +184,7 @@ impl Core {
         let base = base_commit(root).await;
         let file = read_class_file(root, base.as_deref()).await;
         let views = self.class_machine(&thread.project_id).await;
+        let pinned = read_pinned(root).await;
         let mut results = Vec::new();
         for path in paths {
             let problem = if path.chars().count() > PATH_MAX {
@@ -178,23 +203,33 @@ impl Core {
                 });
                 continue;
             }
-            let classes = classify_paths(
+            let mut classes = classify_paths(
                 root,
                 base.as_deref(),
                 file.clone(),
                 std::slice::from_ref(path),
             )
             .await;
+            if let Some((pin, there)) = &pinned {
+                let side = classify_paths(
+                    root,
+                    Some(&pin.commit),
+                    there.clone(),
+                    std::slice::from_ref(path),
+                )
+                .await;
+                classes = classes.with_pinned(pin.name.clone(), pin.commit.clone(), side);
+            }
             results.push(wire::CrewClassTestPath {
                 path: path.clone(),
                 valid: true,
                 problem: None,
                 classes: classes
-                    .hits
-                    .iter()
+                    .matched()
+                    .into_iter()
                     .map(|hit| wire::CrewClassMatch {
-                        name: classes.rule(hit).name.clone(),
-                        pattern: hit.pattern.clone(),
+                        name: hit.name,
+                        pattern: hit.pattern,
                     })
                     .collect(),
                 allowed_engines: classes

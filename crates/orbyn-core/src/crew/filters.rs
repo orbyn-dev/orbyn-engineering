@@ -131,14 +131,17 @@ pub fn class_screen(
     let Some(block) = classes.block_of(&view.id) else {
         return Ok(());
     };
-    let text = if classes.file.invalid() {
+    let differ = classes
+        .differs()
+        .map_or_else(String::new, |words| format!(" {words}"));
+    let text = if classes.invalid() {
         format!(
-            "Blocked by rule: {} \u{2014} {}. Every engine waits until the file is fixed and committed.",
+            "Blocked by rule: {} \u{2014} {}. Every engine waits until the file is fixed and committed.{differ}",
             block.rule, block.reason
         )
     } else {
         format!(
-            "Blocked by rule: {} \u{2014} allowed engines: {}. {}",
+            "Blocked by rule: {} \u{2014} allowed engines: {}. {}{differ}",
             block.rule,
             engine_words(&block.allowed, engines),
             block.reason

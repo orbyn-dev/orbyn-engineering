@@ -11,7 +11,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | --- | --- |
 | `router` | Router v0: filters, scores from seeded defaults, an explicit engine honoured and still checked, and the `RouteDecision`. Pure: no model, no process, no file |
 | `filters` | The hard filters, in order, each rejection with its reason. `class_screen` runs first |
-| `classes` | Data classes: `.orbyn/crew.json` read at the pinned base commit (strict, fail closed), the glob, a brief's files against the classes, the `route_class` ledger row and the three read-only views |
+| `classes` | Data classes: `.orbyn/crew.json` read at the pinned base commit and at the default branch, the stricter applies (strict, fail closed), the glob, a brief's files against the classes, the `route_class` ledger row and the three read-only views |
 | `score` | Pass rate for the brief's kind (seeded defaults until `EvalHistory` has a measured rate) and quota headroom, in permille |
 | `tiers` | The tier a role needs and the model that fills it, matched against the models this machine lists |
 | `view` | A plain copy of one engine's status, models and usage |
