@@ -1242,9 +1242,13 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 - **What exists:** core `Core::crew_cancel_task(task, reason, actor)` and `POST /api/crew/tasks/{id}/cancel` (body empty, or
   `{ "reason": "..." }`, 1 to 200 characters, redacted). The answer is `{ task, state: "cancelled", already }`. With the Preview flag off the
   route is 404.
-- **Person only.** The route is `local_only` (a remote viewer gets 403) and is in `crew::changes::STATE_CHANGING`, so Autopilot's N1
-  refuses an agent's request to it by path. There is no MCP tool for it and no crew tool takes it. This is not an Autopilot stop:
-  `GET /api/crew/stops` lists Autopilot's, and a cancel is the person's own act.
+- **Person only, as far as it is enforced.** *Enforced:* no MCP tool and no crew tool cancels a task; a remote viewer is refused
+  (`local_only` is the whole-process `--remote` flag, 403); Autopilot's N1 refuses an agent's request to the route by the *command
+  text* it sees (path spelling variants are covered, it is in `crew::changes::STATE_CHANGING`); a confined macOS worker cannot read the
+  launch token. *Not enforced:* an unconfined engine, the lead, or any process of the same user that has the launch token (from
+  `service.json`) can `POST` it, and a path assembled at run time is invisible to N1; the audit row says `user` whoever sent it. If real
+  enforcement is wanted later, approve-once's desktop grant is the model. This is not an Autopilot stop: `GET /api/crew/stops` lists
+  Autopilot's, and a cancel is the person's own act.
 - **Answers.** An unknown id is `not_found`. A task already `cancelled` is `already: true`: no second row, no second effect. A task that
   `passed` or `stopped` is `409 task_ended` ("This task already ended."). Every other state (briefed, routed, running, verifying,
   failed, changed_approach, needs_person) can be cancelled, as the lifecycle table says.
@@ -1254,6 +1258,12 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
   stop; its queue is emptied first, so no new turn starts, and the core checks the worker has no run and nothing queued. (3) One
   transaction moves the task to `cancelled` (clearing a verification claim) together with the row `crew.task.cancelled`; then the
   existing end of a task runs (leases released, a final `cancelled` result, the lead told).
+- **Two cancels of one task** run one after the other (a lock per task): the second finds it cancelled and answers `already: true`
+  with no row. If the service dies after the intent row, `crew.task.cancel` stands with no outcome row; the state is unchanged and a
+  retry works (it writes its own intent row).
+- **Races with a start or a retry.** A task cannot get a worker once it ended (`set_crew_worker` refuses in its transaction, the thread
+  just made is removed and no engine starts), and a retry prompt is not queued for an ended task (the state is read again before and
+  after queueing; a message that slipped in is taken back and its run stopped).
 - **If the engine cannot be confirmed stopped,** the task keeps its state, a `crew.task.cancel_failed` row records the attempt and the
   caller gets `502 engine_unavailable`. A retry is a new attempt with its own intent row. A task that ended some other way during the
   stop (it passed, say) is `409 task_ended`, with a `cancel_failed` row.

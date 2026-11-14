@@ -11,6 +11,7 @@
 //!    `crew.task.cancelled`; then the existing end of a task runs: its leases are released, a final `cancelled` result is written and
 //!    the lead is told.
 
+use std::future::Future;
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
@@ -34,12 +35,40 @@ impl Core {
         reason: Option<&str>,
         actor: &str,
     ) -> Result<wire::CrewTaskCancelled> {
+        self.crew_cancel_with(task_id, reason, actor, self.forcing(actor))
+            .await
+    }
+
+    /// `crew_cancel_task`, with how a worker's run is forced to stop given, so a test can make the stop not take.
+    pub(super) async fn crew_cancel_with<F: Future<Output = Result<()>> + Send>(
+        self: &Arc<Self>,
+        task_id: &str,
+        reason: Option<&str>,
+        actor: &str,
+        force: impl Fn(String) -> F,
+    ) -> Result<wire::CrewTaskCancelled> {
         self.crew_preview_only()?;
         valid_id(task_id)?;
         let reason = match reason.map(str::trim).filter(|r| !r.is_empty()) {
             Some(text) => Some(super::background::text("reason", text, REASON_MAX)?),
             None => None,
         };
+        let lock = self.store.crew_cancel_lock(task_id);
+        let held = lock.lock().await;
+        let answer = self.cancel_locked(task_id, reason, actor, &force).await;
+        drop(held);
+        drop(lock);
+        self.store.crew_cancel_unlock(task_id);
+        answer
+    }
+
+    async fn cancel_locked<F: Future<Output = Result<()>> + Send>(
+        self: &Arc<Self>,
+        task_id: &str,
+        reason: Option<String>,
+        actor: &str,
+        force: &impl Fn(String) -> F,
+    ) -> Result<wire::CrewTaskCancelled> {
         let done = |already| wire::CrewTaskCancelled {
             task: task_id.to_owned(),
             state: wire::CrewCancelState::Cancelled,
@@ -52,7 +81,7 @@ impl Core {
             CancelStart::Already => return Ok(done(true)),
             CancelStart::Begun(run) => run,
         };
-        if let Err(error) = self.stop_crew_worker(run.as_deref(), actor).await {
+        if let Err(error) = self.stop_crew_worker_by(run.as_deref(), force).await {
             let why: String = super::redact(&error.to_string())
                 .chars()
                 .take(300)
@@ -84,7 +113,27 @@ impl Core {
 
     /// Stops the worker's engine run and confirms it, with the worker's queue emptied so no new turn starts. A task with no worker,
     /// a worker thread that was removed and one with no run are all stopped already.
-    async fn stop_crew_worker(&self, run: Option<&CrewRun>, actor: &str) -> Result<()> {
+    pub(super) async fn stop_crew_worker(&self, run: Option<&CrewRun>, actor: &str) -> Result<()> {
+        self.stop_crew_worker_by(run, &self.forcing(actor)).await
+    }
+
+    /// The real stop: the run manager's forced stop of a thread's run.
+    fn forcing(
+        &self,
+        actor: &str,
+    ) -> impl Fn(String) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>> + use<> {
+        let (runs, actor) = (self.runs.clone(), actor.to_owned());
+        move |thread| {
+            let (runs, actor) = (runs.clone(), actor.clone());
+            Box::pin(async move { runs.force_stop(&thread, &actor).await.map(|_| ()) })
+        }
+    }
+
+    async fn stop_crew_worker_by<F: Future<Output = Result<()>> + Send>(
+        &self,
+        run: Option<&CrewRun>,
+        force: &impl Fn(String) -> F,
+    ) -> Result<()> {
         let Some(thread_id) = run.and_then(|r| r.worker_thread_id.as_deref()) else {
             return Ok(());
         };
@@ -101,7 +150,7 @@ impl Core {
                 }
             }
             if thread.active_run.is_some() {
-                self.runs.force_stop(thread_id, actor).await?;
+                force(thread_id.to_owned()).await?;
             }
             let now = self.store.thread(thread_id)?;
             if now.active_run.is_none() && self.store.list_queue(thread_id)?.is_empty() {

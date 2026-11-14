@@ -91,6 +91,8 @@ pub struct Store {
     /// Counts local changes that queued an account field, to wake the sync worker.
     account_changes: tokio::sync::watch::Sender<u64>,
     upgrade: Option<orbyn_contracts::DatabaseUpgrade>,
+    /// One lock per Crew task being cancelled, so two cancels of a task run one after the other.
+    cancels: Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// One audit row. Rows are only ever inserted.
@@ -159,6 +161,7 @@ impl Store {
             run_changes: tokio::sync::watch::channel(0).0,
             account_changes: tokio::sync::watch::channel(0).0,
             upgrade,
+            cancels: Mutex::default(),
         })
     }
 

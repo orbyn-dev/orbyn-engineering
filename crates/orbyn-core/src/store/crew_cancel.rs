@@ -3,6 +3,8 @@
 //! `begin_crew_cancel` (the intent row; nothing else changes), then the core stops the worker's engine, then `finish_crew_cancel`
 //! (the state and its row) or `fail_crew_cancel` (a row that says the attempt failed, the state as it was).
 
+use std::sync::Arc;
+
 use serde_json::{Value, json};
 
 use super::crew::{CrewTask, find_task};
@@ -42,6 +44,24 @@ fn audit(
 }
 
 impl Store {
+    /// The lock a cancel of `task_id` holds from its first check to its last row: a second cancel of the task waits for it, then
+    /// finds the task cancelled (`Already`) or, if the first failed, tries for itself.
+    pub fn crew_cancel_lock(&self, task_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.cancels.lock().unwrap_or_else(|e| e.into_inner());
+        locks.entry(task_id.to_owned()).or_default().clone()
+    }
+
+    /// Drops the lock of a cancel that is over, when nobody else waits on it.
+    pub fn crew_cancel_unlock(&self, task_id: &str) {
+        let mut locks = self.cancels.lock().unwrap_or_else(|e| e.into_inner());
+        if locks
+            .get(task_id)
+            .is_some_and(|l| Arc::strong_count(l) <= 1)
+        {
+            locks.remove(task_id);
+        }
+    }
+
     /// Checks the task and writes the intent row (`crew.task.cancel`) in one transaction. `cancelled` answers `Already` and writes
     /// nothing; `passed` and `stopped` are `TaskEnded`.
     pub fn begin_crew_cancel(

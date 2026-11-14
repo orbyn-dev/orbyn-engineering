@@ -368,6 +368,17 @@ impl Core {
             .worker_thread_id
             .clone()
             .ok_or_else(|| CrewError::new(ErrorCode::InvalidObject, "the task has no worker"))?;
+        // The task may have ended (a person's cancel) since the caller read it: nothing is queued for a worker of an ended task.
+        let ended = || {
+            self.store
+                .crew_task(&task.id)
+                .ok()
+                .flatten()
+                .is_none_or(|t| super::lifecycle::is_final(&t.state))
+        };
+        if ended() {
+            return Err(CrewError::new(ErrorCode::RunEnded, "the task has ended"));
+        }
         let needles = match self.store.crew_answer_key(&task.id).map_err(internal)? {
             Some(key) => key_needles(&key),
             None => Vec::new(),
@@ -385,7 +396,16 @@ impl Core {
         let held = self.held_for_worker(task, &run);
         let full = format!("{text}{}", held.text());
         match self.runs.enqueue(&thread, &full, &[]) {
-            Ok(_) => {
+            Ok(queued) => {
+                // A cancel that landed between the check and the queue: take the message back and stop what it started.
+                if ended() {
+                    let _ = self.store.remove_queued(&queued.id);
+                    if let Some(active) = self.store.thread(&thread).ok().and_then(|t| t.active_run)
+                    {
+                        let _ = self.runs.cancel(&active.id);
+                    }
+                    return Err(CrewError::new(ErrorCode::RunEnded, "the task has ended"));
+                }
                 self.commit_held(&held);
                 Ok(())
             }

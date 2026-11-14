@@ -521,6 +521,8 @@ async fn cancel_task(
     Path(id): Path<String>,
     body: Bytes,
 ) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off, a malformed body is still "no such route".
+    state.core.crew_preview_state()?;
     let body: wire::CrewTaskCancel = if body.iter().all(u8::is_ascii_whitespace) {
         wire::CrewTaskCancel { reason: None }
     } else {

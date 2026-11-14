@@ -407,17 +407,43 @@ impl Core {
             effort: wanted.effort,
             options: Default::default(),
         };
-        let task_id = brief.id.as_str().to_owned();
         let thread = self
-            .delegate_then(&lead.id, &task, "crew", |child| {
-                self.store
-                    .set_crew_worker(&task_id, &child.id, &child.cwd, base)
+            .attach_crew_worker(&lead.id, &task, brief.id.as_str(), base)
+            .await?;
+        Ok(json!({ "thread": thread.id, "member": member }))
+    }
+
+    /// Makes the worker's thread, records it on the task and starts it. A task that ended while this ran (a person's cancel) gets no
+    /// worker: `set_crew_worker` refuses it and the thread just made is removed before it had a run; and if the task ends after the
+    /// worker was recorded but before it runs, the worker's run and queue are stopped the way a cancel stops them.
+    pub(super) async fn attach_crew_worker(
+        &self,
+        lead_id: &str,
+        task: &DelegateTask,
+        task_id: &str,
+        base: Option<&str>,
+    ) -> Result<orbyn_contracts::Thread, CrewError> {
+        let thread = self
+            .delegate_then(lead_id, task, "crew", |child| {
+                let recorded = self
+                    .store
+                    .set_crew_worker(task_id, &child.id, &child.cwd, base);
+                if recorded.is_err() {
+                    let _ = self.store.delete_thread(&child.id, "crew");
+                }
+                recorded
             })
             .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.public_message()))?;
-        self.store
-            .move_crew_task(&task_id, "running", None)
-            .map_err(|e| CrewError::new(ErrorCode::InvalidTransition, e.public_message()))?;
-        Ok(json!({ "thread": thread.id, "member": member }))
+        if let Err(error) = self.store.move_crew_task(task_id, "running", None) {
+            if let Ok(Some(run)) = self.store.crew_run(task_id) {
+                let _ = self.stop_crew_worker(Some(&run), "core").await;
+            }
+            return Err(CrewError::new(
+                ErrorCode::InvalidTransition,
+                error.public_message(),
+            ));
+        }
+        Ok(thread)
     }
 
     /// A worker runs as the person, so its process starts under a restriction that keeps it

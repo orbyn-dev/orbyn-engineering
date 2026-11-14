@@ -187,6 +187,8 @@ async fn with_the_flag_off_the_route_is_not_there() {
     let app = serve("off", false, false).await;
     let (status, body) = app.cancel("task-1", None).await;
     assert_eq!((status, body["code"].as_str()), (404, Some("not_found")));
+    let (status, body) = app.cancel("task-1", Some("not json")).await;
+    assert_eq!((status, body["code"].as_str()), (404, Some("not_found")));
 }
 
 #[tokio::test]
