@@ -1229,9 +1229,26 @@ fn nonlocal_word() -> &'static Regex {
 
 /// A command that holds a destructive word and a non-local word but that no category read: the parser found no command at all, a
 /// quote is open, or the program is a variable. It is guarded, because the guard cannot tell what it reaches.
+/// Whether the text ends inside a quote, tracking the shell's rules: an apostrophe inside double quotes and an escaped quote do not open one.
+fn quote_left_open(text: &str) -> bool {
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (None, '\\') | (Some('"'), '\\') => {
+                chars.next();
+            }
+            (None, '\'' | '"') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            _ => {}
+        }
+    }
+    quote.is_some()
+}
+
 fn unparsed(ctx: &Ctx<'_>) -> Option<Read> {
     let text = ctx.target.as_str();
-    let open_quote = text.matches('"').count() % 2 == 1 || text.matches('\'').count() % 2 == 1;
+    let open_quote = quote_left_open(text);
     let by_variable = ctx.commands.iter().any(|c| variable(&c.raw));
     if !(ctx.commands.is_empty() || open_quote || by_variable) {
         return None;

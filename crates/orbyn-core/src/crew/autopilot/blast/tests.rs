@@ -723,3 +723,56 @@ fn compose_and_document_stores_are_read() {
         "psql -h drop.example.com <<EOF\nSELECT 1\nEOF",
     ]);
 }
+
+#[test]
+fn a_shell_under_sudo_su_or_env_on_the_remote_side_is_a_shell() {
+    guarded_all(&[
+        "ssh prod.example.com sudo bash <<'EOF'\nrm -rf /srv/data\nEOF",
+        "ssh prod.example.com sudo -i < script.sh",
+        "ssh prod.example.com sudo -s < script.sh",
+        "ssh prod.example.com sudo su - < script.sh",
+        "cat clean.sh | ssh prod.example.com sudo bash",
+        "ssh prod.example.com env FOO=1 nice sudo -u root bash <<EOF\nrm -rf /srv\nEOF",
+    ]);
+    unguarded_all(&[
+        "echo hi | ssh prod.example.com sudo tee /x",
+        "ssh prod.example.com sudo ls /srv",
+    ]);
+}
+
+#[test]
+fn a_backslash_in_a_quoted_body_makes_the_reader_unsure() {
+    guarded_all(&[
+        "psql -h db.prod -c \"SELECT E'\\\\'' ; DROP TABLE users; --'\"",
+        "mysql -h db.prod -e \"SELECT '\\\\'' ; DROP TABLE users; -- '\"",
+        "mysql -h db.prod -e 'SELECT 1--1; DROP TABLE users'",
+        "mysql -h db.prod -e 'DROP TABLE users --x'",
+    ]);
+    unguarded_all(&[
+        "mysql -h db.prod -e 'SELECT 1 -- DROP TABLE users'",
+        "psql -h db.prod -c 'SELECT 1 -- DROP TABLE users'",
+    ]);
+}
+
+#[test]
+fn env_split_string_and_aws_vault_without_a_separator_are_unwrapped() {
+    guarded_all(&[
+        "env -S'ssh prod.internal rm -rf /x'",
+        "env --split-string='ssh prod.internal rm -rf /x'",
+        "aws-vault exec prod aws s3 rm s3://b --recursive",
+        "aws-vault exec --duration 1h prod aws s3 rb s3://b",
+    ]);
+}
+
+#[test]
+fn an_apostrophe_in_a_commit_message_or_a_read_only_ssh_is_not_held() {
+    unguarded_all(&[
+        "git commit -m \"Don't prune caches in shell.rs\"",
+        "git commit -m \"It's about --force and prune on db.example.com\"",
+        "ssh -T git@github.com 2>&1 | head -1",
+        "ssh -G prod.example.com | grep hostname",
+        "ssh prod.example.com hostname -f",
+    ]);
+    // A really open quote is still unreadable.
+    assert!(guarded("echo 'oops; rm -rf /srv user@prod.example.com"));
+}

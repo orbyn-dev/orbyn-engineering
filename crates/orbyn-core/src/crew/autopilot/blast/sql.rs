@@ -26,7 +26,13 @@ fn normalise_sql(text: &str, mysql: bool) -> Sql {
         let c = chars[at];
         let next = chars.get(at + 1).copied();
         match c {
-            '-' if next == Some('-') => {
+            // In MySQL `--` starts a comment only before a space or control character: `1--1` is arithmetic.
+            '-' if next == Some('-')
+                && (!mysql
+                    || chars
+                        .get(at + 2)
+                        .is_none_or(|c| c.is_whitespace() || c.is_control())) =>
+            {
                 while at < chars.len() && chars[at] != '\n' {
                     at += 1;
                 }
@@ -85,6 +91,10 @@ fn normalise_sql(text: &str, mysql: bool) -> Sql {
                         at += 1;
                         closed = true;
                         break;
+                    }
+                    // A backslash inside a quoted body may escape the quote (PostgreSQL `E'..'`, MySQL's default): not certain.
+                    if chars[at] == '\\' {
+                        sure = false;
                     }
                     body.push(chars[at]);
                     at += 1;

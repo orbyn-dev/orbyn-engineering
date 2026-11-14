@@ -146,7 +146,7 @@ pub(super) fn ssh(command: &Simple, text: &str, out: &mut Vec<Read>) {
     {
         rest.clone_from(option);
     }
-    let fed = text.contains(['|', '<', '\n']);
+    let fed = text.contains('<') || piped_into_ssh(text);
     let before = out.len();
     if !rest.trim().is_empty() {
         for inner in simple_commands(&rest) {
@@ -156,11 +156,18 @@ pub(super) fn ssh(command: &Simple, text: &str, out: &mut Vec<Read>) {
     if out.len() != before {
         return;
     }
-    let first = simple_commands(&rest)
-        .first()
-        .map(|c| c.program.clone())
-        .unwrap_or_default();
-    let interpreter = rest.trim().is_empty() || INTERPRETERS.contains(&first.as_str());
+    // Every command of the remote line counts, wrappers (`sudo`, `env`, ...) already taken off: `sudo bash`, `sudo -i`, `su -` are shells.
+    let inner = simple_commands(&rest);
+    let interpreter = rest.trim().is_empty()
+        || inner.iter().any(|c| {
+            INTERPRETERS.contains(&c.program.as_str())
+                || c.program == "su"
+                || matches!(c.program.as_str(), "sudo" | "doas")
+                    && c.args.iter().any(|a| {
+                        a.starts_with('-') && !a.starts_with("--") && a.contains(['s', 'i'])
+                            || matches!(a.as_str(), "--shell" | "--login")
+                    })
+        });
     let why = if always {
         Some("ssh: a proxy or local command")
     } else if remote_option.is_some() {
@@ -179,6 +186,17 @@ pub(super) fn ssh(command: &Simple, text: &str, out: &mut Vec<Read>) {
             targets,
         });
     }
+}
+
+/// Whether something is piped INTO `ssh`: `ssh` is not the first stage of a pipeline. `ssh -G host | grep x` only reads its output.
+fn piped_into_ssh(text: &str) -> bool {
+    let text = text.replace("||", ";");
+    let stages: Vec<&str> = text.split('|').collect();
+    stages.iter().position(|stage| {
+        stage
+            .split_whitespace()
+            .any(|w| w == "ssh" || w.ends_with("/ssh"))
+    }) > Some(0)
 }
 
 /// Whether the text that feeds `ssh` comes from something other than a literal (`echo`, `printf`): a file or a program's output is

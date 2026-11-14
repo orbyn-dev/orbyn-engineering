@@ -269,6 +269,18 @@ fn skip_options(words: &mut Vec<String>, wrapper: &str) -> Option<String> {
             words.remove(0);
             break;
         }
+        if wrapper == "env" {
+            // `env -S'cmd'` and `env --split-string='cmd'`: the value is attached.
+            let attached = word.strip_prefix("--split-string=").or_else(|| {
+                word.strip_prefix("-S")
+                    .filter(|v| !v.is_empty() && !word.starts_with("--"))
+            });
+            if let Some(value) = attached {
+                split = Some(value.to_owned());
+                words.remove(0);
+                continue;
+            }
+        }
         if word.starts_with('-') && word.len() > 1 {
             words.remove(0);
             if values.contains(&word.as_str()) && !words.is_empty() {
@@ -304,6 +316,28 @@ fn skip_options(words: &mut Vec<String>, wrapper: &str) -> Option<String> {
     if wrapper == "aws-vault" {
         if let Some(at) = words.iter().position(|w| w == "--") {
             words.drain(..=at);
+        } else if let Some(at) = words.iter().position(|w| w == "exec") {
+            // No `--`: the word after `exec` and its options is the profile, and what follows is the command.
+            words.drain(..=at);
+            while words.first().is_some_and(|w| w.starts_with('-')) {
+                let option = words.remove(0);
+                if matches!(
+                    option.as_str(),
+                    "--duration"
+                        | "-d"
+                        | "--region"
+                        | "--mfa-token"
+                        | "-t"
+                        | "--prompt"
+                        | "--backend"
+                ) && !words.is_empty()
+                {
+                    words.remove(0);
+                }
+            }
+            if !words.is_empty() {
+                words.remove(0);
+            }
         } else {
             words.clear();
         }
@@ -580,7 +614,7 @@ pub fn hosts(command: &Simple) -> Vec<String> {
 fn option_host_pattern() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"(?i)\b(?:host_?name|proxyjump)(?:=|\s+)['"]?([^\s'"]+)"#)
+        Regex::new(r#"(?i)-o\s*['"]?(?:host_?name|proxyjump)(?:=|\s+)['"]?([^\s'"]+)"#)
             .expect("a fixed pattern")
     })
 }
@@ -692,6 +726,11 @@ mod tests {
         assert_eq!(
             host("ssh -o ProxyJump=ops@jump.example.com localhost ls"),
             ["jump.example.com"]
+        );
+        // The remote word `hostname` is not an option.
+        assert_eq!(
+            host("ssh allowed.example.com hostname -f"),
+            ["allowed.example.com"]
         );
     }
 
