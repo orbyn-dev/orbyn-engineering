@@ -13,7 +13,7 @@ import { IconButton } from "../../ui/controls";
 import { AppearanceSection } from "./pages/Appearance";
 import { KeybindingsSection } from "./pages/Keybindings";
 import { AccountSection, useAccountAvailable } from "../account";
-import { CrewSettingsSection, useCrewPreview } from "../crew";
+import { CrewSettingsSection, useCrewFlag } from "../crew";
 import { MaintenanceSection } from "./maintenance/Maintenance";
 import { ProjectsSection } from "./projects/Projects";
 import { ProvidersSection } from "./providers/Providers";
@@ -98,7 +98,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
   // The Account category exists only while the sign-in gate is on: no dead entry, nothing disabled-looking.
   const accountOn = useAccountAvailable();
   // Crew is Preview: its category exists only while the service says Crew is on.
-  const crewOn = useCrewPreview();
+  const crewOn = useCrewFlag();
   const current = (section === "account" && !accountOn) || (section === "crew" && !crewOn) ? "general" : (section ?? "general");
   const View = views[current];
 

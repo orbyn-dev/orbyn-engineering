@@ -1,5 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
 import { useConnection } from "../../../../product/state/connection";
@@ -150,10 +152,22 @@ describe("Flow on the real routes", () => {
     expect(findings).toHaveTextContent("blocks");
   });
 
+  it("shows a gate's reason only once the task is over, even if a service sends one for a task that is running", async () => {
+    const { user } = await open("crew-flow-leak");
+    await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Use next in the auth redirect/ }));
+    const gates = await screen.findByRole("region", { name: "Gates" });
+    expect(gates).toHaveTextContent("checks");
+    expect(document.body.textContent).not.toContain("A reason for a task that is not over");
+    await user.click(screen.getByRole("button", { name: "All tasks" }));
+    await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Update the login docs/ }));
+    // The same service text for a task that is over is shown.
+    expect(await screen.findAllByText("A reason for a task that is not over", { selector: "span" })).toHaveLength(2);
+  });
+
   it("says a task Flow does not know is not there (404 on the zoom)", async () => {
     mock.reset("crew");
     render(<FlowZoom id="task-gone" onBack={() => undefined} />);
-    expect(await screen.findByText("This task isn't in Flow")).toBeVisible();
+    expect(await screen.findByText("This task isn’t in Flow")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -172,15 +186,48 @@ describe("Flow on the real routes", () => {
     expect(await screen.findByRole("note")).toHaveTextContent("This crew has more tasks than one read covers; the newest are shown.");
   });
 
-  it("pages with Show more, as reads", async () => {
+  it("pages with +N more from the service's total, as reads", async () => {
     const { user } = await open("crew-flow-many");
     expect(await rowsOf()).toHaveLength(50);
     expect(screen.getByText("50 of 60 shown")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await user.click(screen.getByRole("button", { name: "+10 more" }));
     await waitFor(async () => expect(await rowsOf()).toHaveLength(60));
-    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /more$/ })).toBeNull();
     expect(urls().some((url) => url.includes("offset=50"))).toBe(true);
     expect(writes()).toHaveLength(0);
+  });
+
+  it("sends one read for a double click on +N more", async () => {
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    const { user } = await open("crew-flow-many");
+    await rowsOf();
+    // The next page is slow, so the second click arrives while the first is on its way.
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("offset=50")) await new Promise((resolve) => setTimeout(resolve, 80));
+      return real(input, init);
+    });
+    await user.dblClick(screen.getByRole("button", { name: "+10 more" }));
+    await waitFor(async () => expect(await rowsOf()).toHaveLength(60), { timeout: 8000 });
+    expect(urls().filter((url) => url.includes("offset=50"))).toHaveLength(1);
+    expect(writes()).toHaveLength(0);
+  }, 20_000);
+
+  it("draws Pause crew and Stop crew After the beta, inert", async () => {
+    await open("crew");
+    await table();
+    for (const name of ["Pause crew", "Stop crew"]) {
+      const button = screen.getByRole("button", { name: new RegExp(`^${name}`) });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent("After the beta");
+    }
+  });
+
+  it("draws the truncated note, the eye cell and the Waiting chip neutral, not amber", () => {
+    const css = readFileSync(join(process.cwd(), "src/features/crew/flow/live/flow-live.css"), "utf8");
+    const rule = (selector: string) => css.split("\n").find((line) => line.startsWith(selector)) ?? "";
+    expect(rule(".fv-note")).not.toMatch(/warn/);
+    expect(rule(".fv-rev")).not.toMatch(/warn/);
+    expect(rule(".fv-zoom")).toContain("overflow-wrap: anywhere");
   });
 
   it("names an unreadable service and retries with reads only", async () => {
@@ -188,7 +235,7 @@ describe("Flow on the real routes", () => {
     mock.fail("/api/crew/flow/crews", 1);
     const user = userEvent.setup();
     render(<FlowView />);
-    expect(await screen.findByText("Can't read Flow")).toBeVisible();
+    expect(await screen.findByText("Can’t read Flow")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await table()).toBeVisible();
     expect(writes()).toHaveLength(0);
@@ -199,7 +246,7 @@ describe("Flow on the real routes", () => {
     mock.fail("/api/crew/flow/tasks", 1);
     const user = userEvent.setup();
     render(<FlowView />);
-    expect(await screen.findByText("Can't read Flow")).toBeVisible();
+    expect(await screen.findByText("Can’t read Flow")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await table()).toBeVisible();
     expect(writes()).toHaveLength(0);
@@ -207,26 +254,27 @@ describe("Flow on the real routes", () => {
 });
 
 describe("the Crew row of the left bar", () => {
-  it("shows with the Preview label and opens the Crew view on Flow while Crew Preview is on", async () => {
-    mock.reset("crew");
+  beforeEach(() => useConnection.setState({ crewPreview: false }));
+
+  it("shows with the Preview label and opens the Crew view on Flow while the service says Crew Preview is on", () => {
+    useConnection.setState({ crewPreview: true });
     render(<CrewNavRow route={{ name: "home" }} />);
-    const link = await screen.findByRole("link", { name: /Crew/ });
+    const link = screen.getByRole("link", { name: /Crew/ });
     expect(link).toHaveTextContent("Preview");
     expect(link).toHaveAttribute("href", "#/crew/flow");
     expect(link).not.toHaveAttribute("aria-current");
   });
 
-  it("is marked current on a Crew page and draws nothing while Crew Preview is off", async () => {
-    mock.reset("crew");
-    const on = render(<CrewNavRow route={{ name: "crew", tab: "flow" }} />);
-    expect(await screen.findByRole("link", { name: /Crew/ })).toHaveAttribute("aria-current", "page");
-    on.unmount();
-    mock.reset("default");
+  it("is marked current on a Crew page", () => {
+    useConnection.setState({ crewPreview: true });
+    render(<CrewNavRow route={{ name: "crew", tab: "flow" }} />);
+    expect(screen.getByRole("link", { name: /Crew/ })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("draws nothing and asks no route while Crew Preview is off or not known yet", async () => {
     const { container } = render(<CrewNavRow route={{ name: "home" }} />);
-    await waitFor(() => expect(calls("/api/info").length).toBeGreaterThan(0));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
-    // The row reads the service's info, never a Crew route: with Preview off that route answers 404, which the browser logs.
-    expect(calls("/api/crew")).toHaveLength(0);
+    expect(urls()).toEqual([]);
   });
 });

@@ -1,8 +1,7 @@
 import { Users } from "lucide-react";
 import { routeHref, type Route } from "../../../../product/state/route";
-import { api } from "../../../../api/client";
-import { useAsync } from "../../../../lib/useAsync";
 import "./flow-live.css";
+import { useCrewFlag } from "./useCrewFlag";
 
 /**
  * The Crew row of the left bar, after Pull requests (Engineer Designs, the explorer frames): the icon, "Crew" and the Preview
@@ -10,10 +9,8 @@ import "./flow-live.css";
  * and is not drawn.
  */
 export function CrewNavRow({ route }: { route: Route }) {
-  // The flag comes from the service's info, which the app already reads at start: `crew_preview` is true only when Crew Preview
-  // is on and absent otherwise. The shell never asks a Crew route, which answers 404 (a failed request the browser logs) when it is off.
-  const info = useAsync("crew-nav-info", (signal) => api.info(signal), { keep: true });
-  if (info.data?.crew_preview !== true) return null;
+  const on = useCrewFlag();
+  if (!on) return null;
   return (
     <a className="nav-row" href={routeHref({ name: "crew", tab: "flow" })} aria-current={route.name === "crew" ? "page" : undefined}>
       <Users size={15} aria-hidden />

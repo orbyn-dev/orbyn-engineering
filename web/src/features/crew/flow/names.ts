@@ -22,6 +22,12 @@ export const FLOW_FRAMES = [
   "flow-narrow-panel",
   "flow-narrow-window",
   "flow-artifact-pruned",
+  "flow-empty-crews",
+  "flow-empty-tasks",
+  "flow-empty-filter",
+  "flow-truncated",
+  "flow-task-404",
+  "flow-source-error",
 ] as const;
 
 export type FlowFrameId = (typeof FLOW_FRAMES)[number];

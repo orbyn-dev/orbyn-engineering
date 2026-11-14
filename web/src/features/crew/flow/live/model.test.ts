@@ -48,6 +48,8 @@ describe("the words of the zoomed stage list", () => {
     expect(stageWord("security", { stage: "security", state: "skipped" }).text).toBe("Skipped");
     expect(stageWord("build", { stage: "build", state: "needs_you" })).toEqual({ tone: "warn", text: "Needs you" });
     expect(stageWord("finding", { stage: "finding", state: "failed" })).toEqual({ tone: "err", text: "Failed" });
+    // A merged change waiting for the person is neutral, with its tooltip, never amber.
+    expect(stageWord("you", { stage: "you", state: "review_waiting" })).toEqual({ tone: "neutral", text: "Waiting", title: "Waiting for your review after the merge" });
   });
 
   it("words a lane by its findings, else by its state, and a gate by who decided it", () => {

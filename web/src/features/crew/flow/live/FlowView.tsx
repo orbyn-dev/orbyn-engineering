@@ -11,6 +11,8 @@ import { FlowZoom } from "./FlowZoom";
 import { useFlowCrews, useFlowTasks, useRefresh } from "./useFlow";
 import "./flow-live.css";
 
+const AFTER_THE_BETA = "After the beta: no route yet. The beta has a Cancel on each task, when it is wired.";
+
 /**
  * The Flow tab of the Crew view on the real Flow routes. Nothing is drawn while Crew Preview is off (a service with it off
  * answers 404, and so does one with no Crew routes: both read as off, and no other route is read). Reads only: nothing here
@@ -27,7 +29,7 @@ function Flow() {
   useRefresh(crews.reload, crews.status !== "ready");
 
   if (crews.status === "loading") return <Loading label="Reading Flow" rows={4} />;
-  if (crews.status === "error" && !crews.data) return <ErrorState title="Can't read Flow" failure={crews.error} onRetry={() => void crews.reload()} />;
+  if (crews.status === "error" && !crews.data) return <ErrorState title="Can’t read Flow" failure={crews.error} onRetry={() => void crews.reload()} />;
   const list = crews.data ?? [];
   if (list.length === 0) return <Empty title="No crews running" />;
   const crew = list.find((one) => one.id === picked) ?? list[0]!;
@@ -50,6 +52,14 @@ function Flow() {
             </option>
           ))}
         </select>
+        <span className="fv-spacer" />
+        {/* No Flow route pauses or stops a crew: the design draws both After the beta. */}
+        {["Pause crew", "Stop crew"].map((name) => (
+          <button key={name} type="button" className="fv-off" disabled aria-description={AFTER_THE_BETA} title={AFTER_THE_BETA}>
+            {name}
+            <span className="fv-label">After the beta</span>
+          </button>
+        ))}
       </div>
       {task ? <FlowZoom key={task} id={task} onBack={() => setTask(null)} /> : <CrewTasks key={crew.id} crew={crew.id} onOpen={setTask} />}
     </section>
@@ -115,7 +125,7 @@ function CrewTasks({ crew, onOpen }: { crew: string; onOpen(id: string): void })
         {page ? <span className="fv-count">{shown(rows.length, page.total)}</span> : null}
       </div>
       {first.status === "loading" ? <Loading label="Reading tasks" rows={4} /> : null}
-      {first.status === "error" && !page ? <ErrorState title="Can't read Flow" failure={first.error} onRetry={() => void first.reload()} /> : null}
+      {first.status === "error" && !page ? <ErrorState title="Can’t read Flow" failure={first.error} onRetry={() => void first.reload()} /> : null}
       {page ? (
         <>
           {page.truncated ? (
@@ -124,11 +134,11 @@ function CrewTasks({ crew, onOpen }: { crew: string; onOpen(id: string): void })
             </p>
           ) : null}
           {rows.length === 0 ? <Empty title={filter === "all" && q.trim() === "" && !engine ? "No tasks yet" : "No tasks match"} /> : <TaskTable rows={rows} onOpen={onOpen} />}
-          {failure ? <ErrorState compact title="Can't read more tasks" failure={failure} onRetry={() => void showMore()} /> : null}
+          {failure ? <ErrorState compact title="Can’t read more tasks" failure={failure} onRetry={() => void showMore()} /> : null}
           {next !== null ? (
             <div className="fv-more">
               <Button small busy={busy} onClick={() => void showMore()}>
-                Show more
+                +{Math.max(0, page.total - rows.length)} more
               </Button>
             </div>
           ) : null}

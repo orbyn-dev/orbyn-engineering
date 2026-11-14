@@ -81,13 +81,14 @@ export function roundView(row: FlowTaskRow): RoundView {
 }
 
 /** The word on a stage's chip in the zoomed stage list, in Crew Designs' own words. */
-export function stageWord(stage: FlowStage, cell: FlowCell): { tone: "ok" | "info" | "warn" | "err" | "neutral"; text: string } {
+export function stageWord(stage: FlowStage, cell: FlowCell): { tone: "ok" | "info" | "warn" | "err" | "neutral"; text: string; title?: string } {
   const { state } = cell;
   const tone = state === "done" ? "ok" : state === "running" ? "info" : state === "needs_you" ? "warn" : state === "failed" ? "err" : "neutral";
   const waiting = { tone, text: state === "skipped" ? "Skipped" : "Waiting" } as const;
   if (state === "pending" || state === "skipped") return waiting;
   if (state === "needs_you") return { tone, text: "Needs you" };
-  if (state === "review_waiting") return { tone: "warn", text: "Waiting" };
+  // A merged change waiting for the person asks for no decision before the merge: the chip is neutral, and its tooltip says what it waits for.
+  if (state === "review_waiting") return { tone: "neutral", text: "Waiting", title: STATE_WORD.review_waiting };
   if (stage === "checks" && cell.passed != null && cell.of != null) return { tone, text: `${cell.passed} of ${cell.of}` };
   if (state === "failed") return { tone, text: "Failed" };
   if (state === "running") return { tone, text: stage === "code" || stage === "security" ? "Reviewing" : "Running" };
