@@ -134,18 +134,14 @@ export function createMockApi(options: MockOptions = {}) {
   const now = () => new Date(fixtures.T0 + idCounter * 1000).toISOString();
 
   const accountMock = createAccountMock();
-  const crewMock = createCrewMock({
-    signedIn: () => accountMock.signedInEmail(),
-    consumeConfirmation: (device) => accountMock.consumeConfirmation("approve_device", device),
-  });
+  const crewMock = createCrewMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     scenario = next;
-    // `crew-held-account…` has the sign-in gate on and a person signed in, so approving once can be tried.
-    accountMock.reset(next === "account" || next.startsWith("crew-held-account"), next.startsWith("crew-held-account") ? "dev@example.com" : undefined);
+    accountMock.reset(next === "account");
     crewMock.reset(next);
     secretsMock.reset();
     signedIn = false;
@@ -1117,7 +1113,7 @@ export function createMockApi(options: MockOptions = {}) {
     fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.") {
       failures.push({ path, remaining: times, status, code, message });
     },
-    handle(method: string, url: string, body?: unknown): MockResponse {
+    handle(method: string, url: string, body?: unknown, confirm?: string): MockResponse {
       const parsed = new URL(url, "http://mock.local");
       if (scenario === "offline" && parsed.pathname.startsWith("/api")) {
         return err(503, "unavailable", "The service is unavailable.");
@@ -1129,7 +1125,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return needsYouMock(scenario, method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
+      if (parsed.pathname.startsWith("/api/crew")) return needsYouMock(scenario, method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */

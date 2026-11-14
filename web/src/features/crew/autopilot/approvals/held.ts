@@ -1,17 +1,18 @@
 // The commands the guard holds for the person: the held list becomes log rows, and the person's three answers
 // (approve once, deny, dismiss) go to the service. Approving is the only answer that needs proof a person is
-// present: the "Confirm it's you" dialog first (the password, sent once), then its one-time nonce on the route.
-// Deny and Dismiss never send a password. Nothing here keeps a password or a nonce.
+// present: the person's own click asks the desktop shell, which shows its native dialog and hands back a one-time
+// nonce only after the person clicks Approve once there; the nonce then goes on the route once. Deny and Dismiss
+// need none. Nothing here keeps a nonce, and nothing asks again after a refusal: the person clicks again.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { navigate } from "../../../../product/state/route";
 import { useConnection } from "../../../../product/state/connection";
 import { useAsync, toFailure } from "../../../../lib/useAsync";
-import { ApiFailure, NETWORK_ERROR } from "../../../../api/client";
+import { NETWORK_ERROR } from "../../../../api/client";
+import { askPresence, canAskPresence, PresenceFailure } from "../../../../api/shell";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
-import { useAccountStanding } from "../../../account";
 import { crewApi } from "./api";
 import type { ApprovalRow, HeldInfo } from "./model";
+import { afterKeyboardRelease, isPersonsClick, useDesktopApp, type Gesture } from "./presence";
 
 /** How often the open list is read again while the window is shown: a hold appears, expires or is answered elsewhere. */
 export const HELD_REFRESH_MS = 15_000;
@@ -92,20 +93,26 @@ export function heldRow(item: AutopilotHeld, approvalSecs: number, now: number, 
 
 /** What a card needs to draw and answer one hold. */
 export interface HoldControl {
-  /** The account: Approve once needs a signed-in one. */
-  standing: "loading" | "signed_in" | "none";
+  /** This window is the desktop app, so it can ask the shell to confirm approving. A browser tab cannot. */
+  desktop: boolean;
   /** This window reaches the app from another computer: the person at that computer answers. */
   remote: boolean;
   /** An answer this window sent was refused because the hold ended or was decided. */
   closed: Closed | null;
   /** An answer is on its way. */
   busy: boolean;
-  /** Why the last Deny or Dismiss did not happen. */
+  /** An approval is under way anywhere (the dialog or its request): one at a time. */
+  asking: boolean;
+  /** It is this hold's approval that is under way or just ended, so its button can take focus back. */
+  asked: boolean;
+  /** The last approval was not confirmed as the person's: the card says so and stays held. */
+  refused: boolean;
+  /** Why the last answer did not happen, other than a refusal to confirm. */
   error: string | null;
-  approve(): void;
+  /** Approve once. Only a click by the person counts. */
+  approve(event: Gesture): void;
   deny(): void;
   dismiss(): void;
-  signIn(): void;
 }
 
 type Outcome = "done" | "closed" | "failed";
@@ -113,13 +120,16 @@ type Outcome = "done" | "closed" | "failed";
 export function useHeldCommands(onAnswered: () => void) {
   const read = useAsync<AutopilotHeldList>("crew-held", (signal) => crewApi.held(signal));
   const { reload } = read;
-  const standing = useAccountStanding();
+  const desktop = useDesktopApp();
   const remote = useConnection((state) => state.remote);
   const [closed, setClosed] = useState<Record<string, Closed>>({});
   const [decidedAt, setDecidedAt] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
-  const [noAccount, setNoAccount] = useState(false);
+  /** The hold whose approval is in flight, from the click to the route's answer. Set before anything is awaited, so a second click cannot start another. */
+  const approving = useRef<string | null>(null);
+  const [asking, setAsking] = useState<string | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
   const answered = useRef(onAnswered);
   useEffect(() => {
     answered.current = onAnswered;
@@ -182,66 +192,98 @@ export function useHeldCommands(onAnswered: () => void) {
     [ended, reload],
   );
 
+  /** The card says it could not confirm the person, and the hold stays as it is. */
+  const refuse = useCallback((id: string) => setRefused(id), []);
+
   /**
-   * Approve once, after "Confirm it's you" made `nonce` for this hold. Resolves `false` when the nonce was not used
-   * (the hold ended or was refused, or approving is not available), so the dialog gives it up. A failure that leaves the
-   * hold open throws: the dialog says so, and Try again needs the password typed again.
+   * Approve once: from the person's own click, one request at a time. The shell asks in its native dialog and hands back a
+   * nonce only when the person clicks Approve once there; `cancelled` says nothing, any other refusal says it could not
+   * confirm the person. The nonce goes to the route once. Nothing here asks again: a refusal ends the attempt.
    */
   const approve = useCallback(
-    async (id: string, nonce: string): Promise<boolean> => {
+    async (id: string, gesture: Gesture): Promise<void> => {
+      if (!isPersonsClick(gesture) || approving.current !== null || !canAskPresence()) return;
+      approving.current = id;
+      setRefused(null);
+      setError(null);
+      // Set for the whole attempt (dialog and request), so every card's Approve once is off until it ends.
+      setAsking(id);
       try {
-        await crewApi.approveOnce(id, nonce);
-        setDecidedAt((now) => ({ ...now, [id]: clock(Date.now()) }));
-        await reload();
-        answered.current();
-        return true;
-      } catch (caught) {
-        const failure = toFailure(caught);
-        if (ended(id, failure)) return false;
-        if (failure.code === "account_disabled" || (failure.code === "policy_denied" && failure.message.startsWith("Approving once is not available"))) {
-          setNoAccount(true);
-          return false;
+        let nonce: string;
+        try {
+          await afterKeyboardRelease(gesture);
+          nonce = await askPresence(id);
+        } catch (caught) {
+          if (!(caught instanceof PresenceFailure && caught.code === "cancelled")) refuse(id);
+          return;
         }
-        // The always-denied list refused it now: the service already closed the hold as denied, and nothing ran.
-        if (failure.code === "policy_denied") {
-          setClosed((now) => ({ ...now, [id]: "decided" }));
-          void reload();
-          return false;
-        }
-        if (failure.code === NETWORK_ERROR) {
-          // The request may have landed and only the answer been lost: read the list before saying anything about it.
-          const fresh = await crewApi.held().then((list) => list, () => null);
-          if (!fresh) throw new ApiFailure("unexpected", "Couldn’t tell whether it was approved. Check the approval log before trying again.", 0);
-          const now = fresh.items.find((one) => one.id === id)?.state;
-          if (now && now !== "held") {
-            const landed = now === "approved" || now === "used";
-            if (landed) setDecidedAt((state) => ({ ...state, [id]: clock(Date.now()) }));
-            else setClosed((state) => ({ ...state, [id]: now === "expired" ? "expired" : "decided" }));
+        setBusy(id);
+        try {
+          await crewApi.approveOnce(id, nonce);
+          setDecidedAt((now) => ({ ...now, [id]: clock(Date.now()) }));
+          await reload();
+          answered.current();
+        } catch (caught) {
+          const failure = toFailure(caught);
+          if (ended(id, failure)) return;
+          // The service did not see the shell's confirmation: a wrong or used nonce, or a service not started by the desktop app.
+          if (failure.code === "presence_required" || failure.code === "desktop_required") return refuse(id);
+          // The always-denied list refused it now: the service already closed the hold as denied, and nothing ran.
+          if (failure.code === "policy_denied") {
+            setClosed((now) => ({ ...now, [id]: "decided" }));
             void reload();
-            if (landed) answered.current();
-            return landed;
+            return;
           }
+          if (failure.code === NETWORK_ERROR) {
+            // The request may have landed and only the answer been lost: read the list before saying anything about it.
+            const fresh = await crewApi.held().then((list) => list, () => null);
+            const now = fresh?.items.find((one) => one.id === id)?.state;
+            if (!fresh || !now) {
+              setError({ id, message: "Couldn’t tell whether it was approved. Check the approval log before trying again." });
+              return;
+            }
+            if (now !== "held") {
+              if (now === "approved" || now === "used") {
+                setDecidedAt((state) => ({ ...state, [id]: clock(Date.now()) }));
+                answered.current();
+              } else setClosed((state) => ({ ...state, [id]: now === "expired" ? "expired" : "decided" }));
+              void reload();
+              return;
+            }
+            setError({ id, message: "Can’t reach the Orbyn service. Nothing was changed. The request is still held." });
+            return;
+          }
+          setError({ id, message: failure.message });
+        } finally {
+          setBusy(null);
         }
-        throw caught;
+      } finally {
+        approving.current = null;
+        setAsking(null);
       }
     },
-    [ended, reload],
+    [ended, refuse, reload],
   );
 
   const control = useCallback(
-    (row: ApprovalRow, ask: (row: ApprovalRow) => void): HoldControl => ({
-      standing: noAccount ? "none" : standing,
+    (row: ApprovalRow): HoldControl => ({
+      desktop,
       remote,
       closed: closed[row.id] ?? null,
       busy: busy === row.id,
+      asking: asking !== null,
+      asked: asking === row.id,
+      refused: refused === row.id,
       error: error?.id === row.id ? error.message : null,
-      approve: () => ask(row),
+      approve: (gesture) => void approve(row.id, gesture),
       deny: () => void answer(row.id, "deny"),
       dismiss: () => void answer(row.id, "dismiss"),
-      signIn: () => navigate({ name: "settings", section: "account" }),
     }),
-    [answer, busy, closed, error, noAccount, remote, standing],
+    [answer, approve, asking, busy, closed, desktop, error, refused, remote],
   );
 
-  return { rows, waiting, failure: list ? null : read.error, reload, approve, control };
+  /** What a row without a hold (a denied command that "Approve it myself" can still ask about) needs to draw and ask. */
+  const presence = { desktop, asking: asking !== null, refused };
+
+  return { rows, waiting, failure: list ? null : read.error, reload, approve, control, presence };
 }

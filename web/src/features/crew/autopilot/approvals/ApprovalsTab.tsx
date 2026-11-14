@@ -6,11 +6,9 @@ import { toFailure } from "../../../../lib/useAsync";
 import type { ApiFailure } from "../../../../api/client";
 import type { AutopilotRule } from "../../../../generated/AutopilotRule";
 import { crewApi, PAGE } from "./api";
-import { ApproveMyself } from "./ApproveMyself";
 import { ApprovalTable } from "./ApprovalRows";
 import { DecisionDrawer, type DrawerActions } from "./DecisionDrawer";
 import { HardDeniedDialog } from "./HardDenied";
-import { ApproveOnceDialog } from "./HeldCard";
 import { useHeldCommands } from "./held";
 import { LEDGER_NOTE, LEGEND, MODE_LINE, GUARD_LINE } from "./copy";
 import { dayLine, rowOf } from "./ledger";
@@ -106,9 +104,7 @@ export function ApprovalsTab() {
   const [filter, setFilter] = useState<ApprovalFilter>("all");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const [myself, setMyself] = useState<ApprovalRow | null>(null);
   const [hardList, setHardList] = useState(false);
-  const [confirming, setConfirming] = useState<ApprovalRow | null>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => {
@@ -128,7 +124,12 @@ export function ApprovalsTab() {
 
   const row = rows.find((one) => one.id === selected) ?? null;
   const act: DrawerActions = {
-    approveMyself: setMyself,
+    // The same flow as Approve once, on the row's own hold: the shell's dialog says what it approves, and the target and reason stay on the card behind it.
+    // A ledger row that is not a hold is never sent to the shell.
+    approveMyself: (one, event) => { if (one.held) void held.approve(one.held.id, event); },
+    desktop: held.presence.desktop,
+    asking: held.presence.asking,
+    refused: held.presence.refused,
     seeHardDenied: () => setHardList(true),
     signInSecondEngine: () => navigate({ name: "settings", section: "providers" }),
     close,
@@ -194,11 +195,9 @@ export function ApprovalsTab() {
               <span>{LEDGER_NOTE}</span>
             </div>
           </div>
-          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held ? held.control(row, setConfirming) : undefined} /> : null}
+          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held ? held.control(row) : undefined} /> : null}
         </div>
       )}
-      {confirming ? <ApproveOnceDialog row={confirming} approve={held.approve} onClose={() => setConfirming(null)} /> : null}
-      {myself ? <ApproveMyself row={myself} onClose={() => setMyself(null)} /> : null}
       {hardList ? <HardDeniedDialog onClose={() => setHardList(false)} /> : null}
     </section>
   );

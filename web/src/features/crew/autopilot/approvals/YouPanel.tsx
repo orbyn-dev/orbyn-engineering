@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { Button } from "../../../../ui/controls";
+import { HELD } from "./copy";
+import { useDesktopApp, type Gesture } from "./presence";
 import { Facts, Chip, RISK_LABEL } from "./parts";
 import type { HeldCommand, YouState } from "./model";
 
@@ -20,7 +22,7 @@ export interface YouActions {
   switchToFull?(): void;
 }
 
-function Buttons({ items }: { items: [label: string, run: (() => void) | undefined, primary?: boolean][] }) {
+function Buttons({ items }: { items: [label: string, run: ((event: MouseEvent<HTMLButtonElement>) => void) | undefined, primary?: boolean][] }) {
   const shown = items.filter(([, run]) => run);
   if (!shown.length) return null;
   return (
@@ -99,8 +101,12 @@ export function YouPanel({ state, act = {} }: { state: YouState; act?: YouAction
   }
 }
 
-/** The card under the Flow graph for a command a guard holds: neutral while it waits on a key, amber for you. */
-export function GuardHold({ held, onApprove, onDeny, onOpenLog }: { held: HeldCommand; onApprove?(): void; onDeny?(): void; onOpenLog?(): void }) {
+/**
+ * The card under the Flow graph for a command a guard holds: neutral while it waits on a key, amber for you. Approve once
+ * is the desktop app's: it passes the click on, and a browser tab says the desktop app is needed instead of offering it.
+ */
+export function GuardHold({ held, onApprove, onDeny, onOpenLog }: { held: HeldCommand; onApprove?(event: Gesture): void; onDeny?(): void; onOpenLog?(): void }) {
+  const desktop = useDesktopApp();
   return (
     <section className={`ap-box${held.forYou ? " ap-box-am" : ""}`} aria-label="A held command">
       <h4>{held.forYou ? "Build is holding one command" : "Build is holding one command for a second key"}</h4>
@@ -111,19 +117,22 @@ export function GuardHold({ held, onApprove, onDeny, onOpenLog }: { held: HeldCo
         ...(held.forYou ? [] : [{ label: "Key 1", text: held.key1 }, { label: "Key 2", text: held.key2 }]),
         { label: "The task", text: "Keeps going on everything else. It reaches Checks when the command has run or been denied." },
       ]} />
-      <Buttons items={held.forYou ? [["Approve once", onApprove, true], ["Deny", onDeny]] : [["Open in the approval log", onOpenLog]]} />
+      {held.forYou && !desktop ? <p className="ap-muted">{HELD.desktopOnly}</p> : null}
+      <Buttons items={held.forYou ? [["Approve once", desktop ? onApprove : undefined, true], ["Deny", onDeny]] : [["Open in the approval log", onOpenLog]]} />
     </section>
   );
 }
 
 /** A Needs you item for a guarded command denied for want of a second key. Nothing is blocked. */
-export function GuardNeedsYouItem({ onSignIn, onApproveMyself, onDismiss }: { onSignIn?(): void; onApproveMyself?(): void; onDismiss?(): void }) {
+export function GuardNeedsYouItem({ onSignIn, onApproveMyself, onDismiss }: { onSignIn?(): void; onApproveMyself?(event: Gesture): void; onDismiss?(): void }) {
+  const desktop = useDesktopApp();
   return (
     <article className="ap-box" aria-label="Sign in to a second engine to allow a command that deletes data in a production-linked target">
       <h4>Sign in to a second engine to allow a command that deletes data in a production-linked target</h4>
       <p className="ap-muted">Risk · High · Hard to undo · Claude Code · Sonnet 5.5 · the guard · Denied for now</p>
       <p>The command was denied for now and the worker took another approach. Nothing is blocked; sign in to a second vendor, or approve the command yourself, once.</p>
-      <Buttons items={[["Sign in to a second engine", onSignIn, true], ["Approve it myself", onApproveMyself], ["Dismiss", onDismiss]]} />
+      {desktop ? null : <p className="ap-muted">{HELD.desktopOnly}</p>}
+      <Buttons items={[["Sign in to a second engine", onSignIn, true], ["Approve it myself", desktop ? onApproveMyself : undefined], ["Dismiss", onDismiss]]} />
     </article>
   );
 }

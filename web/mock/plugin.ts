@@ -110,7 +110,7 @@ export function mockApi(): Plugin {
         }
         const body = req.method === "GET" ? undefined : await readBody(req);
         if (mock.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, mock.delayMs));
-        const result = mock.handle(req.method ?? "GET", url, body);
+        const result = mock.handle(req.method ?? "GET", url, body, [req.headers["x-orbyn-confirm"]].flat()[0]);
         send(result.status, result.body);
       });
 
