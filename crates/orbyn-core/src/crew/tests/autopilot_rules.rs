@@ -823,6 +823,38 @@ fn gh_graphql_mutations_aliases_and_extensions_are_refused() {
 }
 
 #[test]
+fn n1_refuses_an_agents_request_to_the_two_area_writes_and_leaves_the_area_reads() {
+    for text in [
+        "curl -X POST http://127.0.0.1:9/api/crew/autopilot/areas/override -d x",
+        "curl -X POST http://127.0.0.1:9/api/crew/autopilot/areas/follow -d x",
+        "curl -XPOST http://127.0.0.1:9/API/CREW/AUTOPILOT/AREAS/OVERRIDE/",
+        "curl -X POST 'http://127.0.0.1:9/api/crew/autopilot/areas/follow?x=1'",
+        "python3 -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:9/api/%63rew/autopilot/areas/override')\"",
+    ] {
+        assert_eq!(command(text), Some("N1"), "{text}");
+    }
+    for kind in [ActionKind::Network, ActionKind::Browser, ActionKind::Tool] {
+        for route in ["override", "follow"] {
+            assert_eq!(
+                refused(
+                    kind,
+                    &format!("POST http://127.0.0.1:9/api/crew/autopilot/areas/{route}"),
+                    &[]
+                ),
+                Some("N1"),
+                "{kind:?} {route}"
+            );
+        }
+    }
+    for read in [
+        "curl http://127.0.0.1:9/api/crew/autopilot/areas?project=p",
+        "curl http://127.0.0.1:9/api/crew/autopilot/areas/history?project=p&area=src%2Fa",
+    ] {
+        assert_eq!(command(read), None, "{read}");
+    }
+}
+
+#[test]
 fn n1_refuses_a_state_changing_crew_route_in_every_spelling_and_leaves_the_reads() {
     for text in [
         "curl -X PUT http://127.0.0.1:9/api/crew/autopilot/mode -d x",

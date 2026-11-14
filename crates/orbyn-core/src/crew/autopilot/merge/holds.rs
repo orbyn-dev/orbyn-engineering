@@ -8,7 +8,6 @@ use super::guard::{owed_lanes, sensitive};
 use super::queue::MergeTarget;
 use super::risk::{RECENT_MERGES, Rate, RecentTotals, Risk, WINDOW_DAYS};
 use crate::app::Core;
-use crate::crew::autopilot::Mode;
 use crate::crew::lifecycle::is_final;
 use crate::error::{CoreError, Result};
 use crate::store::{MergeEntry, MergeRecord};
@@ -143,23 +142,16 @@ impl Core {
         &self,
         entry: &MergeEntry,
         target: &MergeTarget,
+        now: i64,
     ) -> Result<Option<String>> {
         if entry.released {
             return Ok(None);
         }
         let risk = Risk::parse(&entry.risk).unwrap_or(Risk::High);
-        match (self.merge_mode(&entry.task_id)?, risk) {
-            (Mode::Off, _) => {
-                return Ok(Some(
-                    "Autopilot is off, so a person releases every merge.".to_owned(),
-                ));
-            }
-            (Mode::On, Risk::High) => {
-                return Ok(Some(
-                    "A high-risk diff waits for a person under On.".to_owned(),
-                ));
-            }
-            _ => {}
+        // Read again at the merge: the mode, and the areas the diff touches, as they are now.
+        let effect = self.merge_effect(&entry.task_id, &entry.areas, now)?;
+        if let Some(why) = effect.wait_note(risk) {
+            return Ok(Some(why));
         }
         let (paths, _) = gitops::diff_facts(&target.repo, &target.branch, &entry.candidate).await?;
         let held = self.merge_holds(&entry.task_id, target, &paths).await?;

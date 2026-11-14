@@ -439,12 +439,27 @@ impl Core {
 
     /// Why a task's merge has its risk. Reads the queue row, else the merge that reached the branch.
     pub fn autopilot_risk(&self, task_id: &str) -> Result<wire::AutopilotRiskReport> {
+        self.autopilot_risk_at(task_id, crate::util::unix_now())
+    }
+
+    /// [`Self::autopilot_risk`] with the clock the area records are counted against.
+    pub fn autopilot_risk_at(&self, task_id: &str, now: i64) -> Result<wire::AutopilotRiskReport> {
         self.crew_preview_only()?;
         valid_id(task_id)?;
         let mut scrubs = Scrubs::new(self)?;
         let scrub = scrubs.of(task_id);
         let not_measured = vec!["test coverage of the touched code".to_owned()];
         if let Some(entry) = self.store.merge_entry(task_id)? {
+            let ceiling = Mode::parse(&entry.mode).unwrap_or_default();
+            let area_modes = self
+                .area_modes_of(task_id, &entry.areas, ceiling, now)
+                .iter()
+                .map(|l| wire::AutopilotAreaMode {
+                    area: scrub.text(&l.area),
+                    mode: mode_wire(l.mode),
+                    line: scrub.text(&l.line),
+                })
+                .collect();
             return Ok(wire::AutopilotRiskReport {
                 task_id: entry.task_id.clone(),
                 state: entry.state.clone(),
@@ -458,12 +473,23 @@ impl Core {
                 mode: entry.mode.clone(),
                 note: entry.note.as_deref().map(|n| scrub.text(n)),
                 not_measured,
+                area_modes,
             });
         }
         let record = self
             .store
             .crew_merge(task_id)?
             .ok_or_else(|| CoreError::NotFound("merge".into()))?;
+        let ceiling = Mode::parse(&record.mode).unwrap_or_default();
+        let area_modes = self
+            .area_modes_of(task_id, &record.areas, ceiling, now)
+            .iter()
+            .map(|l| wire::AutopilotAreaMode {
+                area: scrub.text(&l.area),
+                mode: mode_wire(l.mode),
+                line: scrub.text(&l.line),
+            })
+            .collect();
         Ok(wire::AutopilotRiskReport {
             task_id: record.task_id.clone(),
             state: "merged".to_owned(),
@@ -477,6 +503,7 @@ impl Core {
             mode: record.mode.clone(),
             note: None,
             not_measured,
+            area_modes,
         })
     }
 
@@ -493,12 +520,26 @@ impl Core {
             .into_iter()
             .map(|item| {
                 let scrub = scrubs.of(&item.task_id);
-                let watch = self
-                    .store
-                    .crew_merge(&item.task_id)
-                    .ok()
-                    .flatten()
-                    .map_or_else(|| "unknown".to_owned(), |m| m.watch);
+                let record = self.store.crew_merge(&item.task_id).ok().flatten();
+                let watch = record
+                    .as_ref()
+                    .map_or_else(|| "unknown".to_owned(), |m| m.watch.clone());
+                // The areas of this merge the breaker has lowered (or a person set to Off) now, each with its record.
+                let area_modes = record
+                    .as_ref()
+                    .map(|m| {
+                        let ceiling = Mode::parse(&m.mode).unwrap_or_default();
+                        self.area_modes_of(&m.task_id, &m.areas, ceiling, now)
+                            .iter()
+                            .filter(|l| l.marked())
+                            .map(|l| wire::AutopilotAreaMode {
+                                area: scrub.text(&l.area),
+                                mode: mode_wire(l.mode),
+                                line: scrub.text(&l.line),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 wire::AutopilotReviewItem {
                     risk: risk_wire(item.risk.name()),
                     reasons: scrub.texts(&item.reasons),
@@ -515,6 +556,7 @@ impl Core {
                     cost: scrub.json(&item.cost),
                     watch,
                     needs_person: item.needs_person.as_deref().map(|n| scrub.text(n)),
+                    area_modes,
                     task_id: item.task_id,
                 }
             })
@@ -859,6 +901,20 @@ impl Core {
             needs_person: to_u32(needs_person),
             denied: of("denied"),
             tripwires: of("tripwire"),
+            areas_changed: self
+                .store
+                .area_events_since(since, to_u32(ROWS_MAX))?
+                .into_iter()
+                .map(|e| wire::AutopilotAreaChanged {
+                    project: e.project_id,
+                    area: redact(&e.area),
+                    kind: e.kind,
+                    from_mode: e.from_mode,
+                    to_mode: e.to_mode,
+                    decided_by: e.decided_by,
+                    at: e.at,
+                })
+                .collect(),
             quiet: false,
         };
         digest.quiet = digest.merged_count == 0
@@ -866,7 +922,8 @@ impl Core {
             && digest.waiting_review == 0
             && digest.needs_person == 0
             && digest.denied == 0
-            && digest.tripwires == 0;
+            && digest.tripwires == 0
+            && digest.areas_changed.is_empty();
         Ok(digest)
     }
 }

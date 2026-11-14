@@ -5,6 +5,7 @@
 
 mod autopilot;
 mod autopilot_areas;
+mod autopilot_enforce;
 mod autopilot_guard;
 mod autopilot_held;
 mod autopilot_merge;

@@ -163,3 +163,102 @@ fn a_mode_update_that_fails_after_the_event_commits_nothing() {
     );
     assert!(store.area_mode("p1", "src/a").unwrap().is_none());
 }
+
+fn person<'a>(
+    choice: Option<&'a str>,
+    trip: Option<i64>,
+    record: &'a serde_json::Value,
+) -> PersonWrite<'a> {
+    PersonWrite {
+        project_id: "p1",
+        area: "src/a",
+        choice,
+        seen: Some(SeenTrip(trip)),
+        reason: Some("checked"),
+        from_mode: "on",
+        to_mode: "full",
+        record,
+        at: 300,
+    }
+}
+
+fn audit_rows(store: &Store) -> i64 {
+    store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action LIKE 'crew.area.%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_persons_choice_writes_the_audit_row_first_and_a_refused_event_undoes_it() {
+    let dir = TempDir::new();
+    let store = Store::open(&dir.path().join("orbyn.db"), "a").unwrap();
+    assert!(demote(&store, "cause-1", 100));
+    let record = json!({ "merges": 5, "reverts": 2, "window_days": 14, "escapes": null });
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_set BEFORE INSERT ON crew_area_events WHEN NEW.kind = 'override_set'
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+    let write = person(Some("keep_ceiling"), Some(100), &record);
+    assert!(store.record_area_override(&write).is_err());
+    assert_eq!(
+        audit_rows(&store),
+        0,
+        "the audit row went with the refused event"
+    );
+    let mode = store.area_mode("p1", "src/a").unwrap().unwrap();
+    assert_eq!(mode.person_override, None, "the area stayed as it was");
+
+    store
+        .writer()
+        .execute_batch("DROP TRIGGER refuse_set")
+        .unwrap();
+    assert!(store.record_area_override(&write).unwrap());
+    assert!(
+        !store.record_area_override(&write).unwrap(),
+        "the same choice again"
+    );
+    assert_eq!(audit_rows(&store), 1);
+    let event = &store.area_events("p1", "src/a", 5).unwrap()[0];
+    let audit_id: i64 = store
+        .reader()
+        .query_row(
+            "SELECT id FROM audit_events WHERE action = 'crew.area.override'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(event.cause, format!("person:{audit_id}"));
+    assert_eq!(event.decided_by, "person");
+    let mode = store.area_mode("p1", "src/a").unwrap().unwrap();
+    assert_eq!(mode.person_override.as_deref(), Some("keep_ceiling"));
+    assert_eq!(
+        (mode.state.as_str(), mode.tripped_at),
+        ("demoted", Some(100))
+    );
+
+    // A person who saw an older trip is stale, and a follow ends the override and nothing else.
+    let old = person(None, Some(99), &record);
+    assert!(matches!(
+        store.record_area_override(&old),
+        Err(crate::error::CoreError::Stale(_))
+    ));
+    assert!(
+        store
+            .record_area_override(&person(None, Some(100), &record))
+            .unwrap()
+    );
+    let mode = store.area_mode("p1", "src/a").unwrap().unwrap();
+    assert_eq!(
+        (mode.person_override, mode.state.as_str()),
+        (None, "demoted")
+    );
+    assert_eq!(audit_rows(&store), 2);
+}

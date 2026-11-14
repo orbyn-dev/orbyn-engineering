@@ -7,6 +7,6 @@ import type { AutopilotRateRow } from "./AutopilotRateRow";
  */
 export type AutopilotTrust = { window_days: number, min_sample: number, high_revert_permille: number, total: AutopilotRate, areas: Array<AutopilotRateRow>, engines: Array<AutopilotRateRow>, 
 /**
- * The circuit breaker records a per-area demotion (slice 4j, shadow: recorded, not yet enforced). Earning a higher mode is not built.
+ * The circuit breaker lowers an area from Full to On, and the merge gate reads it (slice 4j). Earning a higher mode is not built.
  */
 autonomy_by_area: boolean, truncated: boolean, };

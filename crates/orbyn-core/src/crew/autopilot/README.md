@@ -18,7 +18,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |
 | `presence` | The shell messages that carry a person's approval of a hold (`presence_describe`, `presence_grant`) and what they check |
 | `review` | `Core`'s side: the mode, the approvers, and `ActionReview` for the gate |
-| `areas` | Autonomy by area, in shadow (slice 4j): the circuit breaker's pure rule, its writes after a revert and its reads. Nothing reads the result for a decision yet |
+| `areas` | Autonomy by area (slice 4j): the circuit breaker's pure rule and its writes, what the merge gate reads (`effective`), a person's override and follow (`person`), a failed breaker's retry (`retry`) and the reads |
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
 | `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
@@ -156,9 +156,9 @@ ledger of slice 4c; when that lands these rows move into it.
 - **4i, blast-radius guard and data-class routing:** `tier::tier` adds a two-key reason for a destructive command against
   a production-linked target, so it needs two keys under Full too. Path classes and the router's blocking filter go in
   `crew::filters`, reading `.orbyn/crew.json` at the base commit as `hosts` does.
-- **4j, autonomy by area:** `Core::crew_autopilot_mode` is the one place the mode in force is resolved. An area's
-  demotion is a lower value taken there, with the person's chosen mode as the ceiling. Part 1 (shadow) records the
-  demotion in [`areas/`](areas); nothing takes it into `crew_autopilot_mode` yet, which is part 2.
+- **4j, autonomy by area:** `Core::crew_autopilot_mode` still resolves the person's mode (the ceiling). The merge gate lowers it
+  per area in [`areas/effective`](areas/effective.rs): the lower of the ceiling and every touched area, where a lowered area is On only
+  under a Full ceiling. The chain and the tier do not read an area.
 
 ## Limits of Preview
 

@@ -14,6 +14,10 @@ waiting_review: number, overdue: number, needs_person: number,
  */
 denied: number, tripwires: number, 
 /**
+ * Areas whose mode changed in the window: lowered, returned, or a person's override set or cleared. Newest first.
+ */
+areas_changed?: Array<AutopilotAreaChanged>, 
+/**
  * Nothing happened, so no notification is due.
  */
 quiet: boolean, };

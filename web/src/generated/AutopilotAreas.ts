@@ -3,7 +3,7 @@ import type { AutopilotAreaRow } from "./AutopilotAreaRow";
 import type { AutopilotMode } from "./AutopilotMode";
 
 /**
- * The areas of one project under the circuit breaker (slice 4j, shadow). Read-only; the thresholds are proposed.
+ * The areas of one project under the circuit breaker (slice 4j). Read-only; the thresholds are proposed.
  */
 export type AutopilotAreas = { project: string, 
 /**
@@ -11,6 +11,6 @@ export type AutopilotAreas = { project: string,
  */
 ceiling: AutopilotMode, as_of: number, 
 /**
- * False: the state is recorded and shown, and nothing decides by it yet.
+ * True: the merge gate reads each area's mode. Earning a higher mode is not built.
  */
 enforced: boolean, total: number, rows: Array<AutopilotAreaRow>, };

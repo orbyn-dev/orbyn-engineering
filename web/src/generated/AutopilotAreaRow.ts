@@ -18,7 +18,7 @@ area: string,
  */
 area_key: string, ceiling: AutopilotMode, 
 /**
- * The mode the breaker records for the area. Shadow: no merge, approval or tier reads it yet.
+ * The mode the merge gate reads for the area, before the crew's own mode is applied.
  */
 now: AutopilotMode, state: AutopilotAreaState, line: string, 
 /**

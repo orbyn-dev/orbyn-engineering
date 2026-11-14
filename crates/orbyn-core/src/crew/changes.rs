@@ -12,6 +12,8 @@ use crate::account::changes::{normalize, paths_with_prefix, pattern_matches};
 pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("PUT", "/api/crew/autopilot/mode"),
     ("POST", "/api/crew/autopilot/confirm"),
+    ("POST", "/api/crew/autopilot/areas/override"),
+    ("POST", "/api/crew/autopilot/areas/follow"),
     ("POST", "/api/crew/autopilot/review/{id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{id}/comment"),
     ("POST", "/api/crew/autopilot/review/{id}/revert"),

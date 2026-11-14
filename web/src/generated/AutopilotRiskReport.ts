@@ -16,4 +16,8 @@ note?: string | null,
 /**
  * What the score does not measure.
  */
-not_measured: Array<string>, };
+not_measured: Array<string>, 
+/**
+ * The mode each touched area is on, with the record behind it (slice 4j, enforcement).
+ */
+area_modes?: Array<AutopilotAreaMode>, };

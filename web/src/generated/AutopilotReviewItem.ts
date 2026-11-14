@@ -21,4 +21,8 @@ watch: string,
 /**
  * A break the crew was not certain enough to revert; the person decides.
  */
-needs_person?: string | null, };
+needs_person?: string | null, 
+/**
+ * The areas of this merge that are lowered by the circuit breaker now, each with its record. Empty when none is.
+ */
+area_modes?: Array<AutopilotAreaMode>, };

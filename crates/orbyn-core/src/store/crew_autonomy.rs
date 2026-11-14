@@ -1,7 +1,8 @@
 //! Autonomy by area at rest (docs/crew.md, "As built (slice 4j, shadow)"): where the circuit breaker has put an area and the audit
 //! trail of why. The record the breaker reads (merges and reverts) is never stored here: it is counted from `crew_merges`. A
 //! breaker write adds its `crew_area_events` row and changes `crew_area_modes` in one transaction, event first, so a row that
-//! cannot be written leaves the mode as it was. Events are never changed or removed. Nothing reads a mode for a decision yet.
+//! cannot be written leaves the mode as it was. Events are never changed or removed. The merge gate reads a mode through
+//! `crew::autopilot::areas`; a person's override is written by `crew_autonomy_person.rs`.
 
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::Value;
@@ -23,7 +24,7 @@ pub struct AreaMode {
     pub trip_reason: Option<Value>,
     /// When the recovery clock started: the demotion, or the latest revert since.
     pub recovery_since: Option<i64>,
-    /// A person's override: `keep_ceiling` or `off`. Nothing writes one yet.
+    /// A person's override: `keep_ceiling` or `off`.
     pub person_override: Option<String>,
     pub override_at: Option<i64>,
     pub updated_at: i64,
@@ -54,8 +55,10 @@ pub enum AreaChange {
     },
     /// A revert while lowered: the recovery clock restarts.
     ResetRecovery { since: i64 },
-    /// The area follows its ceiling again.
+    /// The area follows its ceiling again. A `keep_ceiling` override ends with the lowering it ignored; `off` stays.
     Restore,
+    /// A new trip while a person's `keep_ceiling` override stands: the override ends and the recovery clock restarts.
+    ClearKeepCeiling { since: i64 },
 }
 
 /// One breaker write: the event and the change it makes.
@@ -79,7 +82,7 @@ fn json(text: String) -> rusqlite::Result<Value> {
     })
 }
 
-fn mode_row(row: &Row<'_>) -> rusqlite::Result<AreaMode> {
+pub(super) fn mode_row(row: &Row<'_>) -> rusqlite::Result<AreaMode> {
     Ok(AreaMode {
         project_id: row.get("project_id")?,
         area: row.get("area")?,
@@ -96,7 +99,7 @@ fn mode_row(row: &Row<'_>) -> rusqlite::Result<AreaMode> {
     })
 }
 
-fn event_row(row: &Row<'_>) -> rusqlite::Result<AreaEvent> {
+pub(super) fn event_row(row: &Row<'_>) -> rusqlite::Result<AreaEvent> {
     Ok(AreaEvent {
         id: row.get("id")?,
         project_id: row.get("project_id")?,
@@ -123,6 +126,22 @@ impl Store {
             .optional()?)
     }
 
+    /// Makes every read of the area modes fail, as a damaged table would. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn break_area_modes_for_test(&self) {
+        self.writer()
+            .execute_batch("ALTER TABLE crew_area_modes RENAME TO crew_area_modes_broken")
+            .unwrap();
+    }
+
+    /// Undoes [`Self::break_area_modes_for_test`]. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fix_area_modes_for_test(&self) {
+        self.writer()
+            .execute_batch("ALTER TABLE crew_area_modes_broken RENAME TO crew_area_modes")
+            .unwrap();
+    }
+
     /// Every area of a project that has a row, by name.
     pub fn area_modes(&self, project_id: &str) -> Result<Vec<AreaMode>> {
         let conn = self.reader();
@@ -131,6 +150,17 @@ impl Store {
         )?;
         Ok(statement
             .query_map(params![project_id, AREAS_MAX], mode_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Every area's events at or after `since`, newest first, at most `limit` rows, for the digest.
+    pub fn area_events_since(&self, since: i64, limit: u32) -> Result<Vec<AreaEvent>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT * FROM crew_area_events WHERE at >= ?1 AND kind != 'recovery_reset' ORDER BY id DESC LIMIT ?2",
+        )?;
+        Ok(statement
+            .query_map(params![since, limit], event_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -193,8 +223,17 @@ impl Store {
                 AreaChange::Restore => {
                     tx.execute(
                         "UPDATE crew_area_modes SET state = 'follows', tripped_at = NULL, trip_reason = NULL, recovery_since = NULL,
+                             override = CASE WHEN override = 'keep_ceiling' THEN NULL ELSE override END,
+                             override_at = CASE WHEN override = 'keep_ceiling' THEN NULL ELSE override_at END,
                              updated_at = ?3 WHERE project_id = ?1 AND area = ?2",
                         params![write.project_id, write.area, write.at],
+                    )?;
+                }
+                AreaChange::ClearKeepCeiling { since } => {
+                    tx.execute(
+                        "UPDATE crew_area_modes SET override = NULL, override_at = NULL, recovery_since = ?3, updated_at = ?4
+                         WHERE project_id = ?1 AND area = ?2 AND override = 'keep_ceiling'",
+                        params![write.project_id, write.area, since, write.at],
                     )?;
                 }
             }

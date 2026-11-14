@@ -107,7 +107,7 @@ pub struct AutopilotTrust {
     pub total: AutopilotRate,
     pub areas: Vec<AutopilotRateRow>,
     pub engines: Vec<AutopilotRateRow>,
-    /// The circuit breaker records a per-area demotion (slice 4j, shadow: recorded, not yet enforced). Earning a higher mode is not built.
+    /// The circuit breaker lowers an area from Full to On, and the merge gate reads it (slice 4j). Earning a higher mode is not built.
     pub autonomy_by_area: bool,
     pub truncated: bool,
 }
@@ -133,6 +133,21 @@ pub struct AutopilotRiskReport {
     pub note: Option<String>,
     /// What the score does not measure.
     pub not_measured: Vec<String>,
+    /// The mode each touched area is on, with the record behind it (slice 4j, enforcement).
+    #[serde(default)]
+    #[ts(type = "Array<AutopilotAreaMode>", optional)]
+    pub area_modes: Vec<AutopilotAreaMode>,
+}
+}
+
+wire! {
+/// One area a merge touched and the mode it is on, with a sentence naming the record: "Area web/app is on On: 2 reverts in 14 days · 9 merges".
+pub struct AutopilotAreaMode {
+    /// The area, scrubbed for display.
+    pub area: String,
+    /// The mode the merge gate reads for the area: the lower of the ceiling and what the area's record or a person's override allows.
+    pub mode: AutopilotMode,
+    pub line: String,
 }
 }
 
@@ -164,6 +179,10 @@ pub struct AutopilotReviewItem {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub needs_person: Option<String>,
+    /// The areas of this merge that are lowered by the circuit breaker now, each with its record. Empty when none is.
+    #[serde(default)]
+    #[ts(type = "Array<AutopilotAreaMode>", optional)]
+    pub area_modes: Vec<AutopilotAreaMode>,
 }
 }
 
@@ -476,6 +495,10 @@ pub struct AutopilotDigest {
     /// Requests denied and wires fired in the window.
     pub denied: u32,
     pub tripwires: u32,
+    /// Areas whose mode changed in the window: lowered, returned, or a person's override set or cleared. Newest first.
+    #[serde(default)]
+    #[ts(type = "Array<AutopilotAreaChanged>", optional)]
+    pub areas_changed: Vec<AutopilotAreaChanged>,
     /// Nothing happened, so no notification is due.
     pub quiet: bool,
 }
@@ -526,7 +549,7 @@ pub struct AutopilotHeldList {
 
 wire_enum! {
 /// Where an area stands under the circuit breaker. `demoted` (just lowered, nothing clean yet), `recovering` (lowered, the way back in progress) and
-/// `criteria_met` (the way back is met; it returns at the next merge) are recorded, not yet enforced.
+/// `criteria_met` (the way back is met; it returns at the next merge) are read by the merge gate.
 pub enum AutopilotAreaState {
     Follows,
     Demoted,
@@ -562,7 +585,7 @@ pub struct AutopilotAreaRecovery {
 }
 
 wire! {
-/// A person's override of an area. Nothing writes one yet, so it is always absent.
+/// A person's override of an area: `keep_ceiling` ignores the breaker's lowering, `off` makes every merge in the area wait.
 pub struct AutopilotAreaOverride {
     /// `keep_ceiling` or `off`.
     pub choice: String,
@@ -579,7 +602,7 @@ pub struct AutopilotAreaRow {
     /// The area as stored: the name to pass as `area` to the history route.
     pub area_key: String,
     pub ceiling: AutopilotMode,
-    /// The mode the breaker records for the area. Shadow: no merge, approval or tier reads it yet.
+    /// The mode the merge gate reads for the area, before the crew's own mode is applied.
     pub now: AutopilotMode,
     pub state: AutopilotAreaState,
     pub line: String,
@@ -598,14 +621,14 @@ pub struct AutopilotAreaRow {
 }
 
 wire! {
-/// The areas of one project under the circuit breaker (slice 4j, shadow). Read-only; the thresholds are proposed.
+/// The areas of one project under the circuit breaker (slice 4j). Read-only; the thresholds are proposed.
 pub struct AutopilotAreas {
     pub project: String,
     /// The repository's mode, else the default, else `full`: the most the breaker can lower from.
     pub ceiling: AutopilotMode,
     #[ts(type = "number")]
     pub as_of: i64,
-    /// False: the state is recorded and shown, and nothing decides by it yet.
+    /// True: the merge gate reads each area's mode. Earning a higher mode is not built.
     pub enforced: bool,
     pub total: u32,
     pub rows: Vec<AutopilotAreaRow>,
@@ -659,5 +682,65 @@ pub struct AutopilotThresholds {
     /// Merges since the lowering, none reverted, before it can return.
     pub recovery_merges: u32,
     pub proposed: bool,
+}
+}
+
+wire! {
+/// The record a person saw when they chose: the merges and reverts in the window and when the breaker lowered the area. A choice made
+/// on an old record is refused with `stale`.
+pub struct AutopilotAreaSeen {
+    pub merges: u32,
+    pub reverts: u32,
+    #[serde(default)]
+    #[ts(type = "number | null", optional)]
+    pub tripped_at: Option<i64>,
+}
+}
+
+wire! {
+/// A person's override of one area. Never raises the mode above the ceiling.
+pub struct AutopilotAreaOverrideBody {
+    pub project: String,
+    /// The area as stored (`area_key` of the areas read).
+    pub area: String,
+    /// `keep_ceiling` or `off`.
+    pub choice: String,
+    /// Must be true: the person read what the choice does.
+    pub acknowledged: bool,
+    pub seen: AutopilotAreaSeen,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reason: Option<String>,
+}
+}
+
+wire! {
+/// A person's return of one area to following the record.
+pub struct AutopilotAreaFollowBody {
+    pub project: String,
+    pub area: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub seen: Option<AutopilotAreaSeen>,
+}
+}
+
+wire! {
+/// One change of an area's mode in a digest window.
+pub struct AutopilotAreaChanged {
+    pub project: String,
+    pub area: String,
+    /// `demoted`, `restored`, `override_set` or `override_cleared`.
+    pub kind: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub from_mode: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub to_mode: Option<String>,
+    /// `breaker` or `person`.
+    pub decided_by: String,
+    #[ts(type = "number")]
+    pub at: i64,
 }
 }

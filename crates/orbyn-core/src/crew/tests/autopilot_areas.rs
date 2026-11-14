@@ -1,6 +1,6 @@
-//! Autonomy by area, in shadow (slice 4j, part 1): the circuit breaker's rule, its writes and its reads, on a real `Core` with fake
+//! Autonomy by area (slice 4j): the circuit breaker's rule, its writes and its reads, on a real `Core` with fake
 //! engines. Merge rows are written beside real tasks as the queue would write them; the two revert paths use real git in a temporary
-//! repository. Nothing is pushed, and nothing here reads an area's mode to decide anything.
+//! repository. Nothing is pushed. What the merge gate does with an area's mode is in `autopilot_enforce`.
 
 use std::sync::Arc;
 
@@ -15,15 +15,15 @@ use crate::store::{AreaMode, MergeRecord};
 use crate::testing::run_git;
 use orbyn_contracts as wire;
 
-const DAY: i64 = 86_400;
+pub(super) const DAY: i64 = 86_400;
 
-struct Rig {
-    w: World,
-    project: String,
+pub(super) struct Rig {
+    pub(super) w: World,
+    pub(super) project: String,
     next: usize,
 }
 
-async fn rig() -> Rig {
+pub(super) async fn rig() -> Rig {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let project = w.core.store.thread(&w.lead).unwrap().project_id;
     Rig {
@@ -64,7 +64,7 @@ fn record_of(w: &World, task: &str, areas: &[&str], at: i64, n: usize) -> MergeR
 
 impl Rig {
     /// A merge of the project's lead, in `areas`, made at `at`; returns its task.
-    async fn merge(&mut self, areas: &[&str], at: i64) -> String {
+    pub(super) async fn merge(&mut self, areas: &[&str], at: i64) -> String {
         self.next += 1;
         let n = self.next;
         let (answer, error) = self
@@ -85,7 +85,7 @@ impl Rig {
     }
 
     /// A merge as `record_merge` records it: the row, then the breaker's look at its areas. Returns its task.
-    async fn merge_recorded(&mut self, areas: &[&str], at: i64) -> String {
+    pub(super) async fn merge_recorded(&mut self, areas: &[&str], at: i64) -> String {
         let task = self.merge(areas, at).await;
         let stored = self.w.core.store.crew_merge(&task).unwrap().unwrap();
         self.w.core.area_breaker_after_merge(&stored, at).unwrap();
@@ -93,7 +93,7 @@ impl Rig {
     }
 
     /// The merge is reverted at `at`, as `revert_merge` records it: the row first, then the breaker. Returns the revert commit.
-    fn revert(&self, task: &str, at: i64) -> String {
+    pub(super) fn revert(&self, task: &str, at: i64) -> String {
         let commit = format!(
             "{:040x}",
             0xfeed_0000_u64 + self.w.core.store.crew_merge(task).unwrap().unwrap().id as u64
@@ -107,11 +107,11 @@ impl Rig {
         commit
     }
 
-    fn mode(&self, area: &str) -> Option<AreaMode> {
+    pub(super) fn mode(&self, area: &str) -> Option<AreaMode> {
         self.w.core.store.area_mode(&self.project, area).unwrap()
     }
 
-    fn kinds(&self, area: &str) -> Vec<String> {
+    pub(super) fn kinds(&self, area: &str) -> Vec<String> {
         let mut kinds: Vec<String> = self
             .w
             .core
@@ -125,14 +125,14 @@ impl Rig {
         kinds
     }
 
-    fn view(&self, at: i64) -> wire::AutopilotAreas {
+    pub(super) fn view(&self, at: i64) -> wire::AutopilotAreas {
         self.w
             .core
             .autopilot_areas(&self.project, Page::new(Some(200), None).unwrap(), at)
             .unwrap()
     }
 
-    fn row(&self, area: &str, at: i64) -> wire::AutopilotAreaRow {
+    pub(super) fn row(&self, area: &str, at: i64) -> wire::AutopilotAreaRow {
         self.view(at)
             .rows
             .into_iter()
@@ -141,7 +141,7 @@ impl Rig {
     }
 
     /// Five merges in `src/a` a day apart before `NOW`, the last two reverted at `NOW`: the second revert trips the breaker.
-    async fn tripped(&mut self) -> (Vec<String>, String) {
+    pub(super) async fn tripped(&mut self) -> (Vec<String>, String) {
         let mut tasks = Vec::new();
         for i in 0..5 {
             tasks.push(self.merge(&["src/a"], NOW - (5 - i) * DAY).await);
@@ -210,14 +210,14 @@ async fn four_merges_with_two_reverts_do_not_trip_and_five_do() {
     // Flow shows it on the task whose revert tripped it, and only there.
     assert_eq!(events(&five.w, &tasks[1], "area_demoted").len(), 1);
     assert!(events(&five.w, &tasks[0], "area_demoted").is_empty());
-    // Shadow: the mode in force is what the person chose, and the view says nothing is enforced.
+    // The mode in force is still what the person chose (the ceiling); the merge gate lowers it per area, and the view says so.
     let crew = five.w.task(&tasks[1]).crew_id;
     assert_eq!(
         five.w.core.crew_autopilot_mode(&five.project, &crew),
         Mode::Full
     );
     let view = five.view(NOW);
-    assert!(!view.enforced);
+    assert!(view.enforced);
     assert_eq!(view.ceiling, wire::AutopilotMode::Full);
     let row = five.row("src/a", NOW);
     assert_eq!(row.state, wire::AutopilotAreaState::Demoted);

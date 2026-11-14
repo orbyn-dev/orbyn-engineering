@@ -80,6 +80,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/autopilot/areas/override",
+        "core autopilot_area_override: keep_ceiling or off only, never above the ceiling, acknowledged, the record as seen (else stale), audit row first in the same transaction as the area event and mode row, the same choice twice records nothing; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/autopilot/areas/follow",
+        "core autopilot_area_follow: ends a person's override and nothing else, the record as seen when given (else stale), audit row first in the same transaction as the area event and mode row, idempotent; local only",
+    ),
+    (
+        "POST",
         "/api/crew/approvals/{id}/approve-once",
         "core autopilot_approve_once: a desktop shell, the person's grant for this hold as it stands (x-orbyn-confirm), used up; the hold open, its task running, the command read whole, the always-denied list again, one decision; local only",
     ),
@@ -156,6 +166,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background/{id}/delete", post(background_delete))
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
+        .merge(super::crew_areas::routes())
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))

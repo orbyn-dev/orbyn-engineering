@@ -1,6 +1,6 @@
 //! What the routes read about the areas of a project: rows with the record, the state and a sentence, the trail of one area, and the
 //! thresholds. Nothing here writes, and no GET starts a return (that waits for the next merge). Names are scrubbed as the trust
-//! record's are.
+//! record's are. The merge gate reads the same rows (`effective`).
 
 use std::collections::BTreeSet;
 
@@ -22,7 +22,7 @@ const HISTORY_MAX: usize = 100;
 /// The longest area name a request may carry.
 const AREA_MAX: usize = 300;
 
-fn mode_wire(mode: Mode) -> wire::AutopilotMode {
+pub(super) fn mode_wire(mode: Mode) -> wire::AutopilotMode {
     match mode {
         Mode::Off => wire::AutopilotMode::Off,
         Mode::On => wire::AutopilotMode::On,
@@ -30,7 +30,7 @@ fn mode_wire(mode: Mode) -> wire::AutopilotMode {
     }
 }
 
-fn word(mode: Mode) -> &'static str {
+pub(super) fn word(mode: Mode) -> &'static str {
     match mode {
         Mode::Off => "Off",
         Mode::On => "On",
@@ -258,7 +258,7 @@ impl Core {
             project: project.to_owned(),
             ceiling: mode_wire(ceiling),
             as_of: now,
-            enforced: false,
+            enforced: true,
             total,
             rows: rows
                 .into_iter()
@@ -267,6 +267,19 @@ impl Core {
                 .map(|(_, r)| r)
                 .collect(),
         })
+    }
+
+    /// The row of one area, as the areas read shows it. Used to answer a person's override or follow with the area as it now stands.
+    pub(super) fn area_row(
+        &self,
+        project: &str,
+        area: &str,
+        now: i64,
+    ) -> Result<wire::AutopilotAreaRow> {
+        let merges = self.store.crew_merges_of_project(project)?;
+        let ceiling = self.crew_project_mode(project);
+        let stored = self.store.area_mode(project, area)?;
+        Ok(row(area, stored.as_ref(), &merges, ceiling, now).1)
     }
 
     /// The trail of one area of a project, newest first. The area comes in the query: it contains `/`.

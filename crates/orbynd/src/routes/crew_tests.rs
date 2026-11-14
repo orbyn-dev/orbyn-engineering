@@ -366,7 +366,7 @@ async fn the_area_reads_are_bounded_read_only_and_never_write() {
         .await;
     assert_eq!(status, 200);
     assert_eq!(areas["ceiling"], "full");
-    assert_eq!(areas["enforced"], false);
+    assert_eq!(areas["enforced"], true);
     assert_eq!(areas["total"], 0);
     let (status, _) = app
         .call(
