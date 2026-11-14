@@ -143,7 +143,9 @@ fn invisible(c: char) -> bool {
             | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
             | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}'
             | '\u{FFF9}'..='\u{FFFC}' | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}'
-            | '\u{E0000}'..='\u{E0FFF}')
+            | '\u{E0000}'..='\u{E0FFF}'
+            // Format characters the service's set does not list yet.
+            | '\u{0600}'..='\u{0605}' | '\u{06DD}' | '\u{070F}' | '\u{08E2}' | '\u{13430}'..='\u{1343F}')
 }
 
 /// What the service says a hold is. The dialog shows these and the grant is bound to the ids and the hash.
@@ -190,6 +192,23 @@ pub fn dialog_body(hold: &Hold) -> String {
         "{}{}\n\nWorker: {}\nTask: {}\n\n{}",
         hold.command_shown, cut, hold.worker_name, hold.task_title, DIALOG_FOOTER
     )
+}
+
+/// `text` made safe for a dialog that reads its text as a printf format. rfd's GTK 3 backend (every platform but macOS and Windows)
+/// hands the description to `gtk_message_dialog_format_secondary_text` with no arguments, so a lone `%` in a command would read memory
+/// or change what the person sees. Doubling every `%` makes it a literal one.
+pub fn double_percent(text: &str) -> String {
+    text.replace('%', "%%")
+}
+
+/// The body as the platform's dialog needs it: unchanged on macOS and Windows, where it is plain text and a doubled `%` would show,
+/// percent-escaped elsewhere.
+pub fn platform_body(body: String) -> String {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        body
+    } else {
+        double_percent(&body)
+    }
 }
 
 /// The line that asks the service what a hold is.
@@ -478,16 +497,26 @@ impl Shell for AppShell {
     }
 
     fn confirm(&self, hold: &Hold) -> Result<bool, PresenceError> {
-        // The dialog belongs to the main window: bring it forward first, and never open one over a window the person cannot see.
+        // Bring the main window forward first, and never open a dialog while it is hidden. The dialog is parented to it on macOS and
+        // Windows; rfd's GTK 3 backend ignores a parent, so on Linux it is unparented and may open behind the window.
         let window = self.window.clone();
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
-        if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(true) {
+        // Un-minimising animates on macOS, so give it a moment before giving up.
+        let mut shown = false;
+        for _ in 0..10 {
+            if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true) {
+                shown = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if !shown {
             return Err(PresenceError::Unavailable);
         }
         let app = self.app.clone();
-        let body = dialog_body(hold);
+        let body = platform_body(dialog_body(hold));
         let flag = self.app.state::<Presence>().dialog_flag();
         // Approve once is the OK slot and Cancel the cancel slot, so what the plugin returns for Escape, the close box or a failed
         // call is the Cancel label (see `dismissals_never_read_as_approval`). On macOS and Windows the first button, Approve once, is
@@ -748,6 +777,13 @@ mod tests {
             '\u{FEFF}',
             '\u{E0041}',
             '\u{FFA0}',
+            '\u{0600}',
+            '\u{0605}',
+            '\u{06DD}',
+            '\u{070F}',
+            '\u{08E2}',
+            '\u{13430}',
+            '\u{1343F}',
         ] {
             for bad in [
                 Hold {
@@ -803,6 +839,35 @@ mod tests {
         }
         assert!(free);
         assert_eq!(ask_with_limit(&flag, SHORT, || true), Ok(true));
+    }
+
+    #[test]
+    fn a_percent_sign_in_a_command_is_never_a_format() {
+        for text in ["date +%s", "%n", "%.0s", "100%", "%%", "a%sb%nc", "%", ""] {
+            let safe = double_percent(text);
+            // Read as a printf format, every `%` must be the start of `%%`.
+            let mut chars = safe.chars();
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    assert_eq!(chars.next(), Some('%'), "{text:?} -> {safe:?}");
+                }
+            }
+            // And the person still reads the same text once the format is applied.
+            assert_eq!(safe.replace("%%", "%"), text);
+        }
+        let hold = Hold {
+            command_shown: "date +%s; echo %n".into(),
+            worker_name: "50%".into(),
+            task_title: "%s".into(),
+            ..hold()
+        };
+        let body = platform_body(dialog_body(&hold));
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            assert_eq!(body, dialog_body(&hold));
+        } else {
+            assert_eq!(body, double_percent(&dialog_body(&hold)));
+            assert!(!body.replace("%%", "").contains('%'));
+        }
     }
 
     #[test]

@@ -608,10 +608,15 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   PR3's card must call it only from a trusted click (`event.isTrusted`, no keydown, no automatic retry). In the shell, `crew_presence` is the only
   way a dialog opens; nothing retries, reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`). Linux's default button is
   not checked.
-  The dialog is a child of the main window, which is shown and focused first; if it cannot be shown the answer is `unavailable`. A native dialog cannot
-  be closed from the shell, so the person has 10 minutes (a hold waits that long); after that the call ends with `timeout` and a late click is thrown away,
-  but the dialog stays up and a new call answers `busy` until it is dismissed. The shell also refuses (`invalid_answer`) text with a control,
-  bidirectional, zero-width or format character, the same set the service marks.
+  The main window is shown, un-minimised and focused first (up to half a second for macOS's animation); if it is still not visible the answer is `unavailable`.
+  The dialog is parented to it on macOS and Windows. On Linux rfd's GTK 3 backend ignores a parent, so the dialog is unparented and may open behind
+  the main window. A native dialog cannot be closed from the shell, so the person has 10 minutes (a hold waits that long); after that the call ends with
+  `timeout` and a late click is thrown away, but the dialog stays up and a new call answers `busy` until it is dismissed.
+  **Text refused** (`invalid_answer`) in the command, worker name or task title: control characters; U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5,
+  U+180B-180F, U+200B-200F, U+2028-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0, U+FFF9-FFFC, U+1BCA0-1BCA3, U+1D173-1D17A, U+E0000-E0FFF (the
+  service's set, copied), and also U+0600-0605, U+06DD, U+070F, U+08E2 and U+13430-1343F, which the shell refuses and the service does not map yet.
+  **Linux text.** rfd's GTK 3 backend reads the dialog text as a printf format, so on every platform but macOS and Windows the shell doubles each `%`
+  in the text it shows (`double_percent`); on macOS and Windows the text is plain and is shown as given.
   The dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
   **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
   from the app's window stays held.
