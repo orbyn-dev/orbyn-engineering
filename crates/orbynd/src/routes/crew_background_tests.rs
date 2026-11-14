@@ -184,6 +184,7 @@ async fn a_crew_lives_its_whole_life_over_http() {
             "crew.background.update",
             "crew.background.enable",
             "crew.background.run.start",
+            "crew.background.run.spend",
             "crew.background.run.stop",
             "crew.background.disable",
             "crew.background.delete"

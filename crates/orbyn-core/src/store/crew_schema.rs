@@ -397,3 +397,11 @@ CREATE TABLE crew_background_runs (
 CREATE UNIQUE INDEX crew_background_one_running ON crew_background_runs(background_id) WHERE state = 'running';
 CREATE INDEX crew_background_runs_by_crew ON crew_background_runs(background_id, started_at);
 "#;
+
+// Schema 42: a run keeps the budget it was given. `crew_background_runs.budget_turns` and `budget_minutes` are copied from the crew
+// when the run opens, and the crew's own budget is fixed by a trigger; this fixes the copy the same way, so a stopped run can never
+// be edited to look as if it stayed within a budget it exceeded. The core never writes these columns after the insert.
+pub(super) const CREW_BACKGROUND_RUN_BUDGET: &str = r#"
+CREATE TRIGGER crew_background_runs_budget_fixed BEFORE UPDATE OF budget_turns, budget_minutes ON crew_background_runs
+BEGIN SELECT RAISE(ABORT, 'a background run keeps the budget it was given'); END;
+"#;

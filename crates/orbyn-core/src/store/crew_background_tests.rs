@@ -141,3 +141,89 @@ fn a_run_is_refused_the_second_running_row_by_the_table_too() {
     );
     assert!(bad_stop.is_err(), "a stopped run names its reason");
 }
+
+#[test]
+fn a_run_keeps_the_budget_it_was_given() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Fixed", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    for column in ["budget_turns = 999", "budget_minutes = 999"] {
+        let result = store.writer().execute(
+            &format!("UPDATE crew_background_runs SET {column} WHERE id = ?1"),
+            [&run.id],
+        );
+        assert!(result.is_err(), "{column}");
+    }
+    // What a run spends still changes.
+    let spent = store.add_background_spend(&run.id, 1, 1).unwrap();
+    assert_eq!((spent.budget_turns, spent.turns_spent), (10, 1));
+}
+
+#[test]
+fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Spend", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    let unchanged = |store: &Store| {
+        let (rows, _) = store.background_runs_page(&crew.id, 10, 0).unwrap();
+        assert_eq!(
+            (
+                rows[0].state.as_str(),
+                rows[0].turns_spent,
+                rows[0].minutes_spent
+            ),
+            ("running", 0, 0)
+        );
+    };
+    // Without its own audit row a spend changes nothing.
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_spend_audit BEFORE INSERT ON audit_events
+             WHEN NEW.action = 'crew.background.run.spend' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
+        )
+        .unwrap();
+    assert!(store.add_background_spend(&run.id, 2, 2).is_err());
+    unchanged(&store);
+    store
+        .writer()
+        .execute_batch("DROP TRIGGER refuse_spend_audit")
+        .unwrap();
+    // Reaching the budget needs the stop row as well: without it the spend is rolled back too.
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_stop_audit BEFORE INSERT ON audit_events
+             WHEN NEW.action = 'crew.background.run.stop' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
+        )
+        .unwrap();
+    assert!(store.add_background_spend(&run.id, 10, 0).is_err());
+    unchanged(&store);
+    store
+        .writer()
+        .execute_batch("DROP TRIGGER refuse_stop_audit")
+        .unwrap();
+    let stopped = store.add_background_spend(&run.id, 10, 0).unwrap();
+    assert_eq!(
+        (
+            stopped.state.as_str(),
+            stopped.turns_spent,
+            stopped.review_waiting
+        ),
+        ("stopped", 10, true)
+    );
+}
