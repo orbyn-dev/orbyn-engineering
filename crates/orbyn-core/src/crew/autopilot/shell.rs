@@ -163,6 +163,92 @@ pub fn program_name(word: &str) -> String {
         .map_or(base.clone(), str::to_owned)
 }
 
+/// The options of a wrapper that take a value as a separate word (`sudo -u root`, `xargs -I {}`, `env -u NAME`): the value is not the
+/// program.
+fn value_options(wrapper: &str) -> &'static [&'static str] {
+    match wrapper {
+        "sudo" => &[
+            "-u",
+            "-g",
+            "-h",
+            "-p",
+            "-C",
+            "-T",
+            "-r",
+            "-t",
+            "-U",
+            "-D",
+            "-R",
+            "--user",
+            "--group",
+            "--host",
+            "--prompt",
+            "--close-from",
+            "--command-timeout",
+            "--role",
+            "--type",
+            "--other-user",
+            "--chdir",
+            "--chroot",
+        ],
+        "doas" => &["-u", "-C"],
+        "env" => &["-u", "-C", "-S", "--unset", "--chdir", "--split-string"],
+        "xargs" => &[
+            "-I",
+            "-n",
+            "-P",
+            "-L",
+            "-s",
+            "-d",
+            "-E",
+            "-a",
+            "-J",
+            "-R",
+            "-S",
+            "--max-args",
+            "--max-procs",
+            "--max-lines",
+            "--max-chars",
+            "--delimiter",
+            "--arg-file",
+            "--replace",
+            "--eof",
+        ],
+        "nice" => &["-n", "--adjustment"],
+        "timeout" => &["-s", "-k", "--signal", "--kill-after"],
+        "stdbuf" => &["-i", "-o", "-e"],
+        "time" => &["-f", "-o", "--format", "--output"],
+        "exec" => &["-a"],
+        _ => &[],
+    }
+}
+
+/// Drops a wrapper's options, their values, `--`, assignments and a bare number or duration (`timeout 5s`), leaving its command.
+fn skip_options(words: &mut Vec<String>, wrapper: &str) {
+    let values = value_options(wrapper);
+    while let Some(word) = words.first().cloned() {
+        if word == "--" {
+            words.remove(0);
+            return;
+        }
+        if word.starts_with('-') && word.len() > 1 {
+            words.remove(0);
+            if values.contains(&word.as_str()) && !words.is_empty() {
+                words.remove(0);
+            }
+        } else if is_assignment(&word)
+            || word
+                .trim_end_matches(['s', 'm', 'h', 'd'])
+                .parse::<f64>()
+                .is_ok()
+        {
+            words.remove(0);
+        } else {
+            return;
+        }
+    }
+}
+
 fn finish(mut words: Vec<String>, redirects: Vec<String>, depth: u8, out: &mut Vec<Simple>) {
     for word in &words {
         nested(word, depth, out);
@@ -176,25 +262,18 @@ fn finish(mut words: Vec<String>, redirects: Vec<String>, depth: u8, out: &mut V
         if name == "sudo" || name == "doas" || name == "su" {
             // A privilege change is refused on its own; the command it wraps is read too.
             out.push(Simple {
-                program: name,
+                program: name.clone(),
                 raw: words[0].clone(),
                 args: words[1..].to_vec(),
                 redirects: Vec::new(),
             });
             words.remove(0);
-            while words.first().is_some_and(|w| w.starts_with('-')) {
-                words.remove(0);
-            }
+            skip_options(&mut words, &name);
             continue;
         }
         if WRAPPERS.contains(&name.as_str()) {
             words.remove(0);
-            while words
-                .first()
-                .is_some_and(|w| w.starts_with('-') || is_assignment(w) || w.parse::<f64>().is_ok())
-            {
-                words.remove(0);
-            }
+            skip_options(&mut words, &name);
             continue;
         }
         break;
@@ -416,7 +495,12 @@ pub fn hosts(command: &Simple) -> Vec<String> {
 /// Whether `host` is loopback or listed (`example.com`, or `*.example.com` for the host and its subdomains).
 pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
     let host = host.trim_matches(['[', ']']).to_lowercase();
-    if host == "localhost" || host == "::1" || host.starts_with("127.") {
+    // Loopback is `localhost` or an IP literal in 127.0.0.0/8 or `::1`: a name that merely starts with `127.` is a host.
+    if host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    {
         return true;
     }
     allowed.iter().any(|entry| {
@@ -454,6 +538,11 @@ mod tests {
         );
         assert_eq!(programs("echo $(rm -rf /)"), ["echo", "rm"]);
         assert_eq!(programs("eval \"git push -f\""), ["git"]);
+        assert_eq!(programs("sudo -u root rm -rf x"), ["rm", "sudo"]);
+        assert_eq!(programs("sudo -h box -g wheel -- rm x"), ["rm", "sudo"]);
+        assert_eq!(programs("xargs -I {} -n 1 rm {}"), ["rm"]);
+        assert_eq!(programs("env -u HOME -C /tmp psql"), ["psql"]);
+        assert_eq!(programs("timeout -s KILL 5s rm x"), ["rm"]);
     }
 
     #[test]
@@ -522,6 +611,9 @@ mod tests {
             "github.com.evil.com",
             "notexample.org",
             "0.0.0.0",
+            "127.evil.com",
+            "127.0.0.1.evil.com",
+            "localhost.evil.com",
         ] {
             assert!(!host_allowed(bad, &allowed), "{bad}");
         }

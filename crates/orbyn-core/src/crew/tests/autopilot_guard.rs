@@ -16,6 +16,7 @@ use crate::crew::{Mode, ModeScope};
 use crate::error::CoreError;
 use crate::governance::approvals::Verdict;
 use crate::host::presence::PresenceFor;
+use crate::testing::run_git;
 use crate::util::unix_now;
 
 /// A destructive database command against a host that is not local and is on no list.
@@ -186,6 +187,8 @@ async fn n8_commands_stay_always_denied_and_are_never_held() {
             "kubectl delete pod web-1",
             "terraform destroy -auto-approve",
             "helm uninstall web",
+            "helm delete web",
+            "helm del web",
         ] {
             let (w, id) = running().await;
             let lead = Scripted::yes("alpha", "alpha");
@@ -448,6 +451,7 @@ async fn tightening_needs_no_proof_and_loosening_needs_the_persons_grant() {
     let now = unix_now();
     let wrong = |action: &str, pattern: &str| PresenceFor::GuardLoosen {
         action: action.into(),
+        kind: "host".into(),
         pattern: pattern.into(),
     };
     w.core
@@ -631,5 +635,161 @@ async fn the_test_reads_a_command_and_changes_nothing() {
     assert!(
         w.core.autopilot_held().unwrap().items.is_empty(),
         "nothing was held or run"
+    );
+}
+
+fn worktree_of(w: &World, id: &str) -> std::path::PathBuf {
+    let (_, run) = w
+        .core
+        .store
+        .crew_task_for_worker(&w.worker(id))
+        .unwrap()
+        .unwrap();
+    std::path::PathBuf::from(run.worktree.unwrap())
+}
+
+const PUSH: &str = "git push origin :old";
+
+#[tokio::test]
+async fn an_approval_is_void_when_the_resolved_target_changed_after_the_hold() {
+    // Before approving.
+    let (w, id) = held_world().await;
+    mode(&w, Mode::On);
+    let tree = worktree_of(&w, &id);
+    run_git(
+        &tree,
+        &["remote", "add", "origin", "git@github.com:o/r.git"],
+    );
+    let hold = hold_of(&w, &id, PUSH).await;
+    assert_eq!(events(&w, &id, "held")[0].body["guard"]["category"], "git");
+    run_git(
+        &tree,
+        &["remote", "set-url", "origin", "git@evil.example:o/r.git"],
+    );
+    let nonce = grant_for(&w, &hold);
+    let refused = w.core.autopilot_approve_once(&hold, Some(&nonce)).await;
+    match refused {
+        Err(CoreError::PolicyDenied(why)) => assert!(why.contains("target changed"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(state_of(&w, &hold), State::Held, "nothing was approved");
+    // Pointed back, the same grant works.
+    run_git(
+        &tree,
+        &["remote", "set-url", "origin", "git@github.com:o/r.git"],
+    );
+    w.core
+        .autopilot_approve_once(&hold, Some(&nonce))
+        .await
+        .unwrap();
+
+    // After approving, before the retry.
+    let (w, id) = held_world().await;
+    mode(&w, Mode::On);
+    let tree = worktree_of(&w, &id);
+    run_git(
+        &tree,
+        &["remote", "add", "origin", "git@github.com:o/r.git"],
+    );
+    let hold = hold_of(&w, &id, PUSH).await;
+    let nonce = grant_for(&w, &hold);
+    w.core
+        .autopilot_approve_once(&hold, Some(&nonce))
+        .await
+        .unwrap();
+    run_git(&tree, &["remote", "set-url", "origin", "/srv/other.git"]);
+    let verdict = request(&w, &id, ActionKind::Command, PUSH).await;
+    assert!(
+        matches!(verdict, Verdict::Deny(_)),
+        "the approval no longer applies"
+    );
+    assert_eq!(state_of(&w, &hold), State::Approved, "and was not used up");
+}
+
+#[tokio::test]
+async fn a_command_the_parser_cannot_read_is_guarded_through_the_gate() {
+    let (w, id) = running().await;
+    let lead = Scripted::yes("alpha", "alpha");
+    w.core.set_crew_approvers(approvers(&lead, &[]));
+    mode(&w, Mode::On);
+    let verdict = request(
+        &w,
+        &id,
+        ActionKind::Command,
+        "$CMD DROP TABLE x -h db.example.com",
+    )
+    .await;
+    assert!(matches!(verdict, Verdict::Deny(_)));
+    let denied = &events(&w, &id, "denied")[0];
+    assert_eq!(denied.body["decided_by"], "guard", "{}", denied.body);
+    assert_eq!(guard_of(denied)["category"], "unparsed");
+}
+
+#[tokio::test]
+async fn only_guard_holds_are_watched_and_only_for_exactly_their_command() {
+    // A hold the guard did not make: no exit watch.
+    let (w, id) = held_world().await;
+    let hold = hold_of(&w, &id, "make deploy").await;
+    let nonce = grant_for(&w, &hold);
+    w.core
+        .autopilot_approve_once(&hold, Some(&nonce))
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&w, &id, ActionKind::Command, "make deploy").await,
+        Verdict::Allow
+    );
+    assert_eq!(w.core.crew_autopilot.exits.len(), 0);
+
+    // A guard hold: a command that merely contains the watched one is not it; the exact one, wrapped in a shell, is.
+    let (w, id) = held_world().await;
+    mode(&w, Mode::On);
+    let hold = hold_of(&w, &id, DROP).await;
+    let nonce = grant_for(&w, &hold);
+    w.core
+        .autopilot_approve_once(&hold, Some(&nonce))
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&w, &id, ActionKind::Command, DROP).await,
+        Verdict::Allow
+    );
+    assert_eq!(w.core.crew_autopilot.exits.len(), 1);
+    let thread = w.worker(&id);
+    w.core.guard_exit_seen(
+        &thread,
+        &finished(&format!("echo hi; {DROP}; echo bye"), Some(0)),
+    );
+    w.core
+        .guard_exit_seen("another-thread", &finished(DROP, Some(0)));
+    assert!(events(&w, &id, "command_exit").is_empty());
+    w.core
+        .guard_exit_seen(&thread, &finished(&format!("bash -lc \"{DROP}\""), Some(0)));
+    assert_eq!(events(&w, &id, "command_exit")[0].body["exit_code"], 0);
+}
+
+#[tokio::test]
+async fn a_loosening_grant_is_for_one_kind() {
+    let (w, _) = running().await;
+    let (lines, answers) = tokio::sync::mpsc::unbounded_channel();
+    w.core.shell.attach(lines);
+    std::mem::forget(answers);
+    let nonce = fresh_nonce();
+    w.core.presence.put(
+        PresenceFor::GuardLoosen {
+            action: "add_safe".into(),
+            kind: "bucket".into(),
+            pattern: "stage.internal".into(),
+        },
+        nonce.clone(),
+        unix_now(),
+    );
+    assert!(
+        matches!(
+            w.core
+                .guard_target_add(&body(GuardList::Safe, "stage.internal"), Some(&nonce)),
+            Err(CoreError::PresenceRequired)
+        ),
+        "a grant for a bucket does not add a host"
     );
 }

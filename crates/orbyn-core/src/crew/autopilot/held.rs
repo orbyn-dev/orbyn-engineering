@@ -324,6 +324,33 @@ impl HeldBook {
         Some(item.clone())
     }
 
+    /// Whether an approval waiting for this request still names the targets it was held for. A hold the guard made keeps the
+    /// targets it resolved; the request now resolves to `current`, and a difference voids the approval. No such approval, or a hold
+    /// the guard did not make, agrees.
+    pub(super) fn targets_agree(
+        &self,
+        task_id: &str,
+        thread_id: &str,
+        bound: &str,
+        current: &[String],
+        now: i64,
+    ) -> bool {
+        self.items
+            .iter()
+            .find(|i| {
+                i.stage == Stage::Approved
+                    && i.until > now
+                    && i.bound == bound
+                    && i.task_id == task_id
+                    && i.thread_id == thread_id
+            })
+            .is_none_or(|i| {
+                i.guard
+                    .as_ref()
+                    .is_none_or(|g| g.get("resolved") == Some(&json!(current)))
+            })
+    }
+
     fn view(item: &Held, now: i64) -> wire::AutopilotHeld {
         let left = match item.stage {
             Stage::Held => item.deadline - now,
@@ -491,13 +518,20 @@ impl Core {
         task: &CrewTask,
         thread_id: &str,
         ask: &ActionAsk,
+        current: &[String],
         now: i64,
     ) -> Option<Taken> {
         let bound = bind(&task.id, thread_id, ask);
         let (taken, ended) = {
             let mut book = self.held_book();
             let ended = book.sweep(now);
-            (book.take(&task.id, thread_id, &bound, now), ended)
+            let agree = book.targets_agree(&task.id, thread_id, &bound, current, now);
+            (
+                agree
+                    .then(|| book.take(&task.id, thread_id, &bound, now))
+                    .flatten(),
+                ended,
+            )
         };
         self.held_ended(ended);
         let held = taken?;
@@ -649,6 +683,12 @@ impl Core {
                 refusal.0, refusal.1
             )));
         }
+        if self.targets_changed(&task, &run, &held).await? {
+            return Err(CoreError::PolicyDenied(
+                "The target changed since this command was held, so it cannot be approved. Ask the worker to run it again."
+                    .into(),
+            ));
+        }
         // The grant is used up here, then the one decision is made: a racing deny or a second approve loses.
         if !self.presence.take(&want(Some(&held)), nonce, now) {
             return Err(CoreError::PresenceRequired);
@@ -661,6 +701,32 @@ impl Core {
             &json!({ "via": "desktop_presence", "expires_in_secs": APPROVAL_LIFETIME_SECS }),
         );
         Ok(HeldBook::view(&held, now))
+    }
+
+    /// Whether the guard now resolves the held command to other targets than it did when it was held (a git remote that was pointed
+    /// elsewhere, say). A hold the guard did not make never changes.
+    async fn targets_changed(&self, task: &CrewTask, run: &CrewRun, held: &Held) -> Result<bool> {
+        let Some(then) = held.guard.as_ref().map(|g| g.get("resolved").cloned()) else {
+            return Ok(false);
+        };
+        let (Some(ask), Some(key), Some(worktree)) = (
+            held.ask.as_ref(),
+            self.store.crew_answer_key(&task.id)?,
+            run.worktree.as_deref().map(std::path::PathBuf::from),
+        ) else {
+            return Err(CoreError::Gone(
+                "This command can no longer be checked.".into(),
+            ));
+        };
+        let ground = super::review::Ground::read(self, &worktree, run.base_commit.as_deref()).await;
+        let scene: Scene<'_> = ground.scene(&key.protected_paths);
+        let ctx = hard::context(ask.kind, &ask.target, &ask.paths, &scene);
+        let now: Vec<String> = self
+            .guard_of(&ctx, &worktree)
+            .await?
+            .map(|g| g.resolved)
+            .unwrap_or_default();
+        Ok(then != Some(json!(now)))
     }
 
     /// The always-denied list, against the exact request, as it stands now.

@@ -19,20 +19,21 @@ use std::sync::OnceLock;
 use orbyn_contracts::{GuardCategory, GuardList, GuardTarget, GuardTargetKind};
 use regex::Regex;
 
+use self::sql::destructive_sql;
 use super::hard::Ctx;
 use super::shell::{Simple, simple_commands};
 
-/// What the guard needs besides the command: this device's two lists and the worktree's git remotes (name to push URL).
+/// What the guard needs besides the command: this device's two lists and the worktree's git remotes (name to every push URL).
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
     pub prod: Vec<GuardTarget>,
     pub safe: Vec<GuardTarget>,
-    pub remotes: HashMap<String, String>,
+    pub remotes: HashMap<String, Vec<String>>,
 }
 
 impl Facts {
     /// Splits the stored entries into the two lists.
-    pub fn new(entries: Vec<GuardTarget>, remotes: HashMap<String, String>) -> Self {
+    pub fn new(entries: Vec<GuardTarget>, remotes: HashMap<String, Vec<String>>) -> Self {
         let (prod, safe) = entries
             .into_iter()
             .partition(|entry| entry.list == GuardList::Prod);
@@ -74,6 +75,8 @@ pub struct Judged {
     /// The name as the command gives it (no credentials), or `unresolved` / `not named`.
     pub name: String,
     pub class: Class,
+    /// A hash of what it resolved from (a git remote's URL), when it resolved from something.
+    pub ident: Option<String>,
 }
 
 /// What the guard found in a command: its category and every target judged.
@@ -112,6 +115,22 @@ impl Found {
         }
     }
 
+    /// Every target as `kind:name` (with a hash of what it resolved from, if any), sorted: what an approval is bound to, so a target
+    /// that changes after the command was held (a `git remote set-url`) is a different command.
+    pub fn resolved(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .targets
+            .iter()
+            .map(|t| match &t.ident {
+                Some(ident) => format!("{:?}:{}#{ident}", t.kind, t.name),
+                None => format!("{:?}:{}", t.kind, t.name),
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The list entry that decided the verdict, when one did: a `prod` entry first, then a `safe` one.
     pub fn entry(&self) -> Option<&GuardTarget> {
         self.targets
@@ -137,6 +156,8 @@ pub struct Blast {
     pub matched_by: String,
     /// `prod` when the `prod` list forced it, else `none`.
     pub list: &'static str,
+    /// [`Found::resolved`]: the targets an approval is bound to.
+    pub resolved: Vec<String>,
 }
 
 /// What the guard holds, if anything: the first destructive reading with a production-linked target.
@@ -149,6 +170,7 @@ pub fn blast(ctx: &Ctx<'_>, facts: &Facts) -> Option<Blast> {
         category: found.category,
         target: found.shown_target(),
         matched_by: found.matched_by.clone(),
+        resolved: found.resolved(),
         list: if found
             .targets
             .iter()
@@ -191,6 +213,8 @@ struct Raw {
     info: bool,
     /// None was named where the tool's default is remote.
     missing: bool,
+    /// What the target resolved from, hashed (a git remote's URL), so a change of it is a change of target.
+    ident: Option<String>,
 }
 
 impl Raw {
@@ -202,6 +226,7 @@ impl Raw {
             local,
             info: false,
             missing: false,
+            ident: None,
         }
     }
 
@@ -212,6 +237,7 @@ impl Raw {
             local: false,
             info: false,
             missing: false,
+            ident: None,
         }
     }
 
@@ -229,6 +255,7 @@ impl Raw {
             local: false,
             info: false,
             missing: true,
+            ident: None,
         }
     }
 
@@ -239,6 +266,7 @@ impl Raw {
             local: true,
             info: false,
             missing: false,
+            ident: None,
         }
     }
 }
@@ -254,7 +282,18 @@ fn variable(word: &str) -> bool {
     word.contains('$') || word.contains('`') || word.starts_with('%')
 }
 
-/// The host of a URL authority or a host word: lowercase, no port, no brackets. The second is whether it is local.
+/// Whether one host word is local: `localhost`, or an IP literal that is a loopback address (127.0.0.0/8, `::1`). Nothing else is, so
+/// `127.evil.com`, `127.0.0.1.evil.com` and `0.0.0.0` are not.
+fn is_loopback(host: &str) -> bool {
+    let host = host.trim().trim_matches(['[', ']']);
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// One `host[:port]` word: lowercase, no port, no brackets. The second is whether it is local. An empty word and a path are a unix
+/// socket.
 fn host_of(word: &str) -> (String, bool) {
     let word = word.trim().trim_matches(['\'', '"']);
     if word.is_empty() {
@@ -275,32 +314,84 @@ fn host_of(word: &str) -> (String, bool) {
         },
     };
     let host = host.to_lowercase();
-    let local = host == "localhost"
-        || host.ends_with(".localhost")
-        || host.starts_with("127.")
-        || host == "::1"
-        || host == "0:0:0:0:0:0:0:1";
+    let local = is_loopback(&host);
     (host, local)
 }
 
-fn url_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(
-            r#"(?i)^([a-z][a-z0-9+.-]*)://(?:[^/@\s]*@)?(\[[0-9a-f:.]+\]|[^/:\s?#]*)(?::\d+)?"#,
-        )
-        .expect("a fixed pattern")
-    })
+/// A comma-separated host list (`psql -h a,b`, a URL's authority): one target each. A list is local only if every host is.
+fn hosts(word: &str) -> Vec<Raw> {
+    let word = word.trim().trim_matches(['\'', '"']);
+    word.split(',').map(Raw::host).collect()
 }
 
-/// The host of a URL, `None` for a word that is not one. An empty host (`postgres:///db`) is a local socket.
-fn url_host(word: &str) -> Option<Raw> {
+/// `%2F` and friends in a URL query value, enough to read a socket directory.
+fn unescape(value: &str) -> String {
+    value
+        .replace("%2F", "/")
+        .replace("%2f", "/")
+        .replace("%3A", ":")
+        .replace("%3a", ":")
+}
+
+/// The hosts of a URL (`postgresql://u:p@127.0.0.1:1,db.prod/app?host=x`), `None` for a word that is not one. An empty authority is a
+/// local socket unless the query names `host=`/`hostaddr=`, which then decide.
+fn url_hosts(word: &str) -> Option<Vec<Raw>> {
     let word = word.trim().trim_matches(['\'', '"']);
-    let captures = url_re().captures(word)?;
-    if captures[1].eq_ignore_ascii_case("file") {
-        return Some(Raw::local());
+    let (scheme, rest) = word.split_once("://")?;
+    let valid = scheme
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
+    if !valid {
+        return None;
     }
-    Some(Raw::host(&captures[2]))
+    if scheme.eq_ignore_ascii_case("file") {
+        return Some(vec![Raw::local()]);
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    let tail = &rest[end..];
+    let host_part = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let mut out: Vec<Raw> = if host_part.is_empty() {
+        Vec::new()
+    } else {
+        hosts(host_part)
+    };
+    if let Some((_, query)) = tail.split_once('?') {
+        for pair in query.split(['&', '#']) {
+            if let Some(value) = pair
+                .strip_prefix("host=")
+                .or_else(|| pair.strip_prefix("hostaddr="))
+            {
+                out.extend(hosts(&unescape(value)));
+            } else if pair.starts_with("service=") {
+                out.push(Raw::missing(GuardTargetKind::Host));
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(Raw::local());
+    }
+    Some(out)
+}
+
+/// The hosts a libpq connection string (`host=a,b dbname=x`) names; `service=` names none that can be read, so it is unknown.
+fn conninfo_hosts(text: &str) -> Vec<Raw> {
+    let mut out = Vec::new();
+    for token in text.split_whitespace() {
+        let Some((key, value)) = token.split_once('=') else {
+            continue;
+        };
+        match key {
+            "host" | "hostaddr" => out.extend(hosts(value)),
+            "service" => out.push(Raw::missing(GuardTargetKind::Host)),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn scp_re() -> &'static Regex {
@@ -312,23 +403,25 @@ fn scp_re() -> &'static Regex {
 
 /// The remote hosts a path-like word names: a URL, or `host:path` / `user@host:path` as rsync and git write them. A word that is
 /// a path, a drive (`C:`) or an option is not a host. A variable host is kept, so it is read as unresolved.
-fn remote_of(word: &str) -> Option<Raw> {
+fn remote_hosts(word: &str) -> Vec<Raw> {
     if word.starts_with('-')
         || word.starts_with('/')
         || word.starts_with('.')
         || word.starts_with('~')
     {
-        return None;
+        return Vec::new();
     }
     if word.contains("://") {
-        return url_host(word);
+        return url_hosts(word).unwrap_or_default();
     }
-    let captures = scp_re().captures(word)?;
+    let Some(captures) = scp_re().captures(word) else {
+        return Vec::new();
+    };
     let host = &captures[1];
     if host.len() == 1 && host.chars().all(|c| c.is_ascii_alphabetic()) {
-        return None;
+        return Vec::new();
     }
-    Some(Raw::host(host))
+    vec![Raw::host(host)]
 }
 
 fn env_re() -> &'static Regex {
@@ -346,6 +439,14 @@ fn env_values(text: &str, names: &[&str]) -> Vec<String> {
         .captures_iter(text)
         .filter(|c| names.contains(&&c[1]))
         .map(|c| c[2].trim_matches(['"', '\'']).to_owned())
+        .collect()
+}
+
+/// The names the command text assigns in front of a program.
+fn env_names(text: &str) -> Vec<String> {
+    env_re()
+        .captures_iter(text)
+        .map(|c| c[1].to_owned())
         .collect()
 }
 
@@ -420,8 +521,12 @@ fn read(command: &Simple, text: &str, over: Option<&Raw>, out: &mut Vec<Read>) {
         "rm" if cluster(args, &['r', 'R']) || has_flag(args, "--recursive") => {
             reads.push(files("rm -r", command, over));
         }
-        "find" if has_flag(args, "-delete") => reads.push(files("find -delete", command, over)),
-        "rsync" if args.iter().any(|a| a.starts_with("--delete")) => {
+        "find" if find_destroys(args) => reads.push(files("find -delete", command, over)),
+        "rsync"
+            if args.iter().any(|a| {
+                a.starts_with("--delete") || a == "--del" || a == "--remove-source-files"
+            }) =>
+        {
             reads.push(files("rsync --delete", command, over));
         }
         "shred" | "truncate" => reads.push(files(&command.program, command, over)),
@@ -433,42 +538,77 @@ fn read(command: &Simple, text: &str, over: Option<&Raw>, out: &mut Vec<Read>) {
         "az" => reads.extend(az(command, text, over)),
         "gsutil" => reads.extend(gsutil(command, text, over)),
         "docker" => reads.extend(docker(command, text, over)),
-        "git" => reads.extend(git(command, over)),
+        "git" => reads.extend(git(command, text, over)),
         _ => {}
     }
     out.extend(reads);
 }
 
-/// `ssh host cmd`: the inner command is read as if it ran on `host`, which is its target.
-fn ssh(command: &Simple, text: &str, out: &mut Vec<Read>) {
-    const WITH_VALUE: [&str; 17] = [
-        "-p", "-i", "-l", "-o", "-F", "-J", "-b", "-c", "-D", "-E", "-e", "-I", "-L", "-m", "-O",
-        "-R", "-S",
-    ];
-    let args = &command.args;
-    let mut skip = false;
-    let mut host_at = None;
-    for (at, arg) in args.iter().enumerate() {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if arg.starts_with('-') && arg.len() > 1 {
-            skip = WITH_VALUE.contains(&arg.as_str());
-            continue;
-        }
-        host_at = Some(at);
-        break;
+/// The programs a `find -exec` runs that remove files.
+fn find_destroys(args: &[String]) -> bool {
+    if has_flag(args, "-delete") {
+        return true;
     }
-    let Some(at) = host_at else { return };
+    let Some(at) = args
+        .iter()
+        .position(|a| matches!(a.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir"))
+    else {
+        return false;
+    };
+    args[at + 1..].iter().any(|a| {
+        matches!(
+            super::shell::program_name(a).as_str(),
+            "rm" | "shred" | "unlink" | "truncate"
+        )
+    })
+}
+
+/// OpenSSH's options that take a value.
+const SSH_WITH_VALUE: &str = "BbcDEeFIiJLlmOoPpQRSWw";
+
+/// The index of the host word in `ssh`'s arguments: after the options and their values, and after `--`.
+fn ssh_host_at(args: &[String]) -> Option<usize> {
+    let mut at = 0;
+    while at < args.len() {
+        let arg = args[at].as_str();
+        if arg == "--" {
+            return (at + 1 < args.len()).then_some(at + 1);
+        }
+        if !arg.starts_with('-') || arg.len() == 1 {
+            return Some(at);
+        }
+        // A cluster such as `-vp 22` or `-p22`: the first option that takes a value ends it.
+        let letters: Vec<char> = arg.chars().skip(1).collect();
+        if let Some(i) = letters.iter().position(|c| SSH_WITH_VALUE.contains(*c)) {
+            at += if i + 1 == letters.len() { 2 } else { 1 };
+        } else {
+            at += 1;
+        }
+    }
+    None
+}
+
+/// `ssh host cmd`: the inner command is read as if it ran on `host`, which is its target. A remote command with a destructive word
+/// that no category read is guarded as unreadable, unless the host is local or safe.
+fn ssh(command: &Simple, text: &str, out: &mut Vec<Read>) {
+    let args = &command.args;
+    let Some(at) = ssh_host_at(args) else { return };
     let word = args[at].rsplit('@').next().unwrap_or(&args[at]);
     let target = Raw::host(word);
     let rest = args[at + 1..].join(" ");
     if rest.trim().is_empty() {
         return;
     }
+    let before = out.len();
     for inner in simple_commands(&rest) {
         read(&inner, text, Some(&target), out);
+    }
+    if out.len() == before && (destructive_words().is_match(&rest) || variable(&rest)) {
+        out.push(Read {
+            category: GuardCategory::Unparsed,
+            matched_by: "ssh: a remote command that could not be read".to_owned(),
+            targets: vec![target],
+        });
     }
 }
 
@@ -477,7 +617,7 @@ fn files(by: &str, command: &Simple, over: Option<&Raw>) -> Read {
     if let Some(over) = over {
         targets.push(over.clone());
     } else if command.program == "rsync" {
-        targets.extend(command.args.iter().filter_map(|a| remote_of(a)));
+        targets.extend(command.args.iter().flat_map(|a| remote_hosts(a)));
     }
     if targets.is_empty() {
         targets.push(Raw::local());
@@ -491,46 +631,6 @@ fn files(by: &str, command: &Simple, over: Option<&Raw>) -> Read {
 
 // ---- databases -----------------------------------------------------------------------------------------------------------
 
-fn sql_patterns() -> &'static [(Regex, &'static str)] {
-    static RE: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
-    RE.get_or_init(|| {
-        [
-            (r"(?i)\bdrop\s+\w", "DROP"),
-            (r"(?i)\btruncate\b\s*(?:table\s+)?\S", "TRUNCATE"),
-            (r"(?i)\bdelete\s+from\b", "DELETE"),
-            (r"(?i)\bflush(?:all|db)\b", "FLUSHALL"),
-            (r"(?i)\bdropdatabase\b", "dropDatabase"),
-            (r"(?i)\.drop\s*\(", "drop()"),
-            (r"(?i)\bdeletemany\s*\(", "deleteMany"),
-            (r"(?i)\.remove\s*\(", "remove()"),
-        ]
-        .into_iter()
-        .map(|(pattern, name)| (Regex::new(pattern).expect("a fixed pattern"), name))
-        .collect()
-    })
-}
-
-fn update_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)\bupdate\s+\S+\s+set\b").expect("a fixed pattern"))
-}
-
-/// The destructive word a query holds, if any: DROP, TRUNCATE, DELETE, FLUSHALL, dropDatabase, or an UPDATE with no WHERE.
-fn destructive_sql(text: &str) -> Option<&'static str> {
-    if let Some((_, name)) = sql_patterns().iter().find(|(re, _)| re.is_match(text)) {
-        return Some(name);
-    }
-    text.split(';')
-        .any(|statement| {
-            update_re().is_match(statement)
-                && !statement
-                    .to_lowercase()
-                    .split_whitespace()
-                    .any(|w| w == "where")
-        })
-        .then_some("UPDATE without WHERE")
-}
-
 const DB_URL_ENV: [&str; 8] = [
     "PGHOST",
     "PGHOSTADDR",
@@ -542,23 +642,45 @@ const DB_URL_ENV: [&str; 8] = [
     "CASSANDRA_HOST",
 ];
 
+/// The queries a client is given on its command line.
+fn inline_queries(command: &Simple) -> Vec<String> {
+    if command.program == "redis-cli" {
+        return vec![command.args.join(" ")];
+    }
+    flag_values(
+        &command.args,
+        &["-c", "--command", "-e", "--execute", "--eval"],
+    )
+}
+
+/// A word that may be a URL or a connection string, read for the hosts it names.
+fn db_hosts_of(word: &str, out: &mut Vec<Raw>) {
+    if let Some(found) = url_hosts(word) {
+        out.extend(found);
+    } else if word.contains('=') {
+        out.extend(conninfo_hosts(word));
+    }
+}
+
 fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     let args = &command.args;
-    // The query is in the arguments for `-c`, `-e`, `--eval` and redis-cli's own words; otherwise it is on the input.
-    let inline_flags = ["-c", "--command", "-e", "--execute", "--eval"];
-    let inline = args.iter().any(|a| {
-        inline_flags.iter().any(|f| {
-            a == f
-                || a.starts_with(&format!("{f}="))
-                || (f.len() == 2 && a.starts_with(f) && a.len() > 2 && !a.starts_with("--"))
-        })
-    }) || command.program == "redis-cli";
-    let query = if inline {
-        args.join(" ")
-    } else {
-        text.to_owned()
-    };
-    let word = destructive_sql(&query)?;
+    let queries = inline_queries(command);
+    // A pipe, a here-doc, a redirect or `-f -` can feed the client SQL as well, even beside `-c`.
+    let stdin = text.contains(['|', '<', '\n'])
+        || args
+            .windows(2)
+            .any(|w| matches!(w[0].as_str(), "-f" | "--file") && w[1] == "-")
+        || args.iter().any(|a| a == "--file=-");
+    let word = queries
+        .iter()
+        .find_map(|q| destructive_sql(q, false))
+        .or_else(|| {
+            if queries.is_empty() || stdin {
+                destructive_sql(text, true)
+            } else {
+                None
+            }
+        })?;
     let matched_by = format!("{}: {word}", command.program);
     if let Some(over) = over {
         return Some(Read {
@@ -569,20 +691,30 @@ fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     }
     let mut targets: Vec<Raw> = Vec::new();
     for arg in args {
-        if let Some(raw) = url_host(arg) {
-            targets.push(raw);
-        } else if let Some(rest) = arg.find("host=").map(|at| &arg[at + 5..]) {
-            targets.push(Raw::host(rest.split_whitespace().next().unwrap_or("")));
+        if arg.starts_with('-') || queries.iter().any(|q| q == arg) {
+            continue;
         }
+        db_hosts_of(arg, &mut targets);
+    }
+    for value in flag_values(args, &["-d", "--dbname", "-u", "--uri", "--url"]) {
+        db_hosts_of(&value, &mut targets);
     }
     for host in flag_values(args, &["-h", "--host", "--hostname"]) {
-        targets.push(Raw::host(&host));
+        targets.extend(hosts(&host));
     }
     if !flag_values(args, &["-S", "--socket"]).is_empty() {
         targets.push(Raw::local());
     }
     for value in env_values(text, &DB_URL_ENV) {
-        targets.push(url_host(&value).unwrap_or_else(|| Raw::host(&value)));
+        if let Some(found) = url_hosts(&value) {
+            targets.extend(found);
+        } else {
+            targets.extend(hosts(&value));
+        }
+    }
+    // A service name hides the host in a file this reads nothing of.
+    if !env_values(text, &["PGSERVICE"]).is_empty() {
+        targets.push(Raw::missing(GuardTargetKind::Host));
     }
     if command.program == "cqlsh"
         && let Some(host) = positional(
@@ -602,7 +734,7 @@ fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         )
         .first()
     {
-        targets.push(Raw::host(host));
+        targets.extend(hosts(host));
     }
     if command.program == "mongosh"
         && targets.is_empty()
@@ -614,7 +746,7 @@ fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         .find(|w| w.contains('/') || w.contains(':'))
     {
         let head = word.split('/').next().unwrap_or(word);
-        targets.push(Raw::host(head));
+        targets.extend(hosts(head));
     }
     if targets.is_empty() {
         // The tool's default is whatever the environment says, which is not known here.
@@ -632,7 +764,7 @@ fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
 fn cloud_endpoint_local(args: &[String]) -> bool {
     flag_values(args, &["--endpoint-url", "--endpoint"])
         .iter()
-        .any(|value| url_host(value).is_some_and(|raw| raw.local))
+        .any(|value| url_hosts(value).is_some_and(|all| all.iter().all(|raw| raw.local)))
 }
 
 fn aws(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
@@ -647,8 +779,10 @@ fn aws(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
             "--query",
             "--cli-read-timeout",
             "--cli-connect-timeout",
+            "--cli-binary-format",
             "--ca-bundle",
             "--color",
+            "--endpoint",
         ],
     );
     let (service, action) = (words.first().copied()?, words.get(1).copied().unwrap_or(""));
@@ -699,6 +833,19 @@ fn aws(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         }
     } else if profiles.is_empty() {
         // No profile: the default one is used, which is not known here.
+        targets.push(Raw::missing(GuardTargetKind::Profile));
+    }
+    // Static keys, a session token or an endpoint in the environment override whatever profile is named: the account is unknown.
+    if env_names(text).iter().any(|name| {
+        matches!(
+            name.as_str(),
+            "AWS_ACCESS_KEY_ID"
+                | "AWS_SECRET_ACCESS_KEY"
+                | "AWS_SESSION_TOKEN"
+                | "AWS_CONFIG_FILE"
+                | "AWS_SHARED_CREDENTIALS_FILE"
+        ) || name.starts_with("AWS_ENDPOINT_URL")
+    }) {
         targets.push(Raw::missing(GuardTargetKind::Profile));
     }
     Some(Read {
@@ -770,7 +917,10 @@ fn gcloud(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
 
 fn az(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     let args = &command.args;
-    if !args.iter().any(|a| a == "delete") {
+    if !args
+        .iter()
+        .any(|a| a == "delete" || a.starts_with("delete-"))
+    {
         return None;
     }
     let matched_by = "az ... delete".to_owned();
@@ -802,10 +952,12 @@ fn az(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
 fn gsutil(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     let args = &command.args;
     let words = positional(args, &["-o", "-p", "-i"]);
-    if words.first().copied() != Some("rm") {
-        return None;
-    }
-    let matched_by = "gsutil rm".to_owned();
+    let matched_by = match words.first().copied() {
+        Some("rm") => "gsutil rm".to_owned(),
+        Some("rb") => "gsutil rb".to_owned(),
+        Some("rsync") if cluster(args, &['d']) => "gsutil rsync -d".to_owned(),
+        _ => return None,
+    };
     if let Some(over) = over {
         return Some(Read {
             category: GuardCategory::Cloud,
@@ -864,7 +1016,11 @@ fn docker(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     let (first, second) = (words.first().copied()?, words.get(1).copied().unwrap_or(""));
     let matched_by = match (first, second) {
         ("rm" | "rmi" | "prune", _) => format!("docker {first}"),
-        ("container" | "image" | "volume" | "network" | "system" | "builder", "rm" | "prune") => {
+        (
+            "container" | "image" | "volume" | "network" | "system" | "builder" | "stack"
+            | "service" | "secret" | "config" | "node" | "plugin",
+            "rm" | "prune",
+        ) => {
             format!("docker {first} {second}")
         }
         _ => return None,
@@ -881,7 +1037,10 @@ fn docker(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         .into_iter()
         .chain(env_values(text, &["DOCKER_HOST"]))
     {
-        targets.push(url_host(&host).unwrap_or_else(|| Raw::host(&host)));
+        match url_hosts(&host) {
+            Some(found) => targets.extend(found),
+            None => targets.extend(hosts(&host)),
+        }
     }
     for context in flag_values(args, &["--context", "-c"])
         .into_iter()
@@ -906,14 +1065,38 @@ fn docker(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
 
 // ---- git -----------------------------------------------------------------------------------------------------------------
 
+fn git_env_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?:^|[\s;&|(])GIT_(?:CONFIG\w*|DIR|WORK_TREE|COMMON_DIR)=")
+            .expect("a fixed pattern")
+    })
+}
+
 /// The remotes are not known to the parser, so a push is read in two steps: here the push and its remote word, and in
-/// [`judge`] the name is looked up. The remote word travels as a target whose kind is `Host` and whose name is `remote:<word>`.
-fn git(command: &Simple, over: Option<&Raw>) -> Option<Read> {
+/// [`judge`] the name is looked up (every push URL of it). The remote word travels as a target whose kind is `Host` and whose name is
+/// `remote:<word>`. A push that could be redirected by the command itself (`-c remote.x.pushurl=...`, `-C`, `GIT_CONFIG_*` and
+/// `GIT_DIR` in the environment) adds a target that cannot be resolved, so it is guarded.
+fn git(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     let args = &command.args;
     let mut at = 0;
+    let mut redirected = git_env_re().is_match(text);
     while at < args.len() {
-        match args[at].as_str() {
-            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" => at += 2,
+        let word = args[at].as_str();
+        match word {
+            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" | "--config-env" => {
+                redirected |= word != "--namespace";
+                at += 2;
+            }
+            w if w.starts_with("--git-dir=")
+                || w.starts_with("--work-tree=")
+                || w.starts_with("--config-env=")
+                || (w.starts_with("-c") && w.len() > 2 && !w.starts_with("--"))
+                || (w.starts_with("-C") && w.len() > 2 && !w.starts_with("--")) =>
+            {
+                redirected = true;
+                at += 1;
+            }
             w if w.starts_with('-') => at += 1,
             _ => break,
         }
@@ -933,10 +1116,9 @@ fn git(command: &Simple, over: Option<&Raw>) -> Option<Read> {
         rest,
         &["--repo", "-o", "--push-option", "--receive-pack", "--exec"],
     );
-    let plus = words
-        .iter()
-        .skip(1)
-        .any(|w| w.starts_with('+') || w.starts_with(':'));
+    let is_refspec = |w: &&str| w.starts_with('+') || w.starts_with(':');
+    let remote_word = words.first().filter(|w| !is_refspec(w)).copied();
+    let plus = words.iter().any(is_refspec);
     if !forced && !plus {
         return None;
     }
@@ -958,18 +1140,23 @@ fn git(command: &Simple, over: Option<&Raw>) -> Option<Read> {
     let remote = flag_values(rest, &["--repo"])
         .into_iter()
         .next()
-        .or_else(|| words.first().map(|w| (*w).to_owned()))
+        .or_else(|| remote_word.map(str::to_owned))
         .unwrap_or_else(|| "origin".to_owned());
+    let mut targets = vec![Raw {
+        kind: GuardTargetKind::Host,
+        name: format!("remote:{remote}"),
+        local: false,
+        info: false,
+        missing: false,
+        ident: None,
+    }];
+    if redirected {
+        targets.push(Raw::missing(GuardTargetKind::Host));
+    }
     Some(Read {
         category: GuardCategory::Git,
         matched_by,
-        targets: vec![Raw {
-            kind: GuardTargetKind::Host,
-            name: format!("remote:{remote}"),
-            local: false,
-            info: false,
-            missing: false,
-        }],
+        targets,
     })
 }
 
@@ -1014,6 +1201,7 @@ fn unparsed(ctx: &Ctx<'_>) -> Option<Read> {
             local: false,
             info: false,
             missing: true,
+            ident: None,
         }],
     })
 }
@@ -1041,7 +1229,7 @@ fn judge(read: Read, facts: &Facts) -> Found {
     let targets = read
         .targets
         .into_iter()
-        .map(|raw| judge_one(raw, facts))
+        .flat_map(|raw| judge_one(raw, facts))
         .collect();
     Found {
         category: read.category,
@@ -1050,15 +1238,23 @@ fn judge(read: Read, facts: &Facts) -> Found {
     }
 }
 
-fn judge_one(mut raw: Raw, facts: &Facts) -> Judged {
-    // A git remote travels as its word and is resolved here, from the worktree's own remotes.
-    if let Some(word) = raw.name.strip_prefix("remote:").map(str::to_owned) {
-        raw = resolve_remote(&word, &facts.remotes);
+fn judge_one(raw: Raw, facts: &Facts) -> Vec<Judged> {
+    // A git remote travels as its word and is resolved here, from the worktree's own remotes: every push URL of it.
+    if let Some(word) = raw.name.strip_prefix("remote:") {
+        return resolve_remote(word, &facts.remotes)
+            .into_iter()
+            .map(|r| judge_plain(r, facts))
+            .collect();
     }
+    vec![judge_plain(raw, facts)]
+}
+
+fn judge_plain(raw: Raw, facts: &Facts) -> Judged {
     let judged = |class| Judged {
         kind: raw.kind,
         name: raw.name.clone(),
         class,
+        ident: raw.ident.clone(),
     };
     if raw.missing || variable(&raw.name) {
         return judged(Class::Unresolved);
@@ -1078,43 +1274,56 @@ fn judge_one(mut raw: Raw, facts: &Facts) -> Judged {
     }
 }
 
-/// A git remote word as the target it points at: a URL or path given directly, or a name looked up in the worktree's remotes. A
-/// name that is not there is unresolved.
-fn resolve_remote(word: &str, remotes: &HashMap<String, String>) -> Raw {
+/// A git remote word as the targets it pushes to: a URL or path given directly, or every push URL of a name in the worktree's
+/// remotes. A name that is not there is unresolved.
+fn resolve_remote(word: &str, remotes: &HashMap<String, Vec<String>>) -> Vec<Raw> {
     let direct = word.contains('/') || word.contains(':') || word.ends_with(".git");
-    let url = if direct {
-        Some(word.to_owned())
+    let urls: Vec<String> = if direct {
+        vec![word.to_owned()]
     } else {
-        remotes.get(word).cloned()
+        remotes.get(word).cloned().unwrap_or_default()
     };
-    let Some(url) = url else {
-        return Raw::missing(GuardTargetKind::Host);
-    };
-    let url = url.trim();
-    if url.starts_with('/')
-        || url.starts_with("./")
-        || url.starts_with("../")
-        || url.starts_with("file://")
-        || url
-            .as_bytes()
-            .get(1..3)
-            .is_some_and(|b| b == b":\\" || b == b":/")
-    {
-        return Raw::local();
+    if urls.is_empty() {
+        return vec![Raw::missing(GuardTargetKind::Host)];
     }
-    remote_of(url).unwrap_or_else(|| {
-        // A bare relative path (`../mirror.git`, `mirror`) is a local path; anything else that is not a URL is not known.
-        if url.contains(':') {
-            Raw::missing(GuardTargetKind::Host)
+    let mut out = Vec::new();
+    for url in urls {
+        let url = url.trim();
+        let ident = Some(crate::util::sha256_hex(url.as_bytes())[..16].to_owned());
+        let mut found = if url.starts_with('/')
+            || url.starts_with("./")
+            || url.starts_with("../")
+            || url.starts_with("file://")
+            || url
+                .as_bytes()
+                .get(1..3)
+                .is_some_and(|b| b == b":\\" || b == b":/")
+        {
+            vec![Raw::local()]
         } else {
-            Raw::local()
+            let hosts = remote_hosts(url);
+            if !hosts.is_empty() {
+                hosts
+            } else if url.contains(':') {
+                // Not a URL and not a path: not known.
+                vec![Raw::missing(GuardTargetKind::Host)]
+            } else {
+                // A bare relative path (`../mirror.git`, `mirror`) is a local path.
+                vec![Raw::local()]
+            }
+        };
+        for raw in &mut found {
+            raw.ident = ident.clone();
         }
-    })
+        out.extend(found);
+    }
+    out
 }
 
-/// Reads `git remote get-url --push` for each remote of a worktree, hardened as the other reads of a worker's repository are. A
-/// remote that cannot be read is left out, which the guard reads as unresolved.
-pub(super) async fn read_remotes(worktree: &Path) -> HashMap<String, String> {
+/// Reads every push URL of each remote of a worktree (`git remote get-url --push --all`, which applies `pushurl`, `insteadOf` and
+/// `pushInsteadOf`), hardened as the other reads of a worker's repository are. A remote that cannot be read is left out, which the
+/// guard reads as unresolved.
+pub(super) async fn read_remotes(worktree: &Path) -> HashMap<String, Vec<String>> {
     use crate::source_control::git::{git_hardened, text};
     let mut found = HashMap::new();
     let Ok(listed) = git_hardened(worktree, &["remote"]).await else {
@@ -1125,364 +1334,21 @@ pub(super) async fn read_remotes(worktree: &Path) -> HashMap<String, String> {
         if name.is_empty() || name.starts_with('-') || name.len() > 100 {
             continue;
         }
-        if let Ok(url) = git_hardened(worktree, &["remote", "get-url", "--push", name]).await {
-            found.insert(name.to_owned(), text(&url));
+        if let Ok(urls) =
+            git_hardened(worktree, &["remote", "get-url", "--push", "--all", name]).await
+        {
+            let urls: Vec<String> = text(&urls)
+                .lines()
+                .map(|l| l.trim().to_owned())
+                .filter(|l| !l.is_empty())
+                .take(10)
+                .collect();
+            found.insert(name.to_owned(), urls);
         }
     }
     found
 }
 
+mod sql;
 #[cfg(test)]
-mod tests {
-    use orbyn_contracts::ActionKind;
-
-    use super::super::hard::{Scene, context};
-    use super::*;
-
-    fn entry(list: GuardList, kind: GuardTargetKind, pattern: &str) -> GuardTarget {
-        GuardTarget {
-            id: format!("gt-{pattern}"),
-            list,
-            pattern: pattern.to_owned(),
-            kind,
-            note: None,
-            added_at: "2026-01-01T00:00:00Z".to_owned(),
-        }
-    }
-
-    fn remotes() -> HashMap<String, String> {
-        [
-            ("origin", "git@github.com:orbyn-dev/app.git"),
-            ("mirror", "/srv/git/app.git"),
-            ("self", "file:///srv/git/app.git"),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_owned(), v.to_owned()))
-        .collect()
-    }
-
-    fn facts(entries: Vec<GuardTarget>) -> Facts {
-        Facts::new(entries, remotes())
-    }
-
-    fn look(command: &str, facts: &Facts) -> Option<Found> {
-        let scene = Scene {
-            worktree: Path::new("/work/tree"),
-            protected: &[],
-            allowed_hosts: &[],
-            data_dir: None,
-            branch: None,
-            default_branch: None,
-        };
-        let ctx = context(ActionKind::Command, command, &[], &scene);
-        inspect(&ctx, facts)
-    }
-
-    fn guarded(command: &str) -> bool {
-        look(command, &facts(Vec::new())).is_some_and(|f| f.guarded())
-    }
-
-    fn category(command: &str) -> Option<GuardCategory> {
-        look(command, &facts(Vec::new())).map(|f| f.category)
-    }
-
-    #[test]
-    fn each_category_is_found_in_a_command_for_a_remote_target() {
-        use GuardCategory::*;
-        let table = [
-            ("ssh prod.example.com 'rm -rf /srv/data'", FileDeletion),
-            ("ssh deploy@box rm -rf /srv/data", FileDeletion),
-            (
-                "rsync -a --delete ./out/ deploy@prod.example.com:/srv/www/",
-                FileDeletion,
-            ),
-            (
-                "ssh prod.example.com 'find /srv -name x -delete'",
-                FileDeletion,
-            ),
-            ("ssh prod.example.com shred /srv/key", FileDeletion),
-            (
-                "ssh prod.example.com truncate -s 0 /var/log/x",
-                FileDeletion,
-            ),
-            (
-                "psql -h db.prod.example.com -c 'DROP TABLE users'",
-                Database,
-            ),
-            ("mysql -h db.example.com -e 'TRUNCATE users'", Database),
-            ("mysql -h db.example.com -e 'DELETE FROM users'", Database),
-            (
-                "psql postgres://u:pw@db.example.com/app -c 'UPDATE users SET x = 1'",
-                Database,
-            ),
-            ("redis-cli -h cache.example.com FLUSHALL", Database),
-            (
-                "mongosh mongodb://db.example.com/app --eval 'db.dropDatabase()'",
-                Database,
-            ),
-            ("cqlsh db.example.com -e 'DROP KEYSPACE app'", Database),
-            ("aws s3 rm s3://logs --recursive --profile prod", Cloud),
-            ("aws s3 rb s3://logs --profile prod", Cloud),
-            (
-                "aws ec2 terminate-instances --instance-ids i-1 --profile prod",
-                Cloud,
-            ),
-            ("aws rds delete-db-instance --profile prod", Cloud),
-            ("gcloud compute instances delete vm --project acme", Cloud),
-            ("az group delete --name rg --subscription sub-1", Cloud),
-            ("gsutil -m rm -r gs://bucket/x", Cloud),
-            ("docker -H tcp://10.0.0.5:2376 rm -f web", Containers),
-            ("docker --context prod system prune -af", Containers),
-            ("git push --force origin feature", Git),
-            ("git push origin --delete feature", Git),
-            ("git push origin +feature", Git),
-            ("git push -f origin feature", Git),
-        ];
-        for (command, want) in table {
-            assert_eq!(category(command), Some(want), "{command}");
-            assert!(guarded(command), "{command}");
-        }
-    }
-
-    #[test]
-    fn a_command_that_is_not_destructive_is_not_read() {
-        for command in [
-            "ls -la",
-            "rm file.txt",
-            "psql -h db.example.com -c 'SELECT 1'",
-            "psql -h db.example.com -c 'UPDATE t SET x = 1 WHERE id = 3'",
-            "aws s3 ls s3://logs --profile prod",
-            "git push origin feature",
-            "docker ps",
-            "docker -H tcp://10.0.0.5:2376 ps",
-            "cargo test",
-        ] {
-            assert_eq!(look(command, &facts(Vec::new())), None, "{command}");
-        }
-    }
-
-    #[test]
-    fn a_variable_or_a_missing_target_is_guarded() {
-        for command in [
-            "psql -h $DB_HOST -c 'DROP TABLE x'",
-            "psql -c 'DROP TABLE x'",
-            "redis-cli FLUSHALL",
-            "mysql -e 'DELETE FROM t'",
-            "aws s3 rm s3://bucket --recursive",
-            "aws ec2 terminate-instances --instance-ids i-1",
-            "gcloud compute instances delete vm",
-            "ssh $TARGET 'rm -rf /srv'",
-            "ssh \"$TARGET\" rm -rf /srv",
-            "git push --force",
-            "git push --force nowhere",
-            "docker --context $CTX rm x",
-            "docker -H $HOST rm x",
-        ] {
-            assert!(guarded(command), "{command}");
-        }
-        let found = look("psql -c 'DROP TABLE x'", &facts(Vec::new())).unwrap();
-        assert_eq!(found.targets[0].class, Class::Unresolved);
-        assert_eq!(found.targets[0].name, "not named");
-    }
-
-    #[test]
-    fn targets_come_from_env_prefixes_urls_and_flags() {
-        let f = |c: &str| look(c, &facts(Vec::new())).unwrap();
-        let found = f("PGHOST=db.example.com psql -c 'DROP TABLE x'");
-        assert_eq!(found.targets[0].name, "db.example.com");
-        let found =
-            f("DATABASE_URL=postgres://u:pw@db.example.com:5432/app psql -c 'DROP TABLE x'");
-        assert_eq!(found.targets[0].name, "db.example.com");
-        assert!(!found.shown_target().contains("pw"));
-        let found = f("AWS_PROFILE=prod aws s3 rb s3://x");
-        assert!(
-            found
-                .targets
-                .iter()
-                .any(|t| t.name == "prod" && t.kind == GuardTargetKind::Profile)
-        );
-        let found = f("docker --context staging rm x");
-        assert_eq!(found.targets[0].kind, GuardTargetKind::Context);
-        let found = f("gcloud compute instances delete vm --project=acme-prod");
-        assert!(found.targets.iter().any(|t| t.name == "acme-prod"));
-        let found = f("git push -f origin main");
-        assert_eq!(found.targets[0].name, "github.com");
-    }
-
-    #[test]
-    fn local_targets_are_not_guarded() {
-        for command in [
-            "psql -h localhost -c 'DROP TABLE x'",
-            "psql -h 127.0.0.1 -c 'DROP TABLE x'",
-            "psql -h ::1 -c 'DROP TABLE x'",
-            "psql -h /var/run/postgresql -c 'DROP TABLE x'",
-            "psql postgres:///app -c 'DROP TABLE x'",
-            "PGHOST=localhost psql -c 'DROP TABLE x'",
-            "mysql -S /tmp/mysql.sock -e 'DROP TABLE x'",
-            "redis-cli -h 127.0.0.1 FLUSHALL",
-            "rm -rf build",
-            "rm -rf /work/tree/target",
-            "find . -name '*.tmp' -delete",
-            "rsync -a --delete src/ dest/",
-            "docker rm web",
-            "docker system prune -af",
-            "docker --context default rm web",
-            "docker -H unix:///var/run/docker.sock rm web",
-            "docker -H tcp://127.0.0.1:2375 rm web",
-            "git push --force mirror feature",
-            "git push --force self feature",
-            "git push --force /srv/git/app.git feature",
-            "git push --force ../mirror.git feature",
-            "aws s3 rm s3://b --recursive --endpoint-url http://localhost:4566",
-        ] {
-            let found = look(command, &facts(Vec::new()));
-            assert!(
-                found.is_some_and(|f| !f.guarded()),
-                "{command} should be read, and local"
-            );
-        }
-    }
-
-    #[test]
-    fn the_safe_list_exempts_and_the_prod_list_forces_and_prod_wins() {
-        use GuardList::*;
-        use GuardTargetKind::*;
-        let safe = facts(vec![entry(Safe, Host, "*.staging.example.com")]);
-        let command = "psql -h db.staging.example.com -c 'DROP TABLE x'";
-        let found = look(command, &safe).unwrap();
-        assert!(!found.guarded());
-        assert!(matches!(found.targets[0].class, Class::Safe(_)));
-        assert_eq!(
-            found.entry().map(|e| e.pattern.as_str()),
-            Some("*.staging.example.com")
-        );
-        // The exemption is for the listed host only.
-        assert!(
-            look("psql -h db.example.com -c 'DROP TABLE x'", &safe)
-                .unwrap()
-                .guarded()
-        );
-        assert!(
-            look(
-                "psql -h staging.example.com.evil.io -c 'DROP TABLE x'",
-                &safe
-            )
-            .unwrap()
-            .guarded()
-        );
-        // A kind must match: a profile entry does not exempt a host.
-        let wrong = facts(vec![entry(Safe, Profile, "db.staging.example.com")]);
-        assert!(look(command, &wrong).unwrap().guarded());
-        // The prod list forces, even for a name that looks local.
-        let forced = facts(vec![entry(Prod, Host, "localhost")]);
-        assert!(
-            look("psql -h localhost -c 'DROP TABLE x'", &forced)
-                .unwrap()
-                .guarded()
-        );
-        // Prod wins when a target is in both.
-        let both = facts(vec![
-            entry(Safe, Host, "db.staging.example.com"),
-            entry(Prod, Host, "db.staging.example.com"),
-        ]);
-        let found = look(command, &both).unwrap();
-        assert!(found.guarded());
-        assert!(matches!(found.targets[0].class, Class::Prod(_)));
-        let held = {
-            let scene = Scene {
-                worktree: Path::new("/work/tree"),
-                protected: &[],
-                allowed_hosts: &[],
-                data_dir: None,
-                branch: None,
-                default_branch: None,
-            };
-            blast(&context(ActionKind::Command, command, &[], &scene), &both).unwrap()
-        };
-        assert_eq!(held.list, "prod");
-    }
-
-    #[test]
-    fn a_safe_profile_does_not_exempt_a_command_with_another_unlisted_target() {
-        use GuardList::*;
-        use GuardTargetKind::*;
-        let safe = facts(vec![entry(Safe, Profile, "dev")]);
-        assert!(
-            !look("aws s3 rm s3://any --profile dev", &safe)
-                .unwrap()
-                .guarded()
-        );
-        // A bucket only describes the command, but a prod bucket forces it.
-        let both = facts(vec![
-            entry(Safe, Profile, "dev"),
-            entry(Prod, Bucket, "customer-data"),
-        ]);
-        assert!(
-            look("aws s3 rm s3://customer-data --profile dev", &both)
-                .unwrap()
-                .guarded()
-        );
-        // Two profiles, one safe: guarded.
-        assert!(
-            look("AWS_PROFILE=prod aws s3 rm s3://b --profile dev", &safe)
-                .unwrap()
-                .guarded()
-        );
-    }
-
-    #[test]
-    fn an_unreadable_command_with_a_destructive_and_a_non_local_word_is_guarded() {
-        assert_eq!(
-            category("echo 'oops; rm -rf /srv user@prod.example.com"),
-            Some(GuardCategory::Unparsed)
-        );
-        assert!(guarded("$CMD psql -h db.example.com DROP TABLE x"));
-        // No non-local word, or no destructive word: not read.
-        assert_eq!(look("echo 'oops; rm -rf build", &facts(Vec::new())), None);
-        assert_eq!(
-            look("echo 'oops prod.example.com", &facts(Vec::new())),
-            None
-        );
-    }
-
-    #[test]
-    fn a_sql_file_is_not_read_and_the_limit_is_documented() {
-        // Known limit: what `-f` runs is not read.
-        assert_eq!(
-            look("psql -h db.example.com -f drop.sql", &facts(Vec::new())),
-            None
-        );
-    }
-
-    #[test]
-    fn stdin_queries_are_read() {
-        assert!(guarded("echo 'DROP TABLE users' | psql -h db.example.com"));
-        assert!(guarded(
-            "psql -h db.example.com <<EOF\nTRUNCATE users;\nEOF"
-        ));
-    }
-
-    #[test]
-    fn a_pattern_is_exact_or_a_suffix_and_never_a_look_alike() {
-        assert!(pattern_matches("db.example.com", "DB.example.com"));
-        assert!(pattern_matches("*.example.com", "a.b.example.com"));
-        assert!(pattern_matches("*.example.com", "example.com"));
-        assert!(!pattern_matches("*.example.com", "notexample.com"));
-        assert!(!pattern_matches("*.example.com", "example.com.evil.io"));
-        assert!(!pattern_matches("db.example.com", "xdb.example.com"));
-    }
-
-    #[test]
-    fn only_a_command_is_read() {
-        let scene = Scene {
-            worktree: Path::new("/work/tree"),
-            protected: &[],
-            allowed_hosts: &[],
-            data_dir: None,
-            branch: None,
-            default_branch: None,
-        };
-        let ctx = context(ActionKind::Network, "psql -c 'DROP TABLE x'", &[], &scene);
-        assert_eq!(inspect(&ctx, &facts(Vec::new())), None);
-    }
-}
+mod tests;

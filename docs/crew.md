@@ -616,26 +616,27 @@ test), `exit.rs` (the exit-status watch).
   worker goes on); there are no two keys under On or Off. Under **Full** the lead decides, then a second key from a *different vendor family*.
   No second vendor signed in: denied for now, held, `needs_second_engine` set. The two keys disagree: denied, with a `disagreement` row. Both agree:
   allowed, and the ledger row keeps both reasons. The lead is told the category, the target and what matched, never the raw page.
+- **An approval is bound to the targets.** A guard hold keeps the targets it resolved (the host list, every git push URL by hash). When the person approves, and again when the worker retries, the command is resolved afresh; if the targets differ (`git remote set-url origin ...` in between) the approval is refused or does not apply (`The target changed since this command was held`).
 - **Approve once.** The held command is approved exactly as in "approve once" above: the person's click in the desktop app's own dialog, one retry, 10
   minutes, the always-denied list checked again. The row is `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`; the app draws it as
   "Approved by you" with the command (`action.target`), the target (`guard.target`), the time (`at`) and the exit status (the `command_exit` row).
-- **Categories (built in; no repository file can add or remove one).** File deletion (`rm -r`, `find -delete`, `rsync --delete`, `shred`,
+- **Categories (built in; no repository file can add or remove one).** File deletion (`rm -r`, `find -delete` and `find -exec rm`, `rsync --delete|--del|--remove-source-files`, `shred`,
   `truncate`, also inside `ssh host '...'`); database (`psql`, `mysql`, `mariadb`, `mongosh`, `redis-cli`, `cqlsh` with DROP, TRUNCATE, DELETE, an
-  UPDATE with no WHERE, FLUSHALL or dropDatabase, in `-c`/`-e`/`--eval` or on the input); cloud (`aws s3 rm|rb`, `aws s3 sync --delete`,
-  `aws * delete-*|terminate-*`, `gcloud ... delete`, `gcloud storage rm`, `az ... delete`, `gsutil rm`); containers (`docker rm|rmi|prune` and the
-  `container|image|volume|network|system|builder` forms, against `-H`, `DOCKER_HOST`, `--context` or `DOCKER_CONTEXT`); git (`push --force`,
+  UPDATE with no WHERE, FLUSHALL or dropDatabase, in `-c`/`-e`/`--eval` or on the input); cloud (`aws s3 rm|rb`,
+  `aws * delete-*|terminate-*`; any `aws ... sync` is refused outright by N8, stricter than the guard, `gcloud ... delete`, `gcloud storage rm`, `az ... delete` and `delete-*`, `gsutil rm|rb` and `rsync -d`); containers (`docker rm|rmi|prune` and the
+  `container|image|volume|network|system|builder|stack|service|secret|config|node|plugin` forms, against `-H`, `DOCKER_HOST`, `--context` or `DOCKER_CONTEXT`); git (`push --force`,
   `--force-with-lease`, `-f`, `--delete`, `-d`, `--mirror`, a `+refspec` or `:ref`, to a remote that is not local); and `unparsed`, a command the guard
-  could not read that holds a destructive word and a non-local word. kubectl delete, terraform destroy and helm uninstall are **N8** and stay always
+  could not read that holds a destructive word and a non-local word. kubectl delete, terraform destroy and helm uninstall, delete and del are **N8** and stay always
   denied: they are never held and no approval can change that.
-- **How a target is classified.** *Local* is loopback (`localhost`, `127.x`, `::1`), a unix socket or an empty database host, a file or path, the
+- **How a target is classified.** *Local* is loopback (`localhost`, or an IP literal in 127.0.0.0/8 or `::1`: `127.evil.com` is a host), a unix socket or an empty database host, a file or path, the
   local Docker socket or the `default` context, an endpoint URL on loopback (a local stack), or a git remote whose URL is a local path. Everything else
   is **production-linked** unless this device's `safe` list names it. The `prod` list forces a target production-linked, even a local-looking
-  name, and wins when a target is in both. A command with several targets is exempt only if every one is local or safe. Targets are read from `shell::hosts`-style
+  name, and wins when a target is in both. A command with several targets is exempt only if every one is local or safe, and a comma-separated host list (`psql -h a,b`, `postgresql://127.0.0.1:1,db.prod/app`, `host=a,b`) is local only if every host in it is. A connection string or URL host is read as well as `-h`; `service=` and `PGSERVICE` name a host the guard cannot read, so they are unknown and guarded. Targets are read from `shell::hosts`-style
   URLs, `-h`/`--host`, `PGHOST`/`MYSQL_HOST`/`DATABASE_URL`/`REDIS_URL`/`MONGODB_URI`, `--profile`/`AWS_PROFILE`, `--project`/`CLOUDSDK_CORE_PROJECT`, `--subscription`,
   `--context`/`DOCKER_CONTEXT`, `s3://` and `gs://` names (a bucket only describes the command; it matters only if the `prod` list names it) and, for
-  a push, the remote resolved with a hardened `git remote get-url --push`. **Fail closed:** a target that is a variable, a tool whose default is remote
-  and that names no target (`psql` with no host, `aws` with no profile, `gcloud` with no project), and an unreadable command with a destructive word and a
-  non-local word are all guarded.
+  a push, **every** push URL of the remote (hardened `git remote get-url --push --all`, which applies `pushurl`, `insteadOf` and `pushInsteadOf`): any non-local URL guards the push. A push the command itself could redirect (`-c`, `-C`, `--git-dir`, `GIT_CONFIG_*`, `GIT_DIR`) is guarded as unresolvable. SQL is read with comments removed and case folded: DROP, TRUNCATE, DELETE (with or without FROM), and an UPDATE with no WHERE outside a string or comment, statement by statement; where the reader cannot be sure (an open quote or comment, a dollar-quoted body, a backslash) any of those words, or ALTER, anywhere in the SQL guards, and SQL fed on the input (a pipe, here-doc, `-f -`) is read even beside `-c`. **Fail closed:** a target that is a variable, a tool whose default is remote
+  and that names no target (`psql` with no host, `aws` with no profile, `gcloud` with no project), an unreadable command with a destructive word and a
+  non-local word (an open quote, or a program that is a variable) and an `ssh` remote command that holds a destructive word the guard did not read are all guarded.
 - **The two lists live on this device**, in the table `crew_guard_targets` (schema **43**) in the data folder, never in a repository file, so a file a worker
   or teammate commits cannot loosen the guard. `.orbyn/crew.json` is not read for it. An entry is a list (`prod` or `safe`), a pattern (an exact name or
   `*.suffix`, lowercase, letters, digits, `.`, `_`, `-`, at most 253 characters; a URL, user, port, path or anything the secret scan objects to is
@@ -646,20 +647,20 @@ test), `exit.rs` (the exit-status watch).
   the list entry that decided it, a verdict of `not_destructive`, `local`, `exempt` or `guarded`; read-only, nothing runs, the command is bounded to 2000
   characters and shown redacted); person-only writes, local only, `POST /api/crew/guard/targets/add` and `/{id}/remove`.
 - **Loosening needs the person's presence.** Adding a `safe` target or removing a `prod` one loosens the guard, so it needs the same proof as approving
-  once: a grant the desktop app records after the person clicks in its own dialog, sent in `x-orbyn-confirm`, bound to `PresenceFor::GuardLoosen {action, pattern}`
-  (`add_safe` or `remove_prod`, and the exact pattern), 60 seconds, used up by one change. Adding a `prod` target or removing a `safe` one tightens and needs none.
+  once: a grant the desktop app records after the person clicks in its own dialog, sent in `x-orbyn-confirm`, bound to `PresenceFor::GuardLoosen {action, kind, pattern}`
+  (`add_safe` or `remove_prod`, the entry's kind and the exact pattern), 60 seconds, used up by one change. Adding a `prod` target or removing a `safe` one tightens and needs none.
   **The shell's dialog for loosening is not built yet** (PR2 only knows approve-once), so until it is, loosening answers `403 desktop_required` (no shell) or
   `403 presence_required` (a shell, and nothing can mint the grant) for every caller. Tightening works now.
 - **Ledger.** The `held`, `approved_once`, `hold_used`, `denied`, `disagreement` and `allowed` rows of a guarded command carry `guard: {category, target, matched_by, list}`
   (`list` is `prod` when the prod list forced it, else `none`; the target has no credentials and is redacted). A new kind, `command_exit`, records
   `{hold, row, exit_code, action, guard}`: when a command the guard let through (a used approval, or Full with both keys) is later reported finished by the
-  engine, `exit_code` is the number; when nothing arrives in 10 minutes it is exactly `unknown`, which the app draws as "Exit status unknown". The watch is
-  **best effort and in memory**: some engines report no exit code, a command the engine wrapped is matched by its text, and a restart drops the watch (no row is written then).
+  engine, `exit_code` is the number; when nothing arrives in 10 minutes it is exactly `unknown`, which the app draws as "Exit status unknown". The watch starts only for a guard hold that was used or a guarded command both keys allowed, and matches the engine's record by thread and by the exact command (whitespace collapsed, one shell wrapper such as `zsh -lc` removed), never by substring. It is
+  **best effort and in memory**: some engines report no exit code, and a restart drops the watch (no row is written then). One background task reaps expired watches for all of them.
 
 **Not built:** the screens (Settings > Crew lists, the test box, the held card's guard detail and the ledger rows: slice 4i PR C); the desktop shell's
 dialog for loosening; any read of `.orbyn/crew.json` for the guard (deliberately none).
 
-**Known limits (heuristic, not secure).** The guard reads a command's text. It does not parse a shell wrapper it does not unwrap, an alias or a function, or a script
+**Known limits (heuristic, not secure).** Not detected, by design of a text reader: `dropdb`, `mysqladmin drop`, `git send-pack --force`, a destructive command run through `kubectl exec` or `docker exec ... -- psql`, a loopback tunnel (`ssh -L 5433:prod:5432` and then `psql -h localhost -p 5433`: the target reads as local; list `localhost` as `prod` while you use one), and static keys in a config file that override a safe-listed AWS profile (keys on the command line are guarded). `docker` with no `-H`, `--context`, `DOCKER_HOST` or `DOCKER_CONTEXT` in the command is read as the local daemon, which is wrong if `docker context use` pointed the CLI at a remote host earlier; prefix the command or list the context. An engine that wraps a command in something other than a plain shell is not matched for its exit status. The guard reads a command's text. It does not parse a shell wrapper it does not unwrap, an alias or a function, or a script
 that a command runs (`psql -f drop.sql`, `bash cleanup.sh`, `make nuke`): the file is not read. A tool outside the categories (`sqlite3`, a custom CLI, an HTTP call to
 a deletion API) is not guarded; the network rule N3 and the tiers still apply. A remote's URL is read from the repository's git config, which an earlier command
 of the worker could have changed; so is an `ssh` alias that points to production under a name the person never listed. The lists decide what is local and safe,

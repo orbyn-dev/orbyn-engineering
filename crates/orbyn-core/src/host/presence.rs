@@ -32,9 +32,13 @@ pub enum PresenceFor {
         command_sha256: String,
     },
     /// A change that loosens the blast-radius guard: adding a `safe` target (`action` is `add_safe`) or removing a `prod` one
-    /// (`remove_prod`), for exactly this pattern. **No shell message mints this grant yet** (the dialog is a later slice), so
+    /// (`remove_prod`), for exactly this kind and pattern. **No shell message mints this grant yet** (the dialog is a later slice), so
     /// until it exists the routes that loosen the guard answer `desktop_required` or `presence_required` for every caller.
-    GuardLoosen { action: String, pattern: String },
+    GuardLoosen {
+        action: String,
+        kind: String,
+        pattern: String,
+    },
 }
 
 impl PresenceFor {
@@ -42,7 +46,11 @@ impl PresenceFor {
     fn key(&self) -> String {
         match self {
             Self::CrewApproveOnce { hold, .. } => hold.clone(),
-            Self::GuardLoosen { action, pattern } => format!("guard:{action}:{pattern}"),
+            Self::GuardLoosen {
+                action,
+                kind,
+                pattern,
+            } => format!("guard:{action}:{kind}:{pattern}"),
         }
     }
 }

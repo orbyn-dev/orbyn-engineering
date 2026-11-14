@@ -232,22 +232,30 @@ impl Core {
             );
         }
 
-        // A person's one-time approval of exactly this command, now that the list above has passed it again.
-        if let Some(taken) = self.held_take(task, &scope.thread_id, ask, unix_now()) {
+        // The blast-radius guard: a destructive command against a production-linked target needs a second key, even in Full. It is
+        // above the tier (a check command or a lease does not exempt it) and below N3 and N8, which have already refused.
+        let guard = self.guard_of(&ctx, &worktree).await?;
+
+        // A person's one-time approval of exactly this command, now that the list above has passed it again. A guarded command's
+        // approval also holds only while its targets are the ones that were held (a `git remote set-url` in between voids it).
+        let resolved: &[String] = guard.as_ref().map_or(&[], |g| g.resolved.as_slice());
+        if let Some(taken) = self.held_take(task, &scope.thread_id, ask, resolved, unix_now()) {
             let mut body = json!({ "action": action, "decided_by": "person", "hold": taken.id, "mode": mode.name() });
             if let Some(guard) = &taken.guard {
                 body["guard"] = guard.clone();
             }
             let row = self.autopilot_record(task, "allowed", &body, &needles)?;
-            self.exit_watch(
-                task,
-                &scope.thread_id,
-                ask,
-                Some(&taken.id),
-                Some(row),
-                taken.guard.as_ref(),
-                unix_now(),
-            );
+            if taken.guard.is_some() {
+                self.exit_watch(
+                    task,
+                    &scope.thread_id,
+                    ask,
+                    Some(&taken.id),
+                    Some(row),
+                    taken.guard.as_ref(),
+                    unix_now(),
+                );
+            }
             return Ok(Review::Approved);
         }
 
@@ -269,9 +277,6 @@ impl Core {
                 check_commands: &commands,
             },
         );
-        // The blast-radius guard: a destructive command against a production-linked target needs a second key, even in Full. It is
-        // above the tier (a check command or a lease does not exempt it) and below N3 and N8, which have already refused.
-        let guard = self.guard_of(&ctx, &worktree).await?;
         if guard.is_some() {
             tiered.need = Need::Guarded;
         }
@@ -331,10 +336,7 @@ impl Core {
 
     /// What the blast-radius guard holds in this command, if anything. It reads this device's two lists and, for a push, the
     /// worktree's own remotes. A list that cannot be read is an error, so the action is denied: not knowing is never a reason to allow.
-    async fn guard_of(&self, ctx: &Ctx<'_>, worktree: &Path) -> Result<Option<Blast>> {
-        if ctx.commands.is_empty() {
-            return Ok(None);
-        }
+    pub(super) async fn guard_of(&self, ctx: &Ctx<'_>, worktree: &Path) -> Result<Option<Blast>> {
         let pushes = ctx
             .commands
             .iter()
@@ -484,6 +486,7 @@ fn guard_body(found: &Blast) -> Value {
         "target": found.target,
         "matched_by": found.matched_by,
         "list": found.list,
+        "resolved": found.resolved,
     })
 }
 

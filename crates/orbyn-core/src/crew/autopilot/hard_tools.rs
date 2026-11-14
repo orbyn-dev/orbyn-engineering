@@ -360,6 +360,8 @@ pub(super) fn n8(ctx: &Ctx<'_>) -> bool {
                 "upgrade",
                 "rollback",
                 "uninstall",
+                "delete",
+                "del",
                 "sync",
                 "apply",
             ]),

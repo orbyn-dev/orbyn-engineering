@@ -7,11 +7,13 @@
 //! The watches live in memory (the raw command may hold a secret and is never written to disk); the rows they write hold the
 //! redacted command.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde_json::{Value, json};
 
 use super::ledger;
+use super::shell::simple_commands;
 use crate::agents::driver::ItemRecord;
 use crate::app::Core;
 use crate::governance::approvals::ActionAsk;
@@ -39,11 +41,25 @@ struct Watch {
 #[derive(Default)]
 pub struct ExitWatches {
     items: Mutex<Vec<Watch>>,
+    /// Whether the one reaper task is running. It sleeps between sweeps and ends when no watch is left, so open watches never cost
+    /// a task each.
+    reaper: AtomicBool,
 }
 
 impl ExitWatches {
     fn lock(&self) -> MutexGuard<'_, Vec<Watch>> {
         self.items.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Ends the reaper if no watch is left. Done under the lock the pushes take, so a watch added at the same moment starts a new one.
+    fn reaper_done_if_empty(&self) -> bool {
+        let items = self.lock();
+        if items.is_empty() {
+            self.reaper.store(false, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
     }
 
     /// Watches open now (for tests).
@@ -71,10 +87,33 @@ fn command_of(raw: &Value) -> Option<String> {
     None
 }
 
-/// Whether the engine's command is the one watched. An engine may run it through a shell (`zsh -lc '...'`), so the watched text
-/// being inside the engine's text is a match; an empty text matches nothing.
+fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The command an engine ran, with one shell wrapper taken off (`zsh -lc '...'`) and whitespace collapsed.
+fn engine_command(text: &str) -> String {
+    const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
+    // The wrapped command is read before the shell that wraps it, so the shell is found by its program, not by its place.
+    if let Some(first) = simple_commands(text)
+        .iter()
+        .find(|c| SHELLS.contains(&c.program.as_str()))
+        && let Some(at) = first
+            .args
+            .iter()
+            .position(|a| matches!(a.as_str(), "-c" | "-lc" | "-ic" | "-cl"))
+        && let Some(inner) = first.args.get(at + 1)
+    {
+        return collapse(inner);
+    }
+    collapse(text)
+}
+
+/// Whether the engine's command is the one watched: the same text once whitespace is collapsed and one shell wrapper is off. Not a
+/// substring: another command that merely holds this one is not it.
 fn same_command(engine: &str, watched: &str) -> bool {
-    !engine.is_empty() && !watched.is_empty() && (engine == watched || engine.contains(watched))
+    let watched = collapse(watched);
+    !watched.is_empty() && engine_command(engine) == watched
 }
 
 impl Core {
@@ -114,18 +153,31 @@ impl Core {
         for watch in overflow {
             self.exit_row(&watch, None);
         }
-        // The ten minutes end by themselves: a command whose exit never arrives still gets its `unknown` row.
-        let weak = std::sync::Arc::downgrade(self);
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(
-                    u64::try_from(EXIT_WATCH_SECS).unwrap_or(600) + 1,
-                ))
-                .await;
-                if let Some(core) = weak.upgrade() {
-                    core.exit_sweep(unix_now());
-                }
-            });
+        // The ten minutes end by themselves: a command whose exit never arrives still gets its `unknown` row. One task reaps them all.
+        if !self
+            .crew_autopilot
+            .exits
+            .reaper
+            .swap(true, Ordering::SeqCst)
+        {
+            let weak = std::sync::Arc::downgrade(self);
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let Some(core) = weak.upgrade() else { break };
+                        core.exit_sweep(unix_now());
+                        if core.crew_autopilot.exits.reaper_done_if_empty() {
+                            break;
+                        }
+                    }
+                });
+            } else {
+                self.crew_autopilot
+                    .exits
+                    .reaper
+                    .store(false, Ordering::SeqCst);
+            }
         }
     }
 

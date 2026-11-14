@@ -8,7 +8,7 @@
 //! `desktop_required` (no shell) or `presence_required` (a shell, and no grant can be minted) for every caller.
 
 use orbyn_contracts as wire;
-use orbyn_contracts::{ActionKind, GuardList};
+use orbyn_contracts::{ActionKind, GuardList, GuardTargetKind};
 use serde_json::json;
 
 use super::blast::{Class, Facts, inspect, read_remotes};
@@ -87,9 +87,10 @@ fn note(text: Option<&str>) -> Result<Option<String>> {
     Ok(Some(redact(text)))
 }
 
-fn presence_for(action: &str, pattern: &str) -> PresenceFor {
+fn presence_for(action: &str, kind: GuardTargetKind, pattern: &str) -> PresenceFor {
     PresenceFor::GuardLoosen {
         action: action.to_owned(),
+        kind: crate::crew::wire_name(&kind),
         pattern: pattern.to_owned(),
     }
 }
@@ -108,6 +109,7 @@ impl Core {
     fn guard_loosening_confirmed(
         &self,
         action: &str,
+        kind: GuardTargetKind,
         pattern: &str,
         nonce: Option<&str>,
         now: i64,
@@ -117,7 +119,7 @@ impl Core {
         }
         if !self
             .presence
-            .confirmed_for(&presence_for(action, pattern), nonce, now)
+            .confirmed_for(&presence_for(action, kind, pattern), nonce, now)
         {
             return Err(CoreError::PresenceRequired);
         }
@@ -145,14 +147,14 @@ impl Core {
         let note = note(body.note.as_deref())?;
         let loosens = body.list == GuardList::Safe;
         if loosens {
-            self.guard_loosening_confirmed("add_safe", &name, nonce, now)?;
+            self.guard_loosening_confirmed("add_safe", body.kind, &name, nonce, now)?;
         }
         // The grant is used up just before the write; a duplicate or a full list is caught by the write and leaves it spent, so the
         // person asks again.
         if loosens
             && !self
                 .presence
-                .take(&presence_for("add_safe", &name), nonce, now)
+                .take(&presence_for("add_safe", body.kind, &name), nonce, now)
         {
             return Err(CoreError::PresenceRequired);
         }
@@ -178,11 +180,12 @@ impl Core {
             .crew_guard_target(id)?
             .ok_or_else(|| CoreError::NotFound("guard target".into()))?;
         if found.list == GuardList::Prod {
-            self.guard_loosening_confirmed("remove_prod", &found.pattern, nonce, now)?;
-            if !self
-                .presence
-                .take(&presence_for("remove_prod", &found.pattern), nonce, now)
-            {
+            self.guard_loosening_confirmed("remove_prod", found.kind, &found.pattern, nonce, now)?;
+            if !self.presence.take(
+                &presence_for("remove_prod", found.kind, &found.pattern),
+                nonce,
+                now,
+            ) {
                 return Err(CoreError::PresenceRequired);
             }
         }
