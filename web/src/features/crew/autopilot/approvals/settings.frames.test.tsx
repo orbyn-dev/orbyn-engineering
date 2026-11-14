@@ -3,8 +3,6 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
-import type { Project } from "../../../../api/types";
-import { useWorkspace } from "../../../../product/state/workspace";
 import { installMockFetch } from "../../../../test-support";
 import { CrewSettingsSection } from "./CrewSettings";
 import { PathClasses, allowedByAll, enginesText } from "./PathClasses";
@@ -16,8 +14,6 @@ const frame = (prefix: string) => document.querySelector(`[data-frame^='${prefix
 
 beforeEach(() => {
   mock = installMockFetch();
-  const loadable = <T,>(data: T) => ({ data, error: null, loading: false });
-  useWorkspace.setState({ projects: loadable([{ id: "p-app" } as Project]), threadIds: { "p-app": loadable(["t-1"]) } });
 });
 
 describe("Settings › Crew › Production-linked targets (guard-settings)", () => {
@@ -64,18 +60,19 @@ describe("Settings › Crew › Production-linked targets (guard-settings)", () 
 });
 
 describe("Settings › Crew › Path classes: the list (classes-list)", () => {
-  it("reads the rules at the thread's checkout and lists each class, its paths and the engines allowed, then the built-in class", async () => {
+  it("reads the rules, with no thread, and lists each class, its paths and the engines allowed, then the built-in class", async () => {
     mock.reset("crew-classes");
     render(<PathClasses />);
     expect(await screen.findByRole("heading", { name: "Crew › Path classes" })).toBeVisible();
     expect(frame("classes-")).toBe("classes-list");
-    expect(calls("/api/crew/classes?thread=t-1")).toHaveLength(1);
+    expect(calls("/api/crew/classes")).toHaveLength(1);
+    expect(String(calls("/api/crew/classes")[0]?.[0])).not.toContain("thread");
     const table = screen.getByRole("table", { name: "Path classes" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Class", "Paths", "Allowed engines"]);
     expect(within(table).getAllByRole("row").slice(1).map((r) => r.textContent)).toEqual([
-      "auth-paths**/auth/****/keys/**Claude Code",
-      "billing**/billing/**Codex",
-      "docsdocs/***.mdClaude Code, Codex, OpenCode",
+      "auth-paths**/auth/****/keys/**claude",
+      "billing**/billing/**codex",
+      "docsdocs/***.mdclaude, codex, opencode",
       "Everything elseBuilt inAny path not matched aboveAny signed-in engine",
     ]);
     // Orbyn never writes the file, so nothing here saves, adds or deletes.
@@ -90,16 +87,8 @@ describe("Settings › Crew › Path classes: the list (classes-list)", () => {
     expect(frame("classes-")).toBe("classes-list");
   });
 
-  it("draws nothing without a thread to read the file for, and asks the service for none", async () => {
-    mock.reset("crew-classes");
-    useWorkspace.setState({ projects: { data: [], error: null, loading: false }, threadIds: {} });
-    const { container } = render(<PathClasses />);
-    expect(container).toBeEmptyDOMElement();
-    expect(calls("/api/crew/classes")).toHaveLength(0);
-  });
-
   it("names an engine this machine does not have, and says no engine for a rule that blocks all", () => {
-    expect(enginesText([{ id: "cursor", name: "Cursor", on_this_machine: false }])).toBe("Cursor (not on this machine)");
+    expect(enginesText([{ id: "cursor", name: "Cursor", on_this_machine: false }])).toBe("cursor (not on this machine)");
     expect(enginesText([])).toBe("No engine");
     expect(enginesText(null)).toBe("Any signed-in engine");
   });
@@ -116,9 +105,9 @@ describe("Settings › Crew › Path classes: one class (classes-edit)", () => {
     expect(detail).toHaveTextContent("Namebilling");
     expect(detail).toHaveTextContent("WhereRule 2 in .orbyn/crew.json");
     expect(detail).toHaveTextContent("Paths**/billing/**");
-    expect(detail).toHaveTextContent("Allowed enginesCodex");
+    expect(detail).toHaveTextContent("Allowed enginescodex");
     expect(detail).toHaveTextContent("ReasonMoney code stays on one vendor.");
-    expect(detail).toHaveTextContent("Tasks that touch these paths are routed to Codex. A task that also touches another class can use the engines both allow.");
+    expect(detail).toHaveTextContent("Tasks that touch these paths are routed to codex. A task that also touches another class can use the engines both allow.");
     expect(within(detail).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("complementary")).toBeNull();
@@ -132,16 +121,17 @@ describe("Settings › Crew › Path classes: a path (classes-test)", () => {
     const user = userEvent.setup();
     render(<PathClasses />);
     await user.click(await screen.findByRole("button", { name: "Test a path" }));
-    await user.type(screen.getByRole("textbox", { name: "Test a path" }), "auth/redirect.ts");
+    await user.type(screen.getByRole("textbox", { name: "Paths to test, one per line" }), "auth/redirect.ts");
     const box = await screen.findByText("Logged as");
     expect(box.closest("section")).toHaveTextContent("Pathauth/redirect.ts");
     expect(box.closest("section")).toHaveTextContent("Matchesauth-paths, by **/auth/**");
-    expect(box.closest("section")).toHaveTextContent("AllowedClaude Code");
+    expect(box.closest("section")).toHaveTextContent("Allowedclaude");
     expect(box.closest("section")).toHaveTextContent("Allowed by auth-paths: Claude Code.");
     await waitFor(() => expect(frame("classes-")).toBe("classes-test"));
     // Typing is read once the person stops, as one request with the path as given.
     expect(calls("/api/crew/classes/test")).toHaveLength(1);
-    expect(String(calls("/api/crew/classes/test")[0]?.[0])).toContain("thread=t-1&path=auth%2Fredirect.ts");
+    expect(String(calls("/api/crew/classes/test")[0]?.[0])).toContain("path=auth%2Fredirect.ts");
+    expect(String(calls("/api/crew/classes/test")[0]?.[0])).not.toContain("thread");
     expect(calls("/api/crew", "POST")).toHaveLength(0);
   });
 
@@ -150,7 +140,7 @@ describe("Settings › Crew › Path classes: a path (classes-test)", () => {
     const user = userEvent.setup();
     render(<PathClasses />);
     await user.click(await screen.findByRole("button", { name: "Test a path" }));
-    await user.type(screen.getByRole("textbox", { name: "Test a path" }), "auth/redirect.ts, billing/invoice.ts");
+    await user.type(screen.getByRole("textbox", { name: "Paths to test, one per line" }), "auth/redirect.ts{Enter}billing/invoice.ts");
     await screen.findByText("Two paths in one task");
     const test = String(calls("/api/crew/classes/test")[0]?.[0]);
     expect(test).toContain("path=auth%2Fredirect.ts&path=billing%2Finvoice.ts");
@@ -164,7 +154,7 @@ describe("Settings › Crew › Path classes: a path (classes-test)", () => {
     const user = userEvent.setup();
     render(<PathClasses />);
     await user.click(await screen.findByRole("button", { name: "Test a path" }));
-    await user.type(screen.getByRole("textbox", { name: "Test a path" }), "../secrets.txt");
+    await user.type(screen.getByRole("textbox", { name: "Paths to test, one per line" }), "../secrets.txt");
     expect(await screen.findByText("This path has an empty, . or .. part.")).toBeVisible();
     expect(screen.getByText("Not a repository path, so nothing was checked.")).toBeVisible();
   });
@@ -174,8 +164,8 @@ describe("Settings › Crew › Path classes: a path (classes-test)", () => {
     const user = userEvent.setup();
     render(<PathClasses />);
     await user.click(await screen.findByRole("button", { name: "Test a path" }));
-    await user.click(screen.getByRole("textbox", { name: "Test a path" }));
-    await user.paste(Array.from({ length: 12 }, (_, i) => `docs/p${i}.md`).join(","));
+    await user.click(screen.getByRole("textbox", { name: "Paths to test, one per line" }));
+    await user.paste(Array.from({ length: 12 }, (_, i) => `docs/p${i}.md`).join("\n"));
     await waitFor(() => expect(calls("/api/crew/classes/test")).toHaveLength(1));
     expect(new URL(String(calls("/api/crew/classes/test")[0]?.[0]), "http://x").searchParams.getAll("path")).toHaveLength(10);
   });
@@ -186,6 +176,26 @@ describe("Settings › Crew › Path classes: a path (classes-test)", () => {
     expect(allowedByAll([one(["a"]), one(null)])?.map((e) => e.id)).toEqual(["a"]);
     expect(allowedByAll([one(null)])).toBeNull();
     expect(allowedByAll([one(["a"]), one(["b"])])).toEqual([]);
+  });
+});
+
+describe("Settings › Crew › Path classes: a command (the guard's test)", () => {
+  it("says what the guard says of a command, read once typing stops, and runs nothing", async () => {
+    mock.reset("crew-classes");
+    const user = userEvent.setup();
+    render(<PathClasses />);
+    await user.click(await screen.findByRole("button", { name: "Test a path" }));
+    expect(screen.getByRole("heading", { name: "Command to test" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Command to test" }), 'psql "$DATABASE_URL" -c "DROP TABLE x"');
+    const box = (await screen.findByText("Matched by")).closest("section");
+    expect(box).toHaveTextContent("ResultGuarded: it needs a second key, or you");
+    expect(box).toHaveTextContent("Matched bypsql: DROP");
+    expect(box).toHaveTextContent("Targetprod-db-1");
+    expect(box).toHaveTextContent("Listed inprod_targets: prod-db-1");
+    const sent = calls("/api/crew/guard/test");
+    expect(sent).toHaveLength(1);
+    expect(new URL(String(sent[0]?.[0]), "http://x").searchParams.get("command")).toBe('psql "$DATABASE_URL" -c "DROP TABLE x"');
+    expect(calls("/api/crew", "POST")).toHaveLength(0);
   });
 });
 
@@ -203,9 +213,9 @@ describe("Settings › Crew › Path classes: what is wrong in the file (classes
       "Rule 4 (keys): no engine is chosen.",
       "Rule 5 (billing): the name billing is already used by rule 2.",
     ]);
-    expect(calls("/api/crew/classes?")).toHaveLength(1);
+    expect(calls("/api/crew/classes")).toHaveLength(1);
     await user.click(within(alert).getByRole("button", { name: "Check again" }));
-    await waitFor(() => expect(calls("/api/crew/classes?")).toHaveLength(2));
+    await waitFor(() => expect(calls("/api/crew/classes")).toHaveLength(2));
   });
 });
 

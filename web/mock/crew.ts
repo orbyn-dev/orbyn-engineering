@@ -16,7 +16,7 @@
  * `crew-guard-empty` (this device lists no target). The lists answer in every Crew scenario. Path classes: `crew-classes`, `crew-classes-invalid`
  * (the file has problems and every engine is blocked), `crew-classes-note` (the checkout's copy differs from the committed one). Routing:
  * `crew-route-blocked`, `crew-route-invalid`, `crew-route-none` (the ledger's `route_class` rows and `GET /api/crew/route/task-redirect`).
- * As the service does, `classes` needs `thread`, `classes/test` takes 1 to 10 paths and says what is wrong with each, and an unknown task is 404.
+ * The service today answers 400 for `classes` and `classes/test` without `thread`; the screen sends none and the mock accepts none (a service change is pending). `classes/test` takes 1 to 10 paths and says what is wrong with each, and an unknown task is 404.
  */
 import type { AutopilotHeld } from "../src/generated/AutopilotHeld.ts";
 import type { AutopilotHeldList } from "../src/generated/AutopilotHeldList.ts";
@@ -35,6 +35,7 @@ import type { CrewClassTest } from "../src/generated/CrewClassTest.ts";
 import type { CrewClassTestPath } from "../src/generated/CrewClassTestPath.ts";
 import type { CrewRouteClassRow } from "../src/generated/CrewRouteClassRow.ts";
 import type { CrewRouteView } from "../src/generated/CrewRouteView.ts";
+import type { GuardTest } from "../src/generated/GuardTest.ts";
 import type { GuardTargets } from "../src/generated/GuardTargets.ts";
 import type { RouteRejection } from "../src/generated/RouteRejection.ts";
 import type { MockResponse } from "./api.ts";
@@ -406,8 +407,7 @@ export function createCrewMock() {
     if (method === "GET" && head === "trust") return { status: 200, body: trust(young) };
     if (method === "GET" && head === "guard" && id === "targets") return { status: 200, body: guardsEmpty ? { ...TARGETS, items: [] } : TARGETS };
     if (method === "GET" && head === "classes" && !id) {
-      const thread = query.get("thread");
-      if (!thread) return { status: 400, body: { code: "invalid", message: "thread is required" } };
+      const thread = query.get("thread") ?? "";
       const bad = classes === "invalid";
       const view: CrewClassesView = {
         thread,
@@ -424,14 +424,25 @@ export function createCrewMock() {
       return { status: 200, body: view };
     }
     if (method === "GET" && head === "classes" && id === "test") {
-      const thread = query.get("thread");
-      if (!thread) return { status: 400, body: { code: "invalid", message: "thread is required" } };
+      const thread = query.get("thread") ?? "";
       // `path` repeated, or one per line.
       const paths = query.getAll("path").flatMap((one) => one.split("\n")).filter((one) => one !== "");
       if (paths.length < 1 || paths.length > 10) return { status: 400, body: { code: "invalid", message: "give 1 to 10 paths" } };
       const bad = classes === "invalid";
       const test: CrewClassTest = { thread, commit: COMMIT, blob: BLOB, problems: bad ? PROBLEMS : [], paths: paths.map((one) => (bad ? { ...testPath(one, []), allowed_engines: [], route_card: "crew.json is invalid, so every engine is blocked." } : testPath(one, RULES))) };
       return { status: 200, body: test };
+    }
+    if (method === "GET" && head === "guard" && id === "test") {
+      const command = query.get("command");
+      if (!command || command.length > 2000) return { status: 400, body: { code: "invalid", message: "give a command of 1 to 2000 characters" } };
+      const destructive = /\b(DROP|TRUNCATE|DELETE)\b/i.test(command);
+      const staging = /staging-db/.test(command);
+      const out: GuardTest = destructive
+        ? staging
+          ? { command, verdict: "exempt", category: "database", matched_by: "psql: DELETE", target: "staging-db.internal", local: false, production_linked: false, matched_entry: TARGETS.items[2] }
+          : { command, verdict: "guarded", category: "database", matched_by: "psql: DROP", target: "prod-db-1", local: false, production_linked: true, matched_entry: TARGETS.items[0] }
+        : { command, verdict: "not_destructive", local: false, production_linked: false };
+      return { status: 200, body: out };
     }
     if (method === "GET" && head === "route" && id) {
       if (id !== "task-redirect") return { status: 404, body: { code: "not_found", message: "task not found" } };

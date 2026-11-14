@@ -7,8 +7,9 @@ import type { ApiFailure } from "../../../../api/client";
 import type { CrewClassEngine } from "../../../../generated/CrewClassEngine";
 import type { CrewClassRule } from "../../../../generated/CrewClassRule";
 import type { CrewClassTest } from "../../../../generated/CrewClassTest";
+import type { GuardTest } from "../../../../generated/GuardTest";
+import type { GuardVerdict } from "../../../../generated/GuardVerdict";
 import type { CrewClassTestPath } from "../../../../generated/CrewClassTestPath";
-import { useWorkspace } from "../../../../product/state/workspace";
 import { Button } from "../../../../ui/controls";
 import { ErrorState, Loading } from "../../../../product/ui/states";
 import { crewApi } from "./api";
@@ -22,8 +23,8 @@ const INTRO =
 export const TEST_PATHS = 10;
 const DEBOUNCE_MS = 300;
 
-/** An engine as a person reads it. One this machine does not have is kept in the file and said so. */
-export const engineName = (engine: CrewClassEngine) => (engine.on_this_machine ? engine.name : `${engine.name} (not on this machine)`);
+/** An engine as the service names it, by its id. One this machine does not have is kept in the file and said so. */
+export const engineName = (engine: CrewClassEngine) => (engine.on_this_machine ? engine.id : `${engine.id} (not on this machine)`);
 
 /** The engines a rule allows, in words: none, or the list. A path in no rule has any signed-in engine. */
 export const enginesText = (engines: CrewClassEngine[] | null | undefined) => (engines === null || engines === undefined ? "Any signed-in engine" : engines.length === 0 ? "No engine" : engines.map(engineName).join(", "));
@@ -37,17 +38,6 @@ export function allowedByAll(paths: CrewClassTestPath[]): CrewClassEngine[] | nu
     common = common === null ? one : common.filter((engine) => one.some((other) => other.id === engine.id));
   }
   return common;
-}
-
-/** The thread the rules are read for: the newest of the first project. The service reads the file at the thread's checkout. */
-export function useClassThread(): string | null {
-  const project = useWorkspace((state) => state.projects.data?.[0]?.id ?? null);
-  const ids = useWorkspace((state) => (project ? state.threadIds[project]?.data : null));
-  const refresh = useWorkspace((state) => state.refreshThreads);
-  useEffect(() => {
-    if (project && !ids) void refresh(project);
-  }, [project, ids, refresh]);
-  return ids?.[0] ?? null;
 }
 
 function Patterns({ paths }: { paths: string[] }) {
@@ -140,10 +130,10 @@ function Answer({ path }: { path: CrewClassTestPath }) {
   );
 }
 
-function TestBox({ thread, onResult }: { thread: string; onResult(has: boolean): void }) {
+function TestBox({ onResult }: { onResult(has: boolean): void }) {
   const [text, setText] = useState("");
   const [state, setState] = useState<{ status: "idle" } | { status: "error"; failure: ApiFailure } | { status: "ready"; test: CrewClassTest }>({ status: "idle" });
-  const paths = useMemo(() => text.split(/[\n,]/).map((one) => one.trim()).filter(Boolean).slice(0, TEST_PATHS), [text]);
+  const paths = useMemo(() => text.split("\n").map((one) => one.trim()).filter(Boolean).slice(0, TEST_PATHS), [text]);
   const key = paths.join("\n");
   useEffect(() => {
     if (!key) {
@@ -152,13 +142,13 @@ function TestBox({ thread, onResult }: { thread: string; onResult(has: boolean):
     }
     const abort = new AbortController();
     const timer = setTimeout(() => {
-      crewApi.classesTest(thread, key.split("\n"), abort.signal).then(
+      crewApi.classesTest(key.split("\n"), abort.signal).then(
         (test) => setState({ status: "ready", test }),
         (error: unknown) => { if (!abort.signal.aborted) setState({ status: "error", failure: toFailure(error) }); },
       );
     }, DEBOUNCE_MS);
     return () => { clearTimeout(timer); abort.abort(); };
-  }, [thread, key]);
+  }, [key]);
   useEffect(() => onResult(state.status === "ready"), [state.status, onResult]);
   const results = state.status === "ready" ? state.test.paths : [];
   const several = results.filter((one) => one.valid);
@@ -166,7 +156,7 @@ function TestBox({ thread, onResult }: { thread: string; onResult(has: boolean):
   return (
     <section className="ap-box">
       <h4>Which class does this path match?</h4>
-      <input type="text" className="ap-search ap-class-input" aria-label="Test a path" placeholder="auth/redirect.ts" autoComplete="off" spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
+      <textarea className="ap-search ap-class-input" aria-label="Paths to test, one per line" placeholder="auth/redirect.ts" rows={2} autoComplete="off" spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
       {state.status === "error" ? <ErrorState title="Can't test the path" failure={state.failure} onRetry={() => setText((now) => `${now} `)} /> : null}
       {results.map((path) => <Answer key={path.path} path={path} />)}
       {together !== undefined ? (
@@ -182,8 +172,53 @@ function TestBox({ thread, onResult }: { thread: string; onResult(has: boolean):
   );
 }
 
-function Loaded({ thread }: { thread: string }) {
-  const read = useAsync(`crew-classes:${thread}`, (signal) => crewApi.classes(thread, signal));
+const VERDICT: Record<GuardVerdict, string> = {
+  not_destructive: "Not a destructive command the guard knows",
+  local: "Destructive, but every target is local",
+  exempt: "Not guarded: listed in safe_targets",
+  guarded: "Guarded: it needs a second key, or you",
+};
+
+/** What the guard says about a command. It runs nothing and changes nothing. */
+function CommandBox() {
+  const [text, setText] = useState("");
+  const [state, setState] = useState<{ status: "idle" } | { status: "error"; failure: ApiFailure } | { status: "ready"; test: GuardTest }>({ status: "idle" });
+  const command = text.trim();
+  useEffect(() => {
+    if (!command) {
+      setState({ status: "idle" });
+      return;
+    }
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      crewApi.guardTest(command, abort.signal).then(
+        (test) => setState({ status: "ready", test }),
+        (error: unknown) => { if (!abort.signal.aborted) setState({ status: "error", failure: toFailure(error) }); },
+      );
+    }, DEBOUNCE_MS);
+    return () => { clearTimeout(timer); abort.abort(); };
+  }, [command]);
+  const test = state.status === "ready" ? state.test : null;
+  return (
+    <section className="ap-box">
+      <h4>Command to test</h4>
+      <textarea className="ap-search ap-class-input" aria-label="Command to test" placeholder='psql "$DATABASE_URL" -c "DROP TABLE x"' rows={2} autoComplete="off" spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
+      {state.status === "error" ? <ErrorState title="Can't test the command" failure={state.failure} onRetry={() => setText((now) => `${now} `)} /> : null}
+      {test ? (
+        <dl className="ap-facts">
+          <div><dt>Result</dt><dd>{VERDICT[test.verdict]}</dd></div>
+          {test.category ? <div><dt>Category</dt><dd>{test.category}</dd></div> : null}
+          {test.matched_by ? <div><dt>Matched by</dt><dd>{test.matched_by}</dd></div> : null}
+          {test.target ? <div><dt>Target</dt><dd>{test.target}</dd></div> : null}
+          {test.matched_entry ? <div><dt>Listed in</dt><dd>{test.matched_entry.list}_targets: {test.matched_entry.pattern}</dd></div> : null}
+        </dl>
+      ) : null}
+    </section>
+  );
+}
+
+function Loaded() {
+  const read = useAsync("crew-classes", (signal) => crewApi.classes(signal));
   const [selected, setSelected] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [answered, setAnswered] = useState(false);
@@ -206,7 +241,7 @@ function Loaded({ thread }: { thread: string }) {
         <div className="ap-class-main">
           <Table view={view} selected={rule?.name ?? null} onSelect={(name) => setSelected(name === selected ? null : name)} />
           <div className="ap-class-acts"><Button small onClick={() => setTesting((now) => !now)} aria-expanded={testing}>Test a path</Button></div>
-          {testing ? <TestBox thread={thread} onResult={setAnswered} /> : null}
+          {testing ? <><TestBox onResult={setAnswered} /><CommandBox /></> : null}
         </div>
         {rule ? <Detail rule={rule} at={view.rules.indexOf(rule) + 1} onClose={() => setSelected(null)} /> : null}
       </div>
@@ -215,8 +250,7 @@ function Loaded({ thread }: { thread: string }) {
   );
 }
 
-/** Settings › Crew › Path classes. Nothing is drawn until there is a thread whose checkout the service can read the file from. */
+/** Settings › Crew › Path classes. */
 export function PathClasses() {
-  const thread = useClassThread();
-  return thread ? <Loaded thread={thread} /> : null;
+  return <Loaded />;
 }

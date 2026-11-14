@@ -13,6 +13,7 @@ import type { CrewClassesView } from "../../../../generated/CrewClassesView";
 import type { CrewClassTest } from "../../../../generated/CrewClassTest";
 import type { CrewPreviewState } from "../../../../generated/CrewPreviewState";
 import type { CrewRouteView } from "../../../../generated/CrewRouteView";
+import type { GuardTest } from "../../../../generated/GuardTest";
 import type { GuardTargets } from "../../../../generated/GuardTargets";
 
 export const PAGE = 18;
@@ -46,14 +47,19 @@ export const crewApi = {
   trust: (signal?: AbortSignal) => request<AutopilotTrust>("GET", "/api/crew/trust", undefined, signal),
   /** This device's two lists of targets the guard watches. Read-only here: adding or removing is not drawn. */
   guardTargets: (signal?: AbortSignal) => request<GuardTargets>("GET", "/api/crew/guard/targets", undefined, signal),
-  /** The rules of `.orbyn/crew.json` at the commit a task started in this thread would start from. The service never writes the file. */
-  classes: (thread: string, signal?: AbortSignal) => request<CrewClassesView>("GET", `/api/crew/classes?${new URLSearchParams({ thread })}`, undefined, signal),
+  /**
+   * The rules of `.orbyn/crew.json`. The screen has no thread and sends none: the service answers 400 "thread is required" until its
+   * `classes` and `classes/test` routes take the thread as optional (`thread_of` in `routes/crew.rs`).
+   */
+  classes: (signal?: AbortSignal) => request<CrewClassesView>("GET", "/api/crew/classes", undefined, signal),
   /** 1 to 10 paths against those rules. Nothing is saved. */
-  classesTest: (thread: string, paths: string[], signal?: AbortSignal) => {
-    const params = new URLSearchParams({ thread });
+  classesTest: (paths: string[], signal?: AbortSignal) => {
+    const params = new URLSearchParams();
     for (const path of paths) params.append("path", path);
     return request<CrewClassTest>("GET", `/api/crew/classes/test?${params}`, undefined, signal);
   },
+  /** What the guard says about a command. Read-only: nothing runs. `thread` is optional on the service and not sent. */
+  guardTest: (command: string, signal?: AbortSignal) => request<GuardTest>("GET", `/api/crew/guard/test?${new URLSearchParams({ command })}`, undefined, signal),
   /** How one task was routed: the decision or the refusal, and the `route_class` rows. */
   route: (task: string, signal?: AbortSignal) => request<CrewRouteView>("GET", `/api/crew/route/${encodeURIComponent(task)}`, undefined, signal),
 };

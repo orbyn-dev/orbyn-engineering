@@ -591,7 +591,7 @@ export const FRAMES = {
   "guard-settings": { route: "#/settings/crew", scenario: "crew-guard" },
   "classes-list": { route: "#/settings/crew", scenario: "crew-classes" },
   "classes-error": { route: "#/settings/crew", scenario: "crew-classes-invalid" },
-  "classes-test": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "Test a path"), { do: "fill", label: "Test a path", value: "auth/redirect.ts", exact: true }] },
+  "classes-test": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "Test a path"), { do: "fill", label: "Paths to test, one per line", value: "auth/redirect.ts" }] },
   "classes-edit": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "billing", { exact: true })] },
   "classes-narrow": { route: "#/settings/crew", scenario: "crew-classes", width: 640 },
   "route-log-none": { route: "#/crew/approvals", scenario: "crew-route-none", steps: [click("button", "Routing", { prefix: true })] },

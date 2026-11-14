@@ -736,14 +736,16 @@ and a wrong entry is the person's to fix. Nothing here is tamper-proof: a proces
   with the same task and command, so Approve it myself answers it; a disagreement has no hold, so it offers none.
 - **Approving is the desktop app's.** The web shows state and the held card; Approve once and Approve it myself ask the shell's native dialog and send its one-time nonce in
   `x-orbyn-confirm`. There is no web path that approves without it. In a browser tab the card says "Approving once needs the Orbyn desktop app."
-- **Settings › Crew** lists this device's `prod_targets` and `safe_targets` (`GET /api/crew/guard/targets`), the built-in categories and the path classes. The classes are read for
-  the newest thread of the first project (`GET /api/crew/classes?thread=`) and the test box takes 1 to 10 paths (`GET /api/crew/classes/test`, read once typing stops). Nothing
-  writes: no Mark a target (loosening needs the shell's dialog, not built), no Save, no Open in editor.
+- **Settings › Crew** lists this device's `prod_targets` and `safe_targets` (`GET /api/crew/guard/targets`), the built-in categories and the path classes. The screen has no
+  thread and sends none, so `GET /api/crew/classes` and `/classes/test` answer 400 "thread is required" until the service makes `thread` optional (`thread_of` in
+  `crates/orbynd/src/routes/crew.rs`); the mock accepts none. The test box takes a path list, one per line (1 to 10), and a command box asks `GET /api/crew/guard/test`
+  (thread optional there); both read once typing stops. Engines are named by id as served. Nothing writes: no Mark a target (loosening needs the shell's dialog,
+  not built), no Save, no Open in editor.
 - **Route card** (`RouteCard` for a task id, `GET /api/crew/route/{task}`) has three states: an engine blocked by a class, the file invalid (with Check again) and no engine
   allowed. Where it is mounted in Flow and the Board is Engineering 1's. The Approval log has a Routing view over the `route_class` ledger rows, offered once one exists.
-- **Not served, so not drawn:** a class's lock and its Sensitive or Open label, whether the file is in another worktree, a task's title and kind, an engine's model and vendor
+- **Not served, so not drawn:** a class's lock and its Sensitive or Open label (no column drawn), whether the file is in another worktree, a task's title and kind, an engine's model and vendor
   on a ledger row, the allowed engines per class in a route row, a held-for-a-second-key state while the second key is still reviewing, Split the task, Change the rule, Ask me
-  to choose, Open the rule, Pin an allowed engine, Open in editor, and a way to test a target (the service tests a command).
+  to choose, Open the rule, Pin an allowed engine, Open in editor.
 
 **As built (slice 4j, shadow):** autonomy by area, part 1: a circuit breaker per area that *records* a demotion. **This part was shadow; part 2
 ([enforcement](#as-built-slice-4j-enforcement), below) now makes the merge gate read it.** `crew_autopilot_mode` is still what the person chose. Code:
