@@ -24,6 +24,8 @@ const markers = [
   "oracle-narrow-window",
   "backtest-narrow-window",
   "settings-crew",
+  // Crew Designs Flow (features/crew/flow): a frame id.
+  "flow-narrow-panel",
   "needsyou-narrow-panel",
 ];
 const dir = process.argv[2] ?? "dist";

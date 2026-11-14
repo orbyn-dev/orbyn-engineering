@@ -1,18 +1,19 @@
-//! A person's one-time answer to a held command over HTTP: the confirmation, the single use, the remote refusal, and the
+//! A person's one-time answer to a held command over HTTP: the desktop app's grant, the single use, the remote refusal, and the
 //! refusals that make an agent's call useless. The table test in `crew_tests.rs` already walks every route with the flag off
-//! (404 for every method) and checks the marker and the guards; this file drives the three answers themselves. The account is
-//! the development stand-in for the Engine, and the password is assembled at run time.
+//! (404 for every method) and checks the marker and the guards; this file drives the three answers themselves. The desktop
+//! shell is played in this process: a channel stands in for the service's stdout and the shell's lines go to
+//! `Core::presence_line`, as `main` hands them from stdin. `tests/presence_stdio.rs` runs the real binary.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
-use orbyn_core::account::{AccountBackendKind, AccountGate, Password};
 use orbyn_core::crew::Stamper;
 use orbyn_core::crew::fixtures::hold_command;
 use orbyn_core::{Core, CoreConfig};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 
 use super::router;
 use crate::http::AppState;
@@ -22,18 +23,28 @@ struct Served {
     port: u16,
     core: Arc<Core>,
     dir: PathBuf,
+    /// What the service says to the shell.
+    shell: Option<std::sync::Mutex<mpsc::UnboundedReceiver<Value>>>,
 }
 
+/// A service with a desktop shell attached, as `--parent-stdin` makes one.
 async fn serve(name: &str, remote: bool) -> Served {
+    serve_with(name, remote, true).await
+}
+
+async fn serve_with(name: &str, remote: bool, desktop: bool) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-held-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
     config.crew_preview = true;
     config.crew_confine_workers = false;
-    config.account_gate = AccountGate::LocalOnly;
-    config.account_backend = AccountBackendKind::Development;
     let core = Arc::new(Core::open(config).unwrap());
+    let shell = desktop.then(|| {
+        let (lines, answers) = mpsc::unbounded_channel();
+        core.shell.attach(lines);
+        std::sync::Mutex::new(answers)
+    });
     let app = router(AppState {
         core: core.clone(),
         access: Arc::new(Access::new("token", vec![], None)),
@@ -44,7 +55,12 @@ async fn serve(name: &str, remote: bool) -> Served {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move { axum::serve(listener, app).await });
-    Served { port, core, dir }
+    Served {
+        port,
+        core,
+        dir,
+        shell,
+    }
 }
 
 impl Drop for Served {
@@ -53,8 +69,18 @@ impl Drop for Served {
     }
 }
 
-fn password() -> String {
-    ["correct", "horse", "battery"].join(" ")
+/// A nonce as the shell mints one: 16 random bytes, hex. Tests draw theirs at run time, never from a literal.
+fn fresh_nonce() -> String {
+    orbyn_core::util::random_token().unwrap()[..32].to_owned()
+}
+
+/// Another nonce of the same shape, different from `other` by construction.
+fn different_from(other: &str) -> String {
+    let mut nonce = fresh_nonce();
+    while nonce == other {
+        nonce = fresh_nonce();
+    }
+    nonce
 }
 
 impl Served {
@@ -79,37 +105,32 @@ impl Served {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
-    /// A private account, not one of the stand-in's seeded ones, whose password is public.
-    async fn sign_in(&self) {
-        self.core
-            .account
-            .start_sign_up(
-                "K7QM2XWH9QXA3C2D",
-                "crew-test@example.org",
-                Password::new(password()),
-            )
-            .await
-            .unwrap();
-        self.core
-            .account
-            .verify_email_code("ABCDEFGH")
-            .await
-            .unwrap();
+    /// One line from the shell and the service's answer.
+    fn shell_says(&self, line: &Value) -> Value {
+        assert!(self.core.presence_line(&line.to_string()));
+        self.shell
+            .as_ref()
+            .expect("a desktop shell")
+            .lock()
+            .unwrap()
+            .try_recv()
+            .expect("the service answered the shell")
     }
 
-    /// What the window does before approving: "Confirm it's you" for this hold.
-    async fn nonce_for(&self, hold: &str) -> String {
-        let (status, body) = self
-            .call(
-                "POST",
-                "/api/account/confirm",
-                json!({ "password": password(), "action": "approve_device",
-                        "device_id": format!("{}{hold}", orbyn_core::crew::CONFIRM_PREFIX) }),
-                None,
-            )
-            .await;
-        assert_eq!(status, 200);
-        body["nonce"].as_str().unwrap().to_owned()
+    /// What the desktop app does after the person clicks Approve: describe the hold, grant what was described.
+    fn grant(&self, hold: &str) -> String {
+        let nonce = fresh_nonce();
+        let shown = self.shell_says(
+            &json!({ "type": "presence_describe", "request_id": "r-1", "hold_id": hold }),
+        );
+        assert_eq!(shown["type"], "presence_hold", "{shown}");
+        let ready = self.shell_says(&json!({
+            "type": "presence_grant", "request_id": "r-2", "nonce": nonce, "hold_id": hold,
+            "thread_id": shown["thread_id"], "task_id": shown["task_id"],
+            "command_sha256": shown["command_sha256"],
+        }));
+        assert_eq!(ready["type"], "presence_ready", "{ready}");
+        nonce
     }
 
     /// A stored task with a worker, holding `command`: the hold's id.
@@ -164,10 +185,9 @@ impl Served {
 }
 
 #[tokio::test]
-async fn a_person_approves_once_with_the_confirmation_and_it_is_used_up() {
+async fn a_person_approves_once_with_the_desktop_grant_and_it_is_used_up() {
     let app = serve("approve", false).await;
     let (_, hold) = app.held("a", "make deploy");
-    app.sign_in().await;
     let path = format!("/api/crew/approvals/{hold}/approve-once");
 
     let (status, body) = app
@@ -177,30 +197,31 @@ async fn a_person_approves_once_with_the_confirmation_and_it_is_used_up() {
     assert_eq!(body["items"][0]["state"], "held");
     assert_eq!(body["items"][0]["command"], "make deploy");
 
-    // The service token alone is not enough: no confirmation, a wrong one, and one for another hold.
+    // The service token alone is not enough: no nonce, a wrong one, and one granted for another hold.
     let (status, body) = app.call("POST", &path, json!({}), None).await;
-    assert_eq!((status, &body["code"]), (403, &json!("reauth_required")));
-    let (status, _) = app
-        .call("POST", &path, json!({}), Some("not-a-nonce"))
-        .await;
-    assert_eq!(status, 403);
+    assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
+    let unknown = fresh_nonce();
+    let (status, body) = app.call("POST", &path, json!({}), Some(&unknown)).await;
+    assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
     let (_, other) = app.held("b", "make ship");
-    let for_other = app.nonce_for(&other).await;
-    let (status, _) = app.call("POST", &path, json!({}), Some(&for_other)).await;
-    assert_eq!(status, 403);
+    let for_other = app.grant(&other);
+    let (status, body) = app.call("POST", &path, json!({}), Some(&for_other)).await;
+    assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
     assert_eq!(app.state(&hold), "held", "nothing was approved");
 
-    let nonce = app.nonce_for(&hold).await;
+    // A wrong nonce does not burn the grant.
+    let nonce = app.grant(&hold);
+    let (status, _) = app
+        .call("POST", &path, json!({}), Some(&different_from(&nonce)))
+        .await;
+    assert_eq!(status, 403);
     let (status, body) = app.call("POST", &path, json!({}), Some(&nonce)).await;
     assert_eq!((status, &body["state"]), (200, &json!("approved")));
     assert_eq!(body["command"], "make deploy");
 
-    // Used up: the same nonce again, and a fresh one on a decided hold.
-    let (status, _) = app.call("POST", &path, json!({}), Some(&nonce)).await;
-    assert_eq!(status, 403);
-    let fresh = app.nonce_for(&hold).await;
-    let (status, body) = app.call("POST", &path, json!({}), Some(&fresh)).await;
-    assert_eq!((status, &body["code"]), (409, &json!("invalid_transition")));
+    // Used up: the same nonce again fails, and the hold is decided.
+    let (status, body) = app.call("POST", &path, json!({}), Some(&nonce)).await;
+    assert_eq!((status, &body["code"]), (403, &json!("presence_required")));
 
     let (_, log) = app
         .call(
@@ -215,7 +236,56 @@ async fn a_person_approves_once_with_the_confirmation_and_it_is_used_up() {
 }
 
 #[tokio::test]
-async fn deny_and_dismiss_need_no_password_and_are_decided_once() {
+async fn a_grant_made_before_a_deny_does_not_approve_and_the_deny_stands() {
+    let app = serve("race", false).await;
+    let (_, hold) = app.held("a", "make deploy");
+    let nonce = app.grant(&hold);
+    let (status, _) = app
+        .call(
+            "POST",
+            &format!("/api/crew/approvals/{hold}/deny"),
+            json!({}),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/crew/approvals/{hold}/approve-once"),
+            json!({}),
+            Some(&nonce),
+        )
+        .await;
+    assert_eq!((status, &body["code"]), (409, &json!("invalid_transition")));
+    assert_eq!(app.state(&hold), "denied");
+
+    // The other order: approved first, the deny then loses.
+    let (_, hold) = app.held("b", "make ship");
+    let nonce = app.grant(&hold);
+    let (status, _) = app
+        .call(
+            "POST",
+            &format!("/api/crew/approvals/{hold}/approve-once"),
+            json!({}),
+            Some(&nonce),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/crew/approvals/{hold}/deny"),
+            json!({}),
+            None,
+        )
+        .await;
+    assert_eq!((status, &body["code"]), (409, &json!("invalid_transition")));
+    assert_eq!(app.state(&hold), "approved");
+}
+
+#[tokio::test]
+async fn deny_and_dismiss_need_no_grant_and_are_decided_once() {
     let app = serve("deny", false).await;
     let (_, one) = app.held("a", "make deploy");
     let (_, two) = app.held("b", "make ship");
@@ -273,12 +343,11 @@ async fn deny_and_dismiss_need_no_password_and_are_decided_once() {
 async fn a_hold_whose_task_ended_answers_gone() {
     let app = serve("gone", false).await;
     let (task, hold) = app.held("a", "make deploy");
-    app.sign_in().await;
+    let nonce = app.grant(&hold);
     app.core
         .store
         .move_crew_task(&task, "cancelled", None)
         .unwrap();
-    let nonce = app.nonce_for(&hold).await;
     let (status, body) = app
         .call(
             "POST",
@@ -300,18 +369,25 @@ async fn a_hold_whose_task_ended_answers_gone() {
 }
 
 #[tokio::test]
-async fn nothing_can_be_approved_without_a_signed_in_account() {
-    let app = serve("noaccount", false).await;
+async fn a_service_without_a_desktop_shell_approves_nothing_with_or_without_the_token() {
+    let app = serve_with("noshell", false, false).await;
     let (_, hold) = app.held("a", "make deploy");
-    let (status, _) = app
-        .call(
-            "POST",
-            &format!("/api/crew/approvals/{hold}/approve-once"),
-            json!({}),
-            Some("0".repeat(32).as_str()),
-        )
-        .await;
-    assert_eq!(status, 403);
+    let drawn = fresh_nonce();
+    for nonce in [None, Some(drawn.as_str())] {
+        let (status, body) = app
+            .call(
+                "POST",
+                &format!("/api/crew/approvals/{hold}/approve-once"),
+                json!({}),
+                nonce,
+            )
+            .await;
+        assert_eq!((status, &body["code"]), (403, &json!("desktop_required")));
+    }
+    // A grant cannot even be made: the line is read, and the answer has nowhere to go.
+    assert!(app.core.presence_line(
+        &json!({ "type": "presence_describe", "request_id": "r-1", "hold_id": hold }).to_string()
+    ));
     assert_eq!(app.state(&hold), "held");
 }
 
@@ -329,14 +405,15 @@ async fn a_remote_viewer_can_read_the_holds_and_answer_none() {
                 "POST",
                 &format!("/api/crew/approvals/{hold}/{verb}"),
                 json!({}),
-                Some("n"),
+                Some(&fresh_nonce()),
             )
             .await;
-        assert_eq!(
-            (status, &body["code"]),
-            (403, &json!("local_only")),
-            "{verb}"
-        );
+        let code = if verb == "approve-once" {
+            "desktop_required"
+        } else {
+            "local_only"
+        };
+        assert_eq!((status, &body["code"]), (403, &json!(code)), "{verb}");
     }
     assert_eq!(app.state(&hold), "held");
 }

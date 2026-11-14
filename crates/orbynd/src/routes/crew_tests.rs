@@ -232,7 +232,13 @@ async fn a_remote_viewer_reads_and_cannot_change_anything() {
     for (method, path) in STATE_CHANGING {
         let (status, body) = app.call(method, &concrete(path), Some(json!({}))).await;
         assert_eq!(status, 403, "a remote viewer cannot change state");
-        assert_eq!(body["code"], "local_only");
+        // Approving once needs the desktop app, so a remote viewer is told that; everything else is local only.
+        let code = if path.ends_with("/approve-once") {
+            "desktop_required"
+        } else {
+            "local_only"
+        };
+        assert_eq!(body["code"], code, "{path}");
     }
     let (status, _) = app.call("GET", "/api/crew/autopilot", None).await;
     assert_eq!(status, 200);

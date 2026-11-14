@@ -11,8 +11,10 @@
 //! redacted command and a hash of the exact one. Each hold is decided once, under one lock, so a racing approve and deny have
 //! exactly one winner.
 //!
-//! Approving is the only answer that needs proof that a person is present: the account's "Confirm it's you" (the password again,
-//! one-time nonce in `x-orbyn-confirm`, bound to this hold's id). See [`CONFIRM_PREFIX`] for what it does and does not protect.
+//! Approving is the only answer that needs proof that a person is present: a grant the desktop app records after the person
+//! clicks Approve in its own native dialog (see [`presence`](super::presence) and docs/crew.md, "Approving once: local presence").
+//! The page sends that grant's nonce in `x-orbyn-confirm`; a caller that only speaks HTTP to the service has none. This is not
+//! OS-level presence: a process of the same OS user can still drive the dialog or the shell.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -22,12 +24,12 @@ use serde_json::{Value, json};
 
 use super::hard::{self, Scene};
 use super::ledger;
-use crate::account::ConfirmFor;
 use crate::app::Core;
 use crate::crew::lifecycle::is_final;
 use crate::crew::{key_needles, wire_name};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::ActionAsk;
+use crate::host::presence::PresenceFor;
 use crate::store::{CrewRun, CrewTask};
 use crate::util::{new_id, sha256_hex, unix_now};
 
@@ -42,22 +44,6 @@ pub const SHOWN_MAX: usize = 1000;
 const OPEN_PER_TASK: usize = 20;
 /// Holds kept in all, open or decided; the oldest decided ones go first.
 const KEPT: usize = 200;
-
-/// The prefix of the id a hold's confirmation is made for. The window asks `POST /api/account/confirm` with the action
-/// `approve_device` and the `device_id` `crew-approve-once:<hold id>`, and sends the nonce it gets back as `x-orbyn-confirm`.
-///
-/// **What it protects:** the one-time nonce comes only from a password check, so a caller that holds nothing but the service
-/// token (a worker, per #441) cannot approve; it is for one hold, used up by its first use, ten minutes at most, in memory only.
-/// **What it does not:** it needs a signed-in account (without one, nothing can be approved once), and a worker that can read
-/// the password or drive the window (the sandbox, #441) can still defeat it. Deny and dismiss need no password, so a caller
-/// with the token can deny or dismiss a hold (never approve one).
-///
-/// **In release builds approve-once always fails** (`account_disabled`: the account is off). **In dev builds the stand-in
-/// account's password is public**, so a worker holding the token (#441) could call `/api/account/confirm` itself, by a script N1
-/// does not read, and approve its own hold: the protection is only as strong as the account password. As a code guard,
-/// approve-once is refused while a seeded stand-in account (an `@example.com` address on the development backend) is signed in.
-/// A dedicated confirmation action replaces this id convention once the account's own code can change.
-pub const CONFIRM_PREFIX: &str = "crew-approve-once:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Stage {
@@ -360,11 +346,11 @@ pub(crate) enum Decision {
 }
 
 impl Core {
-    fn held_book(&self) -> MutexGuard<'_, HeldBook> {
+    pub(super) fn held_book(&self) -> MutexGuard<'_, HeldBook> {
         lock(&self.crew_autopilot.held)
     }
 
-    fn held_needles(&self, task_id: &str) -> Vec<String> {
+    pub(super) fn held_needles(&self, task_id: &str) -> Vec<String> {
         self.store
             .crew_answer_key(task_id)
             .ok()
@@ -507,7 +493,7 @@ impl Core {
     }
 
     /// Ends what ran out of time, and every open hold or approval whose worker's task is over.
-    fn held_sweep(&self, now: i64) {
+    pub(super) fn held_sweep(&self, now: i64) {
         let ended = self.held_book().sweep(now);
         self.held_ended(ended);
         let open: Vec<(String, String)> = self
@@ -524,7 +510,7 @@ impl Core {
         }
     }
 
-    fn held_ended_by_task(&self, id: &str) {
+    pub(super) fn held_ended_by_task(&self, id: &str) {
         let closed = {
             let mut book = self.held_book();
             let Some(item) = book.items.iter_mut().find(|i| i.id == id) else {
@@ -541,7 +527,7 @@ impl Core {
     }
 
     /// The task and run of a worker thread that is still running a task.
-    fn live_worker(&self, thread_id: &str) -> Option<(CrewTask, CrewRun)> {
+    pub(super) fn live_worker(&self, thread_id: &str) -> Option<(CrewTask, CrewRun)> {
         let (task, run) = self.store.crew_task_for_worker(thread_id).ok().flatten()?;
         (!is_final(&task.state)).then_some((task, run))
     }
@@ -559,10 +545,11 @@ impl Core {
         }
     }
 
-    /// Approves one held command, once. Only a person's action: the call needs the nonce that "Confirm it's you" made for this
-    /// hold (see [`CONFIRM_PREFIX`]), and nothing else in the core calls it. It checks, in this order: the confirmation (without
-    /// using it), that the hold is open, that its task is still running, that the command can be read whole, and the
-    /// always-denied list again, now; then uses the confirmation up and decides, once.
+    /// Approves one held command, once. Only a person's action: the call needs the nonce the desktop app recorded when the
+    /// person clicked Approve in its own dialog for this hold, as the hold stands now (see [`PresenceFor`]), and nothing else in
+    /// the core calls it. It checks, in this order: that a desktop shell exists, the grant (without using it), that the hold is
+    /// open, that its task is still running, that the command can be read whole, and the always-denied list again, now; then uses
+    /// the grant up and decides, once. A refusal at any step leaves the grant as it was.
     pub async fn autopilot_approve_once(
         &self,
         id: &str,
@@ -579,20 +566,24 @@ impl Core {
     ) -> Result<wire::AutopilotHeld> {
         self.crew_preview_only()?;
         super::merge::valid_id(id)?;
-        let action = ConfirmFor::ApproveDevice(format!("{CONFIRM_PREFIX}{id}"));
-        if !self.account.available() {
-            return Err(CoreError::AccountDisabled);
-        }
-        if self.stand_in_account_signed_in().await {
-            return Err(CoreError::PolicyDenied(
-                "Approving once is not available while the development stand-in account is signed in: its password is public."
-                    .into(),
-            ));
-        }
-        if !self.account.confirmed_for(&action, nonce) {
-            return Err(CoreError::ReauthRequired);
+        if !self.shell.attached() {
+            return Err(CoreError::DesktopRequired);
         }
         self.held_sweep(now);
+        // A hold that is not there has no grant, so it answers as a missing grant does.
+        let seen = self.held_book().get(id).cloned();
+        let want = |held: Option<&Held>| PresenceFor::CrewApproveOnce {
+            hold: id.to_owned(),
+            thread: held.map(|h| h.thread_id.clone()).unwrap_or_default(),
+            task: held.map(|h| h.task_id.clone()).unwrap_or_default(),
+            command_sha256: held.map(|h| h.bound.clone()).unwrap_or_default(),
+        };
+        if !self
+            .presence
+            .confirmed_for(&want(seen.as_ref()), nonce, now)
+        {
+            return Err(CoreError::PresenceRequired);
+        }
         let held = self.held_book().open(id).map_err(Self::held_failure)?;
         let Some((task, run)) = self
             .live_worker(&held.thread_id)
@@ -620,35 +611,18 @@ impl Core {
                 refusal.0, refusal.1
             )));
         }
-        // The confirmation is used up here, then the one decision is made: a racing deny or a second approve loses.
-        self.account.require_confirmed(action, nonce).await?;
+        // The grant is used up here, then the one decision is made: a racing deny or a second approve loses.
+        if !self.presence.take(&want(Some(&held)), nonce, now) {
+            return Err(CoreError::PresenceRequired);
+        }
         let decided = self.held_book().decide(id, now, Stage::Approved);
         let held = decided.map_err(Self::held_failure)?;
         self.held_row(
             &held,
             "approved_once",
-            &json!({ "via": "local_session", "expires_in_secs": APPROVAL_LIFETIME_SECS }),
+            &json!({ "via": "desktop_presence", "expires_in_secs": APPROVAL_LIFETIME_SECS }),
         );
         Ok(HeldBook::view(&held, now))
-    }
-
-    /// The development backend, signed in as one of its seeded `@example.com` accounts, whose password is public.
-    async fn stand_in_account_signed_in(&self) -> bool {
-        #[cfg(any(test, debug_assertions))]
-        {
-            if self.config.account_backend != crate::account::AccountBackendKind::Development {
-                return false;
-            }
-            self.account
-                .view(std::env::consts::OS)
-                .await
-                .session
-                .is_some_and(|session| session.email.to_ascii_lowercase().ends_with("@example.com"))
-        }
-        #[cfg(not(any(test, debug_assertions)))]
-        {
-            false
-        }
     }
 
     /// The always-denied list, against the exact request, as it stands now.
