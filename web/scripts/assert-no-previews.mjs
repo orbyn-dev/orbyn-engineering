@@ -24,6 +24,7 @@ const markers = [
   "oracle-narrow-window",
   "backtest-narrow-window",
   "settings-crew",
+  "needsyou-narrow-panel",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>
