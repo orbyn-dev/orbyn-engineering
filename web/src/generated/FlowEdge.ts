@@ -4,4 +4,8 @@ import type { FlowDeliveryMode } from "./FlowDeliveryMode";
 /**
  * Who has written to whom, by kind: a count and how the newest one was delivered.
  */
-export type FlowEdge = { from: string, to: string, kind: string, label: string, count: number, delivery?: FlowDeliveryMode | null, };
+export type FlowEdge = { from: string, to: string, kind: string, label: string, count: number, 
+/**
+ * How the newest message was delivered, only when every recipient's newest delivery agrees.
+ */
+delivery?: FlowDeliveryMode | null, };

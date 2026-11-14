@@ -31,6 +31,15 @@ pub(super) fn quiet_of(state: &str, idle_secs: Option<i64>) -> FlowQuiet {
     }
 }
 
+/// Engines whose driver turns the engine's own subagents into `subagent.activity` events (`agents/driver/claude/events.rs`,
+/// `agents/driver/codex/events.rs`). The driver has no capability flag for it, so this keys on the driver's family; any other engine,
+/// whatever its tier, says "not reported".
+const SUBAGENT_FAMILIES: [&str; 2] = ["claude", "codex"];
+
+pub(super) fn reports_subagents(tier: orbyn_contracts::EngineTier, family: &str) -> bool {
+    tier == orbyn_contracts::EngineTier::Native && SUBAGENT_FAMILIES.contains(&family)
+}
+
 pub(super) fn delivery_of(mode: Option<&str>) -> Option<FlowDeliveryMode> {
     match mode? {
         "live" => Some(FlowDeliveryMode::Live),
@@ -75,7 +84,8 @@ impl Core {
         let mut truncated = tasks.len() > NODES_MAX;
         tasks.truncate(NODES_MAX);
 
-        // The registry's cached statuses, by engine id: no probe is forced and no model list is read.
+        // The registry's statuses, by engine id. Never `refresh = true` from a route: the first call may probe the engines once under the
+        // statuses lock and every later call is the cached list, as the Providers list reads it. No model list is read.
         let statuses: BTreeMap<String, (FlowEngineStatus, bool)> = self
             .engines
             .statuses(false)
@@ -87,7 +97,7 @@ impl Core {
                     s.id.clone(),
                     (
                         status_of(&ProviderFacts::of(s)),
-                        s.tier != orbyn_contracts::EngineTier::Acp,
+                        reports_subagents(s.tier, s.instance_of.as_deref().unwrap_or(&s.id)),
                     ),
                 )
             })
@@ -258,6 +268,32 @@ mod tests {
         ] {
             assert_eq!(quiet_of(state, Some(10_000)), FlowQuiet::Active, "{state}");
         }
+    }
+
+    /// A GET never forces a probe of every engine: the map reads the registry's statuses without a refresh.
+    #[test]
+    fn the_map_never_asks_the_registry_to_refresh() {
+        let forced = ["statuses(", "true)"].concat();
+        assert!(!include_str!("map.rs").contains(&forced));
+    }
+
+    #[test]
+    fn only_the_native_drivers_that_emit_subagent_events_report_them() {
+        use orbyn_contracts::EngineTier as Tier;
+        assert!(reports_subagents(Tier::Native, "claude"));
+        assert!(reports_subagents(Tier::Native, "codex"));
+        assert!(
+            !reports_subagents(Tier::Native, "alpha"),
+            "another native engine"
+        );
+        assert!(!reports_subagents(Tier::Acp, "opencode"));
+        assert!(
+            !reports_subagents(Tier::Acp, "claude"),
+            "an ACP setup of a family is not its driver"
+        );
+        assert!(!reports_subagents(Tier::Agui, "claude"));
+        assert!(!reports_subagents(Tier::Terminal, "claude"));
+        assert!(!reports_subagents(Tier::Agui, "remote"));
     }
 
     #[test]

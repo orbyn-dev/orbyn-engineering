@@ -2,7 +2,7 @@
 //! delivery states are right, every type has exactly the fields it should, the reads change nothing, the flag off hides them, and
 //! nothing a member wrote (a message body, a fact value) reaches any read of the crew. No test depends on the clock.
 
-use orbyn_contracts::{FlowDeliveryMode, FlowRole};
+use orbyn_contracts::{CrewObject, FlowDeliveryMode, FlowRole, object_id};
 use serde_json::{Value, json};
 
 use super::bus_support::{Duo, duo};
@@ -259,4 +259,147 @@ async fn the_flag_off_hides_the_reads_and_bad_input_is_refused() {
             .is_empty()
     );
     assert!(d.w.core.crew_flow_facts("nobody").unwrap().facts.is_empty());
+}
+
+#[tokio::test]
+async fn a_delivery_is_reported_only_when_every_recipient_agrees() {
+    let marker = nonce("agree");
+    let (d, crew) = talked(&marker).await;
+    let read = |d: &Duo| {
+        d.w.core
+            .crew_flow_messages(&crew, None, page())
+            .unwrap()
+            .messages
+    };
+    let messages = read(&d);
+    let (held, live) = (messages[0].id.clone(), messages[1].id.clone());
+    // One recipient each: its own state.
+    assert_eq!(messages[0].delivery, Some(FlowDeliveryMode::Held));
+    assert_eq!(messages[1].delivery, Some(FlowDeliveryMode::Live));
+
+    // The newest row of a recipient is the one that counts: the held message goes out with the recipient's next tool result.
+    let store = &d.w.core.store;
+    store
+        .record_crew_delivery(&held, &d.mb, "thread-b", "tool_result", None)
+        .unwrap();
+    assert_eq!(read(&d)[0].delivery, Some(FlowDeliveryMode::ToolResult));
+
+    // Every recipient delivered the same way: that way.
+    store
+        .record_crew_delivery(&live, "member-extra", "thread-extra", "live", None)
+        .unwrap();
+    assert_eq!(read(&d)[1].delivery, Some(FlowDeliveryMode::Live));
+
+    // One recipient live and one failed: no delivery is reported, not either one's.
+    store
+        .record_crew_delivery(&held, "member-other", "thread-other", "failed", None)
+        .unwrap();
+    store
+        .record_crew_delivery(&live, "member-late", "thread-late", "failed", None)
+        .unwrap();
+    let mixed = read(&d);
+    assert_eq!(
+        (mixed[0].delivery, mixed[0].delivered_at.clone()),
+        (None, None)
+    );
+    assert_eq!(mixed[1].delivery, None);
+    let map = d.w.core.crew_flow_map(&crew).await.unwrap();
+    assert!(
+        map.edges.iter().all(|e| e.delivery.is_none()),
+        "an edge says nothing its newest message does not"
+    );
+
+    // A message with no delivery row has none.
+    let mut message =
+        CrewObject::Message(d.w.core.store.crew_messages(&d.a).unwrap().remove(0)).to_value();
+    message["body"] = json!(format!("unsent {marker}"));
+    message["id"] = json!(object_id(&message).unwrap());
+    d.w.core
+        .store
+        .add_crew_member_object(&d.a, &CrewObject::parse(&message).unwrap())
+        .unwrap();
+    let newest = read(&d).remove(0);
+    assert_eq!((newest.delivery, newest.delivered_at), (None, None));
+}
+
+#[tokio::test]
+async fn the_last_event_lookup_seeks_the_primary_key_and_never_scans() {
+    let d = duo().await;
+    let sql = format!("EXPLAIN QUERY PLAN {}", crate::store::last_events_sql(3));
+    let conn = d.w.core.store.reader();
+    let mut statement = conn.prepare(&sql).unwrap();
+    let plan: Vec<String> = statement
+        .query_map(rusqlite::params_from_iter(["a", "b", "c"]), |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        plan.iter()
+            .any(|p| p.contains("thread_events") && p.contains("SEARCH")),
+        "the plan has no seek"
+    );
+    assert!(
+        !plan.iter().any(|p| p.contains("SCAN thread_events")),
+        "the plan scans the events"
+    );
+}
+
+#[tokio::test]
+async fn a_nodes_outcome_and_lease_are_scrubbed_of_the_crews_key_text() {
+    // A task stored with its brief and key, as a lead that slipped would leave it: the outcome and a lease path hold a check's text.
+    let w = world(true, arc(|_, _| Turn::Silent)).await;
+    let secret = nonce("secret");
+    let stamper = crate::crew::Stamper {
+        crew_id: orbyn_contracts::CrewId::new("crew-1").unwrap(),
+        engine: orbyn_contracts::CrewToken::new("claude").unwrap(),
+        member: orbyn_contracts::CrewMember::new("lead-01").unwrap(),
+        now: orbyn_contracts::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let brief = stamper
+        .brief(&json!({
+            "kind": "implement",
+            "outcome": format!("Run {secret} and report."),
+            "inputs": [],
+            "files": [{ "path": format!("src/{secret}/**"), "mode": "write" }],
+            "allowed_effects": ["read_repo", "write_leased", "run_checks"],
+            "stop_when": ["Done."],
+            "budget": { "turns": 20, "minutes": 30 }
+        }))
+        .unwrap();
+    let key = stamper
+        .answer_key(
+            &json!({
+                "checks": [{ "id": "chk-run", "kind": "command", "params": { "run": secret }, "proves": "It runs." }],
+                "protected_paths": ["tests/**"]
+            }),
+            &brief.id,
+        )
+        .unwrap();
+    let task = w
+        .core
+        .store
+        .create_crew_task(&brief, &key, "run-scrub")
+        .unwrap();
+    w.core
+        .store
+        .add_crew_run(&task.id, "lead-thread", "worker-01")
+        .unwrap();
+
+    let map = w.core.crew_flow_map("crew-1").await.unwrap();
+    let node = map
+        .nodes
+        .iter()
+        .find(|n| n.task.as_deref() == Some(task.id.as_str()))
+        .unwrap();
+    assert!(
+        !node.outcome.is_empty() && !node.lease.is_empty(),
+        "the node has an outcome and a lease"
+    );
+    let text = serde_json::to_string(&map).unwrap();
+    assert!(
+        !text.contains(&secret),
+        "a check's text reached the map through an outcome or a lease"
+    );
 }

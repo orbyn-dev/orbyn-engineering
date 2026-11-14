@@ -102,6 +102,7 @@ pub struct FlowEdge {
     pub kind: String,
     pub label: String,
     pub count: u32,
+    /// How the newest message was delivered, only when every recipient's newest delivery agrees.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub delivery: Option<FlowDeliveryMode>,
@@ -139,6 +140,7 @@ pub struct FlowMessage {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub in_reply_to: Option<String>,
+    /// Only when every recipient's newest delivery says the same; a message to `all` that went differently has none.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub delivery: Option<FlowDeliveryMode>,

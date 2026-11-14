@@ -74,7 +74,7 @@ pub struct MessageLabels {
     pub kind: String,
     pub at: Option<String>,
     pub in_reply_to: Option<String>,
-    /// How the newest delivery row of the message went.
+    /// How the message was delivered, only when every recipient's newest delivery row says the same; else none.
     pub mode: Option<String>,
     pub delivered_at: Option<String>,
 }
@@ -100,6 +100,15 @@ pub struct FactLabels {
     pub verified: bool,
 }
 
+/// The statement behind [`Store::thread_last_events`] for `n` threads: a `VALUES` list of ids, each looked up by the primary key.
+pub(crate) fn last_events_sql(n: usize) -> String {
+    let ids = vec!["(?)"; n].join(",");
+    format!(
+        "SELECT v.column1, (SELECT ts FROM thread_events WHERE thread_id = v.column1 ORDER BY seq DESC LIMIT 1) \
+         FROM (VALUES {ids}) v"
+    )
+}
+
 impl Store {
     /// The newest `limit` tasks of a crew of any kind, newest first: the nodes of the map.
     pub fn crew_map_tasks(&self, crew_id: &str, limit: u32) -> Result<Vec<CrewTask>> {
@@ -112,23 +121,27 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// The time of the newest event of each thread, in one query: a seek on `(thread_id, seq)` per thread.
+    /// The time of the newest event of each thread, in one query: one seek on the `(thread_id, seq)` key per thread, never a scan.
     pub fn thread_last_events(&self, thread_ids: &[String]) -> Result<Vec<(String, String)>> {
         if thread_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let marks = vec!["?"; thread_ids.len()].join(",");
         let conn = self.reader();
-        let mut statement = conn.prepare(&format!(
-            "SELECT e.thread_id, e.ts FROM thread_events e WHERE e.thread_id IN ({marks}) \
-             AND e.seq = (SELECT MAX(seq) FROM thread_events WHERE thread_id = e.thread_id)"
-        ))?;
+        let mut statement = conn.prepare(&last_events_sql(thread_ids.len()))?;
         Ok(statement
             .query_map(rusqlite::params_from_iter(thread_ids), |row| {
-                Ok((row.get(0)?, row.get(1)?))
+                Ok((row.get(0)?, row.get::<_, Option<String>>(1)?))
             })?
+            .filter_map(|row| match row {
+                Ok((id, Some(ts))) => Some(Ok((id, ts))),
+                Ok((_, None)) => None,
+                Err(error) => Some(Err(error)),
+            })
             .collect::<rusqlite::Result<_>>()?)
     }
+
+    // The grouped reads below scale with the crew's bus traffic. They are bounded to the newest rows (the messages, or the deliveries,
+    // by their autoincrement or row id), which is enough for Preview and keeps a long-lived crew from making a map read slow.
 
     /// Messages waiting for each recipient's next turn: the newest delivery row of a message and recipient says `held`.
     pub fn crew_held_counts(&self, crew_id: &str) -> Result<Vec<(String, u32)>> {
@@ -137,8 +150,9 @@ impl Store {
             "SELECT d.recipient, COUNT(*) FROM crew_deliveries d
              JOIN crew_messages m ON m.id = d.message_id JOIN crew_tasks t ON t.id = m.task_id
              WHERE t.crew_id = ?1 AND d.mode = 'held'
+               AND d.id > (SELECT COALESCE(MAX(id), 0) - 20000 FROM crew_deliveries)
                AND d.id = (SELECT MAX(id) FROM crew_deliveries WHERE message_id = d.message_id AND recipient = d.recipient)
-             GROUP BY d.recipient",
+             GROUP BY d.recipient LIMIT 200",
         )?;
         Ok(statement
             .query_map([crew_id], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -151,6 +165,7 @@ impl Store {
         let mut statement = conn.prepare(
             "SELECT m.sender, m.recipient, m.kind, COUNT(*), MAX(m.rowid) FROM crew_messages m
              JOIN crew_tasks t ON t.id = m.task_id WHERE t.crew_id = ?1
+               AND m.rowid > (SELECT COALESCE(MAX(rowid), 0) - 5000 FROM crew_messages)
              GROUP BY m.sender, m.recipient, m.kind ORDER BY MAX(m.rowid) DESC LIMIT ?2",
         )?;
         let rows: Vec<(String, String, String, u32, i64)> = statement
@@ -165,14 +180,18 @@ impl Store {
             })?
             .collect::<rusqlite::Result<_>>()?;
         let mut newest = conn.prepare(
-            "SELECT d.mode FROM crew_deliveries d JOIN crew_messages x ON x.id = d.message_id
-             WHERE x.rowid = ?1 ORDER BY d.id DESC LIMIT 1",
+            "SELECT CASE WHEN COUNT(DISTINCT d.mode) = 1 THEN MIN(d.mode) END FROM crew_deliveries d
+             JOIN crew_messages x ON x.id = d.message_id
+             WHERE x.rowid = ?1
+               AND d.id = (SELECT MAX(id) FROM crew_deliveries WHERE message_id = d.message_id AND recipient = d.recipient)",
         )?;
         let mut edges = Vec::new();
         for (sender, recipient, kind, count, rowid) in rows {
+            // The mode only when every recipient's newest row agrees; otherwise none, never one recipient's state.
             let mode = newest
-                .query_row([rowid], |row| row.get::<_, String>(0))
-                .ok();
+                .query_row([rowid], |row| row.get::<_, Option<String>>(0))
+                .ok()
+                .flatten();
             edges.push(MessageEdge {
                 sender,
                 recipient,
@@ -202,8 +221,12 @@ impl Store {
         let mut statement = conn.prepare(
             "SELECT m.id, m.sender, m.recipient, m.kind,
                     json_extract(m.body, '$.created_at'), json_extract(m.body, '$.in_reply_to'),
-                    (SELECT d.mode FROM crew_deliveries d WHERE d.message_id = m.id ORDER BY d.id DESC LIMIT 1),
-                    (SELECT d.at FROM crew_deliveries d WHERE d.message_id = m.id ORDER BY d.id DESC LIMIT 1)
+                    (SELECT CASE WHEN COUNT(DISTINCT d.mode) = 1 THEN MIN(d.mode) END FROM crew_deliveries d
+                      WHERE d.message_id = m.id
+                        AND d.id = (SELECT MAX(id) FROM crew_deliveries WHERE message_id = d.message_id AND recipient = d.recipient)),
+                    (SELECT CASE WHEN COUNT(DISTINCT d.mode) = 1 THEN MAX(d.at) END FROM crew_deliveries d
+                      WHERE d.message_id = m.id
+                        AND d.id = (SELECT MAX(id) FROM crew_deliveries WHERE message_id = d.message_id AND recipient = d.recipient))
              FROM crew_messages m JOIN crew_tasks t ON t.id = m.task_id
              WHERE t.crew_id = ?1 AND (?2 IS NULL OR m.sender = ?2 OR m.recipient = ?2)
              ORDER BY m.rowid DESC LIMIT ?3 OFFSET ?4",

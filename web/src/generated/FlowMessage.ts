@@ -8,4 +8,8 @@ export type FlowMessage = { id: string, at: string, from: string, to: string, ki
 /**
  * What the core calls a message of this kind, such as "a question".
  */
-label: string, in_reply_to?: string | null, delivery?: FlowDeliveryMode | null, delivered_at?: string | null, };
+label: string, in_reply_to?: string | null, 
+/**
+ * Only when every recipient's newest delivery says the same; a message to `all` that went differently has none.
+ */
+delivery?: FlowDeliveryMode | null, delivered_at?: string | null, };

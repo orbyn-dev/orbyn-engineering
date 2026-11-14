@@ -56,3 +56,10 @@ async fn a_remote_viewer_may_read_them_and_the_flag_off_hides_them() {
         assert_eq!(body, unknown, "{path} answers as an absent route does");
     }
 }
+
+/// A GET never forces a probe of every engine: the route and the map read the registry's cached statuses.
+#[test]
+fn the_map_route_never_asks_the_registry_to_refresh() {
+    let forced = ["statuses(", "true)"].concat();
+    assert!(!include_str!("crew_map.rs").contains(&forced));
+}

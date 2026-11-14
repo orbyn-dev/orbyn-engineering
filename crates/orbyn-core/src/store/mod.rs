@@ -60,6 +60,8 @@ pub use crew_background::{
 };
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
+#[cfg(test)]
+pub(crate) use crew_flow::last_events_sql;
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
 pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
