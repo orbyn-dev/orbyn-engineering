@@ -12,14 +12,15 @@ jobs:
   trailers:
     name: Commit trailers
     if: github.event.pull_request.user.login != 'dependabot[bot]'
-    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     timeout-minutes: 3
     steps:
       # The whole history is needed so BASE..HEAD holds exactly the commits this pull
       # request adds, however many there are.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Check the commit checker
         run: python3 scripts/test_check_commit_trailers.py

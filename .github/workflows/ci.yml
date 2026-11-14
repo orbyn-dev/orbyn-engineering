@@ -33,8 +33,8 @@ jobs:
   # everything on every OS.
   changes:
     name: Changes
-    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
       web: ${{ steps.scope.outputs.web }}
@@ -88,8 +88,8 @@ jobs:
   lint:
     name: Cheap checks
     needs: changes
-    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     env:
       RUST: ${{ needs.changes.outputs.rust }}
       WEB: ${{ needs.changes.outputs.web }}
@@ -281,8 +281,8 @@ jobs:
     name: Rust (windows-2022)
     needs: [changes, lint, rust-windows-shard, rust-windows-clippy]
     if: always()
-    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     steps:
       - shell: bash
         env:
@@ -298,8 +298,8 @@ jobs:
     name: Web
     needs: [changes, lint]
     if: ${{ !cancelled() }}
-    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     env:
       RUN: ${{ needs.changes.outputs.web }}
     steps:
@@ -470,8 +470,8 @@ jobs:
     name: E2E
     needs: [changes, lint, e2e-build, e2e-shard]
     if: always()
-    # Local runner only when the repository variable CI_RUNNER is 'local' and the pull request is not from a fork.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true) && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     steps:
       - shell: bash
         env:
