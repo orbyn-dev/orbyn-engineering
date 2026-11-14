@@ -49,15 +49,17 @@ export type RowView = {
   merges: string;
 };
 
-export function rowView(row: AutopilotAreaRow, restored: AutopilotAreaEvent | null): RowView {
+export function rowView(row: AutopilotAreaRow, restored: AutopilotAreaEvent | null, t: AutopilotThresholds, repoCeiling: AutopilotMode): RowView {
   const record = row.record;
   const days = `${record.window_days} days`;
   const sample = plural(record.merges, "merge");
   let why: string;
   switch (row.state) {
     case "follows":
-      // A window that already trips but is not recorded yet has no row in the design: the service's own sentence says so.
-      why = record.reverts > 0 && row.line.includes("evaluated") ? row.line : "Follows your ceiling";
+      // A window that already trips but is not recorded yet has no row in the design.
+      why = record.merges >= t.min_merges && record.reverts >= t.trip_reverts
+        ? `${record.reverts} of ${record.merges} merges reverted in ${record.window_days} days; evaluated at the next merge or revert`
+        : "Follows your ceiling";
       break;
     case "not_enough_data":
       why = "No change until there is data";
@@ -77,9 +79,11 @@ export function rowView(row: AutopilotAreaRow, restored: AutopilotAreaEvent | nu
             : `Recovering: day ${row.recovery?.clean_days ?? 0} of ${row.recovery?.days_needed ?? 0} with no revert; ${row.recovery?.merges ?? 0} of ${row.recovery?.merges_needed ?? 0} merges since, none reverted`;
       break;
     case "overridden":
-      why = row.line;
+      why = row.override?.choice === "off" ? "You turned this area off" : "You kept the ceiling";
       break;
   }
+  // An area's own ceiling, when it is not the repository's, is said in its row.
+  if (row.ceiling !== repoCeiling && row.state !== "ceiling_lower" && !(isLowered(row) && row.ceiling !== "full")) why += `. Ceiling for this area: ${modeName(row.ceiling)}`;
   if (restored && row.state === "follows") why = `Restored ${stamp(restored.at)} at a merge`;
   if (row.state === "not_enough_data") return { why, reverted: "Not measured", measured: false, days, merges: sample };
   // A lowered area counts its way back: the days since the last revert and the merges since, none reverted.

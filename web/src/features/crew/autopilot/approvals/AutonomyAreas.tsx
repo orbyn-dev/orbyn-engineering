@@ -36,13 +36,14 @@ function ModeChip({ mode, ceiling, now }: { mode: AutopilotAreaRow["now"]; ceili
   return <Chip tone={quiet(mode, ceiling, now === true) ? "dim" : "plain"}>{modeName(mode)}</Chip>;
 }
 
-function AreaRow({ row, view }: { row: AutopilotAreaRow; view: RowView }) {
+function AreaRow({ row, view, open }: { row: AutopilotAreaRow; view: RowView; open(row: AutopilotAreaRow, anchor: HTMLElement): void }) {
   return (
     <div className="ar-row" role="row" data-state={row.state}>
       <span role="cell" className="ar-area"><b>{row.area}</b></span>
       <span role="cell" className="ar-now">
         <ModeChip mode={row.now} ceiling={row.ceiling} now />
         <small className="ar-why">{view.why}</small>
+        {row.state === "overridden" ? <OverrideButton onOpen={(anchor) => open(row, anchor)} /> : null}
       </span>
       <span role="cell" className="ar-rev">{view.measured ? null : <span className="ar-n">Reverted: </span>}<b>{view.reverted}</b>{view.measured ? <span className="ar-n"> reverted</span> : null}</span>
       <span role="cell" className="ar-esc"><span className="ar-n">Escaped: </span><b>Not measured</b></span>
@@ -221,17 +222,15 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
       return;
     }
     if (!row.override) return;
-    void crewApi.followArea({ project: project.id, area: row.area_key, seen: seenOf(row) }).then(() => reload(), refuse);
+    void crewApi.followArea({ project: project.id, area: row.area_key, ...(row.since ? { seen: seenOf(row) } : {}) }).then(() => reload(), refuse);
   };
 
-  // One ceiling per repository: every row is read against it.
-  const rows = areas.rows.map((row) => ({ ...row, ceiling: areas.ceiling }));
+  const rows = areas.rows;
   const allThin = rows.length > 0 && rows.every((row) => row.state === "not_enough_data");
-  const footerTarget = rows.find(isLowered) ?? rows.find((row) => row.state === "overridden");
-  const footerBoth = footerTarget?.state === "overridden";
+  const footerTarget = rows.find(isLowered);
   const items = (row: AutopilotAreaRow) => [
     { label: "Follow the record", selected: !row.override, leadCheck: true, content: optionLine("Follow the record", "The default. It returns by itself when the record recovers"), onSelect: () => choose(row, "follow") },
-    ...(isLowered(row) || row.override?.choice === "keep_ceiling"
+    ...((row.ceiling === "full" && row.now !== row.ceiling) || row.override?.choice === "keep_ceiling"
       ? [{ label: "Keep the ceiling", selected: row.override?.choice === "keep_ceiling", leadCheck: true, content: optionLine("Keep the ceiling", `${modeName(row.ceiling)}, your ceiling. Needs an acknowledgement; a new trip clears it`), onSelect: () => choose(row, "keep_ceiling") }]
       : []),
     { label: "Off", selected: row.override?.choice === "off", leadCheck: true, content: optionLine("Off", `Everything in ${row.area} waits for you`), onSelect: () => choose(row, "off") },
@@ -256,7 +255,7 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
         <div className="ar-row ap-head" role="row">
           {["Area", "Now", "Reverted", "Escaped", "Window"].map((name) => <span key={name} role="columnheader">{name}</span>)}
         </div>
-        {rows.map((row) => <AreaRow key={row.area_key} row={row} view={rowView(row, recentRestore(trail[row.area_key], areas.as_of, t.window_days))} />)}
+        {rows.map((row) => <AreaRow key={row.area_key} row={row} open={open} view={rowView(row, recentRestore(trail[row.area_key], areas.as_of, t.window_days), t, areas.ceiling)} />)}
       </div>
       {allThin ? (
         <Panel title={`Not enough data: each area has fewer than ${t.min_merges} merges`}>
@@ -268,7 +267,7 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
       <div className="ar-acts">
         <Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "thresholds", repo: project.id })}>Open the thresholds</Button>
         <span className="ar-wide"><Button small onClick={() => navigate({ name: "crew", tab: "approvals" })}>Open the ledger</Button></span>
-        {footerTarget ? <span className={footerBoth ? "" : "ar-narrow"}><OverrideButton onOpen={(anchor) => open(footerTarget, anchor)} /></span> : null}
+        {footerTarget ? <span className="ar-narrow"><OverrideButton onOpen={(anchor) => open(footerTarget, anchor)} /></span> : null}
       </div>
       <p className="ar-note"><Info size={14} aria-hidden /><span>{GUARD_WORKERS}</span></p>
       <Presence>
@@ -294,8 +293,13 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
             crewApi.overrideArea({ project: project.id, area: keep.row.area_key, choice: keep.choice, acknowledged: true, seen: seenOf(keep.row) }).then(
               () => void reload(),
               (error: unknown) => {
-                // A record that moved while the person read the warning answers `stale`: show the service's words, and the new record behind the dialog.
-                if (error instanceof ApiFailure) void reload();
+                // A record that moved while the person read the warning answers `stale`. The warning described the old record, so it closes:
+                // the service's words show on the page, with the new record, and the person chooses again.
+                if (error instanceof ApiFailure && error.code === "stale") {
+                  setKeep(null);
+                  refuse(error);
+                  return;
+                }
                 throw error;
               },
             )

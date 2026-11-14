@@ -37,9 +37,10 @@ describe("autonomy-table", () => {
     expect(frame()).toBe("autonomy-table");
     expect(within(table()).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Area", "Now", "Reverted", "Escaped", "Window"]);
     expect(rowOf("docs/guides")).toHaveTextContent("docs/guidesFullFollows your ceiling0 of 12 revertedEscaped: Not measured14 days12 merges");
-    // One ceiling per repository: the table has no ceiling column, and the page says it once.
+    // The table has no ceiling column; an area whose own ceiling differs says so in its row.
     expect(within(table()).queryByRole("columnheader", { name: "Ceiling" })).toBeNull();
-    expect(rowOf("crates/orbyn-keys")).toHaveTextContent("1 of 6 reverted");
+    expect(cells(rowOf("crates/orbyn-keys"))[1]).toBe("OnYour ceiling is On: the record is shown, nothing changes");
+    expect(rowOf("crates/orbyn-keys")).toHaveTextContent("2 of 6 reverted");
     // Too few merges: no rate and no change.
     expect(cells(rowOf(".github/workflows"))[1]).toBe("FullNo change until there is data");
     expect(rowOf(".github/workflows")).toHaveTextContent("Reverted: Not measured");
@@ -189,7 +190,7 @@ describe("autonomy-override", () => {
     await user.click(within(dialog).getByRole("checkbox", { name: "I understand that everything in web/auth will wait for me." }));
     await user.click(confirm);
     expect(spy).toHaveBeenCalledWith({ project: "p-app", area: "web/auth", choice: "off", acknowledged: true, seen: { merges: 9, reverts: 2, tripped_at: at(7, 15, 36) } });
-    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("OffA person set this area to off."));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("OffYou turned this area offOverride…"));
   });
 
   it("Cancelling the Off dialog calls no route", async () => {
@@ -219,15 +220,39 @@ describe("autonomy-override", () => {
     const off = await screen.findByRole("dialog", { name: "Turn web/auth off?" });
     await user.click(within(off).getByRole("checkbox"));
     await user.click(within(off).getByRole("button", { name: "Turn it off" }));
-    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("OffA person set this area to off."));
-    // An overridden area has no panel of its own; the footer carries the way back.
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("OffYou turned this area offOverride…"));
+    // An overridden area has its own way back in its row. The service shows no `since` for it, so Follow sends no record to compare (a stale
+    // answer would otherwise refuse every undo).
     const follow = vi.spyOn(crewApi, "followArea");
-    await user.click(screen.getByRole("button", { name: "Override…" }));
+    await user.click(within(rowOf("web/auth")).getByRole("button", { name: "Override…" }));
     const menu = await screen.findByRole("menu", { name: "web/auth override" });
     expect(within(menu).getByRole("menuitem", { name: "Off" })).toHaveAttribute("aria-current", "true");
     await user.click(within(menu).getByRole("menuitem", { name: "Follow the record" }));
-    expect(follow).toHaveBeenCalledWith({ project: "p-app", area: "web/auth", seen: { merges: 9, reverts: 2, tripped_at: at(7, 15, 36) } });
+    expect(follow).toHaveBeenCalledWith({ project: "p-app", area: "web/auth" });
     await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toContain("Demoted"));
+  });
+});
+
+describe("override choices", () => {
+  it("Follow the record after Keep the ceiling also works, with no stale refusal", async () => {
+    const { user } = await open("crew-areas-tripped");
+    await user.click(within(screen.getByRole("region", { name: "Why web/auth moved from Full to On" })).getByRole("button", { name: "Override…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Keep the ceiling" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: "Keep the ceiling" }));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("FullYou kept the ceilingOverride…"));
+    await user.click(within(rowOf("web/auth")).getByRole("button", { name: "Override…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Follow the record" }));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toContain("Demoted"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not offer Keep the ceiling when the ceiling is not Full, where it would change nothing", async () => {
+    const { user } = await open("crew-areas-ceiling-off");
+    await user.click(within(screen.getByRole("region", { name: "web/auth: the ceiling wins" })).getByRole("button", { name: "Override…" }));
+    const menu = await screen.findByRole("menu", { name: "web/auth override" });
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.getAttribute("aria-label"))).toEqual(["Follow the record", "Off"]);
   });
 });
 
@@ -261,7 +286,7 @@ describe("autonomy-override-warning", () => {
     await user.click(within(dialog).getByRole("button", { name: "Keep the ceiling" }));
     expect(spy).toHaveBeenCalledWith({ project: "p-app", area: "web/auth", choice: "keep_ceiling", acknowledged: true, seen: { merges: 9, reverts: 2, tripped_at: at(7, 15, 36) } });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("FullA person set this area to keep ceiling."));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("FullYou kept the ceilingOverride…"));
   });
 
   it("Cancel closes it and sends nothing", async () => {
@@ -272,7 +297,7 @@ describe("autonomy-override-warning", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("a record that moved while the person read it is refused with the service's words, and the dialog stays", async () => {
+  it("a record that moved while the person read it is refused with the service's words, and the warning closes", async () => {
     mock.reset("crew-areas-stale");
     window.location.hash = "#/settings/crew/areas?repo=p-app";
     const user = userEvent.setup();
@@ -282,8 +307,9 @@ describe("autonomy-override-warning", () => {
     const dialog = await screen.findByRole("dialog", { name: "Keep the ceiling for web/auth?" });
     await user.click(within(dialog).getByRole("checkbox"));
     await user.click(within(dialog).getByRole("button", { name: "Keep the ceiling" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The record changed since you looked. Read it again before choosing.");
-    expect(screen.getByRole("dialog", { name: "Keep the ceiling for web/auth?" })).toBeVisible();
+    // The warning described an old record: it closes, and the service's words show on the page.
+    expect(await screen.findByRole("alert")).toHaveTextContent("The record changed since you looked. Read it again before choosing.");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

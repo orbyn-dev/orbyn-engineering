@@ -803,9 +803,9 @@ ledger itself is unreadable: the log then holds the only trace, though the gate 
 `-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-override`, `-override-warning`, `-thresholds` and `-narrow`, plus
 `autonomy-override-off-warning` (Designer ruling on #573). Code: `web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas}.ts*`, routes
 `#/settings/crew/areas[/thresholds]?repo=<project id>` (the first visible repository when `repo` is absent). One component, driven by the areas read; the page's
-`data-frame` names the frame its data is in. **One ceiling per repository:** the header says "Repo ceiling: X" once, the table has no ceiling column, and the
-rows show the mode the area is on now. Both Keep the ceiling and Off ask first in the same dialog and send `acknowledged: true` only after the box is ticked;
-Override… is on the tripped, recovering, criteria-met, ceiling-wins and restored panels, and Follow the record undoes a choice. The words are the design's,
+`data-frame` names the frame its data is in. **Ceiling:** the header says "Repo ceiling: X" (the project's) once and the table has no ceiling column; rows show the mode the area is on now, and
+a row whose own ceiling (the service sets one per area) differs from the repo's says so in its state text. Both Keep the ceiling and Off ask first in the same dialog and send `acknowledged: true` only after the box is ticked;
+Override… is on the tripped, recovering, criteria-met, ceiling-wins and restored panels and in every overridden row; Keep the ceiling is offered only when the area is below a Full ceiling; Follow the record undoes a choice (sent without `seen` when the row has no `since`, as the service stores the trip time through an override). A `stale` answer closes the warning and shows the service's words on the page. The words are the design's,
 written from the served fields. No date is drawn that the service does not serve (recovery clock, who reverted, when a ceiling was lowered).
 Not built (the Designer draws them later): `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, a back link on Thresholds, `autonomy-promoted`, `autonomy-by-area`.
 

@@ -158,7 +158,7 @@ const steady = (): AutopilotAreaRow[] => [
   areaRow("docs/guides", 12, 0),
   areaRow("web/app", 7, 0),
   areaRow("crates/orbyn-core", 6, 0),
-  areaRow("crates/orbyn-keys", 6, 1),
+  areaRow("crates/orbyn-keys", 6, 2, { ceiling: "on", now: "on", state: "ceiling_lower", line: "The ceiling is On, so the breaker has nothing to lower. The record is shown only." }),
   areaRow(".github/workflows", 3, 0),
 ];
 
@@ -208,6 +208,7 @@ export function createCrewMock() {
   let young = false;
   let areas = areaScenario("crew-areas");
   let staleOnce = false;
+  let tripped: Record<string, number> = {};
 
   const modes = (): AutopilotModes => ({ confirmed, effective_default: mode, entries, truncated: false });
 
@@ -220,6 +221,7 @@ export function createCrewMock() {
       : [];
     young = scenario === "crew-young";
     areas = areaScenario(scenario);
+    tripped = Object.fromEntries(areas.rows.flatMap((one) => (one.since ? [[one.area_key, one.since] as const] : [])));
     staleOnce = scenario === "crew-areas-stale";
     heldScenario = scenario.startsWith("crew-held") ? scenario : "";
     held = heldScenario ? holds() : [];
@@ -257,8 +259,10 @@ export function createCrewMock() {
     const asked = body as { area: string; choice?: string; acknowledged?: boolean; seen?: { merges: number; reverts: number; tripped_at?: number | null } };
     const row = areas.rows.find((one) => one.area_key === asked.area);
     if (!row) return { status: 404, body: { code: "not_found", message: "That area is not on this repository." } };
-    const moved = staleOnce || (asked.seen !== undefined && asked.seen !== null && (asked.seen.merges !== row.record.merges || asked.seen.reverts !== row.record.reverts || (asked.seen.tripped_at ?? null) !== (row.since ?? null)));
-    if (moved && tail === "override") {
+    // As the service: `since` is shown only while the area is lowered, but the stored trip time stays through an override, and a stale check compares against it.
+    const stored = tripped[row.area_key] ?? null;
+    const moved = asked.seen !== undefined && asked.seen !== null && (staleOnce || asked.seen.merges !== row.record.merges || asked.seen.reverts !== row.record.reverts || (asked.seen.tripped_at ?? null) !== stored);
+    if (moved) {
       staleOnce = false;
       return { status: 409, body: { code: "stale", message: "The record changed since you looked. Read it again before choosing." } };
     }
@@ -266,11 +270,15 @@ export function createCrewMock() {
     if (tail === "follow") {
       const kept = { ...row };
       delete kept.override;
-      next = { ...kept, state: row.since && row.recovery ? "recovering" : row.since ? "demoted" : "follows", now: row.since ? (row.ceiling === "full" ? "on" : row.ceiling) : row.ceiling };
-    } else if (asked.choice === "off") {
-      next = { ...row, state: "overridden", now: "off", override: { choice: "off", at: areas.asOf }, line: "A person set this area to off." };
-    } else if (asked.choice === "keep_ceiling" && asked.acknowledged && row.since) {
-      next = { ...row, state: "overridden", now: row.ceiling, override: { choice: "keep_ceiling", at: areas.asOf }, line: "A person set this area to keep ceiling." };
+      next = stored ? { ...kept, since: stored, state: row.recovery ? "recovering" : "demoted", now: row.ceiling === "full" ? "on" : row.ceiling } : { ...kept, state: "follows", now: row.ceiling };
+    } else if (asked.choice === "off" && asked.acknowledged) {
+      const kept = { ...row };
+      delete kept.since;
+      next = { ...kept, state: "overridden", now: "off", override: { choice: "off", at: areas.asOf }, line: "A person set this area to off." };
+    } else if (asked.choice === "keep_ceiling" && asked.acknowledged && stored) {
+      const kept = { ...row };
+      delete kept.since;
+      next = { ...kept, state: "overridden", now: row.ceiling, override: { choice: "keep_ceiling", at: areas.asOf }, line: "A person set this area to keep ceiling." };
     } else return { status: 400, body: { code: "invalid", message: "That choice is not allowed for this area." } };
     areas = { ...areas, rows: areas.rows.map((one) => (one.area_key === row.area_key ? next : one)) };
     return { status: 200, body: next };
