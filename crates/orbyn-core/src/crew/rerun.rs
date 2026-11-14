@@ -1,11 +1,15 @@
 //! A person's re-run of a task's checks: the key's checks only, again, in the task's own checkout, through the verifier
-//! (`Core::judge`, SPEC.md H7: it adds Evidence and a Gate and changes no state). Person only: the route is local only and listed in
+//! (`Core::judge`). It changes no state (SPEC.md H7) and **stores no Evidence or Gate**: Review and the merge proof count every
+//! Evidence of a task as its own verification and the protocol's Evidence has no provenance field, so a re-run's record is its two
+//! audit rows (counts only). Person only: the route is local only and listed in
 //! `changes::STATE_CHANGING` (so Autopilot's N1 refuses an agent's request to it), and no Crew tool calls this.
 //!
 //! Order, each step failing closed:
-//! 1. the task must exist, have a key and a checkout, and have ended (`passed`, `stopped`). A task still being worked on, being
-//!    verified, cancelled, or with a worker whose run is still open is a conflict: the key's commands never run in a checkout a worker
-//!    is writing, or beside the live verification. One re-run per task at a time.
+//! 1. the task must exist, have a key and a checkout, and be `passed`, or `stopped` for a benign reason after its checks ran live at
+//!    least once (a safety stop, such as an injection or too many denials, never had the key run in its checkout, and is refused). A
+//!    task still being worked on, being verified, cancelled, or with a worker whose run is still open is a conflict: the key's
+//!    commands never run in a checkout a worker is writing, or beside the live verification. One re-run at a time on the device, and
+//!    a gap of [`MIN_GAP_SECS`] between two re-runs of one task.
 //! 2. one transaction takes the claim and writes the intent row `crew.task.rerun_checks`, before any command runs.
 //! 3. every command of the key is screened with the always-denied list (N1 to N10) and the blast-radius guard, the same reading a
 //!    worker's command gets. A command that fails the screen, or cannot be read, is not run; its check is recorded as an error, so
@@ -20,7 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orbyn_contracts::{CheckOutcome, CrewRerunGate as Gate, CrewRerunRefused, CrewTaskRerunDone};
+use orbyn_contracts::{CheckOutcome, CrewRerunGate as Gate, CrewTaskRerunDone};
 use serde_json::json;
 
 use super::autopilot::Screened;
@@ -37,6 +41,8 @@ pub mod fixtures;
 pub const RERUN_MAX: Duration = Duration::from_secs(30 * 60);
 /// The longest reason, in characters.
 pub const REASON_MAX: usize = 200;
+/// The least time between the end of one re-run of a task and the next.
+pub const MIN_GAP_SECS: i64 = 10;
 
 impl Core {
     /// Runs the key's checks again for the person. See the module for the order and what each failure leaves behind.
@@ -46,16 +52,18 @@ impl Core {
         reason: Option<&str>,
         actor: &str,
     ) -> Result<CrewTaskRerunDone> {
-        self.rerun_within(task_id, reason, actor, RERUN_MAX).await
+        self.rerun_within(task_id, reason, actor, RERUN_MAX, MIN_GAP_SECS)
+            .await
     }
 
-    /// [`Self::crew_rerun_checks`] with its own upper bound on the whole run, so a test can use a short one.
+    /// [`Self::crew_rerun_checks`] with its own upper bound on the whole run and gap, so a test can use short ones.
     pub(super) async fn rerun_within(
         self: &Arc<Self>,
         task_id: &str,
         reason: Option<&str>,
         actor: &str,
         cap: Duration,
+        gap: i64,
     ) -> Result<CrewTaskRerunDone> {
         self.crew_preview_only()?;
         valid_id(task_id)?;
@@ -70,11 +78,19 @@ impl Core {
         self.refuse_open_worker(&task.id)?;
         let (task, run) = self
             .store
-            .begin_crew_rerun(task_id, actor, reason.as_deref())?;
+            .begin_crew_rerun(task_id, actor, reason.as_deref(), gap)?;
         let core = self.clone();
         let (id, who) = (task.id.clone(), actor.to_owned());
         let work = tokio::spawn(async move {
-            let done = core.rerun_claimed(&task, &run, cap).await;
+            // The run is a task of its own, so a panic in it is a `JoinError` here and the claim is still let go.
+            let inner = core.clone();
+            let ran = tokio::spawn(async move { inner.rerun_claimed(&task, &run, cap).await });
+            let done = match ran.await {
+                Ok(done) => done,
+                Err(_) => Err(CoreError::Internal(
+                    "The re-run stopped unexpectedly.".into(),
+                )),
+            };
             let (action, detail) = match &done {
                 Ok(done) => (
                     "crew.task.rerun_checks_done",
@@ -121,6 +137,11 @@ impl Core {
         cap: Duration,
     ) -> Result<CrewTaskRerunDone> {
         self.refuse_open_worker(&task.id)?;
+        #[cfg(test)]
+        assert!(
+            !tests_panic::take(&task.id),
+            "a re-run that panics, for the test of it"
+        );
         let key = self
             .store
             .crew_answer_key(&task.id)?
@@ -147,7 +168,6 @@ impl Core {
                 refused.push((check.id.as_str().to_owned(), rule));
             }
         }
-        let gates_before = self.store.crew_gates(&task.id)?.len();
         let rerun = Rerun {
             refused: &refused,
             cap,
@@ -159,12 +179,12 @@ impl Core {
                 let why: String = super::redact(&error.message).chars().take(200).collect();
                 CoreError::Unsupported(format!("The checks could not be run: {why}"))
             })?;
-        let gate = match self.store.crew_gates(&task.id)?.get(gates_before..) {
-            Some([.., last]) => match last.decision {
-                orbyn_contracts::GateDecision::Pass => Gate::Pass,
-                _ => Gate::Fail,
-            },
-            _ => Gate::None,
+        let gate = if verdict.evidence.is_empty() || verdict.undecided() {
+            Gate::None
+        } else if verdict.passed() {
+            Gate::Pass
+        } else {
+            Gate::Fail
         };
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let ran = verdict
@@ -184,20 +204,28 @@ impl Core {
             refused: count(refused.len()),
             skipped: count(verdict.not_verified.len()),
             gate,
-            evidence_ids: verdict
-                .evidence
-                .iter()
-                .map(|id| id.as_str().to_owned())
-                .collect(),
-            refused_checks: is_final(&task.state).then(|| {
-                refused
-                    .iter()
-                    .map(|(check, rule)| CrewRerunRefused {
-                        check: check.clone(),
-                        rule: (*rule).to_owned(),
-                    })
-                    .collect()
-            }),
+            refused_checks: is_final(&task.state)
+                .then(|| refused.iter().map(|(check, _)| check.clone()).collect()),
         })
+    }
+}
+
+/// Makes the re-run of one task panic, so a test can see that the claim is let go.
+#[cfg(test)]
+pub(super) mod tests_panic {
+    use std::sync::Mutex;
+
+    static TASKS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    pub fn arm(task: &str) {
+        TASKS.lock().unwrap().push(task.to_owned());
+    }
+
+    /// True once for a task that was armed.
+    pub fn take(task: &str) -> bool {
+        let mut tasks = TASKS.lock().unwrap();
+        let before = tasks.len();
+        tasks.retain(|t| t != task);
+        tasks.len() < before
     }
 }

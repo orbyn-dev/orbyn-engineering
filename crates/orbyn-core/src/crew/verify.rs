@@ -83,8 +83,10 @@ impl Judgement {
     }
 }
 
-/// How the core runs the key again for a person (`rerun`): checks the screen refused are not run, and the whole run has an upper
-/// bound of its own.
+/// How the core runs the key again for a person (`rerun`): checks the screen refused are not run, the whole run has an upper
+/// bound of its own, and **nothing is stored**: Review and the merge proof count every Evidence and Gate of a task as the task's own
+/// verification, and the protocol's Evidence has no field that says "a person's re-run", so a re-run's rows would change what a
+/// reviewer is told and the commit it reads. The re-run's record is its audit rows (`rerun`).
 pub(super) struct Rerun<'a> {
     /// The checks not to run, by id, with the rule that refused each.
     pub refused: &'a [(String, &'static str)],
@@ -364,9 +366,11 @@ impl Core {
             evidence.id = CrewObject::Evidence(evidence.clone()).computed_id()?;
             let object = CrewObject::Evidence(evidence.clone());
             refuse_secret(&object.to_value())?;
-            self.store
-                .add_crew_object(&task.id, &object)
-                .map_err(internal)?;
+            if rerun.is_none() {
+                self.store
+                    .add_crew_object(&task.id, &object)
+                    .map_err(internal)?;
+            }
             verdict.checks.push(ResultCheck {
                 check: check.id.clone(),
                 evidence: evidence.id.clone(),
@@ -385,7 +389,7 @@ impl Core {
                 }),
             }
         }
-        if !verdict.undecided() && !verdict.evidence.is_empty() {
+        if rerun.is_none() && !verdict.undecided() && !verdict.evidence.is_empty() {
             self.store_checks_gate(task, key, &run_id, &verdict)?;
         }
         Ok(verdict)

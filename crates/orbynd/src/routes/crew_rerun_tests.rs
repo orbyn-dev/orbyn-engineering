@@ -151,7 +151,6 @@ async fn a_task_that_ended_is_checked_again_and_the_answer_is_counts_only() {
     let command = "echo secret-looking-output-77 && touch ran";
     let id = task_in(&app.core, &repo, &[command], "passed").await;
     let evidence = app.core.store.crew_evidence(&id).unwrap().len();
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let (status, body) = app
         .rerun(&id, Some(r#"{"reason":"after the merge"}"#))
         .await;
@@ -168,7 +167,7 @@ async fn a_task_that_ended_is_checked_again_and_the_answer_is_counts_only() {
         (&json!(2), &json!(2), &json!(2), &json!(0))
     );
     assert_eq!(body["gate"], "pass");
-    assert_eq!(body["evidence_ids"].as_array().unwrap().len(), 2);
+    assert!(body.get("evidence_ids").is_none());
     let text = body.to_string();
     for key_text in [
         command,
@@ -177,13 +176,12 @@ async fn a_task_that_ended_is_checked_again_and_the_answer_is_counts_only() {
         "secret-looking-output-77",
         "proves",
         "excerpt",
+        "evidence",
     ] {
         assert!(!text.contains(key_text), "{key_text}: {text}");
     }
-    assert_eq!(
-        app.core.store.crew_evidence(&id).unwrap().len(),
-        evidence + 2
-    );
+    // A re-run stores no Evidence: Review counts every one of a task as its own verification.
+    assert_eq!(app.core.store.crew_evidence(&id).unwrap().len(), evidence);
     assert_eq!(
         app.core.store.crew_task(&id).unwrap().unwrap().state,
         "passed"
@@ -192,16 +190,17 @@ async fn a_task_that_ended_is_checked_again_and_the_answer_is_counts_only() {
         app.audit("crew.task"),
         ["crew.task.rerun_checks", "crew.task.rerun_checks_done"]
     );
-    // An empty body is as good as none.
-    assert_eq!(app.rerun(&id, Some("  ")).await.0, 200);
+    // A second request at once waits for the gap between two re-runs of one task.
+    let (status, body) = app.rerun(&id, Some("  ")).await;
+    assert_eq!((status, body["code"].as_str()), (409, Some("task_busy")));
 }
 
 #[tokio::test]
-async fn a_task_that_is_not_final_gets_counts_and_none_of_the_key() {
+async fn the_answer_has_counts_and_the_ids_of_refused_checks_and_none_of_the_key() {
     let app = serve("leak", true, false).await;
     let repo = app.checkout("repo");
     let drop = "psql -h db.prod.internal -c 'DROP TABLE users' && touch ran-bad";
-    let id = task_in(&app.core, &repo, &["touch ran-ok", drop], "failed").await;
+    let id = task_in(&app.core, &repo, &["touch ran-ok", drop], "stopped").await;
     let (status, body) = app.rerun(&id, None).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(
@@ -213,13 +212,42 @@ async fn a_task_that_is_not_final_gets_counts_and_none_of_the_key() {
         ),
         (&json!(2), &json!(2), &json!(1), &json!("fail"))
     );
-    assert!(body.get("refused_checks").is_none());
+    assert_eq!(body["refused_checks"], json!(["chk-2"]));
     let text = body.to_string();
-    for key_text in ["chk-", "psql", "DROP", "touch", "prod.internal", "blast"] {
+    for key_text in [
+        "chk-1",
+        "psql",
+        "DROP",
+        "touch",
+        "prod.internal",
+        "blast",
+        "evidence",
+    ] {
         assert!(!text.contains(key_text), "{key_text}: {text}");
     }
     assert!(repo.join("ran-ok").exists());
     assert!(!repo.join("ran-bad").exists(), "a guarded command ran");
+}
+
+#[tokio::test]
+async fn a_task_stopped_for_a_safety_reason_is_a_conflict_and_nothing_runs() {
+    let app = serve("hostile", true, false).await;
+    let repo = app.checkout("repo");
+    for state in [
+        "stopped:injection_suspected",
+        "stopped:too_many_denials",
+        "stopped:never",
+    ] {
+        let id = task_in(&app.core, &repo, &["touch ran"], state).await;
+        let (status, body) = app.rerun(&id, None).await;
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (409, Some("task_busy")),
+            "{state}"
+        );
+    }
+    assert!(!repo.join("ran").exists(), "a command ran");
+    assert!(app.audit("crew.task").is_empty());
 }
 
 #[tokio::test]

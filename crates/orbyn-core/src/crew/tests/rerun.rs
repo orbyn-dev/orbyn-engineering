@@ -91,8 +91,6 @@ async fn a_passed_task_is_checked_again_and_its_state_is_left_alone() {
         w.core.store.crew_evidence(&id).unwrap().len(),
         w.core.store.crew_gates(&id).unwrap().len(),
     );
-    // Evidence is addressed by content, and a second has the same address within the same second.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let done = w.core.crew_rerun_checks(&id, None, "user").await.unwrap();
 
     assert_eq!(
@@ -111,11 +109,11 @@ async fn a_passed_task_is_checked_again_and_its_state_is_left_alone() {
         (3, 2, 2, 0, 1)
     );
     assert_eq!(done.gate, CrewRerunGate::Pass);
-    assert_eq!(done.evidence_ids.len(), 3);
     assert_eq!(done.refused_checks, Some(Vec::new()));
     assert_eq!(w.task(&id).state, "passed", "a re-run changes no state");
-    assert_eq!(w.core.store.crew_evidence(&id).unwrap().len(), before.0 + 3);
-    assert_eq!(w.core.store.crew_gates(&id).unwrap().len(), before.1 + 1);
+    // Review counts every Evidence of a task as its own verification and reads the commit of the last: a re-run stores none.
+    assert_eq!(w.core.store.crew_evidence(&id).unwrap().len(), before.0);
+    assert_eq!(w.core.store.crew_gates(&id).unwrap().len(), before.1);
     assert_eq!(rerun_audit(&w), [INTENT, DONE]);
     assert!(
         w.core
@@ -130,7 +128,7 @@ async fn a_passed_task_is_checked_again_and_its_state_is_left_alone() {
 }
 
 #[tokio::test]
-async fn a_stopped_task_may_be_checked_again_too() {
+async fn a_task_stopped_for_a_benign_reason_after_a_live_verification_may_be_checked_again() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let dir = checkout(&w, "stopped");
     let id = task_in(&w.core, &dir, &["exit 3"], "stopped").await;
@@ -142,6 +140,117 @@ async fn a_stopped_task_may_be_checked_again_too() {
     );
     assert_eq!(w.task(&id).state, "stopped");
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("repeated_failure"));
+    for reason in ["budget", "engine_error"] {
+        let id = task_in(&w.core, &dir, &["exit 0"], &format!("stopped:{reason}")).await;
+        assert_eq!(
+            again(&w, &id).await.unwrap().gate,
+            CrewRerunGate::Pass,
+            "{reason}"
+        );
+    }
+}
+
+/// A re-run with no gap, for tests that run one task twice.
+async fn again(w: &World, id: &str) -> Result<orbyn_contracts::CrewTaskRerunDone, CoreError> {
+    w.core
+        .rerun_within(id, None, "user", crate::crew::rerun::RERUN_MAX, 0)
+        .await
+}
+
+/// A task Autopilot stopped for hostile behaviour never had the key run in its checkout, and the worker may have planted what the key's
+/// commands would run. The table admits six reasons, so a reason this code cannot name cannot be stored today; the allow-list reads one the same way if a seventh is added. A task never verified live is refused too.
+#[tokio::test]
+async fn a_task_stopped_for_a_safety_reason_or_never_verified_is_refused_and_nothing_runs() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let dir = checkout(&w, "hostile");
+    for state in [
+        "stopped:injection_suspected",
+        "stopped:too_many_denials",
+        "stopped:lead_stopped",
+        "stopped:never",
+    ] {
+        let id = task_in(&w.core, &dir, &["touch ran"], state).await;
+        let error = w
+            .core
+            .crew_rerun_checks(&id, None, "user")
+            .await
+            .unwrap_err();
+        assert_eq!(code(&error), ("task_busy", 409), "{state}: {error}");
+        assert!(!dir.join("ran").exists(), "{state}: a command ran");
+    }
+    assert!(rerun_audit(&w).is_empty(), "a refused request wrote a row");
+}
+
+/// One re-run at a time on the device, not per task, and a gap between two of one task.
+#[tokio::test]
+async fn only_one_rerun_runs_on_the_device_and_a_task_waits_between_two() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let dir = checkout(&w, "device");
+    let wait =
+        "touch started; i=0; while [ ! -f go ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done";
+    let slow = task_in(&w.core, &dir, &[wait], "passed").await;
+    let other = task_in(&w.core, &dir, &["exit 0"], "passed").await;
+    let core = w.core.clone();
+    let first = {
+        let slow = slow.clone();
+        tokio::spawn(async move { core.crew_rerun_checks(&slow, None, "user").await })
+    };
+    w.until("the first command started", |_| {
+        dir.join("started").exists()
+    })
+    .await;
+    let error = w
+        .core
+        .crew_rerun_checks(&other, None, "user")
+        .await
+        .unwrap_err();
+    assert_eq!(code(&error), ("task_busy", 409), "{error}");
+    assert!(error.to_string().contains("Another task"));
+    assert_eq!(rerun_audit(&w), [INTENT]);
+    std::fs::write(dir.join("go"), "go").unwrap();
+    first.await.unwrap().unwrap();
+
+    // The device is free again, so the other task runs; the first waits for its gap.
+    w.core
+        .crew_rerun_checks(&other, None, "user")
+        .await
+        .unwrap();
+    let error = w
+        .core
+        .crew_rerun_checks(&other, None, "user")
+        .await
+        .unwrap_err();
+    assert_eq!(code(&error), ("task_busy", 409), "{error}");
+    assert!(error.to_string().contains("Try again in"), "{error}");
+    assert_eq!(rerun_audit(&w).len(), 4, "a refused request wrote a row");
+    again(&w, &other).await.unwrap();
+}
+
+/// A panic in the run must not leave the claim set or the outcome row unwritten.
+#[tokio::test]
+async fn a_panic_in_the_run_lets_the_claim_go_and_writes_the_failed_row() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let dir = checkout(&w, "panic");
+    let id = task_in(&w.core, &dir, &["exit 0"], "passed").await;
+    crate::crew::rerun::tests_panic::arm(&id);
+    let error = w
+        .core
+        .crew_rerun_checks(&id, None, "user")
+        .await
+        .unwrap_err();
+    assert_eq!(error.status(), 500, "{error}");
+    assert_eq!(rerun_audit(&w), [INTENT, "crew.task.rerun_checks_failed"]);
+    assert!(
+        w.core
+            .store
+            .crew_run(&id)
+            .unwrap()
+            .unwrap()
+            .verifying_since
+            .is_none(),
+        "the claim is let go"
+    );
+    assert_eq!(again(&w, &id).await.unwrap().gate, CrewRerunGate::Pass);
 }
 
 /// The intent row exists before the first command runs, and a second request while one runs is refused.
@@ -183,7 +292,6 @@ async fn the_intent_is_written_before_the_first_command_and_a_second_request_is_
             .is_some()
     );
     // A second request is busy, writes nothing and runs nothing.
-    let evidence = w.core.store.crew_evidence(&id).unwrap().len();
     let second = w
         .core
         .crew_rerun_checks(&id, None, "user")
@@ -191,15 +299,20 @@ async fn the_intent_is_written_before_the_first_command_and_a_second_request_is_
         .unwrap_err();
     assert_eq!(code(&second), ("task_busy", 409), "{second}");
     assert_eq!(rerun_audit(&w), [INTENT]);
-    assert_eq!(w.core.store.crew_evidence(&id).unwrap().len(), evidence);
 
     std::fs::write(worktree.join("src/go"), "go").unwrap();
     let done = first.await.unwrap().unwrap();
     assert_eq!(done.gate, CrewRerunGate::Pass);
     assert_eq!(rerun_audit(&w), [INTENT, DONE]);
-    // The claim is let go: the next request is accepted.
+    // The claim is let go; the gap between two re-runs of one task still holds.
+    let soon = w
+        .core
+        .crew_rerun_checks(&id, None, "user")
+        .await
+        .unwrap_err();
+    assert_eq!(code(&soon), ("task_busy", 409), "{soon}");
     std::fs::remove_file(worktree.join("src/started")).unwrap();
-    w.core.crew_rerun_checks(&id, None, "user").await.unwrap();
+    again(&w, &id).await.unwrap();
     assert_eq!(rerun_audit(&w), [INTENT, DONE, INTENT, DONE]);
 }
 
@@ -242,7 +355,10 @@ async fn a_task_with_a_claim_is_refused() {
         .unwrap_err();
     assert_eq!(code(&error), ("task_busy", 409));
     let ended = task_in(&w.core, &dir, &["exit 0"], "stopped").await;
-    w.core.store.begin_crew_rerun(&ended, "user", None).unwrap();
+    w.core
+        .store
+        .begin_crew_rerun(&ended, "user", None, 0)
+        .unwrap();
     let error = w
         .core
         .crew_rerun_checks(&ended, None, "user")
@@ -365,7 +481,7 @@ async fn the_reason_is_redacted_and_a_crash_leaves_the_intent_row() {
     );
 
     // A crash after the intent: the row stays, the claim holds the task, and a start of the service lets it go.
-    w.core.store.begin_crew_rerun(&id, "user", None).unwrap();
+    w.core.store.begin_crew_rerun(&id, "user", None, 0).unwrap();
     assert_eq!(rerun_audit(&w), [INTENT, DONE, INTENT]);
     let error = w
         .core
@@ -374,7 +490,7 @@ async fn the_reason_is_redacted_and_a_crash_leaves_the_intent_row() {
         .unwrap_err();
     assert_eq!(code(&error), ("task_busy", 409));
     w.core.store.clear_crew_claims().unwrap();
-    w.core.crew_rerun_checks(&id, None, "user").await.unwrap();
+    again(&w, &id).await.unwrap();
 }
 
 /// The core's own key commands got no screen before: a re-run gives each the worker's reading, and does not run what fails it.
@@ -407,34 +523,27 @@ async fn a_command_the_screen_refuses_is_not_run_and_the_others_are() {
         CrewRerunGate::Fail,
         "a refused check keeps the Gate from passing"
     );
-    let refused: Vec<(String, String)> = done
-        .refused_checks
-        .clone()
-        .unwrap()
-        .into_iter()
-        .map(|r| (r.check, r.rule))
-        .collect();
+    // The ids of the refused checks, and nothing else about them: not the rule, not the command.
     assert_eq!(
-        refused,
-        [
-            ("chk-2".to_owned(), "blast".to_owned()),
-            ("chk-3".to_owned(), "N4".to_owned()),
-            ("chk-4".to_owned(), "unreadable".to_owned())
-        ]
+        done.refused_checks.as_deref(),
+        Some(&["chk-2".to_owned(), "chk-3".to_owned(), "chk-4".to_owned()][..])
     );
-    // The Evidence says it was not run and holds no command text.
-    let evidence = w.core.store.crew_evidence(&id).unwrap();
-    assert_eq!(evidence.len(), 5);
-    let kept = serde_json::to_string(&evidence).unwrap();
+    assert_eq!(
+        w.core.store.crew_evidence(&id).unwrap().len(),
+        1,
+        "a re-run stores no Evidence"
+    );
+    assert_eq!(w.core.store.crew_gates(&id).unwrap().len(), 0, "or Gate");
+    let rows = w.core.store.list_audit(None, 500).unwrap();
+    let kept = serde_json::to_string(&rows).unwrap();
     for text in ["DROP", "psql", "rm -rf", "oops"] {
         assert!(!kept.contains(text), "{text} was kept");
     }
-    assert!(kept.contains("the command guard refused it"));
 }
 
-/// A task that is not final gets counts and nothing of the key (H1).
+/// The answer has counts, the ids of the refused checks, and nothing else of the key (H1).
 #[tokio::test]
-async fn the_answer_for_a_task_that_is_not_final_has_counts_and_none_of_the_key() {
+async fn the_answer_has_counts_and_refused_ids_and_none_of_the_key() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let dir = checkout(&w, "leak");
     let id = task_in(
@@ -444,16 +553,19 @@ async fn the_answer_for_a_task_that_is_not_final_has_counts_and_none_of_the_key(
             "echo orbyn-key-marker-77 && touch ran-ok",
             "psql -h db.prod.internal -c 'DROP TABLE users'",
         ],
-        "failed",
+        "stopped",
     )
     .await;
     let done = w.core.crew_rerun_checks(&id, None, "user").await.unwrap();
-    assert_eq!(done.state, "failed");
+    assert_eq!(done.state, "stopped");
     assert_eq!((done.ran, done.passed, done.refused), (2, 2, 1));
-    assert_eq!(done.refused_checks, None);
+    assert_eq!(
+        done.refused_checks.as_deref(),
+        Some(&["chk-2".to_owned()][..])
+    );
     let text = serde_json::to_string(&done).unwrap();
     for text_of_key in [
-        "chk-",
+        "chk-1",
         "psql",
         "DROP",
         "touch",
@@ -461,11 +573,12 @@ async fn the_answer_for_a_task_that_is_not_final_has_counts_and_none_of_the_key(
         "proves",
         "Only leased",
         "exits 0",
+        "blast",
+        "N4",
+        "evidence",
     ] {
         assert!(!text.contains(text_of_key), "{text_of_key}: {text}");
     }
-    assert!(!text.contains("refused_checks"));
-    assert_eq!(done.evidence_ids.len(), 3);
 }
 
 #[tokio::test]
@@ -476,18 +589,13 @@ async fn the_whole_run_has_an_upper_bound() {
     let started = std::time::Instant::now();
     let done = w
         .core
-        .rerun_within(&id, None, "user", Duration::from_secs(1))
+        .rerun_within(&id, None, "user", Duration::from_secs(1), 0)
         .await
         .unwrap();
     assert!(started.elapsed() < Duration::from_secs(15));
     assert_eq!(
         (done.ran, done.passed, done.gate),
         (2, 1, CrewRerunGate::Fail)
-    );
-    let kept = serde_json::to_string(&w.core.store.crew_evidence(&id).unwrap()).unwrap();
-    assert!(
-        kept.contains("ran out of time") || kept.contains("time budget"),
-        "{kept}"
     );
     assert_eq!(crate::crew::rerun::RERUN_MAX, Duration::from_secs(1800));
 }

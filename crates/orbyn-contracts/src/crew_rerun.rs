@@ -16,7 +16,7 @@ pub struct CrewTaskRerun {
 }
 
 wire_enum! {
-/// The Gate this run of the checks added: what the verifier decided. `none` when it decided nothing, such as when every check
+/// What the verifier decided about this run of the checks. `none` when it decided nothing, such as when every check
 /// is one this version cannot run, or when a check that would not be fair was met first (a protected file changed).
 pub enum CrewRerunGate {
     Pass,
@@ -26,17 +26,8 @@ pub enum CrewRerunGate {
 }
 
 wire! {
-/// A check the command guard would not let run, for a task that has ended. The id is the check's, never its command.
-pub struct CrewRerunRefused {
-    pub check: String,
-    /// The rule that refused it: `N1` to `N10`, `blast` or `unreadable`.
-    pub rule: String,
-}
-}
-
-wire! {
-/// The answer to a re-run. No command, output, excerpt or claim of any check is in it. The task's state is as it was: a re-run adds
-/// Evidence and a Gate and changes no state.
+/// The answer to a re-run. No command, output, excerpt or claim of any check is in it, and no Evidence id: a re-run stores no
+/// Evidence or Gate (its record is its two audit rows), and changes no state.
 pub struct CrewTaskRerunDone {
     /// The task's id.
     pub task: String,
@@ -48,16 +39,14 @@ pub struct CrewTaskRerunDone {
     pub ran: u32,
     /// How many of those passed.
     pub passed: u32,
-    /// How many the command guard refused. They were not run, and a refused check keeps the Gate from passing.
+    /// How many the command guard refused. They were not run, and a refused check keeps the verdict from passing.
     pub refused: u32,
     /// How many are of a kind this version does not run.
     pub skipped: u32,
     pub gate: CrewRerunGate,
-    /// The Evidence this run added.
-    pub evidence_ids: Vec<String>,
-    /// Which checks were refused. Only for a task that is final; a task that is not final gets the count only.
+    /// The ids of the checks the guard refused, never their commands or the rule. Only for a task that is final; otherwise the count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub refused_checks: Option<Vec<CrewRerunRefused>>,
+    pub refused_checks: Option<Vec<String>>,
 }
 }
