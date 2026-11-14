@@ -53,9 +53,10 @@ export const highFullReport: RiskReport = {
 
 export const highOnReport: RiskReport = {
   ...highReport,
+  // Crew Designs v37: Paths, Size, Revert rate, and Area mode as planned (it comes after the beta and is not an input to the tier).
   reasons: [
-    ...highReport.reasons,
-    { icon: "area-mode", label: "Area mode", value: "Follows the repo: Autopilot is On", effect: "none" },
+    ...highReport.reasons.filter((reason) => reason.icon !== "coverage"),
+    { icon: "area-mode", label: "Area mode", value: "Planned: after the autonomy-by-area slice", effect: "none", muted: true },
   ],
   outcome: {
     heading: "Everything before the merge is green",

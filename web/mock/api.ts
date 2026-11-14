@@ -26,6 +26,7 @@ import type {
 } from "../src/api/types.ts";
 import { createAccountMock } from "./account.ts";
 import { createCrewMock } from "./crew.ts";
+import { needsYouMock } from "./needsyou.ts";
 import { createExplorerMock } from "./explorer.ts";
 import { createSecretsMock } from "./secrets.ts";
 import * as fixtures from "./fixtures.ts";
@@ -1128,7 +1129,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
+      if (parsed.pathname.startsWith("/api/crew")) return needsYouMock(scenario, method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */

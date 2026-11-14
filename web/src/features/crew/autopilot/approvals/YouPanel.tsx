@@ -13,6 +13,8 @@ export interface YouActions {
   turnRuleOff?(): void;
   addReviewer?(): void;
   sendBack?(): void;
+  /** Opens the item in the Review queue. It merges nothing. */
+  review?(): void;
   approveAndMerge?(): void;
   approveDontMerge?(): void;
   switchToFull?(): void;
@@ -80,7 +82,7 @@ export function YouPanel({ state, act = {} }: { state: YouState; act?: YouAction
           <Box title={`Why ${state.risk[0]?.toUpperCase() ?? ""}${state.risk.slice(1)}`}><Facts rows={[{ label: "Paths", text: state.paths }, { label: "Size", text: state.size }]} /></Box>
           <Box title="Every stage before the merge is green"><Facts rows={state.lines} /></Box>
           <p className="ap-muted">Not verified: {state.notVerified}</p>
-          <Buttons items={[["Approve and merge", act.approveAndMerge, true], ["Send back to Build", act.sendBack], ["Switch this repo to Full", act.switchToFull]]} />
+          <Buttons items={[["Review", act.review, true], ["Send back to Build", act.sendBack], ["Switch this repo to Full", act.switchToFull]]} />
         </aside>
       );
     case "off":
@@ -91,7 +93,7 @@ export function YouPanel({ state, act = {} }: { state: YouState; act?: YouAction
           <Box title="Autopilot is Off for this repo"><p>Crew proves the work, but nothing merges until you approve it, and agents’ requests come to you, as they did before Autopilot.</p></Box>
           <Box title={`Risk · ${state.risk[0]?.toUpperCase() ?? ""}${state.risk.slice(1)}`}><p>{state.riskNote}</p></Box>
           <Box title="Every stage before the merge is green"><Facts rows={state.lines} /></Box>
-          <Buttons items={[["Approve and merge", act.approveAndMerge, true], ["Approve, don’t merge", act.approveDontMerge], ["Send back to Build", act.sendBack]]} />
+          <Buttons items={[["Review", act.review, true], ["Approve, don’t merge", act.approveDontMerge], ["Send back to Build", act.sendBack]]} />
         </aside>
       );
   }

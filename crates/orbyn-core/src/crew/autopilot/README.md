@@ -16,6 +16,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |
+| `presence` | The shell messages that carry a person's approval of a hold (`presence_describe`, `presence_grant`) and what they check |
 | `review` | `Core`'s side: the mode, the approvers, and `ActionReview` for the gate |
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
 | `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |
@@ -47,7 +48,7 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
 5b. **Held for a person:** a denied command is held ([`held`](held.rs)). The person may approve that exact command once (bound to its
    text, arguments, paths, thread and task; one retry; 10 minutes), deny it or dismiss it, from the app's window only. The retry is checked
    against the always-denied list first and then lets the one approval through, with a ledger row (`decided_by: person`). Approving needs
-   the account's "Confirm it's you" for the hold. Nothing on the always-denied list is ever held.
+   the person's click in the desktop app's own dialog (`presence`). Nothing on the always-denied list is ever held.
 6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
@@ -141,7 +142,7 @@ sit inside the data folder, which a worker running as the same user can read: th
 
 ## Ledger
 
-`crew_autopilot_events` (migration 38) is append-only: `allowed`, `denied`, `person`, `disagreement`, `tripwire`, and the rows of a held command (`held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used`, `hold_ended`),
+`crew_autopilot_events` (migration 38) is append-only: `allowed`, `denied`, `person`, `disagreement`, `tripwire`, and the rows of a held command (`held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used`, `hold_ended`) and, one per routing, `route_class` (the data classes a brief was in and the engines they blocked),
 each with the action, who decided and the rule or reasons. Counters are read from the rows. This is not the hash-chained
 ledger of slice 4c; when that lands these rows move into it.
 

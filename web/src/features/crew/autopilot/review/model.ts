@@ -18,6 +18,8 @@ export interface Reason {
   label: string;
   value: string;
   effect: Effect;
+  /** The value is a plan, not a fact: drawn muted. */
+  muted?: boolean;
 }
 
 /** A task's tier with every reason behind it. A tier is never shown without these. */

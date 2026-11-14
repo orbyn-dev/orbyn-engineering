@@ -31,7 +31,7 @@ fn clean(value: &Value, needles: &[String]) -> Value {
 }
 
 /// The row as it is stored: cleaned, then scanned; free text is dropped if the scan still objects.
-pub(super) fn safe(body: &Value, needles: &[String]) -> Value {
+pub(in crate::crew) fn safe(body: &Value, needles: &[String]) -> Value {
     let cleaned = clean(body, needles);
     if refuse_secret(&cleaned).is_ok() && refuse_leak(&cleaned, needles).is_ok() {
         cleaned

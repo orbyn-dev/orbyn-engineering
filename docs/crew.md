@@ -559,13 +559,84 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   racing approve and deny have exactly one winner. A hold that expired, or whose task ended, answers 410 (`gone`); one already decided answers 409.
 - **Never the always-denied list.** A command on the list (N1 to N10) is never held. The list is read again when the person approves and again when the
   worker retries, so a change in between (the checkout moved to main, say) turns the approval into a refusal. A person's deny rule still wins at the gate.
-- **Proof that a person is there.** Approving needs the account's "Confirm it's you" for this hold: the window asks `POST /api/account/confirm` with the
-  action `approve_device` and the `device_id` `crew-approve-once:<hold id>`, and sends the one-time nonce back in `x-orbyn-confirm`. It is for this hold
-  only, used up by its first use, 10 minutes at most, in memory only (the account's rules, [issue #435](account.md#sensitive-account-actions)). **It
-  protects against** a caller that holds only the service token (a worker, [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)): it has no
-  nonce, so it cannot approve. **It does not protect against** a worker that can read the password or drive the window (the sandbox, #441), and it needs a
-  signed-in account: without one nothing can be approved once. **In release builds approve-once always fails with `account_disabled` (the account is off). In dev builds the stand-in account's password is public, so a worker holding the token could call `/api/account/confirm` itself (by a script N1 does not read) and approve its own hold: the protection is only as strong as the account password.** As a code guard, approve-once is refused while a seeded stand-in account (an `@example.com` address on the development backend) is signed in. Deny and dismiss need no password because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or
-  dismiss a hold, never approve one. A dedicated confirmation action instead of the `approve_device` id convention waits for the account's own code to change.
+- **Proof that a person is there: local presence (Approving once: local presence).** Approving needs a grant the desktop app records after the person
+  clicks Approve in the app's own native dialog; the account is not involved, so approve-once never answers `account_disabled`. The desktop shell launches
+  the service with `--parent-stdin` and a piped stdin only the shell holds (an engine gets its own piped stdin from the service, never the shell's). The flow, over newline JSON on that channel:
+  1. The shell sends `presence_describe {request_id, hold_id}`. The service answers `presence_hold {request_id, hold_id, thread_id, task_id,
+     command_shown, command_sha256, worker_name, task_title}` or `presence_refused {request_id, code}`. The command, the worker's name and the task's title
+     come from the service, redacted (the answer key's text withheld) and bounded, never from the web page. `command_sha256` is the hold's binding hash.
+  2. The shell shows the dialog. When the person clicks Approve it mints a nonce (16 random bytes, hex) and sends `presence_grant {request_id, nonce,
+     hold_id, thread_id, task_id, command_sha256}`. The service records one grant for the hold in memory (`PresenceBook`), only if the hold is open now
+     and every bound field matches it as it stands now, and answers `presence_ready {request_id}`. The shell hands the nonce to the page only after that.
+     A later grant for the same hold replaces the earlier one. A grant lives 60 seconds, is used by one approval and is cleared by a restart.
+  3. The page posts `POST /api/crew/approvals/{hold}/approve-once` with the nonce in `x-orbyn-confirm`. The service checks the grant first, without
+     using it (constant-time compare), then the hold is open, its task is running, the command is readable and the always-denied list again; only then
+     does it use the grant up and decide. A refusal at any step leaves the grant as it was; a wrong nonce does not burn it. The ledger row is
+     `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`.
+  The strings in `presence_hold` are made for a plain-text dialog: control, invisible, bidirectional and format characters become a visible `�`,
+  a newline becomes a visible `⏎`, the command is capped at 1000 characters with `truncated` set if it was cut (the hash is of the full command), and
+  a hold that cannot be read whole is refused with `unreadable`. The shell's dialog renders all of them as plain text (no markup, no HTML, no
+  link detection) and shows them as given; it also refuses an answer that still holds a control character.
+  Refusal codes on the shell channel: `unavailable`, `invalid`, `not_found`, `gone`, `unreadable`, `mismatch`.
+  **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
+  wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.
+  **What it protects.** No caller that only speaks HTTP to the service can approve once, with or without the service token. Deny and dismiss need no grant
+  because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or dismiss a hold, never approve one.
+  **What a process of the same OS user can still do, so this is not OS-level presence:**
+  - drive the desktop app's native dialog through Accessibility or SendInput, including a lead that is not confined;
+  - read the shell's memory (on macOS the hardened runtime blocks `task_for_pid`, but signing is not checked here; on Windows `PROCESS_VM_READ`);
+  - write into the shell's pipe to the service (on Linux `/proc/<pid>/fd/0`, on Windows `DuplicateHandle`).
+  The devtools feature is on in release builds (`desktop/src-tauri/Cargo.toml:15`): a script in the page can call `invoke` but cannot click the native
+  dialog. That is a known exposure, tracked in [issue #532](https://github.com/orbyn-dev/orbyn-engineering/issues/532).
+  **Idea, not built (Linux only):** a per-launch HMAC key between the shell and the service, so a line written into the pipe by another process fails.
+  **As built (PR2, the shell's dialog):** the command `crew_presence(hold_id)` in `desktop/src-tauri/src/presence.rs`. The bundled app's main window
+  alone may call it (the capability is the `main` window's, and the command checks the window's label and address as well). It checks the hold id, sends
+  `presence_describe` and waits up to 10 seconds for `presence_hold` (matched by request id), shows the native dialog from the service's text, and
+  only on a click on Approve once mints the nonce (16 bytes from the operating system, 32 lowercase hex characters), sends `presence_grant` with the ids
+  and hash exactly as the service described them, waits up to 10 seconds for `presence_ready` and returns the nonce. The dialog's title is "Approve this
+  command once?", its body is the command (then an ellipsis if it was cut), "Worker: <name>", "Task: <title>" and "This approves this one command. It
+  cannot be reused."; its buttons are "Approve once" and "Cancel". One approval is open at a time (a second call is `busy`). The nonce is never logged,
+  never written to disk and never in an event; it reaches the page only as the command's return value. The buffers the shell owns are zeroed when dropped, which is
+  best effort. Errors are stable strings: `cancelled` (nothing was sent), `busy`, `timeout`, `unavailable` (no service), `invalid_hold`,
+  `invalid_answer`, `forbidden`, `dialog_failed`, `nonce_failed` and `presence_refused:<code>` for the service's refusal codes above. The page words
+  them; for a refusal or a timeout the Designer's text is "Orbyn couldn't confirm it was you. Try again from the desktop app."
+  **Which button is which, and what Return does.** Approve once is the dialog plugin's OK slot and Cancel its cancel slot. **Return in the native dialog
+  APPROVES on macOS and Windows**, because Approve once is the first button and the default one, and the plugin has no default-button setting. Escape,
+  the close box, Alt+F4, a failed dialog call and a GTK delete-event all come back as the Cancel label; only a click or Return on the Approve slot equals
+  the Approve label, and the code refuses to build with the two labels equal. What each platform returns (`dismissals_never_read_as_approval` encodes this table):
+
+  | Platform | Click Approve once | Click Cancel | Escape | Close box / Alt+F4 | Failed call | Return (default) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | macOS | approves | Cancel | Cancel | Cancel | Cancel | **approves** |
+  | Windows | approves | Cancel | Cancel | Cancel | Cancel | **approves** |
+  | Linux (GTK) | approves | Cancel | Cancel | Cancel | Cancel | not checked |
+
+  Why this is acceptable: the person opened the dialog by clicking Approve once in the page, the dialog shows the exact command, and Return approving
+  adds no capability beyond what a same-user process that can click the dialog already has (stated above). The dialog may only open as the direct result of the
+  person's own click; the shell cannot tell a click from a script that calls `crew_presence` (devtools is on in release builds, issue #532), so PR3's card
+  must call it only from a trusted click (`event.isTrusted`, no keydown, no automatic retry) and wait for the Enter key to be released first. In the shell,
+  `crew_presence` is the only way a dialog opens; nothing retries, reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`).
+  If the plugin gains a default-button setting, we revisit and make Cancel the default.
+  **Manual check (the dialog cannot run in CI), on macOS, Windows and Linux (GTK):** with a held command, click Approve once in the page, then:
+  1. Escape: the call answers `cancelled`; no grant is sent.
+  2. Close box, and Alt+F4 on Windows and Linux: `cancelled`.
+  3. Click Cancel: `cancelled`.
+  4. Return: approves (expected on macOS and Windows; note what Linux does).
+  5. Click Approve once: the nonce comes back and the service answers `presence_ready`.
+  6. Linux: a command such as `date +%s; echo 100%` is shown exactly, with the single `%` signs.
+  7. Leave it open and call again: `busy`. Minimise the window and call again: the window comes forward.
+  The main window is shown, un-minimised and focused first (up to half a second for macOS's animation); if it is still not visible the answer is `unavailable`.
+  The dialog is parented to it on macOS and Windows. On Linux rfd's GTK 3 backend ignores a parent, so the dialog is unparented and may open behind
+  the main window. A native dialog cannot be closed from the shell, so the person has 10 minutes (a hold waits that long); after that the call ends with
+  `timeout` and a late click is thrown away, but the dialog stays up and a new call answers `busy` until it is dismissed.
+  **Text refused** (`invalid_answer`) in the command, worker name or task title: control characters; U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5,
+  U+180B-180F, U+200B-200F, U+2028-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0, U+FFF9-FFFC, U+1BCA0-1BCA3, U+1D173-1D17A, U+E0000-E0FFF (the
+  service's set, copied), and also U+0600-0605, U+06DD, U+070F, U+08E2 and U+13430-1343F, which the shell refuses and the service does not map yet.
+  **Linux text.** rfd's GTK 3 backend reads the dialog text as a printf format, so on every platform but macOS and Windows the shell doubles each `%`
+  in the text it shows (`double_percent`); on macOS and Windows the text is plain and is shown as given.
+  The dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
+  **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
+  from the app's window stays held.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the
@@ -622,6 +693,70 @@ lists merges, each with a merge commit and a revert, and a stopped run has neith
 review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
 limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
 prompt and checks are not defined yet.
+
+**As built (slice 4i, routing):** a repository can say which engines may take which paths, in `classes` of `.orbyn/crew.json`. The router
+uses it as a hard filter. Preview only; Orbyn reads the file and never writes it (architecture rule 4).
+
+```json
+{ "classes": { "version": 1, "rules": [
+  { "name": "auth-paths", "paths": ["**/auth/**", "crates/keys/**"], "engines": ["claude"], "reason": "Sign-in code stays on one vendor." }
+] } }
+```
+
+- **Read at the commit the task starts from, not from the checkout's files.** The commit is the lead checkout's HEAD, read once before
+  routing, and the file is read at it through hardened git (`ls-tree` then `cat-file`). The decision and the ledger row record the commit and
+  the file's blob id. A running task's routing uses the crew.json recorded when it started (the commit and blob id are in the `route_class` row); a later change has no effect on it, and an uncommitted edit of the file is not read. The `.orbyn` entry must be a tree or
+  absent (a symlink there would read as a missing file), the file must be a plain blob (mode 100644: a symlink or submodule is invalid), and its
+  size (64 KiB at most) is read before its content. No file, or none with `classes`, means one class, "Everything else": any signed-in engine.
+- **Strict inside `classes`.** `version` must be 1; at most 64 rules, 32 paths and 16 engines per rule; `name` 1 to 40 characters of `a-z`, `0-9`,
+  `-`, unique; `reason` 1 to 200 characters; unknown keys inside `classes` are refused. `engines: []` is valid and blocks every engine. An engine id this
+  machine does not have is kept and shown as "not on this machine". Unknown keys at the top of the file belong to other slices: they are noted
+  and ignored. A file holding a secret (the shared detector) is refused.
+- **An invalid file fails closed.** If the file cannot be read, does not parse or breaks a rule above, every engine is blocked by the rule
+  "crew.json invalid" with the problem in plain words, and the task waits in Needs you. It is never read as "no rules". The same file also holds
+  review `lanes` and `allowed_hosts`, so a file that is not JSON at all blocks every start now, not only the review; a file whose `lanes` are wrong
+  but which is valid JSON still starts and fails at the review as before. The dry run (`crew_route`) says nothing about classes for a thread with no
+  commit to read, and a start there is refused on its own terms.
+- **Grammar (v1).** `/`-separated parts. `*` matches any run of characters inside one part; a part that is exactly `**` matches any number of
+  parts, none included. `?`, `[`, `]`, `{` and `}` are refused so a pattern means one thing everywhere. A pattern with a backslash, a leading
+  `/`, a drive letter, an empty part or a `.` or `..` part is invalid. Matching ignores case and Unicode normalisation (NFC, lowercase, NFC):
+  on a case-folding file system two spellings are one file, so a pattern matches the spellings the file system would, which tightens the rule.
+  It is not the file system's own table: a final sigma is a sigma, but `ss` and the sharp s stay different names (as on APFS), and Turkish dotted and
+  dotless i are lowercased only, so a name that is one file only under some locale or file system can be missed.
+- **Which classes a brief is in.** Every pattern of `brief.files` counts, read and write alike; a brief with no files is unknown and is checked
+  against every class. For a lease (`dir/**`) the glob is walked against the directory (a worker with the lease may create a matching path, so
+  `**/auth/**` may match under `src/**`: narrow the lease to avoid it), and the tracked files under it, listed from git at the same commit
+  (50,000 at most, more counts as unknown), are matched too. A tracked symlink under a lease is followed inside the tree and what it reaches
+  is classified as leased; one that points outside the tree, is absolute or has no target counts as every class. When several classes match, the
+  allowed engines are the intersection; if it is empty nothing starts.
+- **In the router.** `filters::class_screen` runs inside `route()` before every other filter and before scoring. A blocked engine is
+  rejected with `path_class` ("Blocked by rule: auth-paths, allowed engines: Claude. <reason>"). An explicit engine tag on a blocked engine is
+  refused and never swapped. The decision gains a `path_classes` reason with the class names, the commit and the blob. The dry run
+  (`crew_route`) reads the classes too, so it never says yes to what a start refuses. Engines that are not installed are also listed as blocked,
+  because the class filter comes first.
+- **Ledger.** Each routing appends one `route_class` row to `crew_autopilot_events` (no migration: `kind` is free text), through the ledger's
+  redaction: the classes matched with their pattern and up to 20 sample paths, each blocked engine with the rule and its reason, the engine
+  chosen or none, the commit and blob, and the time. On a refusal the row also keeps the whole `rejected` list, the requested engine and the
+  message, which is where the Needs you item reads its structured rows. A routing whose row cannot be written does not go on.
+- **Routes** (Preview, 404 with the flag off, reads only, listed in `crew::changes` `READS`): `GET /api/crew/classes?thread=` (commit, blob,
+  rules, problems, notes, the worktree label, and whether the checkout's copy differs: "not in force until committed"),
+  `GET /api/crew/classes/test?thread=&path=` (1 to 10 paths, `path` repeated or one per line, each validated: classes, matched pattern, allowed engines, the
+  route-card sentence), `GET /api/crew/route/{task}` (the decision or the refusal, and the `route_class` rows).
+
+What is not built: the guard that watches a worker against its classes (PR B); the Settings screens, the route card and Needs you screens
+(PR C); enforcement at the gate and at verify time, so **a worker that is allowed to run shell commands can still read a file outside its lease
+until #441's sandbox covers it, and a symlink a worker adds during the task is not seen**; an ask-me route and a `locked` flag on a rule
+(ruling pending). Known limits: **the file is read at the checkout's HEAD at task start; an agent that can run git can move HEAD or commit a change, and the next task reads it; an
+agent that can push to the base branch can change the rules for later tasks** (the N7 check only blocks a git command whose path argument is
+`.orbyn/crew.json`), so a class is not a guarantee against an agent; reading a ref an agent cannot move, such as the default branch, is follow-up #535. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
+counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
+that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
+async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) is refused
+with "no commit to read it at": the rules cannot be read, and not knowing is never a reason to allow. Review briefs always have
+`files: []`, so they count as every class: a rule with `engines: []` blocks every review in the repository, and a class that allows one engine plus
+"the reviewer differs from the builder" means no reviewer can start. The class set is whatever the committed file says, so a person who edits it uncommitted sees "not in force until
+committed" and nothing else changes; the lease walk widens on purpose, so a broad lease can be tied to a class it never touches; a class names
+engines by id only (an instance of an engine is its own id); the tracked-file listing is read whole before the 50,000 cap is applied.
 
 **As built (slice 4f, UI part B):** the risk, Review queue, Merge queue, watch-on-main and digest frames of Crew Designs
 v19 (34 frames) as display-only Preview screens in `web/src/features/crew/autopilot/review`, opened by

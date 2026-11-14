@@ -1,6 +1,7 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
 //! delete and the runs; nothing fires a trigger or starts an engine), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
-//! main, the digest, the approval ledger, the trip wires and the guards. Transport only: `orbyn_core::crew` builds every view and
+//! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
+//! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
 //!
 //! **Flag off, nothing here exists.** Every route sits behind [`preview_gate`], which answers exactly what the fallback answers
@@ -20,15 +21,14 @@
 //!
 //! **No agent approves; a person may approve once.** A command the chain denied is held (`GET /api/crew/approvals/held`). The person
 //! may approve that exact command once (`POST /api/crew/approvals/{id}/approve-once`), deny it or dismiss it. Approving needs the
-//! account's "Confirm it's you" for this hold: the window asks `POST /api/account/confirm` (`approve_device`, `device_id`
-//! `crew-approve-once:<hold id>`) and sends the nonce back in `x-orbyn-confirm`, so a caller that holds only the service token
-//! (#441) cannot approve. It protects against that caller and nothing more: a worker that can drive the window or read the
-//! password defeats it. **In release builds approve-once always fails with `account_disabled` (the account is off); in dev builds
-//! the stand-in account's password is public, so the protection is only as strong as that password, and approve-once is refused
-//! while a seeded stand-in account is signed in.** Deny and dismiss need no password (they only refuse), so a token holder can
-//! deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers are refused for
-//! all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays for
-//! development only.
+//! person's click in the desktop app's own native dialog: the shell records a one-time grant with the service on the channel only
+//! the shell holds, and the page sends the grant's nonce in `x-orbyn-confirm`. A service without a desktop shell, and a remote one,
+//! answers `403 desktop_required`; a missing, wrong, used, expired or mismatched nonce is `403 presence_required` and does not use
+//! the grant up. No caller that only speaks HTTP to the service can approve once, with or without the service token. This is not
+//! OS-level presence (docs/crew.md, "Approving once: local presence"). Deny and dismiss need no grant (they only refuse), so a
+//! token holder can deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers
+//! are refused for all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays
+//! for development only.
 
 use axum::Json;
 use axum::Router;
@@ -76,7 +76,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/approvals/{id}/approve-once",
-        "core autopilot_approve_once: the account's confirmation for this hold (x-orbyn-confirm), used up; the hold open, its task running, the command read whole, the always-denied list again, one decision; local only",
+        "core autopilot_approve_once: a desktop shell, the person's grant for this hold as it stands (x-orbyn-confirm), used up; the hold open, its task running, the command read whole, the always-denied list again, one decision; local only",
     ),
     (
         "POST",
@@ -160,6 +160,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
+        .route("/api/crew/classes", get(classes))
+        .route("/api/crew/classes/test", get(classes_test))
+        .route("/api/crew/route/{task_id}", get(route_view))
         .merge(writes)
         .merge(super::crew_tasks::routes())
         .layer(from_fn_with_state(state, preview_gate))
@@ -188,6 +191,12 @@ async fn local_only(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiFailure> {
+    if state.remote && request.uri().path().ends_with("/approve-once") {
+        return Err(ApiFailure::forbidden(
+            "desktop_required",
+            "Approving a command needs the Orbyn desktop app on this computer.",
+        ));
+    }
     if state.remote {
         return Err(ApiFailure::forbidden(
             "local_only",
@@ -210,6 +219,54 @@ fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
 
 fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
+}
+
+/// The repository's data classes at the commit a task started in this thread would start from. Read-only.
+async fn classes(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    let thread = thread_of(&query)?;
+    Ok(Json(state.core.crew_classes_view(&thread).await?))
+}
+
+/// Up to 10 paths against those rules. `path` may be repeated, and each value may hold several paths, one per line.
+async fn classes_test(
+    State(state): State<AppState>,
+    pairs: Result<
+        axum::extract::Query<Vec<(String, String)>>,
+        axum::extract::rejection::QueryRejection,
+    >,
+) -> ApiResult<impl IntoResponse> {
+    let axum::extract::Query(pairs) =
+        pairs.map_err(|_| CoreError::Invalid("the query is not valid".into()))?;
+    let thread = pairs
+        .iter()
+        .find(|(name, _)| name == "thread")
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| CoreError::Invalid("thread is required".into()))?;
+    let paths: Vec<String> = pairs
+        .iter()
+        .filter(|(name, _)| name == "path")
+        .flat_map(|(_, value)| value.lines())
+        .map(|line| line.trim_end_matches('\r'))
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    Ok(Json(state.core.crew_class_test(&thread, &paths).await?))
+}
+
+/// How one task was routed: the decision or the refusal, and the ledger rows of the routing.
+async fn route_view(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_route_view(&task_id)?))
+}
+
+fn thread_of(query: &QueryMap) -> Result<String, CoreError> {
+    query
+        .0
+        .get("thread")
+        .cloned()
+        .ok_or_else(|| CoreError::Invalid("thread is required".into()))
 }
 
 async fn preview(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
@@ -341,7 +398,7 @@ async fn held(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_held()?))
 }
 
-/// The header the confirmation's nonce comes back in: what the account's "Confirm it's you" answered with.
+/// The header the person's grant nonce comes in: what the desktop app handed the page after the person clicked Approve.
 const CONFIRM_HEADER: &str = "x-orbyn-confirm";
 
 async fn approve_once(

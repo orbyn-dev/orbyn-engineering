@@ -8,6 +8,7 @@ use super::super::AccountCenter;
 use super::super::api::Password;
 use super::{CONFIRM_WINDOW, ConfirmFor, Confirmed};
 use crate::error::{CoreError, Result};
+use crate::util::same_secret;
 
 /// A confirmation waiting to be used. In memory only, never stored.
 pub(in crate::account) struct Grant {
@@ -15,16 +16,6 @@ pub(in crate::account) struct Grant {
     pub(super) at: Instant,
     /// What `confirm` handed back to the window that typed the password. The action must send it.
     pub(super) nonce: String,
-}
-
-/// Compares two secrets without stopping at the first difference.
-fn same_secret(left: &str, right: &str) -> bool {
-    left.len() == right.len()
-        && left
-            .bytes()
-            .zip(right.bytes())
-            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
-            == 0
 }
 
 impl AccountCenter {
