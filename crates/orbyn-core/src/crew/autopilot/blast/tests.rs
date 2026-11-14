@@ -312,12 +312,14 @@ fn an_unreadable_command_with_a_destructive_and_a_non_local_word_is_guarded() {
 
 #[test]
 fn a_sql_file_is_not_read_and_the_limit_is_documented() {
-    // Known limit: what `-f` runs is not read. A file whose name holds a keyword is guarded all the same (it fails closed).
-    assert_eq!(
-        look("psql -h db.example.com -f migrate.sql", &facts(Vec::new())),
-        None
-    );
-    assert!(guarded("psql -h db.example.com -f drop.sql"));
+    // Known limit: what `-f` runs is not read, whatever the file or the host is called.
+    for command in [
+        "psql -h db.example.com -f migrate.sql",
+        "psql -h db.example.com -f drop.sql",
+        "psql -h drop.example.com -f schema.sql",
+    ] {
+        assert_eq!(look(command, &facts(Vec::new())), None, "{command}");
+    }
 }
 
 #[test]
@@ -568,4 +570,156 @@ fn an_approval_is_bound_to_the_resolved_targets() {
     );
     assert_ne!(before, other_host);
     assert_eq!(before, at("", &super::tests::remotes()));
+}
+
+#[test]
+fn ssh_cannot_be_pointed_elsewhere_by_a_jump_a_hostname_a_proxy_or_a_remote_command_option() {
+    guarded_all(&[
+        "ssh -J prod.example.com localhost rm -rf /srv/data",
+        "ssh -J ops@prod.example.com:22,localhost localhost rm -rf /srv/data",
+        "ssh -o HostName=prod.example.com localhost rm -rf /srv/data",
+        "ssh -o 'HostName prod.example.com' localhost rm -rf /srv/data",
+        "ssh -o ProxyJump=prod.example.com localhost rm -rf /srv/data",
+        "ssh -o ProxyCommand='ssh prod rm -rf /srv/data' localhost true",
+        "ssh -o RemoteCommand=\"rm -rf /srv/data\" prod.example.com",
+        "ssh -o RemoteCommand=\"rm -rf /srv/data\" prod.example.com true",
+        "ssh -o RemoteCommand=ls prod.example.com",
+        "ssh -o LocalCommand='rm -rf x' localhost true",
+        "ssh -F cfg localhost rm -rf /srv/data",
+        "ssh -L 1:prod.internal:2 localhost rm -rf /srv/data",
+        "ssh -W prod.internal:22 localhost rm -rf /srv/data",
+    ]);
+    unguarded_all(&[
+        "ssh -o StrictHostKeyChecking=no localhost rm -rf /srv/data",
+        "ssh -J 127.0.0.1 localhost rm -rf /srv/data",
+        "ssh -o HostName=localhost localhost rm -rf /srv/data",
+        "ssh -o RemoteCommand=ls localhost",
+        "ssh -L 1:localhost:2 localhost rm -rf /srv/data",
+    ]);
+}
+
+#[test]
+fn text_fed_to_a_remote_shell_is_read() {
+    guarded_all(&[
+        "echo 'rm -rf /srv/data' | ssh prod.example.com bash",
+        "printf 'rm -rf /srv/data' | ssh prod.example.com sh",
+        "ssh prod.example.com bash <<EOF\nrm -rf /srv/data\nEOF",
+        "ssh prod.example.com <<EOF\nrm -rf /srv/data\nEOF",
+        "cat clean.sh | ssh prod.example.com bash",
+        "ssh prod.example.com bash < clean.sh",
+        "ssh prod.example.com < clean.sh",
+        "./make-script | ssh prod.example.com python3",
+    ]);
+    unguarded_all(&[
+        "echo hello | ssh prod.example.com bash",
+        "echo hi | ssh prod.example.com tee x",
+        "ssh prod.example.com 'cat /x | wc -l'",
+        "echo 'rm -rf /srv/data' | ssh localhost bash",
+    ]);
+}
+
+#[test]
+fn a_backslash_at_the_end_of_a_line_joins_it_to_the_next() {
+    guarded_all(&[
+        "aws --profile prod \\\n s3 rb s3://b",
+        "git \\\n push --force origin feature",
+        "docker -H ssh://prod.internal \\\n rm x",
+        "gsutil -m \\\n rm -r gs://b",
+        "psql -h db.prod \\\n -c 'DROP TABLE t'",
+        "ssh prod.internal \\\r\n rm -rf /srv",
+    ]);
+    unguarded_all(&[
+        "aws --profile prod \\\n s3 ls",
+        "git \\\n push origin feature",
+    ]);
+}
+
+#[test]
+fn sql_parentheses_subqueries_mysql_comments_and_backticks_are_read() {
+    guarded_all(&[
+        "psql -h db.prod -c '(SELECT 1 AS on) DELETE FROM users'",
+        "psql -h db.prod -c '(SELECT 1 AS for) UPDATE t SET a = 1'",
+        "psql -h db.prod -c 'UPDATE users SET email = (SELECT NULL WHERE false)'",
+        "psql -h db.prod -c 'UPDATE users SET email = NULL WHERE id IN (SELECT 1) OR 1=1; UPDATE u SET b = (SELECT 1 WHERE true)'",
+        "mysql -h db.prod -e '/*!50000 DROP TABLE users */'",
+        "mysql -h db.prod -e '/*! DROP TABLE users */'",
+        "mysql -h db.prod -e 'UPDATE t SET a = 1 # WHERE id = 1'",
+        "mysql -h db.prod -e 'UPDATE `where` SET a = 1'",
+        "mysql -h db.prod -e 'DROP TABLE `t`'",
+    ]);
+    unguarded_all(&[
+        "psql -h db.prod -c 'UPDATE users SET email = NULL WHERE id = 1'",
+        "psql -h db.prod -c 'UPDATE users SET email = (SELECT 1) WHERE id = (SELECT 2)'",
+        "mysql -h db.prod -e 'SELECT `drop` FROM t'",
+        "mysql -h db.prod -e 'SELECT 1'",
+    ]);
+}
+
+#[test]
+fn a_remote_changed_earlier_in_the_same_command_line_is_unresolvable() {
+    guarded_all(&[
+        "git remote set-url mirror git@github.com:org/prod.git && git push --force mirror feature",
+        "git remote add x /srv/a.git; git push -f x feature",
+        "git remote rename mirror prod; git push --delete prod old",
+        "git config remote.mirror.pushurl git@github.com:o/p.git && git push --force mirror x",
+        "git remote remove mirror && git remote add mirror git@github.com:o/p.git && git push --force mirror x",
+    ]);
+    unguarded_all(&[
+        "git remote -v && git push --force mirror x",
+        "git remote get-url mirror && git push --delete mirror old",
+    ]);
+}
+
+#[test]
+fn wrappers_that_hide_the_real_command_are_unwrapped_or_scanned() {
+    guarded_all(&[
+        "env -S 'ssh prod.internal rm -rf /x'",
+        "env -S'ssh prod.internal rm -rf /x'",
+        "env -u HOME -S 'aws s3 rb s3://b --profile prod'",
+        "aws-vault exec prod -- aws s3 rb s3://b",
+        "aws-vault exec prod --duration 1h -- aws s3 rm s3://b --recursive",
+        "caffeinate -t 5 ssh prod.internal rm -rf /x",
+        "setsid ssh prod.internal rm -rf /x",
+        "nohup ssh prod.internal rm -rf /x",
+        "chroot /r ssh prod.internal rm -rf /x",
+        "flock /tmp/l ssh prod.internal rm -rf /x",
+        "flock /tmp/l -c 'ssh prod.internal rm -rf /x'",
+        "watch -n 5 ssh prod.internal rm -rf /x",
+        "script -c 'ssh prod.internal rm -rf /x' /dev/null",
+        "parallel ssh {} rm -rf /x ::: prod.internal",
+        "unshare -r ssh prod.internal rm -rf /x",
+        "ionice -c 3 ssh prod.internal rm -rf /x",
+        "mytool --fast ssh prod.internal rm -rf /x",
+        "mytool aws s3 rb s3://b --profile prod",
+        "just docker -H tcp://10.0.0.5:2376 rm x",
+        "make deploy-tool psql -h db.prod -c 'DROP TABLE t'",
+    ]);
+    unguarded_all(&[
+        "echo ssh prod.internal rm -rf /x",
+        "grep \"psql -h db.prod -c 'DROP TABLE x'\" notes.txt",
+        "cargo test",
+        "mytool --fast ls",
+    ]);
+}
+
+#[test]
+fn compose_and_document_stores_are_read() {
+    guarded_all(&[
+        "mongosh mongodb://db.prod/app --eval 'db.users.deleteMany({})'",
+        "mongosh mongodb://db.prod/app --eval 'db.users.updateMany({}, {$set: {a: 1}})'",
+        "mongosh mongodb://db.prod/app --eval 'db.dropDatabase()'",
+        "DOCKER_HOST=ssh://u@prod.internal docker compose down -v",
+        "DOCKER_HOST=ssh://u@prod.internal docker compose -f x.yml -p app down --volumes",
+        "DOCKER_HOST=ssh://u@prod.internal docker compose down --rmi all",
+        "DOCKER_HOST=ssh://u@prod.internal docker compose rm -f",
+        "DOCKER_HOST=ssh://u@prod.internal docker-compose down -v",
+        "docker --context prod compose down -v",
+    ]);
+    unguarded_all(&[
+        "docker compose down -v",
+        "docker compose down",
+        "DOCKER_HOST=ssh://u@prod.internal docker compose down",
+        "docker compose up -d",
+        "psql -h drop.example.com <<EOF\nSELECT 1\nEOF",
+    ]);
 }

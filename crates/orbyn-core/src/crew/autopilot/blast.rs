@@ -20,6 +20,7 @@ use orbyn_contracts::{GuardCategory, GuardList, GuardTarget, GuardTargetKind};
 use regex::Regex;
 
 use self::sql::destructive_sql;
+use self::ssh::ssh;
 use super::hard::Ctx;
 use super::shell::{Simple, simple_commands};
 
@@ -510,7 +511,7 @@ fn cluster(args: &[String], letters: &[char]) -> bool {
 
 /// Reads one simple command. `over` is the target of an `ssh` the command runs under: whatever the inner command reaches, it reaches
 /// from that host.
-fn read(command: &Simple, text: &str, over: Option<&Raw>, out: &mut Vec<Read>) {
+fn read(command: &Simple, text: &str, over: Option<&[Raw]>, out: &mut Vec<Read>) {
     let args = &command.args;
     let mut reads = Vec::new();
     match command.program.as_str() {
@@ -539,9 +540,66 @@ fn read(command: &Simple, text: &str, over: Option<&Raw>, out: &mut Vec<Read>) {
         "gsutil" => reads.extend(gsutil(command, text, over)),
         "docker" => reads.extend(docker(command, text, over)),
         "git" => reads.extend(git(command, text, over)),
+        "docker-compose" => {
+            let mut compose = command.clone();
+            compose.args.insert(0, "compose".to_owned());
+            reads.extend(docker(&compose, text, over));
+        }
+        other if !KNOWN_TOOLS.contains(&other) && !HARMLESS.contains(&other) => {
+            suffix_scan(command, text, over, out);
+        }
         _ => {}
     }
     out.extend(reads);
+}
+
+/// Programs the guard reads itself.
+const KNOWN_TOOLS: [&str; 18] = [
+    "ssh",
+    "rm",
+    "find",
+    "rsync",
+    "shred",
+    "truncate",
+    "psql",
+    "mysql",
+    "mariadb",
+    "mongosh",
+    "mongo",
+    "redis-cli",
+    "cqlsh",
+    "aws",
+    "gcloud",
+    "az",
+    "gsutil",
+    "docker",
+];
+
+/// Programs that only print or search their arguments: a destructive tool named in them is text, not a command.
+const HARMLESS: [&str; 19] = [
+    "echo", "printf", "cat", "grep", "rg", "egrep", "fgrep", "ls", "head", "tail", "less", "man",
+    "which", "type", "sed", "awk", "sudo", "doas", "su",
+];
+
+/// A program the guard does not know, followed by the name of a tool it does: a wrapper the parser did not unwrap (`unknown-tool
+/// --flag rm -rf x`). Each later word that names a tool is read as the start of a command, so the wrapper cannot hide it.
+fn suffix_scan(command: &Simple, text: &str, over: Option<&[Raw]>, out: &mut Vec<Read>) {
+    for at in 0..command.args.len().min(16) {
+        let word = &command.args[at];
+        if word.starts_with('-') {
+            continue;
+        }
+        let name = super::shell::program_name(word);
+        if KNOWN_TOOLS.contains(&name.as_str()) || name == "git" || name == "docker-compose" {
+            let inner = Simple {
+                program: name,
+                raw: word.clone(),
+                args: command.args[at + 1..].to_vec(),
+                redirects: Vec::new(),
+            };
+            read(&inner, text, over, out);
+        }
+    }
 }
 
 /// The programs a `find -exec` runs that remove files.
@@ -563,59 +621,10 @@ fn find_destroys(args: &[String]) -> bool {
     })
 }
 
-/// OpenSSH's options that take a value.
-const SSH_WITH_VALUE: &str = "BbcDEeFIiJLlmOoPpQRSWw";
-
-/// The index of the host word in `ssh`'s arguments: after the options and their values, and after `--`.
-fn ssh_host_at(args: &[String]) -> Option<usize> {
-    let mut at = 0;
-    while at < args.len() {
-        let arg = args[at].as_str();
-        if arg == "--" {
-            return (at + 1 < args.len()).then_some(at + 1);
-        }
-        if !arg.starts_with('-') || arg.len() == 1 {
-            return Some(at);
-        }
-        // A cluster such as `-vp 22` or `-p22`: the first option that takes a value ends it.
-        let letters: Vec<char> = arg.chars().skip(1).collect();
-        if let Some(i) = letters.iter().position(|c| SSH_WITH_VALUE.contains(*c)) {
-            at += if i + 1 == letters.len() { 2 } else { 1 };
-        } else {
-            at += 1;
-        }
-    }
-    None
-}
-
-/// `ssh host cmd`: the inner command is read as if it ran on `host`, which is its target. A remote command with a destructive word
-/// that no category read is guarded as unreadable, unless the host is local or safe.
-fn ssh(command: &Simple, text: &str, out: &mut Vec<Read>) {
-    let args = &command.args;
-    let Some(at) = ssh_host_at(args) else { return };
-    let word = args[at].rsplit('@').next().unwrap_or(&args[at]);
-    let target = Raw::host(word);
-    let rest = args[at + 1..].join(" ");
-    if rest.trim().is_empty() {
-        return;
-    }
-    let before = out.len();
-    for inner in simple_commands(&rest) {
-        read(&inner, text, Some(&target), out);
-    }
-    if out.len() == before && (destructive_words().is_match(&rest) || variable(&rest)) {
-        out.push(Read {
-            category: GuardCategory::Unparsed,
-            matched_by: "ssh: a remote command that could not be read".to_owned(),
-            targets: vec![target],
-        });
-    }
-}
-
-fn files(by: &str, command: &Simple, over: Option<&Raw>) -> Read {
+fn files(by: &str, command: &Simple, over: Option<&[Raw]>) -> Read {
     let mut targets = Vec::new();
     if let Some(over) = over {
-        targets.push(over.clone());
+        targets.extend_from_slice(over);
     } else if command.program == "rsync" {
         targets.extend(command.args.iter().flat_map(|a| remote_hosts(a)));
     }
@@ -662,7 +671,7 @@ fn db_hosts_of(word: &str, out: &mut Vec<Raw>) {
     }
 }
 
-fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn database(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     let queries = inline_queries(command);
     // A pipe, a here-doc, a redirect or `-f -` can feed the client SQL as well, even beside `-c`.
@@ -671,12 +680,27 @@ fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
             .windows(2)
             .any(|w| matches!(w[0].as_str(), "-f" | "--file") && w[1] == "-")
         || args.iter().any(|a| a == "--file=-");
+    let mysql = matches!(command.program.as_str(), "mysql" | "mariadb");
+    // What feeds the client, without the host words (a host named `drop.example.com` is not SQL).
+    let mut fed_text = text.to_owned();
+    for host in flag_values(args, &["-h", "--host", "--hostname"]) {
+        fed_text = fed_text.replace(&host, " ");
+    }
+    for arg in args {
+        if !arg.starts_with('-') && !queries.iter().any(|q| q == arg) {
+            let mut named = Vec::new();
+            db_hosts_of(arg, &mut named);
+            if !named.is_empty() {
+                fed_text = fed_text.replace(arg.as_str(), " ");
+            }
+        }
+    }
     let word = queries
         .iter()
-        .find_map(|q| destructive_sql(q, false))
+        .find_map(|q| destructive_sql(q, false, mysql))
         .or_else(|| {
-            if queries.is_empty() || stdin {
-                destructive_sql(text, true)
+            if stdin {
+                destructive_sql(&fed_text, true, mysql)
             } else {
                 None
             }
@@ -686,7 +710,7 @@ fn database(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Database,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let mut targets: Vec<Raw> = Vec::new();
@@ -767,7 +791,7 @@ fn cloud_endpoint_local(args: &[String]) -> bool {
         .any(|value| url_hosts(value).is_some_and(|all| all.iter().all(|raw| raw.local)))
 }
 
-fn aws(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn aws(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     let words = positional(
         args,
@@ -800,7 +824,7 @@ fn aws(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Cloud,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let mut targets: Vec<Raw> = Vec::new();
@@ -855,7 +879,7 @@ fn aws(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     })
 }
 
-fn gcloud(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn gcloud(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     let words = positional(
         args,
@@ -883,7 +907,7 @@ fn gcloud(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Cloud,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let projects: Vec<String> = flag_values(args, &["--project"])
@@ -915,7 +939,7 @@ fn gcloud(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     })
 }
 
-fn az(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn az(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     if !args
         .iter()
@@ -928,7 +952,7 @@ fn az(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Cloud,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let subscriptions: Vec<String> = flag_values(args, &["--subscription"])
@@ -949,7 +973,7 @@ fn az(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
     })
 }
 
-fn gsutil(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn gsutil(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     let words = positional(args, &["-o", "-p", "-i"]);
     let matched_by = match words.first().copied() {
@@ -962,7 +986,7 @@ fn gsutil(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Cloud,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let projects: Vec<String> = flag_values(args, &["-p"])
@@ -996,7 +1020,7 @@ fn gsutil(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
 
 // ---- containers ----------------------------------------------------------------------------------------------------------
 
-fn docker(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn docker(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     let words = positional(
         args,
@@ -1011,10 +1035,25 @@ fn docker(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
             "--tlscacert",
             "--tlscert",
             "--tlskey",
+            "--file",
+            "-f",
+            "-p",
+            "--project-name",
+            "--env-file",
+            "--profile",
+            "--project-directory",
         ],
     );
     let (first, second) = (words.first().copied()?, words.get(1).copied().unwrap_or(""));
+    // `docker compose down -v|--volumes|--rmi` and `compose rm` remove containers, volumes or images.
+    let compose_destroys = first == "compose"
+        && (second == "rm"
+            || second == "down"
+                && (cluster(args, &['v'])
+                    || has_flag(args, "--volumes")
+                    || args.iter().any(|a| a.starts_with("--rmi"))));
     let matched_by = match (first, second) {
+        ("compose", _) if compose_destroys => format!("docker compose {second}"),
         ("rm" | "rmi" | "prune", _) => format!("docker {first}"),
         (
             "container" | "image" | "volume" | "network" | "system" | "builder" | "stack"
@@ -1029,7 +1068,7 @@ fn docker(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Containers,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let mut targets: Vec<Raw> = Vec::new();
@@ -1073,14 +1112,24 @@ fn git_env_re() -> &'static Regex {
     })
 }
 
+fn git_remote_change_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\bgit\b[^;&|\n]*\b(?:remote\s+(?:set-url|add|rename|remove|rm|set-branches)\b|config\b[^;&|\n]*\b(?:remote|url)\.)")
+            .expect("a fixed pattern")
+    })
+}
+
 /// The remotes are not known to the parser, so a push is read in two steps: here the push and its remote word, and in
 /// [`judge`] the name is looked up (every push URL of it). The remote word travels as a target whose kind is `Host` and whose name is
 /// `remote:<word>`. A push that could be redirected by the command itself (`-c remote.x.pushurl=...`, `-C`, `GIT_CONFIG_*` and
 /// `GIT_DIR` in the environment) adds a target that cannot be resolved, so it is guarded.
-fn git(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
+fn git(command: &Simple, text: &str, over: Option<&[Raw]>) -> Option<Read> {
     let args = &command.args;
     let mut at = 0;
-    let mut redirected = git_env_re().is_match(text);
+    // A `git remote set-url|add|rename|remove` or `git config remote.*` earlier in the same command line changes what the push goes to
+    // before it runs, so the remotes read now are not the ones it will use.
+    let mut redirected = git_env_re().is_match(text) || git_remote_change_re().is_match(text);
     while at < args.len() {
         let word = args[at].as_str();
         match word {
@@ -1134,7 +1183,7 @@ fn git(command: &Simple, text: &str, over: Option<&Raw>) -> Option<Read> {
         return Some(Read {
             category: GuardCategory::Git,
             matched_by,
-            targets: vec![over.clone()],
+            targets: over.to_vec(),
         });
     }
     let remote = flag_values(rest, &["--repo"])
@@ -1350,5 +1399,6 @@ pub(super) async fn read_remotes(worktree: &Path) -> HashMap<String, Vec<String>
 }
 
 mod sql;
+mod ssh;
 #[cfg(test)]
 mod tests;
