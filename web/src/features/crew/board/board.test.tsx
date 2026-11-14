@@ -58,8 +58,10 @@ describe("the Taskboard on the board route", () => {
     expect(running.getByText("Sonnet 5.5 · Medium")).toBeVisible();
     expect(running.getByText("owner Lead")).toBeVisible();
     expect(within(column(/^Routed/)).getByText("Sonnet 5.5 · Low")).toBeVisible();
-    // No checks bar yet (After first board), and no lease: the route carries neither.
-    expect(document.body.textContent).not.toMatch(/of \d+ checks|read only/);
+    // The counts show once a task has reached verifying, and never on a queued, routed or running card; no lease is drawn.
+    expect(within(column(/^Verifying/)).getByText("2 of 3 checks passed")).toBeVisible();
+    for (const early of [/^Queued/, /^Routed/, /^Running/]) expect(column(early).textContent).not.toMatch(/checks? passed/);
+    expect(document.body.textContent).not.toMatch(/read only/);
   });
 
   it("opens Passed and Stopped as rails, and a header opens or closes its column", async () => {

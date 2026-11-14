@@ -1,7 +1,7 @@
 //! The ten cells of a task's line, derived and never stored: a pure function of what `Facts` read. Only a confirmed
 //! finding that still blocks turns a review cell red; a model's review never passes or fails a stage by itself.
 
-use orbyn_contracts::{CheckOutcome, FlowCell, FlowCellState, FlowStage};
+use orbyn_contracts::{CheckOutcome, Evidence, FlowCell, FlowCellState, FlowStage};
 use serde_json::Value;
 
 use super::facts::Facts;
@@ -63,21 +63,57 @@ fn build(facts: &Facts) -> FlowCellState {
     }
 }
 
+/// The evidence of the latest verification: the rows on the commit the newest row ran on.
+fn latest_batch(evidence: &[Evidence]) -> Vec<&Evidence> {
+    let Some(last) = evidence.last() else {
+        return Vec::new();
+    };
+    evidence
+        .iter()
+        .filter(|e| e.commit == last.commit)
+        .collect()
+}
+
+/// The states a task is in once it has reached verifying or gone on from it.
+pub(super) fn reached_verifying(state: &str) -> bool {
+    matches!(
+        state,
+        "verifying" | "needs_person" | "passed" | "stopped" | "cancelled"
+    )
+}
+
+/// Checks passed out of checks run in the latest verification, as two counts and nothing else. Only a task that has reached
+/// verifying (`verifying`, `needs_person`, `passed`, `stopped`, `cancelled`) has one; a queued, routed or running task has none,
+/// even when an earlier round left evidence. A task that never ran its checks has none either.
+pub(super) fn check_counts(state: &str, evidence: &[Evidence]) -> Option<(u32, u32)> {
+    if !reached_verifying(state) {
+        return None;
+    }
+    let batch = latest_batch(evidence);
+    if batch.is_empty() {
+        return None;
+    }
+    let passed = batch
+        .iter()
+        .filter(|e| e.outcome == CheckOutcome::Pass)
+        .count();
+    Some((
+        u32::try_from(passed).ok()?,
+        u32::try_from(batch.len()).ok()?,
+    ))
+}
+
 fn checks(facts: &Facts) -> FlowCell {
     // The latest verification: the evidence on the commit the newest row ran on.
-    let Some(last) = facts.evidence.last() else {
+    if facts.evidence.is_empty() {
         let state = if build_state(facts) == "verifying" {
             FlowCellState::Running
         } else {
             FlowCellState::Pending
         };
         return cell(FlowStage::Checks, state);
-    };
-    let batch: Vec<_> = facts
-        .evidence
-        .iter()
-        .filter(|e| e.commit == last.commit)
-        .collect();
+    }
+    let batch = latest_batch(&facts.evidence);
     let passed = batch
         .iter()
         .filter(|e| e.outcome == CheckOutcome::Pass)
@@ -258,5 +294,37 @@ pub(super) fn in_filter(
         }),
         F::Failed => state == "stopped" || some(&|c| c.state == FlowCellState::Failed),
         F::Passed => state == "passed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_task_that_reached_verifying_has_a_check_count() {
+        for state in ["briefed", "routed", "running", "changed_approach", "failed"] {
+            assert!(!reached_verifying(state), "{state}");
+            assert_eq!(check_counts(state, &[]), None, "{state}");
+        }
+        for state in [
+            "verifying",
+            "needs_person",
+            "passed",
+            "stopped",
+            "cancelled",
+        ] {
+            assert!(reached_verifying(state), "{state}");
+            assert_eq!(check_counts(state, &[]), None, "{state} with no checks run");
+        }
+        for state in [
+            "verifying",
+            "needs_person",
+            "passed",
+            "stopped",
+            "cancelled",
+        ] {
+            assert!(crate::crew::lifecycle::STATES.contains(&state), "{state}");
+        }
     }
 }

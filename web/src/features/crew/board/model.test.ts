@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { boardPath, columnPath } from "./api";
-import { ago, COLUMNS, effortLabel, modelLine, moreOf } from "./model";
+import { ago, checksLine, COLUMNS, effortLabel, modelLine, moreOf } from "./model";
 import { cardItems } from "./CardMenu";
 
 describe("the board's words", () => {
@@ -28,6 +28,17 @@ describe("the board's words", () => {
     expect(modelLine({ model: "Sonnet 5.5", effort: "medium" })).toBe("Sonnet 5.5 · Medium");
     expect(modelLine({ model: "GPT-5.5", effort: "high" })).toBe("GPT-5.5");
     expect(modelLine({ model: null, effort: null })).toBe("");
+  });
+
+  it("says the checks passed from two counts, and nothing for an absent or impossible pair", () => {
+    expect(checksLine({ checks: { passed: 2, of: 3 } })).toBe("2 of 3 checks passed");
+    expect(checksLine({ checks: { passed: 1, of: 1 } })).toBe("1 of 1 check passed");
+    expect(checksLine({ checks: { passed: 0, of: 2 } })).toBe("0 of 2 checks passed");
+    expect(checksLine({ checks: null })).toBeNull();
+    expect(checksLine({})).toBeNull();
+    for (const [passed, of] of [[0, 0], [3, 2], [-1, 2], [1.5, 2], [Number.NaN, 2]]) {
+      expect(checksLine({ checks: { passed: passed!, of: of! } })).toBeNull();
+    }
   });
 
   it("counts what a column still has to read from its real total", () => {

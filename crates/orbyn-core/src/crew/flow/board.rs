@@ -1,11 +1,12 @@
 //! The Taskboard read (Crew Preview): a crew's work tasks grouped into the seven columns of the run states. It reads what Flow
-//! reads (`flow_facts`, the crew-wide scrub, the work-task list) and shows less of it: a card has no cell and no count of
-//! checks (a count is a follow-up, and never for a task that has not reached verifying). Nothing here writes. A reviewer's run and
+//! reads (`flow_facts`, the crew-wide scrub, the work-task list) and shows less of it: a card has no cell, and its only word
+//! about checks is two counts, passed and run, for a task that has reached verifying (never queued, routed or running). Nothing here writes. A reviewer's run and
 //! a fix are lanes and rounds of their task in Flow, not cards. The two flags are advisory; the write routes decide.
 
 use orbyn_contracts as wire;
 use orbyn_contracts::{FlowColumnId as Column, ResultState};
 
+use super::cells::check_counts;
 use super::facts::Facts;
 use super::scrub::{Scrub, TEXT_MAX};
 use super::{QUERY_MAX, SCAN_MAX};
@@ -145,6 +146,8 @@ impl Core {
                     checkout,
                     !facts.evidence.is_empty(),
                 ),
+                checks: check_counts(&task.state, &facts.evidence)
+                    .map(|(passed, of)| wire::FlowChecks { passed, of }),
             },
         ))
     }
@@ -283,6 +286,7 @@ mod tests {
             reason: None,
             can_cancel: true,
             can_rerun: false,
+            checks: None,
         }
     }
 

@@ -1,5 +1,5 @@
 //! The Taskboard over HTTP (Crew Preview): a crew's work tasks grouped by run state. A card is a view the core builds from what
-//! it already stores; none can hold an answer key, a check, a count of checks, a repro, a thread id or a path (H1). Free text is
+//! it already stores; none can hold an answer key, a check, a check's text, a repro, a thread id or a path (H1). Free text is
 //! redacted and capped before it is put in one. Times are RFC 3339.
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,14 @@ pub enum FlowColumnId {
     NeedsYou,
     Passed,
     StoppedCancelled,
+}
+}
+
+wire! {
+/// Checks passed out of checks run in a task's latest verification: two counts, never a check, its id, its command or its text.
+pub struct FlowChecks {
+    pub passed: u32,
+    pub of: u32,
 }
 }
 
@@ -51,6 +59,10 @@ pub struct FlowCard {
     pub can_cancel: bool,
     /// Its checks may be run again: it passed, or it stopped for a benign reason after its checks ran, and it has a checkout.
     pub can_rerun: bool,
+    /// Checks passed out of run; present only once the task has reached verifying and its checks have run.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub checks: Option<FlowChecks>,
 }
 }
 

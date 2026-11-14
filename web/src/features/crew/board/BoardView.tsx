@@ -8,7 +8,7 @@ import { useFlowCrews } from "../flow/live/useFlow";
 import { useTaskWrite, WriteStatus } from "../writes/TaskWrite";
 import { CardMenu } from "./CardMenu";
 import { useBoardFocus } from "./focus";
-import { ago, COLUMNS, modelLine, moreOf, type ColumnSpec } from "./model";
+import { ago, checksLine, COLUMNS, modelLine, moreOf, type ColumnSpec } from "./model";
 import { useBoard } from "./useBoard";
 import { useNarrow } from "./useWidth";
 import "./board.css";
@@ -160,6 +160,7 @@ function CrewBoard({ crew }: { crew: string }) {
 function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
   const write = useTaskWrite({ id: card.id, name: card.name, allowCancel: card.can_cancel, allowRerun: card.can_rerun, onDone: onChanged });
   const needs = card.state === "needs_person";
+  const checks = checksLine(card);
   const model = modelLine(card);
   return (
     <li className="bd-card" data-needs={needs || undefined} data-task={card.id} tabIndex={-1}>
@@ -174,6 +175,7 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
         {model ? <span>{model}</span> : null}
       </div>
       {card.owner ? <div className="bd-ln">owner {card.owner}</div> : null}
+      {checks ? <div className="bd-ln">{checks}</div> : null}
       {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
       <WriteStatus id={card.id} op={write.op} />
       {write.dialog}

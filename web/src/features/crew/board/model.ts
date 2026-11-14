@@ -47,5 +47,14 @@ export function modelLine(card: Pick<FlowCard, "model" | "effort">): string {
   return [card.model, effortLabel(card.effort)].filter(Boolean).join(" · ");
 }
 
+/** "3 of 4 checks passed": the counts a card carries once its task has reached verifying. Nothing is shown for an absent or impossible pair. */
+export function checksLine(card: Pick<FlowCard, "checks">): string | null {
+  const counts = card.checks;
+  if (!counts) return null;
+  const { passed, of } = counts;
+  if (!Number.isInteger(passed) || !Number.isInteger(of) || passed < 0 || of < 1 || passed > of) return null;
+  return `${passed} of ${of} ${of === 1 ? "check" : "checks"} passed`;
+}
+
 /** Cards of a column still to read, from the count the service gives and the cards held. */
 export const moreOf = (count: number, held: number): number => Math.max(0, count - held);
