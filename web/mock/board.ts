@@ -85,8 +85,8 @@ function writeMock(scenario: string, path: string): MockResponse | null {
   if (!KNOWN.test(id)) return fail(404, "not_found", "task not found");
   if (found[2] === "cancel") {
     if (scenario === "crew-write-ended") return fail(409, "task_ended", "This task already ended.");
-    if (scenario === "crew-write-engine") return fail(502, "engine_unavailable", "The worker’s engine could not be stopped. Try again.");
-    if (scenario === "crew-write-engine-cancelled") return fail(502, "engine_unavailable", "The task is cancelled, but its worker could not be stopped. Stop it from its thread.");
+    if (scenario === "crew-write-engine") return fail(502, "engine_unavailable", "The task was not cancelled. Try again.");
+    if (scenario === "crew-write-engine-cancelled") return fail(502, "engine_unavailable", "The task is cancelled, but its worker could not be stopped. Try again.");
     return { status: 200, body: { task: id, state: "cancelled", already: scenario === "crew-write-already" } };
   }
   if (scenario === "crew-write-busy") return fail(409, "task_busy", "Another re-run is running. Try again in 7 seconds.");

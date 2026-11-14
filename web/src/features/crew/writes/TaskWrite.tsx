@@ -39,7 +39,7 @@ export function useTaskWrite({ id, name, allowCancel, allowRerun, onDone }: { id
   return { op, can, ask: setAsking, dialog };
 }
 
-function ConfirmWrite({ kind, name, onClose, onConfirm }: { kind: WriteKind; name: string; onClose(): void; onConfirm(reason: string): void }) {
+export function ConfirmWrite({ kind, name, onClose, onConfirm }: { kind: WriteKind; name: string; onClose(): void; onConfirm(reason: string): void }) {
   const copy = COPY[kind];
   const [reason, setReason] = useState("");
   // A second press while the first is being handled sends nothing.
@@ -97,7 +97,6 @@ export function WriteStatus({ id, op, children }: { id: string; op: Op | undefin
     return (
       <div className="tw-status tw-bad" role="alert">
         <span>{op.message}</span>
-        {op.kind === "cancel" && op.status === 502 ? <span>{/cancelled, but/i.test(op.message) ? "The task is cancelled." : "The task was not cancelled."}</span> : null}
         {close}
       </div>
     );

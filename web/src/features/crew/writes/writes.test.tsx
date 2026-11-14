@@ -6,8 +6,9 @@ import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { BoardView } from "../board/BoardView";
 import { FlowView } from "../flow/live/FlowView";
-import { bodyOf } from "./api";
-import { useWrites } from "./store";
+import { bodyOf, validTaskId } from "./api";
+import { runWrite, useWrites } from "./store";
+import { ConfirmWrite } from "./TaskWrite";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -134,20 +135,36 @@ describe("Cancel on a Taskboard card", () => {
   });
 
   it.each([
-    ["crew-write-ended", "This task already ended.", null],
-    ["crew-write-engine", "The worker’s engine could not be stopped. Try again.", "The task was not cancelled."],
-    ["crew-write-engine-cancelled", "The task is cancelled, but its worker could not be stopped. Stop it from its thread.", "The task is cancelled."],
-  ])("shows a refusal (%s) in the service's words, says whether the task is cancelled, and does not retry", async (scenario, message, clarity) => {
+    ["crew-write-ended", "This task already ended."],
+    // The service's own two messages for a 502, copied from crates/orbyn-core/src/crew/cancel.rs: shown as they are, and nothing added.
+    ["crew-write-engine", "The task was not cancelled. Try again."],
+    ["crew-write-engine-cancelled", "The task is cancelled, but its worker could not be stopped. Try again."],
+  ])("shows a refusal (%s) in the service's words and does not retry", async (scenario, message) => {
     const user = await board(scenario as `crew-${string}`);
     await choose(user, /^Running/, /^Actions for Use next/, /^Cancel$/);
     await user.click(await screen.findByRole("button", { name: "Cancel task" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(message);
-    if (clarity) expect(alert).toHaveTextContent(clarity);
+    expect(alert.textContent).toBe(`${message}Dismiss`);
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(posts()).toHaveLength(1);
     await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it.each([
+    ["a 502 with a message it does not know", () => new Response(JSON.stringify({ code: "engine_unavailable", message: "The engine said something else." }), { status: 502 })],
+    ["a 502 with another code", () => new Response(JSON.stringify({ code: "bad_gateway", message: "The task was not cancelled. Try again." }), { status: 502 })],
+    ["a proxy 502 with an HTML body", () => new Response("<html><body>Bad Gateway</body></html>", { status: 502, headers: { "Content-Type": "text/html" } })],
+    ["a 502 with an empty body", () => new Response(null, { status: 502 })],
+  ])("says only to check the task for %s, and never that it is or is not cancelled", async (_name, response) => {
+    const user = await board();
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => (init?.method === "POST" ? response() : real(input, init)));
+    await choose(user, /^Running/, /^Actions for Use next/, /^Cancel$/);
+    await user.click(await screen.findByRole("button", { name: "Cancel task" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Check the task’s state before trying again.Dismiss");
+    expect(alert.textContent).not.toMatch(/cancelled/i);
   });
 
   it("offers Cancel only for a task the card's flag allows, and is off for a remote window", async () => {
@@ -264,5 +281,69 @@ describe("Cancel and Re-run checks in the Flow zoom", () => {
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Re-run checks" }));
     expect(await screen.findByText(/^Checks: 3 of 4 ran/)).toBeVisible();
     expect(String(posts()[0]![0])).toBe("/api/crew/tasks/task-merged/rerun-checks");
+  });
+});
+
+describe("each guard on its own", () => {
+  it("runWrite called twice for one task sends one POST", async () => {
+    mock.reset("crew");
+    const release = hold();
+    const first = runWrite("cancel", "b-running", "");
+    const second = runWrite("cancel", "b-running", "");
+    release();
+    await Promise.all([first, second]);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("runWrite called for a re-run of two different tasks sends one POST while the first runs", async () => {
+    mock.reset("crew");
+    const release = hold();
+    const first = runWrite("rerun", "b-pass1", "");
+    const second = runWrite("rerun", "b-pass2", "");
+    release();
+    await Promise.all([first, second]);
+    expect(posts()).toHaveLength(1);
+    // A cancel of another task is not held back by a re-run.
+    const release2 = hold();
+    const third = runWrite("rerun", "b-pass1", "");
+    const cancel = runWrite("cancel", "b-running", "");
+    release2();
+    await Promise.all([third, cancel]);
+    expect(posts().map(([url]) => String(url))).toEqual(["/api/crew/tasks/b-pass1/rerun-checks", "/api/crew/tasks/b-pass1/rerun-checks", "/api/crew/tasks/b-running/cancel"]);
+  });
+
+  it("opens with Not now focused, so an Enter pressed at once sends nothing", async () => {
+    const user = await board();
+    await choose(user, /^Running/, /^Actions for Use next/, /^Cancel$/);
+    await screen.findByRole("heading", { name: "Cancel this task?" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Not now" }));
+    await user.keyboard("{Enter}");
+    expect(nonGets()).toHaveLength(0);
+    expect(document.querySelector("dialog")).toBeNull();
+  });
+
+  it("the confirm handler called twice in one tick confirms once", () => {
+    const onConfirm = vi.fn();
+    render(<ConfirmWrite kind="cancel" name="A task" onClose={() => undefined} onConfirm={onConfirm} />);
+    const button = screen.getByRole("button", { name: "Cancel task" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a task id that would change the route", () => {
+  it.each(["..", ".", "a/b", "a?b", "a#b", "", ".hidden", "x".repeat(97), "a b", "a%2Fb"])("is refused before any request: %j", async (id) => {
+    expect(validTaskId(id)).toBe(false);
+    mock.reset("crew");
+    await runWrite("cancel", id, "");
+    await runWrite("rerun", id, "");
+    expect(fetched()).toHaveLength(0);
+    expect(useWrites.getState().ops[id]).toMatchObject({ phase: "failed", message: "That task’s id is not valid." });
+    useWrites.setState({ ops: {} });
+  });
+
+  it("accepts the ids the service accepts", () => {
+    for (const id of ["b-running", "task_1", "a:b", "x.y", "A1", "x".repeat(96)]) expect(validTaskId(id)).toBe(true);
   });
 });

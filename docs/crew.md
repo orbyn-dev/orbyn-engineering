@@ -1329,6 +1329,8 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
   the worker's checkout, and may write there. *Cancel.* The cancel route refuses a task that ended (`409 task_ended`), so a cancel cannot
   land on a task being re-run; a task being verified or worked on is not re-run. A re-run does not re-decide a task: a `stopped` task
   whose checks now pass is still `stopped`, and merge still needs a `passed` one.
+- **The web card.** A page reload during a re-run loses what the window shows (its busy state and the answer) while the service goes on running the
+  checks: the answer is not kept, and a window that asks again within the gap, or while a re-run runs, gets `409 task_busy`.
 
 ## Worker confinement (macOS)
 

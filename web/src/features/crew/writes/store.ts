@@ -28,6 +28,23 @@ export const useWrites = create<Writes>((set) => ({
     }),
 }));
 
+/** The two messages the service's cancel sends with a 502, and the code it sends them under (the same code for both). */
+const CANCEL_502 = ["The task was not cancelled.", "The task is cancelled, but its worker could not be stopped."];
+export const CHECK_THE_TASK = "Check the task’s state before trying again.";
+
+/**
+ * The words for a failed write. A cancel's 502 means the worker's engine could not be stopped, and the service says in its own
+ * message whether the task was left as it was or is cancelled: that message is shown as it is. A 502 whose code or message is not
+ * one of those two (a proxy, another path, no message) says only to check the task: this screen never says "cancelled" or
+ * "not cancelled" itself.
+ */
+export function failureText(kind: WriteKind, status: number, code: string, message: string): string {
+  if (kind === "cancel" && status === 502) {
+    return code === "engine_unavailable" && CANCEL_502.some((known) => message.startsWith(known)) ? message : CHECK_THE_TASK;
+  }
+  return message;
+}
+
 const put = (id: string, op: Op) => useWrites.setState((state) => ({ ops: { ...state.ops, [id]: op } }));
 
 /** A re-run is running somewhere on this device: the service allows one at a time, so every Re-run waits for it. */
@@ -47,7 +64,8 @@ export async function runWrite(kind: WriteKind, id: string, reason: string, onDo
     else put(id, { kind, phase: "done", answer: await writesApi.rerun(id, reason) });
   } catch (error) {
     const failure = toFailure(error);
-    put(id, { kind, phase: "failed", message: failure.message, status: failure instanceof ApiFailure ? failure.status : 0, code: failure.code });
+    const status = failure instanceof ApiFailure ? failure.status : 0;
+    put(id, { kind, phase: "failed", message: failureText(kind, status, failure.code, failure.message), status, code: failure.code });
   }
   onDone?.();
 }
