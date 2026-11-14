@@ -2763,6 +2763,29 @@ children. The data folder and every folder above it, up to `/`, cannot be rename
 renamed ancestor would put the files under a name the path rules do not cover; the folders on the way down to
 the worker's own folders can be looked at (not listed or read), so `cd` into the checkout works. Paths reach the profile only as `-D`
 parameters and are canonicalised first, because a rule on `/var/...` does not match `/private/var/...`.
+For a Claude worker the profile also closes Claude's saved conversations, where the lead's own transcript lives
+(`CLAUDE_CONFIG_DIR` or `~/.claude`, then `projects/<folder>/<session>.jsonl`, with a subagent and tool-result folder
+`<session>/` beside it). Reading and writing under `projects` is denied, then one session is allowed by pattern: any
+project folder directly under it, then `<own id>.jsonl` or anything under `<own id>/`. Before the engine starts the core makes
+`projects` and the project folder for the start folder (Claude's name for it: the real path with every non-alphanumeric
+character turned into `-`, seen with 2.1.318 for ASCII paths; a non-ASCII path, one of 200 characters or more, or one that does
+not resolve refuses the worker rather than guess) with mode 0700. The worker's id is its stored
+`engine_session`; on its first turn Orbyn makes a version 4 UUID and starts Claude with `--session-id <uuid>`, so the allowance
+names the session before it is written. The pattern does not repeat Claude's folder naming (it keys on the real path of the
+start folder, and a long path is shortened), so a naming difference cannot lock the worker out of its own session. A
+transcript another thread creates after the worker started is denied too, because the rule is on the folder, and the
+folder is not listed, so other session ids are not shown. Claude's prompt history `history.jsonl` is denied (Orbyn's `-p`
+runs do not write it; a person's own terminal sessions do). The saved-conversations folder and every folder above it
+cannot be renamed, as for the data folder. Nothing may be created at `projects` or directly under it, by any means: a profile cannot tell a
+directory made by `mkdir` from one a worker prepared elsewhere (with a link inside) and renamed in, so the folders are made
+by the core and the profile allows no create there. The worker's own `<id>.jsonl` and `<id>/` are the only names it can
+make. A configuration folder that goes through a link (itself or a folder above it), a `projects` folder or a `history.jsonl`
+that is itself a link is not followed: the worker is refused, because a rule by path cannot follow a link that is swapped
+later. A Claude folder that does not resolve, is relative, overlaps the data folder, or a session id
+outside letters, digits, `-` and `_` also refuses the worker with a plain line. Auto memory (`projects/<folder>/memory`) is
+closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent; Codex is refused) gets
+`projects` and `history.jsonl` closed with no allowance, so an ACP adapter that wraps Claude Code and writes its sessions
+there cannot run as a worker until it can take a `--session-id`; a Claude folder that does not exist yet is named as given.
 The child's `ORBYN_DATA_DIR` is removed. `RunSpec.confine` carries the rules from the run manager
 to the claude and acp drivers; a driver that cannot apply them does not start the run. A process
 started ahead of a turn (warm) is not used for a worker.
@@ -2776,8 +2799,20 @@ managed, so not restrictable). Tests on macOS run the real tool: the store, the 
 run's `mcp.json` cannot be read through a symlinked data path, the worker's own run folder and its
 checkout can, a program the worker wrote cannot be started through `open`, a signal to another process fails,
 the spawn path drops `ORBYN_DATA_DIR`, a confined `orbyn status` cannot find a service that an unrestricted one
-reaches, and an allowance that contains the data folder is refused. What that proves: a worker's own file access to
-Orbyn's data folder (store, `service.json`, other runs' files) is denied.
+reaches, and an allowance that contains the data folder is refused. For Claude, tests run the real tool against a folder
+shaped like Claude's, with a link, spaces and pattern characters in the path: the lead's transcript, another project's,
+the memory folder and the prompt history cannot be read or changed (nor listed), the worker's own session and its
+subagent files can be read and written, a transcript created after the profile started is denied, a first turn creates
+its own folder and session and no other, `projects`, `history.jsonl` or the folder above them cannot be moved, replaced
+by a link or linked to reach a transcript, a tree prepared outside with a link inside it cannot be moved in under a missing
+project name, over or under the prepared folder, from inside the worker's own folder, or into a missing `projects` (which the
+core makes), nothing but the worker's own session can be created there, a linked configuration folder, `projects` or
+`history.jsonl` refuses the worker, an uncertain start folder name refuses it, and a worker of another engine reads none of it.
+Each of those tests fails if the create allowance is put back. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
+`--session-id` writes its own session, `--resume` of its own session works, and `--resume` of another session in the same
+folder answers "No conversation found", with the folders made beforehand and no create allowed. What that proves: a worker's own file access to
+Orbyn's data folder (store, `service.json`, other runs' files) is denied, and the Claude lead's transcript is denied to
+confined Claude workers. It says nothing about a lead on another engine.
 
 What it does not cover: the profile does not stop a worker reading other processes' command lines and
 environment (`process-info*` is denied, but `sysctl` reads of another process's arguments and environment still
@@ -2792,10 +2827,19 @@ file is mode 0600, that no stdio or Claude entry carries the token and that the 
 real-service test shows a warm-started Claude process's token file under `runs/` and in no `orbyn-probe-*` folder.
 That covers the endpoint token of ACP stdio and Claude launches; it does not show that no other value in any
 process is secret. Also not covered: the network, the loopback service (its token is the guard),
-the OS keychain, the engine's own login and session folders (the lead's own engine transcript files are closed by a
-later change), other files of the same user, and a process a worker leaves running after its turn. The run
+the OS keychain, the engine's own login files (`~/.claude.json`, which Claude must read), other files of the same user,
+and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's own session files (`~/.codex/sessions` and the state and logs SQLite files under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused on macOS (`CODEX_WORKERS_ALLOWED` is false) and stay refused until a separate probe is done. Codex keeps
+them in rollout files and in SQLite files under its home, and an ACP agent keeps its own history wherever it chooses, so
+an ACP agent's conversation, including an ACP adapter that writes Claude's folder, is open, and a Claude lead's transcript
+stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
+in this change (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do lists, file history,
+debug logs, shell snapshots, the live-session registry `sessions/`), are open to a worker. A worker can learn which project
+folder names exist under `projects` (their metadata may be read), not what is in them. A confined Claude worker can create its own `<own id>.jsonl` and `<own id>/` in any existing project folder, not only its own project's, so a session the worker wrote can appear in another project's resume list. A worker that makes Claude create a session under another id (for example `/clear` inside a turn)
+would have that transcript denied: not tried with a signed-in turn, which also leaves tool-result and subagent folders
+unobserved under the profile. The run
 folder is writable by the worker, so it can edit its own per-run settings and `mcp.json`. The tests do not
-establish the answer key as a whole, which waits for the transcript change. A
+establish the answer key as a whole: it stays open to what is listed here (the process-reading limit above, the other
+engines' conversations, Claude's other per-session files, and the folder names). A
 worker also cannot write to a second checkout that lives inside the data folder. File and folder names in the data
 folder can still be learnt through their inode numbers (the contents cannot be read).
 

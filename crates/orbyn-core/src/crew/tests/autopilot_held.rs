@@ -31,7 +31,19 @@ fn describe(w: &World, hold: &str, now: i64) -> Value {
     )
 }
 
-const NONCE: &str = "0123456789abcdef0123456789abcdef";
+/// A nonce as the shell mints one: 16 random bytes, hex. Tests draw theirs at run time, never from a literal.
+fn fresh_nonce() -> String {
+    crate::util::random_token().unwrap()[..32].to_owned()
+}
+
+/// Another nonce of the same shape, different from `other` by construction.
+fn different_from(other: &str) -> String {
+    let mut nonce = fresh_nonce();
+    while nonce == other {
+        nonce = fresh_nonce();
+    }
+    nonce
+}
 
 /// The whole of what the shell does after a click on Approve: describe, then grant what was described. Returns the nonce.
 fn grant_at(w: &World, hold: &str, nonce: &str, now: i64) -> String {
@@ -54,7 +66,7 @@ fn grant_at(w: &World, hold: &str, nonce: &str, now: i64) -> String {
 }
 
 fn grant_for(w: &World, hold: &str) -> String {
-    grant_at(w, hold, NONCE, unix_now())
+    grant_at(w, hold, &fresh_nonce(), unix_now())
 }
 
 /// A running task whose lead says no to everything, with a desktop shell attached.
@@ -183,11 +195,14 @@ async fn an_approval_needs_this_holds_own_unused_grant() {
     // No nonce at all: a caller with only the service token. A wrong one, and one that nothing granted.
     let none = w.core.autopilot_approve_once(&hold, None).await;
     assert!(matches!(none, Err(CoreError::PresenceRequired)));
-    let wrong = w.core.autopilot_approve_once(&hold, Some("0000")).await;
+    let wrong = w
+        .core
+        .autopilot_approve_once(&hold, Some(&fresh_nonce()))
+        .await;
     assert!(matches!(wrong, Err(CoreError::PresenceRequired)));
     let unknown = w
         .core
-        .autopilot_approve_once("hold-nope", Some(NONCE))
+        .autopilot_approve_once("hold-nope", Some(&fresh_nonce()))
         .await;
     assert!(matches!(unknown, Err(CoreError::PresenceRequired)));
 
@@ -201,7 +216,7 @@ async fn an_approval_needs_this_holds_own_unused_grant() {
     let nonce = grant_for(&w, &hold);
     let wrong = w
         .core
-        .autopilot_approve_once(&hold, Some("fedcba9876543210fedcba9876543210"))
+        .autopilot_approve_once(&hold, Some(&different_from(&nonce)))
         .await;
     assert!(matches!(wrong, Err(CoreError::PresenceRequired)));
     w.core
@@ -215,7 +230,10 @@ async fn an_approval_needs_this_holds_own_unused_grant() {
     let refused = describe(&w, &hold, unix_now());
     assert_eq!(refused["type"], "presence_refused");
     assert_eq!(refused["code"], "gone");
-    let twice = w.core.autopilot_approve_once(&hold, Some(NONCE)).await;
+    let twice = w
+        .core
+        .autopilot_approve_once(&hold, Some(&fresh_nonce()))
+        .await;
     assert!(matches!(twice, Err(CoreError::PresenceRequired)));
 }
 
@@ -263,9 +281,10 @@ async fn a_grant_is_recorded_only_for_the_hold_as_it_stands_now() {
     let (w, id) = held_world().await;
     let hold = hold_of(&w, &id, "make deploy").await;
     let shown = describe(&w, &hold, unix_now());
+    let nonce = fresh_nonce();
     let grant = |what: Value, now: i64| {
         let mut line = json!({
-            "type": "presence_grant", "request_id": "r-2", "nonce": NONCE, "hold_id": hold,
+            "type": "presence_grant", "request_id": "r-2", "nonce": nonce, "hold_id": hold,
             "thread_id": shown["thread_id"], "task_id": shown["task_id"],
             "command_sha256": shown["command_sha256"],
         });
@@ -303,15 +322,18 @@ async fn a_grant_is_recorded_only_for_the_hold_as_it_stands_now() {
         "invalid"
     );
     assert_eq!(
-        code(grant(json!({ "nonce": "short" }), unix_now())),
+        code(grant(json!({ "nonce": nonce[..8] }), unix_now())),
         "invalid"
     );
     assert_eq!(
-        code(grant(json!({ "nonce": NONCE.to_uppercase() }), unix_now())),
+        code(grant(
+            json!({ "nonce": format!("A{}", &nonce[1..]) }),
+            unix_now()
+        )),
         "invalid"
     );
     assert!(matches!(
-        w.core.autopilot_approve_once(&hold, Some(NONCE)).await,
+        w.core.autopilot_approve_once(&hold, Some(&nonce)).await,
         Err(CoreError::PresenceRequired)
     ));
     assert_eq!(w.core.presence.len(), 0);
@@ -336,7 +358,7 @@ async fn a_second_grant_replaces_the_first_and_a_grant_runs_out() {
     let (w, id) = held_world().await;
     let hold = hold_of(&w, &id, "make deploy").await;
     let first = grant_for(&w, &hold);
-    let second = grant_at(&w, &hold, "fedcba9876543210fedcba9876543210", unix_now());
+    let second = grant_at(&w, &hold, &different_from(&first), unix_now());
     assert_eq!(w.core.presence.len(), 1);
     let old = w.core.autopilot_approve_once(&hold, Some(&first)).await;
     assert!(
@@ -370,7 +392,8 @@ async fn without_a_desktop_shell_nothing_can_be_approved() {
     let lead = Scripted::no("alpha", "alpha");
     w.core.set_crew_approvers(approvers(&lead, &[]));
     let hold = hold_of(&w, &id, "make deploy").await;
-    for nonce in [None, Some(NONCE)] {
+    let drawn = fresh_nonce();
+    for nonce in [None, Some(drawn.as_str())] {
         let refused = w.core.autopilot_approve_once(&hold, nonce).await;
         assert!(
             matches!(refused, Err(CoreError::DesktopRequired)),
@@ -390,7 +413,7 @@ async fn a_hold_and_an_approval_expire() {
     let hold = hold_of(&w, &id, "make deploy").await;
     let late = unix_now() + HELD_LIFETIME_SECS + 1;
     // The grant was made just before the hold ran out, so it is still live when the hold is over: the answer is `gone`.
-    let nonce = grant_at(&w, &hold, NONCE, late - 2);
+    let nonce = grant_at(&w, &hold, &fresh_nonce(), late - 2);
     let gone = w
         .core
         .autopilot_approve_once_at(&hold, Some(&nonce), late)
@@ -417,7 +440,7 @@ async fn a_hold_and_an_approval_expire() {
     // An approval whose window has passed lets nothing through: it was made, by the clock, long ago.
     let hold = hold_of(&w, &id, "make ship").await;
     let past = unix_now() - APPROVAL_LIFETIME_SECS - 5;
-    let nonce = grant_at(&w, &hold, NONCE, past);
+    let nonce = grant_at(&w, &hold, &fresh_nonce(), past);
     w.core
         .autopilot_approve_once_at(&hold, Some(&nonce), past)
         .await
@@ -709,7 +732,10 @@ async fn a_command_too_long_to_read_is_held_but_cannot_be_approved() {
     // The dialog is never offered it, and no grant can be made for it.
     let refused = describe(&w, &item.id, unix_now());
     assert_eq!(refused["code"], "unreadable");
-    let refused = w.core.autopilot_approve_once(&item.id, Some(NONCE)).await;
+    let refused = w
+        .core
+        .autopilot_approve_once(&item.id, Some(&fresh_nonce()))
+        .await;
     assert!(matches!(refused, Err(CoreError::PresenceRequired)));
     assert_eq!(state_of(&w, &item.id), State::Held);
 }

@@ -437,6 +437,28 @@ fn injection_text_is_caught_in_its_blunt_english_forms_only() {
 }
 
 #[test]
+fn the_tripwire_keeps_its_narrow_list_of_hidden_characters() {
+    // Legitimate command, tool and browser text may hold these; the tripwire must not stop a task for them.
+    for c in ['\u{00ad}', '\u{2028}', '\u{034f}', '\u{180b}', '\u{2800}'] {
+        assert!(
+            injection_in(&format!("cargo test{c} --lib")).is_none(),
+            "{c:?}"
+        );
+    }
+    // The unchanged detection still flags the zero-width, bidirectional, word-joiner, BOM and tag characters.
+    for c in [
+        '\u{200b}',
+        '\u{202e}',
+        '\u{2066}',
+        '\u{2060}',
+        '\u{feff}',
+        '\u{e0041}',
+    ] {
+        assert!(injection_in(&format!("run{c}it")).is_some(), "{c:?}");
+    }
+}
+
+#[test]
 fn n1_looks_at_requests_not_at_files_or_searches_that_name_a_route() {
     // An ordinary file that happens to live under an api/account folder is only a file.
     assert_eq!(
