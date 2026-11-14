@@ -1,7 +1,7 @@
 name: CI retry
 
 # Reruns the failed jobs of a CI run once when a macOS desktop job failed. It covers
-# "Desktop cache warm (macos-15)" and "Unsigned desktop build (macos-15)" only, and only
+# "Desktop cache warm (macos-15)" and the heavy "Desktop build (macos-15)" job only (not the required-name aggregators, which also turn red for a Windows-only failure or a failed lint), and only
 # a first attempt that ended in failure. It does not bound time spent waiting for a
 # runner: a job queued with no runner never starts, so timeout-minutes cannot apply and
 # this workflow is not triggered until the run ends.
@@ -36,7 +36,7 @@ jobs:
           failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" --paginate \
             --jq '.jobs[] | select(.conclusion == "failure") | .name')
           echo "Failed jobs:"; echo "$failed"
-          if ! grep -qxE 'Desktop cache warm \(macos-15\)|Unsigned desktop build \(macos-15\)' <<< "$failed"; then
+          if ! grep -qxE 'Desktop cache warm \(macos-15\)|Desktop build \(macos-15\)' <<< "$failed"; then
             echo "No macOS desktop job failed; not retrying."; exit 0
           fi
           if [ "$EVENT" = pull_request ]; then
