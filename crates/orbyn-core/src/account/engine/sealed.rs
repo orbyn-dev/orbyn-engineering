@@ -60,8 +60,14 @@ impl std::fmt::Debug for SealedSnapshots {
 }
 
 fn bound(profile: &str, counter: u64) -> Vec<u8> {
+    bound_for(PURPOSE, profile, counter)
+}
+
+/// The associated data for a purpose, a profile and a counter. The purpose is a parameter only so
+/// a test can show that a seal under another purpose does not open.
+pub(crate) fn bound_for(purpose: &str, profile: &str, counter: u64) -> Vec<u8> {
     let mut out = Vec::new();
-    for part in [PURPOSE.as_bytes(), profile.as_bytes()] {
+    for part in [purpose.as_bytes(), profile.as_bytes()] {
         out.extend_from_slice(&(part.len() as u64).to_be_bytes());
         out.extend_from_slice(part);
     }

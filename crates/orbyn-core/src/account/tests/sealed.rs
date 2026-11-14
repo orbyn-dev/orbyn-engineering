@@ -16,7 +16,7 @@ use crate::account::api::AccountApi;
 use crate::account::dev::PASSWORD;
 use crate::account::engine::{
     Anchor, EngineAccount, EngineZones, FileKeyStore, PURPOSE, Refusal, SealedSnapshots,
-    SnapshotStore, VERSION, Vault, parts_with,
+    SnapshotStore, VERSION, Vault, bound_for, parts_with,
 };
 
 const FIRST: &str = "0a0a0a0a-0000-4000-8000-0000000000a1";
@@ -189,8 +189,121 @@ fn a_changed_format_version_is_refused() {
 }
 
 #[test]
-fn the_purpose_is_part_of_what_the_seal_binds() {
-    assert_eq!(PURPOSE, "orbyn/engineering/snapshot");
+fn the_seal_binds_the_purpose_the_profile_and_the_counter() {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    let dir = TempDir::new();
+    let f = files(dir.path(), "a", "profile-a");
+    f.snaps.save(&snapshot("x"));
+    let bytes = std::fs::read(&f.snap_file).unwrap();
+    let counter = u64::from_be_bytes(bytes[1..9].try_into().unwrap());
+    let nonce: [u8; 24] = bytes[9..33].try_into().unwrap();
+    let key = f.keys.vault_key().unwrap();
+    let open = |aad: Vec<u8>| {
+        XChaCha20Poly1305::new(&(*key).into())
+            .decrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &bytes[33..],
+                    aad: &aad,
+                },
+            )
+            .is_ok()
+    };
+    assert!(open(bound_for(PURPOSE, "profile-a", counter)));
+    assert!(!open(bound_for(
+        "orbyn/engineering/other",
+        "profile-a",
+        counter
+    )));
+    assert!(!open(bound_for(PURPOSE, "profile-b", counter)));
+    assert!(!open(bound_for(PURPOSE, "profile-a", counter + 1)));
+}
+
+#[test]
+fn a_counter_edit_the_vault_agrees_with_still_does_not_open() {
+    let dir = TempDir::new();
+    let f = files(dir.path(), "a", "p");
+    f.snaps.save(&snapshot("x"));
+    let mut bytes = std::fs::read(&f.snap_file).unwrap();
+    bytes[8] = bytes[8].wrapping_add(1);
+    let counter = u64::from_be_bytes(bytes[1..9].try_into().unwrap());
+    let hash: [u8; 32] = sha2::Sha256::digest(&bytes).into();
+    // Someone who could also move the vault's anchor still cannot forge the counter: it is
+    // part of what the seal authenticates.
+    f.keys.set_anchor(Anchor { counter, hash }).unwrap();
+    std::fs::write(&f.snap_file, &bytes).unwrap();
+    assert!(f.snaps.load().is_none());
+    assert_eq!(f.snaps.last_refusal(), Some(Refusal::DoesNotOpen));
+}
+
+#[test]
+fn a_crash_between_the_anchor_and_the_file_starts_empty_and_the_next_save_recovers() {
+    let dir = TempDir::new();
+    let f = files(dir.path(), "a", "p");
+    f.snaps.save(&snapshot("before"));
+    let kept = f.keys.anchor().unwrap();
+    // The state a crash leaves: the anchor moved to the next save, the file did not.
+    f.keys
+        .set_anchor(Anchor {
+            counter: kept.counter + 1,
+            hash: [7; 32],
+        })
+        .unwrap();
+    assert!(f.snaps.load().is_none());
+    assert_eq!(f.snaps.last_refusal(), Some(Refusal::RolledBack));
+    f.snaps.save(&snapshot("after"));
+    assert_eq!(f.snaps.load().unwrap().account_id, "after");
+    assert_eq!(f.keys.anchor().unwrap().counter, kept.counter + 2);
+}
+
+fn marker(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".wipe");
+    PathBuf::from(name)
+}
+
+#[test]
+fn a_delete_that_fails_half_way_leaves_no_readable_key_and_the_next_one_finishes_it() {
+    let dir = TempDir::new();
+    let f = files(dir.path(), "a", "p");
+    f.snaps.save(&snapshot("x"));
+    f.keys.fail_deletes(1);
+    assert!(f.keys.clear().is_err());
+    // The file is still there, but empty, and a marker says a wipe is owed.
+    assert_eq!(std::fs::metadata(&f.key_file).unwrap().len(), 0);
+    assert!(marker(&f.key_file).exists());
+    assert!(f.keys.load().is_err());
+    assert!(f.keys.vault_key().is_none() && f.keys.anchor().is_none());
+    // A new process sees the same.
+    f.keys.fail_deletes(0);
+    f.keys.clear().unwrap();
+    f.keys.save(&identity(&label("token"), FIRST)).unwrap();
+    // The marker alone keeps a whole, readable file shut: nothing could be overwritten or removed.
+    f.keys.fail_deletes(3);
+    assert!(f.keys.clear().is_err());
+    assert!(std::fs::metadata(&f.key_file).unwrap().len() > 0);
+    assert!(f.keys.load().is_err() && f.keys.vault_key().is_none());
+    f.keys.fail_deletes(1);
+    assert!(f.keys.clear().is_err());
+    let fresh = FileKeyStore::new(&f.key_file);
+    assert!(fresh.load().is_err());
+    // Saving a new identity finishes the old wipe first.
+    f.keys.fail_deletes(0);
+    let next = identity(&label("token"), SECOND);
+    f.keys.save(&next).unwrap();
+    assert!(!marker(&f.key_file).exists());
+    assert_eq!(f.keys.load().unwrap().unwrap().device_id, SECOND);
+    assert!(
+        f.keys.anchor().is_none(),
+        "the old anchor went with the old key"
+    );
+    // And a plain retry of the clear finishes it too.
+    f.keys.fail_deletes(1);
+    assert!(f.keys.clear().is_err());
+    f.keys.fail_deletes(0);
+    f.keys.clear().unwrap();
+    assert!(!f.key_file.exists() && !marker(&f.key_file).exists());
 }
 
 #[test]
@@ -316,6 +429,7 @@ async fn synced(server: &Arc<Server>, dir: &Path, id: &str, name: &str) -> Devic
 fn gone(d: &Device) -> bool {
     !d.files.snap_file.exists()
         && !d.files.key_file.exists()
+        && !marker(&d.files.key_file).exists()
         && d.files.keys.load().unwrap().is_none()
 }
 
@@ -410,4 +524,75 @@ async fn a_session_ended_on_a_screen_call_destroys_the_keys() {
     a.stand_in().sign_out_elsewhere();
     assert!(a.devices().await.is_err());
     assert_eq!(a.stand_in().wipes(), 1);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Trigger {
+    OwnRemoval,
+    EndedSession,
+    AccountGone,
+}
+
+/// A wipe whose key delete fails must not leave a usable key: the client is not opened again
+/// (no call reaches the server), and the next try finishes the wipe.
+async fn failed_delete_then_retry(trigger: Trigger, mode: u8) {
+    let dir = TempDir::new();
+    let server = Server::new();
+    let d = synced(&server, dir.path(), FIRST, "one").await;
+    let _other = synced(&server, dir.path(), SECOND, "two").await;
+    d.files.keys.fail_deletes(mode);
+    match trigger {
+        Trigger::OwnRemoval => {
+            // Removed on the server, but the local keys could not be deleted: told so.
+            assert!(d.account.remove_device(FIRST).await.is_err());
+        }
+        Trigger::EndedSession => {
+            server.refuse("/v1/zones", 401, "unauthorized");
+            assert_eq!(
+                d.zones.pull(ZONE).await.err(),
+                Some(DeviceError::Unauthorized)
+            );
+            d.zones.wipe_keys().await;
+            server.clear_refusal();
+        }
+        Trigger::AccountGone => d.account.wipe_keys().await,
+    }
+    assert!(d.files.key_file.exists(), "{trigger:?}: the delete failed");
+    let calls = server.calls("/v1/");
+    for _ in 0..2 {
+        // Not signed in again, and nothing reached the Engine.
+        assert_eq!(
+            d.zones.pull(ZONE).await.err(),
+            Some(DeviceError::Unauthorized),
+            "{trigger:?} mode {mode}"
+        );
+        assert_eq!(
+            server.calls("/v1/"),
+            calls,
+            "{trigger:?}: the client was reopened"
+        );
+    }
+    // The next try, once deleting works again, wipes everything.
+    d.files.keys.fail_deletes(0);
+    assert_eq!(
+        d.zones.pull(ZONE).await.err(),
+        Some(DeviceError::Unauthorized)
+    );
+    assert!(gone(&d), "{trigger:?} mode {mode}: the retry did not wipe");
+    assert_eq!(server.calls("/v1/"), calls);
+}
+
+#[tokio::test]
+async fn a_failed_key_delete_blocks_the_client_and_is_retried() {
+    for trigger in [
+        Trigger::OwnRemoval,
+        Trigger::EndedSession,
+        Trigger::AccountGone,
+    ] {
+        // 2: nothing could be deleted, so the key file is still whole and only the owed wipe
+        // keeps the client shut. 1: it was emptied but not removed.
+        for mode in [2, 1] {
+            failed_delete_then_retry(trigger, mode).await;
+        }
+    }
 }

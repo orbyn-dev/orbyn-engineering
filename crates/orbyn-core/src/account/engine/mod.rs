@@ -42,7 +42,7 @@ pub use keystore::FileKeyStore;
 #[cfg(test)]
 pub(crate) use keystore::{Anchor, Vault};
 #[cfg(test)]
-pub(crate) use sealed::{PURPOSE, Refusal, SealedSnapshots, VERSION};
+pub(crate) use sealed::{PURPOSE, Refusal, SealedSnapshots, VERSION, bound_for};
 pub use snapshot::{MemorySnapshots, SnapshotStore};
 pub use zones::EngineZones;
 

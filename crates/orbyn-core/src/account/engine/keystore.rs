@@ -73,6 +73,10 @@ pub struct FileKeyStore {
     path: Arc<PathBuf>,
     /// One writer at a time, so a load-modify-save never loses the anchor.
     lock: Arc<Mutex<()>>,
+    /// A test can make deleting fail: 1 stops it after the overwrite, 2 stops it before anything,
+    /// 3 lets the marker go down and then stops.
+    #[cfg(test)]
+    fail_deletes: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl std::fmt::Debug for FileKeyStore {
@@ -86,7 +90,70 @@ impl FileKeyStore {
         Self {
             path: Arc::new(path.into()),
             lock: Arc::default(),
+            #[cfg(test)]
+            fail_deletes: Arc::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_deletes(&self, mode: u8) {
+        self.fail_deletes
+            .store(mode, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn failing(&self) -> u8 {
+        self.fail_deletes.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(not(test))]
+    fn failing(&self) -> u8 {
+        0
+    }
+
+    /// The "wipe owed" marker: it is written before a delete starts and removed only when the
+    /// key file is gone. While it exists nothing reads the key file, even a half-deleted one.
+    fn marker(&self) -> PathBuf {
+        let mut name = self.path.as_os_str().to_owned();
+        name.push(".wipe");
+        PathBuf::from(name)
+    }
+
+    /// Overwrites the file with nothing, then removes it, then the marker. Each step runs even
+    /// if an earlier one failed, and the first failure is reported.
+    fn wipe_files(&self) -> Result<(), dc::StoreError> {
+        if self.failing() >= 2 {
+            return Err(dc::StoreError);
+        }
+        let mut result = Ok(());
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&*self.path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => result = Err(dc::StoreError),
+        }
+        let removed = if self.failing() == 1 {
+            Err(dc::StoreError)
+        } else {
+            match std::fs::remove_file(&*self.path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(_) => Err(dc::StoreError),
+            }
+        };
+        result = result.and(removed);
+        // The marker goes only once the key file is gone.
+        if result.is_ok() {
+            match std::fs::remove_file(self.marker()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => result = Err(dc::StoreError),
+            }
+        }
+        result
     }
 
     pub fn path(&self) -> &Path {
@@ -100,6 +167,10 @@ impl FileKeyStore {
     }
 
     fn read(&self) -> Result<Option<Disk>, dc::StoreError> {
+        if self.marker().exists() {
+            // A delete started and did not finish: the file is not to be used.
+            return Err(dc::StoreError);
+        }
         let bytes = match std::fs::read(&*self.path) {
             Ok(bytes) => dc::Zeroizing::new(bytes),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -148,9 +219,13 @@ impl dc::KeyStore for FileKeyStore {
 
     fn save(&self, identity: &dc::StoredIdentity) -> Result<(), dc::StoreError> {
         let _held = self.guard();
+        if self.marker().exists() {
+            // A new identity may only land once the old one is really gone.
+            self.wipe_files()?;
+        }
         // The anchor belongs to the vault key: it stays while the key does.
         let anchor = self.read()?.and_then(|disk| disk.anchor);
-        self.write(&Disk {
+        let mut disk = Disk {
             identity: DiskIdentity {
                 device_keys: B64.encode(identity.device_keys.as_slice()),
                 account_id: identity.account_id.clone(),
@@ -163,17 +238,31 @@ impl dc::KeyStore for FileKeyStore {
                 vault_key: B64.encode(identity.vault_key.as_slice()),
             },
             anchor,
-        })
+        };
+        let written = self.write(&disk);
+        // The encoded secrets do not outlive the call.
+        zeroize::Zeroize::zeroize(&mut disk.identity.device_keys);
+        zeroize::Zeroize::zeroize(&mut disk.identity.vault_key);
+        if let Some(session) = disk.identity.session.as_mut() {
+            zeroize::Zeroize::zeroize(&mut session.token);
+        }
+        written
     }
 
-    /// Deletes the file: the keys, the token, the vault key and the anchor go together.
+    /// Deletes the file: the keys, the token, the vault key and the anchor go together. The
+    /// marker goes down first and the file is overwritten with nothing before it is removed,
+    /// so a delete that fails half way leaves no readable key. A failure is returned, and the
+    /// next `clear` (or `save`) finishes it.
     fn clear(&self) -> Result<(), dc::StoreError> {
         let _held = self.guard();
-        match std::fs::remove_file(&*self.path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(dc::StoreError),
+        if self.failing() == 2 {
+            return Err(dc::StoreError);
         }
+        let marked = std::fs::write(self.marker(), b"wipe owed");
+        let wiped = self.wipe_files();
+        // No marker means a failed delete is not remembered here; the caller still hears of it.
+        drop(marked);
+        wiped
     }
 }
 

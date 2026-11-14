@@ -306,6 +306,7 @@ where
     }
 
     async fn wipe_keys(&self) {
-        self.shared.forget().await;
+        // A failed delete stays owed in `Shared`; see `EngineAccount::wipe_keys`.
+        let _ = self.shared.forget().await;
     }
 }

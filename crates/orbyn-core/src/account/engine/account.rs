@@ -326,13 +326,18 @@ where
         self.trusted().confirmed.remove(id);
         if own {
             // This device was removed: it must not keep a single zone key (D10).
-            self.shared.forget().await;
+            self.shared
+                .forget()
+                .await
+                .map_err(|_| DeviceError::Server { retryable: true })?;
         }
         Ok(())
     }
 
     async fn wipe_keys(&self) {
-        self.shared.forget().await;
+        // A failed delete stays owed in `Shared`, which refuses to open the client until a retry
+        // finishes it; the next call here, or the next use of the client, is that retry.
+        let _ = self.shared.forget().await;
     }
 
     async fn sign_out_everywhere(&self) -> Result<(), DeviceError> {
@@ -344,11 +349,15 @@ where
     /// sign-in is a new device that a trusted one has to let in.
     async fn sign_out(&self) -> Result<(), DeviceError> {
         let result = self.shared.client.sign_out(true).await.map_err(map);
-        self.shared.forget().await;
+        let forgot = self
+            .shared
+            .forget()
+            .await
+            .map_err(|_| DeviceError::Server { retryable: true });
         *self.sign_up.lock().await = SignUp::default();
         *self.factor.lock().await = None;
         *self.joining.lock().await = None;
         *self.trusted() = Trusted::default();
-        result
+        result.and(forgot)
     }
 }

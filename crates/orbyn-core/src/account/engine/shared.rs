@@ -18,6 +18,9 @@ pub(super) struct Shared<T, S, C> {
     tag: OnceLock<String>,
     /// Zone keys this device owes a device it just approved, because sending them failed.
     owed: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// A wipe was started and the keys could not all be deleted. Nothing opens the client again
+    /// until a retry has finished it.
+    wipe_owed: std::sync::atomic::AtomicBool,
 }
 
 impl<T, S, C> Shared<T, S, C>
@@ -36,11 +39,17 @@ where
             snapshots,
             tag: OnceLock::new(),
             owed: std::sync::Mutex::default(),
+            wipe_owed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     /// The Engine's state, opened from the snapshot (or empty) the first time it is needed.
     pub(super) async fn engine(&self) -> Result<MutexGuard<'_, Option<dc::Engine>>, DeviceError> {
+        if self.wipe_owed.load(std::sync::atomic::Ordering::SeqCst) {
+            // The last wipe did not finish: finish it, and open nothing until it has.
+            self.forget().await.map_err(|_| DeviceError::Unauthorized)?;
+            return Err(DeviceError::Unauthorized);
+        }
         let mut guard = self.engine.lock().await;
         if guard.is_none() {
             let mut opened = self
@@ -62,13 +71,23 @@ where
     /// device, a session the service ended, or an account that is gone. The sealed snapshot goes
     /// first, then the keys (identity, token, vault key and the snapshot's anchor), so no
     /// order leaves a snapshot that an old vault key could still open.
-    pub(super) async fn forget(&self) {
+    ///
+    /// A failed key delete is returned and remembered: `wipe_owed` stays set, so `engine` keeps
+    /// refusing and the next call retries, instead of a signed-in client opening again.
+    pub(super) async fn forget(&self) -> Result<(), dc::StoreError> {
+        self.wipe_owed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         *self.engine.lock().await = None;
         self.owed().clear();
         self.snapshots.clear();
-        if self.client.store().clear().is_err() {
-            tracing::warn!("the device keys could not be deleted");
+        let cleared = self.client.store().clear();
+        if cleared.is_ok() {
+            self.wipe_owed
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        } else {
+            tracing::warn!("the device keys could not be deleted; the wipe is owed");
         }
+        cleared
     }
 
     pub(super) fn tag(&self) -> Option<String> {
