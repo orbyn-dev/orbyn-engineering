@@ -107,7 +107,7 @@ pub struct AutopilotTrust {
     pub total: AutopilotRate,
     pub areas: Vec<AutopilotRateRow>,
     pub engines: Vec<AutopilotRateRow>,
-    /// There is no per-area promotion or demotion yet (slice 4j): areas are scored, never moved up or down.
+    /// The circuit breaker records a per-area demotion (slice 4j, shadow: recorded, not yet enforced). Earning a higher mode is not built.
     pub autonomy_by_area: bool,
     pub truncated: bool,
 }
@@ -521,5 +521,143 @@ pub struct AutopilotHeldList {
     /// How long a hold waits for a decision, and how long an approval lasts, in seconds.
     pub hold_secs: u32,
     pub approval_secs: u32,
+}
+}
+
+wire_enum! {
+/// Where an area stands under the circuit breaker. `demoted` (just lowered, nothing clean yet), `recovering` (lowered, the way back in progress) and
+/// `criteria_met` (the way back is met; it returns at the next merge) are recorded, not yet enforced.
+pub enum AutopilotAreaState {
+    Follows,
+    Demoted,
+    Recovering,
+    CriteriaMet,
+    NotEnoughData,
+    CeilingLower,
+    Overridden,
+}
+}
+
+wire! {
+/// The record the breaker reads for one area: merges made in the window and how many of them were reverted. Escapes are not measured.
+pub struct AutopilotAreaRecord {
+    pub merges: u32,
+    pub reverts: u32,
+    /// Always absent: there is no escape backend, so nothing counts escapes.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub escapes: Option<u32>,
+    pub window_days: u32,
+}
+}
+
+wire! {
+/// What a lowered area still needs to return to its ceiling: days without a revert and merges since, none reverted.
+pub struct AutopilotAreaRecovery {
+    pub clean_days: u32,
+    pub days_needed: u32,
+    pub merges: u32,
+    pub merges_needed: u32,
+}
+}
+
+wire! {
+/// A person's override of an area. Nothing writes one yet, so it is always absent.
+pub struct AutopilotAreaOverride {
+    /// `keep_ceiling` or `off`.
+    pub choice: String,
+    #[ts(type = "number")]
+    pub at: i64,
+}
+}
+
+wire! {
+/// One area of a project: the ceiling, what the breaker would make of it now, and why, in a sentence.
+pub struct AutopilotAreaRow {
+    /// The first two folders of the paths merges touched, or the first one, or the file at the root, scrubbed for display.
+    pub area: String,
+    /// The area as stored: the name to pass as `area` to the history route.
+    pub area_key: String,
+    pub ceiling: AutopilotMode,
+    /// The mode the breaker records for the area. Shadow: no merge, approval or tier reads it yet.
+    pub now: AutopilotMode,
+    pub state: AutopilotAreaState,
+    pub line: String,
+    /// When the breaker lowered the area, for `demoted`, `recovering` and `criteria_met`.
+    #[serde(default)]
+    #[ts(type = "number | null", optional)]
+    pub since: Option<i64>,
+    pub record: AutopilotAreaRecord,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub recovery: Option<AutopilotAreaRecovery>,
+    #[serde(default, rename = "override")]
+    #[ts(optional = nullable)]
+    pub person_override: Option<AutopilotAreaOverride>,
+}
+}
+
+wire! {
+/// The areas of one project under the circuit breaker (slice 4j, shadow). Read-only; the thresholds are proposed.
+pub struct AutopilotAreas {
+    pub project: String,
+    /// The repository's mode, else the default, else `full`: the most the breaker can lower from.
+    pub ceiling: AutopilotMode,
+    #[ts(type = "number")]
+    pub as_of: i64,
+    /// False: the state is recorded and shown, and nothing decides by it yet.
+    pub enforced: bool,
+    pub total: u32,
+    pub rows: Vec<AutopilotAreaRow>,
+}
+}
+
+wire! {
+/// One row of an area's trail, newest first.
+pub struct AutopilotAreaEvent {
+    #[ts(type = "number")]
+    pub id: i64,
+    /// `demoted`, `recovery_reset`, `restored`, `override_set` or `override_cleared`.
+    pub kind: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub from_mode: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub to_mode: Option<String>,
+    /// `breaker` or `person`.
+    pub decided_by: String,
+    /// The revert commit, `restore:<recovery start>` or `person:<audit id>`.
+    pub cause: String,
+    pub record: AutopilotAreaRecord,
+    #[ts(type = "number")]
+    pub at: i64,
+}
+}
+
+wire! {
+/// The trail of one area.
+pub struct AutopilotAreaHistory {
+    pub project: String,
+    pub area: String,
+    pub events: Vec<AutopilotAreaEvent>,
+    /// More rows exist than listed.
+    pub truncated: bool,
+}
+}
+
+wire! {
+/// The breaker's constants, served as they are. They are Engineering's proposal, not yet confirmed.
+pub struct AutopilotThresholds {
+    pub window_days: u32,
+    /// Merges the window needs before the breaker decides anything.
+    pub min_merges: u32,
+    /// Reverted merges in the window that lower an area.
+    pub trip_reverts: u32,
+    /// Days without a revert before a lowered area can return.
+    pub recovery_days: u32,
+    /// Merges since the lowering, none reverted, before it can return.
+    pub recovery_merges: u32,
+    pub proposed: bool,
 }
 }

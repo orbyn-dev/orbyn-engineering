@@ -170,6 +170,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/merge-queue", get(merge_queue))
         .route("/api/crew/autopilot/watch", get(watch))
         .route("/api/crew/autopilot/digest", get(digest))
+        .route("/api/crew/autopilot/areas", get(areas))
+        .route("/api/crew/autopilot/areas/history", get(area_history))
+        .route("/api/crew/autopilot/thresholds", get(thresholds))
         .route("/api/crew/approvals", get(approvals))
         .route("/api/crew/approvals/held", get(held))
         .route("/api/crew/stops", get(stops))
@@ -279,6 +282,14 @@ async fn route_view(
     Ok(Json(state.core.crew_route_view(&task_id)?))
 }
 
+fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {
+    query
+        .0
+        .get(name)
+        .cloned()
+        .ok_or_else(|| CoreError::Invalid(format!("{name} is required")))
+}
+
 fn thread_of(query: &QueryMap) -> Result<String, CoreError> {
     query
         .0
@@ -312,8 +323,37 @@ async fn guards(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_guards()?))
 }
 
-async fn trust(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.autopilot_trust(unix_now())?))
+/// Revert rates; `project` limits them to one repository's merges.
+async fn trust(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_trust(
+        unix_now(),
+        query.0.get("project").map(String::as_str),
+    )?))
+}
+
+/// The areas of a project under the circuit breaker (shadow): `project`, `limit`, `offset`. Read-only.
+async fn areas(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_areas(
+        &required(&query, "project")?,
+        page(&query)?,
+        unix_now(),
+    )?))
+}
+
+/// The trail of one area: `project` and `area` (in the query, as it contains `/`). Read-only.
+async fn area_history(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_area_history(
+        &required(&query, "project")?,
+        &required(&query, "area")?,
+    )?))
+}
+
+/// The breaker's constants, proposed.
+async fn thresholds(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.autopilot_thresholds()?))
 }
 
 async fn risk(

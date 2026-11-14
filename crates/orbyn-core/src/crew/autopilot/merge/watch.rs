@@ -64,7 +64,7 @@ pub(super) async fn revert_merge(
     core: &Arc<Core>,
     record: &MergeRecord,
     target: &MergeTarget,
-    _now: i64,
+    now: i64,
 ) -> Result<std::result::Result<String, String>> {
     if let Some(folder) = gitops::checked_out(&target.repo, &target.branch).await? {
         return Ok(Err(format!(
@@ -115,6 +115,11 @@ pub(super) async fn revert_merge(
         ));
     }
     core.store.set_merge_reverted(&record.task_id, &commit)?;
+    // Shadow: the circuit breaker records what this revert means for the areas the merge touched. The merge lock is held by both
+    // callers, and a failure here never undoes a revert that already moved the branch.
+    if let Err(error) = core.area_breaker_after_revert(record, &commit, now) {
+        tracing::warn!(%error, "could not record the revert against its areas");
+    }
     core.merge_event(
         &record.task_id,
         "reverted",
@@ -128,7 +133,7 @@ impl Core {
     pub async fn crew_watch_main(
         self: &Arc<Self>,
         target: &MergeTarget,
-        _now: i64,
+        now: i64,
     ) -> Result<WatchOutcome> {
         let _one_at_a_time = self.crew_merges.lock().await;
         let (repo, branch) = (
@@ -217,7 +222,7 @@ impl Core {
                         dependents: Vec::new(),
                     });
                 }
-                self.revert_found(&record, target, &merges).await
+                self.revert_found(&record, target, &merges, now).await
             }
         }
     }
@@ -227,6 +232,7 @@ impl Core {
         record: &MergeRecord,
         target: &MergeTarget,
         merges: &[MergeRecord],
+        now: i64,
     ) -> Result<WatchOutcome> {
         let dependents: Vec<String> = merges
             .iter()
@@ -234,7 +240,7 @@ impl Core {
             .map(|m| m.task_id.clone())
             .collect();
         // `revert_merge` re-checks the tip after the revert, so a later merge that needs this one stops it.
-        match revert_merge(self, record, target, 0).await? {
+        match revert_merge(self, record, target, now).await? {
             Ok(revert_commit) => {
                 for m in merges.iter().filter(|m| {
                     m.id < record.id && m.watch != "green" && m.review_state != "reverted"

@@ -14,9 +14,11 @@ use crate::error::{CoreError, Result};
 use crate::store::{MergeEntry, MergeRecord};
 
 impl Core {
-    /// The revert rate of each area and of an engine over the last 60 days, from the merges the queue made.
+    /// The revert rate of each area and of an engine over the last 60 days, from the merges the queue made for this project: another
+    /// repository's merges are not counted.
     pub(super) fn merge_rates(
         &self,
+        project_id: &str,
         areas: &[String],
         engine: &str,
         now: i64,
@@ -24,7 +26,7 @@ impl Core {
         let since = now - WINDOW_DAYS * 86_400;
         let recent: Vec<MergeRecord> = self
             .store
-            .crew_all_merges()?
+            .crew_merges_of_project(project_id)?
             .into_iter()
             .filter(|m| m.merged_unix >= since)
             .collect();
