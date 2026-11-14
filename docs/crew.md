@@ -792,12 +792,24 @@ writes, `retry` a failed breaker), `store/crew_autonomy_person.rs`, `orbynd/src/
 
 **Thresholds are PROPOSED** (window 14 days, 5 merges, 2 reverts, 14 days and 5 merges back; served with `proposed: true`) and may change.
 
-**Not built (4j).** The screens (Crew Designs v39 frames `autonomy-*`) are the next pull request. Earning a higher mode for an area (`autonomy-promoted`, `review-promoted`) is PLANNED, not built. Escapes (a defect that no revert shows)
+**Not built (4j).** Earning a higher mode for an area (`autonomy-promoted`, `review-promoted`) is PLANNED, not built. Escapes (a defect that no revert shows)
 are **not measured**: nothing counts them. The chain and the tier do not read an area.
 
 **Known limits (4j, enforcement).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. Any local process that holds the service token can post an override, the limit `set_mode` and the other Crew writes have, and the audit row
 says `user`, not which process. A lowered area returns at the next merge or queuing, not at the moment its criteria are met. The area is two folders deep, so a large and a small folder weigh the same. A ledger event cannot be written when the
 ledger itself is unreadable: the log then holds the only trace, though the gate still treats an unreadable area as Off. An `off` posted while merge checks are running does not stop the merge already in flight (the same as `set_mode`).
+
+**As built (slice 4j, screens):** Settings › Crew › Autopilot by area and its Thresholds, from the Crew Designs v39 frames `autonomy-table`, `-tripped`,
+`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-override`, `-override-warning`, `-thresholds` and `-narrow`. Code:
+`web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas}.ts*`, routes `#/settings/crew/areas[/thresholds]?repo=<project id>`
+(the first visible repository when `repo` is absent). One component, driven by the areas read: the table's `data-frame` names the frame its data is in. The words are
+the design's, written from the served fields (the service's own `line` shows only where the design draws no row, for a person's override or a window that trips
+before it is recorded). Not served, so left out: the two reverts' names, when a ceiling was lowered, when the recovery clock or the criteria were met (the
+screens say "7 of the 14 days with no revert" without a date) and the merges since a return (the trail keeps only the window's record; the screen says "at least 5").
+Not designed, so left out: `autonomy-promoted` and the Earn upward threshold (earning is not built), an empty table, choosing among several repositories,
+a link from Settings › Crew to the page, a way back from Thresholds, and an Override… button for an area that is not lowered. `Off` is sent with
+`acknowledged: true` from the menu item, which names its effect; `keep_ceiling` asks first and stays disabled until the box is ticked; a `stale` answer shows the
+service's words in the dialog and reads the areas again.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**

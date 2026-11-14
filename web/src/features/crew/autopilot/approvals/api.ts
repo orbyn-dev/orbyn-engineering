@@ -3,6 +3,12 @@
 import { request } from "../../../../api/client";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
+import type { AutopilotAreaFollowBody } from "../../../../generated/AutopilotAreaFollowBody";
+import type { AutopilotAreaHistory } from "../../../../generated/AutopilotAreaHistory";
+import type { AutopilotAreaOverrideBody } from "../../../../generated/AutopilotAreaOverrideBody";
+import type { AutopilotAreaRow } from "../../../../generated/AutopilotAreaRow";
+import type { AutopilotAreas } from "../../../../generated/AutopilotAreas";
+import type { AutopilotThresholds } from "../../../../generated/AutopilotThresholds";
 import type { AutopilotGuards } from "../../../../generated/AutopilotGuards";
 import type { AutopilotLog } from "../../../../generated/AutopilotLog";
 import type { AutopilotMode } from "../../../../generated/AutopilotMode";
@@ -39,5 +45,14 @@ export const crewApi = {
   guards: (signal?: AbortSignal) => request<AutopilotGuards>("GET", "/api/crew/autopilot/guards", undefined, signal),
   setMode: (mode: AutopilotMode) => request<AutopilotModes>("PUT", "/api/crew/autopilot/mode", { scope: "default", mode }),
   confirmMode: () => request<AutopilotModes>("POST", "/api/crew/autopilot/confirm", {}),
+  /** The areas of one project under the circuit breaker (slice 4j), lowered ones first. */
+  areas: (project: string, signal?: AbortSignal) => request<AutopilotAreas>("GET", `/api/crew/autopilot/areas?${new URLSearchParams({ project, limit: "200" })}`, undefined, signal),
+  /** The trail of one area, newest first. `area` is the row's `area_key`: it contains `/`, so it travels in the query. */
+  areaHistory: (project: string, area: string, signal?: AbortSignal) => request<AutopilotAreaHistory>("GET", `/api/crew/autopilot/areas/history?${new URLSearchParams({ project, area })}`, undefined, signal),
+  /** The breaker's constants. Engineering's proposal: the reply says `proposed`. */
+  thresholds: (signal?: AbortSignal) => request<AutopilotThresholds>("GET", "/api/crew/autopilot/thresholds", undefined, signal),
+  /** A person's choice for one area, with the record they saw. A record that moved since answers 409 `stale`. */
+  overrideArea: (body: AutopilotAreaOverrideBody) => request<AutopilotAreaRow>("POST", "/api/crew/autopilot/areas/override", body),
+  followArea: (body: AutopilotAreaFollowBody) => request<AutopilotAreaRow>("POST", "/api/crew/autopilot/areas/follow", body),
   trust: (signal?: AbortSignal) => request<AutopilotTrust>("GET", "/api/crew/trust", undefined, signal),
 };

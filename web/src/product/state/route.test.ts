@@ -20,6 +20,9 @@ describe("routes", () => {
     { name: "settings", section: "worktrees", selection: { kind: "project_group", group_key: "group:/one?x" } },
     { name: "settings", section: "threads", selection: { kind: "checkout", group_key: "group:/one", project_id: "id/2" } },
     { name: "settings", section: "tasks", task: "task/1 x" },
+    { name: "settings", section: "crew", crewPage: "areas" },
+    { name: "settings", section: "crew", crewPage: "areas", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "thresholds", repo: "p-app" },
   ])("round-trips %j", (route) => {
     expect(parseRoute(routeHref(route))).toEqual(route);
   });

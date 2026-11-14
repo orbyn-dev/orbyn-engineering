@@ -45,6 +45,7 @@ function MenuList({
   origin,
   label,
   heading,
+  footer,
   items,
   submenu,
   closing,
@@ -57,6 +58,7 @@ function MenuList({
   origin: string;
   label: string;
   heading?: string;
+  footer?: string;
   minWidth?: number;
   items: MenuItem[];
   submenu?: boolean;
@@ -170,6 +172,7 @@ function MenuList({
             </button>
           </FragmentRow>
         ))}
+        {footer ? <div className="menu-heading" role="presentation">{footer}</div> : null}
       </div>
       {open?.item.children ? (
         <MenuList
@@ -230,6 +233,7 @@ export function Menu({
   origin = "top left",
   label,
   heading,
+  footer,
   items,
   closing,
   minWidth,
@@ -243,6 +247,8 @@ export function Menu({
   minWidth?: number;
   /** A small caption above the items, such as "Hidden tabs". */
   heading?: string;
+  /** A small note after the last item, in the heading's style. */
+  footer?: string;
   items: MenuItem[];
   closing?: boolean;
   onClose(): void;
@@ -281,7 +287,7 @@ export function Menu({
   // Chosen once, so a dialog opening or closing behind the menu doesn't remount it.
   const [host] = useState(menuHost);
   return createPortal(
-    <MenuList x={x} y={y} origin={origin} label={label} heading={heading} items={items} closing={closing} minWidth={minWidth} onClose={dismiss} />,
+    <MenuList x={x} y={y} origin={origin} label={label} heading={heading} footer={footer} items={items} closing={closing} minWidth={minWidth} onClose={dismiss} />,
     host,
   );
 }
