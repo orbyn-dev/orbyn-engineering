@@ -69,9 +69,9 @@ const REVIEW = item({
 const AUTONOMY = item({
   id: "s-autonomy",
   kind: "autonomy",
-  title: "Auth moved from Full to On: 2 reverts in 14 days. Review or override.",
+  title: "web/auth moved from Full to On: 2 reverts in 14 days. Review or override.",
   from: "Autonomy by area · circuit breaker · 9 merges in the window",
-  cost: "Nothing is blocked. A High risk change in auth/ now waits for you before it merges; Low and Medium still merge by themselves.",
+  cost: "Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.",
   actions: [{ key: "review", label: "Review", primary: true }, { key: "override", label: "Override…" }, { key: "dismiss", label: "Dismiss" }],
 });
 
@@ -92,7 +92,7 @@ const STOP_DENIALS = item({
   id: "s-stop-denials",
   kind: "stopped",
   title: "Stopped · too many denials",
-  from: "Login redirect crew · Worker 2 · Claude Code · Sonnet 5.5",
+  from: "Task 91c4e07",
   cost: "3 denials in a row stopped the task. Nothing else is blocked; the other tasks keep going.",
   hint: "Dismiss hides this stop on this device.",
   actions: [{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }],
@@ -101,7 +101,7 @@ const STOP_INJECTED = item({
   id: "s-stop-injected",
   kind: "stopped",
   title: "Stopped · possible injected instructions",
-  from: "Login redirect crew · Worker 1 · Claude Code · Sonnet 5.5",
+  from: "Task 5b2d8a3",
   cost: "A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for.",
   hint: "Dismiss hides this stop on this device.",
   actions: [{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }],
@@ -111,8 +111,8 @@ export const STOP_ITEMS: NeedsItem[] = [STOP_DENIALS, STOP_INJECTED];
 
 /** needsyou-background: a background run waiting on the person, paused for its budget or needing approval. */
 export const BACKGROUND_ITEMS: NeedsItem[] = [
-  item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly · Claude Code", cost: "The run stopped at its budget. Raise the budget, or leave it paused.", actions: [{ key: "open", label: "Open", primary: true }] }),
-  item({ id: "s-bg-approval", kind: "background", title: "Needs approval", from: "Background crew · Update the docs index · Sonnet 5.5", cost: "A command is held for your approval before the run can go on.", actions: [{ key: "open", label: "Open", primary: true }] }),
+  item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly", cost: "The run stopped at its budget. Raise the budget, or leave it paused.", actions: [{ key: "open", label: "Open", primary: true }] }),
+  item({ id: "s-bg-approval", kind: "background", title: "Needs approval", from: "Background crew · Update the docs index", cost: "A command is held for your approval before the run can go on.", actions: [{ key: "open", label: "Open", primary: true }] }),
 ];
 
 /** needsyou-many: the top four of 27, one line each. */
