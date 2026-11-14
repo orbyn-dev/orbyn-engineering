@@ -120,6 +120,23 @@ pub fn restarting() -> Url {
     target
 }
 
+/// The bundled product document, the only page allowed to ask for the person's approval. It is the same address the window is
+/// given (`application`), whatever its query or fragment; the loopback service, the startup document and any other page are not.
+pub fn is_application(url: &Url) -> bool {
+    let app = Url::parse(if cfg!(windows) {
+        "http://tauri.localhost/index.html"
+    } else {
+        "tauri://localhost/index.html"
+    })
+    .expect("static asset URL");
+    url.scheme() == app.scheme()
+        && url.host_str() == app.host_str()
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == "/index.html"
+}
+
 /// The startup commands (retry, show log, quit) belong only to the separate, static
 /// startup document.
 pub fn is_startup(url: &Url) -> bool {
@@ -144,6 +161,33 @@ pub fn require_startup(current: &Url) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_bundled_product_document_is_the_application() {
+        let service = Url::parse("http://127.0.0.1:30001/?token=t").unwrap();
+        assert!(is_application(&application(&service)));
+        assert!(is_application(&preview(&service, "t-1", "p-1").unwrap()));
+        let app = application(&service);
+        assert!(!is_application(&startup()));
+        assert!(!is_application(&failed("x", false)));
+        assert!(!is_application(&service));
+        assert!(!is_application(
+            &Url::parse("https://example.com/index.html").unwrap()
+        ));
+        let host = app.host_str().unwrap().to_owned();
+        let scheme = app.scheme().to_owned();
+        for other in [
+            format!("{scheme}://{host}.evil.test/index.html"),
+            format!("{scheme}://{host}:8080/index.html"),
+            format!("{scheme}://user@{host}/index.html"),
+            format!("{scheme}://{host}/other.html"),
+            format!("{scheme}://{host}/"),
+            format!("{scheme}://x.{host}/index.html"),
+            "about:blank".to_owned(),
+        ] {
+            assert!(!is_application(&Url::parse(&other).unwrap()), "{other}");
+        }
+    }
     #[test]
     fn changing_service_ports_keeps_one_ui_origin_and_forwards_only_launch_fields() {
         let first =
@@ -312,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn the_capability_file_gives_the_startup_commands_to_the_main_window_alone() {
+    fn the_capability_file_gives_the_shell_commands_to_the_main_window_alone() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/main.json")).unwrap();
         // Preview windows are labelled `preview-…` and remote viewers are no window at all.
@@ -328,10 +372,16 @@ mod tests {
         assert_eq!(
             granted,
             [
+                "allow-crew-presence",
                 "allow-quit-core",
                 "allow-restart-core",
                 "allow-show-core-log"
             ]
+        );
+        // The dialog plugin is used from Rust only: no capability hands its commands to a page.
+        assert!(
+            !include_str!("../capabilities/main.json").contains("dialog:"),
+            "no page may call the dialog plugin"
         );
         // Dragging and zooming by the unified title bar is granted on macOS alone, where the system bar is gone.
         let macos: serde_json::Value =

@@ -575,8 +575,8 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
      `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`.
   The strings in `presence_hold` are made for a plain-text dialog: control, invisible, bidirectional and format characters become a visible `�`,
   a newline becomes a visible `⏎`, the command is capped at 1000 characters with `truncated` set if it was cut (the hash is of the full command), and
-  a hold that cannot be read whole is refused with `unreadable`. **PR2's dialog must render all of them as plain text** (no markup, no HTML, no
-  link detection), and show them as given.
+  a hold that cannot be read whole is refused with `unreadable`. The shell's dialog renders all of them as plain text (no markup, no HTML, no
+  link detection) and shows them as given; it also refuses an answer that still holds a control character.
   Refusal codes on the shell channel: `unavailable`, `invalid`, `not_found`, `gone`, `unreadable`, `mismatch`.
   **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
   wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.
@@ -589,8 +589,21 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   The devtools feature is on in release builds (`desktop/src-tauri/Cargo.toml:15`): a script in the page can call `invoke` but cannot click the native
   dialog. That is a known exposure, tracked in [issue #532](https://github.com/orbyn-dev/orbyn-engineering/issues/532).
   **Idea, not built (Linux only):** a per-launch HMAC key between the shell and the service, so a line written into the pipe by another process fails.
-  **Not built yet:** the shell's dialog (PR2) and the web card that asks for it and sends the nonce (PR3). Until the dialog exists nothing can mint a grant,
-  so approve-once answers `presence_required` (desktop service) or `desktop_required` (no shell) for every caller.
+  **As built (PR2, the shell's dialog):** the command `crew_presence(hold_id)` in `desktop/src-tauri/src/presence.rs`. The bundled app's main window
+  alone may call it (the capability is the `main` window's, and the command checks the window's label and address as well). It checks the hold id, sends
+  `presence_describe` and waits up to 10 seconds for `presence_hold` (matched by request id), shows the native dialog from the service's text, and
+  only on a click on Approve once mints the nonce (16 bytes from the operating system, 32 lowercase hex characters), sends `presence_grant` with the ids
+  and hash exactly as the service described them, waits up to 10 seconds for `presence_ready` and returns the nonce. The dialog's title is "Approve this
+  command once?", its body is the command (then an ellipsis if it was cut), "Worker: <name>", "Task: <title>" and "This approves this one command. It
+  cannot be reused."; its buttons are "Approve once" and "Cancel". One approval is open at a time (a second call is `busy`). The nonce is never logged,
+  never written to disk and never in an event; it reaches the page only as the command's return value. The buffers the shell owns are zeroed when dropped, which is
+  best effort. Errors are stable strings: `cancelled` (nothing was sent), `busy`, `timeout`, `unavailable` (no service), `invalid_hold`,
+  `invalid_answer`, `forbidden`, `dialog_failed`, `nonce_failed` and `presence_refused:<code>` for the service's refusal codes above. The page words
+  them; for a refusal or a timeout the Designer's text is "Orbyn couldn't confirm it was you. Try again from the desktop app."
+  Cancel is the first button, which macOS and Windows make the default; the dialog plugin has no setting for it, so on Linux that is not checked. The
+  dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
+  **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
+  from the app's window stays held.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the
