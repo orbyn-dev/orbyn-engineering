@@ -1,11 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApprovalTable } from "./ApprovalRows";
-import { ApproveMyself } from "./ApproveMyself";
 import { DecisionDrawer, type DrawerActions } from "./DecisionDrawer";
 import { GuardHold, GuardNeedsYouItem, YouPanel } from "./YouPanel";
 import type { ApprovalRow, EngineRef, Mode, YouState } from "./model";
+import { inApp } from "./test-support";
 
 // The guard has no route yet, so these rows are built by hand: what the service will answer with once it does.
 const LEAD: EngineRef = { engine: "Claude Code", model: "Opus 5.5", vendor: "Anthropic" };
@@ -29,7 +29,7 @@ const twoKeys: ApprovalRow = { ...base, id: "t", title: "Delete expired sessions
 const byYou: ApprovalRow = { ...twoKeys, id: "y", hard: "guard", result: "approved_you", leadBy: CLAUDE, second: { state: "you" }, guard: target("prod-db-1", "remote database", "14:05", "DELETE FROM sessions WHERE expires_at < now()", 0) };
 
 function show(row: ApprovalRow, mode: Mode = "full", over: Partial<DrawerActions> = {}) {
-  const act: DrawerActions = { approveMyself: () => undefined, signInSecondEngine: () => undefined, close: () => undefined, ...over };
+  const act: DrawerActions = { approveMyself: () => undefined, desktop: true, signInSecondEngine: () => undefined, close: () => undefined, ...over };
   render(<DecisionDrawer row={row} act={act} mode={mode} />);
   return screen.getByRole("complementary", { name: row.title });
 }
@@ -104,14 +104,38 @@ describe("the guard under Full", () => {
     expect(d).toHaveTextContent("Key 2 · a second vendorCodex · GPT-5.5 · OpenAIYes: the filter matches rows past expires_at.");
   });
 
-  it("names the command, the target and the reason in a dialog; approving waits for the route and Escape cancels", async () => {
+  it("hands Approve it myself to the system dialog: no dialog of its own, and the target and reason stay on the card", async () => {
     const user = userEvent.setup();
     const myself = vi.fn();
     const d = show(noSecond, "full", { approveMyself: myself });
     await user.click(within(d).getByRole("button", { name: "Approve it myself" }));
-    expect(myself).toHaveBeenCalledWith(noSecond);
+    expect(myself).toHaveBeenCalledTimes(1);
+    expect(myself.mock.calls[0]?.[0]).toBe(noSecond);
+    expect(myself.mock.calls[0]?.[1]).toHaveProperty("nativeEvent");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(d).toHaveTextContent("Targetprod-db-1 · production-linked, marked by the rule prod-targets");
+    expect(d).toHaveTextContent('psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"');
+  });
+
+  it("in a browser tab does not offer Approve it myself and says the desktop app is needed, keeping the other buttons", () => {
+    for (const row of [noSecond, denied]) {
+      const { unmount } = render(<DecisionDrawer row={row} act={{ approveMyself: () => undefined, desktop: false, signInSecondEngine: () => undefined, close: () => undefined }} mode="full" />);
+      const d = screen.getByRole("complementary", { name: row.title });
+      expect(within(d).queryByRole("button", { name: "Approve it myself" })).toBeNull();
+      expect(d).toHaveTextContent("Approving once needs the Orbyn desktop app.");
+      expect(within(d).getByRole("button", { name: "Close" })).toBeVisible();
+      unmount();
+    }
+  });
+
+  it("is off while the system dialog is open, and says it could not confirm you when it was refused", () => {
+    const d = show(noSecond, "full", { asking: true, refused: "n" });
+    expect(within(d).getByRole("button", { name: "Approve it myself" })).toBeDisabled();
+    expect(d).toHaveTextContent("Orbyn couldn’t confirm it was you. Try again from the desktop app.Nothing ran.");
+    expect(d).toHaveTextContent("Targetprod-db-1");
   });
 });
+
 
 describe("the guard in Flow and Needs you", () => {
   const held = { command: "Delete test orders in prod-db-1", reason: "This command deletes data in a production-linked target.", key1: "The lead said yes.", key2: "Waiting on OpenCode · DeepSeek V4, a different vendor.", forYou: false };
@@ -131,11 +155,13 @@ describe("the guard in Flow and Needs you", () => {
   });
 
   it("under On or Off the same card is held for you, with Approve once and Deny", async () => {
+    await inApp(true, vi.fn());
     const approve = vi.fn();
     const deny = vi.fn();
     const user = userEvent.setup();
     render(<GuardHold held={{ ...held, forYou: true }} onApprove={approve} onDeny={deny} />);
     const card = screen.getByRole("region", { name: "A held command" });
+    await waitFor(() => expect(within(card).getByRole("button", { name: "Approve once" })).toBeVisible());
     expect(card).toHaveClass("ap-box-am");
     expect(card).toHaveTextContent("Held for you");
     await user.click(screen.getByRole("button", { name: "Approve once" }));
@@ -144,12 +170,32 @@ describe("the guard in Flow and Needs you", () => {
     expect(deny).toHaveBeenCalledTimes(1);
   });
 
+  it("in a browser tab the held-for-you card offers no Approve once and says the desktop app is needed", async () => {
+    await inApp(false);
+    render(<GuardHold held={{ ...held, forYou: true }} onApprove={() => undefined} onDeny={() => undefined} />);
+    const card = screen.getByRole("region", { name: "A held command" });
+    expect(card).toHaveTextContent("Approving once needs the Orbyn desktop app.");
+    expect(within(card).queryByRole("button", { name: "Approve once" })).toBeNull();
+    expect(within(card).getByRole("button", { name: "Deny" })).toBeVisible();
+  });
+
+  it("in a browser tab a denied-for-now item keeps Sign in and Dismiss and says the desktop app is needed for the rest", async () => {
+    await inApp(false);
+    render(<GuardNeedsYouItem onSignIn={() => undefined} onApproveMyself={() => undefined} onDismiss={() => undefined} />);
+    const item = screen.getByRole("article", { name: /Sign in to a second engine to allow a command/ });
+    expect(item).toHaveTextContent("Approving once needs the Orbyn desktop app.");
+    expect(within(item).queryByRole("button", { name: "Approve it myself" })).toBeNull();
+    expect(within(item).getAllByRole("button").map((b) => b.textContent)).toEqual(["Sign in to a second engine", "Dismiss"]);
+  });
+
   it("lists a denied-for-now command in Needs you with the two ways forward", async () => {
+    await inApp(true, vi.fn());
     const signIn = vi.fn();
     const myself = vi.fn();
     const user = userEvent.setup();
     render(<GuardNeedsYouItem onSignIn={signIn} onApproveMyself={myself} onDismiss={() => undefined} />);
     const item = screen.getByRole("article", { name: /Sign in to a second engine to allow a command/ });
+    await waitFor(() => expect(within(item).getByRole("button", { name: "Approve it myself" })).toBeVisible());
     expect(item).toHaveTextContent("Risk · High · Hard to undo");
     expect(item).toHaveTextContent("Nothing is blocked; sign in to a second vendor, or approve the command yourself, once.");
     await user.click(within(item).getByRole("button", { name: "Sign in to a second engine" }));
@@ -222,19 +268,3 @@ describe("the You stage of Flow", () => {
   });
 });
 
-describe("approving one command yourself", () => {
-  it("names the exact command, the target and the reason; Cancel has focus and Approve once waits for the route", () => {
-    const close = vi.fn();
-    render(<ApproveMyself row={noSecond} onClose={close} />);
-    const dialog = screen.getByRole("dialog", { name: "Approve this command yourself?" });
-    expect(dialog).toHaveTextContent('psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log"');
-    expect(dialog).toHaveTextContent("Targetprod-db-1 · production-linked · guarded");
-    expect(dialog).toHaveTextContent("CommandTRUNCATE audit_log");
-    expect(dialog).toHaveTextContent("ReasonThis command deletes data in a production-linked target.");
-    expect(dialog).toHaveTextContent("CoversThis one command, on this target, once");
-    expect(dialog).toHaveTextContent("It isn’t a second key, and nothing else is approved with it.");
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    expect(within(dialog).getByRole("button", { name: "Approve once" })).toBeDisabled();
-    expect(dialog).toHaveTextContent("Crew is not connected to this app yet");
-  });
-});

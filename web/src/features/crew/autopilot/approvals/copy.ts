@@ -81,14 +81,16 @@ export const TRIGGERS: { id: TriggerId; name: string; repeats: string }[] = [
   { id: "dependency_update", name: "A dependency update opens", repeats: "One run per update; updates to the same package are grouped." },
 ];
 
-/** The held-command card and the approve-once dialog, as the Crew designs (v31) write them. */
+/** The held-command card, as the Crew designs (v34) write it. Approving once is the desktop app's own dialog: its words are the shell's. */
 export const HELD = {
   restart: "Held requests are cleared if Orbyn restarts.",
   expired: "This request expired. Nothing ran.",
   decided: "Already decided.",
-  noAccount: "Approving needs a signed-in account.",
-  noAccountNote: "Deny and Dismiss still work without one.",
-  networkNote: "The request is still held.",
+  desktopOnly: "Approving once needs the Orbyn desktop app.",
+  desktopOnlyNote: "Deny and Dismiss still work here.",
+  refused: "Orbyn couldn’t confirm it was you. Try again from the desktop app.",
+  refusedNote: "Nothing ran. The command is still held.",
+  refusedNoteOther: "Nothing ran.",
   remote: "Do this from the computer the app runs on.",
   why: "Nothing runs until you approve it.",
 } as const;

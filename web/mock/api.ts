@@ -133,18 +133,14 @@ export function createMockApi(options: MockOptions = {}) {
   const now = () => new Date(fixtures.T0 + idCounter * 1000).toISOString();
 
   const accountMock = createAccountMock();
-  const crewMock = createCrewMock({
-    signedIn: () => accountMock.signedInEmail(),
-    consumeConfirmation: (device) => accountMock.consumeConfirmation("approve_device", device),
-  });
+  const crewMock = createCrewMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     scenario = next;
-    // `crew-held-account…` has the sign-in gate on and a person signed in, so approving once can be tried.
-    accountMock.reset(next === "account" || next.startsWith("crew-held-account"), next.startsWith("crew-held-account") ? "dev@example.com" : undefined);
+    accountMock.reset(next === "account");
     crewMock.reset(next);
     secretsMock.reset();
     signedIn = false;

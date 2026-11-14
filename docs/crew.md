@@ -618,8 +618,18 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   **Linux text.** rfd's GTK 3 backend reads the dialog text as a printf format, so on every platform but macOS and Windows the shell doubles each `%`
   in the text it shows (`double_percent`); on macOS and Windows the text is plain and is shown as given.
   The dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
-  **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
-  from the app's window stays held.
+  **As built (PR3, the web card):** the held card's Approve once (Crew Designs v34: approval-confirm, -browser, -refused-presence, -decided, -expired and
+  guard-approve-myself) calls `crew_presence(hold_id)` through one typed function, `askPresence` in `web/src/api/shell.ts`, which reads the window's Tauri
+  bridge (`__TAURI_INTERNALS__`) and calls that one command by name. The page imports no Tauri package. The call is made only from a click handler that
+  checks `isTrusted` and `type === "click"`; no key handler, effect, page load, retry or replay calls it, and the button is off while a dialog is open
+  (the shell also answers `busy`). A script's `dispatchEvent` or `click()` is untrusted and does nothing. **A click made by pressing Enter or Space on the
+  focused button is trusted** (Chromium and WebKit both report it with `detail` 0, a mouse press with 1), and it is allowed: refusing it would shut out
+  keyboard and screen reader users, so "never on a key event" holds for the card's key handlers, not for the button's own activation. When the
+  shell returns the nonce, the page posts the approve-once route once with it in `x-orbyn-confirm` and shows the decision. A refusal from the shell or
+  `403 presence_required` / `desktop_required` from the service shows "Orbyn couldn't confirm it was you. Try again from the desktop app." and the card stays
+  held; `cancelled` shows nothing; nothing asks again by itself. A plain browser tab (no shell) does not offer Approve once and says "Approving once needs
+  the Orbyn desktop app."; Deny and Dismiss still work. "Approve it myself" from a denied command or a Needs you item is the same flow, with no dialog of
+  the page's own. The account password flow is gone from approve-once.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the

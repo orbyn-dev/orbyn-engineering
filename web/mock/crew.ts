@@ -5,11 +5,11 @@
  * crew-many, crew-one-vendor, crew-tripwire, crew-injected, crew-per-crew, crew-first-run, crew-young.
  * Background crews have no route, so the mock has none either.
  *
- * Held commands: `crew-held` (the sign-in gate is off, as in every released build: Approve once cannot be tried),
- * `crew-held-account` (a person is signed in; approving asks "Confirm it's you" with the password in `mock/account.ts`),
- * `crew-held-account-expired` (the first hold has timed out when it is answered: 410), `crew-held-account-race` (it was
- * denied from another window: 409), `crew-held-account-standin` (the development stand-in account is signed in, so
- * approving once is refused as the service refuses it), `crew-held-account-hardrule` (the always-denied list refuses it at approval time: 403, and the hold is closed as denied). Three commands are held in every one of them.
+ * Held commands: `crew-held` (approving once is the desktop app's native dialog, which a spec fakes in the page, so the route only
+ * answers as the service does), `crew-held-expired` (the first hold has timed out when it is answered: 410), `crew-held-race` (it
+ * was denied from another window: 409), `crew-held-hardrule` (the always-denied list refuses it at approval time: 403, and the hold is
+ * closed as denied) and `crew-held-unconfirmed` (the service did not see the desktop shell's confirmation: 403 `presence_required`).
+ * Three commands are held in every one of them.
  */
 import type { AutopilotHeld } from "../src/generated/AutopilotHeld.ts";
 import type { AutopilotHeldList } from "../src/generated/AutopilotHeldList.ts";
@@ -128,14 +128,7 @@ const holds = (): AutopilotHeld[] => [
   { id: "hold-sessions", task_id: "task-redirect", crew_id: "crew-redirect", kind: "command", command: 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions WHERE expires_at < now()"', reason: "A second key is missing.", state: "held", readable: true, age_secs: 420, expires_in_secs: 180 },
 ];
 
-interface Door {
-  /** The email of the signed-in account, or null (the gate is off, or nobody is signed in). */
-  signedIn(): string | null;
-  /** Uses up the confirmation "Confirm it's you" made for this device id; false when there is none. */
-  consumeConfirmation(device: string): boolean;
-}
-
-export function createCrewMock(door: Door) {
+export function createCrewMock() {
   let held: AutopilotHeld[] = [];
   let heldScenario = "";
   let on = false;
@@ -200,20 +193,18 @@ export function createCrewMock(door: Door) {
         held = held.map((one) => (one.id === id ? { ...one, state, expires_in_secs: state === "approved" ? 600 : 0 } : one));
         return { status: 200, body: held.find((one) => one.id === id) };
       };
-      if (how === "approve-once") {
-        if (door.signedIn() === null) return { status: 403, body: { code: "account_disabled", message: "Accounts are not available yet." } };
-        if (heldScenario === "crew-held-account-standin") return { status: 403, body: { code: "policy_denied", message: "Approving once is not available while the development stand-in account is signed in: its password is public." } };
-        if (!door.consumeConfirmation(`crew-approve-once:${id}`)) return { status: 403, body: { code: "reauth_required", message: "Confirm it's you to do this." } };
+      if (how === "approve-once" && heldScenario === "crew-held-unconfirmed") {
+        return { status: 403, body: { code: "presence_required", message: "Approving needs the person's confirmation from the desktop app." } };
       }
-      if (heldScenario === "crew-held-account-expired" && id === "hold-orders") {
+      if (heldScenario === "crew-held-expired" && id === "hold-orders") {
         held = held.map((one) => (one.id === id ? { ...one, state: "expired", expires_in_secs: 0 } : one));
         return { status: 410, body: { code: "gone", message: "This command is no longer held: its time ran out or its task ended." } };
       }
-      if (heldScenario === "crew-held-account-hardrule" && id === "hold-orders" && how === "approve-once") {
+      if (heldScenario === "crew-held-hardrule" && id === "hold-orders" && how === "approve-once") {
         set("denied");
         return { status: 403, body: { code: "policy_denied", message: "Denied by Autopilot (N4): Writing or deleting outside the worktree. No approval can change this." } };
       }
-      if (heldScenario === "crew-held-account-race" && id === "hold-orders") {
+      if (heldScenario === "crew-held-race" && id === "hold-orders") {
         set("denied");
         return { status: 409, body: { code: "invalid_transition", message: "run cannot move from denied to decided" } };
       }

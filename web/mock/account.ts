@@ -158,16 +158,6 @@ export function createAccountMock() {
       // A spec that is about something else than signing in starts with the account signed in.
       if (gateOn && signedInAs) signedIn(signedInAs);
     },
-    /** The email signed in, or null: what an action that needs a signed-in account asks. */
-    signedInEmail(): string | null {
-      return on ? session : null;
-    },
-    /** Uses up the confirmation made for this action and device, as the service does for a route that needs one. */
-    consumeConfirmation(action: string, device: string): boolean {
-      const allowed = grant?.action === action && grant.device === device;
-      grant = null;
-      return allowed;
-    },
     /** Changes waiting to upload, for a spec that wants the offline or paused wording. */
     setWaiting(count: number) {
       waiting = count;

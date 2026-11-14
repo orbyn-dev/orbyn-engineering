@@ -1,11 +1,11 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { Button } from "../../../../ui/controls";
 import { chainOf, verdictOf, type Step } from "./chain";
 import { NOT_CONNECTED } from "./api";
-import { GUARD_WORKERS, MODE_COPY } from "./copy";
+import { GUARD_WORKERS, HELD, MODE_COPY } from "./copy";
 
 import type { ApprovalRow, Mode } from "./model";
-import { HeldBody, HeldFooter } from "./HeldCard";
+import { HeldBody, HeldFooter, Said } from "./HeldCard";
 import { phaseOf, type HoldControl } from "./held";
 import { Chip, engineLine, Facts, ResultChip, RISK_LABEL } from "./parts";
 
@@ -18,7 +18,14 @@ export interface DrawerActions {
   openRequest?(row: ApprovalRow): void;
   seeHardDenied?(): void;
   signInSecondEngine?(): void;
-  approveMyself(row: ApprovalRow): void;
+  /** "Approve it myself": the same flow as Approve once, handed the click. Only the desktop app offers it. */
+  approveMyself(row: ApprovalRow, event: MouseEvent<HTMLButtonElement>): void;
+  /** This window is the desktop app, so approving once can ask the shell. A browser tab says it needs the app. */
+  desktop?: boolean;
+  /** The shell's dialog is open. */
+  asking?: boolean;
+  /** The row whose last approval was not confirmed as the person's. */
+  refused?: string | null;
   close(): void;
 }
 
@@ -82,15 +89,16 @@ function Waiting({ children, tone = "secondary" }: { children: ReactNode; tone?:
   return <Button small tone={tone} disabled title={NOT_CONNECTED} aria-description={NOT_CONNECTED}>{children}</Button>;
 }
 
-function Button2({ children, onClick, tone = "secondary" }: { children: ReactNode; onClick(): void; tone?: "primary" | "secondary" | "quiet" }) {
-  return <Button small tone={tone} onClick={onClick}>{children}</Button>;
+function Button2({ children, onClick, tone = "secondary", disabled }: { children: ReactNode; onClick(event: MouseEvent<HTMLButtonElement>): void; tone?: "primary" | "secondary" | "quiet"; disabled?: boolean }) {
+  return <Button small tone={tone} disabled={disabled} onClick={onClick}>{children}</Button>;
 }
 
 function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
   const close = <Button2 key="close" onClick={act.close} tone="quiet">Close</Button2>;
   const ledger = act.openLedger ? <Button2 key="ledger" onClick={() => act.openLedger?.(row)}>Open in the ledger</Button2> : null;
-  const self = <Button2 key="self" onClick={() => act.approveMyself(row)}>Approve it myself</Button2>;
+  const self = act.desktop ? <Button2 key="self" disabled={act.asking} onClick={(event) => act.approveMyself(row, event)}>Approve it myself</Button2> : null;
   const signIn = act.signInSecondEngine ? <Button2 key="signin" onClick={() => act.signInSecondEngine?.()}>Sign in to a second engine</Button2> : null;
+  let needsApp = false;
   const list: (ReactNode | null)[] = (() => {
     switch (row.result) {
       case "denied_rule":
@@ -100,8 +108,10 @@ function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
       case "person_only":
         return [act.openRequest ? <Button2 key="req" onClick={() => act.openRequest?.(row)}>Open the request</Button2> : null, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "no_second_key":
+        needsApp = isGuarded(row);
         return isGuarded(row) ? [signIn, self, close] : [signIn, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "denied_second_key":
+        needsApp = true;
         return [self, ledger, close];
       case "held_you":
         return [
@@ -114,6 +124,7 @@ function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
   })();
   return <footer className="ap-drawer-foot">
       {list}
+      {needsApp && !act.desktop ? <small className="ap-muted ap-reason">{HELD.desktopOnly}</small> : null}
       {list.some((item) => item && (item as { type?: unknown }).type === Waiting) ? <small className="ap-muted ap-reason">{NOT_CONNECTED}</small> : null}
     </footer>;
 }
@@ -199,6 +210,7 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
           </>
         )}
         {guarded ? <p className="ap-muted">{GUARD_WORKERS}</p> : null}
+        {act.refused === row.id ? <Said note={HELD.refusedNoteOther}>{HELD.refused}</Said> : null}
       </div>
       <Footer row={row} act={act} />
       </>)}

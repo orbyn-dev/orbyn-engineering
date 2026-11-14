@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ALL_DATA, followShell, onDataChanged, zoomKeyAction } from "./shell";
+import { ALL_DATA, askPresence, canAskPresence, followShell, onDataChanged, PresenceFailure, readShellStatus, zoomKeyAction } from "./shell";
 
 const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
 
@@ -134,5 +134,63 @@ describe("followShell", () => {
     expect(heard).toEqual([ALL_DATA]);
     stop();
     off();
+  });
+});
+
+describe("asking the desktop shell to confirm a person (crew_presence)", () => {
+  type Win = { __TAURI_INTERNALS__?: { invoke: (command: string, args?: Record<string, unknown>) => unknown } };
+  const win = window as unknown as Win;
+
+  async function shell(attached: boolean, invoke?: (command: string, args?: Record<string, unknown>) => unknown) {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ attached, windows: 1, facts: {} }), { status: 200 })));
+    win.__TAURI_INTERNALS__ = invoke ? { invoke } : undefined;
+    await readShellStatus();
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    win.__TAURI_INTERNALS__ = undefined;
+  });
+
+  it("is possible only in the desktop app, with the shell's bridge", async () => {
+    await shell(true, vi.fn());
+    expect(canAskPresence()).toBe(true);
+    await shell(false, vi.fn());
+    expect(canAskPresence()).toBe(false);
+    await shell(true);
+    expect(canAskPresence()).toBe(false);
+  });
+
+  it("calls that one command with the hold id and returns what it gave", async () => {
+    const answer = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const invoke = vi.fn(async () => answer);
+    await shell(true, invoke);
+    await expect(askPresence("hold-1")).resolves.toBe(answer);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("crew_presence", { holdId: "hold-1" });
+  });
+
+  it("fails with the shell's own code, and never retries", async () => {
+    const invoke = vi.fn(async () => { throw "presence_refused:gone"; });
+    await shell(true, invoke);
+    await expect(askPresence("hold-1")).rejects.toMatchObject({ code: "presence_refused:gone" });
+    await expect(askPresence("hold-1")).rejects.toBeInstanceOf(PresenceFailure);
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("is unavailable, without calling anything, outside the desktop app", async () => {
+    const invoke = vi.fn();
+    await shell(false, invoke);
+    await expect(askPresence("hold-1")).rejects.toMatchObject({ code: "unavailable" });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("refuses an answer that is not a nonce, and an error that is not a code", async () => {
+    await shell(true, vi.fn(async () => ({ nonce: "x" })));
+    await expect(askPresence("hold-1")).rejects.toMatchObject({ code: "invalid_answer" });
+    await shell(true, vi.fn(async () => ""));
+    await expect(askPresence("hold-1")).rejects.toMatchObject({ code: "invalid_answer" });
+    await shell(true, vi.fn(async () => { throw new Error("boom"); }));
+    await expect(askPresence("hold-1")).rejects.toMatchObject({ code: "unavailable" });
   });
 });
