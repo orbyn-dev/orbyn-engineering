@@ -9,7 +9,7 @@ import "./shared/frame.css";
 
 const DRAWN: Record<string, ComponentType> = { ...ESCAPE_SCREENS, ...CAPACITY_SCREENS, ...ORACLE_SCREENS, ...BACKTEST_SCREENS, ...SETTINGS_SCREENS, ...FLOW_SCREENS };
 
-/** The frames of Crew Designs v20 to v23. A separate chunk, so opening a review frame never loads them. */
+/** The frames of Crew Designs v20 to v23 and the Flow frames (Version 35). A separate chunk, so opening a review frame never loads them. */
 export default function DrawnScreens({ name }: { name: string }) {
   const Screen = DRAWN[name];
   return Screen ? (

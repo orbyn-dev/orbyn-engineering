@@ -9,11 +9,11 @@ const SHOWS: Record<string, string[]> = {
   "flow-task": ["Tracing the next parameter into the redirect response", "Reading auth/redirect.ts and its 3 callers", "Codex · GPT-5.5 · lead tier", "OpenCode · DeepSeek V4"],
   "flow-task-loop": ["1 confirmed finding", "After the fix", "1 confirmed"],
   "flow-check-failed": ["auth/redirect.test.ts: expected “/” but got “//evil.com”", "Check 3 of 3 failed: npm test auth", "Sent to Build", "After checks"],
-  "flow-artifact-diff": ["Tracing the next parameter into the redirect response", "Reading auth/redirect.ts and its 3 callers", "Codex · GPT-5.5 · lead tier", "OpenCode · DeepSeek V4"],
+  "flow-artifact-diff": ["Diff · Build → Checks", "2 files · +18 −4", "crew/redirect-impl", "Open the diff"],
   "flow-artifacts": ["auth/redirect.test.ts:12 · the example uses //evil.com", "The listed tests pass. Not that other callers work.", "Use next when it points inside the app", "2 lanes · comments link back here"],
   "flow-gates": ["A finding was reproduced with a test that fails (exit 1) on a41c9e2.", "3 of 3 checks ran on commit a41c9e2 and exited 0.", "A confirmed finding. Nothing blocks without one.", "You. Under Full, the queue decides by code."],
   "flow-replay": ["Correctness has read 6 of 9 changed hunks. This is a replay: nothing here can be changed.", "Lane Correctness started on Codex · GPT-5.5 · read-only checkout a41c9e2", "3 of 3 passed on a41c9e2 · decided by code", "Replay · 18:40 of 41:06"],
-  "flow-running": ["Tracing the next parameter into the redirect response", "Reading auth/redirect.ts and its 3 callers", "Codex · GPT-5.5 · lead tier", "OpenCode · DeepSeek V4"],
+  "flow-running": ["Findings so far", "Different engine from the author", "Open the run", "Stop this lane"],
   "flow-lanes-many": ["Accessibility", "Click a line to open what it carries", "a confirmed finding", "Gate decided by:"],
   "flow-long-loop": ["4 earlier findings, each confirmed and sent back once", "Click a round to see its graph", "F1 returned after the refactor", "next survives a failed login"],
   "flow-skipped": ["skipped: docs only (no auth, key, network or dependency files changed)", "Nothing to check: no review reported a finding", "built in · for docs-only diffs", "built in · optional"],
@@ -62,6 +62,13 @@ describe("Flow frames (Crew Designs)", () => {
     const usage = container.querySelector(".cx-cwtabs > .cx-end");
     if (NO_USAGE_LINE.has(name)) expect(usage).toBeNull();
     else expect(usage?.textContent).toBe(name === "flow-offline" ? OFFLINE_USAGE_LINE : USAGE_LINE);
+  });
+
+  it("tells frames that share the lane chrome apart by their own body", async () => {
+    const task = await openFrame("flow-task");
+    for (const text of [...SHOWS["flow-artifact-diff"]!, ...SHOWS["flow-running"]!].filter((t) => !SHOWS["flow-task"]!.includes(t))) {
+      if (["Diff · Build → Checks", "Open the diff", "Findings so far", "Open the run", "Stop this lane"].includes(text)) expect(task.container.textContent).not.toContain(text);
+    }
   });
 
   it("draws the narrow variants at the designed widths", async () => {
