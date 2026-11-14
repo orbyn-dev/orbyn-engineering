@@ -29,8 +29,10 @@ describe("the node's words", () => {
     // The offline frame is drawn from not_installed and the signed-out frame from signed_out.
     expect(engineProblem("codex", "not_installed")).toBe("codex isn’t running.");
     expect(engineProblem("codex", "signed_out")).toBe("codex isn’t signed in.");
-    expect(engineProblem("codex", "sign_in_unconfirmed")).toBe("Sign-in to codex isn’t confirmed.");
-    expect(engineProblem("codex", "broken")).toBe("codex can’t start.");
+    expect(engineProblem("codex", "sign_in_unconfirmed")).toBe("codex: Sign-in unconfirmed");
+    expect(engineProblem("codex", "broken")).toBe("codex: Broken");
+    // For the two without a frame, the banner carries the same word as the chip.
+    for (const status of ["sign_in_unconfirmed", "broken"] as const) expect(engineProblem("x", status)).toContain(engineStatusWord(status));
   });
 
   it("says an engine does not report its subagents, and says nothing else about the ones that do", () => {

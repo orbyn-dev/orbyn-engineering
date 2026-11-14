@@ -6,6 +6,7 @@ import { ErrorState, Empty, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
+import { useBoardFocus } from "../board/focus";
 import { ago } from "../board/model";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useRefresh } from "../flow/live/useFlow";
@@ -106,7 +107,7 @@ function Row({ node, selected, onPick }: { node: FlowNode; selected: boolean; on
 
 const AFTER = "After the beta";
 /** The map does not carry a task's cancel or re-run flags, so it does not guess them: those two are inert here, and the Board card has them. */
-const NOT_HERE = "Use the card on the Board";
+const NOT_HERE = "Use the Board card";
 
 const inert = (label: string, note: string): MenuItem => ({
   label,
@@ -158,6 +159,11 @@ function Detail({ crew, node, onClose }: { crew: string; node: FlowNode; onClose
         >
           <Ellipsis size={14} aria-hidden />
         </button>
+        {node.task ? (
+          <Button small onClick={() => useBoardFocus.getState().ask(crew, node.task!)}>
+            Open on Board
+          </Button>
+        ) : null}
         <Button small onClick={onClose}>
           Close
         </Button>
