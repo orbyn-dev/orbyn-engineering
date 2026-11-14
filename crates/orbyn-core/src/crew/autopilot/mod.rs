@@ -1,7 +1,9 @@
 //! Autopilot (slice 4f), backend only: the lead approves what an agent asks for, code limits what
 //! the lead may approve, and the person reviews what reached main. See the [README](README.md).
 
+mod blast;
 mod chain;
+mod exit;
 mod hard;
 mod hard_tools;
 mod held;
@@ -11,6 +13,7 @@ mod merge;
 mod presence;
 mod review;
 mod shell;
+mod targets;
 mod tier;
 mod tripwire;
 

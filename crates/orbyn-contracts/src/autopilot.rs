@@ -340,7 +340,7 @@ pub struct AutopilotLogRow {
     pub crew_id: String,
     /// `allowed`, `denied`, `person`, `disagreement`, `tripwire`, `merge_queued`, `merge_waiting`, `merged`,
     /// `merge_rejected`, `main_broken`, `reverted`, `person_told`, `held`, `approved_once`, `denied_by_person`,
-    /// `dismissed_by_person`, `hold_used` or `hold_ended`.
+    /// `dismissed_by_person`, `hold_used`, `hold_ended` or `command_exit`.
     pub kind: String,
     pub at: String,
     /// `hard_rule`, `tier`, `lead`, `two_keys`, `person` and so on, when the row says.

@@ -18,6 +18,10 @@ pub enum Need {
     Lead,
     /// The lead and an approver on another vendor both say yes. The ledger calls this tier `medium`.
     TwoKeys,
+    /// A destructive command against a production-linked target (the blast-radius guard, [`super::blast`]). In Full the lead and a
+    /// second key on another vendor both say yes; under On and Off nobody does, and the command is held for the person. The ledger
+    /// calls this tier `guard`.
+    Guarded,
 }
 
 impl Need {
@@ -26,6 +30,7 @@ impl Need {
             Self::Nothing => "always_allowed",
             Self::Lead => "low",
             Self::TwoKeys => "medium",
+            Self::Guarded => "guard",
         }
     }
 }

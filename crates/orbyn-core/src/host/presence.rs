@@ -31,13 +31,26 @@ pub enum PresenceFor {
         task: String,
         command_sha256: String,
     },
+    /// A change that loosens the blast-radius guard: adding a `safe` target (`action` is `add_safe`) or removing a `prod` one
+    /// (`remove_prod`), for exactly this kind and pattern. **No shell message mints this grant yet** (the dialog is a later slice), so
+    /// until it exists the routes that loosen the guard answer `desktop_required` or `presence_required` for every caller.
+    GuardLoosen {
+        action: String,
+        kind: String,
+        pattern: String,
+    },
 }
 
 impl PresenceFor {
     /// The action a grant belongs to: a later grant for the same key replaces the earlier one.
-    fn key(&self) -> &str {
+    fn key(&self) -> String {
         match self {
-            Self::CrewApproveOnce { hold, .. } => hold,
+            Self::CrewApproveOnce { hold, .. } => hold.clone(),
+            Self::GuardLoosen {
+                action,
+                kind,
+                pattern,
+            } => format!("guard:{action}:{kind}:{pattern}"),
         }
     }
 }
@@ -150,7 +163,10 @@ mod tests {
             task,
             command_sha256,
             ..
-        } = &mut other;
+        } = &mut other
+        else {
+            unreachable!("what() is an approve-once grant")
+        };
         change(thread, task, command_sha256);
         other
     }
