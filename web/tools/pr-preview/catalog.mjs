@@ -583,9 +583,9 @@ export const FRAMES = {
   // Not here: `guard-in-flow`, `guard-needsyou` and `route-class-*` are drawn inside Flow, Needs you and the Route card, which other work owns; `guard-approve-myself`
   // is the desktop shell's own dialog over `guard-denied-no-second`; `guard-narrow-panel` is the side panel's card list, and `route-class-*-narrow` the Route card at 320 px.
   "guard-held": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM orders', { prefix: true })] },
-  "guard-denied-no-second": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log', { prefix: true })] },
-  "guard-denied": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users', { prefix: true })] },
-  "guard-approved": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions', { prefix: true })] },
+  "guard-denied-no-second": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log', { prefix: true })] },
+  "guard-denied": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users', { prefix: true })] },
+  "guard-approved": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions', { prefix: true })] },
   "guard-approved-person": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM audit_log', { prefix: true })] },
   "guard-approved-person-unknown": { route: "#/crew/approvals", scenario: "crew-guard-unknown", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM audit_log', { prefix: true })] },
   "guard-settings": { route: "#/settings/crew", scenario: "crew-guard" },

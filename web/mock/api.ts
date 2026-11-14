@@ -54,7 +54,7 @@ export type Scenario =
   | "reference"
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
-  /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
+  /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"

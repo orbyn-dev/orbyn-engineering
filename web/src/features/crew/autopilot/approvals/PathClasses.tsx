@@ -3,6 +3,8 @@
 // the service sends no lock flag, no sensitivity label and no worktree owner, so none is drawn.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toFailure, useAsync } from "../../../../lib/useAsync";
+import { useRoute } from "../../../../product/state/route";
+import { useWorkspace } from "../../../../product/state/workspace";
 import type { ApiFailure } from "../../../../api/client";
 import type { CrewClassEngine } from "../../../../generated/CrewClassEngine";
 import type { CrewClassRule } from "../../../../generated/CrewClassRule";
@@ -17,7 +19,7 @@ import { GUARD_WORKERS } from "./copy";
 import { Chip } from "./parts";
 
 const INTRO =
-  "Path classes sort files by sensitivity and list the engines allowed for each. They are blocking rules: Crew applies them before it scores any engine, and every routing decision is in the ledger. A task that touches two classes can use the engines both classes allow. They are stored in .orbyn/crew.json in this repo, and that file is the authority. Orbyn reads it and never writes it: a change is made in the file’s editor and is a normal reviewed change to the repo, with no separate owner role. A locked class can’t be loosened by personal settings, and agents can never edit the file (it is on the always-denied list). Rules can add or tighten, never loosen.";
+  "Path classes sort files by sensitivity and list the engines allowed for each. They are blocking rules: Crew applies them before it scores any engine, and every routing decision is in the ledger. A task that touches two classes can use the engines both classes allow. They are stored in .orbyn/crew.json in this repo, and that file is the authority. Orbyn reads it and never writes it: a change is made in the file’s editor and is a normal reviewed change to the repo, with no separate owner role. Agents can never edit the file (it is on the always-denied list).";
 
 /** The most paths one test takes (the service refuses more). */
 export const TEST_PATHS = 10;
@@ -29,22 +31,20 @@ export const engineName = (engine: CrewClassEngine) => (engine.on_this_machine ?
 /** The engines a rule allows, in words: none, or the list. A path in no rule has any signed-in engine. */
 export const enginesText = (engines: CrewClassEngine[] | null | undefined) => (engines === null || engines === undefined ? "Any signed-in engine" : engines.length === 0 ? "No engine" : engines.map(engineName).join(", "));
 
-/** What the engines of several paths allow together: every path's list at once. A path with no list allows any engine. */
-export function allowedByAll(paths: CrewClassTestPath[]): CrewClassEngine[] | null {
-  let common: CrewClassEngine[] | null = null;
-  for (const path of paths) {
-    const one = path.allowed_engines;
-    if (one === null || one === undefined) continue;
-    common = common === null ? one : common.filter((engine) => one.some((other) => other.id === engine.id));
-  }
-  return common;
+/** The project the rules are read for: the project of the checkout Settings is showing, else the first project, named on the panel. */
+export function useClassProject(): { id: string; name: string } | null {
+  const route = useRoute();
+  const projects = useWorkspace((state) => state.projects.data);
+  const chosen = route.name === "settings" && route.selection?.kind === "checkout" ? route.selection.project_id : null;
+  const project = (chosen ? projects?.find((one) => one.id === chosen) : undefined) ?? projects?.[0];
+  return project ? { id: project.id, name: project.name } : null;
 }
 
 function Patterns({ paths }: { paths: string[] }) {
-  return <span className="ap-glyphs">{paths.map((path) => <code key={path}>{path}</code>)}</span>;
+  return <span className="ap-glyphs">{paths.map((path, at) => <code key={`${at}-${path}`}>{path}</code>)}</span>;
 }
 
-function Table({ view, selected, onSelect }: { view: { built_in: string; rules: CrewClassRule[] }; selected: string | null; onSelect(name: string): void }) {
+function Table({ view, selected, onSelect }: { view: { built_in: string; rules: CrewClassRule[]; problems: string[] }; selected: string | null; onSelect(name: string): void }) {
   return (
     <div className="ap-targets" role="table" aria-label="Path classes">
       <div className="ap-class-row ap-head" role="row">
@@ -52,8 +52,8 @@ function Table({ view, selected, onSelect }: { view: { built_in: string; rules: 
         <span role="columnheader">Paths</span>
         <span role="columnheader">Allowed engines</span>
       </div>
-      {view.rules.map((rule) => (
-        <div key={rule.name} className={`ap-class-row${selected === rule.name ? " ap-sel" : ""}`} role="row">
+      {view.rules.map((rule, at) => (
+        <div key={`${at}-${rule.name}`} className={`ap-class-row${selected === rule.name ? " ap-sel" : ""}`} role="row">
           <span role="cell"><button type="button" className="ap-open" aria-pressed={selected === rule.name} onClick={() => onSelect(rule.name)}><b>{rule.name}</b></button></span>
           <span role="cell"><Patterns paths={rule.paths} /></span>
           <span role="cell" data-label="Allowed">{enginesText(rule.engines)}</span>
@@ -62,7 +62,8 @@ function Table({ view, selected, onSelect }: { view: { built_in: string; rules: 
       <div className="ap-class-row" role="row">
         <span role="cell"><b>{view.built_in}</b><small>Built in</small></span>
         <span role="cell">Any path not matched above</span>
-        <span role="cell" data-label="Allowed">Any signed-in engine</span>
+        {/* With a file that can't be used every engine is blocked, built-in class included. */}
+        <span role="cell" data-label="Allowed">{view.problems.length ? "No engine" : "Any signed-in engine"}</span>
       </div>
     </div>
   );
@@ -83,7 +84,6 @@ function Detail({ rule, at, onClose }: { rule: CrewClassRule; at: number; onClos
           <div><dt>Allowed engines</dt><dd>{engines}</dd></div>
           <div><dt>Reason</dt><dd>{rule.reason}</dd></div>
         </dl>
-        <p className="ap-muted">{rule.engines.length === 0 ? "No engine may take these paths." : `Tasks that touch these paths are routed to ${rule.engines.map(engineName).join(", ")}.`} A task that also touches another class can use the engines both allow.</p>
         <p className="ap-muted">Orbyn reads this file and never writes it. To change the class, open the file in the editor: the change is a normal reviewed change to the repo, and Orbyn reads it again when it is saved.</p>
       </div>
       <footer className="ap-drawer-foot"><Button small tone="quiet" onClick={onClose}>Close</Button></footer>
@@ -130,7 +130,7 @@ function Answer({ path }: { path: CrewClassTestPath }) {
   );
 }
 
-function TestBox({ onResult }: { onResult(has: boolean): void }) {
+function TestBox({ project, onResult }: { project: string; onResult(has: boolean): void }) {
   const [text, setText] = useState("");
   const [state, setState] = useState<{ status: "idle" } | { status: "error"; failure: ApiFailure } | { status: "ready"; test: CrewClassTest }>({ status: "idle" });
   const paths = useMemo(() => text.split("\n").map((one) => one.trim()).filter(Boolean).slice(0, TEST_PATHS), [text]);
@@ -142,32 +142,21 @@ function TestBox({ onResult }: { onResult(has: boolean): void }) {
     }
     const abort = new AbortController();
     const timer = setTimeout(() => {
-      crewApi.classesTest(key.split("\n"), abort.signal).then(
+      crewApi.classesTest(project, key.split("\n"), abort.signal).then(
         (test) => setState({ status: "ready", test }),
         (error: unknown) => { if (!abort.signal.aborted) setState({ status: "error", failure: toFailure(error) }); },
       );
     }, DEBOUNCE_MS);
     return () => { clearTimeout(timer); abort.abort(); };
-  }, [key]);
+  }, [project, key]);
   useEffect(() => onResult(state.status === "ready"), [state.status, onResult]);
   const results = state.status === "ready" ? state.test.paths : [];
-  const several = results.filter((one) => one.valid);
-  const together = several.length > 1 ? allowedByAll(several) : undefined;
   return (
     <section className="ap-box">
       <h4>Which class does this path match?</h4>
       <textarea className="ap-search ap-class-input" aria-label="Paths to test, one per line" placeholder="auth/redirect.ts" rows={2} autoComplete="off" spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
       {state.status === "error" ? <ErrorState title="Can't test the path" failure={state.failure} onRetry={() => setText((now) => `${now} `)} /> : null}
-      {results.map((path) => <Answer key={path.path} path={path} />)}
-      {together !== undefined ? (
-        <>
-          <h4>Two paths in one task</h4>
-          <dl className="ap-facts">
-            <div><dt>Matches</dt><dd>{[...new Set(several.flatMap((one) => one.classes.map((c) => c.name)))].join(" and ") || "Everything else"}</dd></div>
-            <div><dt>Allowed by both</dt><dd>{enginesText(together)}</dd></div>
-          </dl>
-        </>
-      ) : null}
+      {results.map((path, at) => <Answer key={`${at}-${path.path}`} path={path} />)}
     </section>
   );
 }
@@ -217,8 +206,8 @@ function CommandBox() {
   );
 }
 
-function Loaded() {
-  const read = useAsync("crew-classes", (signal) => crewApi.classes(signal));
+function Loaded({ project }: { project: { id: string; name: string } }) {
+  const read = useAsync(`crew-classes:${project.id}`, (signal) => crewApi.classes(project.id, signal));
   const [selected, setSelected] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [answered, setAnswered] = useState(false);
@@ -234,6 +223,7 @@ function Loaded() {
         <h2 id="ap-classes-title">Crew › Path classes</h2>
         <Chip tone="plain">Preview</Chip>
       </header>
+      <p className="ap-muted">Read for the project {project.name}.</p>
       <p className="ap-muted">{INTRO}</p>
       {view.working_copy_note ? <div className="ap-banner ap-banner-plain" role="note"><p>{view.working_copy_note}</p></div> : null}
       {broken ? <Problems problems={view.problems} onCheck={read.reload} /> : null}
@@ -241,7 +231,7 @@ function Loaded() {
         <div className="ap-class-main">
           <Table view={view} selected={rule?.name ?? null} onSelect={(name) => setSelected(name === selected ? null : name)} />
           <div className="ap-class-acts"><Button small onClick={() => setTesting((now) => !now)} aria-expanded={testing}>Test a path</Button></div>
-          {testing ? <><TestBox onResult={setAnswered} /><CommandBox /></> : null}
+          {testing ? <><TestBox project={project.id} onResult={setAnswered} /><CommandBox /></> : null}
         </div>
         {rule ? <Detail rule={rule} at={view.rules.indexOf(rule) + 1} onClose={() => setSelected(null)} /> : null}
       </div>
@@ -250,7 +240,8 @@ function Loaded() {
   );
 }
 
-/** Settings › Crew › Path classes. */
+/** Settings › Crew › Path classes. Nothing is drawn while there is no project to read the file for. */
 export function PathClasses() {
-  return <Loaded />;
+  const project = useClassProject();
+  return project ? <Loaded project={project} /> : null;
 }

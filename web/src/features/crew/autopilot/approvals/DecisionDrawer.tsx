@@ -5,7 +5,7 @@ import { NOT_CONNECTED } from "./api";
 import { GUARD_WORKERS, HELD, MODE_COPY } from "./copy";
 
 import type { ApprovalRow, Mode } from "./model";
-import { HeldBody, HeldFooter, Said } from "./HeldCard";
+import { HeldBody, HeldFooter, Said, UNREADABLE } from "./HeldCard";
 import { phaseOf, type HoldControl } from "./held";
 import { Chip, engineLine, Facts, ResultChip, RISK_LABEL } from "./parts";
 
@@ -115,10 +115,19 @@ function Button2({ children, onClick, tone = "secondary", disabled }: { children
   return <Button small tone={tone} disabled={disabled} onClick={onClick}>{children}</Button>;
 }
 
-function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
+function Footer({ row, act, joined }: { row: ApprovalRow; act: DrawerActions; joined?: HoldControl }) {
   const close = <Button2 key="close" onClick={act.close} tone="quiet">Close</Button2>;
   const ledger = act.openLedger ? <Button2 key="ledger" onClick={() => act.openLedger?.(row)}>Open in the ledger</Button2> : null;
-  const self = act.desktop && row.held ? <Button2 key="self" disabled={act.asking} onClick={(event) => act.approveMyself(row, event)}>Approve it myself</Button2> : null;
+  // A denied command that still has a live hold is answered through the hold, with the same checks as the held card.
+  const offered = joined ? joined.desktop || joined.remote : act.desktop;
+  const closedHold = joined?.closed != null;
+  const reason = joined ? (joined.remote ? HELD.remote : joined.desktop && row.held && !row.held.readable ? UNREADABLE : null) : null;
+  const selfOff = joined ? joined.busy || joined.asking || joined.remote || closedHold || reason !== null : act.asking;
+  const self = offered && row.held && !closedHold ? <Button2 key="self" disabled={selfOff} onClick={(event) => act.approveMyself(row, event)}>Approve it myself</Button2> : null;
+  const answers = joined && row.held && !closedHold ? [
+    <Button2 key="deny" disabled={joined.busy || joined.remote} onClick={() => joined.deny()}>Deny</Button2>,
+    <Button2 key="dismiss" tone="quiet" disabled={joined.busy || joined.remote} onClick={() => joined.dismiss()}>Dismiss</Button2>,
+  ] : [];
   const signIn = act.signInSecondEngine ? <Button2 key="signin" onClick={() => act.signInSecondEngine?.()}>Sign in to a second engine</Button2> : null;
   let needsApp = false;
   const list: (ReactNode | null)[] = (() => {
@@ -131,7 +140,7 @@ function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
         return [act.openRequest ? <Button2 key="req" onClick={() => act.openRequest?.(row)}>Open the request</Button2> : null, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "no_second_key":
         needsApp = isGuarded(row);
-        return isGuarded(row) ? [signIn, self, close] : [signIn, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
+        return isGuarded(row) ? [signIn, self, ...answers, close] : [signIn, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "denied_second_key":
         needsApp = true;
         return [self, ledger, close];
@@ -146,7 +155,9 @@ function Footer({ row, act }: { row: ApprovalRow; act: DrawerActions }) {
   })();
   return <footer className="ap-drawer-foot">
       {list}
-      {needsApp && !act.desktop ? <small className="ap-muted ap-reason">{HELD.desktopOnly}</small> : null}
+      {reason ? <small className="ap-muted ap-reason">{reason}</small> : null}
+      {joined?.error ? <small className="ap-muted ap-reason" role="alert">{joined.error}</small> : null}
+      {needsApp && !act.desktop && !joined?.remote ? <small className="ap-muted ap-reason">{HELD.desktopOnly}</small> : null}
       {list.some((item) => item && (item as { type?: unknown }).type === Waiting) ? <small className="ap-muted ap-reason">{NOT_CONNECTED}</small> : null}
     </footer>;
 }
@@ -158,7 +169,7 @@ function HeldChip({ held, hold, result }: { held: NonNullable<ApprovalRow["held"
 }
 
 /** One request's whole chain, opened from a row. Escape closes it and focus goes back to the row. */
-export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act: DrawerActions; mode: Mode; hold?: HoldControl }) {
+export function DecisionDrawer({ row, act, mode, hold, joined }: { row: ApprovalRow; act: DrawerActions; mode: Mode; hold?: HoldControl; /** A denied command whose live hold this row answers through. */ joined?: HoldControl }) {
   const answers = hold && row.held ? { hold, held: row.held } : null;
   const ref = useRef<HTMLElement>(null);
   useEffect(() => ref.current?.focus(), [row.id]);
@@ -236,9 +247,11 @@ export function DecisionDrawer({ row, act, mode, hold }: { row: ApprovalRow; act
           </>
         )}
         {guarded ? <p className="ap-muted">{GUARD_WORKERS}</p> : null}
-        {act.refused === row.id ? <Said live note={HELD.refusedNoteOther}>{HELD.refused}</Said> : null}
+        {(joined ? joined.refused : act.refused === row.id) ? <Said live note={HELD.refusedNoteOther}>{HELD.refused}</Said> : null}
+        {joined?.closed === "expired" ? <Said>{HELD.expired}</Said> : null}
+        {joined?.closed === "decided" ? <Said>{HELD.decided}</Said> : null}
       </div>
-      <Footer row={row} act={act} />
+      <Footer row={row} act={act} joined={joined} />
       </>)}
     </aside>
   );

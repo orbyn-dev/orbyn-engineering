@@ -48,13 +48,13 @@ export const crewApi = {
   /** This device's two lists of targets the guard watches. Read-only here: adding or removing is not drawn. */
   guardTargets: (signal?: AbortSignal) => request<GuardTargets>("GET", "/api/crew/guard/targets", undefined, signal),
   /**
-   * The rules of `.orbyn/crew.json`. The screen has no thread and sends none: the service answers 400 "thread is required" until its
-   * `classes` and `classes/test` routes take the thread as optional (`thread_of` in `routes/crew.rs`).
+   * The rules of `.orbyn/crew.json` for a project. The service takes `project` (a project id) as the alternative to `thread` once its change
+   * merges; until then it answers 400 "thread is required" and the panel shows that error.
    */
-  classes: (signal?: AbortSignal) => request<CrewClassesView>("GET", "/api/crew/classes", undefined, signal),
+  classes: (project: string, signal?: AbortSignal) => request<CrewClassesView>("GET", `/api/crew/classes?${new URLSearchParams({ project })}`, undefined, signal),
   /** 1 to 10 paths against those rules. Nothing is saved. */
-  classesTest: (paths: string[], signal?: AbortSignal) => {
-    const params = new URLSearchParams();
+  classesTest: (project: string, paths: string[], signal?: AbortSignal) => {
+    const params = new URLSearchParams({ project });
     for (const path of paths) params.append("path", path);
     return request<CrewClassTest>("GET", `/api/crew/classes/test?${params}`, undefined, signal);
   },

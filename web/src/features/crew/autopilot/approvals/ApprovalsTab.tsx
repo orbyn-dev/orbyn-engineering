@@ -148,6 +148,8 @@ export function ApprovalsTab() {
   const held = useHeldCommands(close);
   // Held commands are newest, and wait for you: they come first, then the ledger.
   const rows = useMemo(() => withHolds(held.rows, state.status === "ready" ? state : null), [held.rows, state]);
+  // A hold waits once, whether its own row or the denied row that took it is drawn.
+  const waiting = useMemo(() => new Set(rows.flatMap((one) => (one.held?.state === "held" ? [one.held.id] : []))).size, [rows]);
   const shown = useMemo(() => rows.filter((row) => matches(row, filter, q)), [rows, filter, q]);
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((one) => [one.id, rows.filter((row) => matches(row, one.id, "")).length])) as Record<ApprovalFilter, number>, [rows]);
 
@@ -190,7 +192,7 @@ export function ApprovalsTab() {
       {view === "routing" ? <RoutingView read={routing} /> : null}
       {view === "routing" ? null : <>
       <div className="ap-bar">
-        {held.waiting > 0 ? <Chip tone="am">Needs you · {held.waiting}</Chip> : null}
+        {waiting > 0 ? <Chip tone="am">Needs you · {waiting}</Chip> : null}
         <Chip tone="plain">{line}</Chip>
       </div>
       {held.failure ? <ErrorState title="Can't read held commands" failure={held.failure} onRetry={() => void held.reload()} /> : null}
@@ -242,7 +244,7 @@ export function ApprovalsTab() {
               <span>{LEDGER_NOTE}</span>
             </div>
           </div>
-          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held && row.result !== "no_second_key" ? held.control(row) : undefined} /> : null}
+          {row ? <DecisionDrawer row={row} act={act} mode={mode} hold={row.held && row.result !== "no_second_key" ? held.control(row) : undefined} joined={row.held && row.result === "no_second_key" ? held.control({ ...row, id: row.held.id }) : undefined} /> : null}
         </div>
       )}
       </>}

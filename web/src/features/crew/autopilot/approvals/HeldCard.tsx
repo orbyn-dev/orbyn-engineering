@@ -9,7 +9,7 @@ import { decidedLine, phaseOf, type HoldControl } from "./held";
 import type { ApprovalRow, HeldInfo, Mode } from "./model";
 import { Facts } from "./parts";
 
-const UNREADABLE = "This command is too long to read whole, so it cannot be approved once.";
+export const UNREADABLE = "This command is too long to read whole, so it cannot be approved once.";
 
 export function Said({ children, note, live }: { children: string; note?: string | null; live?: boolean }) {
   return (

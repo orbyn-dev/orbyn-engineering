@@ -33,14 +33,14 @@ function Considered({ rejected, row, chosen }: { rejected: RouteRejection[]; row
       <h5>Every engine considered, and why not</h5>
       <ul className="ap-rej">
         {chosen ? <li className="ap-rej-chosen"><b>{chosen}</b><small>Chosen</small></li> : null}
-        {rejected.map((one) => (
-          <li key={one.engine}>
+        {rejected.map((one, at) => (
+          <li key={`${at}-${one.engine}`}>
             <b>{one.engine}</b>
             <small>
               {one.text}
               {one.why === "not_signed_in" ? <> <button type="button" className="ap-link" onClick={() => navigate({ name: "settings", section: "providers" })}>Sign in</button></> : null}
             </small>
-            {rulesOf(row, one.engine).map((rule) => <span key={rule} className="ap-rtag" title={`The rule ${rule} in ${FILE}`}>{rule}</span>)}
+            {rulesOf(row, one.engine).map((rule, n) => <span key={`${n}-${rule}`} className="ap-rtag" title={`The rule ${rule} in ${FILE}`}>{rule}</span>)}
           </li>
         ))}
       </ul>
@@ -122,7 +122,7 @@ export function RouteClassCard({ view, onCheck }: { view: CrewRouteView; onCheck
         <div className="ap-route-col">
           <section className="ap-box">
             <h4>Chosen: {decision.engine} · {decision.model} · {effort}</h4>
-            {decision.reasons.map((reason) => <p key={reason.code}>{reason.text}</p>)}
+            {decision.reasons.map((reason, at) => <p key={`${at}-${reason.code}`}>{reason.text}</p>)}
           </section>
           <Task row={row} />
         </div>

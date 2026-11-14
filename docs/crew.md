@@ -737,8 +737,8 @@ and a wrong entry is the person's to fix. Nothing here is tamper-proof: a proces
 - **Approving is the desktop app's.** The web shows state and the held card; Approve once and Approve it myself ask the shell's native dialog and send its one-time nonce in
   `x-orbyn-confirm`. There is no web path that approves without it. In a browser tab the card says "Approving once needs the Orbyn desktop app."
 - **Settings › Crew** lists this device's `prod_targets` and `safe_targets` (`GET /api/crew/guard/targets`), the built-in categories and the path classes. The screen has no
-  thread and sends none, so `GET /api/crew/classes` and `/classes/test` answer 400 "thread is required" until the service makes `thread` optional (`thread_of` in
-  `crates/orbynd/src/routes/crew.rs`); the mock accepts none. The test box takes a path list, one per line (1 to 10), and a command box asks `GET /api/crew/guard/test`
+  thread: it sends `project` (the project Settings shows: the checkout's project when one is selected, else the first, named on the panel). The service takes `project` as the alternative to
+  `thread` in a separate change; until that merges, `GET /api/crew/classes` and `/classes/test` answer 400 "thread is required" and the panel shows the error. The test box takes a path list, one per line (1 to 10), and a command box asks `GET /api/crew/guard/test`
   (thread optional there); both read once typing stops. Engines are named by id as served. Nothing writes: no Mark a target (loosening needs the shell's dialog,
   not built), no Save, no Open in editor.
 - **Route card** (`RouteCard` for a task id, `GET /api/crew/route/{task}`) has three states: an engine blocked by a class, the file invalid (with Check again) and no engine

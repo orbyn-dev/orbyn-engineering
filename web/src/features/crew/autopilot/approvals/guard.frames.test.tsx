@@ -65,14 +65,16 @@ describe("a command held for you (guard-held)", () => {
 
 describe("denied because no second vendor is signed in (guard-denied-no-second, guard-approve-myself)", () => {
   it("is one row for the command, not two: the row takes the live hold", async () => {
-    await open("crew-guard");
+    await open("crew-guard-full");
     expect(screen.getAllByRole("button", { name: TRUNCATE })).toHaveLength(1);
     expect(rowOf_(TRUNCATE)).toHaveTextContent("Denied · no second key");
-    expect(screen.getAllByText("Held for you")).toHaveLength(1);
+    expect(screen.queryByText("Held for you")).toBeNull();
+    // The hold waits once: the denied row took it, and the count says one.
+    expect(screen.getByText("Needs you · 1")).toBeVisible();
   });
 
   it("shows the chain with the second key unavailable, and offers to sign in and to approve it yourself", async () => {
-    const user = await open("crew-guard");
+    const user = await open("crew-guard-full");
     await user.click(screen.getByRole("button", { name: TRUNCATE }));
     const card = screen.getByRole("complementary", { name: TRUNCATE });
     expect(frame()).toBe("guard-denied-no-second");
@@ -80,14 +82,14 @@ describe("denied because no second vendor is signed in (guard-denied-no-second, 
     expect(card).toHaveTextContent("Hard rule: the guardTwo keys are needed for this target.");
     expect(card).toHaveTextContent("Key 1: the lead said yesIt is a cleanup in the brief.");
     expect(card).toHaveTextContent("Key 2: not available");
-    expect(within(card).getAllByRole("button").map((b) => b.textContent)).toEqual(["Sign in to a second engine", "Approve it myself", "Close"]);
+    expect(within(card).getAllByRole("button").map((b) => b.textContent)).toEqual(["Sign in to a second engine", "Approve it myself", "Deny", "Dismiss", "Close"]);
   });
 
   it("hands Approve it myself to the shell for the live hold, then sends the nonce once, in the header", async () => {
     const nonce = randomNonce();
     let release: (value: string) => void = () => undefined;
     invoke.mockImplementation(() => new Promise<string>((resolve) => { release = resolve; }));
-    const user = await open("crew-guard");
+    const user = await open("crew-guard-full");
     await user.click(screen.getByRole("button", { name: TRUNCATE }));
     await trustedClick(within(screen.getByRole("complementary", { name: TRUNCATE })).getByRole("button", { name: "Approve it myself" }));
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -103,7 +105,7 @@ describe("denied because no second vendor is signed in (guard-denied-no-second, 
   });
 
   it("in a browser tab keeps the other buttons and says it needs the desktop app, with no way to approve", async () => {
-    const user = await open("crew-guard", false);
+    const user = await open("crew-guard-full", false);
     await user.click(screen.getByRole("button", { name: TRUNCATE }));
     const card = screen.getByRole("complementary", { name: TRUNCATE });
     expect(card).toHaveTextContent("Approving once needs the Orbyn desktop app.");
@@ -113,15 +115,75 @@ describe("denied because no second vendor is signed in (guard-denied-no-second, 
   });
 });
 
+/** Makes the next answers to approve-once what a test says: a refusal of the service, or a lost network. */
+function answerApproveWith(how: "presence_required" | "policy_denied" | "network") {
+  const real = fetch;
+  vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+    if (!String(input).includes("/approve-once")) return real(input, init);
+    if (how === "network") throw new TypeError("Failed to fetch");
+    return new Response(JSON.stringify({ code: how, message: how === "policy_denied" ? "Denied by Autopilot (N4)." : "Approving needs the person's confirmation." }), { status: 403 });
+  }));
+}
+
+describe("answering the hold behind a denied row (guard-denied-no-second)", () => {
+  const openJoined = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: TRUNCATE }));
+    return screen.getByRole("complementary", { name: TRUNCATE });
+  };
+
+  it("says the shell could not confirm it was you, on this row, and keeps the hold answerable", async () => {
+    const user = await open("crew-guard-full");
+    answerApproveWith("presence_required");
+    const card = await openJoined(user);
+    await trustedClick(within(card).getByRole("button", { name: "Approve it myself" }));
+    expect(await within(card).findByText("Orbyn couldn’t confirm it was you. Try again from the desktop app.")).toBeVisible();
+    expect(within(card).getByRole("button", { name: "Approve it myself" })).toBeEnabled();
+    expect(within(card).getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
+  it("says nothing was changed when the network is lost, and that the request is still held", async () => {
+    const user = await open("crew-guard-full");
+    answerApproveWith("network");
+    const card = await openJoined(user);
+    await trustedClick(within(card).getByRole("button", { name: "Approve it myself" }));
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Can’t reach the Orbyn service. Nothing was changed. The request is still held.");
+  });
+
+  it("says it is already decided when the always-denied list refused it now, and offers no answer for a closed hold", async () => {
+    const user = await open("crew-guard-full");
+    answerApproveWith("policy_denied");
+    const card = await openJoined(user);
+    await trustedClick(within(card).getByRole("button", { name: "Approve it myself" }));
+    expect(await within(card).findByText("Already decided.")).toBeVisible();
+    expect(within(card).queryByRole("button", { name: /Approve it myself|Deny|Dismiss/ })).toBeNull();
+  });
+
+  it("answers the hold on Deny, by the hold's id", async () => {
+    const user = await open("crew-guard-full");
+    const card = await openJoined(user);
+    await user.click(within(card).getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(calls("/api/crew/approvals/hold-audit-2/deny")).toHaveLength(1));
+  });
+
+  it("in a window that reaches the app from another computer shows the answers off, with the reason", async () => {
+    const user = await open("crew-guard-full");
+    useConnection.setState({ remote: true });
+    const card = await openJoined(user);
+    expect(within(card).getByRole("button", { name: "Approve it myself" })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: "Deny" })).toBeDisabled();
+    expect(card).toHaveTextContent("Do this from the computer the app runs on.");
+  });
+});
+
 describe("denied by the second key (guard-denied)", () => {
   it("is one row, though the service stores a disagreement and the denial it caused", async () => {
-    await open("crew-guard");
+    await open("crew-guard-full");
     expect(screen.getAllByRole("button", { name: DROP })).toHaveLength(1);
     expect(rowOf_(DROP)).toHaveTextContent("Denied by the second key");
   });
 
   it("shows both keys with the second key's reason, and no way to approve: no hold was made", async () => {
-    const user = await open("crew-guard");
+    const user = await open("crew-guard-full");
     await user.click(screen.getByRole("button", { name: DROP }));
     const card = screen.getByRole("complementary", { name: DROP });
     expect(frame()).toBe("guard-denied");
@@ -134,7 +196,7 @@ describe("denied by the second key (guard-denied)", () => {
 
 describe("approved (guard-approved, guard-approved-person, guard-approved-person-unknown)", () => {
   it("by two keys: both reasons side by side, and the exit status the later command_exit row gave", async () => {
-    const user = await open("crew-guard");
+    const user = await open("crew-guard-full");
     expect(rowOf_(SESSIONS)).toHaveTextContent("Approved by two keys");
     await user.click(screen.getByRole("button", { name: SESSIONS }));
     const card = screen.getByRole("complementary", { name: SESSIONS });
@@ -173,7 +235,7 @@ describe("approved (guard-approved, guard-approved-person, guard-approved-person
 
 describe("a guarded command in the 320 px panel (guard-narrow-panel)", () => {
   it("is a small card with its time, result and command for each request", async () => {
-    mock.reset("crew-guard");
+    mock.reset("crew-guard-full");
     const page = await crewApi.approvals({ offset: 0, limit: 50 });
     const exits = new Map<number, Exit>();
     const holds = new Map<string, { guard: GuardBody; at: string }>();

@@ -32,7 +32,7 @@ function Row({ row }: { row: RoutingRow }) {
       <span role="cell">
         <b>{row.task}</b>
         <small>Class {names.length ? `${names.join(" and ")} · ${row.classes.map((one) => one.pattern).join(", ")}` : "Everything else"}</small>
-        {shown.length ? <span className="ap-glyphs">{shown.map((path) => <code key={path}>{path}</code>)}{more ? <small>+{more} more</small> : null}</span> : null}
+        {shown.length ? <span className="ap-glyphs">{shown.map((path, at) => <code key={`${at}-${path}`}>{path}</code>)}{more ? <small>+{more} more</small> : null}</span> : null}
       </span>
       <span role="cell">
         {row.blocked.length ? row.blocked.map((one) => <small key={`${one.engine}-${one.rule}`} title={one.reason}>{one.engine} · {one.rule}</small>) : <small>No engine blocked</small>}
