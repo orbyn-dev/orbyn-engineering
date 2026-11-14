@@ -47,6 +47,8 @@ mod crew_areas_tests;
 #[cfg(test)]
 mod crew_background_tests;
 #[cfg(test)]
+mod crew_cancel_tests;
+#[cfg(test)]
 mod crew_classes_tests;
 #[cfg(test)]
 mod crew_guard_tests;

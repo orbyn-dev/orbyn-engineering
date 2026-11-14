@@ -37,6 +37,7 @@
 
 use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
@@ -130,6 +131,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/tasks/{id}/cancel",
+        "core crew_cancel_task: the person's stop button; the intent audit row before any effect, the worker's engine stopped and confirmed (else the state is kept and a failed-attempt row is written), then the state and its row in one transaction; already cancelled answers already and writes nothing; passed or stopped is a conflict; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/guard/targets/add",
         "core guard_target_add: a bare name or *.suffix, no secret, at most 200 entries, audited in the same transaction before the entry; adding a safe target loosens the guard and needs the person's presence grant (x-orbyn-confirm); local only",
     ),
@@ -164,6 +170,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(background_disable),
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
+        .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
@@ -557,6 +564,28 @@ async fn background_delete(
 ) -> ApiResult<impl IntoResponse> {
     state.core.background_delete(&id)?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// The person's stop button: cancels a task. The body may be empty, or `{ "reason": "..." }`.
+async fn cancel_task(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off, a malformed body is still "no such route".
+    state.core.crew_preview_state()?;
+    let body: wire::CrewTaskCancel = if body.iter().all(u8::is_ascii_whitespace) {
+        wire::CrewTaskCancel { reason: None }
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|_| CoreError::Invalid("the body is { \"reason\": text } or empty".into()))?
+    };
+    Ok(Json(
+        state
+            .core
+            .crew_cancel_task(&id, body.reason.as_deref(), "user")
+            .await?,
+    ))
 }
 
 /// The blast-radius guard's two lists, on this device.

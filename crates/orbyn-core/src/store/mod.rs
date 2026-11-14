@@ -21,6 +21,7 @@ mod crew_background_tests;
 mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
+mod crew_cancel;
 mod crew_guard;
 mod crew_merges;
 mod crew_review;
@@ -56,6 +57,7 @@ pub use crew_background::{
     RunEnd,
 };
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
+pub use crew_cancel::CancelStart;
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
 pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
@@ -95,6 +97,8 @@ pub struct Store {
     /// Counts local changes that queued an account field, to wake the sync worker.
     account_changes: tokio::sync::watch::Sender<u64>,
     upgrade: Option<orbyn_contracts::DatabaseUpgrade>,
+    /// One lock per Crew task being cancelled, so two cancels of a task run one after the other.
+    cancels: Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// One audit row. Rows are only ever inserted.
@@ -163,6 +167,7 @@ impl Store {
             run_changes: tokio::sync::watch::channel(0).0,
             account_changes: tokio::sync::watch::channel(0).0,
             upgrade,
+            cancels: Mutex::default(),
         })
     }
 
