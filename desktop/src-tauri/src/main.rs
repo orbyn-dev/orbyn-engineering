@@ -7,6 +7,7 @@ mod desktop_origin;
 mod image_picker;
 mod links;
 mod menu;
+mod presence;
 mod restart_policy;
 mod shell_state;
 mod system;
@@ -160,6 +161,36 @@ fn launch_core(app: &AppHandle) {
         ServiceMessage::Activity(now) => activity::apply(&messages, now),
         ServiceMessage::ChooseProjectImage { request_id } => {
             image_picker::choose(&messages, request_id)
+        }
+        ServiceMessage::PresenceHold {
+            request_id,
+            hold_id,
+            thread_id,
+            task_id,
+            command_shown,
+            command_sha256,
+            worker_name,
+            task_title,
+            truncated,
+        } => presence::deliver(
+            &messages,
+            &request_id,
+            presence::Answer::Hold(presence::Hold {
+                hold_id,
+                thread_id,
+                task_id,
+                command_shown,
+                command_sha256,
+                worker_name,
+                task_title,
+                truncated,
+            }),
+        ),
+        ServiceMessage::PresenceReady { request_id } => {
+            presence::deliver(&messages, &request_id, presence::Answer::Ready)
+        }
+        ServiceMessage::PresenceRefused { request_id, code } => {
+            presence::deliver(&messages, &request_id, presence::Answer::Refused(code))
         }
     };
     let on_exit = move |reason: String| {
@@ -445,7 +476,9 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     // macOS: a template image, so the menu bar tints it for light, dark and a selected bar.
     #[cfg(target_os = "macos")]
     {
-        tray = tray.icon(tray_mark(tauri::Theme::Light)).icon_as_template(true);
+        tray = tray
+            .icon(tray_mark(tauri::Theme::Light))
+            .icon_as_template(true);
     }
     // Elsewhere: black or white by the main window's theme (the app theme, not the taskbar's own setting), set again when it changes (`sync_tray`).
     #[cfg(not(target_os = "macos"))]
@@ -508,6 +541,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(Core(Mutex::new(None)))
+        .manage(presence::Presence::default())
         .manage(Restarts::default())
         .manage(ServiceGeneration::default())
         .manage(PendingUpdate(Mutex::new(None)))
@@ -518,7 +552,7 @@ fn main() {
         .manage(menu::QuitItem::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
-        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core])
+        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence])
         .setup(|app| {
             core_process::startup_phase("setup-started");
             let handle = app.handle().clone();

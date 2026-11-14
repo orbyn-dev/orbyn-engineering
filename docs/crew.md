@@ -575,8 +575,8 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
      `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`.
   The strings in `presence_hold` are made for a plain-text dialog: control, invisible, bidirectional and format characters become a visible `�`,
   a newline becomes a visible `⏎`, the command is capped at 1000 characters with `truncated` set if it was cut (the hash is of the full command), and
-  a hold that cannot be read whole is refused with `unreadable`. **PR2's dialog must render all of them as plain text** (no markup, no HTML, no
-  link detection), and show them as given.
+  a hold that cannot be read whole is refused with `unreadable`. The shell's dialog renders all of them as plain text (no markup, no HTML, no
+  link detection) and shows them as given; it also refuses an answer that still holds a control character.
   Refusal codes on the shell channel: `unavailable`, `invalid`, `not_found`, `gone`, `unreadable`, `mismatch`.
   **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
   wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.
@@ -589,8 +589,54 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   The devtools feature is on in release builds (`desktop/src-tauri/Cargo.toml:15`): a script in the page can call `invoke` but cannot click the native
   dialog. That is a known exposure, tracked in [issue #532](https://github.com/orbyn-dev/orbyn-engineering/issues/532).
   **Idea, not built (Linux only):** a per-launch HMAC key between the shell and the service, so a line written into the pipe by another process fails.
-  **Not built yet:** the shell's dialog (PR2) and the web card that asks for it and sends the nonce (PR3). Until the dialog exists nothing can mint a grant,
-  so approve-once answers `presence_required` (desktop service) or `desktop_required` (no shell) for every caller.
+  **As built (PR2, the shell's dialog):** the command `crew_presence(hold_id)` in `desktop/src-tauri/src/presence.rs`. The bundled app's main window
+  alone may call it (the capability is the `main` window's, and the command checks the window's label and address as well). It checks the hold id, sends
+  `presence_describe` and waits up to 10 seconds for `presence_hold` (matched by request id), shows the native dialog from the service's text, and
+  only on a click on Approve once mints the nonce (16 bytes from the operating system, 32 lowercase hex characters), sends `presence_grant` with the ids
+  and hash exactly as the service described them, waits up to 10 seconds for `presence_ready` and returns the nonce. The dialog's title is "Approve this
+  command once?", its body is the command (then an ellipsis if it was cut), "Worker: <name>", "Task: <title>" and "This approves this one command. It
+  cannot be reused."; its buttons are "Approve once" and "Cancel". One approval is open at a time (a second call is `busy`). The nonce is never logged,
+  never written to disk and never in an event; it reaches the page only as the command's return value. The buffers the shell owns are zeroed when dropped, which is
+  best effort. Errors are stable strings: `cancelled` (nothing was sent), `busy`, `timeout`, `unavailable` (no service), `invalid_hold`,
+  `invalid_answer`, `forbidden`, `dialog_failed`, `nonce_failed` and `presence_refused:<code>` for the service's refusal codes above. The page words
+  them; for a refusal or a timeout the Designer's text is "Orbyn couldn't confirm it was you. Try again from the desktop app."
+  **Which button is which, and what Return does.** Approve once is the dialog plugin's OK slot and Cancel its cancel slot. **Return in the native dialog
+  APPROVES on macOS and Windows**, because Approve once is the first button and the default one, and the plugin has no default-button setting. Escape,
+  the close box, Alt+F4, a failed dialog call and a GTK delete-event all come back as the Cancel label; only a click or Return on the Approve slot equals
+  the Approve label, and the code refuses to build with the two labels equal. What each platform returns (`dismissals_never_read_as_approval` encodes this table):
+
+  | Platform | Click Approve once | Click Cancel | Escape | Close box / Alt+F4 | Failed call | Return (default) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | macOS | approves | Cancel | Cancel | Cancel | Cancel | **approves** |
+  | Windows | approves | Cancel | Cancel | Cancel | Cancel | **approves** |
+  | Linux (GTK) | approves | Cancel | Cancel | Cancel | Cancel | not checked |
+
+  Why this is acceptable: the person opened the dialog by clicking Approve once in the page, the dialog shows the exact command, and Return approving
+  adds no capability beyond what a same-user process that can click the dialog already has (stated above). The dialog may only open as the direct result of the
+  person's own click; the shell cannot tell a click from a script that calls `crew_presence` (devtools is on in release builds, issue #532), so PR3's card
+  must call it only from a trusted click (`event.isTrusted`, no keydown, no automatic retry) and wait for the Enter key to be released first. In the shell,
+  `crew_presence` is the only way a dialog opens; nothing retries, reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`).
+  If the plugin gains a default-button setting, we revisit and make Cancel the default.
+  **Manual check (the dialog cannot run in CI), on macOS, Windows and Linux (GTK):** with a held command, click Approve once in the page, then:
+  1. Escape: the call answers `cancelled`; no grant is sent.
+  2. Close box, and Alt+F4 on Windows and Linux: `cancelled`.
+  3. Click Cancel: `cancelled`.
+  4. Return: approves (expected on macOS and Windows; note what Linux does).
+  5. Click Approve once: the nonce comes back and the service answers `presence_ready`.
+  6. Linux: a command such as `date +%s; echo 100%` is shown exactly, with the single `%` signs.
+  7. Leave it open and call again: `busy`. Minimise the window and call again: the window comes forward.
+  The main window is shown, un-minimised and focused first (up to half a second for macOS's animation); if it is still not visible the answer is `unavailable`.
+  The dialog is parented to it on macOS and Windows. On Linux rfd's GTK 3 backend ignores a parent, so the dialog is unparented and may open behind
+  the main window. A native dialog cannot be closed from the shell, so the person has 10 minutes (a hold waits that long); after that the call ends with
+  `timeout` and a late click is thrown away, but the dialog stays up and a new call answers `busy` until it is dismissed.
+  **Text refused** (`invalid_answer`) in the command, worker name or task title: control characters; U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5,
+  U+180B-180F, U+200B-200F, U+2028-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0, U+FFF9-FFFC, U+1BCA0-1BCA3, U+1D173-1D17A, U+E0000-E0FFF (the
+  service's set, copied), and also U+0600-0605, U+06DD, U+070F, U+08E2 and U+13430-1343F, which the shell refuses and the service does not map yet.
+  **Linux text.** rfd's GTK 3 backend reads the dialog text as a printf format, so on every platform but macOS and Windows the shell doubles each `%`
+  in the text it shows (`double_percent`); on macOS and Windows the text is plain and is shown as given.
+  The dialog cannot be run in CI, so its look, focus and the plain-text rendering by each platform's dialog (macOS, Windows, GTK) are checked by hand.
+  **Not built yet:** the web card that asks for it and sends the nonce (PR3). Until the card exists no page calls `crew_presence`, so approve-once
+  from the app's window stays held.
 - **N1 and remote viewers.** The three routes are in the Crew marker, so an agent's request to one is refused by path in every mode (the lead is never asked),
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the
