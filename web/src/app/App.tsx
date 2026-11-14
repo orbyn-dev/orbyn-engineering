@@ -88,14 +88,23 @@ function BootedApp() {
   const ready = boot.state === "ready";
   useEffect(() => {
     if (!ready) return;
-    // A theme set from the command line, or Crew Preview switched by a restarted service, reaches an open window when it next takes focus.
-    const recheck = () => void api.info().then((info) => { adoptEnvironmentTheme(info.environment_theme); useConnection.setState({ crewPreview: info.crew_preview === true }); }, () => undefined);
+    // A theme set from the command line, or Crew Preview switched by a restarted service, reaches an open window when it next takes focus. A re-check that fails turns the flag off.
+    const recheck = () => void api.info().then((info) => { adoptEnvironmentTheme(info.environment_theme); useConnection.setState({ crewPreview: info.crew_preview === true }); }, () => useConnection.setState({ crewPreview: false }));
     window.addEventListener("focus", recheck);
     return () => window.removeEventListener("focus", recheck);
   }, [ready]);
   useEffect(() => {
     if (!ready) return;
-    return watchConnection((signal) => api.info(signal).then((info) => useConnection.setState({ crewPreview: info.crew_preview === true })));
+    return watchConnection((signal) =>
+      api.info(signal).then(
+        (info) => useConnection.setState({ crewPreview: info.crew_preview === true }),
+        (error: unknown) => {
+          // Fail closed: a service that does not answer is not known to run Crew Preview.
+          useConnection.setState({ crewPreview: false });
+          throw error;
+        },
+      ),
+    );
   }, [ready]);
   useEffect(() => {
     if (!ready) return;
