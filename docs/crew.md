@@ -1251,9 +1251,9 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
 - **Known limits.** *A person is not required.* The route is `local_only` (a remote viewer is 403) and in the N1 marker, but any local
   process holding the launch token (the lead, an unconfined engine) can `POST` it, as with cancel; the audit row says `user` whoever
   sent it. The device-wide and per-task limits bound it; the presence grant is not used. *Worker-written files.* A `passed` task's
-  checkout can still hold files the worker wrote outside the protected paths that the key's commands execute (`package.json` scripts,
+  checkout, and a `stopped` one stopped for `budget`, `repeated_failure` or `engine_error` (a worker can bring those stops about on purpose after one live verification and then write files the key's commands execute), can still hold files the worker wrote outside the protected paths that the key's commands execute (`package.json` scripts,
   `conftest.py`, `build.rs`, a Makefile target): the live verification had the same exposure, and the re-run adds the person's trigger,
-  not a new kind. The screen narrows what a command may do and does not sandbox it; the commands run with the person's permissions in
+  not a new kind. If the outcome row cannot be written, the claim stays set and blocks every re-run on this device until the service restarts (rare: it needs a database write error; a warning is logged). The screen narrows what a command may do and does not sandbox it; the commands run with the person's permissions in
   the worker's checkout, and may write there. *Cancel.* The cancel route refuses a task that ended (`409 task_ended`), so a cancel cannot
   land on a task being re-run; a task being verified or worked on is not re-run. A re-run does not re-decide a task: a `stopped` task
   whose checks now pass is still `stopped`, and merge still needs a `passed` one.
