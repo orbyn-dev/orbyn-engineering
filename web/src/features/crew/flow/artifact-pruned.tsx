@@ -169,15 +169,15 @@ export function FlowArtifactPruned() {
               <h6><Ic n="diff" sm />Check log · npm test auth · a41c9e2</h6>
               <div className="cx-fkv">
                 <span>Status</span>
-                <b>Artifact pruned · hash kept</b>
+                <b>Artifact pruned · hash kept<span className="cx-cwpv">Preview only: no retention window yet</span></b>
                 <span>Hash</span>
                 <b style={{ fontFamily: "var(--font-mono)", fontSize: "11px" }}>sha256 7e1c…b94a</b>
                 <span>Pruned</span>
-                <b>Wed 28 Oct 2026, after 30 days</b>
+                <b>Wed 28 Oct 2026 (example)</b>
                 <span>Result kept</span>
                 <b>exit 0 · 21 s · commit a41c9e2</b>
               </div>
-              <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned after 30 days. The hash stays in the hash-chained ledger, so the log can be checked if you still have a copy. Replay is never truncated: every event stays.</p>
+              <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned once a retention window exists; v1 has none yet. The hash stays in the hash-chained ledger, so the log can be checked if you still have a copy. Replay is never truncated: every event stays.</p>
               <div className="cx-ra"><Btn className="cx-ghost">Verify a copy…</Btn><Btn className="cx-ghost">Re-run the check</Btn></div>
             </div>
       </div>

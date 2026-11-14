@@ -132,8 +132,8 @@ export function FlowYouOff() {
               <div className="cx-fln cx-cpend" style={{ left: "904px", top: "94px", height: "80px" }}><b>Main</b><span className="cx-s">Watched</span><span className="cx-st"><i className="cx-sd" />Waiting</span></div>
               <div className="cx-fln cx-cneeds" style={{ left: "1017px", top: "94px", height: "80px" }}>
                 <b>You</b>
-                <span className="cx-s">Approve</span>
-                <span className="cx-s">and merge</span>
+                <span className="cx-s">Review</span>
+                <span className="cx-s">before merge</span>
                 <span className="cx-st cx-warn"><i className="cx-sd" />Needs you</span>
               </div>
               <span className="cx-flab cx-a" style={{ left: "781px", top: "56px" }}>Waits for you before the merge</span>
@@ -159,13 +159,13 @@ export function FlowYouOff() {
                       <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "3px 0", borderTop: "1px solid var(--color-border)" }}><span style={{ color: "var(--color-text)" }}><Ic n="ok" sm /></span><b style={{ fontWeight: 500, color: "var(--color-text)" }}>Code review</b><span style={{ color: "var(--color-muted)", marginLeft: "auto" }}>2 lanes · 0 confirmed</span></div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "3px 0", borderTop: "1px solid var(--color-border)" }}><span style={{ color: "var(--color-text)" }}><Ic n="ok" sm /></span><b style={{ fontWeight: 500, color: "var(--color-text)" }}>Security review</b><span style={{ color: "var(--color-muted)", marginLeft: "auto" }}>1 lane · 0 confirmed</span></div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "3px 0", borderTop: "1px solid var(--color-border)" }}><span style={{ color: "var(--color-text)" }}><Ic n="ok" sm /></span><b style={{ fontWeight: 500, color: "var(--color-text)" }}>Finding check</b><span style={{ color: "var(--color-muted)", marginLeft: "auto" }}>nothing to check</span></div>
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "3px 0", borderTop: "1px solid var(--color-border)" }}><span style={{ color: "var(--color-text)" }}><Ic n="ok" sm /></span><b style={{ fontWeight: 500, color: "var(--color-text)" }}>CI on the PR</b><span style={{ color: "var(--color-muted)", marginLeft: "auto" }}>2 of 2 required</span></div>
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "3px 0", borderTop: "1px solid var(--color-border)" }}><span style={{ color: "var(--color-text)" }}><Ic n="ok" sm /></span><b style={{ fontWeight: 500, color: "var(--color-text)" }}>CI on the PR</b><span style={{ marginLeft: "auto" }}><span className="cx-cwpv">Planned</span></span></div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center", padding: "3px 0", borderTop: "1px solid var(--color-border)" }}><span style={{ color: "var(--color-text)" }}><Ic n="ok" sm /></span><b style={{ fontWeight: 500, color: "var(--color-text)" }}>Merge queue</b><span style={{ color: "var(--color-muted)", marginLeft: "auto" }}>waits for you</span></div>
                     </div>
                   </div>
                 </div>
               </div>
-              <div className="cx-acts3"><Btn className="cx-btn">Approve and merge</Btn><Btn className="cx-ghost">Approve, don’t merge</Btn><Btn className="cx-ghost">Send back to Build</Btn></div>
+              <div className="cx-acts3"><Btn className="cx-btn">Review</Btn><Btn className="cx-ghost">Approve, don’t merge</Btn><Btn className="cx-ghost">Send back to Build</Btn></div>
             </div>
       </div>
     </Frame>

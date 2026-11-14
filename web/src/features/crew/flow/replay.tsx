@@ -16,7 +16,7 @@ export function FlowReplay() {
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
               <Ic n="right" sm />
               <b>Use next in the auth redirect</b>
-              <span className="cx-fbadge">Replay · 18:40 of 41:06</span>
+              <span className="cx-fbadge">Replay · 18:40 of 41:06<span className="cx-cwpv">Planned</span></span>
               <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer</span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "322px", width: "1110px" }}>

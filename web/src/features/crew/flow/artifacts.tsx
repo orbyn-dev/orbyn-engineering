@@ -76,7 +76,7 @@ export function FlowArtifacts() {
                 <div className="cx-ra"><Btn className="cx-btn">Open findings</Btn><Btn className="cx-ghost">Run the Finding check</Btn></div>
               </div>
               <div className="cx-fpop" style={{ width: "300px" }}>
-                <h6><Ic n="pr" sm />PR · after the PR opens</h6>
+                <h6><Ic n="pr" sm />PR · after the PR opens<span className="cx-cwpv">Planned</span></h6>
                 <div className="cx-fkv">
                   <span>Pull request</span>
                   <b>#482 · draft</b>
