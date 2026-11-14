@@ -40,8 +40,8 @@ describe("each source becomes one inbox row", () => {
   it("a trip wire is a stopped task in the words the Approvals tab already uses; other ledger rows are not", () => {
     const items = stopItems([wire({ id: 7 }), wire({ id: 8, body: { wire: "injection" } }), wire({ id: 9, kind: "denied" })], limits);
     expect(items.map((one) => [one.id, one.title, one.from])).toEqual([
-      ["stop:7", "Stopped · too many denials", "Task task-client"],
-      ["stop:8", "Stopped · possible injected instructions", "Task task-client"],
+      ["stop:7:task-client:2026-11-07T14:27:00", "Stopped · too many denials", "Task task-client"],
+      ["stop:8:task-client:2026-11-07T14:27:00", "Stopped · possible injected instructions", "Task task-client"],
     ]);
     expect(items[0]?.actions).toEqual([{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }]);
     expect(items[0]?.cost).toBe("It was denied 3 times in a row, so Crew stopped it. Nothing was lost; its worktree is intact.");

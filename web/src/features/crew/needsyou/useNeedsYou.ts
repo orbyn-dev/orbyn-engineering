@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApiFailure } from "../../../api/client";
+import { serviceUrl } from "../../../api/origin";
 import { useAsync } from "../../../lib/useAsync";
 import { crewApi } from "../autopilot/approvals/api";
 import { useHeldCommands, type HoldControl } from "../autopilot/approvals/held";
@@ -16,6 +17,16 @@ export const NEEDS_REFRESH_MS = 30_000;
  * windows or devices. A new route would replace this.
  */
 const DISMISSED_KEY = "orbyn.needsyou.dismissedStops";
+
+/** The service this window reaches: a stop's key is scoped to it, so another service, or a remote host, never hides this one's stops. */
+const scope = () => {
+  try {
+    return new URL(serviceUrl("/"), window.location.href).origin;
+  } catch {
+    return window.location.origin;
+  }
+};
+const dismissKey = (id: string) => `${scope()}|${id}`;
 
 function readDismissed(): Set<string> {
   try {
@@ -69,14 +80,32 @@ export function useNeedsYou(): NeedsState {
     const now = Date.now();
     return rank([
       ...heldItems(heldRows, now),
-      ...(stops.data ? stopItems(stops.data.recent, { inARow: stops.data.in_a_row_limit, inARun: stops.data.in_a_run_limit }).filter((one) => !dismissed.has(one.id)) : []),
+      ...(stops.data ? stopItems(stops.data.recent, { inARow: stops.data.in_a_row_limit, inARun: stops.data.in_a_run_limit }).filter((one) => !dismissed.has(dismissKey(one.id))) : []),
       ...(review.data ? mainItems(review.data) : []),
       ...(background.data ? backgroundItems(background.data) : []),
     ]);
   }, [heldRows, stops.data, review.data, background.data, dismissed]);
+  // Keep only the dismissals whose stop is still in the service's list, so the stored list cannot grow without end.
+  const recent = stops.data?.recent;
+  useEffect(() => {
+    if (!recent) return;
+    const present = new Set(
+      stopItems(recent, { inARow: 0, inARun: 0 }).map((one) => dismissKey(one.id)),
+    );
+    setDismissed((now) => {
+      const kept = [...now].filter((key) => present.has(key));
+      if (kept.length === now.size) return now;
+      try {
+        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(kept));
+      } catch {
+        // Storage is off: nothing to prune.
+      }
+      return new Set(kept);
+    });
+  }, [recent]);
   const dismiss = useCallback((id: string) => {
     setDismissed((now) => {
-      const next = new Set(now).add(id);
+      const next = new Set(now).add(dismissKey(id));
       try {
         window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
       } catch {

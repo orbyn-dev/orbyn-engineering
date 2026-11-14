@@ -45,7 +45,8 @@ export function stopItems(recent: AutopilotLogRow[], limits: { inARow: number; i
     .map((row) => {
       const stop = stopOf(row, limits);
       return {
-        id: `stop:${row.id}`,
+        // Ledger id, task and time together: an id reused by another service or a reset database is another stop.
+        id: `stop:${row.id}:${row.task_id}:${row.at}`,
         kind: "stopped" as const,
         title: stop.reason === "injected_instructions" ? "Stopped · possible injected instructions" : "Stopped · too many denials",
         risk: null,

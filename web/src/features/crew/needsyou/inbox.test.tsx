@@ -91,6 +91,32 @@ describe("the Needs you inbox on live data", () => {
     expect(screen.queryByText("Stopped · too many denials")).toBeNull();
   });
 
+  const KEY = "orbyn.needsyou.dismissedStops";
+  const stored = () => JSON.parse(window.localStorage.getItem(KEY) ?? "[]") as string[];
+
+  it("a dismissal is keyed on the service, the ledger id, the task and the time: the same id with another task or time stays visible", async () => {
+    const origin = window.location.origin;
+    window.localStorage.setItem(KEY, JSON.stringify([`${origin}|stop:90:task-other:2026-11-07T14:27:00`, `${origin}|stop:90:task-client:2026-11-07T14:28:00`, `http://elsewhere.example|stop:90:task-client:2026-11-07T14:27:00`]));
+    await open("crew-tripwire");
+    expect(await screen.findByText("Stopped · too many denials")).toBeVisible();
+  });
+
+  it("the exact stop on this service stays hidden", async () => {
+    window.localStorage.setItem(KEY, JSON.stringify([`${window.location.origin}|stop:90:task-client:2026-11-07T14:27:00`]));
+    await open("crew-tripwire");
+    await screen.findByRole("list", { name: "Needs you" });
+    expect(screen.queryByText("Stopped · too many denials")).toBeNull();
+    expect(stored()).toHaveLength(1);
+  });
+
+  it("prunes dismissals whose stop is no longer in the service's list", async () => {
+    const origin = window.location.origin;
+    window.localStorage.setItem(KEY, JSON.stringify([`${origin}|stop:90:task-client:2026-11-07T14:27:00`, `${origin}|stop:1:gone:2026-01-01T00:00:00`]));
+    await open("crew-tripwire");
+    await screen.findByRole("list", { name: "Needs you" });
+    await waitFor(() => expect(stored()).toEqual([`${origin}|stop:90:task-client:2026-11-07T14:27:00`]));
+  });
+
   it("still works with storage unavailable: the stop is hidden for this window", async () => {
     const { user } = await open("crew-tripwire");
     const item = (await screen.findByText("Stopped · too many denials")).closest("li") as HTMLElement;
@@ -170,6 +196,17 @@ describe("answering from the inbox", () => {
     expect(within(orders).getByRole("button", { name: /^Approve/ })).toBeEnabled();
     await user.click(within(orders).getByRole("button", { name: /^Deny/ }));
     await waitFor(() => expect(calls("/api/crew/approvals/hold-orders/deny")).toHaveLength(1));
+  });
+
+  it("a row already answered elsewhere has Deny off with the reason", async () => {
+    const { user } = await open("crew-held-account-race");
+    const orders = await row(/DELETE FROM orders/);
+    await user.click(within(orders).getByRole("button", { name: /^Deny/ }));
+    await waitFor(() => expect(calls("/api/crew/approvals/hold-orders/deny")).toHaveLength(1));
+    await waitFor(() => {
+      const again = screen.queryByText(/DELETE FROM orders/)?.closest("li");
+      if (again) expect(within(again as HTMLElement).getByRole("button", { name: /^Deny/ })).toBeDisabled();
+    });
   });
 
   it("from another computer, Deny is off with the reason; Approve only opens a tab", async () => {

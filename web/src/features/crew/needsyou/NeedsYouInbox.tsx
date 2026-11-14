@@ -43,6 +43,7 @@ function Inbox() {
       const control = state.hold(item.ref);
       if (!control) return UNAVAILABLE_REASON;
       if (control.busy) return "Waiting for the answer";
+      if (control.closed) return control.closed === "expired" ? HELD.expired : HELD.decided;
       return control.remote ? HELD.remote : null;
     },
   };
