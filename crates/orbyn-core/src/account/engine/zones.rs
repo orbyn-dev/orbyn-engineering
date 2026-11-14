@@ -304,4 +304,8 @@ where
     fn device_tag(&self) -> Option<String> {
         self.shared.tag()
     }
+
+    async fn wipe_keys(&self) {
+        self.shared.forget().await;
+    }
 }

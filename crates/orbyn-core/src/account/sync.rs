@@ -199,7 +199,17 @@ impl ZoneWorker {
                 });
                 Flow::Idle
             }
-            Err(failure) => self.failed(failure, failures, offline_since),
+            Err(failure) => {
+                // The session is over or the account is gone: the keys and the sealed snapshot
+                // go now, so a removed device does not keep every zone key (D10).
+                if matches!(
+                    failure,
+                    Failure::Device(DeviceError::Unauthorized | DeviceError::AccountGone)
+                ) {
+                    self.api.wipe_keys().await;
+                }
+                self.failed(failure, failures, offline_since)
+            }
         }
     }
 
@@ -236,7 +246,7 @@ impl ZoneWorker {
                 pause(PauseReason::DeletionScheduled)
             }
             Failure::Device(DeviceError::Unauthorized) => {
-                // Destroying key material belongs to the sign-out path; settings and the
+                // The keys are already destroyed (`wipe_keys`, above); settings and the
                 // outbox stay, so signing in again resumes where this left off.
                 self.show(SyncState::SignedOut {
                     reason: Some(SignOutReason::SessionEnded),

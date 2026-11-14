@@ -25,6 +25,10 @@ use super::device_api::DeviceError;
 mod account;
 mod approval;
 mod errors;
+#[cfg(any(test, debug_assertions))]
+mod keystore;
+#[cfg(any(test, debug_assertions))]
+mod sealed;
 mod shared;
 mod snapshot;
 mod zones;
@@ -33,6 +37,12 @@ mod zones;
 pub(crate) use errors::map_for_test;
 
 pub use account::EngineAccount;
+#[cfg(any(test, debug_assertions))]
+pub use keystore::FileKeyStore;
+#[cfg(test)]
+pub(crate) use keystore::{Anchor, Vault};
+#[cfg(test)]
+pub(crate) use sealed::{PURPOSE, Refusal, SealedSnapshots, VERSION};
 pub use snapshot::{MemorySnapshots, SnapshotStore};
 pub use zones::EngineZones;
 
@@ -70,6 +80,45 @@ where
         account: Arc::new(EngineAccount::new(shared.clone(), wait, step)),
         device: Arc::new(EngineZones::new(shared)),
     }
+}
+
+/// The real client for a development run that keeps its keys and a sealed snapshot in `dir`:
+/// the file key store and the sealed snapshot, named by `profile` (the data folder's random,
+/// non-secret profile id). Debug builds and tests only; a release has no file key store, and
+/// real sign-in stays off. Same loopback rule as [`connect`].
+#[cfg(any(test, debug_assertions))]
+pub fn connect_sealed(
+    address: &str,
+    device_name: &str,
+    dir: &std::path::Path,
+    profile: &str,
+) -> Result<Backend, DeviceError> {
+    if !dc::is_loopback_literal(address) {
+        return Err(DeviceError::Offline);
+    }
+    let transport = dc::HttpApi::new(address).map_err(|_| DeviceError::Offline)?;
+    let keys = FileKeyStore::new(dir.join(format!("dev-keystore-{profile}.json")));
+    let snapshots = sealed::SealedSnapshots::new(
+        dir.join(format!("account-snapshot-{profile}.sealed")),
+        profile,
+        Arc::new(keys.clone()),
+    );
+    let platform = match std::env::consts::OS {
+        "macos" => dc::DevicePlatform::Macos,
+        "windows" => dc::DevicePlatform::Windows,
+        _ => dc::DevicePlatform::Linux,
+    };
+    let client = dc::DeviceClient::new(
+        transport,
+        keys,
+        dc::SystemClock,
+        dc::ClientConfig {
+            device_name: device_name.to_owned(),
+            platform,
+            app: Some(dc::DeviceApp::Engineering),
+        },
+    );
+    Ok(backend(client, Arc::new(snapshots)))
 }
 
 // How many real clients `connect` built on this thread, so a test can show the `Off` gate builds none.
@@ -121,10 +170,23 @@ where
     S: dc::KeyStore + 'static,
     C: dc::Clock + 'static,
 {
-    let shared = Arc::new(shared::Shared::new(
-        client,
-        Arc::new(MemorySnapshots::default()),
-    ));
+    parts_with(client, Arc::new(MemorySnapshots::default()), wait, step)
+}
+
+/// [`parts`] with the snapshot kept where the test says.
+#[cfg(test)]
+pub(crate) fn parts_with<T, S, C>(
+    client: dc::DeviceClient<T, S, C>,
+    snapshots: Arc<dyn SnapshotStore>,
+    wait: std::time::Duration,
+    step: std::time::Duration,
+) -> Parts<T, S, C>
+where
+    T: dc::DeviceApi + 'static,
+    S: dc::KeyStore + 'static,
+    C: dc::Clock + 'static,
+{
+    let shared = Arc::new(shared::Shared::new(client, snapshots));
     (
         Arc::new(EngineAccount::new(shared.clone(), wait, step)),
         Arc::new(EngineZones::new(shared)),

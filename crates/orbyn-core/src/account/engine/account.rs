@@ -303,6 +303,13 @@ where
     }
 
     async fn remove_device(&self, id: &str) -> Result<(), DeviceError> {
+        let own = self
+            .shared
+            .client
+            .identity()
+            .ok()
+            .flatten()
+            .is_some_and(|(_, device, _)| device == id);
         let guard = self.shared.engine().await?;
         let Some(engine) = guard.as_ref() else {
             return Err(DeviceError::Unauthorized);
@@ -315,8 +322,17 @@ where
                 dc::DeviceError::InvalidInput(_) => DeviceError::RequestGone,
                 other => map(other),
             })?;
+        drop(guard);
         self.trusted().confirmed.remove(id);
+        if own {
+            // This device was removed: it must not keep a single zone key (D10).
+            self.shared.forget().await;
+        }
         Ok(())
+    }
+
+    async fn wipe_keys(&self) {
+        self.shared.forget().await;
     }
 
     async fn sign_out_everywhere(&self) -> Result<(), DeviceError> {

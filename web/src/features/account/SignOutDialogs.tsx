@@ -103,7 +103,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, view.sync.waiting, view.sync.last_synced]);
 
-  const stops = ["Settings sync", "Access to your account on this computer", `This device’s keys, removed from the ${view.platform === "windows" ? "Windows credential store" : view.platform === "macos" ? "macOS Keychain" : "system keychain"}`];
+  const stops = ["Settings sync", "Access to your account on this computer", "This device’s keys and its sealed sync copy, deleted from this computer"];
   const choice = (
     <fieldset className="ac-choice" disabled={busy}>
       <legend className="sr-only">What happens to the changes that haven’t synced</legend>
@@ -119,13 +119,13 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
   );
 
   let title = "Sign out of this computer?";
-  let lead = "Signing out removes this device’s keys from the Keychain. Orbyn keeps working here without an account. Other devices stay signed in.";
+  let lead = "Signing out deletes this device’s keys and its sealed sync copy from this computer. Orbyn keeps working here without an account. Other devices stay signed in.";
   if (offline) {
     title = "Sign out while offline?";
     lead = "You’re offline. This computer will sign out now; its entry in your device list stays until you remove it from another device.";
   } else if (waiting > 0) {
     title = `Sign out with ${waiting} ${waiting === 1 ? "change" : "changes"} not synced?`;
-    lead = `${changes(waiting)} ${waiting === 1 ? "hasn’t" : "haven’t"} reached your other devices yet. Choose what happens to them. Signing out also removes this device’s keys from the Keychain.`;
+    lead = `${changes(waiting)} ${waiting === 1 ? "hasn’t" : "haven’t"} reached your other devices yet. Choose what happens to them. Signing out also deletes this device’s keys and its sealed sync copy from this computer.`;
   }
   if (phase === "failed") {
     return (

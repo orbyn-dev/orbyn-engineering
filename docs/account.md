@@ -418,10 +418,11 @@ now and does not wait for them.
    - the keybinding test;
    - the per-adapter options test;
    - the child-environment scrub tests;
-   - the snapshot tests: older, other-profile and wrong-version files are refused;
-   - the key-wipe check on sign-out, device removal and `Unauthorized`. The sign-out and removal dialogs already say
-     "This device's keys, removed from the Keychain", so that copy and the wipe must land together: the gate does not
-     turn on until the wipe exists;
+   - the snapshot tests (`account/tests/sealed.rs`): older, other-profile and wrong-version files are refused;
+   - the key-wipe check on sign-out, device removal and `Unauthorized` (`account/tests/sealed.rs`, against the
+     development file key store). The sign-out dialog now says "This device's keys and its sealed sync copy, deleted
+     from this computer", which is true for the keychain and for the development store alike. The macOS keychain item
+     itself is still checked by hand on a signed build (item 5);
    - the canary tests for logs and diagnostics.
 5. macOS: the keychain API and the Developer ID provisioning are settled and verified on a signed build, and the
    release check shows hardened runtime without `get-task-allow` or `disable-library-validation`.
@@ -623,8 +624,14 @@ Where the Engine's API differs from the traits the screens and the worker were w
   `PERSON_RECORD_ID`) and `Settings` come from the device client's re-exports, never spelled by hand and never from another
   Engine crate; `Settings::from_fields` drops the settings that never leave a device in both directions. The app's own
   rules (`settings_record`, `policy`, `apply`) still apply on top.
-- **Snapshot.** The client does no IO. The Engine's snapshot is held in memory only for now (`SnapshotStore`); sealing it
-  under the vault key is part of the change that turns sign-in on.
+- **Snapshot.** The client does no IO. `SealedSnapshots` (`account/engine/sealed.rs`) seals it with XChaCha20-Poly1305
+  under the vault key, binding the purpose, the profile id, the format version and a counter; the key store keeps the
+  counter and the hash of the newest file and an older or different file is refused. The keys live behind the `KeyStore`
+  trait. The only implementation in the app is `FileKeyStore` (`account/engine/keystore.rs`), a development store that
+  exists in debug builds and tests only, so a release has no file key store and the OS keychain implementation
+  (`account::keystore`, condition 5) is still to come. `connect` keeps the keys and the snapshot in memory;
+  `connect_sealed` uses the file pair. Sign-out, removing this device, `Unauthorized` and `AccountGone` call one wipe
+  (`Shared::forget`): snapshot file, then keys, token, vault key and anchor.
 - **Invite.** The invite step calls `check_invite` (`POST /v1/invites/check`): a good code spends nothing, an unknown, used
   or expired one is `invite_required` (the drawn invite state) and too many wrong tries are `rate_limited` (the drawn
   throttled state). The stand-in does the same (`K7QM-2XWH-9QXA-3C2E` is rate limited).

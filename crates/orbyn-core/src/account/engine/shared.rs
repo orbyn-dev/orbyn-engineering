@@ -58,10 +58,17 @@ where
         self.snapshots.save(&engine.snapshot());
     }
 
-    /// Forgets the Engine's state: a sign-out, or an account that is gone.
+    /// Destroys this device's key material and the Engine's state: a sign-out, a removal of this
+    /// device, a session the service ended, or an account that is gone. The sealed snapshot goes
+    /// first, then the keys (identity, token, vault key and the snapshot's anchor), so no
+    /// order leaves a snapshot that an old vault key could still open.
     pub(super) async fn forget(&self) {
         *self.engine.lock().await = None;
+        self.owed().clear();
         self.snapshots.clear();
+        if self.client.store().clear().is_err() {
+            tracing::warn!("the device keys could not be deleted");
+        }
     }
 
     pub(super) fn tag(&self) -> Option<String> {

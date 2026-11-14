@@ -171,6 +171,11 @@ pub trait AccountApi: Send + Sync {
     async fn sign_out_everywhere(&self) -> Result<(), DeviceError>;
     /// Ends this device's session on the server. Local sign-out never waits for it.
     async fn sign_out(&self) -> Result<(), DeviceError>;
+
+    /// The service ended this session or the account is gone: destroy this device's key
+    /// material and the sealed snapshot, as a sign-out does. A stand-in that keeps no keys has
+    /// nothing to do.
+    async fn wipe_keys(&self) {}
 }
 
 /// What the center talks to: the account calls and the sync adapter.
