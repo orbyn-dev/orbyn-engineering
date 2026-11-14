@@ -216,6 +216,91 @@ mod tests {
         );
     }
 
+    /// The second resolution of the times means a task that began or ended in the second of the message may or may not have been a
+    /// recipient. It is counted as one, so a fan-out that did not reach it reports no delivery.
+    #[test]
+    fn a_boundary_member_is_counted_so_a_fan_out_that_missed_it_reports_no_delivery() {
+        let at = Some("2026-11-12T10:00:10Z");
+        let live = Some(wire::FlowDeliveryMode::Live);
+        // Began in the same second as the message: counted.
+        let began = [
+            member(
+                "worker-a",
+                "2026-11-12T10:00:00Z",
+                "2026-11-12T10:00:00Z",
+                "running",
+            ),
+            member(
+                "worker-b",
+                "2026-11-12T10:00:10Z",
+                "2026-11-12T10:00:10Z",
+                "running",
+            ),
+        ];
+        let expected = expected_recipients(&began, "lead-01", at);
+        assert_eq!(
+            expected,
+            Some(2),
+            "the member that began in the second is counted"
+        );
+        assert_eq!(
+            settled(live, "all", 1, expected),
+            None,
+            "only worker-a has a delivery row"
+        );
+        assert_eq!(settled(live, "all", 2, expected), live);
+
+        // Ended in the same second as the message: counted.
+        let ended = [
+            member(
+                "worker-a",
+                "2026-11-12T10:00:00Z",
+                "2026-11-12T10:00:00Z",
+                "running",
+            ),
+            member(
+                "worker-c",
+                "2026-11-12T09:00:00Z",
+                "2026-11-12T10:00:10Z",
+                "passed",
+            ),
+        ];
+        let expected = expected_recipients(&ended, "lead-01", at);
+        assert_eq!(
+            expected,
+            Some(2),
+            "the member that ended in the second is counted"
+        );
+        assert_eq!(
+            settled(live, "all", 1, expected),
+            None,
+            "only worker-a has a delivery row"
+        );
+
+        // One second either side is not a boundary: a member that began a second later, or ended a second earlier, is not counted.
+        let outside = [
+            member(
+                "worker-a",
+                "2026-11-12T10:00:00Z",
+                "2026-11-12T10:00:00Z",
+                "running",
+            ),
+            member(
+                "worker-d",
+                "2026-11-12T10:00:11Z",
+                "2026-11-12T10:00:11Z",
+                "running",
+            ),
+            member(
+                "worker-e",
+                "2026-11-12T09:00:00Z",
+                "2026-11-12T10:00:09Z",
+                "passed",
+            ),
+        ];
+        assert_eq!(expected_recipients(&outside, "lead-01", at), Some(1));
+    }
+
     #[test]
     fn a_delivery_is_held_back_only_while_a_fan_out_lacks_a_recipient() {
         let live = Some(wire::FlowDeliveryMode::Live);
