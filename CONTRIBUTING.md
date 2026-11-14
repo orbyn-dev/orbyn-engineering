@@ -217,6 +217,14 @@ The Windows Rust tests run on a pull request that changes `crates/`, any `.rs` f
 manifests, the desktop shell, the scripts, the workflows or `docs/crew/protocol/` (the Crew Protocol
 schemas, examples and cases, which `crates/orbyn-contracts/tests/crew_protocol/main.rs` validates). They are split into six shards plus a
 lint job, and the required `Rust (windows-2022)` check is the job that passes only when all of them did.
+A heavy job a change cannot affect is skipped at the job level, so a docs-only or web-only pull
+request never starts the Rust, Windows, desktop or (docs only) browser jobs. Each required check name
+belongs to a small job that always runs and passes when its heavy job succeeded or was skipped by that
+scope (`Rust (macos-15)`, `Web`, `E2E`, `Unsigned desktop build (macos-15)` and `(windows-2022)` follow
+`Rust (windows-2022)`); the heavy jobs have other names, such as `Rust build (macos-15)`. A skipped matrix
+job reports an unexpanded name, so never give a required name to a matrix job:
+`scripts/check_ci_required_names.py` fails the cheap checks when a required name is missing, duplicated
+or produced by a job that can skip.
 The Windows desktop build caches the NSIS download (`%LOCALAPPDATA%\tauri`), keyed on the Tauri CLI version.
 
 The end-to-end suite runs in Playwright's headless shell, never your installed
