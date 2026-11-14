@@ -55,7 +55,7 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
     })
 }
 
-fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
+pub(super) fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
     tx.query_row(
         "SELECT * FROM crew_runs WHERE task_id = ?1",
         [task_id],
@@ -67,7 +67,7 @@ fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
 
 /// Moves a task one step, or refuses with `InvalidTransition`. `stopped` names its reason and
 /// nothing else does; a task passes only with Evidence (H8).
-fn step(
+pub(super) fn step(
     tx: &Transaction<'_>,
     task: &CrewTask,
     to: &str,
@@ -215,6 +215,10 @@ impl Store {
     ) -> Result<()> {
         self.commit(|tx, _| {
             find_run(tx, task_id)?;
+            // A task a person cancelled (or that ended) while the worker was being made gets no worker.
+            if crate::crew::lifecycle::is_final(&find_task(tx, task_id)?.state) {
+                return Err(CoreError::TaskEnded);
+            }
             tx.execute(
                 "UPDATE crew_runs SET worker_thread_id = ?2, worktree = ?3, base_commit = ?4
                  WHERE task_id = ?1",
