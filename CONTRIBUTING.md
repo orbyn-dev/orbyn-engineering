@@ -218,7 +218,7 @@ manifests, the desktop shell, the scripts, the workflows or `docs/crew/protocol/
 schemas, examples and cases, which `crates/orbyn-contracts/tests/crew_protocol/main.rs` validates). They are split into six shards plus a
 lint job, and the required `Rust (windows-2022)` check is the job that passes only when all of them did.
 A heavy job a change cannot affect is skipped at the job level, so a docs-only or web-only pull
-request never starts the Rust, Windows, desktop or (docs only) browser jobs. Each required check name
+request never starts the Rust, Windows or desktop jobs, and a docs-only one starts no browser job either. Each required check name
 belongs to a small job that always runs and passes when its heavy job succeeded or was skipped by that
 scope (`Rust (macos-15)`, `Web`, `E2E`, `Unsigned desktop build (macos-15)` and `(windows-2022)` follow
 `Rust (windows-2022)`); the heavy jobs have other names, such as `Rust build (macos-15)`. A skipped matrix
