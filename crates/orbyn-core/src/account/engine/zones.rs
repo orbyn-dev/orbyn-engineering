@@ -254,6 +254,38 @@ where
     }
 }
 
+/// A peer that does not go through the settings type: it stages `fields` as they are, whatever
+/// their names, and runs a pass. Only a test needs one, to show what this device does with a
+/// record an older or hostile peer made.
+#[cfg(test)]
+impl<T, S, C> EngineZones<T, S, C>
+where
+    T: dc::DeviceApi + 'static,
+    S: dc::KeyStore + 'static,
+    C: dc::Clock + 'static,
+{
+    pub(crate) async fn peer_stage_raw(
+        &self,
+        fields: &[(String, serde_json::Value)],
+        edit_ms: u64,
+        now_ms: u64,
+    ) -> Result<(), DeviceError> {
+        let mut guard = self.shared.engine().await?;
+        let engine = guard.as_mut().ok_or(DeviceError::Unauthorized)?;
+        let stamp = engine.tick_at(edit_ms, now_ms);
+        let mut raw = dc::Fields::default();
+        for (name, value) in fields {
+            raw.set(name, value.clone(), stamp);
+        }
+        engine
+            .stage(ZONE, RECORD_TYPE, RECORD_ID, &raw)
+            .map_err(|_| DeviceError::Server { retryable: false })?;
+        let result = self.shared.client.sync_all(engine).await;
+        self.shared.save(engine);
+        result.map(|_| ()).map_err(map)
+    }
+}
+
 #[async_trait]
 impl<T, S, C> DeviceApi for EngineZones<T, S, C>
 where
