@@ -1,6 +1,7 @@
 name: CI retry
 
-# Reruns the failed jobs of a CI run once when a macOS desktop job failed. It covers
+# Reruns the failed jobs of a CI run once when a macOS desktop job failed, unless the cheap checks or the
+# scope job failed (a deterministic failure that a rerun cannot fix). It covers
 # "Desktop cache warm (macos-15)" and the heavy "Desktop build (macos-15)" job only (not the required-name aggregators, which also turn red for a Windows-only failure or a failed lint), and only
 # a first attempt that ended in failure. It does not bound time spent waiting for a
 # runner: a job queued with no runner never starts, so timeout-minutes cannot apply and
@@ -36,6 +37,11 @@ jobs:
           failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" --paginate \
             --jq '.jobs[] | select(.conclusion == "failure") | .name')
           echo "Failed jobs:"; echo "$failed"
+          # A failed lint (format, types, architecture) or scope job is deterministic: every heavy
+          # job then fails with "Cheap checks passed", and a rerun of the failed jobs fails again.
+          if grep -qxE 'Cheap checks|Changes' <<< "$failed"; then
+            echo "The cheap checks or the scope job failed: a rerun cannot pass; not retrying."; exit 0
+          fi
           if ! grep -qxE 'Desktop cache warm \(macos-15\)|Desktop build \(macos-15\)' <<< "$failed"; then
             echo "No macOS desktop job failed; not retrying."; exit 0
           fi
