@@ -201,8 +201,11 @@ async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
         forbidden.push(check.id.as_str().to_owned());
     }
     let text = everything(&w, &crew_id, &subject);
-    for needle in forbidden.iter().filter(|n| n.len() > 3) {
-        assert!(!text.contains(needle.as_str()), "a read holds {needle}");
+    for (n, needle) in forbidden.iter().filter(|n| n.len() > 3).enumerate() {
+        assert!(
+            !text.contains(needle.as_str()),
+            "a read holds stored check text number {n}"
+        );
     }
     for field in ["worktree", "thread", "protected", "repro", "answer_key"] {
         assert!(!text.contains(field), "a read names {field}");
@@ -223,7 +226,7 @@ async fn a_task_that_is_not_final_shows_no_check_text_and_no_gate_reason() {
     .await;
     let done = w.built_work().await;
     let (answer, error) = w.start(brief(json!({})), key()).await;
-    assert!(!error, "{answer}");
+    assert!(!error, "the second task did not start");
     let running = answer["task"].as_str().unwrap().to_owned();
     let task = w.task(&running);
     assert_eq!(task.state, "running");
@@ -461,8 +464,11 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
         text.contains("ran "),
         "the reason is read once the task is final"
     );
-    for secret in [&repro_command, &other_check] {
-        assert!(!text.contains(secret.as_str()), "a read holds {secret}");
+    for (label, secret) in [
+        ("the repro command", &repro_command),
+        ("the other task's check", &other_check),
+    ] {
+        assert!(!text.contains(secret.as_str()), "a read holds {label}");
     }
 }
 
