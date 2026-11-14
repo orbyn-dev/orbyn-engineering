@@ -63,9 +63,9 @@ function samples(): Sample[] {
         brief,
         route: { engine: "claude", model: "Sonnet 5.5", tier: "builder" },
         lanes: [
-          { lane: "Correctness", group: "code", task: "task-redirect-r1", round: 1, state: "passed", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 },
+          { lane: "Correctness", group: "code", task: "task-redirect-r1", round: 1, state: "passed", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0, tier: "lead", commit: "a41c9e2c0ffee0123456789abcdef0123456789a", same_engine: false },
           { lane: "Performance", group: "code", task: "task-redirect-r2", round: 1, state: "running", engine: "opencode", model: "DeepSeek V4", findings: 0, confirmed: 0, unconfirmed: 0 },
-          { lane: "Docs", group: "code", task: "task-redirect-r3", round: 1, state: "passed", engine: "opencode", model: "DeepSeek V4", findings: 1, confirmed: 0, unconfirmed: 1 },
+          { lane: "Docs", group: "code", task: "task-redirect-r3", round: 1, state: "passed", engine: "opencode", model: "DeepSeek V4", findings: 1, confirmed: 0, unconfirmed: 1, same_engine: true },
           { lane: "security", group: "security", task: "task-redirect-r4", round: 1, state: "running", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 },
         ],
         findings: [{ id: "f-1", lane: "Docs", round: 1, severity: "low", path: "docs/login.md", line: 12, claim: "The example uses //evil.com", check: "unconfirmed", status: "open", blocks: false, fix_task: null }],

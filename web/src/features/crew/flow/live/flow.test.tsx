@@ -148,7 +148,7 @@ describe("Flow on the real routes", () => {
     await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Add a rate limit/ }));
     const findings = await screen.findByRole("region", { name: "Findings" });
     expect(findings).toHaveTextContent("The limit resets on every request");
-    expect(findings).toHaveTextContent("confirmed");
+    expect(findings).toHaveTextContent("Confirmed");
     expect(findings).toHaveTextContent("auth/login.ts:41");
     expect(findings).toHaveTextContent("blocks");
   });
@@ -163,6 +163,16 @@ describe("Flow on the real routes", () => {
     await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Update the login docs/ }));
     // The same service text for a task that is over is shown.
     expect(await screen.findAllByText("A reason for a task that is not over", { selector: "span" })).toHaveLength(2);
+  });
+
+  it("says how each reviewer lane ran (tier, commit read, same engine) and words a finding by its check", async () => {
+    const { user } = await open("crew");
+    await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Use next in the auth redirect/ }));
+    const stages = await screen.findByRole("list", { name: "Stages" });
+    expect(stages).toHaveTextContent("lead tier · read a41c9e2 · Different engine from the author");
+    expect(stages).toHaveTextContent("Same engine as author");
+    expect(await screen.findByRole("region", { name: "Findings" })).toHaveTextContent("Unconfirmed");
+    expect(document.body.textContent).not.toContain("Dropped");
   });
 
   it("says a task Flow does not know is not there (404 on the zoom)", async () => {

@@ -6,6 +6,7 @@ import { ErrorState, Empty, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { DownIcon, RightIcon, StageIcon } from "./glyphs";
 import { cellOf, decidedBy, laneWord, plain, roundView, STAGES, stageWord, when } from "./model";
+import { checkWord, findingStatusWord, laneFacts } from "../../map/model";
 import { useTaskWrite, WriteStatus } from "../../writes/TaskWrite";
 import { useFlowTask, useRefresh } from "./useFlow";
 
@@ -238,6 +239,7 @@ function LaneRow({ lane }: { lane: FlowLane }) {
         {lane.model ? ` · ${lane.model}` : ""}
       </span>
       <span className="fv-n">{laneWord(lane)}</span>
+      {laneFacts(lane).length > 0 ? <span className="fv-lane-facts">{laneFacts(lane).join(" · ")}</span> : null}
     </li>
   );
 }
@@ -248,14 +250,14 @@ function Finding({ finding }: { finding: FlowFinding }) {
       <div className="fv-find-top">
         <span className="fv-badge">{finding.severity}</span>
         <b>{finding.claim}</b>
-        <span className="fv-badge">{plain(finding.check)}</span>
+        <span className="fv-badge">{checkWord(finding.check)}</span>
       </div>
       <code className="fv-path">
         {finding.path}
         {finding.line > 0 ? `:${finding.line}` : ""}
       </code>
       <small className="fv-muted">
-        {finding.lane} · round {finding.round} · {plain(finding.status)}
+        {finding.lane} · round {finding.round} · {findingStatusWord(finding.status)}
         {finding.blocks ? " · blocks" : ""}
       </small>
     </li>
