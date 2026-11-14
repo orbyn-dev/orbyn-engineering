@@ -128,14 +128,12 @@ export function FlowCheckFailed() {
             </div>
             <div style={{ padding: "4px 20px 8px", flex: "none" }}>
               <div className="cx-fbx cx-red" style={{ maxWidth: "640px" }}>
-                <h6>Check 3 of 3 failed: npm test auth</h6>
+                <h6>Check 3 of 3 failed: Tests (auth)</h6>
                 <div className="cx-fkv">
-                  <span>Exit code</span>
-                  <b>1</b>
-                  <span>Why</span>
-                  <b>auth/redirect.test.ts: expected “/” but got “//evil.com”</b>
+                  <span>Result</span>
+                  <b>Failed</b>
                   <span>Sent to Build</span>
-                  <b>The command, the output excerpt and the failing commit, as the retry reason. Nothing is reviewed until the checks pass.</b>
+                  <b>The failed check’s name and the failing commit, as the retry reason. The command and the output are not given to the worker while the task runs. Nothing is reviewed until the checks pass.</b>
                 </div>
               </div>
             </div>
