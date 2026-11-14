@@ -689,7 +689,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsView() };
       case "GET /api/info":
-        return { status: 200, body: { ...fixtures.info, remote: scenario === "remote" } };
+        return { status: 200, body: { ...fixtures.info, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
         if (data.key === "orbyn-demo-key") {
           signedIn = true;

@@ -223,8 +223,10 @@ describe("the Crew row of the left bar", () => {
     on.unmount();
     mock.reset("default");
     const { container } = render(<CrewNavRow route={{ name: "home" }} />);
-    await waitFor(() => expect(calls("/api/crew/preview").length).toBeGreaterThan(1));
+    await waitFor(() => expect(calls("/api/info").length).toBeGreaterThan(0));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
+    // The row reads the service's info, never a Crew route: with Preview off that route answers 404, which the browser logs.
+    expect(calls("/api/crew")).toHaveLength(0);
   });
 });
