@@ -228,13 +228,17 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
   const rows = areas.rows;
   const allThin = rows.length > 0 && rows.every((row) => row.state === "not_enough_data");
   const footerTarget = rows.find(isLowered);
-  const items = (row: AutopilotAreaRow) => [
-    { label: "Follow the record", selected: !row.override, leadCheck: true, content: optionLine("Follow the record", "The default. It returns by itself when the record recovers"), onSelect: () => choose(row, "follow") },
-    ...((row.ceiling === "full" && row.now !== row.ceiling) || row.override?.choice === "keep_ceiling"
-      ? [{ label: "Keep the ceiling", selected: row.override?.choice === "keep_ceiling", leadCheck: true, content: optionLine("Keep the ceiling", `${modeName(row.ceiling)}, your ceiling. Needs an acknowledgement; a new trip clears it`), onSelect: () => choose(row, "keep_ceiling") }]
-      : []),
-    { label: "Off", selected: row.override?.choice === "off", leadCheck: true, content: optionLine("Off", `Everything in ${row.area} waits for you`), onSelect: () => choose(row, "off") },
-  ];
+  // An overridden area offers the way back and the choice it holds, never a direct switch (the service compares the record the person saw,
+  // and an overridden row no longer shows when the area tripped). Keep the ceiling is offered only for an area that is lowered now.
+  const items = (row: AutopilotAreaRow) => {
+    const held = row.override?.choice;
+    const follow = { label: "Follow the record", selected: !held, leadCheck: true, content: optionLine("Follow the record", "The default. It returns by itself when the record recovers"), onSelect: () => choose(row, "follow") };
+    const keepItem = { label: "Keep the ceiling", selected: held === "keep_ceiling", leadCheck: true, content: optionLine("Keep the ceiling", `${modeName(row.ceiling)}, your ceiling. Needs an acknowledgement; a new trip clears it`), onSelect: () => choose(row, "keep_ceiling") };
+    const offItem = { label: "Off", selected: held === "off", leadCheck: true, content: optionLine("Off", `Everything in ${row.area} waits for you`), onSelect: () => choose(row, "off") };
+    if (held === "keep_ceiling") return [follow, keepItem];
+    if (held === "off") return [follow, offItem];
+    return [follow, ...(isLowered(row) && row.ceiling === "full" && row.now !== row.ceiling ? [keepItem] : []), offItem];
+  };
 
   return (
     <section className="ap-set ar" aria-labelledby="ar-title" data-frame={keep ? (keep.choice === "off" ? "autonomy-override-off-warning" : "autonomy-override-warning") : menu ? "autonomy-override" : frameOf(rows, rows.some((row) => recentRestore(trail[row.area_key], areas.as_of, t.window_days) !== null && row.state === "follows"))}>

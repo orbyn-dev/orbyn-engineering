@@ -256,6 +256,52 @@ describe("override choices", () => {
   });
 });
 
+describe("switching between overrides", () => {
+  const ack = async (user: ReturnType<typeof userEvent.setup>, confirm: string) => {
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: confirm }));
+  };
+  const menuOf = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(within(rowOf("web/auth")).getByRole("button", { name: "Override…" }));
+    return screen.findByRole("menu", { name: "web/auth override" });
+  };
+  const labels = (menu: HTMLElement) => within(menu).getAllByRole("menuitem").map((item) => item.getAttribute("aria-label"));
+
+  it("after Off an overridden area offers only the way back and Off, so no direct switch to Keep the ceiling goes stale", async () => {
+    const { user } = await open("crew-areas-tripped");
+    await user.click(within(screen.getByRole("region", { name: "Why web/auth moved from Full to On" })).getByRole("button", { name: "Override…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Off" }));
+    await ack(user, "Turn it off");
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toContain("You turned this area off"));
+    expect(labels(await menuOf(user))).toEqual(["Follow the record", "Off"]);
+  });
+
+  it("after Keep the ceiling an overridden area offers only the way back and Keep the ceiling", async () => {
+    const { user } = await open("crew-areas-tripped");
+    await user.click(within(screen.getByRole("region", { name: "Why web/auth moved from Full to On" })).getByRole("button", { name: "Override…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Keep the ceiling" }));
+    await ack(user, "Keep the ceiling");
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toContain("You kept the ceiling"));
+    expect(labels(await menuOf(user))).toEqual(["Follow the record", "Keep the ceiling"]);
+  });
+
+  it("Off on an area that never tripped does not then offer Keep the ceiling, which the service refuses", async () => {
+    mock.reset("crew-areas-restored");
+    window.location.hash = "#/settings/crew/areas?repo=p-app";
+    const user = userEvent.setup();
+    render(<CrewSettingsSection />);
+    const panel = await screen.findByRole("region", { name: "web/auth is back on Full" });
+    await user.click(within(panel).getByRole("button", { name: "Override…" }));
+    const first = await screen.findByRole("menu", { name: "web/auth override" });
+    expect(labels(first)).toEqual(["Follow the record", "Off"]);
+    await user.click(within(first).getByRole("menuitem", { name: "Off" }));
+    await ack(user, "Turn it off");
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toContain("You turned this area off"));
+    expect(labels(await menuOf(user))).toEqual(["Follow the record", "Off"]);
+  });
+});
+
 describe("autonomy-override-warning", () => {
   async function warn() {
     const opened = await open("crew-areas-tripped");
