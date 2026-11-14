@@ -50,14 +50,12 @@ export function FlowArtifacts() {
                 <div className="cx-fkv">
                   <span>On commit</span>
                   <b>a41c9e2 · current</b>
-                  <span>npm test auth</span>
-                  <b>exit 0 · 21 s</b>
-                  <span>tsc --noEmit</span>
-                  <b>exit 0 · 14 s</b>
-                  <span>File scope</span>
-                  <b>exit 0 · just auth/redirect.ts</b>
-                  <span>Proves</span>
-                  <b>The listed tests pass. Not that other callers work.</b>
+                  <span>Check 1 of 3</span>
+                  <b>Tests (auth) · passed</b>
+                  <span>Check 2 of 3</span>
+                  <b>Typecheck · passed</b>
+                  <span>Check 3 of 3</span>
+                  <b>File scope · passed</b>
                 </div>
                 <div className="cx-ra"><Btn className="cx-btn">Open results</Btn><Btn className="cx-ghost">Re-run all</Btn></div>
               </div>

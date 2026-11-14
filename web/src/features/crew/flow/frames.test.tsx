@@ -10,7 +10,7 @@ const SHOWS: Record<string, string[]> = {
   "flow-task-loop": ["1 confirmed finding", "After the fix", "1 confirmed"],
   "flow-check-failed": ["Check 3 of 3 failed: Tests (auth)", "Sent to Build", "The failed check’s name and the failing commit, as the retry reason.", "After checks"],
   "flow-artifact-diff": ["Diff · Build → Checks", "2 files · +18 −4", "crew/redirect-impl", "Open the diff"],
-  "flow-artifacts": ["auth/redirect.test.ts:12 · the example uses //evil.com", "The listed tests pass. Not that other callers work.", "Use next when it points inside the app", "2 lanes · comments link back here", "Planned"],
+  "flow-artifacts": ["auth/redirect.test.ts:12 · the example uses //evil.com", "Check 1 of 3", "Tests (auth) · passed", "Typecheck · passed", "Use next when it points inside the app", "2 lanes · comments link back here", "Planned"],
   "flow-gates": ["A finding was reproduced with a test that fails (exit 1) on a41c9e2.", "3 of 3 checks ran on commit a41c9e2 and exited 0.", "A confirmed finding. Nothing blocks without one.", "You. Under Full, the queue decides by code."],
   "flow-replay": ["Correctness has read 6 of 9 changed hunks. This is a replay: nothing here can be changed.", "Lane Correctness started on Codex · GPT-5.5 · read-only checkout a41c9e2", "3 of 3 passed on a41c9e2 · decided by code", "Replay · 18:40 of 41:06", "Planned"],
   "flow-running": ["Findings so far", "Different engine from the author", "Open the run", "Stop this lane"],
@@ -26,7 +26,7 @@ const SHOWS: Record<string, string[]> = {
   "flow-you-off": ["A documentation change. Shown so you can review quickly; it does not change what waits.", "Every change waits for you before the merge", "Autopilot is Off for this repo", "Approve, don’t merge", "before merge", "Planned"],
   "flow-narrow-panel": ["Open in Crew", "Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode"],
   "flow-narrow-window": ["Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode", "After the merge"],
-  "flow-artifact-pruned": ["Check log · npm test auth · a41c9e2", "Wed 28 Oct 2026 (example)", "Preview only: no retention window yet", "exit 0 · 21 s · commit a41c9e2"],
+  "flow-artifact-pruned": ["Check log · Tests (auth) · a41c9e2", "Wed 28 Oct 2026 (example)", "Preview only: no retention window yet", "Passed · commit a41c9e2"],
 };
 
 const USAGE_LINE = "Claude Code 412k of 1M tokens \u00b7 Codex 62% of its weekly limit \u00b7 2h 14m";
@@ -87,6 +87,11 @@ describe("Flow frames (Crew Designs)", () => {
     pruned.unmount();
     const task = await openFrame("flow-task");
     expect(task.container.textContent).not.toContain("Planned");
+  });
+
+  it.each(FLOW_FRAMES)("#/preview/crew/%s: shows no check command, exit code or Proves text (v38)", async (name) => {
+    const { container } = await openFrame(name);
+    for (const text of ["npm test auth", "tsc --noEmit", "Proves", "exit 0 ·"]) expect(container.textContent).not.toContain(text);
   });
 
   it("draws the narrow variants at the designed widths", async () => {

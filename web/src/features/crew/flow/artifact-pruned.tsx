@@ -166,7 +166,7 @@ export function FlowArtifactPruned() {
               <span>Click a line to open what it carries</span>
             </div>
             <div className="cx-fpop" style={{ width: "340px", position: "absolute", left: "640px", top: "232px", zIndex: 40 }}>
-              <h6><Ic n="diff" sm />Check log · npm test auth · a41c9e2</h6>
+              <h6><Ic n="diff" sm />Check log · Tests (auth) · a41c9e2</h6>
               <div className="cx-fkv">
                 <span>Status</span>
                 <b>Artifact pruned · hash kept<span className="cx-cwpv">Preview only: no retention window yet</span></b>
@@ -175,7 +175,7 @@ export function FlowArtifactPruned() {
                 <span>Pruned</span>
                 <b>Wed 28 Oct 2026 (example)</b>
                 <span>Result kept</span>
-                <b>exit 0 · 21 s · commit a41c9e2</b>
+                <b>Passed · commit a41c9e2</b>
               </div>
               <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned once a retention window exists; v1 has none yet. The hash stays in the hash-chained ledger, so the log can be checked if you still have a copy. Replay is never truncated: every event stays.</p>
               <div className="cx-ra"><Btn className="cx-ghost">Verify a copy…</Btn><Btn className="cx-ghost">Re-run the check</Btn></div>
