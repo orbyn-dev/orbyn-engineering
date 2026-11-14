@@ -310,9 +310,30 @@ fn n7_holds_every_way_to_move_the_ref_the_rules_are_also_read_at() {
         "git remote set-url origin /elsewhere",
         "git remote set-branches origin x",
         "git branch -r -D origin/main",
+        "git branch -rd origin/main",
+        "git branch -dr origin/main",
+        "git branch -rD origin/main",
+        "git branch -a -d origin/main",
+        "git branch --remotes --delete origin/main",
+        "git fetch origin loose --refmap=+refs/heads/loose:refs/remotes/origin/main",
+        "git fetch . --refmap=+x:remotes/origin/main x",
+        "git push . HEAD:origin",
+        "git push . HEAD:ORIGIN",
     ] {
         assert_eq!(command(text), Some("N7"), "{text}");
     }
+}
+
+#[test]
+fn n5_reads_bundled_short_flags_of_branch() {
+    for text in [
+        "git branch -Dq main",
+        "git branch -qd main",
+        "git branch -fm other main",
+    ] {
+        assert_eq!(command(text), Some("N5"), "{text}");
+    }
+    assert_eq!(command("git branch -vv main"), None);
 }
 
 #[test]
@@ -340,6 +361,12 @@ fn n7_leaves_reads_and_everyday_git_alone() {
         "git push origin HEAD:feature",
         "git branch -r",
         "git branch -d topic",
+        "git branch -a",
+        "git branch -v",
+        "git branch -rv",
+        "git branch -vv",
+        "git push origin HEAD:origin-fix",
+        "git fetch origin loose --refmap=+refs/heads/loose:refs/heads/loose",
     ] {
         assert_eq!(command(text), None, "{text}");
     }

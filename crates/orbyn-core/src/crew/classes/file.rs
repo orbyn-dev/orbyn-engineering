@@ -65,6 +65,11 @@ impl ClassFile {
         self.problems.first().cloned().unwrap_or_default()
     }
 
+    /// A file that cannot be read, for a reason that is not about its content.
+    pub fn refused(problem: String) -> Self {
+        Self::broken(None, None, problem)
+    }
+
     fn broken(commit: Option<&str>, blob: Option<String>, problem: String) -> Self {
         Self {
             commit: commit.map(str::to_owned),
@@ -145,6 +150,42 @@ pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
         }
     }
     None
+}
+
+/// The default branch and the file at it. When `origin` is a configured remote and none of its branches has been fetched, the
+/// default branch cannot be read: that is a file that cannot be trusted, never a repository with no default branch. With no
+/// `origin` remote and no default-branch ref there is nothing to read, and `None` leaves HEAD alone.
+pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
+    let url = git(root, &["config", "--get", "remote.origin.url"])
+        .await
+        .map(|out| text(&out))
+        .unwrap_or_default();
+    let pin = pinned_ref(root).await;
+    if url.is_empty() {
+        let pin = pin?;
+        let file = read_class_file(root, Some(&pin.commit)).await;
+        return Some((pin, file));
+    }
+    let fetched = git(root, &["for-each-ref", "--count=1", "refs/remotes/origin/"])
+        .await
+        .map(|out| !text(&out).is_empty())
+        .unwrap_or(false);
+    // A remote-tracking ref that resolved is the default branch. Anything else, with `origin` configured, is not readable: a
+    // local branch would stand in for a ref an agent could have deleted.
+    if let Some(pin) = pin.filter(|p| fetched && p.name.starts_with("origin/")) {
+        let file = read_class_file(root, Some(&pin.commit)).await;
+        return Some((pin, file));
+    }
+    let pin = PinnedRef {
+        name: "origin".to_owned(),
+        commit: "none".to_owned(),
+    };
+    let why = if fetched {
+        "the remote origin has branches here but none is main, master, trunk or its default, so its rules cannot be read"
+    } else {
+        "the project has a remote named origin but none of its branches has been fetched, so the default branch's rules cannot be read; run git fetch"
+    };
+    Some((pin, ClassFile::refused(why.to_owned())))
 }
 
 fn is_object_id(text: &str) -> bool {

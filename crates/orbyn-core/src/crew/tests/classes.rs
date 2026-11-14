@@ -1270,3 +1270,49 @@ async fn the_default_branchs_rules_are_matched_against_the_tasks_own_tree() {
         "the link is followed in the task's tree, so alpha is kept out"
     );
 }
+
+async fn with_origin_url() -> World {
+    let w = two().await;
+    run_git(
+        &w.repo,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/r.git",
+        ],
+    );
+    w
+}
+
+#[tokio::test]
+async fn an_origin_remote_with_nothing_fetched_blocks_every_engine() {
+    let w = with_origin_url().await;
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+    let texts: Vec<&str> = answer["refusal"]["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["text"].as_str())
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("none of its branches has been fetched")),
+        "{texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn once_a_branch_of_origin_is_fetched_it_is_read_again_and_no_remote_is_as_before() {
+    let w = with_origin_url().await;
+    pin_origin_here(&w.repo);
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "alpha");
+    // No origin at all: as before.
+    let w = two().await;
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "alpha");
+}

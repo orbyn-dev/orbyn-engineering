@@ -7,8 +7,8 @@ use orbyn_contracts as wire;
 
 use super::record::{ROUTE_CLASS, Stored};
 use super::{
-    BUILT_IN, ClassFile, INVALID_RULE, PathClasses, PinnedRef, base_commit, classify_paths,
-    path_problem, pinned_ref, read_class_file,
+    BUILT_IN, ClassFile, INVALID_RULE, PathClasses, base_commit, classify_paths, path_problem,
+    read_class_file, read_pinned,
 };
 use crate::app::Core;
 use crate::crew::EngineView;
@@ -52,13 +52,6 @@ pub(in crate::crew) fn engine_words(ids: &[String], views: &[EngineView]) -> Str
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// The default branch and the file at it, when the repository has one.
-async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
-    let pin = pinned_ref(root).await?;
-    let file = read_class_file(root, Some(&pin.commit)).await;
-    Some((pin, file))
 }
 
 /// What a route card says about a set of classes.

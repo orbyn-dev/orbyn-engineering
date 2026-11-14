@@ -637,30 +637,48 @@ fn into_remote_refs(word: &str) -> bool {
         return false;
     }
     let lower = dest.to_ascii_lowercase();
-    lower.starts_with("refs/remotes/")
+    // A bare remote name expands through `refs/remotes/<name>/HEAD`.
+    (word.contains(':') && lower == "origin")
+        || lower.starts_with("refs/remotes/")
         || lower.starts_with("remotes/")
         || (word.contains(':') && lower.starts_with("origin/"))
+}
+
+/// Whether any of `args` is a short option (`-d`) or a bundle of them (`-rd`, `-dr`) holding one of `chars`.
+pub(super) fn short_has<'a>(args: impl IntoIterator<Item = &'a str>, chars: &[char]) -> bool {
+    args.into_iter().any(|arg| {
+        arg.len() > 1
+            && arg.starts_with('-')
+            && !arg.starts_with("--")
+            && arg[1..].chars().any(|c| chars.contains(&c))
+    })
 }
 
 /// Whether a git command moves, repoints or deletes a ref the rules are also read at.
 fn moves_rules_ref(sub: &str, after: &[String], words: &[String]) -> bool {
     let has = |names: &[&str]| after.iter().any(|a| names.contains(&a.as_str()));
+    let refmap = after
+        .iter()
+        .filter_map(|a| a.strip_prefix("--refmap="))
+        .any(into_remote_refs);
     match sub {
         // Ref plumbing and bulk writers.
         "update-ref" | "fast-import" | "send-pack" => true,
         // Reading a symbolic ref has one name; a write names the ref and its target, or deletes.
         "symbolic-ref" => words.len() >= 2 || has(&["-d", "--delete"]),
-        "fetch" | "push" | "pull" => has(&["--stdin"]) || words.iter().any(|w| into_remote_refs(w)),
+        "fetch" | "push" | "pull" => {
+            has(&["--stdin"]) || refmap || words.iter().any(|w| into_remote_refs(w))
+        }
         // The remote the pinned ref belongs to.
         "remote" => matches!(
             words.first().map(String::as_str),
             Some("set-head" | "rename" | "remove" | "rm" | "add" | "set-url" | "set-branches")
         ),
         "branch" => {
-            has(&["-r", "--remotes"])
-                && has(&[
-                    "-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy",
-                ])
+            let args = || after.iter().map(String::as_str);
+            (has(&["--remotes", "--all"]) || short_has(args(), &['r', 'a']))
+                && (has(&["--delete", "--move", "--copy"])
+                    || short_has(args(), &['d', 'D', 'm', 'M', 'c', 'C']))
         }
         _ => false,
     }

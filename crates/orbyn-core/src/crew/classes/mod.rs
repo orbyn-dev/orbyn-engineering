@@ -25,14 +25,13 @@ pub(in crate::crew) use record::Routed;
 
 pub use classify::{PathClasses, classify, classify_paths};
 pub use file::{
-    BUILT_IN, ClassFile, FILE_MAX, INVALID_RULE, PinnedRef, base_commit, pinned_ref,
-    read_class_file,
+    BUILT_IN, ClassFile, FILE_MAX, INVALID_RULE, base_commit, read_class_file, read_pinned,
 };
 pub use glob::{Glob, path_problem};
 
 #[cfg(test)]
 pub(super) use file::{
-    ENGINES_MAX, GLOBS_MAX, NAME_MAX, REASON_MAX, RULES_MAX, parse as parse_file,
+    ENGINES_MAX, GLOBS_MAX, NAME_MAX, REASON_MAX, RULES_MAX, parse as parse_file, pinned_ref,
 };
 
 use orbyn_contracts::{Brief, Thread};
@@ -56,8 +55,7 @@ impl Core {
             .map(|grant| grant.path.as_str().to_owned())
             .collect();
         let mut classes = classify(root, base.as_deref(), file, &patterns).await;
-        if let Some(pin) = pinned_ref(root).await {
-            let there = read_class_file(root, Some(&pin.commit)).await;
+        if let Some((pin, there)) = read_pinned(root).await {
             // The default branch's rules are matched against the task's own tree, so leases and symlinks list the same files.
             let side = classify(root, base.as_deref(), there, &patterns).await;
             classes = classes.with_pinned(pin.name, pin.commit, side);
