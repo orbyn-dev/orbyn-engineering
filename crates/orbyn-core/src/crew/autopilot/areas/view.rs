@@ -112,14 +112,20 @@ fn row(
                 };
                 if met {
                     (
-                        wire::AutopilotAreaState::Recovering,
+                        wire::AutopilotAreaState::CriteriaMet,
                         "Criteria met; returns at the next merge.".to_owned(),
                         shown,
                         1,
                     )
                 } else {
+                    let fresh =
+                        facts.since_recovery.merges == 0 && clean_days(recovery_since, now) == 0;
                     (
-                        wire::AutopilotAreaState::Demoted,
+                        if fresh {
+                            wire::AutopilotAreaState::Demoted
+                        } else {
+                            wire::AutopilotAreaState::Recovering
+                        },
                         format!(
                             "Lowered after {} of {} merges were reverted in {WINDOW_DAYS} days. Returns after {RECOVERY_DAYS} days with no revert and {RECOVERY_MERGES} merges since.",
                             trip_count(stored_row, "reverts", window.reverts),
@@ -151,7 +157,7 @@ fn row(
             Stored::Follows if trips(window) => (
                 wire::AutopilotAreaState::Follows,
                 format!(
-                    "{} of {} merges were reverted in {WINDOW_DAYS} days; the breaker acts at the next revert.",
+                    "{} of {} merges were reverted in {WINDOW_DAYS} days; it is evaluated at the next merge or revert.",
                     window.reverts, window.merges
                 ),
                 ceiling,
@@ -172,6 +178,7 @@ fn row(
         rank,
         wire::AutopilotAreaRow {
             area: redact(area),
+            area_key: area.to_owned(),
             ceiling: mode_wire(ceiling),
             now: mode_wire(shown),
             state,

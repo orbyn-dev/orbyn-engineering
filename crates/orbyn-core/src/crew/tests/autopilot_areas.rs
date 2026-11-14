@@ -84,6 +84,14 @@ impl Rig {
         task
     }
 
+    /// A merge as `record_merge` records it: the row, then the breaker's look at its areas. Returns its task.
+    async fn merge_recorded(&mut self, areas: &[&str], at: i64) -> String {
+        let task = self.merge(areas, at).await;
+        let stored = self.w.core.store.crew_merge(&task).unwrap().unwrap();
+        self.w.core.area_breaker_after_merge(&stored, at).unwrap();
+        task
+    }
+
     /// The merge is reverted at `at`, as `revert_merge` records it: the row first, then the breaker. Returns the revert commit.
     fn revert(&self, task: &str, at: i64) -> String {
         let commit = format!(
@@ -262,7 +270,7 @@ async fn the_way_back_needs_both_counts_and_a_new_revert_starts_it_again() {
     assert_eq!(r.mode("src/a").unwrap().state, "demoted", "13 days");
     // Both met: the view says so, and no read starts the return.
     let row = r.row("src/a", NOW + 14 * DAY);
-    assert_eq!(row.state, wire::AutopilotAreaState::Recovering);
+    assert_eq!(row.state, wire::AutopilotAreaState::CriteriaMet);
     assert_eq!(row.line, "Criteria met; returns at the next merge.");
     assert_eq!(
         r.mode("src/a").unwrap().state,
@@ -617,4 +625,92 @@ async fn a_revert_the_person_asks_for_reaches_the_breaker() {
             .state,
         "demoted"
     );
+}
+
+#[tokio::test]
+async fn a_trip_is_evaluated_when_a_merge_is_recorded() {
+    let mut r = rig().await;
+    let mut tasks = Vec::new();
+    for i in 0..3 {
+        tasks.push(r.merge(&["src/a"], NOW - (6 - i) * DAY).await);
+    }
+    r.revert(&tasks[0], NOW - 4 * DAY);
+    r.revert(&tasks[1], NOW - 4 * DAY);
+    assert!(r.mode("src/a").is_none(), "3 merges are not enough data");
+    r.merge_recorded(&["src/a"], NOW - 3 * DAY).await;
+    assert!(r.mode("src/a").is_none(), "4 merges");
+    let fifth = r.merge_recorded(&["src/a"], NOW - 2 * DAY).await;
+    let mode = r.mode("src/a").expect("the fifth merge meets the rule");
+    assert_eq!(mode.state, "demoted");
+    let trail = r.w.core.store.area_events(&r.project, "src/a", 5).unwrap();
+    assert_eq!(trail.len(), 1);
+    assert!(trail[0].cause.starts_with("merge:"), "{}", trail[0].cause);
+    assert_eq!(trail[0].from_mode.as_deref(), Some("full"));
+    assert_eq!(events(&r.w, &fifth, "area_demoted").len(), 1);
+    // Looking again records nothing more.
+    let stored = r.w.core.store.crew_merge(&fifth).unwrap().unwrap();
+    r.w.core
+        .area_breaker_after_merge(&stored, NOW - DAY)
+        .unwrap();
+    assert_eq!(r.kinds("src/a"), ["demoted"]);
+    // A ceiling of On is never lowered this way either.
+    let mut on = rig().await;
+    on.w.core
+        .set_crew_autopilot_mode(&ModeScope::Repo(on.project.clone()), Mode::On)
+        .unwrap();
+    let t = [
+        on.merge(&["src/a"], NOW - 6 * DAY).await,
+        on.merge(&["src/a"], NOW - 5 * DAY).await,
+    ];
+    on.revert(&t[0], NOW - 4 * DAY);
+    on.revert(&t[1], NOW - 4 * DAY);
+    for d in [3, 2, 1] {
+        on.merge_recorded(&["src/a"], NOW - d * DAY).await;
+    }
+    assert!(on.mode("src/a").is_none());
+}
+
+#[tokio::test]
+async fn the_way_back_is_shown_in_progress_then_met_and_queuing_never_waits_for_the_lock() {
+    let mut r = rig().await;
+    let (tasks, _) = r.tripped().await;
+    let any = tasks[0].clone();
+    assert_eq!(r.row("src/a", NOW).state, wire::AutopilotAreaState::Demoted);
+    r.merge(&["src/a"], NOW + DAY).await;
+    r.merge(&["src/a"], NOW + 2 * DAY).await;
+    let row = r.row("src/a", NOW + 3 * DAY);
+    assert_eq!(row.state, wire::AutopilotAreaState::Recovering);
+    let progress = row.recovery.unwrap();
+    assert_eq!(
+        (
+            progress.clean_days,
+            progress.days_needed,
+            progress.merges,
+            progress.merges_needed
+        ),
+        (3, 14, 2, 5)
+    );
+    for d in 3..=5 {
+        r.merge(&["src/a"], NOW + d * DAY).await;
+    }
+    // The lock is held (a long check or a bisect): queuing skips the check instead of waiting.
+    let guard = r.w.core.crew_merges.lock().await;
+    assert!(!r.w.core.area_restore_if_free(&any, NOW + 14 * DAY).unwrap());
+    assert_eq!(r.mode("src/a").unwrap().state, "demoted");
+    drop(guard);
+    assert!(r.w.core.area_restore_if_free(&any, NOW + 14 * DAY).unwrap());
+    assert_eq!(r.mode("src/a").unwrap().state, "follows");
+}
+
+#[tokio::test]
+async fn the_listed_key_finds_the_history() {
+    let mut r = rig().await;
+    r.tripped().await;
+    let row = r.row("src/a", NOW);
+    let history =
+        r.w.core
+            .autopilot_area_history(&r.project, &row.area_key)
+            .unwrap();
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(history.events[0].kind, "demoted");
 }

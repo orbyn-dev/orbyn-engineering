@@ -525,11 +525,13 @@ pub struct AutopilotHeldList {
 }
 
 wire_enum! {
-/// Where an area stands under the circuit breaker. `demoted` and `recovering` are recorded, not yet enforced.
+/// Where an area stands under the circuit breaker. `demoted` (just lowered, nothing clean yet), `recovering` (lowered, the way back in progress) and
+/// `criteria_met` (the way back is met; it returns at the next merge) are recorded, not yet enforced.
 pub enum AutopilotAreaState {
     Follows,
     Demoted,
     Recovering,
+    CriteriaMet,
     NotEnoughData,
     CeilingLower,
     Overridden,
@@ -572,14 +574,16 @@ pub struct AutopilotAreaOverride {
 wire! {
 /// One area of a project: the ceiling, what the breaker would make of it now, and why, in a sentence.
 pub struct AutopilotAreaRow {
-    /// The first two folders of the paths merges touched, or the first one, or the file at the root.
+    /// The first two folders of the paths merges touched, or the first one, or the file at the root, scrubbed for display.
     pub area: String,
+    /// The area as stored: the name to pass as `area` to the history route.
+    pub area_key: String,
     pub ceiling: AutopilotMode,
     /// The mode the breaker records for the area. Shadow: no merge, approval or tier reads it yet.
     pub now: AutopilotMode,
     pub state: AutopilotAreaState,
     pub line: String,
-    /// When the breaker lowered the area, for `demoted` and `recovering`.
+    /// When the breaker lowered the area, for `demoted`, `recovering` and `criteria_met`.
     #[serde(default)]
     #[ts(type = "number | null", optional)]
     pub since: Option<i64>,

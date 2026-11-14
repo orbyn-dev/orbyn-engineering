@@ -49,9 +49,57 @@ impl Core {
         }
     }
 
+    /// Lowers `area` from the mode the merge was made under to `On`, as one event and one mode row. Returns whether it was recorded (a
+    /// cause already recorded is not recorded twice). The `from` mode is the one the merge actually used (`MergeRecord.mode`), not an
+    /// assumed Full. Part 2 (enforcement) must take each merge's recorded mode as its basis, not only the repository's ceiling used here.
+    fn demote_area(
+        &self,
+        project: &str,
+        area: &str,
+        record: &MergeRecord,
+        cause: &str,
+        facts: &Facts,
+        now: i64,
+    ) -> Result<bool> {
+        let reason = json!({
+            "rule": "reverts_in_window",
+            "merges": facts.window.merges,
+            "reverts": facts.window.reverts,
+            "window_days": WINDOW_DAYS,
+            "cause": cause,
+            "proposed": true,
+        });
+        let kept = record_json(facts.window);
+        let written = self.store.record_area_change(&AreaWrite {
+            project_id: project,
+            area,
+            kind: "demoted",
+            from_mode: Some(&record.mode),
+            to_mode: Some(Mode::On.name()),
+            decided_by: "breaker",
+            cause,
+            record: &kept,
+            at: now,
+            change: AreaChange::Demote {
+                trip_reason: reason.clone(),
+                recovery_since: now,
+            },
+        })?;
+        if written {
+            // On the task whose revert or merge tripped it, so Flow shows it.
+            self.merge_event(
+                &record.task_id,
+                "area_demoted",
+                &json!({ "area": area, "from": record.mode, "to": "on", "shadow": true, "reason": reason }),
+            );
+        }
+        Ok(written)
+    }
+
     /// A merge was reverted by `revert_commit` at `now`; the record already says so. For each area the merge touched: a lowered area's
     /// recovery clock restarts, and an area that follows its ceiling is lowered when its window trips. Each write is the event and
     /// the mode row in one transaction, and a revert already recorded is not recorded again. Shadow: nothing reads the result.
+    /// A failure is only logged by the caller; part 2 needs a visible ledger event and a rule that fails closed.
     pub(crate) fn area_breaker_after_revert(
         &self,
         record: &MergeRecord,
@@ -67,9 +115,9 @@ impl Core {
             let row = self.store.area_mode(&project, area)?;
             let stored = stored_of(row.as_ref());
             let facts = facts_of(&merges, area, stored, now);
-            let kept = record_json(facts.window);
             match stored {
                 Stored::Demoted { .. } => {
+                    let kept = record_json(facts.window);
                     self.store.record_area_change(&AreaWrite {
                         project_id: &project,
                         area,
@@ -84,42 +132,43 @@ impl Core {
                     })?;
                 }
                 Stored::Follows if decide(&facts, stored, ceiling, now) == Change::Demote => {
-                    let reason = json!({
-                        "rule": "reverts_in_window",
-                        "merges": facts.window.merges,
-                        "reverts": facts.window.reverts,
-                        "window_days": WINDOW_DAYS,
-                        "revert": revert_commit,
-                        "proposed": true,
-                    });
-                    let written = self.store.record_area_change(&AreaWrite {
-                        project_id: &project,
-                        area,
-                        kind: "demoted",
-                        from_mode: Some(Mode::Full.name()),
-                        to_mode: Some(Mode::On.name()),
-                        decided_by: "breaker",
-                        cause: revert_commit,
-                        record: &kept,
-                        at: now,
-                        change: AreaChange::Demote {
-                            trip_reason: reason.clone(),
-                            recovery_since: now,
-                        },
-                    })?;
-                    if written {
-                        // On the task whose revert tripped it, so Flow shows it.
-                        self.merge_event(
-                            &record.task_id,
-                            "area_demoted",
-                            &json!({ "area": area, "from": "full", "to": "on", "shadow": true, "reason": reason }),
-                        );
-                    }
+                    self.demote_area(&project, area, record, revert_commit, &facts, now)?;
                 }
                 Stored::Follows => {}
             }
         }
         Ok(())
+    }
+
+    /// A merge was just recorded (`record` is the stored row, with its id). For each area it touched that follows its ceiling, the trip
+    /// is evaluated again: 3 merges with 2 reverted and then 2 clean ones meet the rule at the fifth merge with no further revert. The
+    /// cause is `merge:<id>`, so a retry records once. Then lowered areas whose way back is met return.
+    pub(crate) fn area_breaker_after_merge(&self, record: &MergeRecord, now: i64) -> Result<()> {
+        let Some(project) = self.project_of_task(&record.task_id)? else {
+            return Ok(());
+        };
+        let merges = self.store.crew_merges_of_project(&project)?;
+        let ceiling = self.crew_project_mode(&project);
+        for area in &record.areas {
+            let row = self.store.area_mode(&project, area)?;
+            let stored = stored_of(row.as_ref());
+            let facts = facts_of(&merges, area, stored, now);
+            if stored == Stored::Follows && decide(&facts, stored, ceiling, now) == Change::Demote {
+                let cause = format!("merge:{}", record.id);
+                self.demote_area(&project, area, record, &cause, &facts, now)?;
+            }
+        }
+        self.area_restore_check(&record.task_id, now)
+    }
+
+    /// The restore check at the start of queuing, skipped when the merge lock is held: queuing must not wait for a long check or a
+    /// bisect, and the same check runs when a merge is recorded. Returns whether it ran.
+    pub(crate) fn area_restore_if_free(&self, task_id: &str, now: i64) -> Result<bool> {
+        let Ok(_free) = self.crew_merges.try_lock() else {
+            return Ok(false);
+        };
+        self.area_restore_check(task_id, now)?;
+        Ok(true)
     }
 
     /// Returns the lowered areas of the task's project that have met the way back: `RECOVERY_DAYS` without a revert and the merges

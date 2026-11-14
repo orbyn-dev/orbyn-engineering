@@ -129,3 +129,37 @@ fn the_tables_refuse_what_the_design_forbids() {
         1
     );
 }
+
+#[test]
+fn a_mode_update_that_fails_after_the_event_commits_nothing() {
+    let dir = TempDir::new();
+    let store = Store::open(&dir.path().join("orbyn.db"), "a").unwrap();
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER test_mode_refused BEFORE INSERT ON crew_area_modes BEGIN SELECT RAISE(ABORT, 'mode refused'); END;",
+        )
+        .unwrap();
+    let write = AreaWrite {
+        project_id: "p1",
+        area: "src/a",
+        kind: "demoted",
+        from_mode: Some("full"),
+        to_mode: Some("on"),
+        decided_by: "breaker",
+        cause: "cause-1",
+        record: &json!({}),
+        at: 100,
+        change: AreaChange::Demote {
+            trip_reason: json!({}),
+            recovery_since: 100,
+        },
+    };
+    let error = store.record_area_change(&write).unwrap_err().to_string();
+    assert!(error.contains("mode refused"), "{error}");
+    assert!(
+        store.area_events("p1", "src/a", 10).unwrap().is_empty(),
+        "the event rolled back with the mode"
+    );
+    assert!(store.area_mode("p1", "src/a").unwrap().is_none());
+}

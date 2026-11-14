@@ -10,14 +10,18 @@ import type { AutopilotMode } from "./AutopilotMode";
  */
 export type AutopilotAreaRow = { 
 /**
- * The first two folders of the paths merges touched, or the first one, or the file at the root.
+ * The first two folders of the paths merges touched, or the first one, or the file at the root, scrubbed for display.
  */
-area: string, ceiling: AutopilotMode, 
+area: string, 
+/**
+ * The area as stored: the name to pass as `area` to the history route.
+ */
+area_key: string, ceiling: AutopilotMode, 
 /**
  * The mode the breaker records for the area. Shadow: no merge, approval or tier reads it yet.
  */
 now: AutopilotMode, state: AutopilotAreaState, line: string, 
 /**
- * When the breaker lowered the area, for `demoted` and `recovering`.
+ * When the breaker lowered the area, for `demoted`, `recovering` and `criteria_met`.
  */
 since?: number | null, record: AutopilotAreaRecord, recovery?: AutopilotAreaRecovery | null, override?: AutopilotAreaOverride | null, };

@@ -732,10 +732,10 @@ enforced.** No merge, approval, tier or queue reads an area's state; the mode in
 `crates/orbyn-core/src/crew/autopilot/areas/` (`decide` the pure rule, `breaker` the writes and the hook, `view` the reads), `store/crew_autonomy.rs`.
 
 - **Area.** The first two folders of a path (`risk::area_of`), or the one folder, or the file at the root. The key is `(project, area)`, and the record
-  counts only merges whose run's lead thread belongs to that project, so the same name in two repositories is counted twice, apart.
+  counts only merges whose run's lead thread belongs to that project, so the same name in two repositories is counted for each repository on its own.
 - **Rule (all Proposed, Engineering's constants in `areas/mod.rs`, served by `GET /api/crew/autopilot/thresholds` with `proposed: true`).** Window 14 days; fewer than
   5 merges in it is "not enough data" and nothing changes. **Demote** when 2 or more of the merges made in the window were reverted ("merged in the window, now
-  reverted", the same meaning as the 60-day rate). **Return** when both hold: 14 days since the recovery clock started with no revert, and 5 merges since then, none reverted.
+  reverted", the same meaning as the 60-day rate). It is evaluated when a revert passes through and when a merge is recorded (3 merges with 2 reverted, then 2 clean ones, trips at the fifth merge; cause `merge:<id>`). **Return** when both hold: 14 days since the recovery clock started with no revert, and 5 merges since then, none reverted.
   The clock starts at the demotion and restarts at every later revert in the area (a `recovery_reset` row). Escapes (a defect that no revert shows) are
   **not measured**: there is no source for them, `escapes` is always `null` and no count includes one. The 60-day, 10-merge, 20% rule in `merge/risk.rs` is
   unchanged and keeps raising the risk tier.
@@ -747,10 +747,10 @@ enforced.** No merge, approval, tier or queue reads an area's state; the mode in
   then changes the mode row **in one transaction** (rule 6: the audit row first; a row the table refuses leaves the mode as it was). A demotion also appends an `area_demoted` row to the
   approval ledger on the task whose revert tripped it, so Flow shows it.
 - **When it acts.** `revert_merge` is the one place every revert passes (the watch's bisect revert and the person's Revert). Right after the merge row says reverted, still under the merge lock, the
-  breaker runs for each area the merge touched. The same revert is recorded once. A failure there is logged and never undoes a revert that already moved the branch. The way back is checked
+  breaker runs for each area the merge touched. The same revert is recorded once. A failure there is logged and never undoes a revert that already moved the branch. Queuing checks the way back only if the merge lock is free (it never waits for a long check or a bisect); recording a merge checks it too. The way back is checked
   when a merge is recorded and at the start of queuing one, so it waits for at most one merge; no GET writes, and the view says "Criteria met; returns at the next merge."
 - **Routes** (Preview-gated, 404 with the flag off; all GET, all in `crew::changes::READS`, nothing writes): `GET /api/crew/autopilot/areas?project=&limit&offset` (the ceiling, `enforced: false`,
-  and per area the record, a state of `follows`, `demoted`, `recovering`, `not_enough_data`, `ceiling_lower` or `overridden`, a sentence, when it was lowered and what recovery still needs),
+  and per area the record, a state of `follows`, `demoted` (just lowered), `recovering` (lowered, with the days and merges so far), `criteria_met` (returns at the next merge), `not_enough_data`, `ceiling_lower` or `overridden`, an `area_key` to pass to the history route, a sentence, when it was lowered and what recovery still needs),
   `GET /api/crew/autopilot/areas/history?project=&area=` (the trail, newest first, at most 100; the area is in the query because it contains `/`) and `GET /api/crew/autopilot/thresholds`.
   `GET /api/crew/trust` now sets `autonomy_by_area: true` and takes an optional `project`, so the revert rates and the risk score's `merge_rates` count one repository's merges instead of all of them.
 
@@ -758,7 +758,7 @@ enforced.** No merge, approval, tier or queue reads an area's state; the mode in
 `autonomy-*`); earning a higher mode for an area; escapes.
 
 **Known limits (4j).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. The area is two folders deep, so a large folder and a small one weigh the same and a change spread over many areas counts in each. A return waits for the next
-merge. A project's ceiling is read for the breaker, so a crew set higher than its repository is not lowered. The thresholds are a proposal and may change.
+merge. A project's ceiling is read for the breaker (repository, then default), but a merge's real mode is the crew's, then the repository's: part 2 (enforcement) must take each `MergeRecord.mode`, the mode actually used, as its basis. The demotion event already records that mode as `from_mode`. Merges whose lead thread was hard-deleted drop out of the rates, the trust record and the breaker (the join needs the thread; the run rows stay). A breaker failure after a revert is only logged: part 2 needs a visible ledger or Flow event and a rule that fails closed. The thresholds are a proposal and may change.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**
