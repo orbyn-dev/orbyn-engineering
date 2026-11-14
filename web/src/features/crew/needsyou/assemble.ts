@@ -38,6 +38,9 @@ export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
   });
 }
 
+/** Dismissing a stop is local to this device: nothing is sent to the service. */
+export const STOP_HINT = "Dismiss hides this stop on this device.";
+
 /** Tasks Crew stopped on a trip wire, from `GET /api/crew/stops`. The service lists the latest wires; none says it was answered. */
 export function stopItems(recent: AutopilotLogRow[], limits: { inARow: number; inARun: number }): NeedsItem[] {
   return recent
@@ -58,6 +61,7 @@ export function stopItems(recent: AutopilotLogRow[], limits: { inARow: number; i
             ? "A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for."
             : `${stop.denialCount} denials ${stop.inARun ? "in one run" : "in a row"} stopped the task. Nothing else is blocked; the other tasks keep going.`,
         since: time(row.at),
+        hint: STOP_HINT,
         actions: [{ key: "open" as const, label: "Open", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
         ref: row.task_id,
       };

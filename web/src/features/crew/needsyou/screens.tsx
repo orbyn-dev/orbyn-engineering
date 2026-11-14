@@ -29,21 +29,21 @@ function Page({ inbox, workers = 3, children }: { inbox: string; workers?: numbe
 
 const inboxOf = (items: NeedsItem[]) => `Inbox · ${items.length}`;
 
-function List({ items, errors, plain }: { items: NeedsItem[]; errors?: string[]; plain?: boolean }) {
+function List({ items, errors }: { items: NeedsItem[]; errors?: string[] }) {
   const chips = kindChips(viewOf(items), items.length);
   return (
     <>
-      <NeedsBar chips={plain ? chips.slice(0, 1) : chips} active="all" rule={CHIP_NOTE} />
+      <NeedsBar chips={chips} active="all" rule={CHIP_NOTE} />
       <NeedsList items={items} handlers={{}} errors={errors} />
     </>
   );
 }
 
-const listFrame = (items: NeedsItem[], options: { errors?: string[]; plain?: boolean; dialog?: ReactNode } = {}): ComponentType => function NeedsYouList() {
+const listFrame = (items: NeedsItem[], options: { errors?: string[]; dialog?: ReactNode } = {}): ComponentType => function NeedsYouList() {
   return (
     <Frame height={options.dialog ? 560 : undefined}>
       <Page inbox={inboxOf(items)}>
-        <List items={items} errors={options.errors} plain={options.plain} />
+        <List items={items} errors={options.errors} />
       </Page>
       {options.dialog}
     </Frame>
@@ -220,6 +220,6 @@ export const NEEDSYOU_SCREENS: Record<NeedsYouFrameId, ComponentType> = {
   "needsyou-demoted": listFrame(DEMOTED_ITEMS),
   "needsyou-stop": listFrame(STOP_ITEMS),
   "needsyou-background": listFrame(BACKGROUND_ITEMS),
-  "needsyou-source-error": listFrame([QUESTIONS_ITEM, MAIN_ITEM], { errors: ["held commands"], plain: true }),
+  "needsyou-source-error": listFrame([QUESTIONS_ITEM, MAIN_ITEM], { errors: ["held commands"] }),
   "needsyou-live": Live,
 };

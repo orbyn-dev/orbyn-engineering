@@ -81,6 +81,7 @@ describe("the Needs you inbox on live data", () => {
     const { user, view } = await open("crew-tripwire");
     const item = (await screen.findByText("Stopped · too many denials")).closest("li") as HTMLElement;
     expect(item).toHaveTextContent("3 denials in a row stopped the task.");
+    expect(item).toHaveTextContent("Dismiss hides this stop on this device.");
     await user.click(within(item).getByRole("button", { name: /^Dismiss/ }));
     expect(screen.queryByText("Stopped · too many denials")).toBeNull();
     expect(writes()).toHaveLength(0);

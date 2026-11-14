@@ -59,6 +59,8 @@ export interface NeedsItem {
   since: number | null;
   /** Past its review time. With High risk, the only reason a risk chip is amber. */
   overdue?: boolean;
+  /** A short line under the cost: what an action does, when the screen must say so ("Dismiss hides this stop on this device."). */
+  hint?: string;
   actions: NeedsAction[];
   /** The crew's name, for the narrow card's second line. */
   engine?: string;

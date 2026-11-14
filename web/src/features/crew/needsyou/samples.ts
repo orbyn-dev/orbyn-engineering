@@ -94,7 +94,8 @@ const STOP_DENIALS = item({
   title: "Stopped · too many denials",
   from: "Login redirect crew · Worker 2 · Claude Code · Sonnet 5.5",
   cost: "3 denials in a row stopped the task. Nothing else is blocked; the other tasks keep going.",
-  actions: [{ key: "open", label: "Open", primary: true }],
+  hint: "Dismiss hides this stop on this device.",
+  actions: [{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }],
 });
 const STOP_INJECTED = item({
   id: "s-stop-injected",
@@ -102,7 +103,8 @@ const STOP_INJECTED = item({
   title: "Stopped · possible injected instructions",
   from: "Login redirect crew · Worker 1 · Claude Code · Sonnet 5.5",
   cost: "A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for.",
-  actions: [{ key: "open", label: "Open", primary: true }],
+  hint: "Dismiss hides this stop on this device.",
+  actions: [{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }],
 });
 /** needsyou-stop: a task stopped by a trip wire, for each reason. */
 export const STOP_ITEMS: NeedsItem[] = [STOP_DENIALS, STOP_INJECTED];

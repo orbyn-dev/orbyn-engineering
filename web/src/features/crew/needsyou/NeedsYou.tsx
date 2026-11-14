@@ -44,6 +44,7 @@ export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: numb
           <span>{item.from}</span>
         </div>
         {item.cost ? <div className="ny-cost">{item.cost}</div> : null}
+        {item.hint ? <div className="ny-m">{item.hint}</div> : null}
       </div>
       <div className="ny-ac">
         {item.actions.map((action) => <ActionButton key={action.key} item={item} action={action} handlers={handlers} />)}
@@ -63,6 +64,7 @@ export function NeedsCard({ item, handlers }: { item: NeedsItem; handlers: Needs
       <span className="ny-t">{item.title}</span>
       <span className="ny-e">{item.engine ?? item.from}</span>
       {item.cost ? <span className="ny-ln">{item.cost}</span> : null}
+      {item.hint ? <span className="ny-k">{item.hint}</span> : null}
       <div className="ny-ca">
         {item.actions.map((action) => <ActionButton key={action.key} item={item} action={action} handlers={handlers} />)}
       </div>
