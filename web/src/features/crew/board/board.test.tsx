@@ -156,22 +156,22 @@ describe("the Taskboard on the board route", () => {
     expect(writes()).toHaveLength(0);
   });
 
-  it("draws the card menu with Cancel and Re-run checks inert and the rest After the beta, and sends nothing", async () => {
+  it("draws the card menu with Cancel as a choice for a running task and the rest After the beta and inert", async () => {
     const user = await open("crew");
     await user.click(within(column(/^Running/)).getByRole("button", { name: /^Actions for Use next/ }));
     const menu = await screen.findByRole("menu", { name: "Task actions" });
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      "Cancel Available when the write route ships",
+      "Cancel",
       "Reassign engine After the beta",
       "Message into a lane After the beta",
       "Add reviewer lane After the beta",
       "Propose a check After the beta",
     ]);
-    for (const item of items) expect(item).toBeDisabled();
-    await user.click(items[0]!);
+    expect(items[0]).toBeEnabled();
+    for (const item of items.slice(1)) expect(item).toBeDisabled();
+    // Opening the menu sends nothing.
     expect(writes()).toHaveLength(0);
-    expect(urls().some((url) => /cancel|rerun/.test(url))).toBe(false);
   });
 
   it("offers Re-run checks, inert, on a task whose checks may run again, and Answer only on one that needs you", async () => {
@@ -179,7 +179,7 @@ describe("the Taskboard on the board route", () => {
     await user.click(within(column(/^Needs you/)).getByRole("button", { name: /^Actions for Which target/ }));
     const menu = await screen.findByRole("menu", { name: "Task actions" });
     expect(within(menu).getByRole("menuitem", { name: /Answer a worker’s question/ })).toBeDisabled();
-    expect(within(menu).getByRole("menuitem", { name: /Cancel/ })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: /Cancel/ })).toBeEnabled();
     expect(within(menu).queryByRole("menuitem", { name: /Re-run checks/ })).toBeNull();
   });
 });

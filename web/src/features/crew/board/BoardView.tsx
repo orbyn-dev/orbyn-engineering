@@ -5,6 +5,7 @@ import { ErrorState, Empty, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useFlowCrews } from "../flow/live/useFlow";
+import { useTaskWrite, WriteStatus } from "../writes/TaskWrite";
 import { CardMenu } from "./CardMenu";
 import { ago, COLUMNS, modelLine, moreOf, type ColumnSpec } from "./model";
 import { useBoard } from "./useBoard";
@@ -106,7 +107,7 @@ function CrewBoard({ crew }: { crew: string }) {
                   <>
                     <ul className="bd-cards">
                       {cards.map((card) => (
-                        <Card key={card.id} card={card} />
+                        <Card key={card.id} card={card} onChanged={() => void first.reload()} />
                       ))}
                     </ul>
                     {nextOf(spec.id) !== null ? (
@@ -126,7 +127,8 @@ function CrewBoard({ crew }: { crew: string }) {
   );
 }
 
-function Card({ card }: { card: FlowCard }) {
+function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
+  const write = useTaskWrite({ id: card.id, name: card.name, allowCancel: card.can_cancel, allowRerun: card.can_rerun, onDone: onChanged });
   const needs = card.state === "needs_person";
   const model = modelLine(card);
   return (
@@ -134,7 +136,7 @@ function Card({ card }: { card: FlowCard }) {
       <div className="bd-k">
         <b>{card.kind || "task"}</b>
         <span>updated {ago(card.updated_at)}</span>
-        <CardMenu card={card} />
+        <CardMenu card={card} actions={write} />
       </div>
       <div className="bd-t">{card.name || "Untitled task"}</div>
       <div className="bd-e">
@@ -143,6 +145,8 @@ function Card({ card }: { card: FlowCard }) {
       </div>
       {card.owner ? <div className="bd-ln">owner {card.owner}</div> : null}
       {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
+      <WriteStatus id={card.id} op={write.op} />
+      {write.dialog}
     </li>
   );
 }

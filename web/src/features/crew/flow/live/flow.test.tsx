@@ -127,17 +127,18 @@ describe("Flow on the real routes", () => {
     expect(document.body.textContent).not.toMatch(/exit \d|Proves|npm test|tsc --noEmit/);
   });
 
-  it("draws Cancel, Re-run checks and Review inert, and calls no write route", async () => {
+  it("keeps Review inert, turns Cancel off for a task that is over, and sends nothing for opening a task or choosing an action it then declines", async () => {
     const { user } = await open("crew");
     await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Update the login docs/ }));
     await screen.findByRole("heading", { name: "Update the login docs" });
-    for (const name of ["Cancel", "Re-run checks", "Review"]) expect(screen.getByRole("button", { name })).toBeDisabled();
-    expect(screen.getByText(/Cancel and Re-run checks: Available when the write route ships/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Re-run checks" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Review" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Review" })).toHaveAttribute("aria-description", "The Review queue is not in this app yet");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    // Choosing Re-run checks only asks; Not now sends nothing (the writes themselves are tested in writes.test.tsx).
     await user.click(screen.getByRole("button", { name: "Re-run checks" }));
+    await user.click(await screen.findByRole("button", { name: "Not now" }));
     expect(writes()).toHaveLength(0);
-    expect(urls().some((url) => /cancel|rerun/.test(url))).toBe(false);
     await user.click(screen.getByRole("button", { name: "All tasks" }));
     expect(await screen.findByRole("list", { name: "Tasks" })).toBeVisible();
   });

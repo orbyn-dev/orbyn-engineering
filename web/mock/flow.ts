@@ -4,6 +4,8 @@
  * at 404 as the service does with Crew Preview off. The sample tasks exercise every state the real data can have: running, needs
  * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
  *
+ * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
+ *
  * Scenarios: `crew` (two crews), `crew-empty` (no crews), `crew-flow-empty` (a crew with no tasks), `crew-flow-truncated`
  * (the service's cap was hit), `crew-flow-many` (more tasks than one page), `crew-flow-leak` (a service that wrongly sends a gate reason
  * for a task that is not over, which the screen must not show).
