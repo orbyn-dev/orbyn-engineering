@@ -6,10 +6,9 @@ import { ErrorState, Empty, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { DownIcon, RightIcon, StageIcon } from "./glyphs";
 import { cellOf, decidedBy, laneWord, plain, roundView, STAGES, stageWord, when } from "./model";
+import { useTaskWrite, WriteStatus } from "../../writes/TaskWrite";
 import { useFlowTask, useRefresh } from "./useFlow";
 
-/** Why the two write buttons are off: their routes exist, but this view does not call them yet. */
-const LATER = "Available when the write route ships";
 /** The Review queue is not a tab of the Crew view yet, so Review has nowhere to open. */
 const NO_QUEUE = "The Review queue is not in this app yet";
 
@@ -37,13 +36,18 @@ export function FlowZoom({ id, onBack }: { id: string; onBack(): void }) {
       </div>
     );
   }
-  return <Detail detail={read.data!} back={back} />;
+  return <Detail detail={read.data!} back={back} onChanged={() => void read.reload()} />;
 }
 
-function Detail({ detail, back }: { detail: FlowTaskDetail; back: React.ReactNode }) {
+function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: React.ReactNode; onChanged(): void }) {
   const { row } = detail;
   const round = roundView(row);
   const final = ["passed", "stopped", "cancelled"].includes(row.state);
+  // The zoom has no card flags: Cancel is for a task that has not ended, and Re-run checks for one that passed (the board's card also
+  // offers it for some stopped tasks). The service decides and refuses the rest.
+  const write = useTaskWrite({ id: row.id, name: row.name, allowCancel: !final, allowRerun: row.state === "passed", onDone: onChanged });
+  const cancel = write.can("cancel");
+  const rerun = write.can("rerun");
   return (
     <div className="fv-body fv-zoom">
       <div className="fv-crumb">
@@ -52,14 +56,15 @@ function Detail({ detail, back }: { detail: FlowTaskDetail; back: React.ReactNod
         <span className="fv-badge">{round.text}</span>
         <span className="fv-badge">{plain(row.state)}</span>
         <span className="fv-spacer" />
-        <button type="button" className="fv-off" disabled aria-description={LATER} title={LATER}>
+        <button type="button" className="fv-off" disabled={!cancel.enabled} title={cancel.why ?? undefined} onClick={() => write.ask("cancel")}>
           Cancel
         </button>
-        <button type="button" className="fv-off" disabled aria-description={LATER} title={LATER}>
+        <button type="button" className="fv-off" disabled={!rerun.enabled} title={rerun.why ?? undefined} onClick={() => write.ask("rerun")}>
           Re-run checks
         </button>
       </div>
-      <p className="fv-later">Cancel and Re-run checks: {LATER}</p>
+      <WriteStatus id={row.id} op={write.op} />
+      {write.dialog}
       {detail.truncated ? (
         <p className="fv-note" role="note">
           A list of this task was cut at its cap; the newest are shown.

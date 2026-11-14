@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { boardPath, columnPath } from "./api";
 import { ago, COLUMNS, effortLabel, modelLine, moreOf } from "./model";
 import { cardItems } from "./CardMenu";
@@ -41,14 +41,25 @@ describe("the board's words", () => {
     expect(columnPath({ crew: "c", engine: "codex", kind: "test" }, "running", 8)).toBe("/api/crew/flow/board?crew=c&engine=codex&kind=test&column=running&limit=50&offset=8");
   });
 
-  it("draws Cancel and Re-run checks only for a task they could apply to, and every item inert", () => {
+  it("draws Cancel and Re-run checks only for a task they could apply to, enabled by the write state, and the rest inert", () => {
     const base = { state: "running", can_cancel: false, can_rerun: false };
-    expect(cardItems(base).map((item) => item.label)).toEqual(["Reassign engine", "Message into a lane", "Add reviewer lane", "Propose a check"]);
-    expect(cardItems({ ...base, can_cancel: true }).map((item) => item.label)[0]).toBe("Cancel");
-    expect(cardItems({ ...base, can_rerun: true }).map((item) => item.label)).toContain("Re-run checks");
-    expect(cardItems({ ...base, state: "needs_person" }).map((item) => item.label)).toContain("Answer a worker’s question");
-    expect(cardItems({ ...base, state: "running" }).map((item) => item.label)).not.toContain("Answer a worker’s question");
-    for (const item of cardItems({ state: "needs_person", can_cancel: true, can_rerun: true })) {
+    const on = { can: () => ({ enabled: true, why: null }), ask: vi.fn() };
+    const off = { can: () => ({ enabled: false, why: "Waiting for the answer" }), ask: vi.fn() };
+    expect(cardItems(base, on).map((item) => item.label)).toEqual(["Reassign engine", "Message into a lane", "Add reviewer lane", "Propose a check"]);
+    expect(cardItems({ ...base, can_cancel: true }, on).map((item) => item.label)[0]).toBe("Cancel");
+    expect(cardItems({ ...base, can_rerun: true }, on).map((item) => item.label)).toContain("Re-run checks");
+    expect(cardItems({ ...base, state: "needs_person" }, on).map((item) => item.label)).toContain("Answer a worker’s question");
+    expect(cardItems({ ...base, state: "running" }, on).map((item) => item.label)).not.toContain("Answer a worker’s question");
+    // Cancel is a choice only while the write state allows it; choosing it asks, and sends nothing.
+    const [cancel] = cardItems({ ...base, can_cancel: true }, on);
+    expect(cancel!.disabled).toBeUndefined();
+    cancel!.onSelect!();
+    expect(on.ask).toHaveBeenCalledWith("cancel");
+    expect(cardItems({ ...base, can_cancel: true }, off)[0]).toMatchObject({ label: "Cancel", disabled: true });
+    // Every item that is target design stays inert whatever the state.
+    const inert = cardItems({ state: "needs_person", can_cancel: true, can_rerun: true }, on).filter((item) => !["Cancel", "Re-run checks"].includes(item.label));
+    expect(inert.map((item) => item.label)).toEqual(["Reassign engine", "Message into a lane", "Add reviewer lane", "Answer a worker’s question", "Propose a check"]);
+    for (const item of inert) {
       expect(item.disabled).toBe(true);
       expect(item.onSelect).toBeUndefined();
     }

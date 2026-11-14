@@ -67,9 +67,37 @@ const facet = (rows: Row[], pick: (row: Row) => string | null | undefined): Flow
 
 const invalid = (message: string): MockResponse => ({ status: 422, body: { code: "invalid", message } });
 
+const WRITE = /^\/api\/crew\/tasks\/([^/]+)\/(cancel|rerun-checks)$/;
+const KNOWN = /^(b-|task-)/;
+const fail = (status: number, code: string, message: string): MockResponse => ({ status, body: { code, message } });
+
+/**
+ * The person's two writes, for the Taskboard and the Flow zoom: `POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`. They answer in
+ * the Crew scenarios only, and the answers are counts and states, never a command. Scenarios: `crew-write-already` (a cancel of a task
+ * already cancelled), `crew-write-ended` (409 task_ended), `crew-write-engine` (502, the task is not cancelled),
+ * `crew-write-engine-cancelled` (502, the task is cancelled but its worker may still run), `crew-write-busy` (a re-run answers 409
+ * task_busy); any other Crew scenario succeeds. A slow answer is made in a test, by holding the request.
+ */
+function writeMock(scenario: string, path: string): MockResponse | null {
+  const found = WRITE.exec(path);
+  if (!found) return null;
+  const id = decodeURIComponent(found[1]!);
+  if (!KNOWN.test(id)) return fail(404, "not_found", "task not found");
+  if (found[2] === "cancel") {
+    if (scenario === "crew-write-ended") return fail(409, "task_ended", "This task already ended.");
+    if (scenario === "crew-write-engine") return fail(502, "engine_unavailable", "The worker’s engine could not be stopped. Try again.");
+    if (scenario === "crew-write-engine-cancelled") return fail(502, "engine_unavailable", "The task is cancelled, but its worker could not be stopped. Stop it from its thread.");
+    return { status: 200, body: { task: id, state: "cancelled", already: scenario === "crew-write-already" } };
+  }
+  if (scenario === "crew-write-busy") return fail(409, "task_busy", "Another re-run is running. Try again in 7 seconds.");
+  return { status: 200, body: { task: id, state: "passed", total: 4, ran: 3, passed: 2, refused: 1, skipped: 1, gate: "fail", refused_checks: ["check-2"] } };
+}
+
 /** The answer for a board read, or null when the route is not the board's (or Crew is off) and the other Crew mocks answer. */
 export function boardMock(scenario: string, method: string, path: string, query: URLSearchParams): MockResponse | null {
-  if (method !== "GET" || path !== "/api/crew/flow/board" || !(scenario === "crew" || scenario.startsWith("crew-"))) return null;
+  if (!(scenario === "crew" || scenario.startsWith("crew-"))) return null;
+  if (method === "POST") return writeMock(scenario, path);
+  if (method !== "GET" || path !== "/api/crew/flow/board") return null;
   const crew = query.get("crew");
   if (!crew) return invalid("crew is required");
   if (crew !== MOCK_CREW && crew !== MOCK_CREW_TWO) return { status: 404, body: { code: "not_found", message: "crew not found" } };
