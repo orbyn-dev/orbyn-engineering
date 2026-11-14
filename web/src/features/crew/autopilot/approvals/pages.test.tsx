@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
+import { useConnection } from "../../../../product/state/connection";
 import { installMockFetch } from "../../../../test-support";
 import { SettingsPage } from "../../../settings/SettingsPage";
 import { AutopilotSettings } from "./AutopilotSettings";
@@ -37,6 +38,8 @@ describe("Crew Preview off", () => {
 
   it("lists Crew in Settings, and its screen, while Preview is on", async () => {
     on("crew");
+    // Settings reads the flag from the service info the app reads at start, not from a Crew route.
+    useConnection.setState({ crewPreview: true });
     render(<SettingsPage section="crew" onClose={() => undefined} />);
     expect(await screen.findByRole("link", { name: "Crew" })).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("heading", { name: "Autopilot" })).toBeVisible();

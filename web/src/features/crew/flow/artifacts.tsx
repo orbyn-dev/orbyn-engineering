@@ -1,5 +1,6 @@
 import { Frame } from "../shared/Frame";
-import { Btn, PageHead, Seg } from "../shared/parts";
+import { Btn, Seg } from "../shared/parts";
+import { FlowHead } from "./FlowHead";
 import { Ic } from "./icons";
 
 /** Crew Designs, frame `flow-artifacts`: Flow: the five artifacts on the lines. */
@@ -7,10 +8,10 @@ export function FlowArtifacts() {
   return (
     <Frame height={700}>
       <div className="cx-cwpg">
-            <PageHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
+            <FlowHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
             <div className="cx-cwtabs">
               <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
-              <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m</span>
+              <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "16px", padding: "20px 28px", alignItems: "start", justifyItems: "start" }}>
               <div className="cx-fpop" style={{ width: "300px" }}>

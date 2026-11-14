@@ -5,7 +5,8 @@
  * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
  *
  * Scenarios: `crew` (two crews), `crew-empty` (no crews), `crew-flow-empty` (a crew with no tasks), `crew-flow-truncated`
- * (the service's cap was hit), `crew-flow-many` (more tasks than one page).
+ * (the service's cap was hit), `crew-flow-many` (more tasks than one page), `crew-flow-leak` (a service that wrongly sends a gate reason
+ * for a task that is not over, which the screen must not show).
  */
 import type { FlowCell } from "../src/generated/FlowCell.ts";
 import type { FlowCellState } from "../src/generated/FlowCellState.ts";
@@ -185,7 +186,8 @@ export function flowMock(scenario: string, method: string, path: string, query: 
   if (id) {
     const found = [...samples(), ...many()].find((one) => one.row.id === decodeURIComponent(id));
     if (!found) return missing("task");
-    const body: FlowTaskDetail = { row: found.row, ...found.detail, truncated: false };
+    const leaked = scenario === "crew-flow-leak" ? found.detail.gates.map((gate) => ({ ...gate, reason: "A reason for a task that is not over" })) : found.detail.gates;
+    const body: FlowTaskDetail = { row: found.row, ...found.detail, gates: leaked, truncated: false };
     return { status: 200, body };
   }
   return null;

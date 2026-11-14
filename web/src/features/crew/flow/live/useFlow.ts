@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiFailure } from "../../../../api/client";
 import type { FlowTaskRow } from "../../../../generated/FlowTaskRow";
 import { toFailure, useAsync } from "../../../../lib/useAsync";
@@ -33,6 +33,8 @@ export function useFlowTasks(query: Omit<TaskQuery, "offset">) {
   const first = useAsync(`flow-tasks:${key}`, (signal) => flowApi.tasks({ ...query, offset: 0 }, signal));
   const [more, setMore] = useState<{ key: string; of: unknown; rows: FlowTaskRow[]; next: number | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  // A second click while a page is on its way sends nothing: state is read after the next render, a ref at once.
+  const inFlight = useRef(false);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const page = first.data;
   const mine = more && more.key === key && more.of === page ? more : null;
@@ -40,7 +42,8 @@ export function useFlowTasks(query: Omit<TaskQuery, "offset">) {
   const rows = [...(page?.tasks ?? []), ...(mine?.rows ?? [])];
 
   const showMore = useCallback(async () => {
-    if (!page || next === null || busy) return;
+    if (!page || next === null || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setFailure(null);
     try {
@@ -49,11 +52,12 @@ export function useFlowTasks(query: Omit<TaskQuery, "offset">) {
     } catch (error) {
       setFailure(toFailure(error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
     // `query` is rebuilt every render; its parts are in `key`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, next, busy, key]);
+  }, [page, next, key]);
 
   return { first, rows, next, showMore, busy, failure };
 }

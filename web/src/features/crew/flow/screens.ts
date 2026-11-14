@@ -22,6 +22,12 @@ import { FlowYouOff } from "./you-off";
 import { FlowNarrowPanel } from "./narrow-panel";
 import { FlowNarrowWindow } from "./narrow-window";
 import { FlowArtifactPruned } from "./artifact-pruned";
+import { FlowEmptyCrews } from "./empty-crews";
+import { FlowEmptyTasks } from "./empty-tasks";
+import { FlowEmptyFilter } from "./empty-filter";
+import { FlowTruncated } from "./truncated";
+import { FlowTask404 } from "./task-404";
+import { FlowSourceError } from "./source-error";
 import type { FlowFrameId } from "./names";
 
 /** Each Flow frame of Crew Designs, drawn on sample data. Loaded only through the Preview route. */
@@ -48,4 +54,10 @@ export const FLOW_SCREENS: Record<FlowFrameId, ComponentType> = {
   "flow-narrow-panel": FlowNarrowPanel,
   "flow-narrow-window": FlowNarrowWindow,
   "flow-artifact-pruned": FlowArtifactPruned,
+  "flow-empty-crews": FlowEmptyCrews,
+  "flow-empty-tasks": FlowEmptyTasks,
+  "flow-empty-filter": FlowEmptyFilter,
+  "flow-truncated": FlowTruncated,
+  "flow-task-404": FlowTask404,
+  "flow-source-error": FlowSourceError,
 };

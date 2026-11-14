@@ -66,7 +66,7 @@ function BootedApp() {
     api.info(abort.signal).then(
       (info) => {
         adoptEnvironmentTheme(info.environment_theme);
-        useConnection.setState({ remote: info.remote });
+        useConnection.setState({ remote: info.remote, crewPreview: info.crew_preview === true });
         const upgraded = upgradeToast(info);
         if (upgraded) useUi.getState().pushToast(upgraded);
         setBoot({ state: "ready" });

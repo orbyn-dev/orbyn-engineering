@@ -1,5 +1,6 @@
 import { Frame } from "../shared/Frame";
-import { Btn, PageHead, Seg } from "../shared/parts";
+import { Btn, Seg } from "../shared/parts";
+import { FlowHead } from "./FlowHead";
 import { Ic } from "./icons";
 
 /** Crew Designs, frame `flow-offline`: Flow: the reviewer’s engine is offline or not signed in. */
@@ -7,10 +8,10 @@ export function FlowOffline() {
   return (
     <Frame height={700}>
       <div className="cx-cwpg">
-            <PageHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
+            <FlowHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
             <div className="cx-cwtabs">
               <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
-              <span className="cx-end">Claude Code 412k of 1M tokens · Codex not reported while offline · 2h 14m</span>
+              <span className="cx-end">Claude Code 412k of 1M tokens · Codex not reported while offline · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div className="cx-flcr">
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
@@ -19,6 +20,7 @@ export function FlowOffline() {
               <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "322px", width: "1110px" }}>
+              <span className="cx-cwpv" style={{ position: "absolute", left: "0", top: "0", margin: "0", zIndex: 1 }} title="The wide graph is Planned; the app’s zoom is the stage list">Planned</span>
               <span className="cx-fh" style={{ left: "0px", top: "22px", width: "93px" }}><Ic n="brief" sm />Brief</span>
               <span className="cx-fh" style={{ left: "113px", top: "22px", width: "93px" }}><Ic n="gate" sm />Route</span>
               <span className="cx-fh" style={{ left: "226px", top: "22px", width: "93px" }}><Ic n="wrench" sm />Build</span>

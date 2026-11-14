@@ -25,14 +25,22 @@ const SHOWS: Record<string, string[]> = {
   "flow-you-waiting-on": ["High risk: waiting for you before the merge", "Not verified: key rotation under load.", "Autopilot is On for this repo", "auth/login.ts, keys/rotate.ts", "Planned"],
   "flow-you-off": ["A documentation change. Shown so you can review quickly; it does not change what waits.", "Every change waits for you before the merge", "Autopilot is Off for this repo", "Approve, don’t merge", "before merge", "Planned"],
   "flow-narrow-panel": ["Open in Crew", "Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode"],
-  "flow-narrow-window": ["Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode", "After the merge"],
+  "flow-narrow-window": ["Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode", "Cancel and Re-run checks: Available when the write route ships", "auth/redirect.ts, auth/redirect.test.ts"],
   "flow-artifact-pruned": ["Check log · Tests (auth) · a41c9e2", "Wed 28 Oct 2026 (example)", "Preview only: no retention window yet", "Passed · commit a41c9e2"],
+  "flow-empty-crews": ["No crews running"],
+  "flow-empty-tasks": ["Login redirect crew · 0 tasks, 0 finished", "0 of 0 shown", "No tasks yet"],
+  "flow-empty-filter": ["Login redirect crew · 31 tasks, 7 finished", "0 of 0 shown", "No tasks match"],
+  "flow-truncated": ["This crew has more tasks than one read covers; the newest are shown.", "6 of 500 shown", "+494 more"],
+  "flow-task-404": ["This task isn’t in Flow", "All tasks"],
+  "flow-source-error": ["Can’t read Flow", "Check that the Orbyn service is running.", "Retry"],
 };
 
-const USAGE_LINE = "Claude Code 412k of 1M tokens \u00b7 Codex 62% of its weekly limit \u00b7 2h 14m";
-const OFFLINE_USAGE_LINE = "Claude Code 412k of 1M tokens \u00b7 Codex not reported while offline \u00b7 2h 14m";
-/** The two narrow-window frames and the panel have no usage line in the design. */
-const NO_USAGE_LINE = new Set(["flow-narrow-panel", "flow-narrow-window"]);
+const USAGE_LINE = "Claude Code 412k of 1M tokens \u00b7 Codex 62% of its weekly limit \u00b7 2h 14mPlanned";
+const OFFLINE_USAGE_LINE = "Claude Code 412k of 1M tokens \u00b7 Codex not reported while offline \u00b7 2h 14mPlanned";
+/** The narrow frames, the empty states, the truncated list, the 404 and the source error draw no usage line in the design. */
+const NO_USAGE_LINE = new Set(["flow-narrow-panel", "flow-narrow-window", "flow-empty-crews", "flow-empty-tasks", "flow-empty-filter", "flow-truncated", "flow-task-404", "flow-source-error"]);
+/** The frames that draw no control. */
+const NO_CONTROLS = new Set(["flow-empty-crews"]);
 
 describe("Flow frames (Crew Designs)", () => {
   it("builds every frame of the slice", () => {
@@ -48,7 +56,7 @@ describe("Flow frames (Crew Designs)", () => {
   it.each(FLOW_FRAMES)("#/preview/crew/%s: every control is disabled and says why", async (name) => {
     const { container } = await openFrame(name);
     const buttons = container.querySelectorAll<HTMLButtonElement>("button");
-    expect(buttons.length).toBeGreaterThan(0);
+    if (!NO_CONTROLS.has(name)) expect(buttons.length).toBeGreaterThan(0);
     for (const control of buttons) {
       expect(control).toBeDisabled();
       expect(control).toHaveAttribute("aria-description", UNAVAILABLE_REASON);
@@ -85,8 +93,6 @@ describe("Flow frames (Crew Designs)", () => {
     const pruned = await openFrame("flow-artifact-pruned");
     expect(pruned.container.textContent).not.toContain("after 30 days");
     pruned.unmount();
-    const task = await openFrame("flow-check-failed");
-    expect(task.container.textContent).not.toContain("Planned");
   });
 
   it.each(FLOW_FRAMES)("#/preview/crew/%s: shows no check command, exit code or Proves text (v38)", async (name) => {
@@ -116,6 +122,25 @@ describe("Flow frames (Crew Designs)", () => {
     artifacts.unmount();
     const pruned = await openFrame("flow-artifact-pruned");
     expect(pruned.container.textContent).toContain("Re-run the check: Available when the write route ships");
+  });
+
+  it("follows Crew Designs v43: Pause crew and Stop crew are After the beta, the usage line and the wide graph are Planned", async () => {
+    for (const name of ["flow-all", "flow-task", "flow-gates", "flow-empty-tasks", "flow-truncated"]) {
+      const view = await openFrame(name);
+      expect(view.container.textContent, name).toContain("Pause crewAfter the betaStop crewAfter the beta");
+      view.unmount();
+    }
+    const task = await openFrame("flow-task");
+    expect(task.container.textContent).toContain("2h 14mPlanned");
+    expect(task.container.querySelector('[title="The wide graph is Planned; the app’s zoom is the stage list"]')).not.toBeNull();
+    task.unmount();
+    const ready = await openFrame("flow-you-ready");
+    expect(ready.container.querySelector('[title="Waiting for your review after the merge"]')?.textContent).toBe("Waiting");
+    ready.unmount();
+    const all = await openFrame("flow-all");
+    expect(all.container.textContent).toContain("+23 more");
+    expect(all.container.textContent).not.toContain("rises to the top");
+    expect(all.container.textContent).toContain("Login redirect crew · 31 tasks, 7 finished");
   });
 
   it("draws the narrow variants at the designed widths", async () => {

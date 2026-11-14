@@ -33,7 +33,7 @@ export function FlowZoom({ id, onBack }: { id: string; onBack(): void }) {
     return (
       <div className="fv-body">
         <div className="fv-crumb">{back}</div>
-        {missing ? <Empty title="This task isn't in Flow" /> : <ErrorState title="Can't read this task" failure={read.error} onRetry={() => void read.reload()} />}
+        {missing ? <Empty title="This task isn’t in Flow" /> : <ErrorState title="Can’t read this task" failure={read.error} onRetry={() => void read.reload()} />}
       </div>
     );
   }
@@ -77,7 +77,7 @@ function Detail({ detail, back }: { detail: FlowTaskDetail; back: React.ReactNod
                 {lanes.length > 0 ? <DownIcon /> : <RightIcon />}
                 <StageIcon stage={one.stage} />
                 <b>{one.name}</b>
-                <span className={`fv-st fv-st-${word.tone}`}>{word.text}</span>
+                <span className={`fv-st fv-st-${word.tone}`} title={word.title}>{word.text}</span>
               </div>
               {lanes.length > 0 ? (
                 <ul className="fv-lanes">
