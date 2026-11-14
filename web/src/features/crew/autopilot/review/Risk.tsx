@@ -20,7 +20,7 @@ export function RiskCard({ report, heading }: { report: RiskReport; heading?: st
           <li key={reason.label}>
             {reasonIcon(reason.icon)}
             <b>{reason.label}</b>
-            <span>{reason.value}</span>
+            <span className={reason.muted ? "crew-muted" : undefined}>{reason.value}</span>
             <EffectTag effect={reason.effect} />
           </li>
         ))}
@@ -136,12 +136,25 @@ export function RiskHighFullScreen() {
 
 export function RiskHighOnScreen() {
   return (
-    <CrewFrame tab="Flow" reviewCount={7} crumbs={<TaskCrumb title="Rotate the signing key" tier="high" />}>
+    <CrewFrame
+      tab="Flow"
+      reviewCount={7}
+      inbox={3}
+      crumbs={
+        <TaskCrumb title="Rotate the signing key" tier="high">
+          <RiskChip tier="high" />
+          <span className="crew-end-acts">
+            <Act label="Add reviewer" />
+            <Act label="Round 1" />
+          </span>
+        </TaskCrumb>
+      }
+    >
       <Banner
         tone="amber"
         heading="Waiting for you before the merge."
         text="Autopilot is On for this repo, and this change is High risk."
-        actions={[{ label: "Approve and merge", primary: true }, { label: "Send back to Build" }, { label: "Switch to Full" }]}
+        actions={[{ label: "Review", primary: true }, { label: "Send back to Build" }, { label: "Switch to Full" }]}
       />
       <div className="crew-pad">
         <div className="crew-narrow620">
