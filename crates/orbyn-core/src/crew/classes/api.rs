@@ -7,8 +7,8 @@ use orbyn_contracts as wire;
 
 use super::record::{ROUTE_CLASS, Stored};
 use super::{
-    BUILT_IN, ClassFile, INVALID_RULE, PathClasses, base_commit, classify_paths, path_problem,
-    read_class_file, read_pinned,
+    BUILT_IN, ClassFile, PathClasses, base_commit, classify_paths, path_problem, read_class_file,
+    read_pinned,
 };
 use crate::app::Core;
 use crate::crew::EngineView;
@@ -65,8 +65,14 @@ fn route_card(classes: &PathClasses, views: &[EngineView]) -> String {
 
 fn route_card_base(classes: &PathClasses, views: &[EngineView]) -> String {
     if classes.invalid() {
+        let fix = if classes.setup_problem() {
+            "until this is fixed"
+        } else {
+            "until the file is fixed and committed"
+        };
         return format!(
-            "{INVALID_RULE}: {}. Every engine is blocked until the file is fixed and committed.",
+            "{}: {}. Every engine is blocked {fix}.",
+            classes.invalid_rule(),
             classes.problem_text()
         );
     }

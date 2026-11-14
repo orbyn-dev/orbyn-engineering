@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use orbyn_contracts::CrewToken;
 
-use super::file::{BUILT_IN, ClassFile, INVALID_RULE, Rule};
+use super::file::{BUILT_IN, ClassFile, INVALID_RULE, Rule, UNREADABLE_RULE};
 use super::glob::{fold, path_problem};
 use crate::source_control::git::{git_hardened as git, text};
 
@@ -157,12 +157,26 @@ impl PathClasses {
         &self.file.rules[hit.rule]
     }
 
+    /// The name of the rule that blocks every engine: the rules file's, or the default branch's setup.
+    pub fn invalid_rule(&self) -> &'static str {
+        match &self.pinned {
+            Some(pinned) if !self.file.invalid() && pinned.classes.file.setup => UNREADABLE_RULE,
+            _ => INVALID_RULE,
+        }
+    }
+
+    /// Whether the block is a git setup problem, which a fix to the rules file does not cure.
+    pub fn setup_problem(&self) -> bool {
+        self.invalid_rule() == UNREADABLE_RULE
+    }
+
     /// The words that block every engine while a file is invalid, saying which one when it is the default branch's.
     pub fn problem_text(&self) -> String {
         if self.file.invalid() {
             return self.file.problem_text();
         }
         match &self.pinned {
+            Some(pinned) if pinned.classes.file.setup => pinned.classes.file.problem_text(),
             Some(pinned) if pinned.classes.file.invalid() => format!(
                 "at {} (the default branch): {}",
                 pinned.name,
@@ -211,7 +225,7 @@ impl PathClasses {
     pub fn block_of(&self, engine: &CrewToken) -> Option<Block> {
         if self.invalid() {
             return Some(Block {
-                rule: INVALID_RULE.to_owned(),
+                rule: self.invalid_rule().to_owned(),
                 reason: self.problem_text(),
                 allowed: Vec::new(),
             });
@@ -253,7 +267,7 @@ impl PathClasses {
     /// The names of the classes that applied: the checkout's in the file's order, then the default branch's others.
     pub fn names(&self) -> Vec<String> {
         if self.invalid() {
-            return vec![INVALID_RULE.to_owned()];
+            return vec![self.invalid_rule().to_owned()];
         }
         let mut names: Vec<String> = Vec::new();
         for side in self.sides() {

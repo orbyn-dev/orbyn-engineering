@@ -1296,10 +1296,14 @@ async fn an_origin_remote_with_nothing_fetched_blocks_every_engine() {
         .filter_map(|r| r["text"].as_str())
         .collect();
     assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("none of its branches has been fetched")),
+        texts.iter().any(|t| t.contains("default branch unreadable")
+            && t.contains("`git fetch origin`")
+            && t.contains("push the default branch first")),
         "{texts:?}"
+    );
+    assert!(
+        texts.iter().all(|t| !t.contains("crew.json invalid")),
+        "a git setup problem is not a rules file problem: {texts:?}"
     );
 }
 
@@ -1315,4 +1319,27 @@ async fn once_a_branch_of_origin_is_fetched_it_is_read_again_and_no_remote_is_as
     let (answer, error) = w.start(brief(json!({})), key()).await;
     assert!(!error, "{answer}");
     assert_eq!(answer["route"]["engine"], "alpha");
+}
+
+#[tokio::test]
+async fn an_origin_with_branches_but_no_default_says_how_to_set_it() {
+    let w = with_origin_url().await;
+    let head = git_out(&w.repo, &["rev-parse", "HEAD"]);
+    run_git(
+        &w.repo,
+        &["update-ref", "refs/remotes/origin/feature", &head],
+    );
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+    let texts: Vec<&str> = answer["refusal"]["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["text"].as_str())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("default branch unreadable")
+            && t.contains("git remote set-head origin --auto")),
+        "{texts:?}"
+    );
 }

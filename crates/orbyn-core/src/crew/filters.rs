@@ -134,9 +134,14 @@ pub fn class_screen(
     let differ = classes
         .differs()
         .map_or_else(String::new, |words| format!(" {words}"));
+    let fix = if classes.setup_problem() {
+        "this is fixed"
+    } else {
+        "the file is fixed and committed"
+    };
     let text = if classes.invalid() {
         format!(
-            "Blocked by rule: {} \u{2014} {}. Every engine waits until the file is fixed and committed.{differ}",
+            "Blocked by rule: {} \u{2014} {}. Every engine waits until {fix}.{differ}",
             block.rule, block.reason
         )
     } else {

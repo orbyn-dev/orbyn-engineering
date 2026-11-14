@@ -25,6 +25,8 @@ pub const REASON_MAX: usize = 200;
 pub const BUILT_IN: &str = "Everything else";
 /// The name of the rule that blocks every engine when the file cannot be trusted.
 pub const INVALID_RULE: &str = "crew.json invalid";
+/// The name of the rule that blocks every engine when the default branch cannot be read: a git setup problem, not a rules file one.
+pub const UNREADABLE_RULE: &str = "default branch unreadable";
 
 /// Keys other slices read. Anything else is reported and ignored.
 const KNOWN_KEYS: [&str; 5] = ["required", "lanes", "checks", "allowed_hosts", "classes"];
@@ -53,6 +55,8 @@ pub struct ClassFile {
     /// Why the file cannot be trusted. Any problem blocks every engine.
     pub problems: Vec<String>,
     pub notes: Vec<String>,
+    /// The problem is the repository's git setup (the default branch cannot be read), not the content of the file.
+    pub setup: bool,
 }
 
 impl ClassFile {
@@ -67,7 +71,10 @@ impl ClassFile {
 
     /// A file that cannot be read, for a reason that is not about its content.
     pub fn refused(problem: String) -> Self {
-        Self::broken(None, None, problem)
+        Self {
+            setup: true,
+            ..Self::broken(None, None, problem)
+        }
     }
 
     fn broken(commit: Option<&str>, blob: Option<String>, problem: String) -> Self {
@@ -181,9 +188,9 @@ pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
         commit: "none".to_owned(),
     };
     let why = if fetched {
-        "the remote origin has branches here but none is main, master, trunk or its default, so its rules cannot be read"
+        "the default branch of the remote origin cannot be told: it has branches here but none is main, master or trunk, and origin/HEAD is not set. Run `git remote set-head origin --auto` (or `git fetch origin <default>`) yourself; an agent is not allowed to"
     } else {
-        "the project has a remote named origin but none of its branches has been fetched, so the default branch's rules cannot be read; run git fetch"
+        "the project has a remote named origin but none of its branches has been fetched, so the default branch cannot be read. Run `git fetch origin`; for a new remote with no branches yet, push the default branch first"
     };
     Some((pin, ClassFile::refused(why.to_owned())))
 }
@@ -336,6 +343,7 @@ pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
             rules,
             problems: Vec::new(),
             notes,
+            setup: false,
         },
         Err(problem) => fail(Some(blob), problem),
     }
