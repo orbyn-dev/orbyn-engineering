@@ -537,3 +537,81 @@ async fn a_fan_out_that_has_not_reached_every_recipient_reports_no_delivery() {
         "every recipient has the same row"
     );
 }
+
+/// A message to everyone with a delivery row for each of the two workers: delivered, as far as the rows go.
+async fn delivered_broadcast(marker: &str) -> (Duo, String) {
+    let (d, crew) = talked(marker).await;
+    let (_, error) =
+        d.w.lead(
+            "crew_post",
+            json!({ "to": "all", "kind": "fact", "body": format!("all {marker}") }),
+        )
+        .await;
+    assert!(!error, "the broadcast was refused");
+    let store = &d.w.core.store;
+    let (task, lead_message) = store
+        .crew_messages_in_crew(&crew)
+        .unwrap()
+        .into_iter()
+        .find(|(_, m)| m.to.as_str() == "all")
+        .unwrap();
+    let mut value = CrewObject::Message(lead_message).to_value();
+    value["body"] = json!(format!("again {marker}"));
+    value["id"] = json!(object_id(&value).unwrap());
+    let object = CrewObject::parse(&value).unwrap();
+    store.add_crew_member_object(&task, &object).unwrap();
+    let id = object.id().as_str().to_owned();
+    store
+        .record_crew_delivery(&id, &d.ma, "thread-a", "live", None)
+        .unwrap();
+    store
+        .record_crew_delivery(&id, &d.mb, "thread-b", "live", None)
+        .unwrap();
+    (d, crew)
+}
+
+#[tokio::test]
+async fn a_crew_with_more_tasks_than_were_read_reports_no_broadcast_delivery() {
+    let (d, crew) = delivered_broadcast(&nonce("cap")).await;
+    let newest = |cap: u32| {
+        d.w.core
+            .flow_messages_with(&crew, None, page(), cap)
+            .unwrap()
+            .messages
+            .remove(0)
+    };
+    // Both workers were read: two recipients, two rows.
+    assert_eq!(newest(200).delivery, Some(FlowDeliveryMode::Live));
+    assert_eq!(
+        newest(2).delivery,
+        Some(FlowDeliveryMode::Live),
+        "exactly as many tasks as the cap is not a cut"
+    );
+    // One task was left out: who else could have been sent to is unknown, so no delivery is reported whatever the rows say.
+    assert_eq!(newest(1).delivery, None);
+    assert_eq!(newest(1).delivered_at, None);
+}
+
+#[tokio::test]
+async fn the_map_says_truncated_when_either_window_cuts_the_crews_traffic() {
+    let (d, crew) = talked(&nonce("cuts")).await;
+    let truncated = |messages: u32, deliveries: u32| {
+        let core = d.w.core.clone();
+        let crew = crew.clone();
+        async move {
+            core.flow_map_with(&crew, messages, deliveries)
+                .await
+                .unwrap()
+                .truncated
+        }
+    };
+    assert!(!truncated(5000, 20000).await, "nothing is cut");
+    assert!(
+        truncated(1, 20000).await,
+        "the message window cut a message"
+    );
+    assert!(
+        truncated(5000, 1).await,
+        "the delivery window cut a delivery, and only that"
+    );
+}

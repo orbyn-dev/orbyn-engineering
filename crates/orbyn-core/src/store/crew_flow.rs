@@ -119,7 +119,10 @@ pub struct FactLabels {
 pub const MESSAGE_WINDOW: u32 = 5000;
 pub const DELIVERY_WINDOW: u32 = 20000;
 
-/// The row id of the oldest row inside a crew's newest `window` rows, and whether older rows were left out. `sql` selects one row id
+/// The row id of the oldest row inside a crew's newest `window` rows, and whether older rows were left out. Finding it sorts all of the
+/// crew's rows by id: they sit under several tasks, and no index orders them across tasks (that needs a `(crew, id)` index, so a
+/// migration), so the cost grows with the crew's whole history while the rows the grouped reads then scan stay inside the window.
+/// Acceptable for Preview; the answer is exact. `sql` selects one row id
 /// per row of the crew, newest first, with `?1` the crew and `?2` the number to read.
 fn window_floor(
     conn: &rusqlite::Connection,
@@ -211,15 +214,16 @@ impl Store {
         Ok((rows, cut))
     }
 
-    /// The members of a crew with the times of their tasks, newest first: who a message to `all` could have gone to.
-    pub fn crew_member_times(&self, crew_id: &str, limit: u32) -> Result<Vec<MemberTimes>> {
+    /// The members of a crew with the times of their tasks, newest first: who a message to `all` could have gone to. The flag is set when
+    /// the crew has more than `limit` tasks, so the list is not everyone.
+    pub fn crew_member_times(&self, crew_id: &str, limit: u32) -> Result<(Vec<MemberTimes>, bool)> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT r.member, t.created_at, t.updated_at, t.state FROM crew_tasks t JOIN crew_runs r ON r.task_id = t.id
              WHERE t.crew_id = ?1 ORDER BY t.created_at DESC, t.rowid DESC LIMIT ?2",
         )?;
-        Ok(statement
-            .query_map(rusqlite::params![crew_id, limit], |row| {
+        let mut members: Vec<MemberTimes> = statement
+            .query_map(rusqlite::params![crew_id, limit.saturating_add(1)], |row| {
                 Ok(MemberTimes {
                     member: row.get(0)?,
                     created_at: row.get(1)?,
@@ -227,7 +231,10 @@ impl Store {
                     state: row.get(3)?,
                 })
             })?
-            .collect::<rusqlite::Result<_>>()?)
+            .collect::<rusqlite::Result<_>>()?;
+        let cut = members.len() > limit as usize;
+        members.truncate(limit as usize);
+        Ok((members, cut))
     }
 
     /// The newest `limit` message pairs by kind within the crew's message window, newest first, each with how its newest message was
