@@ -35,17 +35,17 @@ describe("autonomy-table", () => {
   it("lists each area with its ceiling, the mode it is on, the record and the sample, and says escapes are not measured", async () => {
     await open("crew-areas");
     expect(frame()).toBe("autonomy-table");
-    expect(within(table()).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Area", "Ceiling", "Now", "Reverted", "Escaped", "Window"]);
-    expect(rowOf("docs/guides")).toHaveTextContent("docs/guidesFull ceilingFullFollows your ceiling0 of 12 revertedEscaped: Not measured14 days12 merges");
-    // A ceiling of On stays On with 2 of 6 reverted: the record is shown and nothing changes.
-    expect(cells(rowOf("crates/orbyn-keys"))[2]).toBe("OnYour ceiling is On: the record is shown, nothing changes");
-    expect(rowOf("crates/orbyn-keys")).toHaveTextContent("2 of 6 reverted");
+    expect(within(table()).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Area", "Now", "Reverted", "Escaped", "Window"]);
+    expect(rowOf("docs/guides")).toHaveTextContent("docs/guidesFullFollows your ceiling0 of 12 revertedEscaped: Not measured14 days12 merges");
+    // One ceiling per repository: the table has no ceiling column, and the page says it once.
+    expect(within(table()).queryByRole("columnheader", { name: "Ceiling" })).toBeNull();
+    expect(rowOf("crates/orbyn-keys")).toHaveTextContent("1 of 6 reverted");
     // Too few merges: no rate and no change.
-    expect(cells(rowOf(".github/workflows"))[2]).toBe("FullNo change until there is data");
+    expect(cells(rowOf(".github/workflows"))[1]).toBe("FullNo change until there is data");
     expect(rowOf(".github/workflows")).toHaveTextContent("Reverted: Not measured");
     expect(screen.getByText(`As of ${stamp(at(6, 17, 0)).replace(/^(\w+ \d+ \w+),/, `$1 2026,`)}`)).toBeVisible();
     expect(screen.getByText("Repo: orbyn-engineering")).toBeVisible();
-    expect(screen.getByText("Your mode: Full · the ceiling")).toBeVisible();
+    expect(screen.getByText("Repo ceiling: Full · change it in Settings › Crew")).toBeVisible();
     expect(screen.getByText("Window: 14 days")).toBeVisible();
     expect(screen.getByText(/at least 5 merges in the window and at least 2 of them reverted/)).toBeVisible();
     expect(screen.getByText(/These thresholds are Proposed\./)).toBeVisible();
@@ -77,7 +77,7 @@ describe("autonomy-tripped", () => {
     await open("crew-areas-tripped");
     expect(frame()).toBe("autonomy-tripped");
     const row = rowOf("web/auth");
-    expect(cells(row)).toEqual(["web/auth", "Full ceiling", `OnDemoted ${stamp(at(7, 15, 36))}: 2 reverts in 14 days`, "2 of 9 reverted", "Escaped: Not measured", "14 days9 merges"]);
+    expect(cells(row)).toEqual(["web/auth", `OnDemoted ${stamp(at(7, 15, 36))}: 2 reverts in 14 days`, "2 of 9 reverted", "Escaped: Not measured", "14 days9 merges"]);
     const panel = screen.getByRole("region", { name: "Why web/auth moved from Full to On" });
     expect(panel).toHaveTextContent("2 reverts in 14 days, in 9 merges (a trip needs 5 merges and 2 reverted)");
     expect(panel).toHaveTextContent("A High risk diff in web/auth waits for you at the merge gate. Low and Medium still merge by themselves. The risk tier itself is unchanged.");
@@ -85,13 +85,13 @@ describe("autonomy-tripped", () => {
     expect(panel).toHaveTextContent("Full: the circuit breaker only demotes an area whose ceiling is Full, to On, and it never goes above the ceiling");
     expect(within(panel).getByRole("button", { name: "Override…" })).toBeVisible();
     // Every other area keeps its mode.
-    expect(cells(rowOf("web/app"))[2]).toBe("FullFollows your ceiling");
+    expect(cells(rowOf("web/app"))[1]).toBe("FullFollows your ceiling");
   });
 
   it("marks the lowered mode quietly and leaves the ceiling plain", async () => {
     await open("crew-areas-tripped");
     const chips = within(rowOf("web/auth")).getAllByText(/^(Full|On)$/);
-    expect(chips.map((chip) => [chip.textContent, chip.className.includes("ap-chip-dim")])).toEqual([["Full", false], ["On", true]]);
+    expect(chips.map((chip) => [chip.textContent, chip.className.includes("ap-chip-dim")])).toEqual([["On", true]]);
   });
 });
 
@@ -99,9 +99,11 @@ describe("autonomy-demoted-ceiling-lowered", () => {
   it("shows the ceiling winning over the demotion, with the record still counted", async () => {
     await open("crew-areas-ceiling-off");
     expect(frame()).toBe("autonomy-demoted-ceiling-lowered");
-    expect(cells(rowOf("web/auth"))[2]).toBe("OffYour ceiling is Off: it wins over the demotion");
+    expect(screen.getByText("Repo ceiling: Off · change it in Settings › Crew")).toBeVisible();
+    expect(cells(rowOf("web/auth"))[1]).toBe("OffYour ceiling is Off: it wins over the demotion");
+    expect(cells(rowOf("web/app"))[1]).toBe("OffYour ceiling is Off: the record is shown, nothing changes");
     const panel = screen.getByRole("region", { name: "web/auth: the ceiling wins" });
-    expect(panel).toHaveTextContent("Ceiling Off, Now Off. An area never goes above its ceiling, so the demotion to On changes nothing.");
+    expect(panel).toHaveTextContent("Repo ceiling Off, Now Off. An area never goes above its ceiling, so the demotion to On changes nothing.");
     expect(panel).toHaveTextContent("2 of 9 merges reverted in 14 days: still shown, and still counted");
     expect(panel).toHaveTextContent("Everything in web/auth waits for you");
     expect(panel).toHaveTextContent("To Full: web/auth follows the record again, so it is on On until it recovers. To On: it stays On.");
@@ -114,7 +116,7 @@ describe("autonomy-recovering", () => {
   it("counts the way back in plain numbers, never a bar", async () => {
     await open("crew-areas-recovering");
     expect(frame()).toBe("autonomy-recovering");
-    expect(cells(rowOf("web/auth"))).toEqual(["web/auth", "Full ceiling", "OnRecovering: day 7 of 14 with no revert; 3 of 5 merges since, none reverted", "0 of 3 reverted", "Escaped: Not measured", "7 days3 merges"]);
+    expect(cells(rowOf("web/auth"))).toEqual(["web/auth", "OnRecovering: day 7 of 14 with no revert; 3 of 5 merges since, none reverted", "0 of 3 reverted", "Escaped: Not measured", "7 days3 merges"]);
     const panel = screen.getByRole("region", { name: "web/auth is recovering" });
     expect(panel).toHaveTextContent("7 of the 14 days with no revert.");
     expect(panel).toHaveTextContent("3 of the 5 merges needed since then, none reverted. Nothing returns before both counts are met.");
@@ -127,7 +129,7 @@ describe("autonomy-criteria-met", () => {
   it("says it returns at the next merge, not on a clock", async () => {
     await open("crew-areas-criteria-met");
     expect(frame()).toBe("autonomy-criteria-met");
-    expect(cells(rowOf("web/auth"))[2]).toBe("OnCriteria met; returns at the next merge");
+    expect(cells(rowOf("web/auth"))[1]).toBe("OnCriteria met; returns at the next merge");
     const panel = screen.getByRole("region", { name: "web/auth meets the criteria, and returns at the next merge" });
     expect(panel).toHaveTextContent("No revert for 14 of the 14 days.");
     expect(panel).toHaveTextContent("6 merges since then, none reverted (5 needed).");
@@ -139,10 +141,9 @@ describe("autonomy-restored", () => {
   it("says when the area returned to its ceiling, from the trail, and that the history is kept", async () => {
     await open("crew-areas-restored");
     await waitFor(() => expect(frame()).toBe("autonomy-restored"));
-    expect(cells(rowOf("web/auth"))[2]).toBe(`FullRestored ${stamp(at(21, 16, 10))} at a merge: 14 days with no revert and at least 5 merges since`);
+    expect(cells(rowOf("web/auth"))[1]).toBe(`FullRestored ${stamp(at(21, 16, 10))} at a merge`);
     const panel = screen.getByRole("region", { name: "web/auth is back on Full" });
-    expect(panel).toHaveTextContent("14 days had passed since the last revert, with at least 5 merges since then and none reverted.");
-    expect(panel).toHaveTextContent("returned to your ceiling at the next merge, at 16:10");
+    expect(panel).toHaveTextContent("web/auth returned to your ceiling at the next merge, at 16:10");
     expect(panel).toHaveTextContent("The reverts that tripped it stay in the ledger and in the dashboard history. If the record worsens again, it drops again.");
   });
 });
@@ -152,7 +153,7 @@ describe("autonomy-lowdata", () => {
     await open("crew-areas-lowdata");
     expect(frame()).toBe("autonomy-lowdata");
     for (const area of ["web/auth", "crates/orbyn-core", "web/app", ".github/workflows"]) {
-      expect(cells(rowOf(area))[2]).toBe("FullNo change until there is data");
+      expect(cells(rowOf(area))[1]).toBe("FullNo change until there is data");
       expect(rowOf(area)).toHaveTextContent("Reverted: Not measured");
     }
     const panel = screen.getByRole("region", { name: "Not enough data: each area has fewer than 5 merges" });
@@ -175,21 +176,50 @@ describe("autonomy-override", () => {
     expect(menu).toHaveTextContent("Only you can change this. Never above the ceiling.");
   });
 
-  it("Off takes effect at once and sends what the person saw", async () => {
+  it("Off asks first: choosing it sends nothing until the box is ticked and the dialog confirmed", async () => {
     const { user } = await open("crew-areas-tripped");
     const spy = vi.spyOn(crewApi, "overrideArea");
     await user.click(within(screen.getByRole("region", { name: "Why web/auth moved from Full to On" })).getByRole("button", { name: "Override…" }));
     await user.click(await screen.findByRole("menuitem", { name: "Off" }));
+    const dialog = await screen.findByRole("dialog", { name: "Turn web/auth off?" });
+    expect(frame()).toBe("autonomy-override-off-warning");
+    expect(spy).not.toHaveBeenCalled();
+    const confirm = within(dialog).getByRole("button", { name: "Turn it off" });
+    expect(confirm).toBeDisabled();
+    await user.click(within(dialog).getByRole("checkbox", { name: "I understand that everything in web/auth will wait for me." }));
+    await user.click(confirm);
     expect(spy).toHaveBeenCalledWith({ project: "p-app", area: "web/auth", choice: "off", acknowledged: true, seen: { merges: 9, reverts: 2, tripped_at: at(7, 15, 36) } });
-    await waitFor(() => expect(cells(rowOf("web/auth"))[2]).toContain("Off"));
-    expect(cells(rowOf("web/auth"))[2]).toBe("OffA person set this area to off.");
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("OffA person set this area to off."));
+  });
+
+  it("Cancelling the Off dialog calls no route", async () => {
+    const { user } = await open("crew-areas-tripped");
+    const spy = vi.spyOn(crewApi, "overrideArea");
+    await user.click(within(screen.getByRole("region", { name: "Why web/auth moved from Full to On" })).getByRole("button", { name: "Override…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Off" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["crew-areas-recovering", "web/auth is recovering"],
+    ["crew-areas-criteria-met", "web/auth meets the criteria, and returns at the next merge"],
+    ["crew-areas-ceiling-off", "web/auth: the ceiling wins"],
+    ["crew-areas-restored", "web/auth is back on Full"],
+  ] as const)("%s: the panel offers Override…", async (scenario, name) => {
+    await open(scenario);
+    await waitFor(() => expect(screen.getByRole("region", { name })).toBeVisible());
+    expect(within(screen.getByRole("region", { name })).getByRole("button", { name: "Override…" })).toBeVisible();
   });
 
   it("Follow the record ends an override and the row goes back to the breaker's state", async () => {
     const { user } = await open("crew-areas-tripped");
     await user.click(within(screen.getByRole("region", { name: "Why web/auth moved from Full to On" })).getByRole("button", { name: "Override…" }));
     await user.click(await screen.findByRole("menuitem", { name: "Off" }));
-    await waitFor(() => expect(cells(rowOf("web/auth"))[2]).toBe("OffA person set this area to off."));
+    const off = await screen.findByRole("dialog", { name: "Turn web/auth off?" });
+    await user.click(within(off).getByRole("checkbox"));
+    await user.click(within(off).getByRole("button", { name: "Turn it off" }));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("OffA person set this area to off."));
     // An overridden area has no panel of its own; the footer carries the way back.
     const follow = vi.spyOn(crewApi, "followArea");
     await user.click(screen.getByRole("button", { name: "Override…" }));
@@ -197,7 +227,7 @@ describe("autonomy-override", () => {
     expect(within(menu).getByRole("menuitem", { name: "Off" })).toHaveAttribute("aria-current", "true");
     await user.click(within(menu).getByRole("menuitem", { name: "Follow the record" }));
     expect(follow).toHaveBeenCalledWith({ project: "p-app", area: "web/auth", seen: { merges: 9, reverts: 2, tripped_at: at(7, 15, 36) } });
-    await waitFor(() => expect(cells(rowOf("web/auth"))[2]).toContain("Demoted"));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toContain("Demoted"));
   });
 });
 
@@ -231,7 +261,7 @@ describe("autonomy-override-warning", () => {
     await user.click(within(dialog).getByRole("button", { name: "Keep the ceiling" }));
     expect(spy).toHaveBeenCalledWith({ project: "p-app", area: "web/auth", choice: "keep_ceiling", acknowledged: true, seen: { merges: 9, reverts: 2, tripped_at: at(7, 15, 36) } });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await waitFor(() => expect(cells(rowOf("web/auth"))[2]).toBe("FullA person set this area to keep ceiling."));
+    await waitFor(() => expect(cells(rowOf("web/auth"))[1]).toBe("FullA person set this area to keep ceiling."));
   });
 
   it("Cancel closes it and sends nothing", async () => {
@@ -292,7 +322,7 @@ describe("autonomy-narrow", () => {
   it("is the same rows: each carries its path, ceiling, mode, reason and record, and the footer offers Override…", async () => {
     await open("crew-areas-tripped");
     const row = rowOf("web/auth");
-    expect(row).toHaveTextContent("web/authFull ceilingOnDemoted");
+    expect(row).toHaveTextContent("web/authOnDemoted");
     expect(row).toHaveTextContent("2 of 9 revertedEscaped: Not measured14 days9 merges");
     expect(screen.getAllByRole("button", { name: "Override…" })).toHaveLength(2);
   });

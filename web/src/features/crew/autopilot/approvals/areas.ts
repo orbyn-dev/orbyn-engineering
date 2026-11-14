@@ -49,7 +49,7 @@ export type RowView = {
   merges: string;
 };
 
-export function rowView(row: AutopilotAreaRow, restored: AutopilotAreaEvent | null, t: AutopilotThresholds): RowView {
+export function rowView(row: AutopilotAreaRow, restored: AutopilotAreaEvent | null): RowView {
   const record = row.record;
   const days = `${record.window_days} days`;
   const sample = plural(record.merges, "merge");
@@ -80,25 +80,13 @@ export function rowView(row: AutopilotAreaRow, restored: AutopilotAreaEvent | nu
       why = row.line;
       break;
   }
-  if (restored && row.state === "follows") why = `Restored ${stamp(restored.at)} at a merge: ${restoredCounts(restored, t)}`;
+  if (restored && row.state === "follows") why = `Restored ${stamp(restored.at)} at a merge`;
   if (row.state === "not_enough_data") return { why, reverted: "Not measured", measured: false, days, merges: sample };
   // A lowered area counts its way back: the days since the last revert and the merges since, none reverted.
   if ((row.state === "recovering" || row.state === "criteria_met") && row.recovery) {
     return { why, reverted: `0 of ${row.recovery.merges}`, measured: true, days: `${row.recovery.clean_days} days`, merges: plural(row.recovery.merges, "merge") };
   }
   return { why, reverted: `${record.reverts} of ${record.merges}`, measured: true, days, merges: sample };
-}
-
-/** The days the recovery clock ran when the area returned: the trail's cause is `restore:<recovery start>`. */
-export function restoredDays(event: AutopilotAreaEvent): number | null {
-  const start = Number(event.cause.replace(/^restore:/, ""));
-  return Number.isFinite(start) && event.cause.startsWith("restore:") ? Math.max(0, Math.floor((event.at - start) / 86_400)) : null;
-}
-
-/** What the return took: the days from the trail's cause, and the merges the rule asks for (the trail does not keep the count). */
-export function restoredCounts(event: AutopilotAreaEvent, t: AutopilotThresholds): string {
-  const days = restoredDays(event) ?? t.recovery_days;
-  return `${plural(days, "day")} with no revert and at least ${plural(t.recovery_merges, "merge")} since`;
 }
 
 /** The newest event of an area's trail, when it is a return still inside the window the table shows. */

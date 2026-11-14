@@ -15,8 +15,7 @@
  * `crew-areas-tripped`, `crew-areas-ceiling-off` (web/auth demoted, then its ceiling lowered to Off), `crew-areas-recovering`,
  * `crew-areas-criteria-met`, `crew-areas-restored` (web/auth came back, with the trail's `restored` row) and `crew-areas-lowdata`. The override
  * and follow routes change the area as the service does and answer 409 `stale` when the record the person saw is not the current one;
- * `crew-areas-stale` makes the first choice stale. The ceiling is per repository in the service; the sample gives one area its own so that the
- * frame with a row held at On shows it.
+ * `crew-areas-stale` makes the first choice stale. The ceiling is per repository, as in the service: no area has its own.
  */
 import type { AutopilotAreaEvent } from "../src/generated/AutopilotAreaEvent.ts";
 import type { AutopilotAreaRow } from "../src/generated/AutopilotAreaRow.ts";
@@ -159,34 +158,40 @@ const steady = (): AutopilotAreaRow[] => [
   areaRow("docs/guides", 12, 0),
   areaRow("web/app", 7, 0),
   areaRow("crates/orbyn-core", 6, 0),
-  areaRow("crates/orbyn-keys", 6, 2, { ceiling: "on", now: "on", state: "ceiling_lower", line: "The ceiling is On, so the breaker has nothing to lower. The record is shown only." }),
+  areaRow("crates/orbyn-keys", 6, 1),
   areaRow(".github/workflows", 3, 0),
 ];
 
 const lowered = (state: "demoted" | "recovering" | "criteria_met", over: Partial<AutopilotAreaRow>): AutopilotAreaRow =>
   areaRow("web/auth", 9, 2, { now: "on", state, since: at(7, 15, 36), line: "Lowered after 2 of 9 merges were reverted in 14 days.", ...over });
 
-function areaScenario(scenario: string): { asOf: number; rows: AutopilotAreaRow[]; trail: AutopilotAreaEvent[] } {
+function areaScenario(scenario: string): { ceiling: AutopilotAreas["ceiling"]; asOf: number; rows: AutopilotAreaRow[]; trail: AutopilotAreaEvent[] } {
   const rest = steady();
+  const full = "full" as const;
   const web = (row: AutopilotAreaRow) => [row, ...rest];
   const restored: AutopilotAreaEvent = { id: 3, kind: "restored", from_mode: "on", to_mode: "full", decided_by: "breaker", cause: `restore:${at(7, 15, 34)}`, record: { merges: 6, reverts: 0, window_days: 14 }, at: at(21, 16, 10) };
   switch (scenario) {
     case "crew-areas-tripped":
-      return { asOf: at(7, 15, 36), rows: web(lowered("demoted", {})), trail: [] };
+      return { ceiling: full, asOf: at(7, 15, 36), rows: web(lowered("demoted", {})), trail: [] };
     case "crew-areas-stale":
-      return { asOf: at(7, 15, 36), rows: web(lowered("demoted", {})), trail: [] };
+      return { ceiling: full, asOf: at(7, 15, 36), rows: web(lowered("demoted", {})), trail: [] };
     case "crew-areas-ceiling-off":
-      return { asOf: at(7, 17, 5), rows: web(lowered("demoted", { ceiling: "off", now: "off" })), trail: [] };
+      return {
+        ceiling: "off",
+        asOf: at(7, 17, 5),
+        rows: web(lowered("demoted", {})).map((row) => ({ ...row, ceiling: "off", now: "off", ...(row.state === "follows" || row.state === "not_enough_data" ? { state: "ceiling_lower" as const } : {}) })),
+        trail: [],
+      };
     case "crew-areas-recovering":
-      return { asOf: at(14, 10, 0), rows: web(lowered("recovering", { record: { merges: 3, reverts: 0, window_days: 14 }, recovery: { clean_days: 7, days_needed: 14, merges: 3, merges_needed: 5 } })), trail: [] };
+      return { ceiling: full, asOf: at(14, 10, 0), rows: web(lowered("recovering", { record: { merges: 3, reverts: 0, window_days: 14 }, recovery: { clean_days: 7, days_needed: 14, merges: 3, merges_needed: 5 } })), trail: [] };
     case "crew-areas-criteria-met":
-      return { asOf: at(21, 15, 40), rows: web(lowered("criteria_met", { record: { merges: 6, reverts: 0, window_days: 14 }, recovery: { clean_days: 14, days_needed: 14, merges: 6, merges_needed: 5 } })), trail: [] };
+      return { ceiling: full, asOf: at(21, 15, 40), rows: web(lowered("criteria_met", { record: { merges: 6, reverts: 0, window_days: 14 }, recovery: { clean_days: 14, days_needed: 14, merges: 6, merges_needed: 5 } })), trail: [] };
     case "crew-areas-restored":
-      return { asOf: at(21, 16, 10), rows: web(areaRow("web/auth", 6, 0)), trail: [restored] };
+      return { ceiling: full, asOf: at(21, 16, 10), rows: web(areaRow("web/auth", 6, 0)), trail: [restored] };
     case "crew-areas-lowdata":
-      return { asOf: at(2, 9, 0), rows: [areaRow("web/auth", 3, 0), areaRow("crates/orbyn-core", 4, 0), areaRow("web/app", 2, 0), areaRow(".github/workflows", 3, 0)], trail: [] };
+      return { ceiling: full, asOf: at(2, 9, 0), rows: [areaRow("web/auth", 3, 0), areaRow("crates/orbyn-core", 4, 0), areaRow("web/app", 2, 0), areaRow(".github/workflows", 3, 0)], trail: [] };
     default:
-      return { asOf: at(6, 17, 0), rows: web(areaRow("web/auth", 8, 1)), trail: [] };
+      return { ceiling: full, asOf: at(6, 17, 0), rows: web(areaRow("web/auth", 8, 1)), trail: [] };
   }
 }
 
@@ -244,7 +249,7 @@ export function createCrewMock() {
 
   function areasRoute(method: string, tail: string | undefined, body: unknown, query: URLSearchParams): MockResponse {
     if (method === "GET" && !tail) {
-      const out: AutopilotAreas = { project: query.get("project") ?? "", ceiling: "full", as_of: areas.asOf, enforced: true, total: areas.rows.length, rows: areas.rows };
+      const out: AutopilotAreas = { project: query.get("project") ?? "", ceiling: areas.ceiling, as_of: areas.asOf, enforced: true, total: areas.rows.length, rows: areas.rows };
       return { status: 200, body: out };
     }
     if (method === "GET" && tail === "history") return { status: 200, body: { project: query.get("project") ?? "", area: query.get("area") ?? "", events: query.get("area") === "web/auth" ? areas.trail : [], truncated: false } };

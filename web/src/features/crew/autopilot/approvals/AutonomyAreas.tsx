@@ -16,7 +16,7 @@ import { ConfirmDialog } from "../../../../ui/Dialog";
 import { Menu } from "../../../../ui/Menu";
 import { Presence } from "../../../../ui/Presence";
 import { crewApi } from "./api";
-import { asOf, clock, frameOf, isLowered, modeName, plural, quiet, recentRestore, restoredDays, rowView, type RowView } from "./areas";
+import { asOf, clock, frameOf, isLowered, modeName, plural, quiet, recentRestore, rowView, type RowView } from "./areas";
 import { GUARD_WORKERS } from "./copy";
 import { Chip, Facts } from "./parts";
 
@@ -40,7 +40,6 @@ function AreaRow({ row, view }: { row: AutopilotAreaRow; view: RowView }) {
   return (
     <div className="ar-row" role="row" data-state={row.state}>
       <span role="cell" className="ar-area"><b>{row.area}</b></span>
-      <span role="cell" className="ar-ceil"><ModeChip mode={row.ceiling} ceiling={row.ceiling} /><span className="ar-n"> ceiling</span></span>
       <span role="cell" className="ar-now">
         <ModeChip mode={row.now} ceiling={row.ceiling} now />
         <small className="ar-why">{view.why}</small>
@@ -77,12 +76,14 @@ function AreaPanel({ row, restored, t, open }: Panels) {
       <Panel
         title={`${row.area}: the ceiling wins`}
         rows={[
-          { label: "What the row shows", text: `Ceiling ${modeName(row.ceiling)}, Now ${modeName(row.now)}. An area never goes above its ceiling, so the demotion to On changes nothing.` },
+          { label: "What the row shows", text: `Repo ceiling ${modeName(row.ceiling)}, Now ${modeName(row.now)}. An area never goes above its ceiling, so the demotion to On changes nothing.` },
           { label: "The record", text: `${record.reverts} of ${record.merges} merges reverted in ${record.window_days} days: still shown, and still counted` },
           { label: "While it is Off", text: `Everything in ${row.area} waits for you` },
           { label: "If you raise it", text: `To Full: ${row.area} follows the record again, so it is on On until it recovers. To On: it stays On.` },
         ]}
-      />
+      >
+        <div className="ar-acts"><OverrideButton onOpen={(anchor) => open(row, anchor)} /></div>
+      </Panel>
     );
   }
   if (isLowered(row) && row.ceiling !== "full") return null;
@@ -129,8 +130,9 @@ function AreaPanel({ row, restored, t, open }: Panels) {
     return (
       <Panel title={`${row.area} is back on ${modeName(row.now)}`}>
         <p>
-          {plural(restoredDays(restored) ?? t.recovery_days, "day")} had passed since the last revert, with at least {plural(t.recovery_merges, "merge")} since then and none reverted. {row.area} returned to your ceiling at the next merge, at {clock(restored.at)}. The reverts that tripped it stay in the ledger and in the dashboard history. If the record worsens again, it drops again.
+          {row.area} returned to your ceiling at the next merge, at {clock(restored.at)}. The reverts that tripped it stay in the ledger and in the dashboard history. If the record worsens again, it drops again.
         </p>
+        <div className="ar-acts"><OverrideButton onOpen={(anchor) => open(row, anchor)} /></div>
       </Panel>
     );
   }
@@ -142,13 +144,17 @@ function optionLine(title: string, text: string) {
   return <span className="ar-opt"><b>{title}</b><small>{text}</small></span>;
 }
 
-function KeepCeilingDialog({ row, onClose, onConfirm }: { row: AutopilotAreaRow; onClose(): void; onConfirm(): Promise<void> }) {
+type Risky = "keep_ceiling" | "off";
+
+/** The warning before a choice that changes what waits for the person: the same dialog for Keep the ceiling and Off. */
+function OverrideDialog({ row, choice, onClose, onConfirm }: { row: AutopilotAreaRow; choice: Risky; onClose(): void; onConfirm(): Promise<void> }) {
   const [ack, setAck] = useState(false);
   const record = row.record;
+  const off = choice === "off";
   return (
     <ConfirmDialog
-      title={`Keep the ceiling for ${row.area}?`}
-      confirmLabel="Keep the ceiling"
+      title={off ? `Turn ${row.area} off?` : `Keep the ceiling for ${row.area}?`}
+      confirmLabel={off ? "Turn it off" : "Keep the ceiling"}
       confirmDisabled={!ack}
       className="ap-dialog"
       onClose={onClose}
@@ -156,18 +162,24 @@ function KeepCeilingDialog({ row, onClose, onConfirm }: { row: AutopilotAreaRow;
     >
       <div className="ar-dialog">
         <p>
-          {row.area} is on {modeName(row.now)} because {record.reverts} of its last {record.merges} merges were reverted in {record.window_days} days. If you keep the ceiling ({modeName(row.ceiling)}), a High risk diff in {row.area} merges by itself again, without waiting for you at the merge gate.
+          {off
+            ? `If you turn ${row.area} off, everything in ${row.area} waits for you at the merge gate, whatever its risk.`
+            : `${row.area} is on ${modeName(row.now)} because ${record.reverts} of its last ${record.merges} merges were reverted in ${record.window_days} days. If you keep the ceiling (${modeName(row.ceiling)}), a High risk diff in ${row.area} merges by itself again, without waiting for you at the merge gate.`}
         </p>
         <Facts
           rows={[
             { label: "The record", text: `${plural(record.reverts, "revert")} in ${record.window_days} days · ${plural(record.merges, "merge")}` },
-            { label: "What you risk", text: `A High risk diff in ${row.area} can reach main before you have looked at it. You review it afterwards, at the top of your Review queue.` },
-            { label: "How long", text: `Until a new trip. If ${row.area} is demoted again, Keep the ceiling is cleared and the area follows the record. Crew keeps measuring ${row.area} and shows the record next to it.` },
+            off
+              ? { label: "What it does", text: `Nothing in ${row.area} merges until you have looked at it. Other areas keep their mode.` }
+              : { label: "What you risk", text: `A High risk diff in ${row.area} can reach main before you have looked at it. You review it afterwards, at the top of your Review queue.` },
+            off
+              ? { label: "How long", text: `Until you choose Follow the record. Crew keeps measuring ${row.area} and shows the record next to it.` }
+              : { label: "How long", text: `Until a new trip. If ${row.area} is demoted again, Keep the ceiling is cleared and the area follows the record. Crew keeps measuring ${row.area} and shows the record next to it.` },
           ]}
         />
         <label className="ar-ack">
           <input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} />
-          <span>I understand that High risk diffs in {row.area} will merge without waiting for me.</span>
+          <span>{off ? `I understand that everything in ${row.area} will wait for me.` : `I understand that High risk diffs in ${row.area} will merge without waiting for me.`}</span>
         </label>
         <p className="ap-muted">Only you can make this choice. It is logged with the time. It never raises an area above your ceiling, and the hard-denied list still applies.</p>
       </div>
@@ -180,7 +192,7 @@ const seenOf = (row: AutopilotAreaRow) => ({ merges: row.record.merges, reverts:
 function AreasView({ project, areas, t, reload }: { project: { id: string; name: string }; areas: AutopilotAreas; t: AutopilotThresholds; reload(): Promise<unknown> }) {
   const [trail, setTrail] = useState<Record<string, AutopilotAreaEvent[]>>({});
   const [menu, setMenu] = useState<{ row: AutopilotAreaRow; x: number; y: number } | null>(null);
-  const [keep, setKeep] = useState<AutopilotAreaRow | null>(null);
+  const [keep, setKeep] = useState<{ row: AutopilotAreaRow; choice: Risky } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   // A return is a line in the trail, not a state of the row: read the trail of the rows that follow their ceiling, the first few only.
@@ -203,19 +215,17 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
   };
   const choose = (row: AutopilotAreaRow, choice: "follow" | "keep_ceiling" | "off") => {
     setFailed(null);
-    if (choice === "keep_ceiling") {
-      if (row.override?.choice !== "keep_ceiling") setKeep(row);
+    // Both risky choices ask first: nothing is sent with an acknowledgement the person did not give.
+    if (choice !== "follow") {
+      if (row.override?.choice !== choice) setKeep({ row, choice });
       return;
     }
-    if (choice === "follow" ? !row.override : row.override?.choice === "off") return;
-    const done = choice === "follow"
-      ? crewApi.followArea({ project: project.id, area: row.area_key, seen: seenOf(row) })
-      // Off only ever makes the area stricter; choosing it from the menu is the acknowledgement the route asks for.
-      : crewApi.overrideArea({ project: project.id, area: row.area_key, choice: "off", acknowledged: true, seen: seenOf(row) });
-    void done.then(() => reload(), refuse);
+    if (!row.override) return;
+    void crewApi.followArea({ project: project.id, area: row.area_key, seen: seenOf(row) }).then(() => reload(), refuse);
   };
 
-  const rows = areas.rows;
+  // One ceiling per repository: every row is read against it.
+  const rows = areas.rows.map((row) => ({ ...row, ceiling: areas.ceiling }));
   const allThin = rows.length > 0 && rows.every((row) => row.state === "not_enough_data");
   const footerTarget = rows.find(isLowered) ?? rows.find((row) => row.state === "overridden");
   const footerBoth = footerTarget?.state === "overridden";
@@ -228,7 +238,7 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
   ];
 
   return (
-    <section className="ap-set ar" aria-labelledby="ar-title" data-frame={keep ? "autonomy-override-warning" : menu ? "autonomy-override" : frameOf(rows, rows.some((row) => recentRestore(trail[row.area_key], areas.as_of, t.window_days) !== null && row.state === "follows"))}>
+    <section className="ap-set ar" aria-labelledby="ar-title" data-frame={keep ? (keep.choice === "off" ? "autonomy-override-off-warning" : "autonomy-override-warning") : menu ? "autonomy-override" : frameOf(rows, rows.some((row) => recentRestore(trail[row.area_key], areas.as_of, t.window_days) !== null && row.state === "follows"))}>
       <header className="ap-set-head">
         <h2 id="ar-title">Crew › Autopilot by area</h2>
         <Chip tone="plain">Preview</Chip>
@@ -238,15 +248,15 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
       </p>
       <div className="ar-chips">
         <span className="ar-mk"><Folder size={12} aria-hidden />Repo: {project.name}</span>
-        <span className="ar-mk">Your mode: {modeName(areas.ceiling)} · the ceiling</span>
+        <span className="ar-mk">Repo ceiling: {modeName(areas.ceiling)} · change it in Settings › Crew</span>
         <span className="ar-mk">Window: {plural(t.window_days, "day")}</span>
       </div>
       <small className="ar-sub">As of {asOf(areas.as_of)}</small>
       <div className="ar-table" role="table" aria-label="Autopilot by area">
         <div className="ar-row ap-head" role="row">
-          {["Area", "Ceiling", "Now", "Reverted", "Escaped", "Window"].map((name) => <span key={name} role="columnheader">{name}</span>)}
+          {["Area", "Now", "Reverted", "Escaped", "Window"].map((name) => <span key={name} role="columnheader">{name}</span>)}
         </div>
-        {rows.map((row) => <AreaRow key={row.area_key} row={row} view={rowView(row, recentRestore(trail[row.area_key], areas.as_of, t.window_days), t)} />)}
+        {rows.map((row) => <AreaRow key={row.area_key} row={row} view={rowView(row, recentRestore(trail[row.area_key], areas.as_of, t.window_days))} />)}
       </div>
       {allThin ? (
         <Panel title={`Not enough data: each area has fewer than ${t.min_merges} merges`}>
@@ -276,11 +286,12 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
         ) : null}
       </Presence>
       {keep ? (
-        <KeepCeilingDialog
-          row={keep}
+        <OverrideDialog
+          row={keep.row}
+          choice={keep.choice}
           onClose={() => setKeep(null)}
           onConfirm={() =>
-            crewApi.overrideArea({ project: project.id, area: keep.area_key, choice: "keep_ceiling", acknowledged: true, seen: seenOf(keep) }).then(
+            crewApi.overrideArea({ project: project.id, area: keep.row.area_key, choice: keep.choice, acknowledged: true, seen: seenOf(keep.row) }).then(
               () => void reload(),
               (error: unknown) => {
                 // A record that moved while the person read the warning answers `stale`: show the service's words, and the new record behind the dialog.

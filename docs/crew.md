@@ -800,16 +800,14 @@ says `user`, not which process. A lowered area returns at the next merge or queu
 ledger itself is unreadable: the log then holds the only trace, though the gate still treats an unreadable area as Off. An `off` posted while merge checks are running does not stop the merge already in flight (the same as `set_mode`).
 
 **As built (slice 4j, screens):** Settings › Crew › Autopilot by area and its Thresholds, from the Crew Designs v39 frames `autonomy-table`, `-tripped`,
-`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-override`, `-override-warning`, `-thresholds` and `-narrow`. Code:
-`web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas}.ts*`, routes `#/settings/crew/areas[/thresholds]?repo=<project id>`
-(the first visible repository when `repo` is absent). One component, driven by the areas read: the table's `data-frame` names the frame its data is in. The words are
-the design's, written from the served fields (the service's own `line` shows only where the design draws no row, for a person's override or a window that trips
-before it is recorded). Not served, so left out: the two reverts' names, when a ceiling was lowered, when the recovery clock or the criteria were met (the
-screens say "7 of the 14 days with no revert" without a date) and the merges since a return (the trail keeps only the window's record; the screen says "at least 5").
-Not designed, so left out: `autonomy-promoted` and the Earn upward threshold (earning is not built), an empty table, choosing among several repositories,
-a link from Settings › Crew to the page, a way back from Thresholds, and an Override… button for an area that is not lowered. `Off` is sent with
-`acknowledged: true` from the menu item, which names its effect; `keep_ceiling` asks first and stays disabled until the box is ticked; a `stale` answer shows the
-service's words in the dialog and reads the areas again.
+`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-override`, `-override-warning`, `-thresholds` and `-narrow`, plus
+`autonomy-override-off-warning` (Designer ruling on #573). Code: `web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas}.ts*`, routes
+`#/settings/crew/areas[/thresholds]?repo=<project id>` (the first visible repository when `repo` is absent). One component, driven by the areas read; the page's
+`data-frame` names the frame its data is in. **One ceiling per repository:** the header says "Repo ceiling: X" once, the table has no ceiling column, and the
+rows show the mode the area is on now. Both Keep the ceiling and Off ask first in the same dialog and send `acknowledged: true` only after the box is ticked;
+Override… is on the tripped, recovering, criteria-met, ceiling-wins and restored panels, and Follow the record undoes a choice. The words are the design's,
+written from the served fields. No date is drawn that the service does not serve (recovery clock, who reverted, when a ceiling was lowered).
+Not built (the Designer draws them later): `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, a back link on Thresholds, `autonomy-promoted`, `autonomy-by-area`.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**

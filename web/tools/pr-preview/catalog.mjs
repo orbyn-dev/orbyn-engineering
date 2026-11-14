@@ -595,6 +595,11 @@ export const FRAMES = {
     scenario: "crew-areas-tripped",
     steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" }), click("menuitem", "Keep the ceiling"), click("checkbox", "I understand", { prefix: true })],
   },
+  "autonomy-override-off-warning": {
+    route: AREAS,
+    scenario: "crew-areas-tripped",
+    steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" }), click("menuitem", "Off"), click("checkbox", "I understand", { prefix: true })],
+  },
   "autonomy-thresholds": { route: "#/settings/crew/areas/thresholds?repo=p-app", scenario: "crew-areas" },
   "autonomy-narrow": { route: AREAS, scenario: "crew-areas-tripped", width: 640 },
 };
