@@ -62,6 +62,15 @@ impl Store {
         }
     }
 
+    /// True when a person's cancel of the task was recorded (its intent row exists).
+    pub fn crew_cancel_intended(&self, task_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS (SELECT 1 FROM audit_events WHERE action = 'crew.task.cancel' AND target = ?1)",
+            [task_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Checks the task and writes the intent row (`crew.task.cancel`) in one transaction. `cancelled` answers `Already` and writes
     /// nothing; `passed` and `stopped` are `TaskEnded`.
     pub fn begin_crew_cancel(

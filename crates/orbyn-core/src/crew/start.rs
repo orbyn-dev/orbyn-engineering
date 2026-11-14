@@ -428,15 +428,19 @@ impl Core {
                 let recorded = self
                     .store
                     .set_crew_worker(task_id, &child.id, &child.cwd, base);
-                if recorded.is_err() {
-                    let _ = self.store.delete_thread(&child.id, "crew");
+                if recorded.is_err()
+                    && let Err(error) = self.store.delete_thread(&child.id, "crew")
+                {
+                    tracing::warn!(%error, "could not remove the worker thread of an ended crew task");
                 }
                 recorded
             })
             .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.public_message()))?;
         if let Err(error) = self.store.move_crew_task(task_id, "running", None) {
-            if let Ok(Some(run)) = self.store.crew_run(task_id) {
-                let _ = self.stop_crew_worker(Some(&run), "core").await;
+            if let Ok(Some(run)) = self.store.crew_run(task_id)
+                && let Err(stop) = self.stop_crew_worker(Some(&run), "core").await
+            {
+                tracing::warn!(error = %stop, "could not stop the worker of a crew task that could not run");
             }
             return Err(CrewError::new(
                 ErrorCode::InvalidTransition,

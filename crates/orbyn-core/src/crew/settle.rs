@@ -359,6 +359,16 @@ impl Core {
     /// Queues `text` on the worker's thread. It is checked for the key's text and for secrets
     /// first (H1, H2); a prompt that fails either is replaced by a plain one.
     pub(crate) fn send_to_worker(&self, task: &CrewTask, text: &str) -> Result<(), CrewError> {
+        self.send_to_worker_with(task, text, || {})
+    }
+
+    /// `send_to_worker`; `between` runs after the task was found live and before the message is queued, where a test cancels it.
+    pub(super) fn send_to_worker_with(
+        &self,
+        task: &CrewTask,
+        text: &str,
+        between: impl FnOnce(),
+    ) -> Result<(), CrewError> {
         let run = self
             .store
             .crew_run(&task.id)
@@ -393,16 +403,20 @@ impl Core {
         // this prompt, each already checked the way a live one is.
         // They are recorded as sent only once the prompt is accepted; if it is refused with them,
         // the prompt goes alone (a worker must not lose its retry) and they stay held.
+        between();
         let held = self.held_for_worker(task, &run);
         let full = format!("{text}{}", held.text());
         match self.runs.enqueue(&thread, &full, &[]) {
             Ok(queued) => {
                 // A cancel that landed between the check and the queue: take the message back and stop what it started.
                 if ended() {
-                    let _ = self.store.remove_queued(&queued.id);
+                    if let Err(error) = self.store.remove_queued(&queued.id) {
+                        tracing::warn!(%error, "could not take back a retry queued for an ended crew task");
+                    }
                     if let Some(active) = self.store.thread(&thread).ok().and_then(|t| t.active_run)
+                        && let Err(error) = self.runs.cancel(&active.id)
                     {
-                        let _ = self.runs.cancel(&active.id);
+                        tracing::warn!(%error, "could not stop the run a retry started for an ended crew task");
                     }
                     return Err(CrewError::new(ErrorCode::RunEnded, "the task has ended"));
                 }
@@ -463,11 +477,17 @@ impl Core {
     pub(super) fn end_for_run(self: &Arc<Self>, task_id: &str, state: RunState) {
         if state == RunState::Cancelled {
             if let Some(task) = self.step_crew_task(task_id, "cancelled", None) {
+                // A person's cancel stops the run, so its end is that cancel's: the intent row says so.
+                let person = self.store.crew_cancel_intended(task_id).unwrap_or(false);
                 self.end_crew_task(
                     &task,
                     ResultState::Cancelled,
                     None,
-                    "The worker's run was cancelled.",
+                    if person {
+                        "The person cancelled the task."
+                    } else {
+                        "The worker's run was cancelled."
+                    },
                     None,
                 );
             }

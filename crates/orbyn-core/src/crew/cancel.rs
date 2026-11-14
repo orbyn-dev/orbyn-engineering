@@ -10,6 +10,10 @@
 //! 3. one transaction moves the task to `cancelled` (the lifecycle table, which clears a verification claim) with the row
 //!    `crew.task.cancelled`; then the existing end of a task runs: its leases are released, a final `cancelled` result is written and
 //!    the lead is told.
+//! 4. the worker is read again and stopped once more. A start or a retry does not take the cancel's lock, so one may have landed
+//!    between steps 1 and 3; the state is final now, so a later one meets its own guard and an earlier one is seen here. If this
+//!    pass fails the task stays `cancelled` (the state change stands), a `crew.task.cancel_failed` row flags the live worker and the
+//!    caller gets the 502.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -35,7 +39,7 @@ impl Core {
         reason: Option<&str>,
         actor: &str,
     ) -> Result<wire::CrewTaskCancelled> {
-        self.crew_cancel_with(task_id, reason, actor, self.forcing(actor))
+        self.crew_cancel_with(task_id, reason, actor, self.forcing(actor), || {})
             .await
     }
 
@@ -46,6 +50,7 @@ impl Core {
         reason: Option<&str>,
         actor: &str,
         force: impl Fn(String) -> F,
+        between: impl FnOnce(),
     ) -> Result<wire::CrewTaskCancelled> {
         self.crew_preview_only()?;
         valid_id(task_id)?;
@@ -55,7 +60,9 @@ impl Core {
         };
         let lock = self.store.crew_cancel_lock(task_id);
         let held = lock.lock().await;
-        let answer = self.cancel_locked(task_id, reason, actor, &force).await;
+        let answer = self
+            .cancel_locked(task_id, reason, actor, &force, between)
+            .await;
         drop(held);
         drop(lock);
         self.store.crew_cancel_unlock(task_id);
@@ -68,6 +75,7 @@ impl Core {
         reason: Option<String>,
         actor: &str,
         force: &impl Fn(String) -> F,
+        between: impl FnOnce(),
     ) -> Result<wire::CrewTaskCancelled> {
         let done = |already| wire::CrewTaskCancelled {
             task: task_id.to_owned(),
@@ -82,21 +90,19 @@ impl Core {
             CancelStart::Begun(run) => run,
         };
         if let Err(error) = self.stop_crew_worker_by(run.as_deref(), force).await {
-            let why: String = super::redact(&error.to_string())
-                .chars()
-                .take(300)
-                .collect();
-            if let Err(write) = self.store.fail_crew_cancel(task_id, actor, &why) {
-                tracing::warn!(%write, "could not record a failed crew cancel");
-            }
-            return Err(CoreError::EngineUnavailable(
-                "The task was not cancelled: its worker could not be stopped. Try again.".into(),
-            ));
+            return Err(self.cancel_failed(task_id, actor, &error, "The task was not cancelled"));
         }
+        // Start and retry do not take this lock, so a worker may have been recorded or a message queued since the run was read.
+        // `between` is where a test makes that happen.
+        between();
         let (task, moved) = self.store.finish_crew_cancel(task_id, actor)?;
         if task.state != "cancelled" {
             return Err(CoreError::TaskEnded);
         }
+        // The state is final now, so any later start or retry meets its own guard, and any earlier one is visible to this second
+        // pass: it reads the worker again and stops what the first pass could not have seen.
+        let again = self.store.crew_run(task_id).ok().flatten();
+        let stopped = self.stop_crew_worker_by(again.as_ref(), force).await;
         // Exactly one of this call and the worker's run end (which the stop above triggers) moves the task, and that one ends it:
         // leases, the final result, the lead.
         if moved {
@@ -108,7 +114,33 @@ impl Core {
                 None,
             );
         }
+        if let Err(error) = stopped {
+            // The task stays cancelled: the failed row flags a cancelled task whose worker may still run.
+            return Err(self.cancel_failed(
+                task_id,
+                actor,
+                &error,
+                "The task is cancelled, but its worker could not be stopped",
+            ));
+        }
         Ok(done(false))
+    }
+
+    fn cancel_failed(
+        &self,
+        task_id: &str,
+        actor: &str,
+        error: &CoreError,
+        lead: &str,
+    ) -> CoreError {
+        let why: String = super::redact(&error.to_string())
+            .chars()
+            .take(300)
+            .collect();
+        if let Err(write) = self.store.fail_crew_cancel(task_id, actor, &why) {
+            tracing::warn!(%write, "could not record a failed crew cancel");
+        }
+        CoreError::EngineUnavailable(format!("{lead}. Try again."))
     }
 
     /// Stops the worker's engine run and confirms it, with the worker's queue emptied so no new turn starts. A task with no worker,
@@ -118,7 +150,7 @@ impl Core {
     }
 
     /// The real stop: the run manager's forced stop of a thread's run.
-    fn forcing(
+    pub(super) fn forcing(
         &self,
         actor: &str,
     ) -> impl Fn(String) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>> + use<> {

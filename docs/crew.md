@@ -1261,6 +1261,14 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 - **Two cancels of one task** run one after the other (a lock per task): the second finds it cancelled and answers `already: true`
   with no row. If the service dies after the intent row, `crew.task.cancel` stands with no outcome row; the state is unchanged and a
   retry works (it writes its own intent row).
+- **A second stop after the state change.** Start and retry do not take the cancel's lock, so a worker may have been recorded, or a
+  message queued, after the cancel read the task. Once the task is `cancelled` the worker is read again and stopped once more (with
+  its queue emptied); a later start or retry meets its own final-state guard. If that second stop fails, **the task stays
+  `cancelled` with a worker that may still run**: a `crew.task.cancel_failed` row flags it and the caller gets `502
+  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel answers `already: true`,
+  so the person stops that worker from its thread.
+- **Wording.** When the worker's run end moves the task first, its final result still says the person cancelled it if the cancel's
+  intent row exists.
 - **Races with a start or a retry.** A task cannot get a worker once it ended (`set_crew_worker` refuses in its transaction, the thread
   just made is removed and no engine starts), and a retry prompt is not queued for an ended task (the state is read again before and
   after queueing; a message that slipped in is taken back and its run stopped).

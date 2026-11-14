@@ -505,6 +505,17 @@ async fn the_run_end_winning_the_race_leaves_one_result_and_says_who_moved_it() 
         .find(|r| r.action == "crew.task.cancelled")
         .unwrap();
     assert_eq!(row.detail["moved_by"], "run_end");
+    // The run end chose its wording from the cancel's intent row.
+    let last = w.core.store.crew_results(&id).unwrap();
+    let last = last
+        .iter()
+        .find(|r| r.state == ResultState::Cancelled && r.r#final)
+        .unwrap();
+    assert!(
+        last.summary.contains("person cancelled"),
+        "{}",
+        last.summary
+    );
     assert_eq!(
         w.core
             .store
@@ -525,7 +536,7 @@ async fn when_every_stop_round_runs_out_the_state_is_kept_and_the_attempt_audite
     let worker = w.worker(&id);
     let error = w
         .core
-        .crew_cancel_with(&id, None, "user", |_: String| async { Ok(()) })
+        .crew_cancel_with(&id, None, "user", |_: String| async { Ok(()) }, || {})
         .await
         .unwrap_err();
     assert!(matches!(error, CoreError::EngineUnavailable(_)), "{error}");
@@ -549,4 +560,134 @@ async fn when_every_stop_round_runs_out_the_state_is_kept_and_the_attempt_audite
             .unwrap()
             .contains("did not stop")
     );
+}
+
+/// A worker made and started after the cancel read the task (it saw none): the second pass finds it and stops it.
+fn late_worker(w: &World, id: &str) -> impl FnOnce() + use<> {
+    let (core, lead, id) = (w.core.clone(), w.lead.clone(), id.to_owned());
+    move || {
+        let child = core
+            .delegate_then(&lead, &delegate("late"), "crew", |c| {
+                core.store.set_crew_worker(&id, &c.id, &c.cwd, None)
+            })
+            .unwrap();
+        core.store.move_crew_task(&id, "running", None).unwrap();
+        assert!(core.store.thread(&child.id).unwrap().active_run.is_some());
+    }
+}
+
+fn routed(w: &World, label: &str) -> String {
+    let id = seeded_task(w, label);
+    w.core.store.move_crew_task(&id, "routed", None).unwrap();
+    id
+}
+
+#[tokio::test]
+async fn a_worker_started_between_the_read_and_the_state_change_is_stopped_by_the_second_pass() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = routed(&w, "a");
+    let hook = late_worker(&w, &id);
+    let done = w
+        .core
+        .crew_cancel_with(&id, None, "user", w.core.forcing("user"), hook)
+        .await
+        .unwrap();
+    assert!(!done.already);
+    assert_eq!(w.task(&id).state, "cancelled");
+    let worker = w.worker(&id);
+    assert!(w.core.store.thread(&worker).unwrap().active_run.is_none());
+    assert!(w.core.store.list_queue(&worker).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_message_queued_after_the_last_stop_round_is_stopped_by_the_second_pass() {
+    let (w, id) = running().await;
+    let worker = w.worker(&id);
+    let core = w.core.clone();
+    let hook = {
+        let worker = worker.clone();
+        move || {
+            // The retry passed its own check before the cancel and is queued now: it starts a run on the idle worker.
+            core.runs.enqueue(&worker, "retry", &[]).unwrap();
+        }
+    };
+    w.core
+        .crew_cancel_with(&id, None, "user", w.core.forcing("user"), hook)
+        .await
+        .unwrap();
+    assert_eq!(w.task(&id).state, "cancelled");
+    assert!(w.core.store.thread(&worker).unwrap().active_run.is_none());
+    assert!(w.core.store.list_queue(&worker).unwrap().is_empty());
+}
+
+/// The second pass cannot stop the worker: the task stays cancelled, a failed row flags the live worker, the caller gets the 502.
+#[tokio::test]
+async fn a_second_pass_that_fails_leaves_the_task_cancelled_and_flags_it() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = routed(&w, "b");
+    let hook = late_worker(&w, &id);
+    let error = w
+        .core
+        .crew_cancel_with(
+            &id,
+            None,
+            "user",
+            |_: String| async { Err(CoreError::Internal("stuck".into())) },
+            hook,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::EngineUnavailable(_)), "{error}");
+    assert!(error.public_message().contains("is cancelled"));
+    assert_eq!(w.task(&id).state, "cancelled");
+    assert_eq!(count(&w, "crew.task.cancelled"), 1);
+    assert_eq!(count(&w, "crew.task.cancel_failed"), 1);
+    // A retry finds it cancelled: nothing more is written.
+    assert!(
+        w.core
+            .crew_cancel_task(&id, None, "user")
+            .await
+            .unwrap()
+            .already
+    );
+}
+
+/// The move to `running` fails after the worker was recorded and started (the task was not routed): the worker is stopped.
+#[tokio::test]
+async fn a_task_that_cannot_move_to_running_has_its_started_worker_stopped() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = seeded_task(&w, "c");
+    assert_eq!(w.task(&id).state, "briefed");
+    let error = w
+        .core
+        .attach_crew_worker(&w.lead, &delegate("c"), &id, None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, orbyn_contracts::ErrorCode::InvalidTransition);
+    let worker = w.worker(&id);
+    assert!(w.core.store.thread(&worker).unwrap().active_run.is_none());
+    assert!(w.core.store.list_queue(&worker).unwrap().is_empty());
+    assert_eq!(w.task(&id).state, "briefed");
+}
+
+/// A retry queued after the task ended meanwhile (the check passed, then the task ended) is taken back and its run stopped.
+#[tokio::test]
+async fn a_retry_queued_just_as_the_task_ends_is_taken_back() {
+    let (w, id) = running().await;
+    let worker = w.worker(&id);
+    let stale = w.task(&id);
+    let core = w.core.clone();
+    let end = id.clone();
+    let error = w
+        .core
+        .send_to_worker_with(&stale, "Fix this.", move || {
+            core.store.move_crew_task(&end, "cancelled", None).unwrap();
+        })
+        .unwrap_err();
+    assert_eq!(error.code, orbyn_contracts::ErrorCode::RunEnded);
+    assert!(w.core.store.list_queue(&worker).unwrap().is_empty());
+    w.until("its run was stopped", |w| {
+        w.core.store.thread(&worker).unwrap().active_run.is_none()
+    })
+    .await;
 }
