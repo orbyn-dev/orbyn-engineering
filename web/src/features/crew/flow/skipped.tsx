@@ -16,7 +16,7 @@ export function FlowSkipped() {
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
               <Ic n="right" sm />
               <b>Update the login docs</b>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer</span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "270px", width: "1110px" }}>
               <span className="cx-fh" style={{ left: "0px", top: "22px", width: "93px" }}><Ic n="brief" sm />Brief</span>
@@ -158,7 +158,7 @@ export function FlowSkipped() {
               </div>
               <div className="cx-r" style={{ gridTemplateColumns: "130px minmax(0,1fr) 230px 120px", minHeight: "34px" }}>
                 <b>PR review</b>
-                <span>Optional by default</span>
+                <span>Optional by default<span className="cx-cwpv">Planned</span></span>
                 <span className="cx-num">built in · optional</span>
                 <Btn className="cx-ghost">Run it anyway</Btn>
               </div>

@@ -138,7 +138,8 @@ select {
     .pulls-search,
     .palette-search,
     .flf,
-    .x2find
+    .x2find,
+    .fv-search
   )
   input:not([type="checkbox"], [type="radio"]):not([type="hidden"]),
 .pulls-fld .pulls-inp input:not([type="checkbox"], [type="radio"]) {

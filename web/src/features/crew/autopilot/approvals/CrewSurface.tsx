@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { CREW_TABS as TABS, routeHref, type CrewTab } from "../../../../product/state/route";
 import { PageBar } from "../../../../product/ui/PageBar";
 import { tabKeys } from "../../../../ui/tabKeys";
+import { FlowView } from "../../flow/live/FlowView";
 import { NeedsYouInbox } from "../../needsyou/NeedsYouInbox";
 import { ApprovalsTab } from "./ApprovalsTab";
 import { BackgroundTab } from "./Background";
@@ -10,7 +11,7 @@ import { Chip } from "./parts";
 import { TrustTab } from "./Trust";
 import { useCrewPreview } from "./useCrew";
 
-const LABEL: Record<CrewTab, string> = { approvals: "Approvals", trust: "Trust", background: "Background", inbox: "Inbox" };
+const LABEL: Record<CrewTab, string> = { approvals: "Approvals", trust: "Trust", background: "Background", inbox: "Inbox", flow: "Flow" };
 export const CREW_TABS: { id: CrewTab; label: string }[] = TABS.map((id) => ({ id, label: LABEL[id] }));
 
 /**
@@ -42,7 +43,7 @@ export function CrewSurface({ tab: opened }: { tab: CrewTab }) {
         ))}
       </div>
       <div className="ap-panel" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${tab}`}>
-        {tab === "approvals" ? <ApprovalsTab /> : tab === "trust" ? <TrustTab /> : tab === "inbox" ? <NeedsYouInbox /> : <BackgroundTab />}
+        {tab === "approvals" ? <ApprovalsTab /> : tab === "trust" ? <TrustTab /> : tab === "inbox" ? <NeedsYouInbox /> : tab === "flow" ? <FlowView /> : <BackgroundTab />}
       </div>
     </div>
   );

@@ -17,7 +17,7 @@ export function FlowPrReview() {
               <Ic n="right" sm />
               <b>Use next in the auth redirect</b>
               <span className="cx-fbadge">PR #482</span><span className="cx-cwpv">Planned</span>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer</span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "300px", width: "1110px" }}>
               <span className="cx-fh" style={{ left: "0px", top: "22px", width: "93px" }}><Ic n="brief" sm />Brief</span>
@@ -143,7 +143,7 @@ export function FlowPrReview() {
                 <span className="cx-s">after merge</span>
                 <span className="cx-st"><i className="cx-sd" />Waiting</span>
               </div>
-              <span className="cx-flab" style={{ left: "498px", top: "62px" }}>Dashed lanes: on PR #482</span>
+              <span className="cx-flab" style={{ left: "498px", top: "62px" }}>Dashed lanes: on PR #482<span className="cx-cwpv">Planned</span></span>
             </div>
             <div className="cx-flk">
               <span>On the lines:</span>
@@ -151,7 +151,7 @@ export function FlowPrReview() {
               <span><i className="cx-fgt cx-done"><Ic n="diff" sm /></i>diff</span>
               <span><i className="cx-fgt cx-done"><Ic n="check2" sm /></i>check results</span>
               <span><i className="cx-fgt cx-done"><Ic n="bug" sm /></i>findings</span>
-              <span><i className="cx-fgt cx-done"><Ic n="pr" sm /></i>PR</span>
+              <span><i className="cx-fgt cx-done"><Ic n="pr" sm /></i>PR<span className="cx-cwpv">Planned</span></span>
               <span style={{ marginLeft: "8px" }}>Gate decided by:</span>
               <span><i className="cx-fgt cx-done"><Ic n="cpu" sm /></i>code</span>
               <span><i className="cx-fgt cx-done"><Ic n="bug" sm /></i>a confirmed finding</span>
