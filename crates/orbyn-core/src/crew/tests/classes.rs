@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::harness::{Turn, World, brief, key, world_with};
 use crate::crew::classes::{
     BUILT_IN, ENGINES_MAX, FILE_MAX, GLOBS_MAX, NAME_MAX, PathClasses, REASON_MAX, RULES_MAX,
-    base_commit, classify, parse_file, read_class_file,
+    base_commit, classify, parse_file, pinned_ref, read_class_file,
 };
 use crate::testing::run_git;
 
@@ -988,5 +988,358 @@ async fn an_exact_path_spelled_in_another_case_counts_as_every_class() {
         "{:?} {:?}",
         fresh.unknown,
         fresh.hits
+    );
+}
+
+/// Makes `origin/main` a remote-tracking ref at HEAD and points `origin/HEAD` at it, with no remote to fetch from.
+fn pin_origin_here(repo: &Path) {
+    let head = git_out(repo, &["rev-parse", "HEAD"]);
+    run_git(repo, &["update-ref", "refs/remotes/origin/main", &head]);
+    run_git(
+        repo,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+}
+
+fn reasons_text(w: &World, task: &str) -> String {
+    let decision = w
+        .core
+        .store
+        .crew_route_decisions(task)
+        .unwrap()
+        .pop()
+        .unwrap();
+    format!("{:?}", decision.reasons)
+}
+
+async fn three() -> World {
+    world_with(
+        true,
+        Arc::new(|_, _| Turn::Hang),
+        &[("alpha", false), ("bravo", false), ("charlie", false)],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn moving_head_to_a_commit_without_the_file_does_not_loosen_the_next_task() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    // Without a remote the local default branch is the ref the rules are also read at.
+    let branch = git_out(&w.repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    // The agent checks out the commit before the rules were added: HEAD has no file.
+    run_git(&w.repo, &["checkout", "-q", "--detach", "HEAD~1"]);
+    assert!(
+        read_class_file(&w.repo, base_commit(&w.repo).await.as_deref())
+            .await
+            .blob
+            .is_none()
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "bravo", "alpha must stay out");
+    let id = answer["task"].as_str().unwrap();
+    let text = reasons_text(&w, id);
+    assert!(text.contains("The rules differ"), "{text}");
+    assert!(text.contains("has no file"), "{text}");
+    assert!(text.contains(&branch), "{text}");
+}
+
+#[tokio::test]
+async fn the_remote_tracking_default_branch_is_read_and_the_stricter_of_the_two_applies() {
+    let w = three().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![rule("keep", &["src/**"], &["alpha", "bravo"])]),
+    );
+    pin_origin_here(&w.repo);
+    // A later commit on this checkout loosens the rule to a different pair: only what both allow may take the task.
+    commit_crew(
+        &w.repo,
+        &file(vec![rule("keep", &["src/**"], &["bravo", "charlie"])]),
+    );
+    let pin = pinned_ref(&w.repo).await.unwrap();
+    assert_eq!(
+        pin.name, "origin/main",
+        "the remote-tracking ref comes first"
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "bravo");
+    let id = answer["task"].as_str().unwrap();
+    let decision = w
+        .core
+        .store
+        .crew_route_decisions(id)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let blocked: Vec<(&str, RejectionWhy)> = fakes(&decision.rejected)
+        .iter()
+        .map(|r| (r.engine.as_str(), r.why))
+        .collect();
+    assert_eq!(
+        blocked,
+        [
+            ("alpha", RejectionWhy::PathClass),
+            ("charlie", RejectionWhy::PathClass)
+        ]
+    );
+    let text = reasons_text(&w, id);
+    assert!(
+        text.contains("The rules differ") && text.contains("origin/main (the default branch)"),
+        "{text}"
+    );
+    assert!(text.contains("Also read at origin/main"), "{text}");
+}
+
+#[tokio::test]
+async fn identical_rules_say_nothing_about_a_difference() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let classes = classes_of_pinned(&w, &["src/a.rs"]).await;
+    assert!(classes.pinned.is_some());
+    assert!(classes.differs().is_none());
+    assert_eq!(classes.allowed(), Some(vec!["bravo".to_owned()]));
+}
+
+async fn classes_of_pinned(w: &World, patterns: &[&str]) -> PathClasses {
+    let own = classes_of(w, patterns).await;
+    let pin = pinned_ref(&w.repo).await.unwrap();
+    let there = read_class_file(&w.repo, Some(&pin.commit)).await;
+    let patterns: Vec<String> = patterns.iter().map(|p| (*p).to_owned()).collect();
+    let side = classify(&w.repo, Some(&pin.commit), there, &patterns).await;
+    own.with_pinned(pin.name, pin.commit, side)
+}
+
+#[tokio::test]
+async fn a_file_that_cannot_be_read_on_either_side_blocks_every_engine() {
+    // Invalid on the default branch, fine at HEAD.
+    let w = two().await;
+    commit_crew(&w.repo, "{ not json");
+    pin_origin_here(&w.repo);
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["alpha"])]));
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+    let texts: Vec<&str> = answer["refusal"]["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["text"].as_str())
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("crew.json invalid") && t.contains("origin/main")),
+        "{texts:?}"
+    );
+
+    // Invalid at HEAD, fine on the default branch.
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["alpha"])]));
+    pin_origin_here(&w.repo);
+    commit_crew(&w.repo, "{ not json");
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+}
+
+#[tokio::test]
+async fn with_no_default_branch_ref_the_rules_are_read_at_head_alone() {
+    let w = two().await;
+    run_git(&w.repo, &["checkout", "-q", "-B", "topic"]);
+    for name in ["main", "master", "trunk"] {
+        let _ = std::process::Command::new("git")
+            .args(["branch", "-q", "-D", name])
+            .current_dir(&w.repo)
+            .output();
+    }
+    assert!(pinned_ref(&w.repo).await.is_none());
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "bravo");
+    let id = answer["task"].as_str().unwrap();
+    let text = reasons_text(&w, id);
+    assert!(
+        !text.contains("The rules differ") && !text.contains("Also read at"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_default_branch_without_the_file_leaves_the_checkouts_rules_in_force() {
+    let w = two().await;
+    pin_origin_here(&w.repo);
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "bravo");
+    let text = reasons_text(&w, answer["task"].as_str().unwrap());
+    assert!(
+        text.contains("has a file, and origin/main (the default branch) has no file"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn the_ledger_row_records_both_sides_and_a_class_of_the_same_name_on_each() {
+    let w = three().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![rule("keep", &["src/**"], &["alpha", "bravo"])]),
+    );
+    pin_origin_here(&w.repo);
+    let pinned_commit = git_out(&w.repo, &["rev-parse", "HEAD"]);
+    let pinned_blob = git_out(&w.repo, &["rev-parse", "HEAD:.orbyn/crew.json"]);
+    commit_crew(
+        &w.repo,
+        &file(vec![rule(
+            "keep",
+            &["lib/**", "src/**"],
+            &["bravo", "charlie"],
+        )]),
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap();
+    let body = &rows(&w, id)[0].body;
+    assert_eq!(body["pinned"]["reference"], "origin/main");
+    assert_eq!(body["pinned"]["commit"], pinned_commit);
+    assert_eq!(body["pinned"]["blob"], pinned_blob);
+    assert!(body["pinned"]["problem"].is_null());
+    // Both sides' class of the same name are listed, the default branch's saying where it came from.
+    let patterns: Vec<&str> = body["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["pattern"].as_str().unwrap())
+        .collect();
+    assert_eq!(patterns.len(), 2, "{patterns:?}");
+    assert!(
+        patterns.iter().any(|p| p.ends_with("(at origin/main)")),
+        "{patterns:?}"
+    );
+    assert!(patterns.iter().any(|p| !p.contains("(at ")), "{patterns:?}");
+}
+
+#[tokio::test]
+async fn init_default_branch_names_the_fallback_and_a_bad_value_is_ignored() {
+    let w = two().await;
+    run_git(&w.repo, &["checkout", "-q", "-B", "dev"]);
+    for name in ["main", "master", "trunk"] {
+        let _ = std::process::Command::new("git")
+            .args(["branch", "-q", "-D", name])
+            .current_dir(&w.repo)
+            .output();
+    }
+    run_git(&w.repo, &["config", "init.defaultBranch", "dev"]);
+    assert_eq!(pinned_ref(&w.repo).await.unwrap().name, "dev");
+    // Not a branch name: it must not be read as a revision such as `dev~1`.
+    for bad in ["dev~1", "dev^", "@{-1}", "-x"] {
+        run_git(&w.repo, &["config", "init.defaultBranch", bad]);
+        assert!(pinned_ref(&w.repo).await.is_none(), "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn the_default_branchs_rules_are_matched_against_the_tasks_own_tree() {
+    let w = two().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![rule("keys", &["crates/keys/**"], &["bravo"])]),
+    );
+    pin_origin_here(&w.repo);
+    // After the default branch was read, this checkout added a symlink under a lease that leads into the class.
+    stage(&w.repo, "100644", "crates/keys/k.txt", "k\n");
+    stage(&w.repo, "120000", "docs/link", "../crates/keys");
+    commit(&w.repo, "a link");
+    let (answer, error) = w
+        .start(
+            brief(json!({ "files": [{ "path": "docs/**", "mode": "write" }] })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer["route"]["engine"], "bravo",
+        "the link is followed in the task's tree, so alpha is kept out"
+    );
+}
+
+async fn with_origin_url() -> World {
+    let w = two().await;
+    run_git(
+        &w.repo,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/r.git",
+        ],
+    );
+    w
+}
+
+#[tokio::test]
+async fn an_origin_remote_with_nothing_fetched_blocks_every_engine() {
+    let w = with_origin_url().await;
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+    let texts: Vec<&str> = answer["refusal"]["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["text"].as_str())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("default branch unreadable")
+            && t.contains("`git fetch origin`")
+            && t.contains("push the default branch first")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().all(|t| !t.contains("crew.json invalid")),
+        "a git setup problem is not a rules file problem: {texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn once_a_branch_of_origin_is_fetched_it_is_read_again_and_no_remote_is_as_before() {
+    let w = with_origin_url().await;
+    pin_origin_here(&w.repo);
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "alpha");
+    // No origin at all: as before.
+    let w = two().await;
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "alpha");
+}
+
+#[tokio::test]
+async fn an_origin_with_branches_but_no_default_says_how_to_set_it() {
+    let w = with_origin_url().await;
+    let head = git_out(&w.repo, &["rev-parse", "HEAD"]);
+    run_git(
+        &w.repo,
+        &["update-ref", "refs/remotes/origin/feature", &head],
+    );
+    let (answer, _) = w.start(brief(json!({})), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+    let texts: Vec<&str> = answer["refusal"]["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["text"].as_str())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("default branch unreadable")
+            && t.contains("git remote set-head origin --auto")),
+        "{texts:?}"
     );
 }

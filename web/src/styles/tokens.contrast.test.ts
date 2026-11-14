@@ -98,6 +98,26 @@ describe("text contrast of the theme tokens (Orbyn designs v101 shared contrast 
     }
   });
 
+  it("keeps the thread header's status text at 4.5:1 or more in every theme: the colour its own rules name, on every surface", () => {
+    // The header's status ("Running", "Waiting for you", "Offline", "Archived", "Compacting") is a `.page-sub-item`, which takes the
+    // colour of `.page-sub`; the waiting-for-a-limit label is `.limit-label`. Read the token each rule names, so changing a rule to a
+    // weaker token fails here, not only changing a token's value.
+    const colourOf = (file: string, selector: string) => {
+      const text = readFileSync(join(process.cwd(), `src/styles/${file}`), "utf8");
+      const start = text.indexOf(`\n${selector} {`);
+      expect(start, `${selector} in ${file}`).toBeGreaterThanOrEqual(0);
+      return /color:\s*var\((--[A-Za-z-]+)\)/.exec(text.slice(start, text.indexOf("\n}", start)))?.[1];
+    };
+    const tokens = { ".page-sub": colourOf("thread.css", ".page-sub"), ".limit-label": colourOf("detailsCard.css", ".limit-label"), ".conn-status": colourOf("browser.css", ".conn-status") };
+    expect(tokens).toEqual({ ".page-sub": "--color-muted", ".limit-label": "--color-warnText", ".conn-status": "--color-muted" });
+    for (const theme of ["light", "dark", "dim"] as const) {
+      for (const [selector, foreground] of Object.entries(tokens)) {
+        const { min, on } = worst(theme, foreground as string);
+        expect(min, `${theme} ${selector} (${foreground}) on ${on}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it("uses the designer's Light amber text and red", () => {
     expect(block(":root")).toContain("--color-warnText: #8f5004;");
     expect(block(":root")).toContain("--color-danger: #c22020;");

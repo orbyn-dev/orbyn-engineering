@@ -205,9 +205,11 @@ pub(super) fn check(tool: &Path) -> Option<String> {
                 .to_owned(),
         );
     }
-    let run = std::process::Command::new(tool)
-        .args(["-p", "(version 1)(allow default)", "/usr/bin/true"])
-        .output();
+    let mut command = std::process::Command::new(tool);
+    command.args(["-p", "(version 1)(allow default)", "/usr/bin/true"]);
+    // The probe runs the system restriction tool; it too goes through the one gate.
+    crate::host::child_env::for_tool(&mut command);
+    let run = command.output();
     match run {
         Ok(output) if output.status.success() => None,
         _ => Some(

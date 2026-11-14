@@ -53,6 +53,30 @@ const CLAUDE_CREDENTIALS: &[&str] = &[
 const CODEX_CREDENTIALS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY"];
 const ENDPOINTS: &[&str] = &["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"];
 
+/// Prefixes that belong to the account: a sign-in, this device's keys, the keychain. Nothing Orbyn
+/// starts may carry a name under one of them, and no child may inherit one, whatever it holds
+/// (docs/account-threat-model.md, control 2). Names are compared without regard to case on every
+/// platform: Windows ignores case, and a child that reads `orbyn_account_x` should not either.
+const ACCOUNT_PREFIXES: &[&str] = &["ORBYN_ACCOUNT_", "ORBYN_DEVICE_", "ORBYN_KEYSTORE_"];
+/// Names outside those prefixes that would hold account material if anyone ever set them: the
+/// vault key, the session and service tokens, the password, the Engine's sign-in setup secret.
+const ACCOUNT_NAMES: &[&str] = &[
+    "ORBYN_VAULT_KEY",
+    "ORBYN_SESSION_TOKEN",
+    "ORBYN_SERVICE_TOKEN",
+    "ORBYN_PASSWORD",
+    "ORBYN_AUTH_SETUP",
+];
+
+/// Whether `name` is reserved for account material, and so never reaches a child.
+pub fn is_account_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    ACCOUNT_PREFIXES
+        .iter()
+        .any(|prefix| upper.starts_with(prefix))
+        || ACCOUNT_NAMES.contains(&upper.as_str())
+}
+
 static PREFER_SAVED_LOGIN: AtomicBool = AtomicBool::new(false);
 
 /// The `prefer_saved_login` preference, kept here because spawning has no store.
@@ -108,7 +132,10 @@ pub fn plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> 
         let host_endpoint =
             engine && text == "ANTHROPIC_BASE_URL" && drops_host_endpoint(nested, |name| has(name));
         let dev_login = engine && OAUTH_DEV_SWITCHES.contains(&text.as_str());
-        if host_session
+        // Account material goes from every child: an engine, a tool, a terminal.
+        let account = is_account_name(&text);
+        if account
+            || host_session
             || host_endpoint
             || dev_login
             || scrubbed_login
@@ -171,13 +198,21 @@ pub fn for_engine(command: &mut Command) {
 /// engine, so it does.
 pub fn for_terminal(engine: bool) -> EnvPlan {
     let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-    let mut changes = plan(
+    terminal_plan(
         &vars,
         engine,
         engine && PREFER_SAVED_LOGIN.load(Ordering::Relaxed),
-    );
+    )
+}
+
+/// The terminal's plan for the given variables, so a test can feed it any set.
+fn terminal_plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> EnvPlan {
+    let mut changes = plan(vars, engine, prefer_saved);
     changes.set.retain(|(name, _)| name != "PATH");
-    let base = std::env::var_os("PATH");
+    let base = vars
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.clone());
     changes.set.push(("PATH".into(), widened(base.as_deref())));
     changes
 }
@@ -583,5 +618,219 @@ mod tests {
         assert_eq!(npm_prefix("a=b\nprefix = \"/opt/n\"\n"), Some("/opt/n"));
         assert_eq!(npm_prefix("prefix=${HOME}/n\n"), None);
         assert_eq!(npm_prefix("registry=x\n"), None);
+    }
+
+    // ---- account material never reaches a child (account-threat-model control 2) ----
+
+    /// A value nobody could guess and no source file holds.
+    fn canary(label: &str) -> String {
+        format!("{label}-{}", ulid::Ulid::generate())
+    }
+
+    /// Every reserved name and prefix, as a name a person could have set, with the spellings a case-blind
+    /// system (Windows) or a careless script would give it.
+    fn reserved() -> Vec<String> {
+        let mut names = Vec::new();
+        for base in [
+            "ORBYN_ACCOUNT_PASSWORD",
+            "ORBYN_ACCOUNT_",
+            "ORBYN_ACCOUNT_SESSION_TOKEN",
+            "ORBYN_DEVICE_KEYS",
+            "ORBYN_DEVICE_",
+            "ORBYN_KEYSTORE_URL",
+            "ORBYN_KEYSTORE_",
+            "ORBYN_VAULT_KEY",
+            "ORBYN_SESSION_TOKEN",
+            "ORBYN_SERVICE_TOKEN",
+            "ORBYN_PASSWORD",
+            "ORBYN_AUTH_SETUP",
+        ] {
+            names.push(base.to_owned());
+            names.push(base.to_ascii_lowercase());
+            let mixed: String = base
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if i % 2 == 0 {
+                        c
+                    } else {
+                        c.to_ascii_lowercase()
+                    }
+                })
+                .collect();
+            names.push(mixed);
+        }
+        names
+    }
+
+    /// What must stay: a person's own variables, names that only look like a reserved one, and the
+    /// ones Orbyn itself passes on.
+    const KEPT: &[&str] = &[
+        "HOME",
+        "ORBYN_DATA_DIR",
+        "ORBYN_ENGINE_URL",
+        "ORBYN_ACCOUNTS",
+        "ORBYN_ACCOUNT",
+        "ORBYN_DEVICE",
+        "ORBYN_DEVICES_SEEN",
+        "ORBYN_KEYSTORES",
+        "MY_ORBYN_ACCOUNT_NAME",
+        "PRE_ORBYN_DEVICE_ID",
+        "ORBYN_VAULT",
+        "ORBYN_TOKEN_COUNT",
+    ];
+
+    #[test]
+    fn every_reserved_name_and_prefix_is_removed_for_a_tool_an_engine_and_a_terminal() {
+        let mut inherited: Vec<(OsString, OsString)> = reserved()
+            .into_iter()
+            .map(|name| (name.into(), canary("reserved").into()))
+            .collect();
+        inherited.extend(
+            KEPT.iter()
+                .map(|name| ((*name).into(), canary("kept").into())),
+        );
+        for (kind, changes) in [
+            ("tool", plan(&inherited, false, false)),
+            ("engine", plan(&inherited, true, false)),
+            ("engine, saved login", plan(&inherited, true, true)),
+            ("terminal", terminal_plan(&inherited, false, false)),
+            ("engine terminal", terminal_plan(&inherited, true, false)),
+        ] {
+            let gone = removed(&changes);
+            for name in reserved() {
+                assert!(gone.contains(&name), "{kind}: {name} stays");
+            }
+            for name in KEPT {
+                assert!(!gone.contains(&(*name).to_owned()), "{kind}: {name} goes");
+            }
+            // Nothing is set from a reserved name either.
+            assert!(
+                changes
+                    .set
+                    .iter()
+                    .all(|(name, _)| !is_account_name(&name_of(name))),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_is_reserved_without_regard_to_case_and_only_by_prefix_or_exact_name() {
+        for name in reserved() {
+            assert!(is_account_name(&name), "{name}");
+        }
+        for name in KEPT {
+            assert!(!is_account_name(name), "{name}");
+        }
+        // The prefixes are whole words: one more or fewer character is not reserved.
+        for name in [
+            "ORBYN_ACCOUN_X",
+            "ORBYN_ACCOUNT",
+            "ORBYN_DEVIC_X",
+            "ORBYN_KEYSTOR_X",
+            "",
+        ] {
+            assert!(!is_account_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn the_scrub_leaves_every_existing_rule_as_it_was() {
+        // A reserved name beside the host-session and login names: each rule still applies by itself.
+        let inherited = vars(&[
+            ("CLAUDECODE", "1"),
+            ("CLAUDE_CODE_SESSION_ID", "s"),
+            ("OPENAI_API_KEY", "k"),
+            ("ORBYN_ACCOUNT_PASSWORD", "p"),
+            ("HOME", "/h"),
+        ]);
+        let gone = removed(&plan(&inherited, true, true));
+        assert_eq!(
+            gone,
+            [
+                "CLAUDECODE",
+                "CLAUDE_CODE_SESSION_ID",
+                "OPENAI_API_KEY",
+                "ORBYN_ACCOUNT_PASSWORD"
+            ]
+        );
+    }
+
+    /// Set on the helper process only, so the helper test knows it is the one to run.
+    const HELPER: &str = "ORBYN_TEST_CHILD_ENV_HELPER";
+    const KEEP_NAME: &str = "ORBYN_TEST_KEEP";
+
+    /// A real program that prints its environment, for the platform.
+    fn env_printer() -> Command {
+        if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/D", "/C", "set"]);
+            command
+        } else {
+            Command::new("/usr/bin/env")
+        }
+    }
+
+    /// Runs only inside the process the next test starts: it spawns real children through the
+    /// gate, as a tool and as an engine, and prints what each of them sees.
+    #[test]
+    fn helper_prints_what_real_children_inherit() {
+        if std::env::var_os(HELPER).is_none() {
+            return;
+        }
+        for (kind, engine) in [("tool", false), ("engine", true)] {
+            let mut command = env_printer();
+            apply(&mut command, engine);
+            let output = command.output().expect("the printer ran");
+            assert!(output.status.success());
+            println!("BEGIN {kind}");
+            println!("{}", String::from_utf8_lossy(&output.stdout));
+            println!("END {kind}");
+        }
+    }
+
+    #[test]
+    fn a_real_child_prints_its_environment_and_it_holds_no_account_name_or_value() {
+        let secret = canary("account-secret");
+        let kept = canary("kept");
+        let mut helper = Command::new(std::env::current_exe().unwrap());
+        helper
+            .args([
+                "--exact",
+                "host::child_env::tests::helper_prints_what_real_children_inherit",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HELPER, "1")
+            .env(KEEP_NAME, &kept);
+        // The helper process starts with every reserved name set, as an Orbyn started from a shell
+        // that had them (a person's profile, a CI job) would.
+        for name in reserved() {
+            helper.env(name, &secret);
+        }
+        let output = helper.output().expect("the helper ran");
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(output.status.success(), "{text}");
+        for kind in ["tool", "engine"] {
+            let begin = text
+                .find(&format!("BEGIN {kind}"))
+                .expect("the helper printed");
+            let end = text
+                .find(&format!("END {kind}"))
+                .expect("the helper finished");
+            let printed = &text[begin..end];
+            // It really is the environment: a variable that must pass is there.
+            assert!(
+                printed.contains(&format!("{KEEP_NAME}={kept}")),
+                "{kind}: {printed}"
+            );
+            // And nothing of the account is, by name or by value.
+            assert!(!printed.contains(&secret), "{kind}: a value leaked");
+            for line in printed.lines() {
+                let name = line.split('=').next().unwrap_or_default();
+                assert!(!is_account_name(name), "{kind}: {name}");
+            }
+        }
     }
 }

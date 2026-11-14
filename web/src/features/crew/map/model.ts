@@ -50,15 +50,16 @@ export function engineStatusWord(status: FlowEngineStatus): string {
 /**
  * The line a crew shows above its workers for an engine that cannot take work. There is no offline value on the wire: the offline
  * frame is drawn from `not_installed` and the signed-out frame from `signed_out`. The other two have no frame, and say what the
- * registry says.
+ * registry says, in its words: the same word as the row's chip.
  */
 export function engineProblem(engine: string, status: FlowEngineStatus): string | null {
   switch (status) {
     case "ready": return null;
     case "not_installed": return `${engine} isn’t running.`;
     case "signed_out": return `${engine} isn’t signed in.`;
-    case "sign_in_unconfirmed": return `Sign-in to ${engine} isn’t confirmed.`;
-    case "broken": return `${engine} can’t start.`;
+    // The two states no frame draws say the registry's own word, the same one the row's chip carries.
+    case "sign_in_unconfirmed": return `${engine}: ${engineStatusWord(status)}`;
+    case "broken": return `${engine}: ${engineStatusWord(status)}`;
   }
 }
 

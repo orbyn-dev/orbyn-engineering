@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use orbyn_contracts::CrewToken;
 
-use super::file::{BUILT_IN, ClassFile, INVALID_RULE, Rule};
+use super::file::{BUILT_IN, ClassFile, INVALID_RULE, Rule, UNREADABLE_RULE};
 use super::glob::{fold, path_problem};
 use crate::source_control::git::{git_hardened as git, text};
 
@@ -47,6 +47,28 @@ pub struct Block {
     pub allowed: Vec<String>,
 }
 
+/// The same brief's files read against the rules at the default branch (see [`PinnedRef`](super::file::PinnedRef)).
+#[derive(Clone, Debug)]
+pub struct Pinned {
+    /// The ref's short name, such as `origin/main`.
+    pub name: String,
+    pub commit: String,
+    pub classes: PathClasses,
+}
+
+/// A class that applied, from either side.
+#[derive(Clone, Debug)]
+pub struct Applied {
+    pub name: String,
+    pub pattern: String,
+    pub samples: Vec<String>,
+    pub reason: String,
+    /// The engines the rule allows.
+    pub engines: Vec<String>,
+    /// The default branch's ref name when the class came from there, `None` for the checkout's own rules.
+    pub at: Option<String>,
+}
+
 /// The file and what the brief's files matched in it.
 #[derive(Clone, Debug, Default)]
 pub struct PathClasses {
@@ -54,6 +76,39 @@ pub struct PathClasses {
     pub hits: Vec<Hit>,
     /// Why every class counted, when it did.
     pub unknown: Option<String>,
+    /// What the default branch's copy of the file says about the same files. When it is set the stricter of the two applies:
+    /// an engine must be allowed by both, and a file either side cannot read blocks every engine.
+    pub pinned: Option<Box<Pinned>>,
+}
+
+impl Applied {
+    /// The pattern, saying which ref it came from when that is the default branch.
+    pub fn shown_pattern(&self) -> String {
+        match &self.at {
+            Some(at) => format!("{} (at {at})", self.pattern),
+            None => self.pattern.clone(),
+        }
+    }
+}
+
+fn side_names(side: &PathClasses) -> Vec<String> {
+    if side.file.invalid() {
+        return vec![INVALID_RULE.to_owned()];
+    }
+    side.hits
+        .iter()
+        .map(|hit| side.rule(hit).name.clone())
+        .collect()
+}
+
+fn file_words(file: &ClassFile) -> String {
+    if file.invalid() {
+        "a file that cannot be trusted".to_owned()
+    } else if file.blob.is_some() {
+        "a file".to_owned()
+    } else {
+        "no file".to_owned()
+    }
 }
 
 impl PathClasses {
@@ -65,65 +120,183 @@ impl PathClasses {
         }
     }
 
-    /// Whether the classification says anything: a file was read, or a class matched.
-    pub fn applies(&self) -> bool {
-        self.file.invalid() || !self.hits.is_empty() || self.file.blob.is_some()
+    /// Adds the default branch's reading of the same files.
+    pub fn with_pinned(mut self, name: String, commit: String, classes: PathClasses) -> Self {
+        // A ref name is repository data: it is redacted and kept short wherever it is shown.
+        let name: String = crate::crew::redact(&name).chars().take(80).collect();
+        self.pinned = Some(Box::new(Pinned {
+            name,
+            commit,
+            classes,
+        }));
+        self
     }
 
+    fn sides(&self) -> impl Iterator<Item = &PathClasses> {
+        std::iter::once(self).chain(self.pinned.as_deref().map(|p| &p.classes))
+    }
+
+    /// Whether the classification says anything: a file was read, or a class matched.
+    pub fn applies(&self) -> bool {
+        self.sides()
+            .any(|s| s.file.invalid() || !s.hits.is_empty() || s.file.blob.is_some())
+    }
+
+    /// Why every class counted, on either side.
+    pub fn unknown_why(&self) -> Option<&str> {
+        self.sides().find_map(|s| s.unknown.as_deref())
+    }
+
+    /// Whether the file at HEAD or at the default branch cannot be trusted.
+    pub fn invalid(&self) -> bool {
+        self.sides().any(|s| s.file.invalid())
+    }
+
+    /// The rule of a hit of the checkout's own side.
     pub fn rule(&self, hit: &Hit) -> &Rule {
         &self.file.rules[hit.rule]
     }
 
-    /// The first rule that does not allow `engine`, or the invalid file's rule.
-    pub fn block_of(&self, engine: &CrewToken) -> Option<Block> {
+    /// The name of the rule that blocks every engine: the rules file's, or the default branch's setup.
+    pub fn invalid_rule(&self) -> &'static str {
+        match &self.pinned {
+            Some(pinned) if !self.file.invalid() && pinned.classes.file.setup => UNREADABLE_RULE,
+            _ => INVALID_RULE,
+        }
+    }
+
+    /// Whether the block is a git setup problem, which a fix to the rules file does not cure.
+    pub fn setup_problem(&self) -> bool {
+        self.invalid_rule() == UNREADABLE_RULE
+    }
+
+    /// The words that block every engine while a file is invalid, saying which one when it is the default branch's.
+    pub fn problem_text(&self) -> String {
         if self.file.invalid() {
+            return self.file.problem_text();
+        }
+        match &self.pinned {
+            Some(pinned) if pinned.classes.file.setup => pinned.classes.file.problem_text(),
+            Some(pinned) if pinned.classes.file.invalid() => format!(
+                "at {} (the default branch): {}",
+                pinned.name,
+                pinned.classes.file.problem_text()
+            ),
+            _ => String::new(),
+        }
+    }
+
+    /// The classes that applied, from both sides, each side's own; one that reads the same on both is listed once.
+    pub fn matched(&self) -> Vec<Applied> {
+        let mut out: Vec<Applied> = Vec::new();
+        for (at, side) in self.sides().enumerate() {
+            let from = self
+                .pinned
+                .as_deref()
+                .filter(|_| at == 1)
+                .map(|p| p.name.clone());
+            for hit in &side.hits {
+                let name = side.rule(hit).name.clone();
+                // The same class, pattern and engines on both sides (the usual case: HEAD is the default branch's tip) is one.
+                let engines = &side.rule(hit).engines;
+                if out.iter().any(|m| {
+                    m.name == name
+                        && m.pattern == hit.pattern
+                        && m.reason == side.rule(hit).reason
+                        && &m.engines == engines
+                }) {
+                    continue;
+                }
+                out.push(Applied {
+                    name,
+                    pattern: hit.pattern.clone(),
+                    samples: hit.samples.clone(),
+                    reason: side.rule(hit).reason.clone(),
+                    engines: side.rule(hit).engines.clone(),
+                    at: from.clone(),
+                });
+            }
+        }
+        out
+    }
+
+    /// The first rule that does not allow `engine`, or the invalid file's rule. The checkout's rules come first, then the
+    /// default branch's.
+    pub fn block_of(&self, engine: &CrewToken) -> Option<Block> {
+        if self.invalid() {
             return Some(Block {
-                rule: INVALID_RULE.to_owned(),
-                reason: self.file.problem_text(),
+                rule: self.invalid_rule().to_owned(),
+                reason: self.problem_text(),
                 allowed: Vec::new(),
             });
         }
-        self.hits.iter().find_map(|hit| {
-            let rule = self.rule(hit);
-            (!rule.engines.iter().any(|e| e == engine.as_str())).then(|| Block {
-                rule: rule.name.clone(),
-                reason: rule.reason.clone(),
-                allowed: rule.engines.clone(),
+        self.sides().find_map(|side| {
+            side.hits.iter().find_map(|hit| {
+                let rule = side.rule(hit);
+                (!rule.engines.iter().any(|e| e == engine.as_str())).then(|| Block {
+                    rule: rule.name.clone(),
+                    reason: rule.reason.clone(),
+                    allowed: self.allowed().unwrap_or_default(),
+                })
             })
         })
     }
 
-    /// The engines every matching class allows, as ids. `None` when no class matched: any engine. An invalid file allows none.
+    /// The engines every matching class allows, as ids, on both sides. `None` when no class matched: any engine. An invalid
+    /// file allows none.
     pub fn allowed(&self) -> Option<Vec<String>> {
-        if self.file.invalid() {
+        if self.invalid() {
             return Some(Vec::new());
         }
         let mut now: Option<Vec<String>> = None;
-        for hit in &self.hits {
-            let rule = self.rule(hit);
-            now = Some(match now {
-                None => rule.engines.clone(),
-                Some(have) => have
-                    .into_iter()
-                    .filter(|e| rule.engines.contains(e))
-                    .collect(),
-            });
+        for side in self.sides() {
+            for hit in &side.hits {
+                let rule = side.rule(hit);
+                now = Some(match now {
+                    None => rule.engines.clone(),
+                    Some(have) => have
+                        .into_iter()
+                        .filter(|e| rule.engines.contains(e))
+                        .collect(),
+                });
+            }
         }
         now
     }
 
-    /// The names of the classes that applied, in the file's order.
+    /// The names of the classes that applied: the checkout's in the file's order, then the default branch's others.
     pub fn names(&self) -> Vec<String> {
-        if self.file.invalid() {
-            return vec![INVALID_RULE.to_owned()];
+        if self.invalid() {
+            return vec![self.invalid_rule().to_owned()];
         }
-        if self.hits.is_empty() {
+        let mut names: Vec<String> = Vec::new();
+        for side in self.sides() {
+            for name in side_names(side) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        if names.is_empty() {
             return vec![BUILT_IN.to_owned()];
         }
-        self.hits
-            .iter()
-            .map(|hit| self.rule(hit).name.clone())
-            .collect()
+        names
+    }
+
+    /// Whether the checkout's rules and the default branch's are not the same file, in words. `None` when there is no default
+    /// branch to compare, or the two are the same file.
+    pub fn differs(&self) -> Option<String> {
+        let pinned = self.pinned.as_deref()?;
+        let (here, there) = (&self.file, &pinned.classes.file);
+        if here.blob == there.blob && here.problems == there.problems {
+            return None;
+        }
+        Some(format!(
+            "The rules differ: this checkout's HEAD has {}, and {} (the default branch) has {}. The stricter of the two applies, so an engine must be allowed by both.",
+            file_words(here),
+            pinned.name,
+            file_words(there)
+        ))
     }
 }
 
@@ -325,6 +498,7 @@ async fn classify_probes(
                 file,
                 hits,
                 unknown: None,
+                pinned: None,
             }
         }
     }
@@ -345,6 +519,7 @@ fn every_class(file: ClassFile, why: String) -> PathClasses {
         file,
         hits,
         unknown: Some(why),
+        pinned: None,
     }
 }
 

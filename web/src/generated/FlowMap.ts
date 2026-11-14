@@ -5,6 +5,7 @@ import type { FlowNode } from "./FlowNode";
 
 export type FlowMap = { crew: string, nodes: Array<FlowNode>, edges: Array<FlowEdge>, engines: Array<FlowEngineRow>, 
 /**
- * A list was cut at its cap; the newest are shown.
+ * A list was cut at its cap, or the crew's newest-message or newest-delivery window cut older traffic, so an edge's count and a
+ * node's unread cover recent traffic only.
  */
 truncated: boolean, };
