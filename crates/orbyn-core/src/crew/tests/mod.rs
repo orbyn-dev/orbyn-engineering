@@ -27,6 +27,7 @@ mod fake;
 mod filters;
 mod flow;
 mod flow_board;
+mod flow_map;
 mod hardening;
 mod harness;
 mod lifecycle;

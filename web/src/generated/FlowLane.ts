@@ -11,4 +11,16 @@ group: string, task: string, round: number, state: string, engine?: string | nul
 /**
  * Findings this lane filed in that round.
  */
-findings: number, confirmed: number, unconfirmed: number, };
+findings: number, confirmed: number, unconfirmed: number, 
+/**
+ * The tier the lane was routed at, such as `lead`.
+ */
+tier?: string | null, 
+/**
+ * The commit the lane read.
+ */
+commit?: string | null, 
+/**
+ * The lane ran on the engine that built the work.
+ */
+same_engine?: boolean | null, };

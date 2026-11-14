@@ -10,6 +10,8 @@
 mod board;
 mod cells;
 mod facts;
+mod map;
+mod messages;
 mod scrub;
 
 use orbyn_contracts as wire;
@@ -225,6 +227,20 @@ impl Core {
                 unconfirmed: u32::try_from(of("unconfirmed")).unwrap_or(0),
                 engine: route.as_ref().map(|r| r.engine.as_str().to_owned()),
                 model: route.as_ref().map(|r| scrub.text(r.model.as_str(), 80)),
+                tier: route.as_ref().map(|r| wire_name(&r.tier)),
+                // The commit the lane's run read, from the review's own row.
+                commit: facts.review["lanes"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|l| l["rounds"].as_array().into_iter().flatten())
+                    .find(|r| r["task"] == task.as_str())
+                    .and_then(|r| r["commit"].as_str())
+                    .map(|c| scrub.text(c, 64)),
+                same_engine: route
+                    .as_ref()
+                    .zip(facts.route.as_ref())
+                    .map(|(lane, build)| lane.engine == build.engine),
                 lane: shown,
                 task,
                 round,
