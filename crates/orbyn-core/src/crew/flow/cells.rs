@@ -63,49 +63,76 @@ fn build(facts: &Facts) -> FlowCellState {
     }
 }
 
-/// The evidence of the latest verification: the rows on the commit the newest row ran on.
-fn latest_batch(evidence: &[Evidence]) -> Vec<&Evidence> {
-    let Some(last) = evidence.last() else {
-        return Vec::new();
-    };
+/// One row of evidence as the rule reads it: the run it was written under, the commit it ran on, and whether it passed.
+struct Row<'a> {
+    run: &'a str,
+    commit: &'a str,
+    pass: bool,
+    /// Failed or errored; a skipped check is neither a pass nor a break.
+    broke: bool,
+}
+
+fn rows(evidence: &[Evidence]) -> Vec<Row<'_>> {
     evidence
         .iter()
-        .filter(|e| e.commit == last.commit)
+        .map(|e| Row {
+            run: e.run_id.as_str(),
+            commit: e.commit.as_str(),
+            pass: e.outcome == CheckOutcome::Pass,
+            broke: matches!(e.outcome, CheckOutcome::Fail | CheckOutcome::Error),
+        })
         .collect()
 }
 
-/// The states a task is in once it has reached verifying or gone on from it.
+/// The current verification: the rows written under the build's own run, on the commit the newest of them ran on. A row of an
+/// earlier round was written under another run and is never counted.
+fn current_batch<'a, 'b>(rows: &'b [Row<'a>], run_id: &str) -> Vec<&'b Row<'a>> {
+    let mine: Vec<&Row<'a>> = rows.iter().filter(|r| r.run == run_id).collect();
+    let Some(last) = mine.last() else {
+        return Vec::new();
+    };
+    mine.iter()
+        .filter(|r| r.commit == last.commit)
+        .copied()
+        .collect()
+}
+
+/// The states a task is in once it has reached verifying or gone on from it. `failed` is one: it is where a failed verification
+/// rests until the task is tried again, and its count is the most useful one.
 pub(super) fn reached_verifying(state: &str) -> bool {
     matches!(
         state,
-        "verifying" | "needs_person" | "passed" | "stopped" | "cancelled"
+        "verifying" | "failed" | "needs_person" | "passed" | "stopped" | "cancelled"
     )
 }
 
-/// Checks passed out of checks run in the latest verification, as two counts and nothing else. Only a task that has reached
-/// verifying (`verifying`, `needs_person`, `passed`, `stopped`, `cancelled`) has one; a queued, routed or running task has none,
-/// even when an earlier round left evidence. A task that never ran its checks has none either.
-pub(super) fn check_counts(state: &str, evidence: &[Evidence]) -> Option<(u32, u32)> {
+fn counts_of(state: &str, run_id: &str, rows: &[Row<'_>]) -> Option<(u32, u32)> {
     if !reached_verifying(state) {
         return None;
     }
-    let batch = latest_batch(evidence);
+    let batch = current_batch(rows, run_id);
     if batch.is_empty() {
         return None;
     }
-    let passed = batch
-        .iter()
-        .filter(|e| e.outcome == CheckOutcome::Pass)
-        .count();
+    let passed = batch.iter().filter(|r| r.pass).count();
     Some((
         u32::try_from(passed).ok()?,
         u32::try_from(batch.len()).ok()?,
     ))
 }
 
+/// Checks passed out of checks run in the current verification, as two counts and nothing else. Only a build that has reached
+/// verifying (`verifying`, `failed`, `needs_person`, `passed`, `stopped`, `cancelled`) has one; a queued, routed or running build
+/// has none, and neither has one whose current run has written no row yet, even when an earlier round left evidence.
+pub(super) fn check_counts(state: &str, run_id: &str, evidence: &[Evidence]) -> Option<(u32, u32)> {
+    counts_of(state, run_id, &rows(evidence))
+}
+
 fn checks(facts: &Facts) -> FlowCell {
-    // The latest verification: the evidence on the commit the newest row ran on.
-    if facts.evidence.is_empty() {
+    // The current verification: the build's own run, on the commit its newest row ran on. An earlier round's rows are not it.
+    let all = rows(&facts.evidence);
+    let batch = current_batch(&all, &facts.run_id);
+    if batch.is_empty() {
         let state = if build_state(facts) == "verifying" {
             FlowCellState::Running
         } else {
@@ -113,14 +140,8 @@ fn checks(facts: &Facts) -> FlowCell {
         };
         return cell(FlowStage::Checks, state);
     }
-    let batch = latest_batch(&facts.evidence);
-    let passed = batch
-        .iter()
-        .filter(|e| e.outcome == CheckOutcome::Pass)
-        .count();
-    let broken = batch
-        .iter()
-        .any(|e| matches!(e.outcome, CheckOutcome::Fail | CheckOutcome::Error));
+    let passed = batch.iter().filter(|r| r.pass).count();
+    let broken = batch.iter().any(|r| r.broke);
     let state = if broken {
         FlowCellState::Failed
     } else if build_state(facts) == "verifying" {
@@ -301,30 +322,89 @@ pub(super) fn in_filter(
 mod tests {
     use super::*;
 
+    const GATED: [&str; 6] = [
+        "verifying",
+        "failed",
+        "needs_person",
+        "passed",
+        "stopped",
+        "cancelled",
+    ];
+
+    fn row<'a>(run: &'a str, commit: &'a str, pass: bool) -> Row<'a> {
+        Row {
+            run,
+            commit,
+            pass,
+            broke: !pass,
+        }
+    }
+
     #[test]
     fn only_a_task_that_reached_verifying_has_a_check_count() {
-        for state in ["briefed", "routed", "running", "changed_approach", "failed"] {
+        let rows = [row("r1", "c1", true), row("r1", "c1", false)];
+        for state in ["briefed", "routed", "running", "changed_approach"] {
             assert!(!reached_verifying(state), "{state}");
-            assert_eq!(check_counts(state, &[]), None, "{state}");
+            assert_eq!(counts_of(state, "r1", &rows), None, "{state}");
         }
-        for state in [
-            "verifying",
-            "needs_person",
-            "passed",
-            "stopped",
-            "cancelled",
-        ] {
+        for state in GATED {
             assert!(reached_verifying(state), "{state}");
-            assert_eq!(check_counts(state, &[]), None, "{state} with no checks run");
-        }
-        for state in [
-            "verifying",
-            "needs_person",
-            "passed",
-            "stopped",
-            "cancelled",
-        ] {
             assert!(crate::crew::lifecycle::STATES.contains(&state), "{state}");
+            assert_eq!(counts_of(state, "r1", &rows), Some((1, 2)), "{state}");
+            assert_eq!(counts_of(state, "r1", &[]), None, "{state}: none ran");
         }
+    }
+
+    #[test]
+    fn a_later_round_shows_none_until_its_own_run_writes_a_row() {
+        // Round 1 ran under r1; round 2 is a new run, r2, that has written nothing yet.
+        let first = [
+            row("r1", "c1", true),
+            row("r1", "c1", true),
+            row("r1", "c1", false),
+        ];
+        for state in GATED {
+            assert_eq!(counts_of(state, "r2", &first), None, "{state} in round 2");
+        }
+        assert_eq!(counts_of("verifying", "r1", &first), Some((2, 3)));
+    }
+
+    #[test]
+    fn a_later_round_counts_only_its_own_rows() {
+        let both = [
+            row("r1", "c1", true),
+            row("r1", "c1", true),
+            row("r1", "c1", true),
+            row("r2", "c2", true),
+            row("r2", "c2", false),
+        ];
+        for state in GATED {
+            assert_eq!(counts_of(state, "r2", &both), Some((1, 2)), "{state}");
+        }
+        // The earlier round is still its own, and a foreign run's newest row never decides the commit.
+        assert_eq!(counts_of("passed", "r1", &both), Some((3, 3)));
+        let after = [
+            row("r1", "c1", true),
+            row("r1", "c1", false),
+            row("r2", "c9", true),
+        ];
+        assert_eq!(counts_of("failed", "r1", &after), Some((1, 2)));
+    }
+
+    #[test]
+    fn only_the_newest_commit_of_the_current_run_is_counted() {
+        let tried_twice = [
+            row("r1", "c1", false),
+            row("r1", "c1", false),
+            row("r1", "c2", true),
+        ];
+        assert_eq!(counts_of("passed", "r1", &tried_twice), Some((1, 1)));
+    }
+
+    #[test]
+    fn running_in_round_two_shows_none_even_with_current_rows() {
+        let rows = [row("r2", "c2", true)];
+        assert_eq!(counts_of("running", "r2", &rows), None);
+        assert_eq!(counts_of("needs_person", "r2", &rows), Some((1, 1)));
     }
 }

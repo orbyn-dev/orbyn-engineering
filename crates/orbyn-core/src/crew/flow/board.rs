@@ -6,7 +6,7 @@
 use orbyn_contracts as wire;
 use orbyn_contracts::{FlowColumnId as Column, ResultState};
 
-use super::cells::check_counts;
+use super::cells::{build_state, check_counts};
 use super::facts::Facts;
 use super::scrub::{Scrub, TEXT_MAX};
 use super::{QUERY_MAX, SCAN_MAX};
@@ -146,7 +146,7 @@ impl Core {
                     checkout,
                     !facts.evidence.is_empty(),
                 ),
-                checks: check_counts(&task.state, &facts.evidence)
+                checks: check_counts(build_state(facts), &facts.run_id, &facts.evidence)
                     .map(|(passed, of)| wire::FlowChecks { passed, of }),
             },
         ))
