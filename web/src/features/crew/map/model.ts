@@ -1,6 +1,7 @@
 // What the map and the lanes show from the routes' answers: the words and tones of Crew Designs and of the service's own wire values.
 // Pure functions. There is no word here for what the routes do not carry (a worker's tokens, a branch, a level, a blocked state, a
 // message's text, a fact's value).
+import { validTaskId } from "../writes/api";
 import type { FlowDeliveryMode } from "../../../generated/FlowDeliveryMode";
 import type { FlowEngineStatus } from "../../../generated/FlowEngineStatus";
 import type { FlowLane } from "../../../generated/FlowLane";
@@ -129,3 +130,9 @@ export function laneFacts(lane: Pick<FlowLane, "tier" | "commit" | "same_engine"
     lane.same_engine === true ? "Same engine as author" : lane.same_engine === false ? "Different engine from the author" : null,
   ].filter((one): one is string => one !== null);
 }
+
+/**
+ * Whether a member's name can be sent as the messages filter. The service refuses a name that fails its id check, and a name it
+ * scrubbed ("[redacted]", "Withheld.") is no member's id at all: those are shown, but never sent.
+ */
+export const memberFilterable = (member: string): boolean => validTaskId(member) && member !== "Withheld.";

@@ -6,7 +6,7 @@
  * Scenarios: `crew` (the lead and three workers), `crew-map-engine-states` (one worker on each of four more engines, so all five registry states show), `crew-map-empty` (the lead alone), `crew-map-one`, `crew-map-many` (twelve
  * workers), `crew-map-deep` (a Claude worker, which reports its subagents), `crew-map-problems` (a failed worker, a quiet one and one
  * that may be stuck), `crew-map-offline` (Codex not installed), `crew-map-signedout` (Codex signed out), `crew-map-acp` (OpenCode,
- * which is not steered mid-turn), `crew-map-truncated`, `crew-map-no-messages`, `crew-map-many-messages` (more than one page), `crew-map-hostile` (extra fields a service must never
+ * which is not steered mid-turn), `crew-map-truncated`, `crew-map-no-messages`, `crew-map-many-messages` (more than one page), `crew-map-scrubbed` (members whose names the service scrubbed), `crew-map-hostile` (extra fields a service must never
  * send: a message body and a fact value, which the screens must never draw).
  */
 import type { FlowEngineStatus } from "../src/generated/FlowEngineStatus.ts";
@@ -17,9 +17,8 @@ import type { FlowNode } from "../src/generated/FlowNode.ts";
 import type { MockResponse } from "./api.ts";
 import { MOCK_CREW } from "./flow.ts";
 
-/** The text a hostile service adds where the contract has no field: no screen may draw it. */
-export const HOSTILE_BODY = "HOSTILE-MESSAGE-BODY-7731";
-export const HOSTILE_VALUE = "HOSTILE-FACT-VALUE-9042";
+import { HOSTILE } from "./hostile.ts";
+
 
 const NOW = Date.parse("2026-11-07T15:00:00Z");
 const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -62,6 +61,7 @@ function nodes(scenario: string): FlowNode[] {
   switch (scenario) {
     case "crew-map-empty": return [lead()];
     case "crew-map-engine-states": return [lead(), ...Object.keys(FIVE).slice(1).map((engine) => worker(engine, engine, "Model", "needs_person", `Work on ${engine}`, { engine_status: FIVE[engine] }))];
+    case "crew-map-scrubbed": return [lead(), worker("[redacted]", "codex", "GPT-5.5", "running", "Work whose member name was scrubbed"), worker("Withheld.", "opencode", "DeepSeek V4", "running", "Work whose member name was withheld"), base[2]!];
     case "crew-map-one": return [lead(), base[2]!];
     case "crew-map-many": return [lead(), ...Array.from({ length: 12 }, (_, i) => worker(`worker-${i + 1}`, ["claude", "codex", "opencode"][i % 3]!, "Sonnet 5.5", i % 4 === 0 ? "passed" : "running", `Task ${i + 1}`))];
     case "crew-map-deep": return [lead(), base[1]!];
@@ -109,7 +109,7 @@ export function mapMock(scenario: string, method: string, path: string, query: U
     const list = nodes(scenario);
     const engines = [...new Set(list.map((node) => node.engine))].map((engine) => ({ engine, status: status(engine, scenario) }));
     const body: FlowMap = { crew, nodes: list, edges: [{ from: "implement", to: "tests", kind: "fact", label: "a fact", count: 1, delivery: "live" }], engines, truncated: scenario === "crew-map-truncated" };
-    return { status: 200, body: hostile ? { ...body, nodes: list.map((node) => ({ ...node, thread: HOSTILE_BODY, step: HOSTILE_VALUE })) } : body };
+    return { status: 200, body: hostile ? { ...body, nodes: list.map((node) => ({ ...node, thread: HOSTILE.thread, worktree: HOSTILE.worktree, tokens: HOSTILE.tokens, level: HOSTILE.level })) } : body };
   }
   if (path === "/api/crew/flow/messages") {
     const member = query.get("member");
@@ -117,9 +117,9 @@ export function mapMock(scenario: string, method: string, path: string, query: U
     const limit = Number(query.get("limit") ?? 50);
     const offset = Number(query.get("offset") ?? 0);
     const end = Math.min(offset + limit, all.length);
-    const page = all.slice(offset, end).map((row) => (hostile ? { ...row, body: HOSTILE_BODY, text: HOSTILE_BODY } : row));
+    const page = all.slice(offset, end).map((row) => (hostile ? { ...row, body: HOSTILE.body, text: HOSTILE.text } : row));
     return { status: 200, body: { messages: page, total: all.length, next_offset: end < all.length ? end : null } };
   }
-  const list = facts(scenario).map((row) => (hostile ? { ...row, value: HOSTILE_VALUE } : row));
+  const list = facts(scenario).map((row) => (hostile ? { ...row, value: HOSTILE.value } : row));
   return { status: 200, body: { facts: list, total: list.length, truncated: false } };
 }

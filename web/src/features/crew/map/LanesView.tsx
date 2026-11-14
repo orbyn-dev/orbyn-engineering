@@ -5,7 +5,7 @@ import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useRefresh } from "../flow/live/useFlow";
 import { CrewPick } from "./CrewPick";
 import { MessageLines } from "./MapView";
-import { clock, modelWord, ordered } from "./model";
+import { clock, memberFilterable, modelWord, ordered } from "./model";
 import { useCrewFacts, useCrewMap, useCrewMessages } from "./useMap";
 import "./map.css";
 
@@ -54,8 +54,8 @@ function CrewLanes({ crew }: { crew: string }) {
               <select value={member ?? ""} onChange={(event) => setMember(event.target.value === "" ? null : event.target.value)}>
                 <option value="">Everyone</option>
                 {nodes.map((node) => (
-                  <option key={node.member} value={node.member}>
-                    {node.member}
+                  <option key={node.member} value={node.member} disabled={!memberFilterable(node.member)}>
+                    {memberFilterable(node.member) ? node.member : `${node.member} (can’t be filtered)`}
                   </option>
                 ))}
               </select>

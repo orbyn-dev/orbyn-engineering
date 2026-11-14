@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
 import { useConnection } from "../../../../product/state/connection";
 import { installMockFetch } from "../../../../test-support";
+import { HOSTILE_MARKERS } from "../../../../../mock/hostile";
 import { CrewNavRow } from "./CrewNavRow";
 import { FlowView } from "./FlowView";
 import { FlowZoom } from "./FlowZoom";
@@ -173,6 +174,14 @@ describe("Flow on the real routes", () => {
     expect(stages).toHaveTextContent("Same engine as author");
     expect(await screen.findByRole("region", { name: "Findings" })).toHaveTextContent("Unconfirmed");
     expect(document.body.textContent).not.toContain("Dropped");
+  });
+
+  it("never draws a thread, a worktree, a body or a text a hostile service adds to a lane or a finding, as text or in any attribute", async () => {
+    const { user } = await open("crew-flow-hostile");
+    await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Use next in the auth redirect/ }));
+    await screen.findByRole("list", { name: "Stages" });
+    await screen.findByRole("region", { name: "Findings" });
+    for (const marker of HOSTILE_MARKERS) expect(document.body.innerHTML, marker).not.toContain(marker);
   });
 
   it("says a task Flow does not know is not there (404 on the zoom)", async () => {
