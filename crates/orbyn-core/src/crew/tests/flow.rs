@@ -132,6 +132,40 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
 
     let detail = w.core.crew_flow_task(&subject).unwrap();
     assert_eq!(detail.lanes.len(), 2);
+    let lane = &detail.lanes[0];
+    assert_eq!(
+        serde_json::to_value(lane)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        [
+            "commit",
+            "confirmed",
+            "engine",
+            "findings",
+            "group",
+            "lane",
+            "model",
+            "round",
+            "same_engine",
+            "state",
+            "task",
+            "tier",
+            "unconfirmed"
+        ]
+    );
+    assert_eq!(lane.tier.as_deref(), Some("lead"));
+    assert!(lane.commit.as_ref().is_some_and(|c| !c.is_empty()));
+    assert_eq!(
+        lane.same_engine,
+        Some(false),
+        "alpha built and beta reviewed"
+    );
     assert!(detail.lanes.iter().any(|l| l.group == "security"));
     assert!(
         detail

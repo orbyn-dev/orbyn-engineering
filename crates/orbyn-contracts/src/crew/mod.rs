@@ -36,6 +36,7 @@ mod common;
 mod evidence;
 mod flow;
 mod flow_board;
+mod flow_map;
 mod lease;
 mod message;
 mod report;
@@ -53,6 +54,7 @@ pub use common::{CrewAuthor, CrewError, CrewRole, ErrorCode, Verdict, reject_flo
 pub use evidence::*;
 pub use flow::*;
 pub use flow_board::*;
+pub use flow_map::*;
 pub use lease::*;
 pub use message::*;
 pub use report::*;

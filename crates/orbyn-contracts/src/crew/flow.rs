@@ -166,6 +166,18 @@ pub struct FlowLane {
     pub findings: u32,
     pub confirmed: u32,
     pub unconfirmed: u32,
+    /// The tier the lane was routed at, such as `lead`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub tier: Option<String>,
+    /// The commit the lane read.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub commit: Option<String>,
+    /// The lane ran on the engine that built the work.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub same_engine: Option<bool>,
 }
 }
 

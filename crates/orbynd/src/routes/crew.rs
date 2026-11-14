@@ -212,6 +212,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(writes)
         .merge(super::crew_tasks::routes())
         .merge(super::crew_board::routes())
+        .merge(super::crew_map::routes())
         .layer(from_fn_with_state(state, preview_gate))
 }
 

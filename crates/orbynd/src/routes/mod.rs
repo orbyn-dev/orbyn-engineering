@@ -11,6 +11,7 @@ mod composer;
 mod crew;
 mod crew_areas;
 mod crew_board;
+mod crew_map;
 mod crew_tasks;
 mod engines;
 mod explorer;
@@ -58,6 +59,8 @@ mod crew_classes_tests;
 mod crew_guard_tests;
 #[cfg(test)]
 mod crew_held_tests;
+#[cfg(test)]
+mod crew_map_tests;
 #[cfg(all(test, unix))]
 mod crew_rerun_tests;
 #[cfg(test)]
