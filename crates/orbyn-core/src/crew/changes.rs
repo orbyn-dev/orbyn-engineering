@@ -57,6 +57,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/classes"),
     ("GET", "/api/crew/classes/test"),
     ("GET", "/api/crew/route/{id}"),
+    ("GET", "/api/crew/flow/board"),
     ("GET", "/api/crew/flow/crews"),
     ("GET", "/api/crew/flow/tasks"),
     ("GET", "/api/crew/flow/tasks/{id}"),

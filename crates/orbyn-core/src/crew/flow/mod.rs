@@ -7,6 +7,7 @@
 //! id, a path on this machine, a bus message. A text is redacted, the key's text withheld and the length cut
 //! ([`scrub`]). A gate's reason is read only once the task is final, so a running task shows no check text at all (H1).
 
+mod board;
 mod cells;
 mod facts;
 mod scrub;
