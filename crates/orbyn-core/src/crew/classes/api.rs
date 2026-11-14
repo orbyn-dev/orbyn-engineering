@@ -124,7 +124,7 @@ impl Core {
     }
 
     /// The checkout a class read is for. A thread reads at its own working folder; a project reads at the repository checkout
-    /// the project is registered at, never at a worktree path from the client. Exactly one of the two is named.
+    /// the project is registered at, never at a worktree path from the client, and only a trusted one (as a thread's diff is). Exactly one of the two is named.
     fn class_root(&self, thread_id: Option<&str>, project_id: Option<&str>) -> Result<ClassRoot> {
         self.crew_preview_only()?;
         match (thread_id, project_id) {
@@ -151,6 +151,9 @@ impl Core {
             (None, Some(id)) => {
                 valid_id(id)?;
                 let project = self.store.project(id)?;
+                if !project.trusted {
+                    return Err(CoreError::FolderUntrusted);
+                }
                 Ok(ClassRoot {
                     root: PathBuf::from(&project.path),
                     project_id: project.id,

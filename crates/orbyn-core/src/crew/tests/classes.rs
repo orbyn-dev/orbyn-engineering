@@ -1499,3 +1499,37 @@ async fn a_project_read_keeps_the_default_branch_pin() {
         .collect();
     assert_eq!(engines, ["bravo"]);
 }
+
+#[tokio::test]
+async fn a_project_read_refuses_an_untrusted_or_removed_project() {
+    let w = two().await;
+    let paths = ["a".to_owned()];
+    // A project nobody has trusted is refused as a thread's diff refuses it.
+    let loose = w.core.new_project("loose", false, None).await.unwrap();
+    let view = w.core.crew_classes_view(None, Some(&loose.id)).await;
+    assert!(matches!(
+        view,
+        Err(crate::error::CoreError::FolderUntrusted)
+    ));
+    let test = w.core.crew_class_test(None, Some(&loose.id), &paths).await;
+    assert!(matches!(
+        test,
+        Err(crate::error::CoreError::FolderUntrusted)
+    ));
+    // A removed project is refused with project_removed (409), never read.
+    let id = project_of(&w);
+    w.core
+        .store
+        .remove_project_keeping_threads(&id, "tester")
+        .unwrap();
+    let view = w.core.crew_classes_view(None, Some(&id)).await;
+    assert!(matches!(
+        view,
+        Err(crate::error::CoreError::ProjectRemoved(_))
+    ));
+    let test = w.core.crew_class_test(None, Some(&id), &paths).await;
+    assert!(matches!(
+        test,
+        Err(crate::error::CoreError::ProjectRemoved(_))
+    ));
+}

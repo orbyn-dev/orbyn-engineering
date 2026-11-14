@@ -902,7 +902,7 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   route-card sentence), `GET /api/crew/route/{task}` (the decision or the refusal, and the `route_class` rows).
   **Thread or project.** Both class routes take exactly one of `thread=<thread id>` or `project=<project id>`; the Settings view has no thread. Both ids
   is a 400 ("give thread or project, not both"), neither is a 400 ("thread or project is required"), an id that fails the route id rule is a 400
-  ("that id is not valid"), and an unknown thread or project is a 404. The flag check comes first, so with the flag off every shape is the absent route.
+  ("that id is not valid"), and an unknown thread or project is a 404. The flag is checked before the query is read, so with the flag off every request, valid or not, is the absent route. A repeated `thread` or `project` key is a 400 ("give thread once"), on both routes. A project that is not trusted is refused with `folder_untrusted`, as a thread's diff is, and a removed project with 409 `project_removed`; neither is read. (A thread keeps its older behaviour.)
   A thread reads at its own working folder. A project reads at the checkout the project is registered at (its `path`), never at a path the client sends, with
   the same hardened git reads, the same base commit and the same default-branch pin as a thread: for the same checkout the two reads are equal except for
   `thread` and `worktree`, which are absent when read by project.

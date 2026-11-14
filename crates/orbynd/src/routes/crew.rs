@@ -271,33 +271,22 @@ fn page(query: &QueryMap) -> Result<Page, CoreError> {
 
 /// The repository's data classes at the commit a task started in this thread would start from, or at the project's own checkout
 /// with `project=`. One of the two, never both. Read-only.
-async fn classes(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
-    let (thread, project) = (query.0.get("thread"), query.0.get("project"));
-    Ok(Json(
-        state
-            .core
-            .crew_classes_view(thread.map(String::as_str), project.map(String::as_str))
-            .await?,
-    ))
+async fn classes(State(state): State<AppState>, pairs: ClassQuery) -> ApiResult<impl IntoResponse> {
+    state.core.crew_preview_state()?;
+    let pairs = class_pairs(pairs)?;
+    let (thread, project) = class_ids(&pairs)?;
+    Ok(Json(state.core.crew_classes_view(thread, project).await?))
 }
 
 /// Up to 10 paths against those rules. `path` may be repeated, and each value may hold several paths, one per line.
 async fn classes_test(
     State(state): State<AppState>,
-    pairs: Result<
-        axum::extract::Query<Vec<(String, String)>>,
-        axum::extract::rejection::QueryRejection,
-    >,
+    pairs: ClassQuery,
 ) -> ApiResult<impl IntoResponse> {
-    let axum::extract::Query(pairs) =
-        pairs.map_err(|_| CoreError::Invalid("the query is not valid".into()))?;
-    let first = |key: &str| {
-        pairs
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.as_str())
-    };
-    let (thread, project) = (first("thread"), first("project"));
+    // The flag comes before the query is read, so with it off every request is the absent route.
+    state.core.crew_preview_state()?;
+    let pairs = class_pairs(pairs)?;
+    let (thread, project) = class_ids(&pairs)?;
     let paths: Vec<String> = pairs
         .iter()
         .filter(|(name, _)| name == "path")
@@ -309,6 +298,28 @@ async fn classes_test(
     Ok(Json(
         state.core.crew_class_test(thread, project, &paths).await?,
     ))
+}
+
+type ClassQuery =
+    Result<axum::extract::Query<Vec<(String, String)>>, axum::extract::rejection::QueryRejection>;
+
+fn class_pairs(pairs: ClassQuery) -> Result<Vec<(String, String)>, CoreError> {
+    pairs
+        .map(|axum::extract::Query(pairs)| pairs)
+        .map_err(|_| CoreError::Invalid("the query is not valid".into()))
+}
+
+/// The `thread` and `project` of a class query. Either key given twice is refused, so both routes read one id the same way.
+fn class_ids(pairs: &[(String, String)]) -> Result<(Option<&str>, Option<&str>), CoreError> {
+    let one = |key: &str| {
+        let mut found = pairs.iter().filter(|(name, _)| name == key);
+        let first = found.next().map(|(_, value)| value.as_str());
+        match found.next() {
+            Some(_) => Err(CoreError::Invalid(format!("give {key} once"))),
+            None => Ok(first),
+        }
+    };
+    Ok((one("thread")?, one("project")?))
 }
 
 /// How one task was routed: the decision or the refusal, and the ledger rows of the routing.
