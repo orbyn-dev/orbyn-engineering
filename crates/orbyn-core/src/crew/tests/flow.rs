@@ -12,6 +12,23 @@ use super::review_support::{arc, built, crew, finding, reviewed};
 use crate::crew::Page;
 use crate::store::FindingRepro;
 
+/// A second finished task in the same crew. A task's id is the hash of its brief, which carries the second it was written
+/// in, so two identical briefs started together are one task; this one has an outcome of its own.
+async fn built_another(w: &super::harness::World, outcome: &str, key: Value) -> String {
+    let (answer, error) = w
+        .start(
+            brief(
+                json!({ "outcome": outcome, "engine": { "id": "alpha", "assigned_by": "person" } }),
+            ),
+            key,
+        )
+        .await;
+    assert!(!error, "the second task did not start");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    w.until_state(&id, "passed").await;
+    id
+}
+
 fn page() -> Page {
     Page::new(None, None).unwrap()
 }
@@ -303,7 +320,7 @@ async fn a_merge_waiting_for_the_person_needs_you_and_rises_to_the_top() {
     let w = crew(arc(|_, root| built(root))).await;
     let first = w.built_work().await;
     let crew_id = w.task(&first).crew_id;
-    let second = w.built_work().await;
+    let second = built_another(&w, "Add a second function.", key()).await;
     assert_ne!(first, second);
     // The older task waits for a person at the merge queue.
     let entry = crate::crew::fixtures::merge_entry(&first, "/repo", "waiting");
@@ -428,7 +445,7 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
             "proves": "It runs." }],
         "protected_paths": ["tests/**"]
     });
-    let other = w.built_with(other_key).await;
+    let other = built_another(&w, "Add another function.", other_key).await;
     assert_ne!(other, subject);
 
     // The lead's repro for the finding is stored apart from any key.
