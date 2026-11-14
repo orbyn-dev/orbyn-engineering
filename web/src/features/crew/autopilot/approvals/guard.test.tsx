@@ -201,7 +201,7 @@ describe("the You stage of Flow", () => {
 
   it("waits for you in amber under On, with the reasons and a one-button return to Full", async () => {
     const full = vi.fn();
-    render(<YouPanel state={state({ kind: "waiting_on_you", risk: "high", paths: "auth/login.ts, keys/rotate.ts", size: "2 files · +64 −12 · coverage 71%", lines, notVerified: "key rotation under load." })} act={{ approveAndMerge: () => undefined, sendBack: () => undefined, switchToFull: full }} />);
+    render(<YouPanel state={state({ kind: "waiting_on_you", risk: "high", paths: "auth/login.ts, keys/rotate.ts", size: "2 files · +64 −12 · coverage 71%", lines, notVerified: "key rotation under load." })} act={{ review: () => undefined, sendBack: () => undefined, switchToFull: full }} />);
     const panel = screen.getByRole("complementary", { name: "You" });
     expect(panel).toHaveClass("ap-you-wait");
     expect(panel).toHaveTextContent("High risk: waiting for you before the mergeNeeds you");
@@ -212,13 +212,21 @@ describe("the You stage of Flow", () => {
     expect(full).toHaveBeenCalled();
   });
 
+  it("draws Review only when the host can open the review: with no handler there is no button, and no panel offers a merge", () => {
+    const { container } = render(<YouPanel state={state({ kind: "off", risk: "low", riskNote: "A change.", lines })} act={{ approveDontMerge: () => undefined }} />);
+    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
+    expect(container.textContent).not.toContain("Approve and merge");
+  });
+
   it("waits for you whatever the risk under Off, and says the risk does not change what waits", () => {
-    render(<YouPanel state={state({ kind: "off", risk: "low", riskNote: "A documentation change. Shown so you can review quickly; it does not change what waits.", lines })} act={{ approveAndMerge: () => undefined, approveDontMerge: () => undefined, sendBack: () => undefined }} />);
+    render(<YouPanel state={state({ kind: "off", risk: "low", riskNote: "A documentation change. Shown so you can review quickly; it does not change what waits.", lines })} act={{ review: () => undefined, approveDontMerge: () => undefined, sendBack: () => undefined }} />);
     const panel = screen.getByRole("complementary", { name: "You" });
     expect(panel).toHaveTextContent("Every change waits for you before the mergeNeeds you");
     expect(panel).toHaveTextContent("Autopilot is Off for this repo");
     expect(panel).toHaveTextContent("Risk · Low");
-    expect(within(panel).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve and merge", "Approve, don’t merge", "Send back to Build"]);
+    expect(within(panel).getAllByRole("button").map((b) => b.textContent)).toEqual(["Review", "Approve, don’t merge", "Send back to Build"]);
+    // Review opens the item in the Review queue and merges nothing; with no handler it is not drawn at all.
+    expect(panel).not.toHaveTextContent("Approve and merge");
   });
 });
 

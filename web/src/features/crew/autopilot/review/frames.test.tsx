@@ -10,7 +10,7 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "risk-reasons": ["Risk tiers", "Merges by itself · review within 24 hours", "count as High unless the changes are in a path class marked Low in .orbyn/crew.json"],
   "risk-popover": ["Why Medium", "Area auth is on Full: 1 revert in 14 days · 8 merges"],
   "risk-high-full": ["Merged by Crew at 15:02.", "Why High", "Key rotation under load. No check covers it."],
-  "risk-high-on": ["Waiting for you before the merge.", "Approve and merge", "Switch to Full"],
+  "risk-high-on": ["Waiting for you before the merge.", "Autopilot is On for this repo, and this change is High risk.", "Review", "Send back to Build", "Switch to Full", "Add reviewer", "Round 1", "Inbox · 3", "Planned: after the autonomy-by-area slice", "Revert rate"],
   "risk-raised": ["Raised from Medium", "Same engine as author · lead tier", "Sign in to another engine"],
   "risk-board-card": ["Low · Full", "High · On", "Waiting for you before the merge (On)"],
   "risk-demoted": ["Area auth is on On: 2 reverts in 14 days · 9 merges", "Where the area mode comes from"],
@@ -69,6 +69,19 @@ describe("Autopilot review frames (Crew Designs v19)", () => {
     for (const label of ["Looks good", "Approve and merge", "Revert both together", "Revert the later one", "Open the revert", "Create a check"]) {
       for (const button of screen.queryAllByRole("button", { name: label })) expect(button).toBeDisabled();
     }
+  });
+
+  it.each(REVIEW_FRAMES)("#/preview/crew/%s: no frame of the group offers Approve and merge; merging stays with the person-only review routes", async (name) => {
+    const { container } = await open(name);
+    expect(container.textContent).not.toContain("Approve and merge");
+  });
+
+  it("risk-high-on: Review opens the item in the Review queue, and is inert in the preview", async () => {
+    await open("risk-high-on");
+    const review = screen.getByRole("button", { name: "Review" });
+    expect(review).toBeDisabled();
+    expect(review).toHaveAttribute("aria-description", UNAVAILABLE_REASON);
+    expect(screen.queryByRole("button", { name: "Approve and merge" })).toBeNull();
   });
 
   it("Crew v22: no frame shows a dollar figure, and the header says Codex's usage as a share of its weekly limit", async () => {
