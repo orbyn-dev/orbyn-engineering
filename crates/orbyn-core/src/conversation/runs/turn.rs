@@ -109,8 +109,17 @@ impl RunManager {
             at_checkout = engine_cwd == checkout;
             start = engine_cwd;
         }
-        let confine =
-            self.confinement_for(thread, driver.as_ref(), &root, &checkout, &start, run_dir)?;
+        let confine = self.confinement_for(
+            thread,
+            driver.as_ref(),
+            &super::confine::Launch {
+                library: &root,
+                checkout: &checkout,
+                start: &start,
+                run_dir,
+                resume: resume.as_deref(),
+            },
+        )?;
         // A process started ahead of this turn was not started under the restriction.
         let warm = if confine.is_some() { None } else { warm };
         let mut context = run_context(&RunContext {

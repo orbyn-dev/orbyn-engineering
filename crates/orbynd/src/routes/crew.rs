@@ -112,7 +112,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/{id}/delete",
-        "core background_delete: refused while a run is in progress, the audit row stays; local only",
+        "core background_delete: refused only while a run is in progress; its runs and waiting reviews are removed with the crew and counted in the audit row, which stays; local only",
     ),
 ];
 
