@@ -195,6 +195,8 @@ jobs:
     name: Rust Windows shard ${{ matrix.shard }}/3
     needs: [changes, lint]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true'
+    # Running time only. A shard took 14-16 minutes in a measured run; the cap is over twice that, so a hang fails early instead of after the default 360.
+    timeout-minutes: 35
     # The two Rust jobs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy, and the runner should be a dedicated low-privilege user or VM with no other credentials. Set the variable only after the group serves this repository, and unset it when the machine is down: a job with no runner waits in the queue. The desktop build and packaged jobs stay hosted because their smoke test installs the app on the machine, and the cache warm job stays hosted so its cache matches hosted builds.
     runs-on: ${{ (vars.CI_RUNNER_WINDOWS == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","windows","orbyn-win"]') || 'windows-2022' }}
     env:
@@ -231,6 +233,8 @@ jobs:
     name: Rust Windows clippy
     needs: [changes, lint]
     if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.windows_rust == 'true'
+    # Running time only. Clippy took under 3 minutes warm; the cap leaves room for a cold cache and stops a hang early.
+    timeout-minutes: 30
     # The two Rust jobs run on the local Windows runner only when the repository variable CI_RUNNER_WINDOWS is 'local', the pull request is not from a fork and the actor is not Dependabot. Unset means the hosted windows-2022 runner. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy, and the runner should be a dedicated low-privilege user or VM with no other credentials. Set the variable only after the group serves this repository, and unset it when the machine is down: a job with no runner waits in the queue. The desktop build and packaged jobs stay hosted because their smoke test installs the app on the machine, and the cache warm job stays hosted so its cache matches hosted builds.
     runs-on: ${{ (vars.CI_RUNNER_WINDOWS == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","windows","orbyn-win"]') || 'windows-2022' }}
     steps:
@@ -346,6 +350,8 @@ jobs:
     name: E2E shard ${{ matrix.shard }}/6
     needs: [changes, lint, e2e-build]
     if: needs.changes.outputs.e2e == 'true'
+    # Running time only. A shard took 7-12 minutes in a measured run; the cap is over twice that.
+    timeout-minutes: 25
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
