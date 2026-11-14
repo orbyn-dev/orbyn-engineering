@@ -1170,3 +1170,103 @@ async fn with_no_default_branch_ref_the_rules_are_read_at_head_alone() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn a_default_branch_without_the_file_leaves_the_checkouts_rules_in_force() {
+    let w = two().await;
+    pin_origin_here(&w.repo);
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["route"]["engine"], "bravo");
+    let text = reasons_text(&w, answer["task"].as_str().unwrap());
+    assert!(
+        text.contains("has a file, and origin/main (the default branch) has no file"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn the_ledger_row_records_both_sides_and_a_class_of_the_same_name_on_each() {
+    let w = three().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![rule("keep", &["src/**"], &["alpha", "bravo"])]),
+    );
+    pin_origin_here(&w.repo);
+    let pinned_commit = git_out(&w.repo, &["rev-parse", "HEAD"]);
+    let pinned_blob = git_out(&w.repo, &["rev-parse", "HEAD:.orbyn/crew.json"]);
+    commit_crew(
+        &w.repo,
+        &file(vec![rule(
+            "keep",
+            &["lib/**", "src/**"],
+            &["bravo", "charlie"],
+        )]),
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap();
+    let body = &rows(&w, id)[0].body;
+    assert_eq!(body["pinned"]["reference"], "origin/main");
+    assert_eq!(body["pinned"]["commit"], pinned_commit);
+    assert_eq!(body["pinned"]["blob"], pinned_blob);
+    assert!(body["pinned"]["problem"].is_null());
+    // Both sides' class of the same name are listed, the default branch's saying where it came from.
+    let patterns: Vec<&str> = body["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["pattern"].as_str().unwrap())
+        .collect();
+    assert_eq!(patterns.len(), 2, "{patterns:?}");
+    assert!(
+        patterns.iter().any(|p| p.ends_with("(at origin/main)")),
+        "{patterns:?}"
+    );
+    assert!(patterns.iter().any(|p| !p.contains("(at ")), "{patterns:?}");
+}
+
+#[tokio::test]
+async fn init_default_branch_names_the_fallback_and_a_bad_value_is_ignored() {
+    let w = two().await;
+    run_git(&w.repo, &["checkout", "-q", "-B", "dev"]);
+    for name in ["main", "master", "trunk"] {
+        let _ = std::process::Command::new("git")
+            .args(["branch", "-q", "-D", name])
+            .current_dir(&w.repo)
+            .output();
+    }
+    run_git(&w.repo, &["config", "init.defaultBranch", "dev"]);
+    assert_eq!(pinned_ref(&w.repo).await.unwrap().name, "dev");
+    // Not a branch name: it must not be read as a revision such as `dev~1`.
+    for bad in ["dev~1", "dev^", "@{-1}", "-x"] {
+        run_git(&w.repo, &["config", "init.defaultBranch", bad]);
+        assert!(pinned_ref(&w.repo).await.is_none(), "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn the_default_branchs_rules_are_matched_against_the_tasks_own_tree() {
+    let w = two().await;
+    commit_crew(
+        &w.repo,
+        &file(vec![rule("keys", &["crates/keys/**"], &["bravo"])]),
+    );
+    pin_origin_here(&w.repo);
+    // After the default branch was read, this checkout added a symlink under a lease that leads into the class.
+    stage(&w.repo, "100644", "crates/keys/k.txt", "k\n");
+    stage(&w.repo, "120000", "docs/link", "../crates/keys");
+    commit(&w.repo, "a link");
+    let (answer, error) = w
+        .start(
+            brief(json!({ "files": [{ "path": "docs/**", "mode": "write" }] })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer["route"]["engine"], "bravo",
+        "the link is followed in the task's tree, so alpha is kept out"
+    );
+}

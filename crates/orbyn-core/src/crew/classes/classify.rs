@@ -63,6 +63,10 @@ pub struct Applied {
     pub pattern: String,
     pub samples: Vec<String>,
     pub reason: String,
+    /// The engines the rule allows.
+    pub engines: Vec<String>,
+    /// The default branch's ref name when the class came from there, `None` for the checkout's own rules.
+    pub at: Option<String>,
 }
 
 /// The file and what the brief's files matched in it.
@@ -75,6 +79,16 @@ pub struct PathClasses {
     /// What the default branch's copy of the file says about the same files. When it is set the stricter of the two applies:
     /// an engine must be allowed by both, and a file either side cannot read blocks every engine.
     pub pinned: Option<Box<Pinned>>,
+}
+
+impl Applied {
+    /// The pattern, saying which ref it came from when that is the default branch.
+    pub fn shown_pattern(&self) -> String {
+        match &self.at {
+            Some(at) => format!("{} (at {at})", self.pattern),
+            None => self.pattern.clone(),
+        }
+    }
 }
 
 fn side_names(side: &PathClasses) -> Vec<String> {
@@ -108,6 +122,8 @@ impl PathClasses {
 
     /// Adds the default branch's reading of the same files.
     pub fn with_pinned(mut self, name: String, commit: String, classes: PathClasses) -> Self {
+        // A ref name is repository data: it is redacted and kept short wherever it is shown.
+        let name: String = crate::crew::redact(&name).chars().take(80).collect();
         self.pinned = Some(Box::new(Pinned {
             name,
             commit,
@@ -156,20 +172,35 @@ impl PathClasses {
         }
     }
 
-    /// The classes that applied, from both sides. A class named on both sides is listed once.
+    /// The classes that applied, from both sides, each side's own; one that reads the same on both is listed once.
     pub fn matched(&self) -> Vec<Applied> {
         let mut out: Vec<Applied> = Vec::new();
-        for side in self.sides() {
+        for (at, side) in self.sides().enumerate() {
+            let from = self
+                .pinned
+                .as_deref()
+                .filter(|_| at == 1)
+                .map(|p| p.name.clone());
             for hit in &side.hits {
                 let name = side.rule(hit).name.clone();
-                if !out.iter().any(|m| m.name == name) {
-                    out.push(Applied {
-                        name,
-                        pattern: hit.pattern.clone(),
-                        samples: hit.samples.clone(),
-                        reason: side.rule(hit).reason.clone(),
-                    });
+                // The same class, pattern and engines on both sides (the usual case: HEAD is the default branch's tip) is one.
+                let engines = &side.rule(hit).engines;
+                if out.iter().any(|m| {
+                    m.name == name
+                        && m.pattern == hit.pattern
+                        && m.reason == side.rule(hit).reason
+                        && &m.engines == engines
+                }) {
+                    continue;
                 }
+                out.push(Applied {
+                    name,
+                    pattern: hit.pattern.clone(),
+                    samples: hit.samples.clone(),
+                    reason: side.rule(hit).reason.clone(),
+                    engines: side.rule(hit).engines.clone(),
+                    at: from.clone(),
+                });
             }
         }
         out

@@ -114,7 +114,13 @@ pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
     );
     if let Ok(out) = git(root, &["config", "--get", "init.defaultBranch"]).await {
         let name = text(&out);
-        if !name.is_empty() && !name.starts_with('-') {
+        // A value such as `main~3` or `@{-1}` is not a branch name: git's own check must give the same name back.
+        if !name.is_empty()
+            && !name.starts_with('-')
+            && git(root, &["check-ref-format", "--branch", &name])
+                .await
+                .is_ok_and(|checked| text(&checked) == name)
+        {
             candidates.push(format!("refs/heads/{name}"));
         }
     }

@@ -357,8 +357,11 @@ const GIT_READS: [&str; 12] = [
     "ls-tree",
 ];
 
-/// A git command split into its `-C` folder, its subcommand and the words after it that are not options.
-fn git_parts(command: &Simple) -> Option<(Option<String>, String, Vec<String>)> {
+/// `-C` folder, subcommand, words that are not options, every argument after the subcommand.
+type GitParts = (Option<String>, String, Vec<String>, Vec<String>);
+
+/// A git command split into its `-C` folder, its subcommand, the words after it that are not options, and every argument after it.
+fn git_parts(command: &Simple) -> Option<GitParts> {
     let mut rest = command.args.iter();
     let mut dir = None;
     let mut sub = None;
@@ -375,8 +378,13 @@ fn git_parts(command: &Simple) -> Option<(Option<String>, String, Vec<String>)> 
             }
         }
     }
-    let words: Vec<String> = rest.filter(|a| !a.starts_with('-')).cloned().collect();
-    Some((dir, sub?, words))
+    let after: Vec<String> = rest.cloned().collect();
+    let words: Vec<String> = after
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .cloned()
+        .collect();
+    Some((dir, sub?, words, after))
 }
 
 /// The files a command writes or deletes, as the words it names them by.
@@ -453,7 +461,7 @@ pub(super) fn writes(command: &Simple) -> Vec<String> {
         }
         "unzip" => out.extend(after("-d")),
         "git" => {
-            let Some((dir, sub, words)) = git_parts(command) else {
+            let Some((dir, sub, words, _)) = git_parts(command) else {
                 return out;
             };
             if !GIT_READS.contains(&sub.as_str()) {
@@ -563,6 +571,101 @@ const GIT_CHANGES: [&str; 20] = [
     "pull",
 ];
 
+/// Options of the subcommands above that take a value in the next argument, so the value is not read as a path or a revision.
+const GIT_VALUE_OPTIONS: [&str; 16] = [
+    "-m",
+    "-F",
+    "-C",
+    "-c",
+    "-b",
+    "-B",
+    "--message",
+    "--file",
+    "--author",
+    "--date",
+    "--source",
+    "--pathspec-from-file",
+    "--reuse-message",
+    "--reedit-message",
+    "-s",
+    "--strategy",
+];
+
+/// What follows `--` and what comes before it, after the values of options are set aside. `source` is whether `--source` was given.
+struct GitWords {
+    before: Vec<String>,
+    after: Vec<String>,
+    source: bool,
+}
+
+fn git_words(args: &[String]) -> GitWords {
+    let mut out = GitWords {
+        before: Vec::new(),
+        after: Vec::new(),
+        source: false,
+    };
+    let mut dashes = false;
+    let mut skip = false;
+    for arg in args {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if dashes {
+            out.after.push(arg.clone());
+        } else if arg == "--" {
+            dashes = true;
+        } else if arg.starts_with("--source") {
+            out.source = true;
+            skip = arg == "--source";
+        } else if arg.starts_with('-') {
+            skip = GIT_VALUE_OPTIONS.contains(&arg.as_str());
+        } else {
+            out.before.push(arg.clone());
+        }
+    }
+    out
+}
+
+/// Whether a refspec's destination is under `refs/remotes/`, by git's own expansion (`remotes/x` is `refs/remotes/x`), compared
+/// without case because a case-insensitive file system treats `refs/REMOTES` as the same folder. A destination spelled
+/// `origin/...` could also resolve there, so it counts.
+fn into_remote_refs(word: &str) -> bool {
+    let spec = word.trim_start_matches('+');
+    let dest = spec.rsplit_once(':').map_or(spec, |(_, dest)| dest);
+    if dest.is_empty() || (!word.contains(':') && !dest.contains('/')) {
+        return false;
+    }
+    let lower = dest.to_ascii_lowercase();
+    lower.starts_with("refs/remotes/")
+        || lower.starts_with("remotes/")
+        || (word.contains(':') && lower.starts_with("origin/"))
+}
+
+/// Whether a git command moves, repoints or deletes a ref the rules are also read at.
+fn moves_rules_ref(sub: &str, after: &[String], words: &[String]) -> bool {
+    let has = |names: &[&str]| after.iter().any(|a| names.contains(&a.as_str()));
+    match sub {
+        // Ref plumbing and bulk writers.
+        "update-ref" | "fast-import" | "send-pack" => true,
+        // Reading a symbolic ref has one name; a write names the ref and its target, or deletes.
+        "symbolic-ref" => words.len() >= 2 || has(&["-d", "--delete"]),
+        "fetch" | "push" | "pull" => has(&["--stdin"]) || words.iter().any(|w| into_remote_refs(w)),
+        // The remote the pinned ref belongs to.
+        "remote" => matches!(
+            words.first().map(String::as_str),
+            Some("set-head" | "rename" | "remove" | "rm" | "add" | "set-url" | "set-branches")
+        ),
+        "branch" => {
+            has(&["-r", "--remotes"])
+                && has(&[
+                    "-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy",
+                ])
+        }
+        _ => false,
+    }
+}
+
 /// Whether a git command in the action names the rules file (or its folder, or a whole checkout together with a revision, which
 /// takes the file from that revision) to change it, or moves a ref the rules are also read at. A bare `git checkout <revision>`
 /// names no path, so it is not seen here: the default branch's copy of the file is the check for that.
@@ -582,30 +685,29 @@ fn git_changes_rules(ctx: &Ctx<'_>) -> bool {
         if command.program != "git" {
             continue;
         }
-        let Some((_, sub, words)) = git_parts(command) else {
+        let Some((_, sub, words, after)) = git_parts(command) else {
             continue;
         };
         let sub = sub.as_str();
-        if matches!(sub, "update-ref" | "symbolic-ref") {
-            return true;
-        }
-        if matches!(sub, "fetch" | "pull" | "push")
-            && words.iter().any(|w| w.contains("refs/remotes/"))
-        {
+        if moves_rules_ref(sub, &after, &words) {
             return true;
         }
         if !GIT_CHANGES.contains(&sub) {
             continue;
         }
-        let from_revision =
-            words.len() > 1 || command.args.iter().any(|a| a.starts_with("--source"));
-        let hit = words.iter().any(
-            |word| match shell::relative_from(word, cwd.as_deref(), tree) {
-                Some(path) if path == crate::crew::RULES_FILE || path == RULES_DIR => true,
-                Some(path) if path.is_empty() => sub == "rm" || from_revision,
-                _ => false,
-            },
-        );
+        let parsed = git_words(&after);
+        let from_revision = matches!(sub, "checkout" | "restore" | "reset")
+            && (parsed.source
+                || (!parsed.after.is_empty() && !parsed.before.is_empty())
+                || (parsed.after.is_empty() && parsed.before.len() > 1));
+        let hit =
+            parsed.before.iter().chain(&parsed.after).any(|word| {
+                match shell::relative_from(word, cwd.as_deref(), tree) {
+                    Some(path) if path == crate::crew::RULES_FILE || path == RULES_DIR => true,
+                    Some(path) if path.is_empty() => sub == "rm" || from_revision,
+                    _ => false,
+                }
+            });
         if hit {
             return true;
         }

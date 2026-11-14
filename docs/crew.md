@@ -900,12 +900,14 @@ branch as of the last fetch** (`refs/remotes/origin/HEAD`, else `origin/main`, `
 side blocks every engine, and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
 looser one, does not loosen the next task. A remote-tracking ref is moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit in any
 worktree; a local branch is moved by a commit or `git branch -f` on it, so it is the weaker fallback. **Neither is out of an agent's reach:** a worker runs as the person, the
-macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs `git update-ref`
-or edits `.git` can still move either ref. N7 holds `git update-ref`, `git symbolic-ref`, a fetch into `refs/remotes/`, and a checkout, restore, reset, stash, rm,
-add, commit and the like that names `.orbyn/crew.json` or `.orbyn`, or a revision with a whole checkout (`git checkout <rev> .`); a bare `git checkout <rev>` names no path
-and is not held, because the default branch's copy is the check for it. **A person or an agent that can push to the base branch can still change the rules for later
-tasks**, and a rule edit that tightens on a branch applies only once it is on the default branch's tip (for a rule that must be in force sooner, fetch or merge it
-first). `review` lanes, `checks`, `required` and `allowed_hosts` are still read at the base commit only. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
+macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs git plumbing
+or edits `.git` can still move either ref. N7 holds `git update-ref`, `fast-import`, `send-pack`, a writing `symbolic-ref`, any fetch or push whose refspec ends under
+`refs/remotes/` (also spelled `remotes/` or `origin/`, in any case) and `fetch --stdin`, the `git remote` commands that repoint or remove the remote (`set-head`, `rename`, `remove`,
+`add`, `set-url`, `set-branches`), `branch -r` with a delete, move or copy, and a checkout, restore, reset, stash, rm, add, commit and the like that names `.orbyn/crew.json` or `.orbyn`,
+or a revision with a whole checkout (`git checkout <rev> .`). It reads command text, so a path built in a script, a hand edit of `.git`, or a command the parser does not
+recognise is not seen; a bare `git checkout <rev>` names no path and is not held, because the default branch's copy is the check for it. **A repository that had a default-branch ref and loses it (the remote
+removed, the ref deleted) is read at HEAD alone again: Orbyn does not remember the last pinned commit between tasks** (a limit; N7 holds the commands that do it). **A person or an agent that can push to the
+base branch can still change the rules for later tasks.** A rule that is tighter at HEAD applies at once, because an engine must be allowed by both; a loosening takes effect only once it is on the default branch's tip. `review` lanes, `checks`, `required` and `allowed_hosts` are still read at the base commit only. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
 counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
 that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
 async runtime. A thread with no commit (a fresh `git init`, or a folder that is not a repository) is refused

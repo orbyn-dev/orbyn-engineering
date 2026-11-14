@@ -25,12 +25,24 @@ pub(super) struct Stored {
     pub problem: Option<String>,
     pub unknown: Option<String>,
     pub classes: Vec<CrewRouteClassHit>,
+    /// The default branch's reading: its ref, commit, file blob and problem.
+    pub pinned: Option<StoredPin>,
     pub blocked: Vec<CrewRouteBlocked>,
     pub chosen: Option<String>,
     pub rejected: Vec<RouteRejection>,
     pub message: Option<String>,
     pub requested: Option<RouteRequested>,
     pub withheld: Option<String>,
+}
+
+/// What a row holds about the default branch's copy of the file.
+#[derive(Default, Deserialize, Serialize)]
+#[serde(default)]
+pub(super) struct StoredPin {
+    pub reference: String,
+    pub commit: String,
+    pub blob: Option<String>,
+    pub problem: Option<String>,
 }
 
 /// How a routing ended.
@@ -61,11 +73,21 @@ impl Core {
                 .matched()
                 .into_iter()
                 .map(|hit| CrewRouteClassHit {
+                    pattern: hit.shown_pattern(),
                     name: hit.name,
-                    pattern: hit.pattern,
                     samples: hit.samples,
                 })
                 .collect(),
+            pinned: classes.pinned.as_deref().map(|pin| StoredPin {
+                reference: pin.name.clone(),
+                commit: pin.commit.clone(),
+                blob: pin.classes.file.blob.clone(),
+                problem: pin
+                    .classes
+                    .file
+                    .invalid()
+                    .then(|| pin.classes.file.problem_text()),
+            }),
             ..Stored::default()
         };
         stored.blocked = rejected

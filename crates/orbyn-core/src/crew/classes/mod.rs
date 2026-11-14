@@ -5,9 +5,11 @@
 //! else a local `init.defaultBranch`, `main`, `master` or `trunk`; with none of them HEAD alone is read, as before). An engine must
 //! be allowed by both, a file either side cannot read blocks every engine, and the route card says when the two files differ.
 //! An agent that moves HEAD to a commit without the file, or commits a looser one, therefore does not loosen the next task. The
-//! default branch is not out of an agent's reach: a remote-tracking ref moves only by fetch or pull, but a local branch moves by a
-//! commit on it, and `git update-ref` or an edit of `.git` moves either (Autopilot's N7 holds `update-ref`); the macOS confinement of
-//! #441 does not close the repository's `.git`, and Windows and Linux workers are refused. See the known limits in docs/crew.md.
+//! default branch is not out of an agent's reach: a remote-tracking ref moves by fetch or pull, a local branch by a commit on it, and
+//! either by git plumbing, `git remote set-head`, `remote rename|remove|set-url` or an edit of `.git`. Autopilot's N7 holds those
+//! commands, but it reads command text only; the macOS confinement of #441 does not close the repository's `.git`, and Windows and
+//! Linux workers are refused. A repository that loses its default-branch ref is read at HEAD alone again (nothing remembers the
+//! earlier ref between tasks). See the known limits in docs/crew.md.
 //! The router uses the result as a hard filter before scoring
 //! ([`class_screen`](super::filters::class_screen)); each routing writes one `route_class` row to the approval ledger; and
 //! three read-only views serve the routes. Orbyn never writes the file.
@@ -56,7 +58,8 @@ impl Core {
         let mut classes = classify(root, base.as_deref(), file, &patterns).await;
         if let Some(pin) = pinned_ref(root).await {
             let there = read_class_file(root, Some(&pin.commit)).await;
-            let side = classify(root, Some(&pin.commit), there, &patterns).await;
+            // The default branch's rules are matched against the task's own tree, so leases and symlinks list the same files.
+            let side = classify(root, base.as_deref(), there, &patterns).await;
             classes = classes.with_pinned(pin.name, pin.commit, side);
         }
         (base, classes)

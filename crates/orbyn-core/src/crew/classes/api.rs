@@ -213,7 +213,7 @@ impl Core {
             if let Some((pin, there)) = &pinned {
                 let side = classify_paths(
                     root,
-                    Some(&pin.commit),
+                    base.as_deref(),
                     there.clone(),
                     std::slice::from_ref(path),
                 )
@@ -228,8 +228,8 @@ impl Core {
                     .matched()
                     .into_iter()
                     .map(|hit| wire::CrewClassMatch {
+                        pattern: hit.shown_pattern(),
                         name: hit.name,
-                        pattern: hit.pattern,
                     })
                     .collect(),
                 allowed_engines: classes
