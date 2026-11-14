@@ -52,11 +52,11 @@ export function stopItems(recent: AutopilotLogRow[], limits: { inARow: number; i
         risk: null,
         undo: null,
         from: `Task ${row.task_id}`,
-        // The reason in words, from the Approvals tab's own sentences.
+        // The reason in words, as Crew Designs v37 words it.
         cost:
           stop.reason === "injected_instructions"
-            ? "It read text that looks like instructions to the agent, so Crew stopped it. Nothing was lost; its worktree is intact."
-            : `It was denied ${stop.denialCount} times ${stop.inARun ? "in one run" : "in a row"}, so Crew stopped it. Nothing was lost; its worktree is intact.`,
+            ? "A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for."
+            : `${stop.denialCount} denials ${stop.inARun ? "in one run" : "in a row"} stopped the task. Nothing else is blocked; the other tasks keep going.`,
         since: time(row.at),
         actions: [{ key: "open" as const, label: "Open", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
         ref: row.task_id,
@@ -90,13 +90,13 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
       .filter((run) => run.review_waiting)
       .map((run) => ({
         id: `background:${run.id}`,
-        kind: "review" as const,
-        // A run that spent its budget is paused; any other run waiting on the person says what it waits for, or that it needs approval.
-        title: run.stop_reason === "budget" ? "Paused: budget reached" : run.review_reason?.trim() ? `Review: ${run.review_reason.trim()}` : "Needs approval",
+        kind: "background" as const,
+        // A run that spent its budget is paused; any other run waiting on the person needs approval.
+        title: run.stop_reason === "budget" ? "Paused: budget reached" : "Needs approval",
         risk: null,
         undo: null,
-        from: `Background · ${crew.name}`,
-        cost: run.stop_reason === "budget" ? (run.review_reason?.trim() ?? null) : null,
+        from: `Background crew · ${crew.name}`,
+        cost: run.stop_reason === "budget" ? "The run stopped at its budget. Raise the budget, or leave it paused." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
         since: time(run.ended_at ?? run.updated_at),
         actions: [{ key: "open" as const, label: "Open", primary: true }],
         ref: crew.id,

@@ -3,11 +3,11 @@
 import type { Risk } from "../autopilot/approvals/model";
 
 /** The kinds the designs name, in the order their filters are drawn. The first four live kinds have a route behind them. */
-export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped"] as const;
+export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped", "background"] as const;
 export type NeedsKind = (typeof NEEDS_KINDS)[number];
 
 /** The kinds `assemble.ts` builds from a route today. The rest are drawn by the frames only. */
-export const LIVE_KINDS = ["approval", "stopped", "main", "review"] as const satisfies readonly NeedsKind[];
+export const LIVE_KINDS = ["approval", "stopped", "main", "background"] as const satisfies readonly NeedsKind[];
 
 /** A filter chip's word, from the designs: Approvals, Denied, Questions, Main, Conflicts, Reviews, Autonomy. */
 export const KIND_FILTER: Record<NeedsKind, string> = {
@@ -18,7 +18,8 @@ export const KIND_FILTER: Record<NeedsKind, string> = {
   review: "Reviews",
   main: "Main",
   conflict: "Conflicts",
-  stopped: "Stopped",
+  stopped: "Stops",
+  background: "Background",
 };
 
 /** The word before a narrow card's risk: "Approval · High · hard to undo". */
@@ -31,6 +32,7 @@ export const KIND_ONE: Record<NeedsKind, string> = {
   main: "Main",
   conflict: "Conflict",
   stopped: "Stopped",
+  background: "Background",
 };
 
 /** An answer an item offers. `key` names what the screen's owner does; none is a merge, a revert or an approval of its own. */
@@ -45,7 +47,7 @@ export interface NeedsItem {
   id: string;
   kind: NeedsKind;
   title: string;
-  /** The risk when the source states it: a Review item does, a held command or a stop does not. */
+  /** The risk when the source states it. Only a review item draws its chips (v37); the break on main keeps its risk for the ranking alone. */
   risk: Risk | null;
   /** Reversibility is stated by no route: only the frames carry it. */
   undo: "easy" | "hard" | null;

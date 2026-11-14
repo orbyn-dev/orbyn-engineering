@@ -42,22 +42,22 @@ describe("the Needs you inbox on live data", () => {
     // High risk first (the break on main), then the items without a stated risk, oldest first (the run is from 7 Nov).
     expect(items).toHaveLength(5);
     expect(items[0]).toHaveTextContent("Main broke and the cause isn’t certain");
-    expect(items[0]).toHaveTextContent("Risk · High");
-    // The chip is amber because the row is High risk; no row is amber for its place, and rows with no stated risk have no chip.
-    expect(items[0]?.querySelector(".ny-tag")).toHaveAttribute("data-tone", "amber");
-    expect(items[0]).not.toHaveAttribute("data-hi");
-    for (const row of items.slice(1)) expect(row.querySelector(".ny-tag")).toBeNull();
+    // Only a review item draws chips (v37): the break on main keeps its risk for the ranking alone. No row is amber.
+    for (const row of items) {
+      expect(row.querySelector(".ny-tag")).toBeNull();
+      expect(row).not.toHaveAttribute("data-hi");
+    }
     expect(items[0]).toHaveTextContent("Watch on main · 9be4410");
     expect(items[0]).toHaveTextContent("Nothing has been reverted. Main stays as it is until you choose.");
     expect(items[1]).toHaveTextContent("Paused: budget reached");
-    expect(items[1]).toHaveTextContent("It used its whole turn budget before the checks passed");
-    expect(items[1]).toHaveTextContent("Background · Fix failing CI");
+    expect(items[1]).toHaveTextContent("The run stopped at its budget. Raise the budget, or leave it paused.");
+    expect(items[1]).toHaveTextContent("Background crew · Fix failing CI");
     expect(items[2]).toHaveTextContent("DELETE FROM sessions");
     expect(items[3]).toHaveTextContent("aws s3 rb");
     expect(items[4]).toHaveTextContent("DELETE FROM orders");
     const bar = screen.getByRole("group", { name: "Filter the inbox" });
-    expect(within(bar).getAllByRole("button").map((one) => one.textContent)).toEqual(["Needs you 5", "Approvals 3", "Reviews 1", "Main 1"]);
-    expect(bar).toHaveTextContent("Ranked by risk, then by how hard it is to undo, then by what waiting costs");
+    expect(within(bar).getAllByRole("button").map((one) => one.textContent)).toEqual(["Needs you 5", "Approvals 3", "Main 1", "Background 1"]);
+    expect(bar).toHaveTextContent("Risk and reversibility only where the item’s data has them");
   });
 
   it("a filter shows one kind and says which is pressed", async () => {
@@ -80,7 +80,7 @@ describe("the Needs you inbox on live data", () => {
   it("Dismiss hides a stop in this browser only: it is remembered locally, nothing is sent, and another read does not bring it back", async () => {
     const { user, view } = await open("crew-tripwire");
     const item = (await screen.findByText("Stopped · too many denials")).closest("li") as HTMLElement;
-    expect(item).toHaveTextContent("It was denied 3 times in a row, so Crew stopped it.");
+    expect(item).toHaveTextContent("3 denials in a row stopped the task.");
     await user.click(within(item).getByRole("button", { name: /^Dismiss/ }));
     expect(screen.queryByText("Stopped · too many denials")).toBeNull();
     expect(writes()).toHaveLength(0);
@@ -142,7 +142,7 @@ describe("the Needs you inbox on live data", () => {
   it("says nothing needs you when every source is empty", async () => {
     await open("crew-empty");
     expect(await screen.findByText("Nothing needs you")).toBeVisible();
-    expect(screen.getByText("When something needs you, it appears here, ranked, with what waiting costs.")).toBeVisible();
+    expect(screen.getByText("When something needs you, it appears here.")).toBeVisible();
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull();
   });
 
@@ -153,7 +153,7 @@ describe("the Needs you inbox on live data", () => {
     render(<NeedsYouInbox />);
     expect(await screen.findByText("Can’t read stops. The rest is shown.")).toBeVisible();
     expect(await list()).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(screen.getByRole("button", { name: /^Try again/ }));
     await waitFor(() => expect(screen.queryByText(/Can’t read/)).toBeNull());
   });
 
@@ -231,7 +231,7 @@ describe("answering from the inbox", () => {
     await open("crew-held-account");
     await list();
     const labels = screen.getAllByRole("button").map((one) => (one.textContent ?? "").trim());
-    for (const label of labels) expect(label).toMatch(/^(Open|Approve|Deny|Dismiss|Try again|Needs you \d+|Approvals \d+|Reviews \d+|Main \d+|Stopped \d+)$/);
+    for (const label of labels) expect(label).toMatch(/^(Open|Approve|Deny|Dismiss|Try again|Needs you \d+|Approvals \d+|Background \d+|Main \d+|Stops \d+)$/);
   });
 });
 

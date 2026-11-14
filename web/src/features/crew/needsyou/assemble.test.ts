@@ -44,9 +44,9 @@ describe("each source becomes one inbox row", () => {
       ["stop:8:task-client:2026-11-07T14:27:00", "Stopped · possible injected instructions", "Task task-client"],
     ]);
     expect(items[0]?.actions).toEqual([{ key: "open", label: "Open", primary: true }, { key: "dismiss", label: "Dismiss" }]);
-    expect(items[0]?.cost).toBe("It was denied 3 times in a row, so Crew stopped it. Nothing was lost; its worktree is intact.");
-    expect(items[1]?.cost).toBe("It read text that looks like instructions to the agent, so Crew stopped it. Nothing was lost; its worktree is intact.");
-    expect(stopItems([wire({ body: { wire: "denials", in_a_row: 1, in_a_run: 20 } })], limits)[0]?.cost).toContain("20 times in one run");
+    expect(items[0]?.cost).toBe("3 denials in a row stopped the task. Nothing else is blocked; the other tasks keep going.");
+    expect(items[1]?.cost).toBe("A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for.");
+    expect(stopItems([wire({ body: { wire: "denials", in_a_row: 1, in_a_run: 20 } })], limits)[0]?.cost).toContain("20 denials in one run");
   });
 
   it("only a break the crew was not certain about reaches Needs you; a plain after-merge review stays in the Review tab", () => {
@@ -55,14 +55,14 @@ describe("each source becomes one inbox row", () => {
     expect(items[0]).toMatchObject({ id: "main:t-main", kind: "main", risk: "high", from: "Watch on main · 9be4410", cost: "Nothing has been reverted. Main stays as it is until you choose.", since: 1_000_000, overdue: false });
   });
 
-  it("a background run waiting on you says it is paused for its budget, what it waits for, or that it needs approval; a run not waiting is not an item", () => {
+  it("a background run waiting on you is Paused: budget reached, or Needs approval with its reason; a run not waiting is not an item", () => {
     const items = backgroundItems([{ crew, runs: [bgRun({ stop_reason: "budget" }), bgRun({ id: "r2", review_reason: null }), bgRun({ id: "r4", review_reason: "Checks failed twice" }), bgRun({ id: "r3", review_waiting: false })] }]);
-    expect(items.map((one) => [one.id, one.title, one.cost, one.from, one.ref])).toEqual([
-      ["background:r1", "Paused: budget reached", "Budget reached", "Background · Fix failing CI", "bg"],
-      ["background:r2", "Needs approval", null, "Background · Fix failing CI", "bg"],
-      ["background:r4", "Review: Checks failed twice", null, "Background · Fix failing CI", "bg"],
+    expect(items.map((one) => [one.id, one.kind, one.title, one.cost, one.from, one.ref])).toEqual([
+      ["background:r1", "background", "Paused: budget reached", "The run stopped at its budget. Raise the budget, or leave it paused.", "Background crew · Fix failing CI", "bg"],
+      ["background:r2", "background", "Needs approval", "A command is held for your approval before the run can go on.", "Background crew · Fix failing CI", "bg"],
+      ["background:r4", "background", "Needs approval", "Checks failed twice", "Background crew · Fix failing CI", "bg"],
     ]);
-    expect(items.every((one) => one.kind === "review" && one.risk === null)).toBe(true);
+    expect(items.every((one) => one.risk === null)).toBe(true);
   });
 
   it("nothing in, nothing out", () => {
@@ -104,13 +104,14 @@ describe("ranking", () => {
 
 describe("filters", () => {
   it("lists one chip for each kind that has an item, in the designs' order, with its count", () => {
-    const items = [make("1", { kind: "main" }), make("2", { kind: "approval" }), make("3", { kind: "approval" }), make("4", { kind: "stopped" })];
+    const items = [make("1", { kind: "main" }), make("2", { kind: "approval" }), make("3", { kind: "approval" }), make("4", { kind: "stopped" }), make("5", { kind: "background" })];
     expect(viewOf(items).filters).toEqual([
       { kind: "approval", label: "Approvals", count: 2 },
       { kind: "main", label: "Main", count: 1 },
-      { kind: "stopped", label: "Stopped", count: 1 },
+      { kind: "stopped", label: "Stops", count: 1 },
+      { kind: "background", label: "Background", count: 1 },
     ]);
     expect(only(items, "approval")).toHaveLength(2);
-    expect(only(items, "all")).toHaveLength(4);
+    expect(only(items, "all")).toHaveLength(5);
   });
 });

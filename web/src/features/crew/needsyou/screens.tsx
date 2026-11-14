@@ -3,10 +3,10 @@ import { unavailable } from "../autopilot/review/Parts";
 import { Frame } from "../shared/Frame";
 import { Btn, Ic, PageHead, Seg } from "../shared/parts";
 import { viewOf } from "./assemble";
-import { kindChips, NeedsBar, NeedsCard, NeedsEmpty, NeedsList, RANKED_BY, SourceError, type Chip } from "./NeedsYou";
+import { kindChips, NeedsBar, NeedsCard, NeedsEmpty, NeedsList, CHIP_NOTE, type Chip } from "./NeedsYou";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import type { NeedsItem } from "./model";
-import { BACKGROUND_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
+import { BACKGROUND_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MAIN_ITEM, QUESTIONS_ITEM, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
 import type { NeedsYouFrameId } from "./names";
 
 const SUB = "Login redirect crew · Lead: Fix login redirect on Claude Code";
@@ -29,32 +29,57 @@ function Page({ inbox, workers = 3, children }: { inbox: string; workers?: numbe
 
 const inboxOf = (items: NeedsItem[]) => `Inbox · ${items.length}`;
 
-function List({ items }: { items: NeedsItem[] }) {
+function List({ items, errors, plain }: { items: NeedsItem[]; errors?: string[]; plain?: boolean }) {
+  const chips = kindChips(viewOf(items), items.length);
   return (
     <>
-      <NeedsBar chips={kindChips(viewOf(items), items.length)} active="all" rule={RANKED_BY} />
-      <NeedsList items={items} handlers={{}} />
+      <NeedsBar chips={plain ? chips.slice(0, 1) : chips} active="all" rule={CHIP_NOTE} />
+      <NeedsList items={items} handlers={{}} errors={errors} />
     </>
   );
 }
 
-const listFrame = (items: NeedsItem[], error?: string[]): ComponentType => function NeedsYouList() {
+const listFrame = (items: NeedsItem[], options: { errors?: string[]; plain?: boolean; dialog?: ReactNode } = {}): ComponentType => function NeedsYouList() {
   return (
-    <Frame>
+    <Frame height={options.dialog ? 560 : undefined}>
       <Page inbox={inboxOf(items)}>
-        {error ? <SourceError sources={error} /> : null}
-        <List items={items} />
+        <List items={items} errors={options.errors} plain={options.plain} />
       </Page>
+      {options.dialog}
     </Frame>
   );
 };
+
+function ApproveDialog() {
+  return (
+    <div className="cx-cwov">
+      <div className="cx-cwdlg" role="dialog" aria-modal="true" aria-label="Approve a command" style={{ width: 460 }}>
+        <h4>
+          Approve a command <span className="cx-cwpv">Preview</span>
+        </h4>
+        <p>Claude Code · Sonnet 5.5 asks to run a command in its worktree crew/redirect-impl.</p>
+        <pre className="ny-guard"><code>npm publish --dry-run --workspace auth</code></pre>
+        <div className="cx-fbx">
+          <div className="cx-fkv">
+            <span>Waiting holds</span>
+            <b>1 task and its lease on auth/redirect.ts</b>
+          </div>
+        </div>
+        <div className="cx-ra">
+          <Btn className="cx-ghost">Deny</Btn>
+          <Btn className="cx-btn">Approve once</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Empty() {
   return (
     <Frame>
       <Page inbox="Inbox">
         <NeedsEmpty title="Nothing needs you" action={<Btn className="cx-ghost">Open the Flow view</Btn>}>
-          When something needs you, it appears here, ranked, with what waiting costs.
+          When something needs you, it appears here.
         </NeedsEmpty>
       </Page>
     </Frame>
@@ -70,7 +95,7 @@ function Many() {
   return (
     <Frame height={560}>
       <Page inbox="Inbox · 27" workers={9}>
-        <NeedsBar chips={chips} active="all" rule={RANKED_BY} label="Filter by project" />
+        <NeedsBar chips={chips} active="all" rule="Showing 4 of 27 · the rest are grouped below" label="Filter by project" />
         <NeedsList items={MANY_ITEMS} handlers={{}} />
         <ul className="ny-groups" aria-label="The rest, by crew">
           {MANY_GROUPS.map((group) => (
@@ -137,7 +162,7 @@ function NarrowPanel() {
 }
 
 const RULES: [string, string, string][] = [
-  ["1 · Risk", "What could go wrong if the answer is wrong: a command that touches the network, a deletion, a merge.", "“Run npm publish --dry-run”: High"],
+  ["1 · Risk", "What could go wrong if the answer is wrong: a command that touches the network, a deletion, a merge.", "“A change waiting for your review”: High"],
   ["2 · Reversibility", "How easily the result can be undone: a branch can be reset; a publish can’t.", "“Merge to main”: Hard to undo"],
   ["3 · Cost of waiting", "What stays blocked while it waits: tasks, leases, workers, and whether any engine is idle on a paid plan.", "“Holds 2 tasks and 1 lease”"],
   ["Batching", "Questions from one worker arrive together; low-risk ones wait up to 10 minutes before they interrupt.", "“3 questions from OpenCode”"],
@@ -187,7 +212,7 @@ function Live() {
 export const NEEDSYOU_SCREENS: Record<NeedsYouFrameId, ComponentType> = {
   "needsyou-inbox": listFrame(FULL_ITEMS),
   "needsyou-inbox-off": listFrame(OFF_ITEMS),
-  "needsyou-approval": listFrame(OFF_ITEMS),
+  "needsyou-approval": listFrame(OFF_ITEMS, { dialog: <ApproveDialog /> }),
   "needsyou-empty": Empty,
   "needsyou-many": Many,
   "needsyou-narrow-panel": NarrowPanel,
@@ -195,6 +220,6 @@ export const NEEDSYOU_SCREENS: Record<NeedsYouFrameId, ComponentType> = {
   "needsyou-demoted": listFrame(DEMOTED_ITEMS),
   "needsyou-stop": listFrame(STOP_ITEMS),
   "needsyou-background": listFrame(BACKGROUND_ITEMS),
-  "needsyou-source-error": listFrame(OFF_ITEMS.slice(0, 3), ["stops"]),
+  "needsyou-source-error": listFrame([QUESTIONS_ITEM, MAIN_ITEM], { errors: ["held commands"], plain: true }),
   "needsyou-live": Live,
 };
