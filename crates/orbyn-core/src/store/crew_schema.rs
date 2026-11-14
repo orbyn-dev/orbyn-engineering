@@ -422,3 +422,43 @@ CREATE TABLE crew_guard_targets (
     UNIQUE(list, kind, pattern)
 );
 "#;
+
+// Schema 44: autonomy by area, in shadow (docs/crew.md, "As built (slice 4j, shadow)"). `crew_area_modes` holds, per project and area
+// (the first two folders of a path), whether the circuit breaker has lowered the area (`demoted`) or it follows its ceiling
+// (`follows`), when and why, where the recovery clock started and a person's override (nothing writes an override yet). The record
+// the breaker reads is never stored: it is counted from `crew_merges` each time. `crew_area_events` is the audit trail: one row
+// per breaker or person write, added in the same transaction before the mode row changes, and never changed or removed. The
+// `cause` is the revert commit that tripped or reset the breaker, `restore:<recovery start>` for a return, or `person:<audit id>`.
+// On this device only: never a file in a repository. Nothing reads these rows for a decision yet.
+pub(super) const CREW_AUTONOMY: &str = r#"
+CREATE TABLE crew_area_modes (
+    project_id TEXT NOT NULL,
+    area TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('follows', 'demoted')),
+    tripped_at INTEGER,
+    trip_reason TEXT CHECK(trip_reason IS NULL OR json_valid(trip_reason)),
+    recovery_since INTEGER,
+    override TEXT CHECK(override IS NULL OR override IN ('keep_ceiling', 'off')),
+    override_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(project_id, area)
+);
+CREATE TABLE crew_area_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    area TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('demoted', 'recovery_reset', 'restored', 'override_set', 'override_cleared')),
+    from_mode TEXT,
+    to_mode TEXT,
+    decided_by TEXT NOT NULL CHECK(decided_by IN ('breaker', 'person')),
+    cause TEXT NOT NULL,
+    record TEXT NOT NULL CHECK(json_valid(record)),
+    at INTEGER NOT NULL,
+    UNIQUE(project_id, area, kind, cause)
+);
+CREATE INDEX crew_area_events_by_area ON crew_area_events(project_id, area, id);
+CREATE TRIGGER crew_area_events_no_update BEFORE UPDATE ON crew_area_events
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+CREATE TRIGGER crew_area_events_no_delete BEFORE DELETE ON crew_area_events
+BEGIN SELECT RAISE(ABORT, 'crew objects are immutable'); END;
+"#;

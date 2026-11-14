@@ -532,7 +532,7 @@ read, never set, over HTTP. **The Preview flag stays for development only until 
 is fixed:** a worker runs as the person and can read the service token and the data folder, so it could reach these routes.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
-`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires) and `/trust` (revert rates by area and engine).
+`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
 Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
 `PUT /autopilot/mode`, `POST /autopilot/confirm`, and `POST /autopilot/review/{task}/{looks-good,comment,revert}`.
 
@@ -663,7 +663,7 @@ ledger rows hold the lead's and second key's reasons but not the asker's model, 
 class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
 comment is kept and is not yet a fix brief.
 
-Not built, so not served: per-area promotion and demotion (4j), trust scores for reviewers and the crew-versus-solo baseline (4g), the
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), the
 conflict forecast, bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
 
 **As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
@@ -726,6 +726,39 @@ that a command runs (`psql -f drop.sql`, `bash cleanup.sh`, `make nuke`): the fi
 a deletion API) is not guarded; the network rule N3 and the tiers still apply. A remote's URL is read from the repository's git config, which an earlier command
 of the worker could have changed; so is an `ssh` alias that points to production under a name the person never listed. The lists decide what is local and safe,
 and a wrong entry is the person's to fix. Nothing here is tamper-proof: a process of the same OS user can still read the data folder and change the table.
+
+**As built (slice 4j, shadow):** autonomy by area, part 1: a circuit breaker per area that *records* a demotion. **Shadow: recorded and shown, not yet
+enforced.** No merge, approval, tier or queue reads an area's state; the mode in force is still what the person chose (`crew_autopilot_mode`). Code:
+`crates/orbyn-core/src/crew/autopilot/areas/` (`decide` the pure rule, `breaker` the writes and the hook, `view` the reads), `store/crew_autonomy.rs`.
+
+- **Area.** The first two folders of a path (`risk::area_of`), or the one folder, or the file at the root. The key is `(project, area)`, and the record
+  counts only merges whose run's lead thread belongs to that project, so the same name in two repositories is counted for each repository on its own.
+- **Rule (all Proposed, Engineering's constants in `areas/mod.rs`, served by `GET /api/crew/autopilot/thresholds` with `proposed: true`).** Window 14 days; fewer than
+  5 merges in it is "not enough data" and nothing changes. **Demote** when 2 or more of the merges made in the window were reverted ("merged in the window, now
+  reverted", the same meaning as the 60-day rate). It is evaluated when a revert passes through and when a merge is recorded (3 merges with 2 reverted, then 2 clean ones, trips at the fifth merge; cause `merge:<id>`). **Return** when both hold: 14 days since the recovery clock started with no revert, and 5 merges since then, none reverted.
+  The clock starts at the demotion and restarts at every later revert in the area (a `recovery_reset` row). Escapes (a defect that no revert shows) are
+  **not measured**: there is no source for them, `escapes` is always `null` and no count includes one. The 60-day, 10-merge, 20% rule in `merge/risk.rs` is
+  unchanged and keeps raising the risk tier.
+- **Ceiling.** The ceiling is the person's mode for the repository, else the default, else Full, read live. A demotion lowers an area from Full to On only; a ceiling of
+  On or Off is never changed and the record is still shown (`ceiling_lower`). A crew's own choice is not read for this (a known limit).
+- **Stored on this device** (schema **44**, `CREW_AUTONOMY`), never in a repository file (architecture rule 4): `crew_area_modes` (state `follows` or `demoted`, when and why,
+  the recovery clock, a person's override column that nothing writes yet) and `crew_area_events`, append-only (a trigger refuses UPDATE and DELETE), unique per
+  `(project, area, kind, cause)`. The record and the recovery counts are never stored: they are counted from `crew_merges` each time. Each breaker write adds its event row and
+  then changes the mode row **in one transaction** (rule 6: the audit row first; a row the table refuses leaves the mode as it was). A demotion also appends an `area_demoted` row to the
+  approval ledger on the task whose revert tripped it, so Flow shows it.
+- **When it acts.** `revert_merge` is the one place every revert passes (the watch's bisect revert and the person's Revert). Right after the merge row says reverted, still under the merge lock, the
+  breaker runs for each area the merge touched. The same revert is recorded once. A failure there is logged and never undoes a revert that already moved the branch. Queuing checks the way back only if the merge lock is free (it never waits for a long check or a bisect); recording a merge checks it too. The way back is checked
+  when a merge is recorded and at the start of queuing one, so it waits for at most one merge; no GET writes, and the view says "Criteria met; returns at the next merge."
+- **Routes** (Preview-gated, 404 with the flag off; all GET, all in `crew::changes::READS`, nothing writes): `GET /api/crew/autopilot/areas?project=&limit&offset` (the ceiling, `enforced: false`,
+  and per area the record, a state of `follows`, `demoted` (just lowered), `recovering` (lowered, with the days and merges so far), `criteria_met` (returns at the next merge), `not_enough_data`, `ceiling_lower` or `overridden`, an `area_key` to pass to the history route, a sentence, when it was lowered and what recovery still needs),
+  `GET /api/crew/autopilot/areas/history?project=&area=` (the trail, newest first, at most 100; the area is in the query because it contains `/`) and `GET /api/crew/autopilot/thresholds`.
+  `GET /api/crew/trust` now sets `autonomy_by_area: true` and takes an optional `project`, so the revert rates and the risk score's `merge_rates` count one repository's merges instead of all of them.
+
+**Not built (4j):** enforcement (the merge gate, the chain and the tier reading an area's state); a person's override and its writes; the screens (Crew Designs v38 frames
+`autonomy-*`); earning a higher mode for an area; escapes.
+
+**Known limits (4j).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. The area is two folders deep, so a large folder and a small one weigh the same and a change spread over many areas counts in each. A return waits for the next
+merge. A project's ceiling is read for the breaker (repository, then default), but a merge's real mode is the crew's, then the repository's: part 2 (enforcement) must take each `MergeRecord.mode`, the mode actually used, as its basis. The demotion event already records that mode as `from_mode`. Merges whose lead thread was hard-deleted drop out of the rates, the trust record and the breaker (the join needs the thread; the run rows stay). A breaker failure after a revert is only logged: part 2 needs a visible ledger or Flow event and a rule that fails closed. The thresholds are a proposal and may change.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**
@@ -1292,6 +1325,55 @@ lists, file history, debug logs, shell snapshots, `sessions/`), the network, the
 and processes a worker leaves running. A worker can learn which project folder names exist under `projects` (their metadata may be read), not what is in them. The lead's Claude transcript is closed for a Claude worker; the answer key as a
 whole is not claimed safe. Codex workers are refused until the nested-profile question is answered, and Codex's
 conversation files are a second reason to keep it so.
+
+## As built (cancel)
+
+The person's stop button for a Crew task (Preview). Backend only: the card action that calls it is Engineering 1's.
+
+- **What exists:** core `Core::crew_cancel_task(task, reason, actor)` and `POST /api/crew/tasks/{id}/cancel` (body empty, or
+  `{ "reason": "..." }`, 1 to 200 characters, redacted). The answer is `{ task, state: "cancelled", already }`. With the Preview flag off the
+  route is 404.
+- **Person only, as far as it is enforced.** *Enforced:* no MCP tool and no crew tool cancels a task; a remote viewer is refused
+  (`local_only` is the whole-process `--remote` flag, 403); Autopilot's N1 refuses an agent's request to the route by the *command
+  text* it sees (path spelling variants are covered, it is in `crew::changes::STATE_CHANGING`); a confined macOS worker cannot read the
+  launch token. *Not enforced:* an unconfined engine, the lead, or any process of the same user that has the launch token (from
+  `service.json`) can `POST` it, and a path assembled at run time is invisible to N1; the audit row says `user` whoever sent it. If real
+  enforcement is wanted later, approve-once's desktop grant is the model. This is not an Autopilot stop: `GET /api/crew/stops` lists
+  Autopilot's, and a cancel is the person's own act.
+- **Answers.** An unknown id is `not_found`. A task already `cancelled` is `already: true`: no second row, no second effect. A task that
+  `passed` or `stopped` is `409 task_ended` ("This task already ended."). Every other state (briefed, routed, running, verifying,
+  failed, changed_approach, needs_person) can be cancelled, as the lifecycle table says.
+- **Order, failing closed.** (1) One transaction checks the task and writes the intent row `crew.task.cancel` (actor, source, task id,
+  previous state, whether a verification was claimed, the reason): the row comes before every effect (architecture rule 6). (2) The
+  worker's engine is stopped through `RunManager::force_stop`, which also kills the engine's process tree and closes a run that will not
+  stop; its queue is emptied first, so no new turn starts, and the core checks the worker has no run and nothing queued. (3) One
+  transaction moves the task to `cancelled` (clearing a verification claim) together with the row `crew.task.cancelled`; then the
+  existing end of a task runs (leases released, a final `cancelled` result, the lead told).
+- **Two cancels of one task** run one after the other (a lock per task): the second finds it cancelled and answers `already: true`
+  with no row. If the service dies after the intent row, `crew.task.cancel` stands with no outcome row; the state is unchanged and a
+  retry works (it writes its own intent row).
+- **A second stop after the state change.** Start and retry do not take the cancel's lock, so a worker may have been recorded, or a
+  message queued, after the cancel read the task. Once the task is `cancelled` the worker is read again and stopped once more (with
+  its queue emptied); a later start or retry meets its own final-state guard. If that second stop fails, **the task stays
+  `cancelled` with a worker that may still run**: a `crew.task.cancel_failed` row flags it and the caller gets `502
+  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel answers `already: true`,
+  so the person stops that worker from its thread.
+- **Wording.** When the worker's run end moves the task first, its final result still says the person cancelled it if the cancel's
+  intent row exists.
+- **Races with a start or a retry.** A task cannot get a worker once it ended (`set_crew_worker` refuses in its transaction, the thread
+  just made is removed and no engine starts), and a retry prompt is not queued for an ended task (the state is read again before and
+  after queueing; a message that slipped in is taken back and its run stopped).
+- **If the engine cannot be confirmed stopped,** the task keeps its state, a `crew.task.cancel_failed` row records the attempt and the
+  caller gets `502 engine_unavailable`. A retry is a new attempt with its own intent row. A task that ended some other way during the
+  stop (it passed, say) is `409 task_ended`, with a `cancel_failed` row.
+- **Verification.** Cancelling a `verifying` task clears its claim. A verification still running stops before its next check and cannot
+  settle the task: `passed`, `failed` and the loop guard refuse a cancelled task.
+- **No merge.** Only a `passed` task is queued for merge, and a cancelled one is refused there (tested).
+- **Not built:** the card action (Engineering 1); reassign, message into a lane, add a lane and a person's answer, which are out of the
+  beta. No new event on the bus or the Autopilot ledger: the audit rows and the final `cancelled` result are the record.
+- **Known limits.** A cancel cannot undo what the worker already wrote in its worktree, and commits already merged stay merged; the
+  worktree itself is left as the existing end of a task leaves it. A check command already running when the cancel lands finishes
+  first (its result is discarded). The stop waits up to four seconds for the engine before it closes the run by force.
 
 ## Open risks
 

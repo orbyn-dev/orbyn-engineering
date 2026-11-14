@@ -13,7 +13,7 @@ use crate::crew::{MergeTarget, WatchOutcome};
 use crate::store::MergeRecord;
 use crate::testing::run_git;
 
-const NOW: i64 = 1_800_000_000;
+pub(super) const NOW: i64 = 1_800_000_000;
 const IDENTITY: [&str; 4] = ["-c", "user.name=t", "-c", "user.email=t@example.test"];
 
 fn git_id(repo: &Path, args: &[&str]) {
@@ -43,11 +43,11 @@ fn merge(repo: &Path, main: &str, name: &str, files: &[(&str, &str)]) {
     );
 }
 
-struct Watched {
-    w: World,
-    main: String,
-    target: MergeTarget,
-    tasks: Vec<String>,
+pub(super) struct Watched {
+    pub(super) w: World,
+    pub(super) main: String,
+    pub(super) target: MergeTarget,
+    pub(super) tasks: Vec<String>,
 }
 
 /// A history of four merges, `edits[i]` the files merge `i + 1` writes. The checks of `.orbyn/crew.json` pass while
@@ -131,7 +131,7 @@ async fn history_with(rules: &str, edits: [&[(&'static str, &'static str)]; 4]) 
 
 const RULES: &str = r#"{"checks":[{"run":"git grep --no-index -q GOOD -- src/state.txt"}]}"#;
 
-async fn history(edits: [&[(&'static str, &'static str)]; 4]) -> Watched {
+pub(super) async fn history(edits: [&[(&'static str, &'static str)]; 4]) -> Watched {
     history_with(RULES, edits).await
 }
 

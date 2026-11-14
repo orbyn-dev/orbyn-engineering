@@ -326,6 +326,87 @@ async fn reads_answer_empty_views_and_every_list_is_bounded() {
 }
 
 #[tokio::test]
+async fn the_area_reads_are_bounded_read_only_and_never_write() {
+    let app = serve("areas", true, false).await;
+    let (status, thresholds) = app
+        .call("GET", "/api/crew/autopilot/thresholds", None)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(thresholds["proposed"], true);
+    assert_eq!(thresholds["window_days"], 14);
+    assert_eq!(thresholds["min_merges"], 5);
+    for path in [
+        "/api/crew/autopilot/areas",
+        "/api/crew/autopilot/areas?project=..%2Fx",
+        "/api/crew/autopilot/areas?project=a%20b",
+        "/api/crew/autopilot/areas/history",
+        "/api/crew/autopilot/areas/history?project=p",
+        "/api/crew/autopilot/areas/history?project=p&area=",
+        "/api/crew/trust?project=..%2Fx",
+    ] {
+        let (status, body) = app.call("GET", path, None).await;
+        assert_eq!(status, 400, "{path}");
+        assert_eq!(body["code"], "invalid_input", "{path}");
+    }
+    for path in [
+        "/api/crew/autopilot/areas?project=no-such-project",
+        "/api/crew/autopilot/areas/history?project=no-such-project&area=src%2Fa",
+        "/api/crew/trust?project=no-such-project",
+    ] {
+        let (status, _) = app.call("GET", path, None).await;
+        assert_eq!(status, 404, "{path}");
+    }
+    let project = fixtures::add_project(&app.core, app.dir.join("areas-project").to_str().unwrap());
+    let (status, areas) = app
+        .call(
+            "GET",
+            &format!("/api/crew/autopilot/areas?project={}", project),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(areas["ceiling"], "full");
+    assert_eq!(areas["enforced"], false);
+    assert_eq!(areas["total"], 0);
+    let (status, _) = app
+        .call(
+            "GET",
+            &format!("/api/crew/autopilot/areas?project={}&limit=201", project),
+            None,
+        )
+        .await;
+    assert_eq!(status, 400);
+    let (status, history) = app
+        .call(
+            "GET",
+            &format!(
+                "/api/crew/autopilot/areas/history?project={}&area=src%2Fa",
+                project
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(history["area"], "src/a");
+    assert_eq!(history["events"], json!([]));
+    let (status, trust) = app
+        .call("GET", &format!("/api/crew/trust?project={}", project), None)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(trust["autonomy_by_area"], true);
+    // All three are reads: the core's marker does not refuse them, and none of them is listed as a change.
+    for path in [
+        "/api/crew/autopilot/areas",
+        "/api/crew/autopilot/areas/history",
+        "/api/crew/autopilot/thresholds",
+    ] {
+        assert!(!changes_crew_state(path), "{path}");
+        assert!(STATE_CHANGING.iter().all(|(_, p)| *p != path));
+        assert!(READS.contains(&("GET", path)));
+    }
+}
+
+#[tokio::test]
 async fn a_mode_is_saved_only_through_the_core_and_only_for_something_real() {
     let app = serve("mode", true, false).await;
     let put = |body: Value| {
