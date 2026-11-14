@@ -21,6 +21,7 @@ mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
 mod crew_cancel;
+mod crew_flow;
 mod crew_guard;
 mod crew_merges;
 mod crew_rerun;

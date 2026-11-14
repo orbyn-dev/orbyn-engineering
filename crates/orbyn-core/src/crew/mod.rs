@@ -12,6 +12,7 @@ mod classes;
 mod filters;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
+mod flow;
 mod gather;
 mod guard;
 mod index_flags;
