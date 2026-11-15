@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use orbyn_contracts::{
-    Brief, CrewError, CrewId, CrewMember, CrewObject, CrewToken, DelegateTask, ErrorCode,
-    ModelSelection, RouteDecision, WorkerObject,
+    AnswerKey, Brief, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewToken, DelegateTask,
+    ErrorCode, ModelSelection, RouteDecision, WorkerObject,
 };
 use serde_json::{Value, json};
 
@@ -118,8 +118,7 @@ impl Core {
             member: CrewMember::new(LEAD_MEMBER).map_err(invalid)?,
             now: stamp_now()?,
         };
-        let brief = stamper.brief(brief_draft)?;
-        let key = stamper.answer_key(key_draft, &brief.id)?;
+        let (brief, key) = self.crew_drafts(&stamper, brief_draft, key_draft)?;
         // H2, after the shape: nothing the lead sent holds a secret.
         refuse_secret(args)?;
         self.launch_crew_task(Launch {
@@ -135,6 +134,36 @@ impl Core {
             links: Links::default(),
         })
         .await
+    }
+
+    /// Both drafts as objects. When either fails to parse the lead gets one error that lists every
+    /// problem in both, not serde's first.
+    fn crew_drafts(
+        &self,
+        stamper: &Stamper,
+        brief_draft: &Value,
+        key_draft: &Value,
+    ) -> Result<(Brief, AnswerKey), CrewError> {
+        let brief = stamper.brief(brief_draft);
+        let placeholder = CrewHash::new(format!("sha256:{}", "0".repeat(64))).map_err(invalid)?;
+        let key = stamper.answer_key(
+            key_draft,
+            brief.as_ref().map_or(&placeholder, |brief| &brief.id),
+        );
+        match (brief, key) {
+            (Ok(brief), Ok(key)) => Ok((brief, key)),
+            (brief, key) => {
+                let all = super::draft::problems(brief_draft, key_draft);
+                if all.is_empty() {
+                    return Err(brief.err().or(key.err()).expect("one of the two failed"));
+                }
+                Err(invalid(format!(
+                    "{} problem(s) in the drafts: {}",
+                    all.len(),
+                    all.join("; ")
+                )))
+            }
+        }
     }
 
     /// Starts a task: the checks every start passes (H1, H2, H10, H11), the stored task, the route, the

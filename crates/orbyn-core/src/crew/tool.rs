@@ -37,14 +37,14 @@ pub fn tool_specs() -> Vec<Value> {
         route_spec(),
         json!({
             "name": START_TOOL,
-            "description": "Preview: start a Crew task. `brief` is the brief draft the worker reads \
-                (kind, outcome, inputs, files, allowed_effects, stop_when, budget, optionally needs and engine); \
-                `answer_key` is what the core checks, as a draft (checks, protected_paths). The core routes the \
-                brief, grants the files and runs a worker; the worker never sees the answer key. \
-                Only the lead calls this.",
+            "description": start_description(),
             "inputSchema": {
                 "type": "object",
-                "properties": { "brief": { "type": "object" }, "answer_key": { "type": "object" } },
+                "additionalProperties": false,
+                "properties": {
+                    "brief": super::draft::brief_schema(),
+                    "answer_key": super::draft::answer_key_schema(),
+                },
                 "required": ["brief", "answer_key"],
             },
         }),
@@ -69,6 +69,17 @@ pub fn tool_specs() -> Vec<Value> {
     tools.extend(super::bus::specs());
     tools.extend(super::review::specs());
     tools
+}
+
+fn start_description() -> String {
+    format!(
+        "Preview: start a Crew task. `brief` is the brief the worker reads; `answer_key` is what the core \
+        checks, and the worker never sees it. The core routes the brief, grants the files and runs a worker. \
+        Only the lead calls this. Both are drafts: leave out id, author and the other envelope fields. \
+        Put a check command only in the answer key, never in the brief text (the core refuses a brief that \
+        leaks it). A bad draft returns every problem at once. A valid call: {}",
+        super::draft::example()
+    )
 }
 
 fn route_spec() -> Value {

@@ -58,3 +58,4 @@ windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 [dev-dependencies]
 orbyn-core = { path = ".", features = ["engine-client"] }
 tokio = { workspace = true, features = ["test-util"] }
+ts-rs.workspace = true
