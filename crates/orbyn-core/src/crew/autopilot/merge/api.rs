@@ -266,6 +266,7 @@ fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
         kind: event.kind.clone(),
         at: event.at.clone(),
         decided_by: str_of(&body, "decided_by"),
+        actor: str_of(&body, "actor"),
         tier: str_of(&body, "tier"),
         rule: str_of(&body, "rule"),
         mode: str_of(&body, "mode"),

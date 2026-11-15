@@ -75,6 +75,11 @@ async fn the_tools_exist_only_with_the_preview_flag() {
 async fn a_brief_that_leaks_the_key_or_a_secret_is_refused_at_the_start() {
     let w = quiet().await;
     let leak = brief(json!({ "outcome": format!("Make `echo {KEY_MARKER}` pass.") }));
+    let (answer, _) = w.start(leak.clone(), key()).await;
+    let message = answer.to_string();
+    assert!(message.contains("brief.outcome"), "{message}");
+    assert!(message.contains("check `"), "{message}");
+    assert!(!message.contains(KEY_MARKER), "{message}");
     assert_eq!(refused(&w, leak, key()).await, "answer_key_forbidden");
     let secret = brief(json!({ "outcome": format!("Use sk-{} to log in.", "b".repeat(24)) }));
     assert_eq!(refused(&w, secret, key()).await, "secret_detected");

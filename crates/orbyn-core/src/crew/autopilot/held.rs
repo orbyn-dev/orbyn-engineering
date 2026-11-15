@@ -412,6 +412,12 @@ impl Core {
             "bound": format!("sha256:{}", held.bound),
             "action": { "kind": held.kind, "target": held.shown, "paths": [] },
         });
+        // The same names the audit rows use: the person is `user`; a deny or a dismiss is `local_caller`.
+        match kind {
+            "approved_once" => body["actor"] = json!("user"),
+            "denied_by_person" | "dismissed_by_person" => body["actor"] = json!("local_caller"),
+            _ => {}
+        }
         if let (Some(into), Some(from)) = (body.as_object_mut(), extra.as_object()) {
             into.extend(from.clone());
         }
@@ -675,7 +681,7 @@ impl Core {
                 self.held_row(
                     &closed,
                     "denied_by_person",
-                    &json!({ "decided_by": "hard_rule", "rule": refusal.0, "name": refusal.1, "why": "always_denied_at_approval" }),
+                    &json!({ "decided_by": "hard_rule", "actor": "user", "rule": refusal.0, "name": refusal.1, "why": "always_denied_at_approval" }),
                 );
             }
             return Err(CoreError::PolicyDenied(format!(
