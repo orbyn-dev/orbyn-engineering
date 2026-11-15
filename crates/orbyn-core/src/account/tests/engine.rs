@@ -433,6 +433,15 @@ async fn removing_the_last_trusted_device_and_a_stale_sign_in_have_their_own_ans
 /// Two trusted devices, each running the real worker against its own store. The first sets a
 /// value and syncs, so its zone exists when it lets the second in and hands over the zone key.
 async fn trusted_pair(dir: &TempDir) -> (Core, Core, Arc<Server>, [SyncHandle; 2]) {
+    let (a, b, server, workers, _) = trusted_pair_parts(dir).await;
+    (a, b, server, workers)
+}
+
+/// As [`trusted_pair`], with the second device's sync half, for a test that makes it send a record
+/// the app itself would never make.
+async fn trusted_pair_parts(
+    dir: &TempDir,
+) -> (Core, Core, Arc<Server>, [SyncHandle; 2], Arc<Zones>) {
     let (server, a, b) = pair();
     let (core_a, core_b) = (on(dir, "a"), on(dir, "b"));
     set(&core_a, "preview_appearance", json!("system"));
@@ -462,7 +471,7 @@ async fn trusted_pair(dir: &TempDir) -> (Core, Core, Arc<Server>, [SyncHandle; 2
         stored(core, "preview_appearance") == json!("system") && online(core)
     })
     .await;
-    (core_a, core_b, server, [first, second])
+    (core_a, core_b, server, [first, second], b.zones.clone())
 }
 
 #[tokio::test]
@@ -571,4 +580,58 @@ fn only_a_loopback_address_builds_the_real_client() {
     }
     assert!(connect("http://127.0.0.1:9", "This computer").is_ok());
     assert!(connect("http://[::1]:9", "This computer").is_ok());
+}
+
+/// A record a peer made without the settings type, carrying every setting the Engine never syncs
+/// (the default permission mode and the default engine among them), reaches this device through
+/// the real adapter: none of them is applied, kept or queued, and an allowlisted setting sent in
+/// the same record is applied, so the pass itself worked.
+#[tokio::test]
+async fn a_peer_record_with_never_sync_keys_is_refused_on_apply_through_the_engine() {
+    let dir = TempDir::new();
+    let (a, _b, _server, _workers, b_zones) = trusted_pair_parts(&dir).await;
+    let keys = super::never_sync::engine_refused_catalog_keys();
+    assert!(keys.contains(&"default_permission_mode") && keys.contains(&"default_engine"));
+    let before_values: Vec<(String, Value)> = keys
+        .iter()
+        .map(|key| ((*key).to_owned(), stored(&a, key)))
+        .collect();
+    let before_globals = globals(&a);
+    let before_waiting = waiting(&a);
+    // Every key, with a value that would pass the value check, so it is the list that refuses it.
+    let mut sent: Vec<(String, Value)> = Vec::new();
+    for key in &keys {
+        let (value, _) = foreign_value(&a, key);
+        assert_ne!(stored(&a, key), value, "{key}");
+        sent.push(((*key).to_owned(), value));
+    }
+    sent.push(("preview_appearance".into(), json!("dark")));
+    let now = crate::util::unix_now_ms();
+    b_zones
+        .peer_stage_raw(
+            &sent,
+            u64::try_from(now + 60_000).unwrap(),
+            u64::try_from(now).unwrap(),
+        )
+        .await
+        .unwrap();
+    a.store.account_poke();
+    until(&a, |a| {
+        stored(a, "preview_appearance") == json!("dark") && online(a)
+    })
+    .await;
+    // Only the allowlisted key changed; nothing was queued by applying.
+    let mut expected = before_globals;
+    expected.insert("pref:preview_appearance".into(), "\"dark\"".into());
+    assert_eq!(globals(&a), expected);
+    assert_eq!(waiting(&a), before_waiting);
+    for (key, value) in &before_values {
+        assert_eq!(&stored(&a, key), value, "{key}");
+    }
+    // And the record this device holds and would upload carries none of them.
+    let record = a.store.account_record(ZONE).unwrap();
+    for key in &keys {
+        assert!(!record.contains_key(*key), "{key}");
+    }
+    assert!(record.contains_key("preview_appearance"));
 }

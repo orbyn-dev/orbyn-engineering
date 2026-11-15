@@ -414,9 +414,14 @@ now and does not wait for them.
 3. "Confirm it's you" is built and enforced inside `orbynd`, with a route-table guard so no new account-changing route
    can skip it.
 4. Controls 1 to 7 and 5b of the [threat model](account-threat-model.md) are built and their checks pass:
-   - the allowlist-only apply test for all 51 non-allowlisted keys;
+   - the allowlist-only apply test for all 51 non-allowlisted keys, and the drift tests that tie the allowlist to the
+     Engine's never-sync list (`account/tests/never_sync.rs`): no allowlisted key is one the Engine refuses, the
+     Engine's 28 never-sync keys are exactly the catalog keys it refuses, the other 23 non-allowlisted keys are named
+     so a new key forces a decision, and a peer record carrying a never-sync key is refused on apply through the real
+     adapter;
    - the keybinding test;
-   - the per-adapter options test;
+   - the by-name test that `default_model_options` is never synced (`account/tests/allowlist.rs`; there is no
+     per-adapter options sync to test, because the key never leaves the device);
    - the child-environment scrub tests;
    - the snapshot tests (`account/tests/sealed.rs`): older, other-profile and wrong-version files are refused;
    - the key-wipe check on sign-out, device removal and `Unauthorized` (`account/tests/sealed.rs`, against the

@@ -19,6 +19,8 @@ mod engine_scan;
 mod engine_server;
 mod flow;
 mod limits;
+#[cfg(feature = "engine-client")]
+mod never_sync;
 mod nonce;
 #[cfg(feature = "engine-client")]
 mod sealed;
