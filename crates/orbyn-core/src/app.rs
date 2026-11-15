@@ -87,6 +87,10 @@ pub struct CoreConfig {
     /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
     /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
     pub crew_tiers: Option<crate::crew::RouterConfig>,
+    /// Person-owned CI names for forge merging. Empty disables forge merge effects.
+    pub crew_merge_required_checks: Vec<String>,
+    /// Explicit in-service watch schedule, never publication/merging. None is off; 60s..24h only.
+    pub crew_merge_watch_interval: Option<Duration>,
     /// Whether a crew worker's process starts under the restriction (and is refused where
     /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
     pub crew_confine_workers: bool,
@@ -111,6 +115,8 @@ impl CoreConfig {
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
             crew_tiers: None,
+            crew_merge_required_checks: Vec::new(),
+            crew_merge_watch_interval: None,
             crew_confine_workers: true,
         }
     }

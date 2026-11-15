@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub use decide::agrees;
+pub(crate) use rules::read_rules_at;
 pub use rules::{RULES_FILE, RuleLane, read_rules};
 pub use status::{FindingStatus, status_of};
 

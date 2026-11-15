@@ -71,6 +71,29 @@ pub async fn update_pull(forge: Forge, cwd: &Path, number: u64, update: &UpdateP
 
 /// Azure's merge strategy words differ from everyone else's.
 pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -> Result<()> {
+    merge_selected(forge, cwd, number, options, None).await
+}
+
+pub(crate) async fn merge_in(
+    forge: Forge,
+    cwd: &Path,
+    number: u64,
+    options: &MergePull,
+    repository: &str,
+) -> Result<()> {
+    if !matches!(forge, Forge::GitHub | Forge::GitLab) || options.method != "merge" {
+        return Err(forge.unsupported("select a guarded Crew merge repository"));
+    }
+    merge_selected(forge, cwd, number, options, Some(repository)).await
+}
+
+async fn merge_selected(
+    forge: Forge,
+    cwd: &Path,
+    number: u64,
+    options: &MergePull,
+    repository: Option<&str>,
+) -> Result<()> {
     if !matches!(options.method.as_str(), "merge" | "squash" | "rebase") {
         return Err(CoreError::Invalid("Choose merge, squash or rebase.".into()));
     }
@@ -90,7 +113,10 @@ pub async fn merge(forge: Forge, cwd: &Path, number: u64, options: &MergePull) -
     });
     match forge {
         Forge::GitHub | Forge::GitLab => {
-            let args = merge_args(forge, &id, options, body.as_deref());
+            let mut args = merge_args(forge, &id, options, body.as_deref());
+            if let Some(repository) = repository {
+                args.extend(["--repo".into(), repository.into()]);
+            }
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             call(forge, cwd, &args)
                 .await

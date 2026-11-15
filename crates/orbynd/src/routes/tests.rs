@@ -74,6 +74,12 @@ async fn observed() -> Value {
     std::fs::create_dir_all(&dir).unwrap();
     // The Crew routes hide behind the Preview flag; with it on they are protected routes like the rest.
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
+    let absent = dir.join("absent-native");
+    assert!(absent.is_absolute() && !absent.exists());
+    config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
+    config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
+    config.engines.known_engine_ids = Some(Vec::new());
+    config.engines.lookup_latest = false;
     config.crew_preview = true;
     config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
