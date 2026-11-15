@@ -1390,6 +1390,11 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
 - **The web card.** A page reload during a re-run loses what the window shows (its busy state and the answer) while the service goes on running the
   checks: the answer is not kept, and a window that asks again within the gap, or while a re-run runs, gets `409 task_busy`.
 
+## Worker approvals
+
+- **Approvals wait up to the approval timeout (30 minutes by default).** Claude Code asks Orbyn through one long MCP call and drops an HTTP MCP request that has no response after 60 s unless the server's `timeout` is higher, so a worker's or reviewer's approval used to be expired as `system:abandoned` after about a minute. Orbyn now writes `timeout` (approval timeout plus 60 s) into each run's `--mcp-config`.
+- **Full access on the lead thread does not cover crew workers.** Crew mode governs a worker's commands, so a worker can still ask for approval while the thread it came from is on Full access.
+
 ## Worker confinement (macOS)
 
 Crew runs on macOS in the beta; Windows later. On macOS each worker's engine process starts under a

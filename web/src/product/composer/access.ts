@@ -13,7 +13,7 @@ export const ACCESS: Record<PermissionMode, { label: string; description: string
     description: "Supported engines approve routine actions; others still ask.",
     icon: Sparkles,
   },
-  full_access: { label: "Full access", description: "Allow commands and edits without prompts.", icon: ShieldOff },
+  full_access: { label: "Full access", description: "Allow commands and edits without prompts in this thread. Crew mode decides for crew workers.", icon: ShieldOff },
 };
 
 const MODES = Object.keys(ACCESS) as PermissionMode[];

@@ -200,7 +200,7 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   await expect
     .poll(async () => (await thread(id) as unknown as { lifecycle: { permission_mode: string } }).lifecycle.permission_mode)
     .toBe("full_access");
-  await expect(page.getByText("Allow commands and edits without prompts.")).toBeVisible();
+  await expect(page.getByText("Allow commands and edits without prompts in this thread. Crew mode decides for crew workers.")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Permissions: Full access", exact: true })).toBeVisible();
   await service.api("PATCH", `/api/threads/${id}`, { permission_mode: "supervised" });

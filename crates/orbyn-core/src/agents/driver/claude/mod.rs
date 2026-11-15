@@ -67,14 +67,17 @@ pub struct ClaudeDriver {
     named: Option<(String, String)>,
     /// Tokens before Claude compacts, from the instance.
     auto_compact_window: Option<u32>,
+    /// The service's approval timeout; the run's MCP tool timeout is this plus a margin.
+    approval_timeout: Duration,
 }
 
 impl ClaudeDriver {
-    pub fn new(program: String) -> Self {
+    pub fn new(program: String, approval_timeout: Duration) -> Self {
         Self {
             program,
             named: None,
             auto_compact_window: None,
+            approval_timeout,
         }
     }
 }
@@ -123,6 +126,7 @@ impl EngineDriver for ClaudeDriver {
                 .auto_compact_window
                 .as_deref()
                 .and_then(|window| window.parse().ok()),
+            approval_timeout: self.approval_timeout,
         }))
     }
 
@@ -375,19 +379,37 @@ fn handle_for(
     }
 }
 
+/// Margin over the approval timeout, so the service answers (expires) before Claude gives up on the call.
+const APPROVAL_MARGIN: Duration = Duration::from_secs(60);
+/// Below the 2^31-1 ms a JavaScript timer can hold (about 24.8 days), so a huge approval timeout cannot wrap to zero.
+const TIMEOUT_MAX: Duration = Duration::from_secs(24 * 24 * 60 * 60);
+
+/// The run's `--mcp-config`. The permission prompt is one long MCP call that waits for a person, and Claude
+/// Code drops an HTTP MCP request that has no response byte after the greater of 60 s, the server's tool
+/// `timeout` and `MCP_TIMEOUT`; the same `timeout` raises the idle limit's floor (documented under
+/// "MCP_TOOL_TIMEOUT" in https://code.claude.com/docs/en/mcp). Without it the call died at 60 s and the
+/// service expired the approval as `system:abandoned`.
+pub(super) fn mcp_config(url: Option<&str>, approval_timeout: Duration) -> Value {
+    let timeout = approval_timeout
+        .saturating_add(APPROVAL_MARGIN)
+        .min(TIMEOUT_MAX)
+        .as_millis() as u64;
+    json!({
+        "mcpServers": { (MCP_SERVER_NAME): { "type": "http", "url": url, "timeout": timeout } }
+    })
+}
+
 impl ClaudeDriver {
     /// Writes a run's files into its folder and starts the CLI on them.
     fn launch(&self, spec: &RunSpec) -> Result<EngineProcess> {
         let command = resolve_engine(&self.program)?;
-        let mcp_config = spec.run_dir.join("mcp.json");
-        let config = json!({
-            "mcpServers": { (MCP_SERVER_NAME): { "type": "http", "url": spec.mcp_url } }
-        });
-        write_private(&mcp_config, config.to_string().as_bytes())?;
+        let mcp_path = spec.run_dir.join("mcp.json");
+        let servers = mcp_config(spec.mcp_url.as_deref(), self.approval_timeout);
+        write_private(&mcp_path, servers.to_string().as_bytes())?;
         if let Some(settings) = launch_settings(spec, self.auto_compact_window) {
             write_private(&run_settings_path(spec), settings.to_string().as_bytes())?;
         }
-        let args = run_args(spec, &mcp_config);
+        let args = run_args(spec, &mcp_path);
         spawn_engine_confined(&command, &args, &spec.cwd, &[], spec.confine.as_ref())
     }
 

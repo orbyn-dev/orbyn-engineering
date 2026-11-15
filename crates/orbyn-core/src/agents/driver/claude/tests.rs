@@ -603,7 +603,7 @@ fn a_recorded_reply_parses_as_the_live_one_will() {
 #[tokio::test]
 #[ignore = "needs a real Claude Code"]
 async fn live_catalog_is_the_engines_own() {
-    let catalog = ClaudeDriver::new("claude".into())
+    let catalog = ClaudeDriver::new("claude".into(), Duration::from_secs(1800))
         .models()
         .await
         .unwrap()
@@ -1253,4 +1253,25 @@ fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
     free.resume = None;
     let args = run_args(&free, Path::new("/m"));
     assert!(!args.iter().any(|a| a == "--session-id"));
+}
+
+#[test]
+fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
+    use super::mcp_config;
+    let config = mcp_config(Some("http://127.0.0.1:1/mcp/t"), Duration::from_secs(1800));
+    let server = &config["mcpServers"][MCP_SERVER_NAME];
+    // Approval timeout plus a 60 s margin, in milliseconds.
+    assert_eq!(server["timeout"], json!(1_860_000));
+    assert_eq!(server["url"], json!("http://127.0.0.1:1/mcp/t"));
+    let short = mcp_config(None, Duration::from_secs(5));
+    assert_eq!(
+        short["mcpServers"][MCP_SERVER_NAME]["timeout"],
+        json!(65_000)
+    );
+    // A huge timeout neither overflows nor passes what a JavaScript timer can hold.
+    let huge = mcp_config(None, Duration::MAX);
+    assert_eq!(
+        huge["mcpServers"][MCP_SERVER_NAME]["timeout"],
+        json!(24u64 * 24 * 60 * 60 * 1000)
+    );
 }
