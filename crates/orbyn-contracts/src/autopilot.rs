@@ -403,6 +403,27 @@ pub struct AutopilotLogRow {
 }
 
 wire! {
+pub struct AutopilotSecondEngineNotice {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub task_id: String,
+    pub at: String,
+    pub target: String,
+    pub lead_engine: Option<String>,
+    pub lead_family: Option<String>,
+}
+}
+
+wire! {
+/// Pending notices; continue before next_before's immutable ledger id, even if this page resolved items.
+pub struct AutopilotSecondEngineNotices {
+    pub items: Vec<AutopilotSecondEngineNotice>,
+    #[ts(type = "number | null")]
+    pub next_before: Option<i64>,
+}
+}
+
+wire! {
 pub struct AutopilotLog {
     pub rows: Vec<AutopilotLogRow>,
     pub total: u32,

@@ -3,6 +3,7 @@
 //! ignores OAuth, is never passed. Permissions reach Orbyn through the per-run
 //! MCP `approve` tool, not through this process's stdio.
 
+mod approval;
 mod args;
 mod catalog;
 mod events;
@@ -84,6 +85,25 @@ impl ClaudeDriver {
 
 #[async_trait]
 impl EngineDriver for ClaudeDriver {
+    fn supports_approval(&self) -> bool {
+        true
+    }
+
+    fn supports_approval_version(&self, version: Option<&str>) -> bool {
+        approval::version_supported(version)
+    }
+
+    fn approval_model(&self, selected: &str, effective: Option<&str>) -> Option<String> {
+        approval::pinned_model(selected, effective)
+    }
+
+    async fn start_approval(
+        &self,
+        spec: super::ApprovalSpec,
+        events: mpsc::Sender<EngineEvent>,
+    ) -> Result<RunHandle> {
+        approval::start(self, spec, events)
+    }
     fn descriptor(&self) -> EngineDescriptor {
         let (id, name) = self
             .named

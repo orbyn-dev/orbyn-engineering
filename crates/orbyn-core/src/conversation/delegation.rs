@@ -1,5 +1,7 @@
 //! Delegation: handing work to a child thread in the parent's folder.
 
+mod approval;
+
 use orbyn_contracts::{DelegateTask, ModelSelection, Thread};
 
 use crate::app::Core;

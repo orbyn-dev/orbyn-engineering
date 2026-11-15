@@ -75,6 +75,21 @@ impl StreamMapper {
             }
             Some("system") if frame.get("subtype").and_then(Value::as_str) == Some("init") => {
                 let mut events = session(frame);
+                if !nested {
+                    // Only a bounded effective model scalar is retained. Missing or
+                    // noncanonical metadata is explicit, so an older init cannot win.
+                    let model = frame
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .and_then(|model| super::approval::pinned_model(model, None));
+                    events.push(
+                        AgUiEvent::Custom {
+                            name: "engine.model".into(),
+                            value: json!({ "engine": "claude", "model": model }),
+                        }
+                        .into(),
+                    );
+                }
                 events.extend(init_commands(frame));
                 events.extend(init_tools(frame));
                 events
