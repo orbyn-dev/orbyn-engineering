@@ -68,10 +68,25 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
         "a passed task with a checkout may be re-run"
     );
     assert!(card.reason.is_none());
+    let stored = w.core.store.crew_evidence(&subject).unwrap();
+    assert!(!stored.is_empty(), "the task ran its checks");
+    let passed = stored
+        .iter()
+        .filter(|e| e.outcome == orbyn_contracts::CheckOutcome::Pass)
+        .count();
+    let counts = card
+        .checks
+        .as_ref()
+        .expect("a passed task shows its counts");
+    assert_eq!(
+        (counts.passed as usize, counts.of as usize),
+        (passed, stored.len()),
+        "the card counts the latest verification"
+    );
     assert_eq!(view.engines.len(), 1);
     assert_eq!(view.kinds[0].name, "implement");
 
-    // A card has these fields and no cell, count of checks or check text.
+    // A card has these fields and no cell or check text; its checks are two counts.
     let mut keys: Vec<String> = serde_json::to_value(card)
         .unwrap()
         .as_object()
@@ -85,6 +100,7 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
         [
             "can_cancel",
             "can_rerun",
+            "checks",
             "effort",
             "engine",
             "id",
@@ -170,6 +186,95 @@ async fn a_running_task_can_be_cancelled_and_shows_no_check_text() {
         !text.contains(&marker),
         "check text reached the board of a running task"
     );
+    assert!(
+        card.checks.is_none(),
+        "a running task shows no count, though it holds evidence"
+    );
+    assert!(
+        column(&view, Column::Passed).cards[0].checks.is_some(),
+        "the passed one still does"
+    );
+}
+
+#[tokio::test]
+async fn hostile_evidence_fields_reach_a_card_only_as_two_counts() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let done = w.built_work().await;
+    let crew_id = w.task(&done).crew_id;
+    let base = w.core.store.crew_evidence(&done).unwrap().remove(0);
+    let ran = w.core.store.crew_evidence(&done).unwrap().len();
+    let before = board(&w, &crew_id);
+    let was = column(&before, Column::Passed).cards[0]
+        .checks
+        .clone()
+        .unwrap();
+    assert_eq!(was.of as usize, ran);
+
+    // A failing row, with hostile text in every field a check has, built at run time.
+    let marker = nonce("count");
+    let mut value: Value = CrewObject::Evidence(base).to_value();
+    value["outcome"] = json!("fail");
+    value["check"] = json!(format!("chk-{marker}"));
+    for field in ["command", "excerpt", "proves", "does_not_prove"] {
+        value[field] = json!(format!("{field} {marker} <script>alert(1)</script>"));
+    }
+    value["id"] = json!(object_id(&value).unwrap());
+    w.core
+        .store
+        .add_crew_object(&done, &CrewObject::parse(&value).unwrap())
+        .unwrap();
+
+    let view = board(&w, &crew_id);
+    let card = &column(&view, Column::Passed).cards[0];
+    let counts = card.checks.clone().expect("counts");
+    // No finished verification named the grafted row, so it is not part of the one the task passed on.
+    assert_eq!(
+        (counts.passed, counts.of),
+        (was.passed, was.of),
+        "a row no verification named changed the count"
+    );
+
+    // A retry: a later verification names the hostile row alone. The count is that verification's, not both attempts' together.
+    let gate = w
+        .core
+        .store
+        .crew_gates(&done)
+        .unwrap()
+        .into_iter()
+        .find(|g| g.stage == orbyn_contracts::GateStage::Checks)
+        .expect("the task's own checks gate");
+    let mut later: Value = CrewObject::Gate(gate).to_value();
+    later["evidence"] = json!([value["id"]]);
+    later["decision"] = json!("fail");
+    later["id"] = json!(object_id(&later).unwrap());
+    w.core
+        .store
+        .add_crew_object(&done, &CrewObject::parse(&later).unwrap())
+        .unwrap();
+    let view = board(&w, &crew_id);
+    let counts = column(&view, Column::Passed).cards[0]
+        .checks
+        .clone()
+        .expect("counts");
+    assert_eq!(
+        (counts.passed, counts.of),
+        (0, 1),
+        "the newest verification is the one counted"
+    );
+    let text = serde_json::to_string(&view).unwrap();
+    assert!(
+        !text.contains(&marker) && !text.contains("<script>"),
+        "evidence text reached the board"
+    );
+    let checks = serde_json::to_value(counts).unwrap();
+    let mut keys: Vec<&str> = checks
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["of", "passed"], "a count holds two numbers only");
 }
 
 #[tokio::test]

@@ -18,6 +18,10 @@ pub(super) struct Facts {
     pub fixes: Vec<(CrewFix, String)>,
     /// Evidence of the build now under way: the latest fix when it has any, else the task's own.
     pub evidence: Vec<Evidence>,
+    /// The evidence of the task that is building now (the latest fix, else the task itself), and no other.
+    pub build_evidence: Vec<Evidence>,
+    /// That task's checks gates about its own brief, oldest first. A lead's repro gate on a finding is not one.
+    pub build_gates: Vec<Gate>,
     pub gates: Vec<Gate>,
     /// `Core::review_status`, or an empty review when no lane ran.
     pub review: Value,
@@ -43,6 +47,21 @@ impl Core {
                 evidence = latest;
             }
         }
+        let building = fixes
+            .last()
+            .map_or_else(|| id.clone(), |(fix, _)| fix.fix_task_id.clone());
+        let build_evidence = store.crew_evidence(&building)?;
+        let build_brief = store.crew_brief(&building)?.map(|b| b.id);
+        let build_gates = store
+            .crew_gates(&building)?
+            .into_iter()
+            .filter(|g| {
+                g.stage == orbyn_contracts::GateStage::Checks
+                    && build_brief
+                        .as_ref()
+                        .is_some_and(|brief| *brief == g.subject)
+            })
+            .collect();
         let review = if store.crew_reviews_of(&id)?.is_empty() {
             json!({ "lanes": [], "findings": [], "blocked": false })
         } else {
@@ -55,6 +74,8 @@ impl Core {
             route: store.crew_route_decisions(&id)?.pop(),
             fixes,
             evidence,
+            build_evidence,
+            build_gates,
             gates: store.crew_gates(&id)?,
             review,
             entry: store.merge_entry(&id)?,

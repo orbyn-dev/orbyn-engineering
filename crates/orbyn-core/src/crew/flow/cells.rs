@@ -1,7 +1,7 @@
 //! The ten cells of a task's line, derived and never stored: a pure function of what `Facts` read. Only a confirmed
 //! finding that still blocks turns a review cell red; a model's review never passes or fails a stage by itself.
 
-use orbyn_contracts::{CheckOutcome, FlowCell, FlowCellState, FlowStage};
+use orbyn_contracts::{CheckOutcome, Evidence, FlowCell, FlowCellState, FlowStage, Gate};
 use serde_json::Value;
 
 use super::facts::Facts;
@@ -63,28 +63,85 @@ fn build(facts: &Facts) -> FlowCellState {
     }
 }
 
+/// One row of evidence as the rule reads it: its id, and whether it passed or broke.
+struct Row<'a> {
+    id: &'a str,
+    pass: bool,
+    /// Failed or errored; a skipped check is neither a pass nor a break.
+    broke: bool,
+}
+
+fn rows(evidence: &[Evidence]) -> Vec<Row<'_>> {
+    evidence
+        .iter()
+        .map(|e| Row {
+            id: e.id.as_str(),
+            pass: e.outcome == CheckOutcome::Pass,
+            broke: matches!(e.outcome, CheckOutcome::Fail | CheckOutcome::Error),
+        })
+        .collect()
+}
+
+/// The rows of the final verification, once there is one: the ones the newest checks gate named. Nothing else is counted.
+///
+/// A count is shown only in `passed`. `passed` is reached only when the final verification decided pass, and that verification
+/// wrote a gate naming its rows, so the newest gate is the right one. In every other state the store cannot say which attempt a
+/// row belongs to: nothing dates a state entry or tags a row with its attempt, a retry keeps its run and its commit, and a
+/// verification that stops early (a protected file changed, a hidden file found) or is undecided writes no gate and leaves rows
+/// no gate names. Counting there would show an earlier attempt's result, so `failed`, `verifying`, `needs_person`, `stopped` and
+/// `cancelled` have none, until the store keeps a record per verification attempt.
+fn current_batch<'a, 'b>(
+    state: &str,
+    rows: &'b [Row<'a>],
+    newest: Option<&[&str]>,
+) -> Vec<&'b Row<'a>> {
+    match (state, newest) {
+        ("passed", Some(ids)) => rows.iter().filter(|r| ids.contains(&r.id)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The evidence ids the newest checks gate named; `gates` holds only checks gates about the task's own brief.
+fn newest_verification(gates: &[Gate]) -> Option<Vec<&str>> {
+    gates
+        .last()
+        .map(|g| g.evidence.iter().map(|h| h.as_str()).collect())
+}
+
+/// Checks passed out of checks run in the final verification, as two counts and nothing else; only a `passed` build has them.
+pub(super) fn check_counts(
+    state: &str,
+    evidence: &[Evidence],
+    gates: &[Gate],
+) -> Option<(u32, u32)> {
+    let all = rows(evidence);
+    let newest = newest_verification(gates);
+    let batch = current_batch(state, &all, newest.as_deref());
+    if batch.is_empty() {
+        return None;
+    }
+    let passed = batch.iter().filter(|r| r.pass).count();
+    Some((
+        u32::try_from(passed).ok()?,
+        u32::try_from(batch.len()).ok()?,
+    ))
+}
+
 fn checks(facts: &Facts) -> FlowCell {
-    // The latest verification: the evidence on the commit the newest row ran on.
-    let Some(last) = facts.evidence.last() else {
+    // The current verification of the build now under way; an earlier attempt's rows are not it.
+    let all = rows(&facts.build_evidence);
+    let newest = newest_verification(&facts.build_gates);
+    let batch = current_batch(build_state(facts), &all, newest.as_deref());
+    if batch.is_empty() {
         let state = if build_state(facts) == "verifying" {
             FlowCellState::Running
         } else {
             FlowCellState::Pending
         };
         return cell(FlowStage::Checks, state);
-    };
-    let batch: Vec<_> = facts
-        .evidence
-        .iter()
-        .filter(|e| e.commit == last.commit)
-        .collect();
-    let passed = batch
-        .iter()
-        .filter(|e| e.outcome == CheckOutcome::Pass)
-        .count();
-    let broken = batch
-        .iter()
-        .any(|e| matches!(e.outcome, CheckOutcome::Fail | CheckOutcome::Error));
+    }
+    let passed = batch.iter().filter(|r| r.pass).count();
+    let broken = batch.iter().any(|r| r.broke);
     let state = if broken {
         FlowCellState::Failed
     } else if build_state(facts) == "verifying" {
@@ -258,5 +315,71 @@ pub(super) fn in_filter(
         }),
         F::Failed => state == "stopped" || some(&|c| c.state == FlowCellState::Failed),
         F::Passed => state == "passed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, pass: bool) -> Row<'_> {
+        Row {
+            id,
+            pass,
+            broke: !pass,
+        }
+    }
+
+    fn counts(state: &str, rows: &[Row<'_>], newest: Option<&[&str]>) -> Option<(usize, usize)> {
+        let batch = current_batch(state, rows, newest);
+        (!batch.is_empty()).then(|| (batch.iter().filter(|r| r.pass).count(), batch.len()))
+    }
+
+    #[test]
+    fn passed_shows_the_newest_gates_counts_after_an_earlier_failed_attempt() {
+        // Attempt 1 ran a, b and failed (gate g1); the retry ran d, e, f and passed (gate g2).
+        let rows = [
+            row("a", true),
+            row("b", false),
+            row("d", true),
+            row("e", true),
+            row("f", true),
+        ];
+        assert_eq!(
+            counts("passed", &rows, Some(&["d", "e", "f"])),
+            Some((3, 3))
+        );
+    }
+
+    #[test]
+    fn no_other_state_shows_a_count() {
+        let rows = [row("a", true), row("b", false)];
+        let newest: Option<&[&str]> = Some(&["a", "b"]);
+        for state in [
+            "failed",
+            "verifying",
+            "needs_person",
+            "stopped",
+            "cancelled",
+            "briefed",
+            "routed",
+            "running",
+            "changed_approach",
+        ] {
+            assert_eq!(counts(state, &rows, newest), None, "{state}");
+        }
+    }
+
+    #[test]
+    fn a_failure_after_a_gate_that_wrote_no_gate_shows_none() {
+        // Attempt 1 wrote gate g1; the retry stopped early on a protected file: no row, no gate, state failed.
+        let rows = [row("a", true), row("b", false)];
+        assert_eq!(counts("failed", &rows, Some(&["a", "b"])), None);
+    }
+
+    #[test]
+    fn a_passed_task_with_no_gate_or_no_rows_has_none() {
+        assert_eq!(counts("passed", &[row("a", true)], None), None);
+        assert_eq!(counts("passed", &[], Some(&["a"])), None);
     }
 }
