@@ -92,4 +92,3 @@ export function ReviewConsent({ consent, onChanged }: { consent: FlowReviewConse
     </li>
   );
 }
-
