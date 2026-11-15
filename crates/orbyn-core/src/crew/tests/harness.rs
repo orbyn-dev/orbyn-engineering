@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 
 use super::fake::{caps, model};
 use crate::agents::driver::{
-    EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, ModelCatalog,
-    RunHandle, RunSpec,
+    ApprovalSpec, EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe,
+    ModelCatalog, RunHandle, RunSpec,
 };
 use crate::app::Core;
 use crate::error::Result;
@@ -49,8 +49,25 @@ pub enum Turn {
 /// happens next.
 pub type Script = Arc<dyn Fn(usize, &std::path::Path) -> Turn + Send + Sync>;
 
+#[derive(Clone)]
+pub enum ApprovalTurn {
+    Reply(String),
+    Hang,
+    Permission,
+    Session,
+    OverBudget,
+    Fail,
+}
+
+pub type ApprovalTurns = Arc<Mutex<BTreeMap<String, ApprovalTurn>>>;
+pub type ApprovalSpecs = Arc<Mutex<Vec<(String, ApprovalSpec)>>>;
+
+#[derive(Clone)]
 pub struct Fake {
+    approval_turns: ApprovalTurns,
+    approval_specs: ApprovalSpecs,
     id: String,
+    family: String,
     /// Takes input while a turn runs, as Claude and Codex do; false is an engine that does not.
     steerable: bool,
     /// Lists a lead-tier model as well, so a review role can be routed to it.
@@ -70,6 +87,97 @@ pub struct Fake {
 
 #[async_trait]
 impl EngineDriver for Fake {
+    fn family(&self) -> String {
+        self.family.clone()
+    }
+
+    fn instance(
+        &self,
+        instance: &orbyn_contracts::ProviderInstance,
+    ) -> Option<Arc<dyn EngineDriver>> {
+        let mut driver = self.clone();
+        driver.id.clone_from(&instance.id);
+        Some(Arc::new(driver))
+    }
+    fn supports_approval(&self) -> bool {
+        true
+    }
+
+    async fn start_approval(
+        &self,
+        spec: ApprovalSpec,
+        events: mpsc::Sender<EngineEvent>,
+    ) -> Result<RunHandle> {
+        self.approval_specs
+            .lock()
+            .unwrap()
+            .push((self.id.clone(), spec.clone()));
+        let turn = self
+            .approval_turns
+            .lock()
+            .unwrap()
+            .get(&self.id)
+            .cloned()
+            .unwrap_or(ApprovalTurn::Fail);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let stop = cancel.clone();
+        let task = tokio::spawn(async move {
+            let event = match turn {
+                ApprovalTurn::Reply(text) => {
+                    if events.send(EngineEvent::Usage(orbyn_contracts::ThreadUsage { total_tokens: Some(20), context_window: None, raw: json!({ "input_tokens": 10, "output_tokens": 10, "estimated_cost_usd": 0.001 }) })).await.is_err() { return; }
+                    for event in [
+                        orbyn_contracts::AgUiEvent::TextMessageStart {
+                            message_id: "approval".into(),
+                            role: "assistant".into(),
+                        },
+                        orbyn_contracts::AgUiEvent::TextMessageContent {
+                            message_id: "approval".into(),
+                            delta: text,
+                        },
+                        orbyn_contracts::AgUiEvent::TextMessageEnd {
+                            message_id: "approval".into(),
+                        },
+                    ] {
+                        if events.send(event.into()).await.is_err() {
+                            return;
+                        }
+                    }
+                    EngineEvent::Finished(EngineOutcome::Completed)
+                }
+                ApprovalTurn::Hang => {
+                    stop.cancelled().await;
+                    EngineEvent::Finished(EngineOutcome::Cancelled)
+                }
+                ApprovalTurn::Session => EngineEvent::Session("forbidden-session".into()),
+                ApprovalTurn::OverBudget => EngineEvent::Usage(orbyn_contracts::ThreadUsage {
+                    total_tokens: Some(spec.max_reported_tokens + 1),
+                    context_window: None,
+                    raw: json!({}),
+                }),
+                ApprovalTurn::Permission => {
+                    let (reply, _answer) = tokio::sync::oneshot::channel();
+                    EngineEvent::Permission(crate::agents::driver::PermissionRequest {
+                        kind: orbyn_contracts::ActionKind::Command,
+                        target: "must-not-execute".into(),
+                        summary: "forbidden".into(),
+                        detail: json!({}),
+                        paths: vec![],
+                        reply,
+                    })
+                }
+                ApprovalTurn::Fail => {
+                    EngineEvent::Finished(EngineOutcome::Failed("unavailable".into()))
+                }
+            };
+            let _ = events.send(event).await;
+        });
+        Ok(RunHandle {
+            cancel,
+            task,
+            input: None,
+            control: None,
+        })
+    }
     fn descriptor(&self) -> EngineDescriptor {
         EngineDescriptor {
             id: self.id.clone(),
@@ -92,7 +200,12 @@ impl EngineDriver for Fake {
         let mut models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
         if self.tiered {
             // The review tests map each fake's `-lead` model to the lead tier (see `world_tiered`).
-            models.push(model(&format!("{}-lead", self.id), &self.id, false));
+            let mut lead = model(&format!("{}-lead", self.id), &self.id, false);
+            lead.options.push(crate::agents::driver::effort_option(
+                ["medium"],
+                Some("medium"),
+            ));
+            models.push(lead);
         }
         Ok(Some(ModelCatalog::engine(models)))
     }
@@ -190,6 +303,8 @@ async fn send_tool(
 }
 
 pub struct World {
+    pub approval_turns: ApprovalTurns,
+    pub approval_specs: ApprovalSpecs,
     pub _dir: TempDir,
     pub core: Arc<Core>,
     pub repo: std::path::PathBuf,
@@ -271,9 +386,14 @@ async fn world_full(
     let steered = Arc::new(Mutex::new(Vec::new()));
     let confines = Arc::new(Mutex::new(Vec::new()));
     let turns: Arc<AtomicUsize> = Arc::default();
+    let approval_turns = Arc::new(Mutex::new(BTreeMap::new()));
+    let approval_specs = Arc::new(Mutex::new(Vec::new()));
     for (id, steerable) in engines {
         core.engines.register(Arc::new(Fake {
+            approval_turns: approval_turns.clone(),
+            approval_specs: approval_specs.clone(),
             id: (*id).to_owned(),
+            family: (*id).to_owned(),
             steerable: *steerable,
             tiered,
             steered: steered.clone(),
@@ -328,6 +448,8 @@ async fn world_full(
         .unwrap();
     let lead_token = bind(&core, &lead.id, "run-lead");
     World {
+        approval_turns,
+        approval_specs,
         _dir: dir,
         core,
         repo,

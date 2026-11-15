@@ -4,6 +4,7 @@
 mod areas;
 mod blast;
 mod chain;
+mod engine;
 mod exit;
 mod hard;
 mod hard_tools;
@@ -11,6 +12,7 @@ mod held;
 mod hosts;
 pub(super) mod ledger;
 mod merge;
+mod notices;
 mod presence;
 mod review;
 mod screen;

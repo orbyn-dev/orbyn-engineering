@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { navigate } from "../../../../product/state/route";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
@@ -137,12 +137,33 @@ export function ApprovalsTab() {
   const [hardList, setHardList] = useState(false);
   const routing = useRoutingRows();
   const [picked, setShown] = useState<"requests" | "routing">("requests");
+  const [noticeFailure, setNoticeFailure] = useState<{ id: string; failure: ApiFailure } | null>(null);
+  const noticeRequest = useRef(0);
   const rowsRef = useRef<HTMLDivElement>(null);
 
-  const close = useCallback(() => {
-    setSelected(null);
-    // Focus goes back to the row that opened the drawer.
-    requestAnimationFrame(() => rowsRef.current?.querySelector<HTMLElement>(".ap-open")?.focus());
+  const returnFocus = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (selected !== null) {
+      returnFocus.current = rowsRef.current?.querySelector<HTMLElement>('.ap-open[aria-pressed="true"]') ?? null;
+    } else if (returnFocus.current) {
+      // Every close, including an asynchronous dismissal, returns to its own row.
+      if (returnFocus.current.isConnected) returnFocus.current.focus();
+      else rowsRef.current?.focus();
+      returnFocus.current = null;
+    }
+  }, [selected]);
+
+  const close = useCallback(() => setSelected(null), []);
+
+  const dismissNotice = useCallback((id: string) => {
+    const request = ++noticeRequest.current;
+    setNoticeFailure(null);
+    void crewApi.dismissSecondEngineNotice(Number(id)).then(() => {
+      // Completion belongs to the original notice even if another drawer opened.
+      setSelected((current) => current === id ? null : current);
+    }).catch((error: unknown) => {
+      if (noticeRequest.current === request) setNoticeFailure({ id, failure: toFailure(error) });
+    });
   }, []);
 
   const held = useHeldCommands(close);
@@ -166,6 +187,7 @@ export function ApprovalsTab() {
     refused: held.presence.refused,
     seeHardDenied: () => setHardList(true),
     signInSecondEngine: () => navigate({ name: "settings", section: "providers" }),
+    dismissSecondEngineNotice: (one) => dismissNotice(one.id),
     close,
   };
   const mode = modes.data?.effective_default ?? "full";
@@ -179,6 +201,7 @@ export function ApprovalsTab() {
   return (
     <section className="ap-page" aria-label="Approvals">
       <StopsList />
+      {noticeFailure ? <ErrorState title="Can’t dismiss this notice" failure={noticeFailure.failure} onRetry={() => dismissNotice(noticeFailure.id)} /> : null}
       {routed > 0 ? (
         <div className="ap-tool">
           <span>Show</span>

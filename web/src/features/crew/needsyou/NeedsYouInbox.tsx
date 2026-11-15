@@ -34,6 +34,7 @@ function Inbox() {
   const handlers: NeedsActions = {
     act(item: NeedsItem, action: NeedsAction) {
       if (action.key === "dismiss") state.dismiss(item.id);
+      else if (action.key === "sign-in") navigate({ name: "settings", section: "providers" });
       else if (action.key === "deny") state.hold(item.ref)?.deny();
       else if (action.key === "approve" || action.key === "open") navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
     },
@@ -61,6 +62,7 @@ function Inbox() {
           <NeedsBar<NeedsKind | "all"> chips={kindChips(view, items.length)} active={view.filters.some((one) => one.kind === filter) ? filter : "all"} onPick={setFilter} rule={CHIP_NOTE} />
           <NeedsList items={shown} narrow={narrow} handlers={handlers} errors={state.partial} onRetry={state.retry} />
           {errors.map((one) => <p key={one.id} className="ny-note" role="alert">{one.message}</p>)}
+          {state.noticeFailure ? <p className="ny-note" role="alert">{state.noticeFailure.message}</p> : null}
         </>
       )}
     </section>

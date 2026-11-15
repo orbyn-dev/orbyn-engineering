@@ -31,8 +31,8 @@ pub struct Answer {
     pub reason: String,
 }
 
-/// Anyone who may say yes or no to a summary: the lead, or a second key. The engine-backed ones
-/// are not built yet (see the README); tests use scripted ones.
+/// Anyone who may say yes or no to a summary: the lead, or a second key.
+/// Engine adapters require the driver's bounded tool-free approval capability.
 #[async_trait]
 pub trait Approver: Send + Sync {
     /// The engine that answers.
