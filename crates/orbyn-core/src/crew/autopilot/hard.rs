@@ -10,7 +10,9 @@ use orbyn_contracts::{ActionKind, CrewPathPattern};
 use regex::Regex;
 use serde_json::json;
 
-use super::shell::{self, Simple, host_allowed, hosts, outside, outside_from, relative};
+use super::shell::{
+    self, Simple, host_allowed, hosts, outside, outside_from, relative, unreadable_target,
+};
 use crate::account::changes::{account_paths_in, changes_account_state};
 use crate::crew::changes::crew_change;
 use crate::crew::checks::covers;
@@ -735,6 +737,10 @@ fn git_changes_rules(ctx: &Ctx<'_>) -> bool {
 
 /// N3: a host the repository has not allowed.
 fn n3(ctx: &Ctx<'_>) -> bool {
+    // A target that holds an unresolved expansion is a host nobody listed.
+    if ctx.commands.iter().any(unreadable_target) {
+        return true;
+    }
     let from_commands = ctx.commands.iter().flat_map(hosts);
     let from_text: Vec<String> = if ctx.kind == ActionKind::Command {
         Vec::new()

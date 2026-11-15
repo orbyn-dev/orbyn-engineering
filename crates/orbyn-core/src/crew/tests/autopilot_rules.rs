@@ -116,6 +116,42 @@ fn n2_secrets_and_credentials() {
 }
 
 #[test]
+fn n3_denies_a_network_target_it_cannot_read() {
+    for text in [
+        "HOST=prod.example; ssh \"$HOST\" 'rm -rf /x'",
+        "ssh $HOST ls",
+        "ssh ${H} ls",
+        "ssh \"$(cat h)\" ls",
+        "ssh dev@$H ls",
+        "curl \"https://$H/x\"",
+        "curl $URL",
+        "git push \"$R\" feature",
+        "scp f \"$H:/p\"",
+        "rsync -a f $H:/p",
+        "ssh \"`cat h`\" ls",
+        "ssh $(cat h) ls",
+    ] {
+        let hit = command(text);
+        // scp and rsync of an unreadable path may trip N4 before N3; either way it is denied.
+        let by_n4 = text.starts_with("scp") || text.starts_with("rsync");
+        assert!(
+            hit == Some("N3") || by_n4 && hit == Some("N4"),
+            "{text}: {hit:?}"
+        );
+    }
+    for text in [
+        "ssh github.com \"echo $HOME\"",
+        "curl -H \"Authorization: x$T\" https://github.com/o/r",
+        "curl https://github.com/o/$P",
+        "curl -d \"$DATA\" http://localhost:3000/x",
+        "git push origin \"$BRANCH\"",
+        "git commit -m \"$MSG\"",
+    ] {
+        assert_eq!(command(text), None, "{text}");
+    }
+}
+
+#[test]
 fn n3_hosts_the_repository_has_not_allowed() {
     assert_eq!(command("curl https://evil.example/x"), Some("N3"));
     assert_eq!(command("git clone git@evil.example:o/r.git"), Some("N3"));

@@ -611,6 +611,94 @@ pub fn hosts(command: &Simple) -> Vec<String> {
     found
 }
 
+/// Whether a word still holds an expansion the guard cannot resolve: `$VAR`, `${..}`, `$(..)`, a
+/// backtick, or a glob.
+fn expands(word: &str) -> bool {
+    word.contains(['$', '`', '*', '?', '[', '{'])
+}
+
+/// Options whose next word is a value, not a target.
+const VALUE_FLAGS: [&str; 33] = [
+    "-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-E", "-e", "-I", "-m", "-O",
+    "-Q", "-S", "-W", "-w", "-H", "-d", "-u", "-X", "-A", "-T", "-x", "-K", "-B", "-P", "-s", "-t",
+    "-U",
+];
+
+/// The part of a word that would name the host: before any `/` of a URL path or `:` of a `host:path`.
+fn authority_of(word: &str) -> &str {
+    let rest = word.split_once("://").map_or(word, |(_, rest)| rest);
+    rest.split(['/', '?', '#']).next().unwrap_or(rest)
+}
+
+/// Whether a network program's host, URL or remote position holds an expansion, so the host cannot
+/// be read: `ssh "$HOST" ...`, `curl "https://$H/x"`, `git push "$R"`, `scp f "$H:/p"`. A variable
+/// elsewhere (the remote command, a header, a path) does not count.
+pub fn unreadable_target(command: &Simple) -> bool {
+    let program = command.program.as_str();
+    let long_value = |flag: &str| {
+        matches!(
+            flag,
+            "--header"
+                | "--data"
+                | "--output"
+                | "--user"
+                | "--request"
+                | "--user-agent"
+                | "--referer"
+                | "--cookie"
+                | "--form"
+                | "--upload-file"
+                | "--proxy"
+                | "--output-document"
+                | "--post-data"
+                | "--identity-file"
+                | "--config"
+        )
+    };
+    // The words that are positions, not options or option values.
+    let mut positional: Vec<&str> = Vec::new();
+    let mut skip = false;
+    for arg in &command.args {
+        if skip {
+            skip = false;
+        } else if arg.starts_with('-') {
+            skip = (VALUE_FLAGS.contains(&arg.as_str()) || long_value(arg)) && !arg.contains('=');
+        } else {
+            positional.push(arg);
+        }
+    }
+    match program {
+        "ssh" | "sftp" | "mosh" => positional
+            .first()
+            .is_some_and(|arg| expands(authority_of(arg.rsplit('@').next().unwrap_or(arg)))),
+        "scp" | "rsync" => positional.iter().any(|arg| {
+            arg.split_once(':')
+                .is_some_and(|(host, _)| expands(host.rsplit('@').next().unwrap_or(host)))
+                || arg.starts_with("ssh://") && expands(authority_of(arg))
+        }),
+        "git" => {
+            let Some((sub, rest)) = positional.split_first() else {
+                return false;
+            };
+            match *sub {
+                "push" | "pull" | "fetch" | "ls-remote" | "clone" => {
+                    rest.first().is_some_and(|arg| expands(authority_of(arg)))
+                }
+                "remote" => {
+                    matches!(rest.first(), Some(&"add" | &"set-url"))
+                        && rest.iter().skip(1).any(|arg| expands(authority_of(arg)))
+                }
+                _ => false,
+            }
+        }
+        _ if CONNECTORS.contains(&program) => positional.iter().any(|arg| {
+            let host = authority_of(arg);
+            expands(host.rsplit('@').next().unwrap_or(host))
+        }),
+        _ => false,
+    }
+}
+
 fn option_host_pattern() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
