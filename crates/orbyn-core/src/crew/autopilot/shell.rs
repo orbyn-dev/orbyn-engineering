@@ -606,6 +606,7 @@ pub fn hosts(command: &Simple) -> Vec<String> {
             }
         }
     }
+    found.extend(option_hosts(command));
     found.sort();
     found.dedup();
     found
@@ -858,11 +859,124 @@ fn git_sub(command: &Simple) -> Option<(&str, Vec<&str>)> {
     Some((sub, rest))
 }
 
+/// The values of the options `flags` in a command: `-J x`, `-Jx`, `--url x` and `--url=x`.
+fn option_values<'a>(command: &'a Simple, flags: &[&str]) -> Vec<&'a str> {
+    let mut found = Vec::new();
+    let mut args = command.args.iter();
+    while let Some(arg) = args.next() {
+        for flag in flags {
+            if arg == flag {
+                if let Some(next) = args.next() {
+                    found.push(next.as_str());
+                }
+            } else if flag.starts_with("--") {
+                if let Some(rest) = arg.strip_prefix(&format!("{flag}=")) {
+                    found.push(rest);
+                }
+            } else if let Some(rest) = arg.strip_prefix(flag)
+                && !rest.is_empty()
+                && !arg.starts_with("--")
+            {
+                found.push(rest.trim_start_matches('='));
+            }
+        }
+    }
+    found
+}
+
+/// The `-o Key=value` options of an ssh-family command, as `key=value`.
+fn ssh_options(command: &Simple) -> Vec<String> {
+    option_values(command, &["-o"])
+        .into_iter()
+        .map(|value| value.replacen(' ', "=", 1))
+        .collect()
+}
+
+/// The hosts that options name apart from the target: a jump host (`-J`, `ProxyJump`), a proxy
+/// (`-x`, `--proxy`), `--url`, and what `--resolve` and `--connect-to` point a name at.
+fn option_hosts(command: &Simple) -> Vec<String> {
+    let program = command.program.as_str();
+    let mut raw: Vec<String> = Vec::new();
+    if matches!(program, "ssh" | "scp" | "sftp" | "rsync") {
+        raw.extend(
+            option_values(command, &["-J"])
+                .into_iter()
+                .flat_map(|value| value.split(',').map(str::to_owned).collect::<Vec<_>>()),
+        );
+    }
+    if program == "curl" {
+        raw.extend(
+            option_values(command, &["-x", "--proxy", "--url"])
+                .into_iter()
+                .map(str::to_owned),
+        );
+        for value in option_values(command, &["--resolve", "--connect-to"]) {
+            let parts: Vec<&str> = value.trim_start_matches(['+', '-']).split(':').collect();
+            // `host:port:address` and `host:port:host2:port2`.
+            raw.push(parts[0].to_owned());
+            if let Some(target) = parts.get(2) {
+                raw.push((*target).to_owned());
+            }
+        }
+    }
+    raw.into_iter()
+        .map(|value| {
+            let value = value.trim_start_matches("ssh://");
+            let host = authority_of(value).rsplit('@').next().unwrap_or("");
+            let host = if host.starts_with('[') {
+                host.split(']')
+                    .next()
+                    .unwrap_or(host)
+                    .trim_start_matches('[')
+            } else {
+                host.split(':').next().unwrap_or(host)
+            };
+            host.to_lowercase()
+        })
+        .filter(|host| !host.is_empty() && !host.contains(['$', '`']))
+        .collect()
+}
+
+/// Whether an option names a host the reader cannot see: an expansion in a jump, proxy, `--url`,
+/// `--resolve` or `--connect-to` value, or any ssh `ProxyCommand` (denied outright, since it runs
+/// a command that opens the connection).
+fn unreadable_option(command: &Simple) -> bool {
+    let program = command.program.as_str();
+    if matches!(program, "ssh" | "scp" | "sftp" | "rsync" | "mosh") {
+        for option in ssh_options(command) {
+            let lower = option.to_lowercase();
+            if lower.starts_with("proxycommand") {
+                return true;
+            }
+            if (lower.starts_with("proxyjump") || lower.starts_with("hostname")) && expands(&option)
+            {
+                return true;
+            }
+        }
+        if option_values(command, &["-J"])
+            .iter()
+            .any(|value| expands(value))
+        {
+            return true;
+        }
+    }
+    program == "curl"
+        && option_values(
+            command,
+            &["-x", "--proxy", "--url", "--resolve", "--connect-to"],
+        )
+        .iter()
+        .any(|value| expands(value))
+}
+
 /// Whether a network program's host, URL or remote position holds an expansion, so the host cannot
 /// be read: `ssh "$HOST" ...`, `curl "https://$H/x"`, `git push "$R"`, `scp f "$H:/p"`. A variable
 /// elsewhere (the remote command, a header, a path) does not count.
 pub fn unreadable_target(command: &Simple) -> bool {
     let program = command.program.as_str();
+    if unreadable_option(command) {
+        return true;
+    }
     let host_of = |arg: &str| expands(authority_of(arg).rsplit('@').next().unwrap_or(""));
     match program {
         "ssh" | "sftp" | "mosh" => positionals(program, None, &command.args)
