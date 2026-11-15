@@ -270,10 +270,17 @@ impl Core {
             default_engine: machine.default_engine.clone(),
             classes: Some(&classes),
         };
-        let decision = match route(
+        let router_config = match self.crew_router_config_with_mappings() {
+            Ok(config) => config,
+            Err(error) => {
+                self.crew_needs_person(&task.id, &error.message, false);
+                return Err(error);
+            }
+        };
+        let mut decision = match route(
             &input,
             &machine.views,
-            &self.crew_router_config(),
+            &router_config,
             &EvalHistory::default(),
         ) {
             Ok(decision) => decision,
@@ -306,6 +313,19 @@ impl Core {
                 }));
             }
         };
+        if let Err(error) = self
+            .admit_review_route(
+                thread,
+                links.review.as_ref(),
+                &mut decision,
+                &machine.views,
+                now,
+            )
+            .await
+        {
+            self.crew_needs_person(&task.id, &error.message, false);
+            return Err(error);
+        }
         self.route_crew_task(&task.id, &decision)?;
         // The row names the engine only once the decision is stored, so a failed route leaves no row that says one was chosen. A
         // decision with no record is not one: if the row cannot be written, the task waits for a person.

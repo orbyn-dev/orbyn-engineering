@@ -96,7 +96,7 @@ impl Core {
     }
 
     /// The paths the work changed since it started (committed or not), or `None` when that cannot be known.
-    async fn review_changed(&self, run: &CrewRun, cwd: &Path) -> Option<Vec<String>> {
+    pub(super) async fn review_changed(&self, run: &CrewRun, cwd: &Path) -> Option<Vec<String>> {
         let base = run.base_commit.as_deref()?;
         changed(&Site {
             worktree: cwd,
@@ -162,6 +162,15 @@ impl Core {
         for rule in &from_rules {
             lanes.push(rule.lane.clone());
         }
+        let controls = self
+            .store
+            .crew_review_controls(&task.id)
+            .map_err(internal)?;
+        lanes.retain(|lane| {
+            !controls
+                .iter()
+                .any(|c| c.kind == "remove_lane" && c.state == "removed" && c.lane == lane.as_str())
+        });
         let mut seen = std::collections::BTreeSet::new();
         lanes.retain(|lane| seen.insert(lane.as_str().to_owned()));
         if lanes.is_empty() {
@@ -238,7 +247,7 @@ impl Core {
             base: None,
         })
         .await
-        .unwrap_or_default();
+        .map_err(internal)?;
         let judge = match kind {
             Run::Lane => format!("Review round {round} of the {lane} lane"),
             Run::Second { finding } => format!(
@@ -334,6 +343,16 @@ impl Core {
                 Run::Lane => None,
             },
         };
+        if let Some(consent) = self
+            .review_consent_needed(thread, &brief, &review, author_engine.clone())
+            .await?
+        {
+            return Ok(json!({
+                "started": false,
+                "state": "needs_person",
+                "same_engine_consent": consent,
+            }));
+        }
         self.launch_crew_task(Launch {
             lead: thread,
             now: stamper.now.clone(),

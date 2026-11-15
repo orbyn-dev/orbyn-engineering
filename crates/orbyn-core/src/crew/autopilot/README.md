@@ -13,6 +13,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `hosts` | `allowed_hosts` of `.orbyn/crew.json`, read at the commit the work started from |
 | `tier` | What an action needs: nobody, the lead, or the lead and a second key |
 | `chain` | The approval chain over the `Approver` trait: the lead, then a second key on another vendor |
+| `comment` | Saved lead-requested advisory review-comment claims through the same hard/host rules and two-key chain, before ordinary gate policy; no worker resurrection or held-command grant |
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |

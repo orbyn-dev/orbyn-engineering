@@ -41,11 +41,17 @@ mod provider_facts;
 #[cfg(unix)]
 mod rerun;
 mod review;
+mod review_controls;
 mod review_fix;
+mod review_gates;
+mod review_publication;
+mod review_publication_repair;
+mod review_publication_support;
 mod review_rules;
 mod review_support;
 mod runs;
 mod scoring;
 mod stamp;
 mod starts;
+mod tier_settings;
 mod verify;

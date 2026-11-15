@@ -17,7 +17,7 @@ export function framesBuilt(body) {
   let text = m[1].trim();
   if (text === "") return { line: "empty", ids: [], version: null };
   let version = null;
-  const v = /^(.*?)\s@\s*(v\d+)\s*$/.exec(text);
+  const v = /^(.*?)\s@\s*(v\d+|git:[0-9a-f]{40}|git:[0-9a-f]{64})\s*$/.exec(text);
   if (v) {
     text = v[1].trim();
     version = v[2];

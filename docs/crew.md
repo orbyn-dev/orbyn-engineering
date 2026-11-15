@@ -429,7 +429,17 @@ merge).
   the fix, and a finding shows as fixed only after such a fix passed and a repro has proved it: a finding confirmed by agreement has no repro, so it keeps
   blocking until the lead supplies one that passes after the fix (or a person clears it). A reviewer's silence clears nothing. One fix per lane and file,
   at most three per task. Reviewers are read-only by bytes, and the second review needs another vendor than the first.
-- Not yet: PR review on the forge, the same-engine badge, a per-lane `review` Gate, locked-lane removal by a person.
+- #450 adds source contracts for person once consent, a persistent same-engine route badge, per-lane code-owned
+  `review` Gates and reasoned unlocked-lane removal. Migration 46 follows forge migration 45; launch and merge admission
+  are covered by focused fake-engine, store and HTTP tests. The live Flow task includes the reasoned removal dialog;
+  Settings, Crew includes an explicit device-local ACP tier editor with whole-map revision checks and default-model pins.
+  Both controls reconcile uncertain writes before a retry; locked lanes cannot be removed by anyone.
+  A copyable installation-local task locator, `orbyn://crew/task/<encoded-task-id>`, opens the existing read-only Flow task
+  when Preview is on. It conveys no consent or action and needs that installation's task data. It is not a public report;
+  forge clickability and native delivery remain unqualified. Lead-requested advisory PR-comment publication is integrated
+  through existing Network policy and two-key admission, covered by fake-protocol, recovery and gate tests.
+  Mock-backed Chromium checks cover the controls, native-select Escape behavior, dirty navigation and narrow Light, Dark and Dim layouts;
+  real engines and actual forge publication remain unqualified.
   `crew_finding` refuses after the reviewer's run has ended (H7); the Gates are core writes and do not.
 
 **Review decisions** (2026-11-11, Designer part 2, frames in `crew-designs.html`):
@@ -1121,6 +1131,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
   - With On or Off, always ask.
   - With Full, when no other vendor is signed in: it runs at the lead tier, badged "Same engine as author", and the task
     is raised to High risk.
+  - Owner reaffirmed on 2026-11-16: keep the High-risk rule. Conflicting design copy does not lower task risk.
 
 **Device, welcome and access decisions** (2026-11-11, Engineer Designs after pull requests #150 and #151, frames
 `device-*`, `welcome-*`, `scopes-*`, `update-tracks*`; from parity rows H21, H31, K35, L27, P6):

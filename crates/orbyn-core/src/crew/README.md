@@ -13,7 +13,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `filters` | The hard filters, in order, each rejection with its reason. `class_screen` runs first |
 | `classes` | Data classes: `.orbyn/crew.json` read at the pinned base commit and at the default branch, the stricter applies (strict, fail closed), the glob, a brief's files against the classes, the `route_class` ledger row and the three read-only views |
 | `score` | Pass rate for the brief's kind (seeded defaults until `EvalHistory` has a measured rate) and quota headroom, in permille |
-| `tiers` | The tier a role needs and the model that fills it, matched against the models this machine lists |
+| `tiers` | The tier a role needs; native model-family words and explicit exact ACP engine/model admission |
+| `tier_settings` | Person-owned ACP assignments: revision saves plus reviewed-default preconditions; no tier guessing |
 | `view` | A plain copy of one engine's status, models and usage |
 | `gather` | Builds the views from the engine registry and model list the engine picker reads, and limits from the usage cache only |
 | `stamp` | A brief draft becomes a brief: the core adds the envelope, a draft that carries one is refused |

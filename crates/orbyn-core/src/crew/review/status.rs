@@ -82,6 +82,7 @@ impl Core {
     /// The review of finished work, as the lead reads it.
     pub fn review_status(&self, subject: &str) -> Result<Value, CrewError> {
         let reviews = self.store.crew_reviews_of(subject).map_err(internal)?;
+        let controls = self.store.crew_review_controls(subject).map_err(internal)?;
         // What an independent second review filed is evidence for a check, not a finding of the lane.
         let second_runs: Vec<&str> = reviews
             .iter()
@@ -116,6 +117,10 @@ impl Core {
             }
             lanes.entry(review.lane.clone()).or_default().push(json!({
                 "round": review.round, "task": review.task_id, "state": state, "commit": review.commit,
+                "same_engine_as_author": self.store.crew_run(&review.task_id).map_err(internal)?
+                    .is_some_and(|r| r.worker_thread_id.is_some())
+                    && self.store.crew_route_decisions(&review.task_id).map_err(internal)?
+                    .iter().any(|d| d.reasons.iter().any(|r| r.code.as_str() == "same_engine_as_author")),
             }));
             if state == "passed" {
                 let prints = findings
@@ -246,14 +251,28 @@ impl Core {
         }
         let lanes: Vec<Value> = lanes
             .into_iter()
-            .map(|(lane, rounds)| json!({ "lane": lane, "rounds": rounds }))
-            .collect();
+            .map(|(lane, rounds)| {
+                let latest = reviews
+                    .iter()
+                    .filter(|r| r.role == "review" && r.lane == lane)
+                    .max_by_key(|r| r.round);
+                let gate = match latest {
+                    Some(review) => self.lane_gate(review, &review.commit, &json!(shown))?,
+                    None => None,
+                };
+                let removed = controls
+                    .iter()
+                    .any(|c| c.kind == "remove_lane" && c.state == "removed" && c.lane == lane);
+                Ok(json!({ "lane": lane, "rounds": rounds, "gate": gate, "removed": removed }))
+            })
+            .collect::<Result<_, CrewError>>()?;
         Ok(json!({
             "task": subject,
             "lanes": lanes,
             "second_reviews": seconds,
             "findings": shown,
             "blocked": blocked,
+            "controls": controls,
         }))
     }
 }

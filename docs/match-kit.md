@@ -15,6 +15,9 @@ Frames built: pr-list-failed, pr-detail-running @ v56
 The ids are screens from the list below; `@ v56` is the version of the designs they were built to. A pull request that draws nothing says
 `Frames built: none` and gets no comment. A missing or empty line gets a comment asking for it. Nothing is blocked either way.
 
+An exact artifact source revision is also accepted: `Frames built: flow-offline @ git:a582a9ba4fb950d4024ac50541a63e9c01f7669a`.
+Use the actual full Git object id; no numbered published version is implied and no private source URL is needed.
+
 ## What it does
 
 `.github/workflows/ui-preview.yml` runs for a same-repository pull request that changes `web/` (a fork's is skipped: no `pull_request_target`, no
@@ -63,6 +66,10 @@ or fail on the network, and what to click first. Use the design's frame id for a
 **Account and sync.** `settings-account-gate-off`, `acct-settings-signed-out`, `acct-signin`, `acct-signin-wrong-password`, `acct-signin-network`, `acct-signup-invite`, `acct-signup-details`, `acct-signup-password`, `acct-signup-password-weak`, `acct-signup-password-mismatch`, `acct-signup-password-network`, `acct-signup-check-failed`, `acct-signup-email-code`, `acct-signup-code-wrong`, `acct-signup-code-network`, `acct-signup-done`, `acct-2fa-code`, `acct-settings-signed-in`, `acct-settings-paused`, `acct-settings-loading`, `acct-settings-error`, `acct-settings-offline`, `acct-signup-check`, `acct-2fa-closed`, `acct-reauth`, `acct-reauth-network`, `sync-line`, `acct-device-waiting`, `acct-device-approved`, `acct-device-denied`, `acct-device-timeout`, `acct-device-enter-digits`, `acct-device-codes-mismatch`, `acct-device-digits-locked`, `acct-device-approve-digits`, `acct-device-check-failed`, `acct-settings-not-connected`, `sync-popover-not-connected`, `acct-connect-workspace`, `acct-connect-progress`, `acct-connect-done`, `signout-other-device-removed`, `devices-waiting-approval`, `acct-device-approve-prompt`, `devices-list`, `devices-remove-confirm`, `signout-confirm`, `signout-everywhere`, `sync-popover`, `sync-popover-offline`, `sync-popover-failed`
 
 ## Add a screen
+
+Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`.
+Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`.
+These retain the beta stage list; the planned graph and PR cards are not drawn.
 
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
 2. Add an entry to `catalog.mjs`: `route`, `scenario`, `pre` (requests to hold or fail before the page opens), `steps` (click, fill, press, route, offline) and `wait` for states that show only after a delay.

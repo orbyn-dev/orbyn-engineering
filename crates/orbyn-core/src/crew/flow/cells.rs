@@ -179,8 +179,21 @@ fn lanes(facts: &Facts, security: bool) -> FlowCell {
         .into_iter()
         .filter(|(lane, ..)| is_security(lane) == security)
         .collect();
-    let count = u32::try_from(mine.len()).ok();
-    let state = if mine.is_empty() {
+    let pending = super::review_controls::pending_controls(facts);
+    let pending: Vec<&str> = pending
+        .iter()
+        .filter_map(|c| c["lane"].as_str())
+        .filter(|lane| is_security(lane) == security)
+        .collect();
+    let added = pending
+        .iter()
+        .filter(|name| !mine.iter().any(|(lane, ..)| lane == *name))
+        .count();
+    let count = u32::try_from(mine.len() + added).ok();
+    let waiting_consent = !pending.is_empty();
+    let state = if waiting_consent {
+        FlowCellState::NeedsYou
+    } else if mine.is_empty() {
         FlowCellState::Pending
     } else if mine.iter().any(|(_, _, s, _)| s == "needs_person") {
         FlowCellState::NeedsYou

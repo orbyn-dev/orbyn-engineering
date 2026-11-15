@@ -12,6 +12,7 @@ mod cells;
 mod facts;
 mod map;
 mod messages;
+mod review_controls;
 mod scrub;
 
 use orbyn_contracts as wire;
@@ -214,6 +215,16 @@ impl Core {
                     .count()
             };
             let route = self.store.crew_route_decisions(&task)?.pop();
+            let launched = self
+                .store
+                .crew_run(&task)?
+                .is_some_and(|r| r.worker_thread_id.is_some());
+            let same_engine = route.as_ref().map(|r| {
+                launched
+                    && r.reasons
+                        .iter()
+                        .any(|why| why.code.as_str() == "same_engine_as_author")
+            });
             let shown = scrub.text(&lane, 60);
             lanes.push(wire::FlowLane {
                 group: if is_security(&lane) {
@@ -237,20 +248,42 @@ impl Core {
                     .find(|r| r["task"] == task.as_str())
                     .and_then(|r| r["commit"].as_str())
                     .map(|c| scrub.text(c, 64)),
-                same_engine: route
+                same_engine,
+                same_engine_allowed_by: route
                     .as_ref()
-                    .zip(facts.route.as_ref())
-                    .map(|(lane, build)| lane.engine == build.engine),
+                    .filter(|_| same_engine == Some(true))
+                    .and_then(|r| {
+                        if r.reasons
+                            .iter()
+                            .any(|why| why.code.as_str() == "same_engine_full_security")
+                        {
+                            Some(wire::CrewSameEngineAllowedBy::AutopilotFull)
+                        } else if r
+                            .reasons
+                            .iter()
+                            .any(|why| why.code.as_str() == "same_engine_person_once")
+                        {
+                            Some(wire::CrewSameEngineAllowedBy::PersonOnce)
+                        } else {
+                            None
+                        }
+                    }),
                 lane: shown,
                 task,
                 round,
                 state,
             });
         }
+        let same_engine_security_high = lanes
+            .iter()
+            .any(|l| l.lane == crate::crew::SECURITY_LANE && l.same_engine == Some(true));
         if lanes.len() > LANES_MAX {
             lanes.truncate(LANES_MAX);
             truncated = true;
         }
+        let mut review_consents = review_controls::consents(&facts, &scrub);
+        truncated |= review_consents.len() > LANES_MAX;
+        review_consents.truncate(LANES_MAX);
 
         let text =
             |f: &Value, key: &str, max: usize| scrub.text(f[key].as_str().unwrap_or(""), max);
@@ -321,6 +354,7 @@ impl Core {
             (None, None) => None,
         };
         Ok(wire::FlowTaskDetail {
+            crew: facts.task.crew_id.clone(),
             brief: wire::FlowBrief {
                 purpose: facts
                     .brief
@@ -342,12 +376,18 @@ impl Core {
                 tier: wire_name(&r.tier),
             }),
             lanes,
+            review_consents,
+            same_engine_security_high,
             findings,
             gates,
             rounds,
             merge: merge.map(|(state, risk, reasons, mode)| wire::FlowMerge {
                 state,
-                risk,
+                risk: if same_engine_security_high {
+                    "high".to_owned()
+                } else {
+                    risk
+                },
                 reasons: scrub.texts(&reasons, TEXT_MAX),
                 mode,
             }),

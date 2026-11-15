@@ -143,7 +143,13 @@ impl Core {
             engine: Some((engine.clone(), by_engine)),
             recent,
         };
-        let scored = score(&facts);
+        let mut scored = score(&facts);
+        if self.review_security_requires_high(task_id)? {
+            scored.risk = Risk::High;
+            scored
+                .reasons
+                .push("Same engine as author: Security review raises risk to High.".into());
+        }
         // The mode the diff runs under: the crew's mode (recorded as the entry's `mode`) lowered by every area it touches.
         let effect = self.merge_effect(task_id, &areas, now)?;
         let mode = effect.ceiling;
@@ -427,6 +433,7 @@ impl Core {
         needs_person: Option<&str>,
     ) -> Result<()> {
         let task_id = &entry.task_id;
+        let effective_risk = self.refresh_merge_review_risk(entry)?;
         let results = self.store.crew_results(task_id)?;
         let passed = results
             .iter()
@@ -492,7 +499,7 @@ impl Core {
             not_verified
                 .push("current-head forge CI has no Core receipt for this observed merge".into());
         }
-        let risk = Risk::parse(&entry.risk).unwrap_or(Risk::High);
+        let risk = effective_risk;
         let record = MergeRecord {
             id: 0,
             task_id: task_id.clone(),
@@ -502,8 +509,11 @@ impl Core {
             before_commit: before.to_owned(),
             merge_commit: merge_commit.to_owned(),
             candidate: entry.candidate.clone(),
-            risk: entry.risk.clone(),
-            reasons: entry.reasons.clone(),
+            risk: risk.name().to_owned(),
+            reasons: self
+                .store
+                .merge_entry(task_id)?
+                .map_or_else(|| entry.reasons.clone(), |e| e.reasons),
             areas: entry.areas.clone(),
             engine: entry.engine.clone(),
             mode: entry.mode.clone(),

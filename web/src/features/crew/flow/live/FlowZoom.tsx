@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { ApiFailure } from "../../../../api/client";
 import type { FlowFinding } from "../../../../generated/FlowFinding";
 import type { FlowLane } from "../../../../generated/FlowLane";
@@ -9,6 +10,9 @@ import { cellOf, decidedBy, laneWord, plain, roundView, STAGES, stageWord, when 
 import { checkWord, findingStatusWord, laneFacts } from "../../map/model";
 import { useTaskWrite, WriteStatus } from "../../writes/TaskWrite";
 import { useFlowTask, useRefresh } from "./useFlow";
+import { ReviewConsent, consentKey } from "./ReviewConsent";
+import { RequiredLanes } from "./RemoveLane";
+import { flowApi } from "./api";
 
 /** The Review queue is not a tab of the Crew view yet, so Review has nowhere to open. */
 const NO_QUEUE = "The Review queue is not in this app yet";
@@ -18,10 +22,15 @@ const NO_QUEUE = "The Review queue is not in this app yet";
  * brief, the route, the findings, the gates, the rounds, the merge, main and the person's part. No check, command, output
  * or "proves" text is in the answer, so none is drawn. A gate's reason is present only once the task is final.
  */
-export function FlowZoom({ id, onBack }: { id: string; onBack(): void }) {
+export function FlowZoom({ id, onBack, onCrew }: { id: string; onBack(): void; onCrew?(crew: string): void }) {
   const read = useFlowTask(id);
+  useEffect(() => {
+    if (read.data?.row.id === id && read.data.crew) onCrew?.(read.data.crew);
+  }, [id, read.data, onCrew]);
   const running = read.data ? !["passed", "stopped", "cancelled"].includes(read.data.row.state) : false;
-  useRefresh(read.reload, !running);
+  const reviewing = (read.data?.review_consents?.length ?? 0) > 0
+    || read.data?.lanes.some((lane) => !["passed", "stopped", "cancelled"].includes(lane.state));
+  useRefresh(read.reload, !running && !reviewing);
   const back = (
     <Button small onClick={onBack}>
       All tasks
@@ -37,10 +46,10 @@ export function FlowZoom({ id, onBack }: { id: string; onBack(): void }) {
       </div>
     );
   }
-  return <Detail detail={read.data!} back={back} onChanged={() => void read.reload()} />;
+  return <Detail key={id} detail={read.data!} back={back} onChanged={async () => { const fresh = await flowApi.task(id); if (fresh.row.id !== id) throw new Error("Wrong task"); read.setData(fresh); }} />;
 }
 
-function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: React.ReactNode; onChanged(): void }) {
+function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: React.ReactNode; onChanged(): Promise<void> | void }) {
   const { row } = detail;
   const round = roundView(row);
   const final = ["passed", "stopped", "cancelled"].includes(row.state);
@@ -53,7 +62,7 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
     <div className="fv-body fv-zoom">
       <div className="fv-crumb">
         {back}
-        <h2>{row.name || "Untitled task"}</h2>
+        <h2 tabIndex={-1} data-page-title>{row.name || "Untitled task"}</h2>
         <span className="fv-badge">{round.text}</span>
         <span className="fv-badge">{plain(row.state)}</span>
         <span className="fv-spacer" />
@@ -77,25 +86,31 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
           const cell = cellOf(row, one.stage);
           const word = stageWord(one.stage, cell);
           const lanes = detail.lanes.filter((lane) => (one.stage === "code" ? lane.group === "code" : one.stage === "security" ? lane.group === "security" : false));
+          const consents = (detail.review_consents ?? []).filter((c) => c.task === row.id
+            && (one.stage === "security" ? c.lane === "security" : one.stage === "code" && c.lane !== "security"));
           return (
             <div key={one.stage} role="listitem">
               <div className="fv-stage">
-                {lanes.length > 0 ? <DownIcon /> : <RightIcon />}
+                {lanes.length > 0 || consents.length > 0 ? <DownIcon /> : <RightIcon />}
                 <StageIcon stage={one.stage} />
                 <b>{one.name}</b>
                 <span className={`fv-st fv-st-${word.tone}`} title={word.title}>{word.text}</span>
               </div>
-              {lanes.length > 0 ? (
+              {lanes.length > 0 || consents.length > 0 ? (
                 <ul className="fv-lanes">
                   {lanes.map((lane) => (
                     <LaneRow key={`${lane.lane}-${lane.task}`} lane={lane} />
                   ))}
+                  {consents.map((consent) => <ReviewConsent key={consentKey(consent)} consent={consent} onChanged={onChanged} />)}
                 </ul>
               ) : null}
             </div>
           );
         })}
       </div>
+
+      {detail.same_engine_security_high ? <p className="fv-note">Same-engine Security review raises this task to High risk.</p> : null}
+      <RequiredLanes task={row.id} name={row.name || "Untitled task"} onChanged={onChanged} />
 
       <div className="fv-two">
         <section className="fv-box" aria-label="Brief">
@@ -231,6 +246,7 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
 }
 
 function LaneRow({ lane }: { lane: FlowLane }) {
+  const facts = laneFacts(lane).filter((fact) => fact !== "Same engine as author");
   return (
     <li>
       <span>
@@ -239,7 +255,11 @@ function LaneRow({ lane }: { lane: FlowLane }) {
         {lane.model ? ` · ${lane.model}` : ""}
       </span>
       <span className="fv-n">{laneWord(lane)}</span>
-      {laneFacts(lane).length > 0 ? <span className="fv-lane-facts">{laneFacts(lane).join(" · ")}</span> : null}
+      {facts.length > 0 ? <span className="fv-lane-facts">{facts.join(" · ")}</span> : null}
+      {lane.same_engine ? <span className="fv-badge">Same engine as author</span> : null}
+      {lane.same_engine_allowed_by ? <p className="fv-lane-facts">{lane.same_engine_allowed_by === "autopilot_full"
+        ? "Autopilot Full: no other vendor is signed in. Separate lead-tier run. High risk."
+        : "Allowed by you, once. Separate read-only run."}</p> : null}
     </li>
   );
 }

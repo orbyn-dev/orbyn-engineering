@@ -1,7 +1,8 @@
 //! Autopilot at the gate: every request of a Crew worker passes the always-denied list, the trip
 //! wires and the chain before a rule or a person is asked (see the [README](README.md)). The
 //! gate calls this through [`ActionReview`], bound by `McpService::bind_host` only when the Crew
-//! Preview flag is on. Outside a Crew task only N1, the account, is enforced.
+//! Preview flag is on. A saved lead-requested review-comment claim has a narrow
+//! Network admission branch; other requests outside a Crew task enforce N1 only.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -157,6 +158,9 @@ impl Core {
         scope: &RunScope,
         ask: &ActionAsk,
     ) -> Review {
+        if ask.detail.get("crew_review_comment").is_some() {
+            return self.review_comment_action(scope, ask).await;
+        }
         let found = self.store.crew_task_for_worker(&scope.thread_id);
         let Ok(found) = found else {
             return Review::Deny("Orbyn could not check this action.".to_owned());
