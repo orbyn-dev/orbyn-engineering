@@ -1032,7 +1032,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
 | --- | --- |
 | Flow | The whole pipeline for every task, from brief to merge: every stage, every reviewer lane, every loop back to Build, and who decided each gate (code, a confirmed finding, or the person). It works like a CI graph, but for agents. Each edge carries its artifact: brief, diff, check results, findings, pull request. A scrubber replays how the task got here |
 | Crew map | The live tree above: who spawned whom, and who is talking to whom |
-| Taskboard | Cards by state: Queued, Routed, Running, Verifying, Needs you, Passed, Stopped or Cancelled. A card is a brief: kind, engine, owner, checks passed and total, last activity. From the card the person can reassign the engine, cancel, add a check, answer or open |
+| Taskboard | Cards by state: Queued, Routed, Running, Verifying, Needs you, Passed, Stopped or Cancelled. A card is a brief: kind, engine, owner, last activity, and on a passed card the checks passed and total of its final verification (other states show none until the core keeps a record per verification attempt). From the card the person can reassign the engine, cancel, add a check, answer or open |
 | Conversation lanes | One lane per worker over time. Messages show as arrows between lanes, each marked "live" (steered) or "next turn". The board's facts show with their author and evidence |
 | Route card | Why this engine: the reasons, every rejected engine and why, and what the person can change |
 | Needs you inbox | Questions, approvals, reviews and conflicting board writes, oldest first, each with the one action it needs |

@@ -41,12 +41,12 @@ function sample(): Row[] {
     card("queued", "b-queued", "docs", "Update the login docs for the new redirect rule", null, null, null, "briefed", 1),
     card("routed", "b-routed", "implement", "Rename returnTo to next in the session code", "claude", "Sonnet 5.5", "low", "routed", 0),
     card("running", "b-running", "implement", "Use next in the auth redirect when it points inside the app", "claude", "Sonnet 5.5", "medium", "running", 0),
-    card("verifying", "b-verifying", "test", "Add tests for the redirect, including //evil.com", "codex", "GPT-5.5", "medium", "verifying", 0, { checks: { passed: 2, of: 3 } }),
+    card("verifying", "b-verifying", "test", "Add tests for the redirect, including //evil.com", "codex", "GPT-5.5", "medium", "verifying", 0),
     card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { reason: "Asked you a question: <b>which target wins</b>?" }),
     card("passed", "b-pass1", "docs", "Fix the typo in the README", "codex", "GPT-5.5", "low", "passed", 120, { can_rerun: true, checks: { passed: 4, of: 4 } }),
     card("passed", "b-pass2", "implement", "Move session helpers to auth/session.ts", "claude", "Sonnet 5.5", "medium", "passed", 600, { can_rerun: false, checks: { passed: 3, of: 3 } }),
     card("passed", "b-pass3", "test", "Cover the login route", "codex", "GPT-5.5", "high", "passed", 2000),
-    card("stopped_cancelled", "b-stop1", "implement", "Add a rate limit to the login route", "codex", "GPT-5.5", "medium", "stopped", 300, { stop_reason: "repeated_failure", can_rerun: true, checks: { passed: 1, of: 3 } }),
+    card("stopped_cancelled", "b-stop1", "implement", "Add a rate limit to the login route", "codex", "GPT-5.5", "medium", "stopped", 300, { stop_reason: "repeated_failure", can_rerun: true }),
     card("stopped_cancelled", "b-stop2", "docs", "Move the CHANGELOG entry", "claude", "Sonnet 5.5", "low", "cancelled", 900),
   ];
 }

@@ -19,7 +19,7 @@ pub enum FlowColumnId {
 }
 
 wire! {
-/// Checks passed out of checks run in a task's latest verification: two counts, never a check, its id, its command or its text.
+/// Checks passed out of checks run in a task's final verification, shown for a passed task only: two counts, never a check, its id, its command or its text.
 pub struct FlowChecks {
     pub passed: u32,
     pub of: u32,
@@ -59,7 +59,8 @@ pub struct FlowCard {
     pub can_cancel: bool,
     /// Its checks may be run again: it passed, or it stopped for a benign reason after its checks ran, and it has a checkout.
     pub can_rerun: bool,
-    /// Checks passed out of run; present only once the task has reached verifying and its checks have run.
+    /// Checks passed out of run in the final verification; present only on a passed task. A task still verifying, failed or stopped
+    /// has none: the core keeps no record per verification attempt to count from.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub checks: Option<FlowChecks>,

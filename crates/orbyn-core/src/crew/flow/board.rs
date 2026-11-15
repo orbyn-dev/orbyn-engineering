@@ -1,6 +1,6 @@
 //! The Taskboard read (Crew Preview): a crew's work tasks grouped into the seven columns of the run states. It reads what Flow
 //! reads (`flow_facts`, the crew-wide scrub, the work-task list) and shows less of it: a card has no cell, and its only word
-//! about checks is two counts, passed and run, for a task that has reached verifying (never queued, routed or running). Nothing here writes. A reviewer's run and
+//! about checks is two counts, passed and run, for a passed task (any other state has none). Nothing here writes. A reviewer's run and
 //! a fix are lanes and rounds of their task in Flow, not cards. The two flags are advisory; the write routes decide.
 
 use orbyn_contracts as wire;

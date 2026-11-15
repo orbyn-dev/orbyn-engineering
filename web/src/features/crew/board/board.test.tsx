@@ -58,9 +58,8 @@ describe("the Taskboard on the board route", () => {
     expect(running.getByText("Sonnet 5.5 · Medium")).toBeVisible();
     expect(running.getByText("owner Lead")).toBeVisible();
     expect(within(column(/^Routed/)).getByText("Sonnet 5.5 · Low")).toBeVisible();
-    // The counts show once a task has reached verifying, and never on a queued, routed or running card; no lease is drawn.
-    expect(within(column(/^Verifying/)).getByText("2 of 3 checks passed")).toBeVisible();
-    for (const early of [/^Queued/, /^Routed/, /^Running/]) expect(column(early).textContent).not.toMatch(/checks? passed/);
+    // The counts show on a passed card only; no other card has them, and no lease is drawn.
+    for (const other of [/^Queued/, /^Routed/, /^Running/, /^Verifying/, /^Needs you/, /^Stopped/]) expect(column(other).textContent).not.toMatch(/checks? passed/);
     expect(document.body.textContent).not.toMatch(/read only/);
   });
 
@@ -71,6 +70,8 @@ describe("the Taskboard on the board route", () => {
     expect(passed.queryByText("Fix the typo in the README")).toBeNull();
     await user.click(passed.getByRole("button", { name: /Passed/ }));
     expect(within(column(/^Passed/)).getByText("Fix the typo in the README")).toBeVisible();
+    // A passed card carries the counts of its final verification.
+    expect(within(column(/^Passed/)).getByText("4 of 4 checks passed")).toBeVisible();
     // A task whose effort is not Low or Medium shows no effort.
     expect(within(column(/^Passed/)).getByText("GPT-5.5")).toBeVisible();
     await user.click(within(column(/^Passed/)).getByRole("button", { name: /Passed/ }));

@@ -34,6 +34,7 @@ can_cancel: boolean,
  */
 can_rerun: boolean, 
 /**
- * Checks passed out of run; present only once the task has reached verifying and its checks have run.
+ * Checks passed out of run in the final verification; present only on a passed task. A task still verifying, failed or stopped
+ * has none: the core keeps no record per verification attempt to count from.
  */
 checks?: FlowChecks | null, };
