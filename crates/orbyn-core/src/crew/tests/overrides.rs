@@ -103,6 +103,14 @@ fn a_named_model_must_be_listed_and_a_tag_cannot_lower_a_lead_role() {
     );
     assert_eq!(build.model.as_str(), "claude-haiku-4");
     assert_eq!(build.tier, orbyn_contracts::RouteTier::Scout);
+    // The lead can pin a worker to Haiku the same way: the lead's engine is {id, model, assigned_by}.
+    let pinned = routed(
+        &brief(json!({ "engine": { "id": "claude", "model": "haiku", "assigned_by": "lead" } })),
+        &engines,
+        &Ask::default(),
+    );
+    assert_eq!(pinned.model.as_str(), "claude-haiku-4");
+    assert_eq!(pinned.assigned_by, RouteAssigner::Lead);
     // A model the engine does not list is refused.
     let missing = refused(&tagged("gpt-nope"), &engines, &ask(RouteRole::CodeReview));
     assert_eq!(missing.rejected[0].why, RejectionWhy::MissingCapability);

@@ -260,6 +260,10 @@ the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium
 The route card shows the tier, model and effort chosen, and why. A repository's harness file can only lower cost, never
 raise a tier. Only the person can change a lead tier.
 
+To pin a worker's model (for example a Haiku-only run), the lead sets `engine: { id, model, assigned_by }` in the brief
+(`"model": "haiku"`). Reviewers and finding checks stay on the lead tier by rule, so a review lane runs on Opus or Sol;
+`crew_route` (dry run) and the `route` in a start answer show the engine, model, tier and role before the run goes on.
+
 **Router v0**
 
 1. Hard filters: installed, logged in, compatibility not `Broken`, and `managed` plus `approvals` for any brief that
