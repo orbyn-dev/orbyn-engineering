@@ -32,6 +32,12 @@ async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
+    let absent = dir.join("absent-native");
+    assert!(absent.is_absolute() && absent.starts_with(&dir) && !absent.exists());
+    config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
+    config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
     config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
@@ -541,6 +547,13 @@ async fn an_answer_to_a_merge_refuses_what_it_should_before_the_core_acts() {
     assert_eq!(status, 200);
     assert_eq!(body["review_state"], "commented");
     let stored = app.core.store.crew_merge(&task).unwrap().unwrap();
+    assert!(
+        stored
+            .needs_person
+            .as_deref()
+            .unwrap()
+            .contains("merge lead")
+    );
     assert!(!stored.comment.unwrap().contains(&secret_label));
     // A short prefix of the commit the person saw is enough; the answer is recorded.
     let (status, _) = app

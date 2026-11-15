@@ -2409,12 +2409,37 @@ crew or repository. N1 also applies to threads outside Crew: an agent's command 
 route, or a Crew route that changes state (`crew::changes`: the person's answers under `/api/crew`), is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
 
 A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
-merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,
-the task's and the repository's checks again on that combined state, then a compare-and-swap of the branch. Under `off` every merge
-waits for a person and under `on` a high-risk one does; under `full` it merges and tops the after-merge Review queue. After merges the
-watch runs the repository's own checks and, if they fail, bisects the first-parent commits and reverts the crew's merge it finds only
-when the failure reproduces with it, passes without it and the later merges pass after the revert; otherwise it asks the person.
-Nothing is pushed.
+merge queue serializes one task at a time. Its lead tools use the forge as final writer (GitHub or GitLab), retaining a `--no-ff`
+scratch merge and the task's and repository's checks on the combined state. The service's person-owned required CI names must be
+nonempty; every named check must succeed at the actual candidate head, every observed check must succeed, and the target base
+must still match the checked base. Missing, skipped, neutral, pending and wrong-head evidence cannot pass. Agents cannot supply
+CI policy, remove owed lanes, release holds or answer the person's Review queue. Ordinary agent main-push/forge-merge commands
+remain denied. A merge Gate is code-authored from stored combined-state and current-head CI Evidence, never a model's approval.
+
+Migration 45 stores immutable repository/remote/source/head/base intent and revision checks before publication and merge effects.
+An interrupted create is reconciled by its deterministic source/target and same-repository PR identity; an interrupted merge is
+reconciled by PR identity, head and merge commit. An absent or uncertain receipt never causes a duplicate effect or local fallback.
+Origin supplies the canonical host/repository, with explicit API hostname and PR repository selectors; CLI default repositories
+and host overrides cannot select the destination. Credential-bearing or unsupported origin URLs refuse admission. The actual
+merge tree and parents are compared to the checked combination; a mismatch commits with the Review record as needing a person.
+The existing local branch API is explicit compatibility behavior: compare-and-swap only when no checkout holds the branch, and it
+refuses forge intents. Under `off` every merge waits for a person; under `on` high risk waits; mode, area ceilings, holds, findings
+and owed lanes are rechecked before the forge writer. Until review consent/risk receipts are available, same-vendor Security
+fallback is held for a person's explicit release.
+Every applicable pinned-base rule and default owed lane needs its latest passed review at the candidate; a person's release may
+stand in for a nonlocked lane but never a locked lane. Reviewer commit and verification counts come from the last passed Result
+and its exact check/Evidence citations, so later merge or finding Gates/Evidence cannot change what work the reviewer reads.
+
+Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base,
+records `NoChecks` as unverified, and asks a person when checks break; it never uses a local branch revert as a forge repair.
+Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
+without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
+24 hours, observes at most 32 confirmed forge targets and never schedules publication or merging. With Preview enabled, startup
+first reconciles up to 128 unfinished effects/confirmed receipts and watches the resulting merges even when periodic work is off;
+only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local
+JSON list, never a tool or HTTP setting. A stored person's Comment becomes a deterministic ordinary task with the
+original write grants, effects and protected checks plus a scope check; a stale checkout or failed admission asks the person.
 
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool

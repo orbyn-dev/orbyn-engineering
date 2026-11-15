@@ -22,6 +22,9 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
 | `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
+| `merge/forge`, `merge/evidence` | Durable forge intent, current-head CI receipts and the code-written merge Gate |
+| `merge/tool`, `merge/comment` | Lead requests and the person's Comment through ordinary scoped task admission |
+| `merge/forge_watch` | Remote-tip checks, an optional owned watch future, and durable digest/overdue/break messages |
 | `merge/review_queue` | The after-merge Review queue and the person's answers |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
 | `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
@@ -85,10 +88,16 @@ the hard rules, the injection wire and the denial counts still apply.
 
 ## Merge queue, Review queue and watch on main
 
-**Local only.** A merge moves a *local* branch in a repository where no worktree has that branch checked out, by a
-compare-and-swap `update-ref`. A branch that is checked out is never moved: the entry waits for a person. Nothing is pushed,
-no pull request is opened or merged, no forge CI is read, and nothing reaches a remote. Every merge, check and revert runs in a
-scratch checkout under the data folder (`crew-merge/`), never in a person's checkout.
+**Forge final writer.** The lead's `crew_queue_merge` and `crew_process_merges` request Core-owned GitHub/GitLab publication,
+CI observation and merge commits. Commands still pass through the existing forge process owner; no credential is read by Crew.
+Person-owned `CoreConfig::crew_merge_required_checks` must be nonempty. Missing, pending, skipped, neutral, failing or wrong-head
+checks refuse merging, including additional observed failures. Head and base are pinned, combined-state checks run in scratch,
+and holds, lanes, actual PR identity and CI are read again before merging. Migration 45 persists intent before each effect;
+uncertain results reconcile identity/head/merge commit rather than repeating an effect. The actual merged tree/parents are checked.
+Canonical origin host/repository identity is selected explicitly for every API/create/merge call and checked against receipts;
+CLI repository/host defaults cannot redirect it. Startup reconciles unfinished effects and confirmed receipts before watching.
+The separate local compatibility API keeps its no-checked-out-branch and compare-and-swap rules and refuses forge intents;
+authentication failure never selects it. Ordinary agent main-push and forge-merge commands remain N5 denied.
 
 - **Risk.** `merge::score` reads paths (CI, migrations, dependency files, and auth, keys or crypto as whole words in a path),
   size (over 20 files or 400 lines is large) and the 60-day revert rate of each area and of the engine, which counts from 10
@@ -117,14 +126,18 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
   finding or a running review lane blocks it until it clears. A merge commit makes a revert one `git revert -m 1`.
 - **Review queue.** Every merge is one item: the diff size, the proof (checks, reviewers by engine, findings), what was not
   verified and the cost the result recorded. Ranked: a break that needs a decision, then high, medium, low, then oldest.
-  Windows: high 4 hours, medium 24, low none. Answers: looks good, comment (kept; the fix brief is not built), revert (made in a
+  Windows: high 4 hours, medium 24, low none. Answers: looks good, comment (a normal scoped fix using the original grants, effects,
+  protected checks and a scope check; a stale checkout asks a person), revert in local compatibility mode (made in a
   scratch checkout, the checks run on the result, then the branch moves, and it is refused if a later merge needs the one reverted).
 - **Watch.** `crew_watch_main` runs the repository's checks, read at the last commit known good (or where the first watched
   merge began), so a merge cannot remove its own check. If they fail it bisects the first-parent commits to the first that fails.
   It reverts only when the culprit is a merge the crew made, the checks fail with it twice and pass without it, and they pass
   after the revert (so no later merge needs it). Otherwise it records the break, flags the item to the top of the Review queue
   and tells the person (a `person_told` row). Under `off` it only asks. A revert in a repository that defines no checks runs none and is recorded `verified: false`. A repository with no checks is reported `NoChecks`,
-  never healthy. Nothing schedules the watch yet: a caller runs it after merges.
+  never healthy. Forge merges trigger a remote-tip scratch watch after a confirmed receipt; a break asks for a reviewed corrective
+  PR instead of moving local main. A repository/commit claim is durable across restart. Digest, overdue and break messages are
+  visible chat messages with atomic dedupe receipts, without provider turns. The optional owned `run_crew_merge_watch` future
+  is off by default, bounded to 60s..24h and 32 targets, and cancellation-owned; it never schedules publication or merging.
 
 ## The always-denied list: what it reads, and what it cannot
 
@@ -165,7 +178,11 @@ ledger of slice 4c; when that lands these rows move into it.
 - No engine-backed approver exists yet: `Approver` is the seam, and tests script it. Until one is wired, a lead that is
   not set means `full` denies and `on` asks a person.
 - The lead's thread is not asked mid-turn; wiring an approver to a live lead thread and a second engine is [#456](https://github.com/orbyn-dev/orbyn-engineering/issues/456).
-- The queue and the watch are called by whoever drives them: no tool exposes them to the lead, and nothing runs them on a
-  schedule or after a merge yet. The merge Gate (stage `merge`) is not written, since it needs Evidence objects.
-  See [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
+- Forge merging needs the person's nonempty `ORBYN_CREW_REQUIRED_CHECKS` JSON list. Only GitHub and GitLab have guarded Crew
+  receipts. Idle delivery is off unless Preview and `ORBYN_CREW_WATCH_INTERVAL_SECS` (60..86400) are explicitly enabled; the
+  service still makes one read-only startup reconciliation/watch pass with Preview on, and cancels/awaits its single owner on
+  shutdown. Forge breaks and requested reverts require a reviewed corrective
+  PR; automatic forge revert publication is not implemented. Same-vendor
+  Security review awaits the review owner's consent/risk receipt integration and is conservatively held for a person's release.
+  Coverage remains unmeasured. These remaining items stay with [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
 - The detector and the list are heuristics (above); real runs will show what they miss ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)).

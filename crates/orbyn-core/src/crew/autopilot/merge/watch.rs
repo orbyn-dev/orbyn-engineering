@@ -142,6 +142,13 @@ impl Core {
             target.branch.clone(),
         );
         let merges: Vec<MergeRecord> = self.store.crew_merges(&repo, &branch)?;
+        for record in &merges {
+            if self.store.crew_forge_merge(&record.task_id)?.is_some() {
+                return Err(CoreError::Invalid(
+                    "forge merges use the forge watch; a local revert is not a forge repair".into(),
+                ));
+            }
+        }
         let unwatched: Vec<&MergeRecord> = merges
             .iter()
             .filter(|m| m.watch != "green" && m.review_state != "reverted")
