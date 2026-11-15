@@ -9,7 +9,7 @@ import { decidedLine, phaseOf, type HoldControl } from "./held";
 import type { ApprovalRow, HeldInfo, Mode } from "./model";
 import { Facts } from "./parts";
 
-const UNREADABLE = "This command is too long to read whole, so it cannot be approved once.";
+export const UNREADABLE = "This command is too long to read whole, so it cannot be approved once.";
 
 export function Said({ children, note, live }: { children: string; note?: string | null; live?: boolean }) {
   return (
@@ -43,6 +43,7 @@ export function HeldBody({ row, held, hold, mode }: { row: ApprovalRow; held: He
     <>
       <p className="ap-asked">Task <b>{row.taskId}</b></p>
       <Facts rows={[
+        ...(row.guard ? [{ label: "Target", text: `${row.guard.target} · ${row.guard.kind} · guarded` }] : []),
         ...(phase === "open" ? [{ label: "Autopilot", text: `${MODE_COPY[mode].name}: the guard holds this command for you` }] : []),
         { label: "Waiting since", text: held.since },
         ...(phase === "decided" && decided.fact ? [{ label: "Decided", text: decided.fact }] : []),
