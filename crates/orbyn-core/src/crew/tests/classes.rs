@@ -287,6 +287,10 @@ async fn a_start_without_the_file_routes_as_before_and_still_writes_its_row() {
     let (answer, error) = w.start(brief(json!({})), key()).await;
     assert!(!error, "{answer}");
     assert_eq!(answer["route"]["engine"], "alpha");
+    // The lead is told the tier and role too, so it can say what the run costs before the person is surprised.
+    assert_eq!(answer["route"]["tier"], "worker");
+    assert_eq!(answer["route"]["role"], "builder");
+    assert!(answer["route"]["model"].is_string(), "{answer}");
     let id = answer["task"].as_str().unwrap();
     let decision = w
         .core

@@ -354,6 +354,9 @@ impl Core {
                 "route": {
                     "engine": decision.engine,
                     "model": decision.model,
+                    "tier": decision.tier,
+                    "role": decision.role,
+                    "lane": decision.lane,
                     "effort": decision.effort,
                     "reasons": decision.reasons,
                 },
