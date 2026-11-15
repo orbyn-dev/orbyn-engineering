@@ -145,7 +145,7 @@ fn folded(part: Component<'_>) -> String {
 }
 
 /// Whether `path` is `root` or below it, whole components at a time.
-fn within(path: &Path, root: &Path) -> bool {
+pub(super) fn within(path: &Path, root: &Path) -> bool {
     let fold = |path: &Path| -> Vec<String> {
         path.components()
             .filter(|part| !matches!(part, Component::CurDir))

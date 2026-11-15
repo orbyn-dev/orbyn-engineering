@@ -1,5 +1,5 @@
 //! The left explorer: a project's worktrees and a read-only look at their files. Core
-//! decides what may be shown; these handlers only route. There is no write route.
+//! decides what may be shown or changed; these handlers only route.
 
 use std::collections::HashMap;
 
@@ -7,15 +7,32 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
+use orbyn_contracts::ExplorerFileAction;
 
-use crate::http::{ApiResult, AppState};
+use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/projects/{id}/worktrees", get(worktrees))
         .route("/api/projects/{id}/worktrees/{worktree}/tree", get(tree))
         .route("/api/projects/{id}/worktrees/{worktree}/file", get(file))
+        .route(
+            "/api/projects/{id}/worktrees/{worktree}/file-actions",
+            post(file_action),
+        )
+}
+
+async fn file_action(
+    State(state): State<AppState>,
+    Path((id, worktree)): Path<(String, String)>,
+    ApiJson(action): ApiJson<ExplorerFileAction>,
+) -> ApiResult<impl IntoResponse> {
+    state
+        .core
+        .explorer_file_action(&id, &worktree, &action, LOCAL_USER)
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 type Params = Query<HashMap<String, String>>;
