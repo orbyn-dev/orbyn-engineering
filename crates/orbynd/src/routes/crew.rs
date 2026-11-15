@@ -62,6 +62,21 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/settings/engine-tiers/save",
+        "core crew_set_engine_tiers: local only, person transport, revision compare-and-swap, exact configured ACP engine ids, unique entries, exactly one visible marked default, expected_default_model precondition independently checked by core, native and unavailable engines refused; clear restores builder-only; no agent tool",
+    ),
+    (
+        "POST",
+        "/api/crew/review/{id}/consent",
+        "core crew_review_consent: local only, person transport, exact pending request id with pinned head and round, once or wait, ten-minute expiry, atomic single consumption; no client actor or grant flag; no model tool",
+    ),
+    (
+        "POST",
+        "/api/crew/review/{id}/remove-lane",
+        "core crew_remove_review_lane: local only, person transport, nonempty bounded reason, required lane from pinned base or default risk lanes, locked lane refused, durable waiver and audit, never clears findings; no model tool",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/merge",
         "core forge queue: stored task/project target, person-owned CI policy, pinned head/base, durable effect reconciliation; person release, local only",
     ),
@@ -164,6 +179,15 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let writes = Router::new()
+        .route(
+            "/api/crew/settings/engine-tiers/save",
+            post(set_engine_tiers),
+        )
+        .route("/api/crew/review/{task_id}/consent", post(review_consent))
+        .route(
+            "/api/crew/review/{task_id}/remove-lane",
+            post(remove_review_lane),
+        )
         .route("/api/crew/autopilot/mode", put(set_mode))
         .route("/api/crew/autopilot/confirm", post(confirm))
         .route(
@@ -229,6 +253,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/classes", get(classes))
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
+        .route("/api/crew/review/{task_id}/controls", get(review_controls))
+        .route("/api/crew/settings/engine-tiers", get(engine_tiers))
         .merge(writes)
         .merge(super::crew_tasks::routes())
         .merge(super::crew_board::routes())
@@ -356,6 +382,50 @@ async fn route_view(
     Path(task_id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_route_view(&task_id)?))
+}
+
+async fn review_controls(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let mut view = state.core.crew_review_control_view(&task_id).await?;
+    if state.remote {
+        for lane in &mut view.lanes {
+            lane.can_remove = false;
+        }
+    }
+    Ok(Json(view))
+}
+
+async fn engine_tiers(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let mut view = state.core.crew_engine_tier_view().await?;
+    view.writable = !state.remote;
+    Ok(Json(view))
+}
+
+async fn set_engine_tiers(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<serde_json::Value>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_set_engine_tiers(&body).await?))
+}
+
+async fn review_consent(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    ApiJson(body): ApiJson<serde_json::Value>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_review_consent(&task_id, &body).await?))
+}
+
+async fn remove_review_lane(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    ApiJson(body): ApiJson<serde_json::Value>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.crew_remove_review_lane(&task_id, &body).await?,
+    ))
 }
 
 fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {

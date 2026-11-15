@@ -178,6 +178,9 @@ pub struct FlowLane {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub same_engine: Option<bool>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub same_engine_allowed_by: Option<crate::CrewSameEngineAllowedBy>,
 }
 }
 
@@ -255,26 +258,35 @@ pub struct FlowYou {
 wire! {
 /// One task zoomed. No check, command, output excerpt or answer key is in it.
 pub struct FlowTaskDetail {
+    // Stored crew identity, including for a task outside the bounded crew list.
+    pub crew: String,
     pub row: FlowTaskRow,
     pub brief: FlowBrief,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub route: Option<FlowRoute>,
     pub lanes: Vec<FlowLane>,
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<crate::FlowReviewConsent>>")]
+    pub review_consents: Vec<crate::FlowReviewConsent>,
+    // Human policy: a launched same-engine Security review raises risk to High.
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub same_engine_security_high: bool,
     pub findings: Vec<FlowFinding>,
     pub gates: Vec<FlowGate>,
     pub rounds: Vec<FlowRound>,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub merge: Option<FlowMerge>,
-    /// `unknown`, `green` or `broken` once merged.
+    // `unknown`, `green` or `broken` once merged.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub watch: Option<String>,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub you: Option<FlowYou>,
-    /// A list was cut at its cap.
+    // A list was cut at its cap.
     pub truncated: bool,
 }
 }

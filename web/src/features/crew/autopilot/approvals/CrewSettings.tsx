@@ -4,6 +4,7 @@ import { AutonomyThresholds } from "./AutonomyThresholds";
 import { AutopilotSettings } from "./AutopilotSettings";
 import { PathClasses } from "./PathClasses";
 import { ProductionTargets } from "./ProductionTargets";
+import { EngineTiers } from "./EngineTiers";
 
 /** Settings › Crew: Autopilot, the production-linked targets the guard watches, then the path classes of the repo. Autopilot by area and its thresholds are pages of their own. */
 export function CrewSettingsSection() {
@@ -20,6 +21,7 @@ export function CrewSettingsSection() {
         ) : (
           <>
             <AutopilotSettings />
+            <EngineTiers />
             <ProductionTargets />
             <PathClasses />
           </>

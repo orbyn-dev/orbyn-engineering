@@ -15,6 +15,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `chain` | The approval chain over the `Approver` trait: the lead, then a second key on another vendor |
 | `notices` | Server-persistent missing-second-key notices, cursor paging and idempotent dismissal or sign-in resolution |
 | `engine` | Per-request lead selection and a lead-tier second vendor through the registry, filters and data classes; strict JSON answers from bounded tool-free runs |
+| `comment` | Saved lead-requested advisory review-comment claims through the same hard/host rules and two-key chain, before ordinary gate policy; no worker resurrection or held-command grant |
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |

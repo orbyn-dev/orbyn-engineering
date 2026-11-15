@@ -5,11 +5,15 @@
 //! through a check that fails or a second independent run that agrees ([`decide`]). A confirmed finding sends
 //! a fix brief to a builder, and the lanes run again ([`fix`], [`ended`]).
 
+mod control_view;
+mod controls;
 mod decide;
 mod ended;
 mod findings;
 mod fix;
+mod gates;
 mod lanes;
+pub(in crate::crew) mod publication;
 mod rules;
 mod status;
 
@@ -34,7 +38,13 @@ pub const FINDING_TOOL: &str = "crew_finding";
 pub const CHECK_FINDING_TOOL: &str = "crew_check_finding";
 pub const STATUS_TOOL: &str = "crew_review_status";
 /// The review tools. The lead calls all but `crew_finding`, which only a reviewer calls.
-pub const REVIEW_TOOLS: [&str; 4] = [REVIEW_TOOL, FINDING_TOOL, CHECK_FINDING_TOOL, STATUS_TOOL];
+pub const REVIEW_TOOLS: [&str; 5] = [
+    REVIEW_TOOL,
+    FINDING_TOOL,
+    CHECK_FINDING_TOOL,
+    STATUS_TOOL,
+    "crew_publish_review",
+];
 
 /// The most findings one review run files, and one independent second run (which only has to find one place).
 pub(super) const MOST_FINDINGS: usize = 100;
@@ -50,7 +60,7 @@ pub(super) const MOST_ROUNDS: u32 = 5;
 
 /// The tools as `tools/list` shows them.
 pub fn specs() -> Vec<Value> {
-    vec![
+    let mut specs = vec![
         json!({
             "name": REVIEW_TOOL,
             "description": "Preview: review finished work. `task` is a task that has passed; `lanes` names the \
@@ -109,7 +119,10 @@ pub fn specs() -> Vec<Value> {
                 "required": ["task"],
             },
         }),
-    ]
+    ];
+    specs.push(json!({"name":"crew_publish_review","description":"Preview: lead-requested same-repository advisory PR comment from a completed clean read-only lane. Uses existing Network policy and Autopilot two-key admission. Never approves a PR. A saved uncertain publication only reconciles; never retries its POST. To deliberately replace a renewable pre-send stale intent, provide its id as renew with review and pull; replacement requires fresh admission and preserves the old record.",
+        "inputSchema":{"type":"object","additionalProperties":false,"properties":{"task":{"type":"string"},"review":{"type":"string"},"pull":{"type":"integer","minimum":1},"publication":{"type":"string"},"renew":{"type":"string"}},"required":["task"]}}));
+    specs
 }
 
 /// A finding's identity across rounds: its lane, its file and its claim with case and spacing ignored. The line
@@ -133,6 +146,7 @@ impl Core {
             return Err(CrewError::new(ErrorCode::UnknownTool, tool));
         }
         match tool {
+            "crew_publish_review" => self.publish_review_tool(binding, args).await,
             FINDING_TOOL => self.crew_finding_tool(binding, args),
             REVIEW_TOOL => self.crew_lanes_tool(binding, args).await,
             CHECK_FINDING_TOOL => self.crew_check_finding_tool(binding, args).await,

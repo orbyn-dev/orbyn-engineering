@@ -44,6 +44,14 @@ impl Core {
 
     /// Starts `review_task_unpassed` for a task that ended or waits for a person without passing.
     pub(crate) fn spawn_review_unpassed(self: &Arc<Self>, task_id: &str) {
+        if let Ok(Some(review)) = self.store.crew_review(task_id)
+            && let Err(error) = self.snapshot_review_gates(&review.subject_id)
+        {
+            tracing::warn!(
+                ?error,
+                "could not snapshot lane Gates after the review ended"
+            );
+        }
         if !matches!(self.store.crew_fix_for_task(task_id), Ok(Some(_))) {
             return;
         }
@@ -83,6 +91,25 @@ impl Core {
     }
 
     fn review_lane_passed(&self, review: &CrewReview) {
+        if review.lane == super::SECURITY_LANE {
+            let refreshed = self
+                .store
+                .merge_entry(&review.subject_id)
+                .and_then(|entry| {
+                    entry
+                        .map(|entry| self.refresh_merge_review_risk(&entry))
+                        .transpose()
+                });
+            if let Err(error) = refreshed {
+                tracing::warn!(%error, "could not refresh queued Security review risk; merge admission will retry");
+            }
+        }
+        if let Err(error) = self.snapshot_review_gates(&review.subject_id) {
+            tracing::warn!(
+                ?error,
+                "could not snapshot lane Gates after review completion"
+            );
+        }
         let Ok(filed) = self.store.crew_findings_of_task(&review.task_id) else {
             return;
         };
@@ -167,6 +194,14 @@ impl Core {
             }
         }
         for lane in lanes {
+            match self.review_lane_removed(subject_id, &lane) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "could not read person lane removal; no reround started");
+                    return;
+                }
+            }
             let Ok(token) = CrewToken::new(lane) else {
                 continue;
             };

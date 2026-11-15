@@ -2,9 +2,9 @@
 //! added once, when the merge reaches the branch, and only its review, its watch and its revert change after.
 
 use rusqlite::{OptionalExtension, Row, params};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::Store;
+use super::{AuditRecord, Store, insert_audit};
 use crate::error::{CoreError, Result};
 use crate::util::unix_now;
 
@@ -131,6 +131,27 @@ fn merge_row(row: &Row<'_>) -> rusqlite::Result<MergeRecord> {
 }
 
 impl Store {
+    /// A same-engine Security review can only raise queued risk, never change
+    /// the target, candidate, person release, forge phase or CI policy.
+    pub(crate) fn raise_merge_review_risk(&self, task: &str, reason: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            let Some(entry) = tx.query_row("SELECT * FROM crew_merge_queue WHERE task_id=?1", [task], entry_row).optional()? else { return Ok(()); };
+            let mut reasons = entry.reasons.as_array().cloned()
+                .ok_or_else(|| CoreError::Invalid("merge risk reasons are not a list".into()))?;
+            if entry.risk == "high" && reasons.iter().any(|r| r.as_str() == Some(reason)) { return Ok(()); }
+            if !reasons.iter().any(|r| r.as_str() == Some(reason)) { reasons.push(Value::String(reason.into())); }
+            insert_audit(tx, &AuditRecord {
+                actor: "core".into(), action: "crew.merge.review_risk".into(),
+                target: task.into(), decision: None, source: "core".into(),
+                thread_id: None, run_id: None,
+                detail: json!({"before":entry.risk,"risk":"high","reason":reason}),
+            })?;
+            tx.execute("UPDATE crew_merge_queue SET risk='high',reasons=?2,updated_unix=?3 WHERE task_id=?1",
+                params![task,serde_json::to_string(&reasons)?,unix_now()])?;
+            Ok(())
+        })
+    }
+
     /// Puts a task in the queue. A task already merged is refused; one still waiting is replaced.
     pub fn add_merge_entry(&self, entry: &MergeEntry) -> Result<()> {
         let reasons = serde_json::to_string(&entry.reasons)?;

@@ -340,6 +340,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
     assert_eq!(
         tables(&store.reader()),
         [
+            "crew_acp_tier_revision",
+            "crew_acp_tiers",
             "crew_answer_keys",
             "crew_area_events",
             "crew_area_modes",
@@ -365,6 +367,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_messages",
             "crew_reports",
             "crew_results",
+            "crew_review_controls",
+            "crew_review_publications",
             "crew_reviews",
             "crew_route_decisions",
             "crew_runs",

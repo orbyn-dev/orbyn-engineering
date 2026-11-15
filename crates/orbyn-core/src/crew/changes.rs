@@ -11,6 +11,9 @@ use crate::account::changes::{normalize, paths_with_prefix, pattern_matches};
 /// Every route under `/api/crew` that changes state, as `(method, path)`. A `{id}` segment matches any one segment.
 pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/merge"),
+    ("POST", "/api/crew/settings/engine-tiers/save"),
+    ("POST", "/api/crew/review/{id}/consent"),
+    ("POST", "/api/crew/review/{id}/remove-lane"),
     ("PUT", "/api/crew/autopilot/mode"),
     ("POST", "/api/crew/autopilot/confirm"),
     ("POST", "/api/crew/autopilot/areas/override"),
@@ -36,6 +39,8 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
 /// Reads confer no action authority. The notice projection may record observed
 /// second-engine availability, never approve or retry work.
 pub const READS: &[(&str, &str)] = &[
+    ("GET", "/api/crew/settings/engine-tiers"),
+    ("GET", "/api/crew/review/{id}/controls"),
     ("GET", "/api/crew/preview"),
     ("GET", "/api/crew/autopilot"),
     ("GET", "/api/crew/autopilot/guards"),

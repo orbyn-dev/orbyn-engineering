@@ -4,6 +4,7 @@
 mod areas;
 mod blast;
 mod chain;
+mod comment;
 mod engine;
 mod exit;
 mod hard;

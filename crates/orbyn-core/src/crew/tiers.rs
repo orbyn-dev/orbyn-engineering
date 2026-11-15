@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use orbyn_contracts::{BriefKind, ModelInfo, RouteRole, RouteTier};
+use orbyn_contracts::{BriefKind, EngineTier, ModelInfo, RouteRole, RouteTier};
 
 /// The words that mark a model as one tier's, matched as whole words in its id or label,
 /// ignoring case.
@@ -41,11 +41,17 @@ impl TierWords {
 pub struct RouterConfig {
     /// By engine family.
     pub tiers: BTreeMap<String, TierWords>,
+    /// Explicit exact ACP engine id assignments. The model pin is resolved by
+    /// core when the person saves, never guessed from its name.
+    pub acp_tiers: BTreeMap<String, AcpTierAssignment>,
 }
+
+pub use orbyn_contracts::CrewAcpTierAssignment as AcpTierAssignment;
 
 impl Default for RouterConfig {
     fn default() -> Self {
         Self {
+            acp_tiers: BTreeMap::new(),
             tiers: BTreeMap::from([
                 (
                     "claude".to_owned(),
@@ -55,6 +61,36 @@ impl Default for RouterConfig {
             ]),
         }
     }
+}
+
+/// ACP assignments add only the explicitly assigned tier to the engine's
+/// existing builder admission. They do not promote siblings or other models.
+pub(super) fn acp_model<'a>(
+    config: &RouterConfig,
+    view: &super::view::EngineView,
+    models: &'a [ModelInfo],
+    tier: RouteTier,
+    named: Option<&str>,
+    image: bool,
+) -> Result<(&'a ModelInfo, RouteTier), Unfit> {
+    debug_assert_eq!(view.tier, EngineTier::Acp);
+    let default = explicit_default(models);
+    let model = match named {
+        Some(id) => models.iter().find(|m| m.id == id).ok_or(Unfit::Named)?,
+        None if tier == RouteTier::Worker => preferred(models.iter()).ok_or(Unfit::NoModels)?,
+        None => default.ok_or(Unfit::Tier(tier))?,
+    };
+    if image && !takes_image(model) {
+        return Err(Unfit::Input("image"));
+    }
+    let assigned = config
+        .acp_tiers
+        .get(view.id.as_str())
+        .filter(|a| default.is_some_and(|d| a.model == d.id) && a.model == model.id);
+    if tier != RouteTier::Worker && !assigned.is_some_and(|a| a.tier == tier) {
+        return Err(Unfit::Tier(tier));
+    }
+    Ok((model, assigned.map_or(RouteTier::Worker, |a| a.tier)))
 }
 
 impl RouterConfig {
@@ -139,6 +175,14 @@ pub enum Unfit {
 fn preferred<'a>(models: impl Iterator<Item = &'a ModelInfo>) -> Option<&'a ModelInfo> {
     let all: Vec<&ModelInfo> = models.collect();
     all.iter().find(|m| m.is_default).or(all.first()).copied()
+}
+
+/// Only one visible explicitly marked default is a valid ACP assignment target.
+/// Builder selection retains its existing fallback through `preferred`.
+pub(super) fn explicit_default(models: &[ModelInfo]) -> Option<&ModelInfo> {
+    let mut defaults = models.iter().filter(|m| m.is_default);
+    let one = defaults.next()?;
+    defaults.next().is_none().then_some(one)
 }
 
 fn takes_image(model: &ModelInfo) -> bool {

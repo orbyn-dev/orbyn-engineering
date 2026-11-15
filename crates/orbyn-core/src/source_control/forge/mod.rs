@@ -7,6 +7,7 @@
 pub(crate) mod cache;
 mod create;
 pub(crate) mod crew;
+pub(crate) mod crew_review;
 mod details;
 mod github;
 mod gitlab;
@@ -35,6 +36,8 @@ pub use merge::{
 pub use parse::parse_pull;
 #[cfg(test)]
 pub(crate) use process::with_crew_fixture;
+#[cfg(test)]
+pub(crate) use process::with_crew_input_fixture;
 pub use process::{call, no_such_pull};
 pub use pulls::{
     PullFilter, approve_workflow, conversation, fetch_pull, list_pulls, pull_checks, pull_detail,

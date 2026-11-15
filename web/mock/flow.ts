@@ -38,7 +38,7 @@ function line(states: Partial<Record<FlowStage, FlowCellState | [FlowCellState, 
 
 interface Sample {
   row: FlowTaskRow;
-  detail: Omit<FlowTaskDetail, "row" | "truncated">;
+  detail: Omit<FlowTaskDetail, "row" | "truncated" | "crew">;
 }
 
 const row = (id: string, name: string, kind: string, engine: string | null, state: string, round: number, cells: FlowCell[], at: string): FlowTaskRow => ({
@@ -150,6 +150,21 @@ export function flowMock(scenario: string, method: string, path: string, query: 
   if (method !== "GET" || !path.startsWith("/api/crew/flow/") || !(scenario === "crew" || scenario.startsWith("crew-"))) return null;
   const truncated = scenario === "crew-flow-truncated";
   const all = scenario === "crew-flow-many" ? many() : scenario === "crew-flow-empty" ? [] : samples();
+  if (scenario.startsWith("crew-review-")) {
+    const sample = all.find((s) => s.row.id === "task-redirect");
+    if (sample) {
+      sample.row.state = "passed";
+      if (scenario === "crew-review-remove") sample.row.name = "Review dependency licences";
+      sample.row.cells = line({ brief:"done",route:"done",build:"done",checks:["done",{passed:3,of:3}],code:"done",security:scenario === "crew-review-consent" ? "needs_you" : "running" });
+      sample.detail.lanes = sample.detail.lanes.filter((l) => l.group !== "security");
+      if (scenario === "crew-review-consent") {
+        sample.detail.review_consents = [{ id:"consent-preview",task:sample.row.id,lane:"security",commit:"a41c9e2c0ffee0123456789abcdef0123456789a",round:1,engine:"claude",model:"Opus 5.5",state:"waiting",expires_unix:4102444800,can_answer:true }];
+      } else if (scenario !== "crew-review-remove") {
+        sample.detail.lanes.push({ lane:"security",group:"security",task:"task-same-engine",round:1,state:"running",engine:"claude",model:"Opus 5.5",tier:"lead",findings:0,confirmed:0,unconfirmed:0,same_engine:true,same_engine_allowed_by:scenario === "crew-review-full" ? "autopilot_full" : "person_once" });
+        sample.detail.same_engine_security_high = true;
+      }
+    }
+  }
   if (path === "/api/crew/flow/crews") {
     if (scenario === "crew-empty") return { status: 200, body: { crews: [], total: 0, next_offset: null } satisfies FlowCrewList };
     const crews = [
@@ -187,14 +202,14 @@ export function flowMock(scenario: string, method: string, path: string, query: 
   }
   const id = /^\/api\/crew\/flow\/tasks\/([^/]+)$/.exec(path)?.[1];
   if (id) {
-    const found = [...samples(), ...many()].find((one) => one.row.id === decodeURIComponent(id));
+    const found = [...all, ...many()].find((one) => one.row.id === decodeURIComponent(id));
     if (!found) return missing("task");
     const leaked = scenario === "crew-flow-leak" ? found.detail.gates.map((gate) => ({ ...gate, reason: "A reason for a task that is not over" })) : found.detail.gates;
     const hostile = scenario === "crew-flow-hostile";
     const detail = hostile
       ? { ...found.detail, lanes: found.detail.lanes.map((lane) => ({ ...lane, thread: HOSTILE.thread, worktree: HOSTILE.worktree })), findings: found.detail.findings.map((finding) => ({ ...finding, body: HOSTILE.body, text: HOSTILE.text })) }
       : found.detail;
-    const body: FlowTaskDetail = { row: found.row, ...detail, gates: leaked, truncated: false };
+    const body: FlowTaskDetail = { crew: MOCK_CREW, row: found.row, ...detail, gates: leaked, truncated: false };
     return { status: 200, body };
   }
   return null;

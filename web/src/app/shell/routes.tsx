@@ -39,7 +39,7 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
     case "tasks":
       return <ScheduledTasksPage />;
     case "crew":
-      return <CrewSurface tab={route.tab} />;
+      return <CrewSurface key={`${route.tab}:${route.task ?? ""}`} tab={route.tab} task={route.task} />;
     case "thread":
       return <ThreadView key={route.id} id={route.id} />;
     case "new":

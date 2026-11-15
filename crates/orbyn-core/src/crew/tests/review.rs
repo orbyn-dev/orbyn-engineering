@@ -427,7 +427,15 @@ async fn second_review(line: u32) -> (super::harness::World, String, String) {
 #[tokio::test]
 async fn a_second_review_that_agrees_confirms_a_finding() {
     let (w, subject, second) = second_review(6).await;
-    let gate = w.core.store.crew_gates(&subject).unwrap().pop().unwrap();
+    let gate = w
+        .core
+        .store
+        .crew_gates(&subject)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find(|g| g.stage == GateStage::FindingCheck)
+        .unwrap();
     assert_eq!(gate.decision, GateDecision::Confirmed);
     assert_eq!(gate.decided_by, GateDecider::Code);
     assert!(
@@ -478,7 +486,15 @@ async fn a_second_review_that_agrees_confirms_a_finding() {
 #[tokio::test]
 async fn a_second_review_elsewhere_leaves_the_finding_unconfirmed() {
     let (w, subject, _) = second_review(50).await;
-    let gate = w.core.store.crew_gates(&subject).unwrap().pop().unwrap();
+    let gate = w
+        .core
+        .store
+        .crew_gates(&subject)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find(|g| g.stage == GateStage::FindingCheck)
+        .unwrap();
     assert_eq!(gate.decision, GateDecision::Unconfirmed);
     assert_eq!(w.status(&subject)["blocked"], false);
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());

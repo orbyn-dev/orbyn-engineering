@@ -28,10 +28,15 @@ mod crew_merge_forge;
 mod crew_merges;
 mod crew_rerun;
 mod crew_review;
+mod crew_review_controls;
+#[cfg(test)]
+mod crew_review_migration_tests;
+mod crew_review_publications;
 mod crew_runs;
 mod crew_schema;
 #[cfg(test)]
 mod crew_tests;
+mod crew_tier_settings;
 mod hub;
 mod installs;
 mod migrations;
@@ -68,6 +73,8 @@ pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
 pub use crew_merge_forge::{ForgeMerge, ForgePhase};
 pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
+pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
+pub(crate) use crew_review_publications::{Publication, PublicationState};
 pub use crew_runs::CrewRun;
 
 use std::path::Path;

@@ -4,14 +4,14 @@
 //! `needs`, a model for the tier, and quota left.
 
 use orbyn_contracts::{
-    Brief, BriefEffect, CrewShortText, EngineCapabilities, LeaseMode, ModelInfo, RejectionWhy,
-    RouteRejection, RouteTier,
+    Brief, BriefEffect, CrewShortText, EngineCapabilities, EngineTier, LeaseMode, ModelInfo,
+    RejectionWhy, RouteRejection, RouteTier,
 };
 
 use crate::agents::provider_facts::{Unavailable, WriteBlock};
 
 use super::classes::{PathClasses, engine_words};
-use super::tiers::{RouterConfig, Unfit, model_for_tier, model_named, tier_of_model};
+use super::tiers::{RouterConfig, Unfit, acp_model, model_for_tier, model_named, tier_of_model};
 use super::view::EngineView;
 
 /// What the brief asks of an engine, read once.
@@ -243,15 +243,20 @@ pub fn screen<'a>(
         }
     }
     let models: &[ModelInfo] = view.models.as_deref().unwrap_or(&[]);
-    let model = match named {
-        Some(asked) => model_named(models, asked, want.image),
-        None => model_for_tier(config, &view.family, models, want.tier, want.image),
-    }
-    .map_err(|unfit| {
+    let selected = if view.tier == EngineTier::Acp {
+        acp_model(config, view, models, want.tier, named, want.image)
+            .map(|(m, tier)| (m, Some(tier)))
+    } else {
+        match named {
+            Some(asked) => model_named(models, asked, want.image),
+            None => model_for_tier(config, &view.family, models, want.tier, want.image),
+        }
+        .map(|m| (m, tier_of_model(config, &view.family, m)))
+    };
+    let (model, tier) = selected.map_err(|unfit| {
         let (why, text) = unfit_text(view, want.tier, &unfit, named);
         rejection(view, why, text)
     })?;
-    let tier = tier_of_model(config, &view.family, model);
     if want.tier == RouteTier::Lead && tier != Some(RouteTier::Lead) {
         return Err(rejection(
             view,
