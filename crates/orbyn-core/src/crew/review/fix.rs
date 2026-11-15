@@ -74,12 +74,6 @@ fn sensitive(path: &str) -> bool {
             .any(|m| name.contains(m))
 }
 
-/// Characters a path may have in a check command written without quotes (`cmd /C` cannot be handed them).
-fn quotable(path: &str) -> bool {
-    path.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
-}
-
 impl Core {
     /// Tells the lead why no fix brief was sent, and returns the same as the tool's answer.
     fn no_fix(&self, subject: &CrewTask, stopped: &str, why: &str) -> Value {
@@ -145,11 +139,11 @@ impl Core {
             .iter()
             .filter_map(CrewCheck::command)
             .any(|run| run.contains(path));
-        if !writable || sensitive(path) || named || !quotable(path) {
+        if !writable || sensitive(path) || named {
             return Ok(self.no_fix(
                 subject,
                 "refused_path",
-                &format!("{path} is not a file a fix may write: it is outside what the task could write, or a test, CI or rule file, or its name needs care."),
+                &format!("{path} is not a file a fix may write: it is outside what the task could write, or a test, CI or rule file."),
             ));
         }
         let cwd = std::path::PathBuf::from(&thread.cwd);
@@ -160,26 +154,17 @@ impl Core {
                 &format!("{path} is not a file in the checkout."),
             ));
         }
-        // What the file holds now, kept in the repository's own git folder, so a fix that leaves it as it is can be told. The check
-        // runs through `cmd /C` on Windows, which does not take the quotes a path with spaces would need, so both paths are
-        // plain relative names; a place that is not is refused.
-        let git_path = crate::source_control::git::git_hardened(
-            &cwd,
-            &["rev-parse", "--git-path", "orbyn-fix"],
-        )
-        .await
-        .map(|out| crate::source_control::git::text(&out).replace('\\', "/"))
-        .map_err(|e| invalid(e.public_message()))?;
-        let copy = format!("{git_path}/{}.orig", &finding.id.as_str()[7..23]);
-        if !quotable(&copy) || copy.starts_with('/') {
+        // Keep the digest in the immutable key, outside the worker's checkout. The verifier
+        // uses the protected-file byte reader, with no shell or Git conversion involved.
+        let pattern = orbyn_contracts::CrewPathPattern::new(path).map_err(invalid)?;
+        let snapshot = crate::crew::protect::snapshot(&cwd, &[pattern]);
+        let Some(before) = snapshot.get(path).filter(|entry| entry.kind == "file") else {
             return Ok(self.no_fix(
                 subject,
                 "refused_path",
-                "The repository's git folder is not a plain relative place the core can keep a copy in.",
+                "The finding's file cannot be read as a regular file.",
             ));
-        }
-        std::fs::create_dir_all(cwd.join(&git_path)).map_err(|e| invalid(e.to_string()))?;
-        std::fs::copy(cwd.join(path), cwd.join(&copy)).map_err(|e| invalid(e.to_string()))?;
+        };
         let dirty = changed(&Site {
             worktree: &cwd,
             deadline: std::time::Instant::now() + std::time::Duration::from_secs(120),
@@ -218,8 +203,8 @@ impl Core {
             checks.push(serde_json::to_value(&repro).map_err(|e| invalid(e.to_string()))?);
         }
         checks.push(json!({
-            "id": "chk-fix-touched", "kind": "command",
-            "params": { "run": format!("git diff --no-index --quiet {copy} {path}"), "expect_exit": 1 },
+            "id": "chk-fix-touched", "kind": "repo_required",
+            "params": { "name": "crew-fix-touched", "note": before.sha256 },
             "proves": "The finding's file now differs from what it held when the fix began.",
             "does_not_prove": "That the difference fixes the finding.",
         }));

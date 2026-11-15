@@ -66,6 +66,60 @@ fn kind_name(check: &CrewCheck) -> String {
     super::wire_name(&check.kind)
 }
 
+/// The core's fix guard. Only the verifier of a recorded fix task calls this;
+/// ordinary `repo_required` checks remain unimplemented.
+pub(super) fn fix_touched(path: &str, digest: &str, site: &Site<'_>) -> Ran {
+    let started = Instant::now();
+    let description = "byte comparison: chk-fix-touched".to_owned();
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    let Ok(pattern) = CrewPathPattern::new(path) else {
+        return error(description, "The finding's path is invalid.", started);
+    };
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return error(
+            description,
+            "The fix's original bytes were not recorded.",
+            started,
+        );
+    }
+    let snapshot = super::protect::snapshot(site.worktree, &[pattern]);
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out during the byte check.",
+            started,
+        );
+    }
+    let Some(now) = snapshot.get(path).filter(|entry| entry.kind == "file") else {
+        return error(
+            description,
+            "The finding's file cannot be read as a regular file.",
+            started,
+        );
+    };
+    let mut result = ran(
+        if now.sha256 == digest {
+            CheckOutcome::Fail
+        } else {
+            CheckOutcome::Pass
+        },
+        description,
+        String::new(),
+        started,
+    );
+    if now.sha256 == digest {
+        result.reason = Some("The finding's file has not changed.".to_owned());
+        result.names.push(path.to_owned());
+    }
+    result
+}
+
 /// Runs one check.
 pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     let started = Instant::now();
@@ -225,6 +279,34 @@ pub fn covers(pattern: &CrewPathPattern, path: &str) -> bool {
 /// Every path that differs from the starting commit: changed tracked files and new ones.
 pub(super) async fn changed(site: &Site<'_>) -> Result<Vec<String>, CoreError> {
     use crate::source_control::git::git_hardened as git;
+    // GIT_ATTR_SOURCE does not replace info/attributes. Do not read its contents:
+    // encoding and eol attributes there could normalize a byte change away.
+    let location = git(
+        site.worktree,
+        &["rev-parse", "--git-path", "info/attributes"],
+    )
+    .await?;
+    let location = std::str::from_utf8(&location)
+        .map_err(|_| CoreError::Git("The Git attributes path is not valid UTF-8.".into()))?;
+    let location = location.strip_suffix('\n').unwrap_or(location);
+    let location = location.strip_suffix('\r').unwrap_or(location);
+    let attributes = site.worktree.join(location);
+    match std::fs::symlink_metadata(&attributes) {
+        Err(why) if why.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(meta) if meta.is_file() && meta.len() == 0 => {
+            std::fs::File::open(&attributes).map_err(|_| CoreError::Git("Git info/attributes cannot be inspected.".into()))?;
+        }
+        _ => return Err(CoreError::Git("Git info/attributes overrides must be absent or an empty readable regular file for Crew checks.".into())),
+    }
+    // A flagged entry can hide a tracked edit, including when the flag predates this task.
+    match super::index_flags::flagged(site.worktree).await {
+        Some(flags) if flags.is_empty() => {}
+        _ => {
+            return Err(CoreError::Git(
+                "The checkout has an unreadable index or flags that hide changes.".into(),
+            ));
+        }
+    }
     let base = site.base.unwrap_or("HEAD");
     let tracked = git(
         site.worktree,

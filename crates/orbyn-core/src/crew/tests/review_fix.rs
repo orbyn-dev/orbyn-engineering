@@ -15,6 +15,62 @@ fn failing(id: &str, path: &str) -> serde_json::Value {
         "params": { "run": format!("git grep --no-index -q NEVERHERE -- {path}") }, "proves": "It holds." })
 }
 
+#[tokio::test]
+async fn a_fix_with_spaces_and_valid_punctuation_gets_a_core_byte_check() {
+    const PATH: &str = "src/file with spaces @plus+.txt";
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            std::fs::write(root.join(PATH), "original\n").unwrap();
+            built(root)
+        }
+        1 => reviewed(vec![finding(PATH, 1, "Wrong value.")]),
+        2 => reviewed(vec![finding(PATH, 2, "The value is wrong.")]),
+        3 => fixed_file(root, PATH),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+    let id = w.first_finding(&subject);
+    let (pending, error) = w.lead("crew_check_finding", json!({ "finding": id })).await;
+    assert!(!error, "{pending}");
+    w.until_state(pending["second_review"]["task"].as_str().unwrap(), "passed")
+        .await;
+    w.until("a fix is started", |w| {
+        !w.core.store.crew_fixes_of(&subject).unwrap().is_empty()
+    })
+    .await;
+    let fix = w.core.store.crew_fixes_of(&subject).unwrap()[0]
+        .fix_task_id
+        .clone();
+    w.until_state(&fix, "passed").await;
+    let key = w.core.store.crew_answer_key(&fix).unwrap().unwrap();
+    let check = key
+        .checks
+        .iter()
+        .find(|c| c.id.as_str() == "chk-fix-touched")
+        .unwrap();
+    assert!(check.command().is_none());
+    let digest = check.params["note"].as_str().unwrap();
+    assert!(
+        w.sent_to(&w.worker(&fix))
+            .iter()
+            .all(|prompt| !prompt.contains(digest))
+    );
+    let evidence = w.core.store.crew_evidence(&fix).unwrap();
+    assert!(
+        evidence
+            .iter()
+            .any(|e| e.check == check.id && e.outcome == orbyn_contracts::CheckOutcome::Pass)
+    );
+    assert_eq!(
+        w.status(&subject)["blocked"],
+        true,
+        "touching a file never clears agreement alone"
+    );
+}
+
 /// A reviewer that edits the code it reviews fails its run, and its findings can then not be confirmed.
 #[tokio::test]
 async fn a_reviewer_that_edits_the_work_fails_and_its_findings_are_not_confirmable() {
@@ -76,7 +132,18 @@ async fn a_confirmed_finding_stays_until_a_real_fix_passes() {
         0 => built(root),
         1 => reviewed(vec![finding("src/lib.txt", 5, "Overflow.")]),
         2 => reviewed(vec![finding("src/lib.txt", 6, "A second reading.")]),
-        3..=5 => Turn::Report(super::harness::report("done")),
+        3..=5 => {
+            // A worker could alter the legacy comparison copy in writable Git metadata
+            // without changing the finding's file. The immutable digest must still fail.
+            if let Ok(copies) = std::fs::read_dir(root.join(".git/orbyn-fix")) {
+                for copy in copies.flatten() {
+                    if copy.path().extension().is_some_and(|ext| ext == "orig") {
+                        std::fs::write(copy.path(), "tampered comparison copy\n").unwrap();
+                    }
+                }
+            }
+            Turn::Report(super::harness::report("done"))
+        }
         _ => reviewed(vec![]),
     }))
     .await;
@@ -95,7 +162,18 @@ async fn a_confirmed_finding_stays_until_a_real_fix_passes() {
         .fix_task_id
         .clone();
     // The fix changes nothing, so the check that the file changed fails every attempt and the fix stops.
-    w.until_state(&fix, "stopped").await;
+    w.until("the no-op fix ends", |w| {
+        matches!(
+            w.task(&fix).state.as_str(),
+            "passed" | "stopped" | "needs_person"
+        )
+    })
+    .await;
+    assert_eq!(
+        w.task(&fix).state,
+        "stopped",
+        "a mutable comparison copy must not make a no-op fix pass"
+    );
     assert_eq!(w.status(&subject)["blocked"], true);
     // The lead runs the lane again; the reviewer says nothing. A model's silence clears nothing.
     let again = w.review(&subject, &["correctness"]).await;
@@ -379,21 +457,25 @@ async fn an_index_flag_does_not_hide_a_reviewers_edit() {
     }
 }
 
-/// A flag the checkout already had (a sparse checkout's, say) is not the reviewer's doing.
+/// Pre-existing flags are refused too: attribution does not make hidden edits observable.
 #[tokio::test]
-async fn a_flag_that_was_there_at_the_start_is_not_a_failure() {
-    let w = crew(arc(|n, root| match n {
-        0 => built(root),
-        _ => reviewed(vec![]),
-    }))
-    .await;
-    crate::testing::run_git(
-        &w.repo,
-        &["update-index", "--skip-worktree", "src/base.txt"],
-    );
-    let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+async fn a_flag_that_was_there_at_the_start_refuses_admission() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let w = crew(arc(|n, root| match n {
+            0 => built(root),
+            _ => reviewed(vec![]),
+        }))
+        .await;
+        crate::testing::run_git(&w.repo, &["update-index", flag, "src/base.txt"]);
+        let (answer, error) = w
+            .start(super::harness::brief(json!({})), super::harness::key())
+            .await;
+        assert!(error, "{answer}");
+        assert!(
+            answer.to_string().contains("flags that hide changes"),
+            "{answer}"
+        );
+    }
 }
 
 /// A finding confirmed by agreement has no repro. A cosmetic edit and a silent re-review do not clear it; the lead's repro

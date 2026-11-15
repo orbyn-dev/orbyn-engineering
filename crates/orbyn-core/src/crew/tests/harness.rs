@@ -245,8 +245,16 @@ async fn world_full(
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
-    config.engines.claude_program = "orbyn-test-no-such-claude".into();
-    config.engines.codex_program = "orbyn-test-no-such-codex".into();
+    config.engines.claude_program = dir
+        .path()
+        .join("absent-claude")
+        .to_string_lossy()
+        .into_owned();
+    config.engines.codex_program = dir
+        .path()
+        .join("absent-codex")
+        .to_string_lossy()
+        .into_owned();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
     config.crew_confine_workers = confine;

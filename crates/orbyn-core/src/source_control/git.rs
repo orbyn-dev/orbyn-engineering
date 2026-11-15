@@ -88,8 +88,9 @@ async fn converter_overrides(cwd: &Path) -> Vec<String> {
 }
 
 /// Git for the checks that read what a worker changed. Anything the worker could set in the repository to hide an edit, or to
-/// make the core run a program of its choosing, is off: repository filters and diff converters, attributes (from the tree, the
-/// global file and the system), and replace refs. A caller that relies on a changed file showing in a diff uses this.
+/// make the core run a program of its choosing, is off: repository filters and diff converters, attributes from the tree,
+/// global file and system, line-ending conversion and replace refs. `info/attributes` remains repository metadata;
+/// Crew's byte-sensitive checks refuse its overrides separately. Writable Git metadata is not an isolation boundary.
 pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let overrides = converter_overrides(cwd).await;
     let attributes = no_attributes(cwd).await?;
@@ -99,7 +100,8 @@ pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .env("GIT_ATTR_NOSYSTEM", "1")
         .env("GIT_ATTR_SOURCE", &attributes)
         .args(SAFE_CONFIG)
-        .args(["-c", "core.attributesFile="])
+        .args(BYTE_EXACT)
+        .args(["-c", "core.untrackedCache=false"])
         .args(&overrides)
         .args(args);
     let output = async {
