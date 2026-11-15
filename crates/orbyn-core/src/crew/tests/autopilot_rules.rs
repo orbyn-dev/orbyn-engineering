@@ -130,6 +130,24 @@ fn n3_denies_a_network_target_it_cannot_read() {
         "rsync -a f $H:/p",
         "ssh \"`cat h`\" ls",
         "ssh $(cat h) ls",
+        "HOST=p.example; ssh -t \"$HOST\" 'rm -rf /x'",
+        "ssh -T \"$H\" x",
+        "ssh -A \"$H\" x",
+        "ssh -X \"$H\" x",
+        "ssh -x \"$H\" x",
+        "ssh -K \"$H\" x",
+        "ssh -s \"$H\" x",
+        "ssh -t prod.example.invalid 'x'",
+        "ssh -p 22 prod.example.invalid x",
+        "curl -s \"$URL\"",
+        "curl -L \"$URL\"",
+        "curl -O \"$URL\"",
+        "curl -I \"$URL\"",
+        "git push -u \"$R\" feature",
+        "git push -d \"$R\" br",
+        "nc -u \"$H\" 53",
+        "git -C . push \"$R\" feature",
+        "ssh `echo p.example` 'rm -rf /x'",
     ] {
         let hit = command(text);
         // scp and rsync of an unreadable path may trip N4 before N3; either way it is denied.
@@ -145,6 +163,8 @@ fn n3_denies_a_network_target_it_cannot_read() {
         "curl https://github.com/o/$P",
         "curl -d \"$DATA\" http://localhost:3000/x",
         "git push origin \"$BRANCH\"",
+        "curl http://[::1]:3000",
+        "ssh -t github.com \"echo $HOME\"",
         "git commit -m \"$MSG\"",
     ] {
         assert_eq!(command(text), None, "{text}");

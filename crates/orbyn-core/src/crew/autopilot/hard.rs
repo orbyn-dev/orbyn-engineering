@@ -11,7 +11,8 @@ use regex::Regex;
 use serde_json::json;
 
 use super::shell::{
-    self, Simple, host_allowed, hosts, outside, outside_from, relative, unreadable_target,
+    self, Simple, host_allowed, hosts, is_network, outside, outside_from, relative,
+    unreadable_target,
 };
 use crate::account::changes::{account_paths_in, changes_account_state};
 use crate::crew::changes::crew_change;
@@ -739,6 +740,14 @@ fn git_changes_rules(ctx: &Ctx<'_>) -> bool {
 fn n3(ctx: &Ctx<'_>) -> bool {
     // A target that holds an unresolved expansion is a host nobody listed.
     if ctx.commands.iter().any(unreadable_target) {
+        return true;
+    }
+    // A backtick or `$(` splits or hides words the reader cannot follow: with a network program in the
+    // command, any target may be one of them.
+    if ctx.kind == ActionKind::Command
+        && (ctx.target.contains('`') || ctx.target.contains("$("))
+        && ctx.commands.iter().any(is_network)
+    {
         return true;
     }
     let from_commands = ctx.commands.iter().flat_map(hosts);
