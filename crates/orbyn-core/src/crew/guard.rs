@@ -91,22 +91,29 @@ pub fn key_labeled(key: &AnswerKey) -> Vec<Labeled> {
 }
 
 /// Every string with the JSON path it sits at, `root` first (`brief.stop_when[0]`).
-fn strings_at(value: &Value, path: &str, visit: &mut dyn FnMut(&str, &str)) {
+/// A key that holds a needle is written `<key>` in the path, so the path never repeats it.
+fn strings_at(
+    value: &Value,
+    path: &str,
+    hide: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str, &str),
+) {
     match value {
         Value::String(text) => visit(path, text),
         Value::Array(items) => items
             .iter()
             .enumerate()
-            .for_each(|(i, item)| strings_at(item, &format!("{path}[{i}]"), visit)),
+            .for_each(|(i, item)| strings_at(item, &format!("{path}[{i}]"), hide, visit)),
         Value::Object(map) => {
             for (key, item) in map {
+                let name = if hide(key) { "<key>" } else { key.as_str() };
                 let here = if path.is_empty() {
-                    key.clone()
+                    name.to_owned()
                 } else {
-                    format!("{path}.{key}")
+                    format!("{path}.{name}")
                 };
                 visit(&here, key);
-                strings_at(item, &here, visit);
+                strings_at(item, &here, hide, visit);
             }
         }
         _ => {}
@@ -118,7 +125,8 @@ fn strings_at(value: &Value, path: &str, visit: &mut dyn FnMut(&str, &str)) {
 /// the lead, and what it quoted could reach a worker.
 pub fn refuse_leak_in(value: &Value, root: &str, needles: &[Labeled]) -> Result<(), CrewError> {
     let mut hit: Option<(String, String)> = None;
-    strings_at(value, root, &mut |path, text| {
+    let hide = |key: &str| needles.iter().any(|n| key.contains(n.needle.as_str()));
+    strings_at(value, root, &hide, &mut |path, text| {
         if hit.is_none()
             && let Some(found) = needles.iter().find(|n| text.contains(n.needle.as_str()))
         {
@@ -187,6 +195,30 @@ mod tests {
         assert!(text.contains("check `test-script`"), "{text}");
         assert!(!text.contains("cargo test"), "{text}");
         assert_eq!(error.code, ErrorCode::AnswerKeyForbidden);
+    }
+
+    #[test]
+    fn a_needle_in_a_key_is_never_repeated_in_the_path() {
+        let needles = labeled("cargo test -p demo", "the command of check `t`");
+        for value in [
+            json!({ "facts": [{}, {}, { "value": { "cargo test -p demo": 1 } }] }),
+            json!({ "facts": [{ "value": { "cargo test -p demo": { "deep": "x" } } }] }),
+            json!({ "cargo test -p demo": { "cargo test -p demo again": ["y"] } }),
+        ] {
+            let text = refuse_leak_in(&value, "brief", &needles)
+                .unwrap_err()
+                .to_string();
+            assert!(!text.contains("cargo test"), "{text}");
+            assert!(text.contains("<key>") || text.contains("brief."), "{text}");
+        }
+        let text = refuse_leak_in(
+            &json!({ "facts": [{ "value": { "cargo test -p demo": 1 } }] }),
+            "brief",
+            &needles,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(text.contains("brief.facts[0].value.<key>"), "{text}");
     }
 
     #[test]

@@ -412,7 +412,7 @@ impl Core {
             "bound": format!("sha256:{}", held.bound),
             "action": { "kind": held.kind, "target": held.shown, "paths": [] },
         });
-        // The same names the audit rows use: the person is `user`; a deny or a dismiss is `local_caller`.
+        // `user` is the person, confirmed in the desktop app; `local_caller` is a local API caller of the service, with no proof of who.
         match kind {
             "approved_once" => body["actor"] = json!("user"),
             "denied_by_person" | "dismissed_by_person" => body["actor"] = json!("local_caller"),
