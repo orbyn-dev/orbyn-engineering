@@ -381,6 +381,8 @@ fn handle_for(
 
 /// Margin over the approval timeout, so the service answers (expires) before Claude gives up on the call.
 const APPROVAL_MARGIN: Duration = Duration::from_secs(60);
+/// Below the 2^31-1 ms a JavaScript timer can hold (about 24.8 days), so a huge approval timeout cannot wrap to zero.
+const TIMEOUT_MAX: Duration = Duration::from_secs(24 * 24 * 60 * 60);
 
 /// The run's `--mcp-config`. The permission prompt is one long MCP call that waits for a person, and Claude
 /// Code drops an HTTP MCP request that has no response byte after the greater of 60 s, the server's tool
@@ -388,9 +390,12 @@ const APPROVAL_MARGIN: Duration = Duration::from_secs(60);
 /// "MCP_TOOL_TIMEOUT" in https://code.claude.com/docs/en/mcp). Without it the call died at 60 s and the
 /// service expired the approval as `system:abandoned`.
 pub(super) fn mcp_config(url: Option<&str>, approval_timeout: Duration) -> Value {
-    let timeout = (approval_timeout + APPROVAL_MARGIN).as_millis();
+    let timeout = approval_timeout
+        .saturating_add(APPROVAL_MARGIN)
+        .min(TIMEOUT_MAX)
+        .as_millis() as u64;
     json!({
-        "mcpServers": { (MCP_SERVER_NAME): { "type": "http", "url": url, "timeout": timeout as u64 } }
+        "mcpServers": { (MCP_SERVER_NAME): { "type": "http", "url": url, "timeout": timeout } }
     })
 }
 

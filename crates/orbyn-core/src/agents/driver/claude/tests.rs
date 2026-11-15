@@ -1268,4 +1268,10 @@ fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
         short["mcpServers"][MCP_SERVER_NAME]["timeout"],
         json!(65_000)
     );
+    // A huge timeout neither overflows nor passes what a JavaScript timer can hold.
+    let huge = mcp_config(None, Duration::MAX);
+    assert_eq!(
+        huge["mcpServers"][MCP_SERVER_NAME]["timeout"],
+        json!(24u64 * 24 * 60 * 60 * 1000)
+    );
 }
