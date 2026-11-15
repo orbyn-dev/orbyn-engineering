@@ -571,8 +571,20 @@ async fn a_dead_claim_is_cleared_when_the_core_opens() {
         assert!(store.claim_crew_verification(&task.id).unwrap());
         task.id
     };
-    let core =
-        crate::Core::open(crate::CoreConfig::new(data, "http://127.0.0.1:1".into())).unwrap();
+    let mut config = crate::CoreConfig::new(data, "http://127.0.0.1:1".into());
+    config.engines.claude_program = dir
+        .path()
+        .join("absent-claude")
+        .to_string_lossy()
+        .into_owned();
+    config.engines.codex_program = dir
+        .path()
+        .join("absent-codex")
+        .to_string_lossy()
+        .into_owned();
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
+    let core = crate::Core::open(config).unwrap();
     assert!(
         core.store.claim_crew_verification(&id).unwrap(),
         "the claim was cleared"

@@ -11,6 +11,244 @@ fn check(value: serde_json::Value) -> orbyn_contracts::CrewCheck {
     serde_json::from_value(value).unwrap()
 }
 
+fn integrity_repo() -> crate::testing::TempDir {
+    let dir = crate::testing::TempDir::new();
+    crate::testing::run_git(dir.path(), &["init", "-q"]);
+    crate::testing::run_git(dir.path(), &["config", "core.autocrlf", "false"]);
+    std::fs::write(dir.path().join("base.txt"), "base\n").unwrap();
+    super::review_support::commit_all(dir.path(), "base");
+    dir
+}
+
+/// Accepted remaining limit: ignore rules still hide newly created files.
+/// This characterizes blindness, not a passing security mitigation (#451/#436).
+#[tokio::test]
+async fn ignored_new_files_remain_an_accepted_blind_spot() {
+    for source in [".gitignore", ".git/info/exclude", "external"] {
+        let dir = integrity_repo();
+        let root = dir.path();
+        let ignore = if source == "external" {
+            let file = root.join(".git/global-ignore");
+            crate::testing::run_git(
+                root,
+                &["config", "core.excludesFile", file.to_str().unwrap()],
+            );
+            file
+        } else {
+            root.join(source)
+        };
+        std::fs::write(ignore, "hidden.txt\n").unwrap();
+        if source == ".gitignore" {
+            super::review_support::commit_all(root, "ignore");
+        }
+        crate::testing::run_git(root, &["config", "core.untrackedCache", "true"]);
+        std::fs::write(root.join("hidden.txt"), "one\ntwo\n").unwrap();
+        let site = Site {
+            worktree: root,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+            base: None,
+        };
+        let scope = check(
+            json!({ "id": "scope", "kind": "file_scope", "proves": "scope", "params": { "only": ["base.txt"] } }),
+        );
+        let size = check(
+            json!({ "id": "size", "kind": "diff_size", "proves": "size", "params": { "max_lines": 1 } }),
+        );
+        assert_eq!(
+            run_check(&scope, &site).await.outcome,
+            CheckOutcome::Pass,
+            "accepted blind spot: {source}"
+        );
+        assert_eq!(
+            run_check(&size, &site).await.outcome,
+            CheckOutcome::Pass,
+            "accepted blind spot: {source}"
+        );
+        std::fs::remove_file(root.join("hidden.txt")).unwrap();
+        assert_eq!(
+            run_check(&scope, &site).await.outcome,
+            CheckOutcome::Pass,
+            "{source}"
+        );
+        assert_eq!(
+            run_check(&size, &site).await.outcome,
+            CheckOutcome::Pass,
+            "{source}"
+        );
+        // Ordinary visible new paths still fail both checks under the same key.
+        std::fs::write(root.join("visible.txt"), "one\ntwo\n").unwrap();
+        assert_eq!(
+            run_check(&scope, &site).await.outcome,
+            CheckOutcome::Fail,
+            "{source}"
+        );
+        assert_eq!(
+            run_check(&size, &site).await.outcome,
+            CheckOutcome::Fail,
+            "{source}"
+        );
+    }
+}
+
+/// Existing ignored caches must not require data deletion or broader task scope.
+#[tokio::test]
+async fn preexisting_ignored_artifacts_do_not_reject_an_ordinary_narrow_task() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    std::fs::write(root.join(".gitignore"), "target/\nnode_modules/\n.env\n").unwrap();
+    super::review_support::commit_all(root, "ignore generated and local files");
+    std::fs::create_dir_all(root.join("target")).unwrap();
+    std::fs::create_dir_all(root.join("node_modules")).unwrap();
+    // Synthetic data only. All three artifacts exist before the task's Site is made.
+    std::fs::write(root.join("target/cache.txt"), "cache\n").unwrap();
+    std::fs::write(root.join("node_modules/cache.txt"), "dependency\n").unwrap();
+    std::fs::write(root.join(".env"), "SYNTHETIC_FIXTURE=1\n").unwrap();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    std::fs::write(root.join("base.txt"), "changed\n").unwrap();
+    let narrow_scope = check(
+        json!({ "id": "scope", "kind": "file_scope", "proves": "scope", "params": { "only": ["base.txt"] } }),
+    );
+    let narrow_size = check(
+        json!({ "id": "size", "kind": "diff_size", "proves": "size", "params": { "max_files": 1, "max_lines": 2 } }),
+    );
+    assert_eq!(
+        run_check(&narrow_scope, &site).await.outcome,
+        CheckOutcome::Pass
+    );
+    assert_eq!(
+        run_check(&narrow_size, &site).await.outcome,
+        CheckOutcome::Pass
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("target/cache.txt")).unwrap(),
+        "cache\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("node_modules/cache.txt")).unwrap(),
+        "dependency\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".env")).unwrap(),
+        "SYNTHETIC_FIXTURE=1\n"
+    );
+}
+
+#[tokio::test]
+async fn autocrlf_cannot_hide_a_byte_change_from_scope_or_size() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    crate::testing::run_git(root, &["config", "core.autocrlf", "true"]);
+    std::fs::write(root.join("base.txt"), "base\r\n").unwrap();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    for value in [
+        json!({ "id": "scope", "kind": "file_scope", "proves": "scope", "params": { "only": ["other.txt"] } }),
+        json!({ "id": "size", "kind": "diff_size", "proves": "size", "params": { "max_lines": 0 } }),
+    ] {
+        assert_eq!(
+            run_check(&check(value), &site).await.outcome,
+            CheckOutcome::Fail
+        );
+    }
+}
+
+#[tokio::test]
+async fn info_attributes_cannot_normalize_a_byte_change_into_a_pass() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    let scope = check(
+        json!({ "id": "scope", "kind": "file_scope", "proves": "scope", "params": { "only": ["other.txt"] } }),
+    );
+    let size = check(
+        json!({ "id": "size", "kind": "diff_size", "proves": "size", "params": { "max_lines": 0 } }),
+    );
+    for bytes in [None, Some("")] {
+        if let Some(bytes) = bytes {
+            std::fs::write(root.join(".git/info/attributes"), bytes).unwrap();
+        }
+        for c in [&scope, &size] {
+            assert_eq!(run_check(c, &site).await.outcome, CheckOutcome::Pass);
+        }
+    }
+    std::fs::write(root.join(".git/info/attributes"), "base.txt text eol=lf\n").unwrap();
+    std::fs::write(root.join("base.txt"), b"base\r\n").unwrap();
+    for c in [&scope, &size] {
+        assert_eq!(run_check(c, &site).await.outcome, CheckOutcome::Error);
+    }
+    std::fs::remove_file(root.join(".git/info/attributes")).unwrap();
+    std::fs::create_dir(root.join(".git/info/attributes")).unwrap();
+    assert_eq!(run_check(&scope, &site).await.outcome, CheckOutcome::Error);
+}
+
+#[tokio::test]
+async fn byte_fix_guard_handles_windows_names_and_never_passes_on_read_errors() {
+    use crate::crew::checks::fix_touched;
+    use sha2::{Digest, Sha256};
+    let dir = crate::testing::TempDir::new();
+    let site = Site {
+        worktree: dir.path(),
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    let path = "file with spaces @plus+.txt";
+    let digest = crate::util::hex(&Sha256::digest(b"one\n"));
+    std::fs::write(dir.path().join(path), b"one\n").unwrap();
+    assert_eq!(
+        fix_touched(path, &digest, &site).outcome,
+        CheckOutcome::Fail
+    );
+    std::fs::write(dir.path().join(path), b"one\r\n").unwrap();
+    assert_eq!(
+        fix_touched(path, &digest, &site).outcome,
+        CheckOutcome::Pass
+    );
+    assert_eq!(fix_touched(path, "", &site).outcome, CheckOutcome::Error);
+    // The existing wire path grammar excludes Unicode and shell metacharacters.
+    // The byte guard must refuse those, rather than widen that contract.
+    assert_eq!(
+        fix_touched("unicode é.txt", &digest, &site).outcome,
+        CheckOutcome::Error
+    );
+    assert_eq!(
+        fix_touched("shell & name.txt", &digest, &site).outcome,
+        CheckOutcome::Error
+    );
+    std::fs::remove_file(dir.path().join(path)).unwrap();
+    assert_eq!(
+        fix_touched(path, &digest, &site).outcome,
+        CheckOutcome::Error
+    );
+    std::fs::create_dir(dir.path().join(path)).unwrap();
+    assert_eq!(
+        fix_touched(path, &digest, &site).outcome,
+        CheckOutcome::Error
+    );
+}
+
+#[test]
+fn the_internal_fix_digest_is_withheld_from_worker_reports() {
+    let digest = "d".repeat(64);
+    let c = check(
+        json!({ "id": "chk-fix-touched", "kind": "repo_required", "proves": "p",
+        "params": { "name": "crew-fix-touched", "note": digest } }),
+    );
+    let needles = crate::crew::guard::check_needles(&[c]);
+    assert!(crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).is_err());
+    assert!(!withhold(&digest, &needles).contains(&digest));
+}
+
 #[test]
 fn redaction_removes_secrets_and_withholding_removes_the_key() {
     let token = format!("ghp_{}", "x".repeat(36));
