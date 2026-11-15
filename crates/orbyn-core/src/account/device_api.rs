@@ -122,4 +122,9 @@ pub trait DeviceApi: Send + Sync {
     fn device_tag(&self) -> Option<String> {
         None
     }
+
+    /// The session ended or the account is gone: destroy this device's key material (keys, token,
+    /// vault key) and the sealed snapshot. Settings and the outbox stay. A stand-in that keeps
+    /// no keys has nothing to do.
+    async fn wipe_keys(&self) {}
 }

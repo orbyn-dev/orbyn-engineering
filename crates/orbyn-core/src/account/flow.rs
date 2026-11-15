@@ -147,6 +147,10 @@ impl AccountCenter {
     }
 
     async fn end_session(&self, reason: SignOutReason) {
+        // The service ended the session or the account is gone: the keys go too.
+        if let Ok(backend) = self.backend() {
+            backend.account.wipe_keys().await;
+        }
         let mut inner = self.inner.lock().await;
         self.forget(&mut inner).await;
         self.status.update(|status| {

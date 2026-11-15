@@ -113,6 +113,9 @@ pub struct DevAccount {
     incoming_life: Mutex<Duration>,
     #[cfg(test)]
     zones: Arc<FakeDeviceApi>,
+    /// How many times the account was told to destroy its keys.
+    #[cfg(test)]
+    wipes: std::sync::atomic::AtomicUsize,
 }
 
 /// The backend, and the stand-in itself so a test can play the trusted device.
@@ -153,6 +156,8 @@ pub fn handle() -> (Backend, Arc<DevAccount>) {
         incoming_life: Mutex::new(Duration::from_secs(10 * 60)),
         #[cfg(test)]
         zones: zones.clone(),
+        #[cfg(test)]
+        wipes: std::sync::atomic::AtomicUsize::new(0),
     });
     (
         Backend {
@@ -217,6 +222,12 @@ impl DevAccount {
     #[cfg(test)]
     pub fn sign_out_elsewhere(&self) {
         self.lock().session = None;
+    }
+
+    /// How many times the account was told to destroy its keys.
+    #[cfg(test)]
+    pub fn wipes(&self) -> usize {
+        self.wipes.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Whether the stand-in still holds a session for this device.
@@ -355,6 +366,11 @@ impl DevAccount {
 
 #[async_trait]
 impl AccountApi for DevAccount {
+    #[cfg(test)]
+    async fn wipe_keys(&self) {
+        self.wipes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn invite_required(&self) -> bool {
         true
     }

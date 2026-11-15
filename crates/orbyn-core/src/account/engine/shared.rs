@@ -18,6 +18,9 @@ pub(super) struct Shared<T, S, C> {
     tag: OnceLock<String>,
     /// Zone keys this device owes a device it just approved, because sending them failed.
     owed: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// A wipe was started and the keys could not all be deleted. Nothing opens the client again
+    /// until a retry has finished it.
+    wipe_owed: std::sync::atomic::AtomicBool,
 }
 
 impl<T, S, C> Shared<T, S, C>
@@ -36,17 +39,32 @@ where
             snapshots,
             tag: OnceLock::new(),
             owed: std::sync::Mutex::default(),
+            wipe_owed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     /// The Engine's state, opened from the snapshot (or empty) the first time it is needed.
     pub(super) async fn engine(&self) -> Result<MutexGuard<'_, Option<dc::Engine>>, DeviceError> {
         let mut guard = self.engine.lock().await;
+        // Checked under the lock, so a wipe that is running cannot be overtaken by an open.
+        if self.wipe_owed.load(std::sync::atomic::Ordering::SeqCst) {
+            // The last wipe did not finish: finish it, and open nothing until it has.
+            self.wipe_locked(&mut guard)
+                .map_err(|_| DeviceError::Unauthorized)?;
+            return Err(DeviceError::Unauthorized);
+        }
         if guard.is_none() {
-            let mut opened = self
-                .client
-                .open_engine(self.snapshots.load())
-                .map_err(map)?;
+            let mut opened = match self.client.open_engine(self.snapshots.load()) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    if matches!(error, dc::DeviceError::NotSignedIn) {
+                        // No keys: a sealed snapshot left behind (a wipe finished by the store
+                        // after a restart) can never be opened, so it goes too.
+                        self.snapshots.clear();
+                    }
+                    return Err(map(error));
+                }
+            };
             let now = u64::try_from(unix_secs()).unwrap_or(0).saturating_mul(1000);
             let _ = self.tag.set(format!("{:016x}", opened.tick(now).device));
             *guard = Some(opened);
@@ -58,10 +76,33 @@ where
         self.snapshots.save(&engine.snapshot());
     }
 
-    /// Forgets the Engine's state: a sign-out, or an account that is gone.
-    pub(super) async fn forget(&self) {
-        *self.engine.lock().await = None;
+    /// Destroys this device's key material and the Engine's state: a sign-out, a removal of this
+    /// device, a session the service ended, or an account that is gone. The sealed snapshot goes
+    /// first, then the keys (identity, token, vault key and the snapshot's anchor), so no
+    /// order leaves a snapshot that an old vault key could still open.
+    ///
+    /// A failed key delete is returned and remembered: `wipe_owed` stays set, so `engine` keeps
+    /// refusing and the next call retries, instead of a signed-in client opening again.
+    pub(super) async fn forget(&self) -> Result<(), dc::StoreError> {
+        // The engine lock is held through the whole wipe, so nothing opens the client half way.
+        let mut guard = self.engine.lock().await;
+        self.wipe_locked(&mut guard)
+    }
+
+    fn wipe_locked(&self, engine: &mut Option<dc::Engine>) -> Result<(), dc::StoreError> {
+        self.wipe_owed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        *engine = None;
+        self.owed().clear();
         self.snapshots.clear();
+        let cleared = self.client.store().clear();
+        if cleared.is_ok() {
+            self.wipe_owed
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        } else {
+            tracing::warn!("the device keys could not be deleted; the wipe is owed");
+        }
+        cleared
     }
 
     pub(super) fn tag(&self) -> Option<String> {

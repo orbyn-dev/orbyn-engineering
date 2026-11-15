@@ -20,6 +20,8 @@ mod engine_server;
 mod flow;
 mod limits;
 mod nonce;
+#[cfg(feature = "engine-client")]
+mod sealed;
 
 use super::fake::FakeDeviceApi;
 use super::settings_record::{self as record, ZONE};

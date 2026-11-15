@@ -304,4 +304,9 @@ where
     fn device_tag(&self) -> Option<String> {
         self.shared.tag()
     }
+
+    async fn wipe_keys(&self) {
+        // A failed delete stays owed in `Shared`; see `EngineAccount::wipe_keys`.
+        let _ = self.shared.forget().await;
+    }
 }

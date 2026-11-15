@@ -23,6 +23,7 @@ struct Inner {
     commits: usize,
     pushes: Vec<(Option<Version>, Record)>,
     pulls: usize,
+    wipes: usize,
 }
 
 pub struct FakeDeviceApi {
@@ -127,10 +128,19 @@ impl FakeDeviceApi {
     pub fn pulls(&self) -> usize {
         self.lock().pulls
     }
+
+    /// How many times the worker told this device to destroy its keys.
+    pub fn wipes(&self) -> usize {
+        self.lock().wipes
+    }
 }
 
 #[async_trait]
 impl DeviceApi for FakeDeviceApi {
+    async fn wipe_keys(&self) {
+        self.lock().wipes += 1;
+    }
+
     async fn pull(&self, zone: &str) -> Result<Option<ZoneSnapshot>, DeviceError> {
         let mut inner = self.lock();
         if let Some(error) = inner.error.clone() {

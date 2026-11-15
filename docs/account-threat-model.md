@@ -300,7 +300,7 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
 | Account files | Mode `0600` and folder `0700` test; write, read and `outside` read refused; an action naming the folder denied in every permission mode; data-folder scan for canary bytes after sign-in |
 | No key in logs | Canary tests over errors, status, TRACE capture and diagnostics events; no request-logging layer; contract field test |
 | Memory | `codesign -d --entitlements` and the `runtime` flag on the release sidecar |
-| Snapshot | Older, foreign-profile and wrong-version files refused; keychain and file empty after sign-out |
+| Snapshot | Older, foreign-profile and wrong-version files refused (`account/tests/sealed.rs`); key store and file empty after sign-out, removing this device and `Unauthorized`. Built against the development file key store; the keychain item is checked by hand on a signed build |
 | Sensitive routes | Four routes refuse without a password in the last 10 minutes |
 | Gate | A test that every sign-in route answers `account_disabled` under `Off` and sends no request |
 
