@@ -1715,6 +1715,7 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "tokio-util",
  "tracing",
+ "ts-rs",
  "ulid",
  "unicode-segmentation",
  "windows-sys 0.61.2",

@@ -104,15 +104,15 @@ pub(super) fn brief_schema() -> Value {
             "outcome": { "type": "string", "minLength": 1, "maxLength": 4000 },
             "inputs": {
                 "type": "array", "maxItems": 64,
-                "items": { "oneOf": [
+                "items": { "anyOf": [
                     { "type": "object", "additionalProperties": false, "required": ["kind", "text"],
-                      "properties": { "kind": { "const": "text" },
+                      "properties": { "kind": { "enum": ["text"] },
                           "text": { "type": "string", "minLength": 1, "maxLength": 8000 } } },
                     { "type": "object", "additionalProperties": false, "required": ["kind", "path"],
-                      "properties": { "kind": { "const": "path" },
+                      "properties": { "kind": { "enum": ["path"] },
                           "path": { "type": "string", "description": "repo-relative, no leading slash or .." } } },
                     { "type": "object", "additionalProperties": false, "required": ["kind", "ref"],
-                      "properties": { "kind": { "const": "ref" },
+                      "properties": { "kind": { "enum": ["ref"] },
                           "ref": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } }
                 ] }
             },
@@ -188,7 +188,7 @@ pub(super) fn answer_key_schema() -> Value {
             },
             "protected_paths": {
                 "type": "array", "maxItems": 256,
-                "description": "Every file the checks run or read. A write lease never overlaps them.",
+                "description": "Files the checks rely on that the worker must not change; never a file the brief leases for write.",
                 "items": { "type": "string" }
             }
         }
@@ -631,6 +631,11 @@ pub(super) fn problems(brief: &Value, key: &Value) -> Vec<String> {
     let mut walk = Walk { out: Vec::new() };
     walk_brief(&mut walk, brief);
     let brief_count = walk.out.len();
+    for line in &mut walk.out {
+        if !line.starts_with("brief") {
+            *line = format!("brief.{line}");
+        }
+    }
     walk_key(&mut walk, key);
     for line in &mut walk.out[brief_count..] {
         if !line.starts_with("answer_key") {
@@ -638,10 +643,4 @@ pub(super) fn problems(brief: &Value, key: &Value) -> Vec<String> {
         }
     }
     walk.out
-}
-
-/// The kinds, so the tests can tie the lists above to the real enums.
-#[cfg(test)]
-pub(super) fn check_kind_is_real(name: &str) -> bool {
-    serde_json::from_value::<orbyn_contracts::CheckKind>(Value::String(name.into())).is_ok()
 }
