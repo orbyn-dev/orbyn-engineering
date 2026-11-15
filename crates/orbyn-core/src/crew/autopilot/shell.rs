@@ -606,9 +606,402 @@ pub fn hosts(command: &Simple) -> Vec<String> {
             }
         }
     }
+    found.extend(option_hosts(command));
     found.sort();
     found.dedup();
     found
+}
+
+/// Whether a word still holds an expansion the guard cannot resolve: `$VAR`, `${..}`, `$(..)`, a
+/// backtick, or a glob. A bracketed IPv6 literal (`[::1]`) is a host, not a glob.
+fn expands(word: &str) -> bool {
+    if word.starts_with('[') && word.contains(']') {
+        return word.contains(['$', '`', '*', '?']);
+    }
+    word.contains(['$', '`', '*', '?', '[', '{'])
+}
+
+/// The options that TAKE a value, short and long, for a program (and a git subcommand). Any other
+/// option is a flag with no value, so the word after it is a target: a table too long only hides a
+/// target, so each list holds just the value-taking options.
+fn value_flags(program: &str, sub: Option<&str>) -> &'static [&'static str] {
+    match (program, sub) {
+        ("ssh", _) => &[
+            "-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O",
+            "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+        ],
+        ("sftp", _) => &[
+            "-B", "-b", "-c", "-D", "-F", "-i", "-J", "-l", "-o", "-P", "-R", "-S", "-s",
+        ],
+        ("scp", _) => &["-c", "-D", "-F", "-i", "-J", "-l", "-o", "-P", "-S"],
+        ("rsync", _) => &[
+            "-e",
+            "--rsh",
+            "--port",
+            "--include",
+            "--exclude",
+            "--rsync-path",
+            "--timeout",
+            "--bwlimit",
+            "--chmod",
+            "--chown",
+            "--files-from",
+            "--partial-dir",
+            "--log-file",
+        ],
+        ("curl", _) => &[
+            "-A",
+            "-b",
+            "-C",
+            "-c",
+            "-D",
+            "-d",
+            "-E",
+            "-e",
+            "-F",
+            "-H",
+            "-K",
+            "-m",
+            "-o",
+            "-P",
+            "-Q",
+            "-r",
+            "-T",
+            "-t",
+            "-U",
+            "-u",
+            "-w",
+            "-X",
+            "-x",
+            "-Y",
+            "-y",
+            "-z",
+            "--header",
+            "--data",
+            "--data-raw",
+            "--data-binary",
+            "--data-urlencode",
+            "--output",
+            "--user",
+            "--request",
+            "--user-agent",
+            "--referer",
+            "--cookie",
+            "--cookie-jar",
+            "--form",
+            "--upload-file",
+            "--proxy",
+            "--cacert",
+            "--cert",
+            "--key",
+            "--max-time",
+            "--connect-timeout",
+            "--resolve",
+            "--connect-to",
+            "--retry",
+            "--config",
+            "--url",
+        ],
+        ("wget", _) => &[
+            "-A",
+            "-a",
+            "-B",
+            "-D",
+            "-e",
+            "-I",
+            "-i",
+            "-l",
+            "-O",
+            "-o",
+            "-P",
+            "-Q",
+            "-R",
+            "-T",
+            "-t",
+            "-U",
+            "-w",
+            "-X",
+            "--header",
+            "--post-data",
+            "--output-document",
+            "--user",
+            "--password",
+            "--user-agent",
+            "--referer",
+            "--tries",
+            "--timeout",
+        ],
+        ("nc" | "ncat" | "netcat", _) => &[
+            "-c", "-e", "-I", "-i", "-m", "-O", "-P", "-p", "-q", "-s", "-T", "-W", "-w", "-X",
+            "-x",
+        ],
+        ("telnet", _) => &["-b", "-e", "-l", "-s"],
+        ("ping", _) => &[
+            "-c", "-i", "-I", "-M", "-p", "-Q", "-S", "-s", "-t", "-W", "-w",
+        ],
+        ("http" | "https" | "xh", _) => &["-a", "-A", "-o", "-p", "-s"],
+        ("mosh", _) => &["-p", "--ssh", "--port", "--server"],
+        ("git", Some("push")) => &["-o", "--push-option", "--receive-pack", "--exec", "--repo"],
+        ("git", Some("pull" | "fetch")) => &[
+            "-j",
+            "-o",
+            "-S",
+            "--jobs",
+            "--depth",
+            "--deepen",
+            "--shallow-since",
+            "--shallow-exclude",
+            "--upload-pack",
+            "--refmap",
+            "--server-option",
+            "--negotiation-tip",
+            "--filter",
+            "--strategy",
+            "-s",
+            "-X",
+            "--strategy-option",
+        ],
+        ("git", Some("clone")) => &[
+            "-b",
+            "-c",
+            "-j",
+            "-o",
+            "-u",
+            "--branch",
+            "--config",
+            "--depth",
+            "--filter",
+            "--jobs",
+            "--origin",
+            "--reference",
+            "--reference-if-able",
+            "--separate-git-dir",
+            "--template",
+            "--upload-pack",
+            "--shallow-since",
+            "--shallow-exclude",
+            "--server-option",
+        ],
+        ("git", Some("ls-remote")) => {
+            &["-o", "--upload-pack", "--exec", "--server-option", "--sort"]
+        }
+        ("git", Some("remote")) => &["-t", "-m", "--track", "--master"],
+        ("git", None) => &[
+            "-C",
+            "-c",
+            "--git-dir",
+            "--work-tree",
+            "--namespace",
+            "--exec-path",
+            "--super-prefix",
+            "--config-env",
+        ],
+        _ => &[],
+    }
+}
+
+/// The positional words of `args` (the options and their values dropped), by the program's table.
+fn positionals<'a>(program: &str, sub: Option<&str>, args: &'a [String]) -> Vec<&'a str> {
+    let table = value_flags(program, sub);
+    let mut found = Vec::new();
+    let mut skip = false;
+    let mut ended = false;
+    for arg in args {
+        if skip {
+            skip = false;
+        } else if ended || !arg.starts_with('-') || arg == "-" {
+            found.push(arg.as_str());
+        } else if arg == "--" {
+            ended = true;
+        } else if arg.starts_with("--") {
+            skip = !arg.contains('=') && table.contains(&arg.as_str());
+        } else {
+            // A short cluster: `-tp 22` ends in a value flag, `-p22` carries its value.
+            for (at, flag) in arg.char_indices().skip(1) {
+                if table.contains(&format!("-{flag}").as_str()) {
+                    skip = at + flag.len_utf8() == arg.len();
+                    break;
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The part of a word that would name the host: before any `/` of a URL path or `?`, `#`.
+fn authority_of(word: &str) -> &str {
+    let rest = word.split_once("://").map_or(word, |(_, rest)| rest);
+    rest.split(['/', '?', '#']).next().unwrap_or(rest)
+}
+
+/// Whether the command is a network program the unreadable-target rule reads.
+pub fn is_network(command: &Simple) -> bool {
+    let program = command.program.as_str();
+    match program {
+        "ssh" | "sftp" | "mosh" | "scp" | "rsync" => true,
+        "git" => matches!(
+            git_sub(command),
+            Some((
+                "push" | "pull" | "fetch" | "ls-remote" | "clone" | "remote",
+                _
+            ))
+        ),
+        _ => CONNECTORS.contains(&program),
+    }
+}
+
+/// A git command's subcommand and the words after it, past the global options.
+fn git_sub(command: &Simple) -> Option<(&str, Vec<&str>)> {
+    let words = positionals("git", None, &command.args);
+    let (sub, _) = words.split_first()?;
+    let at = command.args.iter().position(|arg| arg == sub)?;
+    let rest = positionals("git", Some(sub), &command.args[at + 1..]);
+    Some((sub, rest))
+}
+
+/// The values of the options `flags` in a command: `-J x`, `-Jx`, `--url x` and `--url=x`.
+fn option_values<'a>(command: &'a Simple, flags: &[&str]) -> Vec<&'a str> {
+    let mut found = Vec::new();
+    let mut args = command.args.iter();
+    while let Some(arg) = args.next() {
+        for flag in flags {
+            if arg == flag {
+                if let Some(next) = args.next() {
+                    found.push(next.as_str());
+                }
+            } else if flag.starts_with("--") {
+                if let Some(rest) = arg.strip_prefix(&format!("{flag}=")) {
+                    found.push(rest);
+                }
+            } else if let Some(rest) = arg.strip_prefix(flag)
+                && !rest.is_empty()
+                && !arg.starts_with("--")
+            {
+                found.push(rest.trim_start_matches('='));
+            }
+        }
+    }
+    found
+}
+
+/// The `-o Key=value` options of an ssh-family command, as `key=value`.
+fn ssh_options(command: &Simple) -> Vec<String> {
+    option_values(command, &["-o"])
+        .into_iter()
+        .map(|value| value.replacen(' ', "=", 1))
+        .collect()
+}
+
+/// The hosts that options name apart from the target: a jump host (`-J`, `ProxyJump`), a proxy
+/// (`-x`, `--proxy`), `--url`, and what `--resolve` and `--connect-to` point a name at.
+fn option_hosts(command: &Simple) -> Vec<String> {
+    let program = command.program.as_str();
+    let mut raw: Vec<String> = Vec::new();
+    if matches!(program, "ssh" | "scp" | "sftp" | "rsync") {
+        raw.extend(
+            option_values(command, &["-J"])
+                .into_iter()
+                .flat_map(|value| value.split(',').map(str::to_owned).collect::<Vec<_>>()),
+        );
+    }
+    if program == "curl" {
+        raw.extend(
+            option_values(command, &["-x", "--proxy", "--url"])
+                .into_iter()
+                .map(str::to_owned),
+        );
+        for value in option_values(command, &["--resolve", "--connect-to"]) {
+            let parts: Vec<&str> = value.trim_start_matches(['+', '-']).split(':').collect();
+            // `host:port:address` and `host:port:host2:port2`.
+            raw.push(parts[0].to_owned());
+            if let Some(target) = parts.get(2) {
+                raw.push((*target).to_owned());
+            }
+        }
+    }
+    raw.into_iter()
+        .map(|value| {
+            let value = value.trim_start_matches("ssh://");
+            let host = authority_of(value).rsplit('@').next().unwrap_or("");
+            let host = if host.starts_with('[') {
+                host.split(']')
+                    .next()
+                    .unwrap_or(host)
+                    .trim_start_matches('[')
+            } else {
+                host.split(':').next().unwrap_or(host)
+            };
+            host.to_lowercase()
+        })
+        .filter(|host| !host.is_empty() && !host.contains(['$', '`']))
+        .collect()
+}
+
+/// Whether an option names a host the reader cannot see: an expansion in a jump, proxy, `--url`,
+/// `--resolve` or `--connect-to` value, or any ssh `ProxyCommand` (denied outright, since it runs
+/// a command that opens the connection).
+fn unreadable_option(command: &Simple) -> bool {
+    let program = command.program.as_str();
+    if matches!(program, "ssh" | "scp" | "sftp" | "rsync" | "mosh") {
+        for option in ssh_options(command) {
+            let lower = option.to_lowercase();
+            if lower.starts_with("proxycommand") {
+                return true;
+            }
+            if (lower.starts_with("proxyjump") || lower.starts_with("hostname")) && expands(&option)
+            {
+                return true;
+            }
+        }
+        if option_values(command, &["-J"])
+            .iter()
+            .any(|value| expands(value))
+        {
+            return true;
+        }
+    }
+    program == "curl"
+        && option_values(
+            command,
+            &["-x", "--proxy", "--url", "--resolve", "--connect-to"],
+        )
+        .iter()
+        .any(|value| expands(value))
+}
+
+/// Whether a network program's host, URL or remote position holds an expansion, so the host cannot
+/// be read: `ssh "$HOST" ...`, `curl "https://$H/x"`, `git push "$R"`, `scp f "$H:/p"`. A variable
+/// elsewhere (the remote command, a header, a path) does not count.
+pub fn unreadable_target(command: &Simple) -> bool {
+    let program = command.program.as_str();
+    if unreadable_option(command) {
+        return true;
+    }
+    let host_of = |arg: &str| expands(authority_of(arg).rsplit('@').next().unwrap_or(""));
+    match program {
+        "ssh" | "sftp" | "mosh" => positionals(program, None, &command.args)
+            .first()
+            .is_some_and(|arg| host_of(arg)),
+        "scp" | "rsync" => positionals(program, None, &command.args).iter().any(|arg| {
+            arg.split_once(':')
+                .is_some_and(|(host, _)| expands(host.rsplit('@').next().unwrap_or(host)))
+                || arg.starts_with("ssh://") && host_of(arg)
+        }),
+        "git" => match git_sub(command) {
+            Some(("push" | "pull" | "fetch" | "ls-remote" | "clone", rest)) => {
+                rest.first().is_some_and(|arg| host_of(arg))
+            }
+            Some(("remote", rest)) => {
+                matches!(rest.first(), Some(&"add" | &"set-url"))
+                    && rest.iter().skip(1).any(|arg| host_of(arg))
+            }
+            _ => false,
+        },
+        _ if CONNECTORS.contains(&program) => positionals(program, None, &command.args)
+            .iter()
+            .any(|arg| host_of(arg)),
+        _ => false,
+    }
 }
 
 fn option_host_pattern() -> &'static Regex {

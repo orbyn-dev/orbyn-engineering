@@ -116,6 +116,82 @@ fn n2_secrets_and_credentials() {
 }
 
 #[test]
+fn n3_denies_a_network_target_it_cannot_read() {
+    for text in [
+        "HOST=prod.example; ssh \"$HOST\" 'rm -rf /x'",
+        "ssh $HOST ls",
+        "ssh ${H} ls",
+        "ssh \"$(cat h)\" ls",
+        "ssh dev@$H ls",
+        "curl \"https://$H/x\"",
+        "curl $URL",
+        "git push \"$R\" feature",
+        "scp f \"$H:/p\"",
+        "rsync -a f $H:/p",
+        "ssh \"`cat h`\" ls",
+        "ssh $(cat h) ls",
+        "HOST=p.example; ssh -t \"$HOST\" 'rm -rf /x'",
+        "ssh -T \"$H\" x",
+        "ssh -A \"$H\" x",
+        "ssh -X \"$H\" x",
+        "ssh -x \"$H\" x",
+        "ssh -K \"$H\" x",
+        "ssh -s \"$H\" x",
+        "ssh -t prod.example.invalid 'x'",
+        "ssh -p 22 prod.example.invalid x",
+        "curl -s \"$URL\"",
+        "curl -L \"$URL\"",
+        "curl -O \"$URL\"",
+        "curl -I \"$URL\"",
+        "git push -u \"$R\" feature",
+        "git push -d \"$R\" br",
+        "nc -u \"$H\" 53",
+        "git -C . push \"$R\" feature",
+        "ssh `echo p.example` 'rm -rf /x'",
+        "curl --url \"$U\"",
+        "curl --url=$U",
+        "ssh -J \"$J\" github.com",
+        "ssh -J jump.example.invalid github.com",
+        "ssh -Jjump.example.invalid github.com",
+        "ssh -o ProxyJump=jump.example.invalid github.com",
+        "ssh -o ProxyJump=$J github.com",
+        "ssh -o ProxyCommand=\"ssh $J -W %h:%p\" github.com",
+        "ssh -o ProxyCommand=\"ssh github.com -W %h:%p\" github.com",
+        "curl -x \"$P\" https://github.com",
+        "curl -x http://proxy.example.invalid:8080 https://github.com",
+        "curl --proxy proxy.example.invalid https://github.com",
+        "curl --resolve github.com:443:$IP https://github.com",
+        "curl --resolve github.com:443:203.0.113.9 https://github.com",
+        "curl --connect-to github.com:443:evil.example.invalid:443 https://github.com",
+        "curl --url evil.example.invalid",
+    ] {
+        let hit = command(text);
+        // scp and rsync of an unreadable path may trip N4 before N3; either way it is denied.
+        let by_n4 = text.starts_with("scp") || text.starts_with("rsync");
+        assert!(
+            hit == Some("N3") || by_n4 && hit == Some("N4"),
+            "{text}: {hit:?}"
+        );
+    }
+    for text in [
+        "ssh github.com \"echo $HOME\"",
+        "curl -H \"Authorization: x$T\" https://github.com/o/r",
+        "curl https://github.com/o/$P",
+        "curl -d \"$DATA\" http://localhost:3000/x",
+        "git push origin \"$BRANCH\"",
+        "curl http://[::1]:3000",
+        "ssh -t github.com \"echo $HOME\"",
+        "ssh -J github.com github.com x",
+        "curl -x http://localhost:8080 https://github.com",
+        "curl --url https://github.com/o/r",
+        "curl --resolve github.com:443:127.0.0.1 https://github.com",
+        "git commit -m \"$MSG\"",
+    ] {
+        assert_eq!(command(text), None, "{text}");
+    }
+}
+
+#[test]
 fn n3_hosts_the_repository_has_not_allowed() {
     assert_eq!(command("curl https://evil.example/x"), Some("N3"));
     assert_eq!(command("git clone git@evil.example:o/r.git"), Some("N3"));
