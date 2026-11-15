@@ -17,6 +17,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `view` | A plain copy of one engine's status, models and usage |
 | `gather` | Builds the views from the engine registry and model list the engine picker reads, and limits from the usage cache only |
 | `stamp` | A brief draft becomes a brief: the core adds the envelope, a draft that carries one is refused |
+| `draft` | The JSON Schema `crew_start` lists for its drafts, a valid example, and every problem in a bad draft at once |
 | `guard` | The secret scan (H2) and the answer-key leak check (H1) |
 | `persist` | Storing a decision with its task, after both checks |
 | `tool` | The tool list and `crew_route`, the dry-run tool |
