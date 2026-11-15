@@ -396,6 +396,14 @@ mod tests {
                 "core:window:allow-internal-toggle-maximize"
             ])
         );
+        // The config lists the capabilities that apply: one left out of `app.security.capabilities` is built but never
+        // granted, which left the unified title bar unable to move the window.
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config["app"]["security"]["capabilities"],
+            serde_json::json!(["main", "main-macos"])
+        );
         // No other capability file grants any of them.
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
         for entry in std::fs::read_dir(folder).unwrap() {
