@@ -207,6 +207,7 @@ impl Core {
             .map_err(|error| CoreError::Internal(error.to_string()))?;
         let mut engine_config = config.engines.clone();
         engine_config.cache_dir = Some(config.data_dir.join("model-cache"));
+        engine_config.approval_timeout = config.approval_timeout;
         let engines = Arc::new(EngineManager::new(
             store.clone(),
             terminals.clone(),

@@ -68,6 +68,9 @@ pub struct EngineConfig {
     pub known_engine_ids: Option<Vec<String>>,
     /// Where the last good model lists are kept. `None` keeps them in memory only.
     pub cache_dir: Option<PathBuf>,
+    /// How long the service waits for a person to answer an approval. Claude's permission prompt is a long
+    /// poll to the service, so its own MCP timeout has to outlast this.
+    pub approval_timeout: Duration,
 }
 
 impl Default for EngineConfig {
@@ -80,6 +83,7 @@ impl Default for EngineConfig {
             update_timeout: UPDATE_TIMEOUT,
             known_engine_ids: None,
             cache_dir: None,
+            approval_timeout: crate::app::DEFAULT_APPROVAL_TIMEOUT,
         }
     }
 }
@@ -142,7 +146,10 @@ impl EngineManager {
         config: EngineConfig,
     ) -> Self {
         let drivers: Vec<Arc<dyn EngineDriver>> = vec![
-            Arc::new(ClaudeDriver::new(config.claude_program.clone())),
+            Arc::new(ClaudeDriver::new(
+                config.claude_program.clone(),
+                config.approval_timeout,
+            )),
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),
