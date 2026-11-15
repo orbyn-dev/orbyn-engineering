@@ -1014,7 +1014,9 @@ fn option_host_pattern() -> &'static Regex {
 
 /// Whether `host` is loopback or listed (`example.com`, or `*.example.com` for the host and its subdomains).
 pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
-    let host = host.trim_matches(['[', ']']).to_lowercase();
+    let Some(host) = super::hosts::normalize_host(host) else {
+        return false;
+    };
     // Loopback is `localhost` or an IP literal in 127.0.0.0/8 or `::1`: a name that merely starts with `127.` is a host.
     if host == "localhost"
         || host
@@ -1024,7 +1026,9 @@ pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
         return true;
     }
     allowed.iter().any(|entry| {
-        let entry = entry.to_lowercase();
+        let Some(entry) = super::hosts::normalize_entry(entry) else {
+            return false;
+        };
         match entry.strip_prefix("*.") {
             Some(suffix) => host == suffix || host.ends_with(&format!(".{suffix}")),
             None => host == entry,
@@ -1151,6 +1155,51 @@ mod tests {
             "localhost.evil.com",
         ] {
             assert!(!host_allowed(bad, &allowed), "{bad}");
+        }
+    }
+
+    #[test]
+    fn malformed_configured_hosts_never_grant_network_access() {
+        for (entry, host) in [
+            ("*.", "collector."),
+            ("*.127.0.0.1", "collector.127.0.0.1"),
+            ("*.10.0.0.7", "collector.10.0.0.7"),
+            ("-collector.internal", "-collector.internal"),
+            ("collector..internal", "collector..internal"),
+            ("256.1.2.3", "256.1.2.3"),
+            ("0x", "0x"),
+            ("0X.", "0x"),
+            ("*.0x", "collector.0x"),
+        ] {
+            assert!(!host_allowed(host, &[entry.to_owned()]), "{entry}: {host}");
+        }
+        for bad in ["[localhost]", "[[::1]]", "localhost.."] {
+            assert!(!host_allowed(bad, &[]), "{bad}");
+        }
+    }
+
+    #[test]
+    fn host_comparison_normalizes_names_and_literal_addresses() {
+        let allowed = [
+            "COLLECTOR.Internal.".to_owned(),
+            "*.Logs.Internal.".to_owned(),
+            "10.0.0.7".to_owned(),
+            "[fd00:0:0:0:0:0:0:7]".to_owned(),
+        ];
+        for host in [
+            "collector.internal",
+            "COLLECTOR.INTERNAL.",
+            "logs.internal",
+            "a.logs.internal.",
+            "10.0.0.7",
+            "fd00::7",
+            "[fd00::7]",
+            "localhost.",
+        ] {
+            assert!(host_allowed(host, &allowed), "{host}");
+        }
+        for host in ["10.0.0.8", "fd00::8", "evil.internal", "notlogs.internal"] {
+            assert!(!host_allowed(host, &allowed), "{host}");
         }
     }
 }
