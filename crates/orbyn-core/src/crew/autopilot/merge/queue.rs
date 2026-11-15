@@ -210,7 +210,7 @@ impl Core {
         self.merge_event(
             task_id,
             "merge_rejected",
-            &json!({ "why": why, "by": "person" }),
+            &json!({ "why": why, "by": "person", "actor": "local_caller" }),
         );
         Ok(())
     }

@@ -582,7 +582,7 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
   wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.
   **What it protects.** No caller that only speaks HTTP to the service can approve once, with or without the service token. Deny and dismiss need no grant
-  because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or dismiss a hold, never approve one.
+  because they only refuse (their ledger rows say `decided_by: local_caller`, not `person`), so a token holder can deny or dismiss a hold, never approve one. Every row a person or local caller decides also carries `actor` (`user`: the person, confirmed in the desktop app; `local_caller`: a local API caller of the service, with no proof of who) in its body and in the `actor` field of the served log row.
   **What a process of the same OS user can still do, so this is not OS-level presence:**
   - drive the desktop app's native dialog through Accessibility or SendInput, including a lead that is not confined;
   - read the shell's memory (on macOS the hardened runtime blocks `task_for_pid`, but signing is not checked here; on Windows `PROCESS_VM_READ`);

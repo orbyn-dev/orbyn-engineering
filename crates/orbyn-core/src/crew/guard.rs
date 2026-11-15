@@ -67,19 +67,91 @@ pub fn check_needles(checks: &[orbyn_contracts::CrewCheck]) -> Vec<String> {
         .collect()
 }
 
-/// `answer_key_forbidden` when any string of the value holds a needle.
-pub fn refuse_leak(value: &Value, needles: &[String]) -> Result<(), CrewError> {
-    let mut leaked = false;
-    strings(value, &mut |text| {
-        leaked = leaked || needles.iter().any(|needle| text.contains(needle.as_str()));
-    });
-    if leaked {
-        return Err(CrewError::new(
-            ErrorCode::AnswerKeyForbidden,
-            "the answer key is never part of a route",
-        ));
+/// A needle and what it is, for a refusal that names the check and never the text.
+pub struct Labeled {
+    needle: String,
+    what: String,
+}
+
+/// The key's needles with their owners: the key's id, and the command of each check by its id.
+pub fn key_labeled(key: &AnswerKey) -> Vec<Labeled> {
+    std::iter::once(Labeled {
+        needle: key.id.as_str().to_owned(),
+        what: "the id of the answer key".to_owned(),
+    })
+    .chain(key.checks.iter().flat_map(|check| {
+        check_needles(std::slice::from_ref(check))
+            .into_iter()
+            .map(|needle| Labeled {
+                needle,
+                what: format!("the command of check `{}`", check.id.as_str()),
+            })
+    }))
+    .collect()
+}
+
+/// Every string with the JSON path it sits at, `root` first (`brief.stop_when[0]`).
+/// A key that holds a needle is written `<key>` in the path, so the path never repeats it.
+fn strings_at(
+    value: &Value,
+    path: &str,
+    hide: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str, &str),
+) {
+    match value {
+        Value::String(text) => visit(path, text),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .for_each(|(i, item)| strings_at(item, &format!("{path}[{i}]"), hide, visit)),
+        Value::Object(map) => {
+            for (key, item) in map {
+                let name = if hide(key) { "<key>" } else { key.as_str() };
+                let here = if path.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{path}.{name}")
+                };
+                visit(&here, key);
+                strings_at(item, &here, hide, visit);
+            }
+        }
+        _ => {}
     }
-    Ok(())
+}
+
+/// `answer_key_forbidden` when any string of the value holds a needle. The refusal names the field
+/// path under `root` and what the text repeats (a check's id), never the text itself: it goes to
+/// the lead, and what it quoted could reach a worker.
+pub fn refuse_leak_in(value: &Value, root: &str, needles: &[Labeled]) -> Result<(), CrewError> {
+    let mut hit: Option<(String, String)> = None;
+    let hide = |key: &str| needles.iter().any(|n| key.contains(n.needle.as_str()));
+    strings_at(value, root, &hide, &mut |path, text| {
+        if hit.is_none()
+            && let Some(found) = needles.iter().find(|n| text.contains(n.needle.as_str()))
+        {
+            hit = Some((path.to_owned(), found.what.clone()));
+        }
+    });
+    match hit {
+        Some((path, what)) => Err(CrewError::new(
+            ErrorCode::AnswerKeyForbidden,
+            format!("{path} repeats {what}; keep check commands out of the brief"),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// `answer_key_forbidden` when any string of the value holds a needle; the path is named, the owner is not known.
+pub fn refuse_leak(value: &Value, needles: &[String]) -> Result<(), CrewError> {
+    let labeled: Vec<Labeled> = needles
+        .iter()
+        .map(|needle| Labeled {
+            needle: needle.clone(),
+            what: "answer-key text".to_owned(),
+        })
+        .collect();
+    refuse_leak_in(value, "", &labeled)
 }
 
 /// A check's output with every secret of the spec's classes replaced by `[redacted]`. The core
@@ -99,4 +171,64 @@ pub fn withhold(text: &str, needles: &[String]) -> String {
             text.replace(needle.as_str(), "[check]")
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn labeled(needle: &str, what: &str) -> Vec<Labeled> {
+        vec![Labeled {
+            needle: needle.to_owned(),
+            what: what.to_owned(),
+        }]
+    }
+
+    #[test]
+    fn a_leak_names_the_field_and_the_check_and_never_the_command() {
+        let needles = labeled("cargo test -p demo", "the command of check `test-script`");
+        let value = json!({ "stop_when": ["done", "when cargo test -p demo passes"] });
+        let error = refuse_leak_in(&value, "brief", &needles).unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("brief.stop_when[1]"), "{text}");
+        assert!(text.contains("check `test-script`"), "{text}");
+        assert!(!text.contains("cargo test"), "{text}");
+        assert_eq!(error.code, ErrorCode::AnswerKeyForbidden);
+    }
+
+    #[test]
+    fn a_needle_in_a_key_is_never_repeated_in_the_path() {
+        let needles = labeled("cargo test -p demo", "the command of check `t`");
+        for value in [
+            json!({ "facts": [{}, {}, { "value": { "cargo test -p demo": 1 } }] }),
+            json!({ "facts": [{ "value": { "cargo test -p demo": { "deep": "x" } } }] }),
+            json!({ "cargo test -p demo": { "cargo test -p demo again": ["y"] } }),
+        ] {
+            let text = refuse_leak_in(&value, "brief", &needles)
+                .unwrap_err()
+                .to_string();
+            assert!(!text.contains("cargo test"), "{text}");
+            assert!(text.contains("<key>") || text.contains("brief."), "{text}");
+        }
+        let text = refuse_leak_in(
+            &json!({ "facts": [{ "value": { "cargo test -p demo": 1 } }] }),
+            "brief",
+            &needles,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(text.contains("brief.facts[0].value.<key>"), "{text}");
+    }
+
+    #[test]
+    fn a_clean_value_passes_and_the_plain_form_still_names_the_path() {
+        let needles = vec!["cargo test -p demo".to_owned()];
+        assert!(refuse_leak(&json!({ "a": ["fine"] }), &needles).is_ok());
+        let error = refuse_leak(&json!({ "a": { "b": "x cargo test -p demo" } }), &needles)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("a.b"), "{error}");
+        assert!(!error.contains("cargo test"), "{error}");
+    }
 }

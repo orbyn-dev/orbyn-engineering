@@ -249,7 +249,7 @@ impl Core {
         // approval also holds only while its targets are the ones that were held (a `git remote set-url` in between voids it).
         let resolved: &[String] = guard.as_ref().map_or(&[], |g| g.resolved.as_slice());
         if let Some(taken) = self.held_take(task, &scope.thread_id, ask, resolved, unix_now()) {
-            let mut body = json!({ "action": action, "decided_by": "person", "hold": taken.id, "mode": mode.name() });
+            let mut body = json!({ "action": action, "decided_by": "person", "actor": "user", "hold": taken.id, "mode": mode.name() });
             if let Some(guard) = &taken.guard {
                 body["guard"] = guard.clone();
             }

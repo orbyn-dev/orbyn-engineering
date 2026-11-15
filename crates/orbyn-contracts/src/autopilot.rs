@@ -366,6 +366,11 @@ pub struct AutopilotLogRow {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub decided_by: Option<String>,
+    /// Who decided, when a person or a local caller did: `user` is the person, confirmed in the desktop app; `local_caller` is a
+    /// local API caller of the service (a deny, a dismiss or a merge reject), with no proof of who. Absent on rows the core or an engine decided.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub actor: Option<String>,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub tier: Option<String>,

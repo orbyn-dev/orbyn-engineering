@@ -233,6 +233,7 @@ async fn a_person_approves_once_with_the_desktop_grant_and_it_is_used_up() {
         .await;
     assert_eq!(log["total"], 1);
     assert_eq!(log["rows"][0]["decided_by"], "person");
+    assert_eq!(log["rows"][0]["actor"], "user");
 }
 
 #[tokio::test]
@@ -337,6 +338,11 @@ async fn deny_and_dismiss_need_no_grant_and_are_decided_once() {
         .map(|row| row["kind"].as_str().unwrap())
         .collect();
     assert!(kinds.contains(&"denied_by_person") && kinds.contains(&"dismissed_by_person"));
+    for row in log["rows"].as_array().unwrap() {
+        if row["kind"] == "denied_by_person" || row["kind"] == "dismissed_by_person" {
+            assert_eq!(row["actor"], "local_caller", "{row}");
+        }
+    }
 }
 
 #[tokio::test]

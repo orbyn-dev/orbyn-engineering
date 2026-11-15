@@ -12,7 +12,7 @@ use orbyn_contracts::{
 use serde_json::{Value, json};
 
 use super::classes::Routed;
-use super::guard::{key_needles, refuse_leak, refuse_secret};
+use super::guard::{key_labeled, refuse_leak, refuse_leak_in, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
 use super::router::{RouteFailure, RouteInput, route};
 use super::score::EvalHistory;
@@ -192,9 +192,10 @@ impl Core {
         let writes: Vec<_> = brief.write_paths().collect();
         refuse_protected(&writes, &key.protected_paths)?;
         // H1: the brief the worker reads holds nothing of the key.
-        refuse_leak(
+        refuse_leak_in(
             &CrewObject::Brief(brief.clone()).to_value(),
-            &key_needles(&key),
+            "brief",
+            &key_labeled(&key),
         )?;
         if is_reviewer(&brief) && !writes.is_empty() {
             return Err(CrewError::new(

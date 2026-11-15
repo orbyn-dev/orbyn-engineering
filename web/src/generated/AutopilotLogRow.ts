@@ -16,7 +16,12 @@ kind: string, at: string,
 /**
  * `hard_rule`, `tier`, `lead`, `two_keys`, `person` and so on, when the row says.
  */
-decided_by?: string | null, tier?: string | null, 
+decided_by?: string | null, 
+/**
+ * Who decided, when a person or a local caller did: `user` is the person, confirmed in the desktop app; `local_caller` is a
+ * local API caller of the service (a deny, a dismiss or a merge reject), with no proof of who. Absent on rows the core or an engine decided.
+ */
+actor?: string | null, tier?: string | null, 
 /**
  * The always-denied rule, such as `N5`.
  */
