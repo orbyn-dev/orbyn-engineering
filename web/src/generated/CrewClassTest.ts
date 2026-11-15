@@ -4,4 +4,8 @@ import type { CrewClassTestPath } from "./CrewClassTestPath";
 /**
  * `GET /api/crew/classes/test`: up to 10 paths checked against the rules at the commit.
  */
-export type CrewClassTest = { thread: string, commit?: string | null, blob?: string | null, problems: Array<string>, paths: Array<CrewClassTestPath>, };
+export type CrewClassTest = { 
+/**
+ * The thread the rules were read for. Absent when they were read by project.
+ */
+thread?: string | null, commit?: string | null, blob?: string | null, problems: Array<string>, paths: Array<CrewClassTestPath>, };

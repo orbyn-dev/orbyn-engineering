@@ -1,7 +1,8 @@
 //! The read-only views the routes serve: the rules at the commit, a path tester and a task's routing. They read git and the
-//! ledger and change nothing. With the Crew Preview flag off none of them exists.
+//! ledger and change nothing. With the Crew Preview flag off none of them exists. The rules and the tester are read for a thread (its
+//! working folder) or for a project (the checkout it is registered at, which has no thread); the two reads share one path.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use orbyn_contracts as wire;
 
@@ -104,6 +105,16 @@ fn route_card_base(classes: &PathClasses, views: &[EngineView]) -> String {
     }
 }
 
+/// Where a class read looks, and what the view says it read.
+struct ClassRoot {
+    root: PathBuf,
+    project_id: String,
+    /// Set when the read was by thread.
+    thread: Option<String>,
+    /// The checkout's label, set when the read was by thread.
+    worktree: Option<String>,
+}
+
 impl Core {
     async fn class_machine(&self, project_id: &str) -> Vec<EngineView> {
         self.crew_machine(Some(project_id))
@@ -112,19 +123,59 @@ impl Core {
             .unwrap_or_default()
     }
 
-    fn class_thread(&self, thread_id: &str) -> Result<orbyn_contracts::Thread> {
+    /// The checkout a class read is for. A thread reads at its own working folder; a project reads at the repository checkout
+    /// the project is registered at, never at a worktree path from the client, and only a trusted one (as a thread's diff is). Exactly one of the two is named.
+    fn class_root(&self, thread_id: Option<&str>, project_id: Option<&str>) -> Result<ClassRoot> {
         self.crew_preview_only()?;
-        valid_id(thread_id)?;
-        self.store.thread(thread_id)
+        match (thread_id, project_id) {
+            (Some(_), Some(_)) => Err(CoreError::Invalid(
+                "give thread or project, not both".into(),
+            )),
+            (None, None) => Err(CoreError::Invalid("thread or project is required".into())),
+            (Some(id), None) => {
+                valid_id(id)?;
+                let thread = self.store.thread(id)?;
+                let label = match &thread.worktree {
+                    Some(tree) => tree.branch.clone(),
+                    None => Path::new(&thread.cwd)
+                        .file_name()
+                        .map_or_else(|| thread.cwd.clone(), |n| n.to_string_lossy().into_owned()),
+                };
+                Ok(ClassRoot {
+                    root: PathBuf::from(&thread.cwd),
+                    project_id: thread.project_id,
+                    thread: Some(thread.id),
+                    worktree: Some(label),
+                })
+            }
+            (None, Some(id)) => {
+                valid_id(id)?;
+                let project = self.store.project(id)?;
+                if !project.trusted {
+                    return Err(CoreError::FolderUntrusted);
+                }
+                Ok(ClassRoot {
+                    root: PathBuf::from(&project.path),
+                    project_id: project.id,
+                    thread: None,
+                    worktree: None,
+                })
+            }
+        }
     }
 
-    /// `GET /api/crew/classes`: the rules at the commit a task started in this thread would start from.
-    pub async fn crew_classes_view(&self, thread_id: &str) -> Result<wire::CrewClassesView> {
-        let thread = self.class_thread(thread_id)?;
-        let root = Path::new(&thread.cwd);
+    /// `GET /api/crew/classes`: the rules at the commit a task started in this thread would start from, or, with a project, at the
+    /// commit of the project's own checkout. Give `thread` or `project`, one of them.
+    pub async fn crew_classes_view(
+        &self,
+        thread_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> Result<wire::CrewClassesView> {
+        let target = self.class_root(thread_id, project_id)?;
+        let root = target.root.as_path();
         let base = base_commit(root).await;
         let file = read_class_file(root, base.as_deref()).await;
-        let views = self.class_machine(&thread.project_id).await;
+        let views = self.class_machine(&target.project_id).await;
         let differs = working_copy_differs(root, &file).await;
         let mut notes = file.notes.clone();
         if let Some((pin, there)) = read_pinned(root).await {
@@ -135,17 +186,11 @@ impl Core {
             );
             notes.extend(both.differs());
         }
-        let worktree = match &thread.worktree {
-            Some(tree) => tree.branch.clone(),
-            None => root
-                .file_name()
-                .map_or_else(|| thread.cwd.clone(), |n| n.to_string_lossy().into_owned()),
-        };
         Ok(wire::CrewClassesView {
-            thread: thread.id,
+            thread: target.thread,
             commit: file.commit.clone(),
             blob: file.blob.clone(),
-            worktree,
+            worktree: target.worktree,
             built_in: BUILT_IN.to_owned(),
             rules: file
                 .rules
@@ -167,22 +212,23 @@ impl Core {
         })
     }
 
-    /// `GET /api/crew/classes/test`: up to 10 paths against the rules at the commit.
+    /// `GET /api/crew/classes/test`: up to 10 paths against the rules at the commit, read as `crew_classes_view` reads them.
     pub async fn crew_class_test(
         &self,
-        thread_id: &str,
+        thread_id: Option<&str>,
+        project_id: Option<&str>,
         paths: &[String],
     ) -> Result<wire::CrewClassTest> {
-        let thread = self.class_thread(thread_id)?;
+        let target = self.class_root(thread_id, project_id)?;
         if paths.is_empty() || paths.len() > TEST_PATHS_MAX {
             return Err(CoreError::Invalid(format!(
                 "give 1 to {TEST_PATHS_MAX} paths"
             )));
         }
-        let root = Path::new(&thread.cwd);
+        let root = target.root.as_path();
         let base = base_commit(root).await;
         let file = read_class_file(root, base.as_deref()).await;
-        let views = self.class_machine(&thread.project_id).await;
+        let views = self.class_machine(&target.project_id).await;
         let pinned = read_pinned(root).await;
         let mut results = Vec::new();
         for path in paths {
@@ -238,7 +284,7 @@ impl Core {
             });
         }
         Ok(wire::CrewClassTest {
-            thread: thread.id,
+            thread: target.thread,
             commit: file.commit.clone(),
             blob: file.blob.clone(),
             problems: file.problems.clone(),

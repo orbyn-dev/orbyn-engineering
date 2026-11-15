@@ -21,6 +21,7 @@ mod bus_review;
 mod bus_support;
 mod cancel;
 mod classes;
+mod classes_project;
 mod confined;
 mod core;
 mod fake;

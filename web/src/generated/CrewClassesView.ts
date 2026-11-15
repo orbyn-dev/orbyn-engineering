@@ -4,7 +4,11 @@ import type { CrewClassRule } from "./CrewClassRule";
 /**
  * What the repository's rules are at the commit a task would start from (`GET /api/crew/classes`).
  */
-export type CrewClassesView = { thread: string, 
+export type CrewClassesView = { 
+/**
+ * The thread the rules were read for. Absent when they were read by project.
+ */
+thread?: string | null, 
 /**
  * The commit the rules are read at. Absent when it could not be resolved.
  */
@@ -14,9 +18,10 @@ commit?: string | null,
  */
 blob?: string | null, 
 /**
- * A label for the checkout the rules are read for: its branch, or the folder's name.
+ * A label for the checkout the rules are read for: its branch, or the folder's name. Absent when they were read by project,
+ * which reads the project's own checkout.
  */
-worktree: string, 
+worktree?: string | null, 
 /**
  * The class every path outside the rules belongs to.
  */

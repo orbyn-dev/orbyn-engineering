@@ -51,7 +51,11 @@ async fn the_class_routes_are_hidden_with_the_flag_off() {
     let (_, absent) = get(port, "/api/crew-nothing").await;
     for path in [
         "/api/crew/classes?thread=t1",
+        "/api/crew/classes?project=p1",
+        "/api/crew/classes/test?project=p1&path=src/a.rs",
         "/api/crew/classes/test?thread=t1&path=src/a.rs",
+        "/api/crew/classes/test?%FF=1&thread=t1&thread=t2",
+        "/api/crew/classes?thread=t1&project=p1",
         "/api/crew/route/t1",
     ] {
         let (status, body) = get(port, path).await;
@@ -66,6 +70,40 @@ async fn the_class_routes_refuse_what_names_nothing_and_change_nothing() {
     let (port, dir) = serve("on", true).await;
     // No thread named, and a thread that does not exist.
     assert_eq!(get(port, "/api/crew/classes").await.0, 400);
+    // Either id, never both and never neither; a malformed id is refused; an unknown project is not found.
+    assert_eq!(get(port, "/api/crew/classes?project=nope").await.0, 404);
+    // A repeated id key is refused the same way by both routes.
+    for path in [
+        "/api/crew/classes?thread=a&thread=b",
+        "/api/crew/classes?project=a&project=b",
+        "/api/crew/classes/test?thread=a&thread=b&path=x",
+        "/api/crew/classes/test?project=a&project=b&path=x",
+    ] {
+        assert_eq!(get(port, path).await.0, 400, "{path}");
+    }
+    assert_eq!(get(port, "/api/crew/classes?project=a%20b").await.0, 400);
+    assert_eq!(get(port, "/api/crew/classes?thread=a%20b").await.0, 400);
+    let (status, body) = get(port, "/api/crew/classes?thread=t&project=p").await;
+    assert_eq!(status, 400);
+    assert!(
+        body.to_string()
+            .contains("give thread or project, not both")
+    );
+    let (status, body) = get(port, "/api/crew/classes/test?path=a").await;
+    assert_eq!(status, 400);
+    assert!(body.to_string().contains("thread or project is required"));
+    assert_eq!(
+        get(port, "/api/crew/classes/test?project=nope&path=a")
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        get(port, "/api/crew/classes/test?thread=t&project=p&path=a")
+            .await
+            .0,
+        400
+    );
     assert_eq!(get(port, "/api/crew/classes?thread=nope").await.0, 404);
     assert_eq!(get(port, "/api/crew/classes/test?path=a").await.0, 400);
     assert_eq!(

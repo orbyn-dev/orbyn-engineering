@@ -15,11 +15,11 @@ use crate::crew::classes::{
 };
 use crate::testing::run_git;
 
-fn rule(name: &str, paths: &[&str], engines: &[&str]) -> Value {
+pub(super) fn rule(name: &str, paths: &[&str], engines: &[&str]) -> Value {
     json!({ "name": name, "paths": paths, "engines": engines, "reason": format!("{name} stays with its engines.") })
 }
 
-fn file(rules: Vec<Value>) -> String {
+pub(super) fn file(rules: Vec<Value>) -> String {
     json!({ "classes": { "version": 1, "rules": rules } }).to_string()
 }
 
@@ -76,14 +76,14 @@ fn commit(repo: &Path, message: &str) {
 }
 
 /// Writes `.orbyn/crew.json` in the checkout, and commits it.
-fn commit_crew(repo: &Path, text: &str) {
+pub(super) fn commit_crew(repo: &Path, text: &str) {
     std::fs::create_dir_all(repo.join(".orbyn")).unwrap();
     std::fs::write(repo.join(".orbyn/crew.json"), text).unwrap();
     run_git(repo, &["add", "-f", ".orbyn/crew.json"]);
     commit(repo, "rules");
 }
 
-async fn two() -> World {
+pub(super) async fn two() -> World {
     world_with(
         true,
         Arc::new(|_, _| Turn::Hang),
@@ -577,7 +577,7 @@ async fn an_edit_after_the_base_is_not_in_force_and_the_view_says_so() {
         file(vec![rule("keep", &["src/**"], &["alpha", "bravo"])]),
     )
     .unwrap();
-    let view = w.core.crew_classes_view(&w.lead).await.unwrap();
+    let view = w.core.crew_classes_view(Some(&w.lead), None).await.unwrap();
     assert!(view.working_copy_differs);
     assert!(
         view.working_copy_note
@@ -602,7 +602,7 @@ async fn an_edit_after_the_base_is_not_in_force_and_the_view_says_so() {
     run_git(&w.repo, &["add", "-f", ".orbyn/crew.json"]);
     commit(&w.repo, "loosen");
     assert_eq!(rows(&w, &id)[0].body, before);
-    let view = w.core.crew_classes_view(&w.lead).await.unwrap();
+    let view = w.core.crew_classes_view(Some(&w.lead), None).await.unwrap();
     assert!(!view.working_copy_differs && view.working_copy_note.is_none());
     assert_eq!(view.rules[0].engines.len(), 2);
 }
@@ -767,7 +767,11 @@ async fn paths_are_folded_and_a_bad_path_is_refused_by_the_tester() {
     .iter()
     .map(|p| (*p).to_owned())
     .collect();
-    let test = w.core.crew_class_test(&w.lead, &paths).await.unwrap();
+    let test = w
+        .core
+        .crew_class_test(Some(&w.lead), None, &paths)
+        .await
+        .unwrap();
     let by = |path: &str| test.paths.iter().find(|p| p.path == path).unwrap();
     let hit = by("SRC/auth/Login.rs");
     assert!(hit.valid && hit.classes[0].name == "auth");
@@ -791,18 +795,28 @@ async fn paths_are_folded_and_a_bad_path_is_refused_by_the_tester() {
         let one = by(bad);
         assert!(!one.valid && one.problem.is_some(), "{bad}");
     }
-    assert!(w.core.crew_class_test(&w.lead, &[]).await.is_err());
+    assert!(
+        w.core
+            .crew_class_test(Some(&w.lead), None, &[])
+            .await
+            .is_err()
+    );
     let eleven: Vec<String> = (0..11).map(|n| format!("p{n}")).collect();
-    assert!(w.core.crew_class_test(&w.lead, &eleven).await.is_err());
+    assert!(
+        w.core
+            .crew_class_test(Some(&w.lead), None, &eleven)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
 async fn the_views_exist_only_with_the_preview_flag() {
     let w = world_with(false, Arc::new(|_, _| Turn::Hang), &[("alpha", false)]).await;
-    assert!(w.core.crew_classes_view(&w.lead).await.is_err());
+    assert!(w.core.crew_classes_view(Some(&w.lead), None).await.is_err());
     assert!(
         w.core
-            .crew_class_test(&w.lead, &["a".to_owned()])
+            .crew_class_test(Some(&w.lead), None, &["a".to_owned()])
             .await
             .is_err()
     );
@@ -992,7 +1006,7 @@ async fn an_exact_path_spelled_in_another_case_counts_as_every_class() {
 }
 
 /// Makes `origin/main` a remote-tracking ref at HEAD and points `origin/HEAD` at it, with no remote to fetch from.
-fn pin_origin_here(repo: &Path) {
+pub(super) fn pin_origin_here(repo: &Path) {
     let head = git_out(repo, &["rev-parse", "HEAD"]);
     run_git(repo, &["update-ref", "refs/remotes/origin/main", &head]);
     run_git(

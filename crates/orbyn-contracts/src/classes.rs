@@ -31,15 +31,19 @@ pub struct CrewClassRule {
 wire! {
 /// What the repository's rules are at the commit a task would start from (`GET /api/crew/classes`).
 pub struct CrewClassesView {
-    pub thread: String,
+    /// The thread the rules were read for. Absent when they were read by project.
+    #[ts(optional = nullable)]
+    pub thread: Option<String>,
     /// The commit the rules are read at. Absent when it could not be resolved.
     #[ts(optional = nullable)]
     pub commit: Option<String>,
     /// The file's blob id at that commit. Absent when the file is missing or unreadable.
     #[ts(optional = nullable)]
     pub blob: Option<String>,
-    /// A label for the checkout the rules are read for: its branch, or the folder's name.
-    pub worktree: String,
+    /// A label for the checkout the rules are read for: its branch, or the folder's name. Absent when they were read by project,
+    /// which reads the project's own checkout.
+    #[ts(optional = nullable)]
+    pub worktree: Option<String>,
     /// The class every path outside the rules belongs to.
     pub built_in: String,
     pub rules: Vec<CrewClassRule>,
@@ -84,7 +88,9 @@ pub struct CrewClassTestPath {
 wire! {
 /// `GET /api/crew/classes/test`: up to 10 paths checked against the rules at the commit.
 pub struct CrewClassTest {
-    pub thread: String,
+    /// The thread the rules were read for. Absent when they were read by project.
+    #[ts(optional = nullable)]
+    pub thread: Option<String>,
     #[ts(optional = nullable)]
     pub commit: Option<String>,
     #[ts(optional = nullable)]
