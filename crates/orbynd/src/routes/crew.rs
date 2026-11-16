@@ -231,7 +231,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
 
 /// With the flag off the route is not there: the same answer as any other path nothing serves, for every method (a wrong one
 /// included, which is why this is a `layer` and not a `route_layer`).
-async fn preview_gate(
+pub(super) async fn preview_gate(
     State(state): State<AppState>,
     request: Request,
     next: Next,
