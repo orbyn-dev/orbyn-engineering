@@ -2393,7 +2393,8 @@ Crew's Git scope and size checks retain Git's ignore rules and disable the untra
 Unchanged ignored caches do not require broader scope or data removal; ignored new files
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
-checkouts; verification fails if either flag appears. Git reads disable line-ending conversion.
+checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
+other Git reads keep their settings.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
 which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
 A fix's touched-file guard compares the file's exact byte digest with the digest the core

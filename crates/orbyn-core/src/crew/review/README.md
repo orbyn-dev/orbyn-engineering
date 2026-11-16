@@ -29,7 +29,7 @@ its own. Code, not a model, decides whether a finding is true.
   with no file reads. Scope and size checks retain `--exclude-standard` and disable the untracked cache.
   Pre-existing ignored caches do not require broader scope or data removal; ignored new files remain invisible to these checks.
   No generic cache names are specially exempted, and the core does not widen leases or remove existing data.
-  `git_hardened` disables repository filters and diff converters, tree/global/system attributes, line-ending conversion and replace refs.
+  `git_hardened` disables repository filters and diff converters, tree/global/system attributes and replace refs. The scope, size and changed-path checks use `git_byte_exact`, which also disables line-ending conversion and the untracked cache; no other caller carries those flags.
   Git's `info/attributes` overrides are a separate source: scope and size checks refuse a nonempty, unreadable or nonregular override file
   with an error; an absent or empty readable file is accepted. The preflight checks metadata without reading attribute contents.
   If git cannot list the index, or the flags were recorded for another directory than the one checked, nothing passes: the task goes to a person (a task whose index cannot be listed does not start).
@@ -87,7 +87,7 @@ its own. Code, not a model, decides whether a finding is true.
 | Real Claude and Codex yield | Unqualified: only fake engines are tested here. Real provider runs and confirmed-finding yield remain outstanding. |
 | Hidden paths and index flags | Partially changed: all hiding flags refuse admission/fail checks; sparse checkouts with skip-worktree entries are intentionally unsupported. Ignored new files remain an accepted blind spot to preserve ordinary cached checkouts. Crafted index stat data remains a limit above; #436 isolation is still needed. |
 | Clearing repro at finding commit | Deferred: current-checkout repro is recorded as such; fail-before/pass-after at exact commits and isolated process lifetime remain outstanding with #436. |
-| BYTE_EXACT | Changed: hardened Git disables autocrlf/safecrlf and untracked-cache use. Repository metadata remains writable. |
+| Byte-exact Git | Changed: only Crew scope, size and changed-path checks run `git_byte_exact` (autocrlf, safecrlf and untracked cache off). `git_hardened` is unchanged. Repository metadata remains writable. |
 | Touched guard and plain HEAD reads | Changed: core digest comparison and hardened HEAD reads in `review/lanes` and the start path's `classes/file`. No generic shell rewriting. |
 
 This is partial hardening, not full #451 qualification. Exact-commit repro, isolated review and real-lane measurements stay visible.
