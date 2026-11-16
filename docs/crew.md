@@ -251,7 +251,8 @@ the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium
 | Lead (briefs, approves in Autopilot, merges) | Opus | Sol | The engine the person picks for the lead thread |
 | Router, verifier, merge queue, watch on main | No model | No model | Code |
 | Builder | Sonnet | Terra | Complex work on Codex goes to Sol (harness `engineer_complex`) |
-| Code review | Opus | Sol | Lead tier, on the other vendor from the builder by default |
+| Review lane (`crew_review`) | Sonnet | Terra | Worker tier by default, on the other vendor from the builder. Security and locked lanes stay on the lead tier |
+| Code review (a review brief) | Opus | Sol | Lead tier, on the other vendor from the builder by default |
 | Security review and finding check | Opus | Sol | Lead tier always; never lower |
 | Second key (Autopilot) | Opus | Sol | Must be the other vendor from the lead |
 | Scout (search, mechanical checks, cheap drafts) | Haiku | Luna | Escalates to the builder tier on failure |
@@ -261,7 +262,12 @@ The route card shows the tier, model and effort chosen, and why. A repository's 
 raise a tier. Only the person can change a lead tier.
 
 To pin a worker's model (for example a Haiku-only run), the lead sets `engine: { id, model, assigned_by }` in the brief
-(`"model": "haiku"`). Reviewers and finding checks stay on the lead tier by rule, so a review lane runs on Opus or Sol;
+(`"model": "haiku"`). A review lane defaults to the worker tier (Sonnet or Terra), so it costs less than the lead. The `security` lane,
+any lane a repository rule locks (`"locked": true`), the finding check and a second key stay on the lead tier, and a pinned model that is
+below the lead tier is refused for them, never swapped. When the rules cannot be read, a lane counts as locked. A model pinned in the brief's
+`engine` wins over the lane default in either direction. An engine with no tier mapping (OpenCode before Settings maps it) is a builder only,
+so it never takes a lane. The reviewer is still another vendor than the builder where one is configured. The route card of a lane carries
+a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` answer reports its `tier`, `model` and `reasons`.
 `crew_route` (dry run) shows the engine, model, tier and role before anything runs; the `route` in a start answer reports what has already started.
 
 **Router v0**
@@ -394,7 +400,7 @@ merge).
 - **Different eyes by default.**
   - The router prefers a different engine or vendor from the author: a Codex review of Claude's work, and the reverse.
   - Security review and finding checks run at the lead tier (the harness's `security` and `security_verifier` routes),
-    never on a cheaper tier.
+    never on a cheaper tier. So do locked lanes. Every other lane runs on the worker tier unless the brief pins a model.
 - **No limit on reviewers.** A stage holds any number of reviewer lanes running side by side, for example:
   - Correctness
   - Security

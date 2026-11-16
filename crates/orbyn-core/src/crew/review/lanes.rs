@@ -1,7 +1,7 @@
 //! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. A lane named after the
 //! work has passed runs like any other, and a lane the repo's rules ask for runs without being named. A lane
-//! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the lead
-//! tier, to another vendor than the builder where one is configured, and its key holds one check: the review
+//! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
+//! tier (the lead tier for the security lane and a lane a repo rule locks), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
 //! and how many checks passed, never a check, its command or the builder's transcript.
 
@@ -27,6 +27,20 @@ use crate::tools::mcp::McpBinding;
 const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
 /// The most changed files a review can hold read-only: the key protects each by its bytes, and a key lists at most 256.
 const MOST_PATHS: usize = 256;
+
+/// Whether a repository rule locks `lane` at `base`, the commit the work started from. A locked lane keeps the lead tier. When the
+/// rules cannot be read, or there is no base to read them at, the lane counts as locked: not knowing never lowers a review.
+pub(in crate::crew) async fn lane_locked(
+    root: &Path,
+    base: Option<&str>,
+    lane: &CrewToken,
+) -> bool {
+    let Some(base) = base else { return true };
+    match read_rules_at(root, base).await {
+        Ok(rules) => rules.iter().any(|r| r.lane == *lane && r.locked),
+        Err(_) => true,
+    }
+}
 
 /// What a review run is for.
 pub(super) enum Run<'a> {
@@ -248,6 +262,10 @@ impl Core {
         })
         .await
         .map_err(internal)?;
+        let lane_locked = match kind {
+            Run::Lane => lane_locked(&cwd, subject_run.base_commit.as_deref(), lane).await,
+            Run::Second { .. } => false,
+        };
         let judge = match kind {
             Run::Lane => format!("Review round {round} of the {lane} lane"),
             Run::Second { finding } => format!(
@@ -364,6 +382,7 @@ impl Core {
                 RouteRole::Review
             }),
             lane: (!second).then(|| lane.clone()),
+            lane_locked,
             author_engine,
             prefix: "reviewer",
             prompt: Some(prompt),

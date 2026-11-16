@@ -206,3 +206,99 @@ fn a_reviewer_is_from_the_other_vendor_by_default_and_a_second_key_always() {
         RejectionWhy::SameEngineRefused
     );
 }
+
+fn lane(name: &'static str, author: &'static str, locked: bool) -> Ask {
+    Ask {
+        role: Some(RouteRole::Review),
+        lane: Some(name),
+        author: Some(author),
+        locked,
+        ..Ask::default()
+    }
+}
+
+#[test]
+fn a_review_lane_defaults_to_the_worker_tier_on_another_vendor() {
+    let both = [engine("claude"), engine("codex")];
+    let work = reading(json!({ "kind": "review" }));
+    let decision = routed(&work, &both, &lane("correctness", "claude", false));
+    assert_eq!(decision.tier, orbyn_contracts::RouteTier::Worker);
+    assert_eq!(decision.engine.as_str(), "codex", "the author was claude");
+    assert_eq!(decision.model.as_str(), "terra-1");
+    assert!(
+        decision
+            .reasons
+            .iter()
+            .any(|r| r.code.as_str() == "review_lane_tier"
+                && r.text.as_str().contains("worker tier"))
+    );
+    verified(&decision);
+    let back = routed(&work, &both, &lane("correctness", "codex", false));
+    assert_eq!(back.engine.as_str(), "claude");
+    assert_eq!(back.model.as_str(), "claude-sonnet-4");
+    // The reviewer is never the author's vendor while another is configured.
+    assert_eq!(
+        back.rejected
+            .iter()
+            .find(|r| r.engine.as_str() == "codex")
+            .map(|r| r.why),
+        Some(RejectionWhy::SameEngineRefused)
+    );
+}
+
+#[test]
+fn a_pinned_model_wins_over_the_default_lane_tier() {
+    let both = [engine("claude"), engine("codex")];
+    let pin = |model: &str| {
+        reading(json!({ "kind": "review",
+            "engine": { "id": "codex", "model": model, "assigned_by": "lead" } }))
+    };
+    let up = routed(&pin("sol"), &both, &lane("correctness", "claude", false));
+    assert_eq!(up.model.as_str(), "sol-1");
+    assert_eq!(up.tier, orbyn_contracts::RouteTier::Lead);
+    assert_eq!(up.assigned_by, RouteAssigner::Lead);
+    let down = routed(&pin("luna"), &both, &lane("correctness", "claude", false));
+    assert_eq!(down.model.as_str(), "luna-1");
+    assert_eq!(down.tier, orbyn_contracts::RouteTier::Scout);
+}
+
+#[test]
+fn security_and_locked_lanes_stay_on_the_lead_tier_even_when_pinned_lower() {
+    let both = [engine("claude"), engine("codex")];
+    let work = reading(json!({ "kind": "review" }));
+    let security = routed(&work, &both, &lane("security", "claude", false));
+    assert_eq!(security.tier, orbyn_contracts::RouteTier::Lead);
+    assert_eq!(security.model.as_str(), "sol-1");
+    let locked = routed(&work, &both, &lane("correctness", "claude", true));
+    assert_eq!(locked.tier, orbyn_contracts::RouteTier::Lead);
+    assert_eq!(locked.model.as_str(), "sol-1");
+    // A free-form lane that only mentions security is an ordinary lane.
+    let named = routed(&work, &both, &lane("secrets", "claude", false));
+    assert_eq!(named.tier, orbyn_contracts::RouteTier::Worker);
+    // A pin below the lead tier is refused, never swapped.
+    let low = reading(json!({ "kind": "review",
+        "engine": { "id": "codex", "model": "terra", "assigned_by": "lead" } }));
+    let refusal = refused(&low, &both, &lane("security", "claude", false));
+    assert_eq!(refusal.rejected[0].why, RejectionWhy::TierBelowLead);
+    let refusal = refused(&low, &both, &lane("correctness", "claude", true));
+    assert_eq!(refusal.rejected[0].why, RejectionWhy::TierBelowLead);
+}
+
+#[test]
+fn an_engine_with_no_tier_mapping_is_not_a_default_lane_reviewer() {
+    // OpenCode has no mapping: it would fill the worker tier as a builder, but it never reviews.
+    let engines = [engine("claude"), engine("opencode")];
+    let work = reading(json!({ "kind": "review" }));
+    let decision = routed(&work, &engines, &lane("correctness", "claude", false));
+    assert_eq!(
+        decision.engine.as_str(),
+        "claude",
+        "only the author's vendor reviews"
+    );
+    assert!(
+        decision
+            .rejected
+            .iter()
+            .any(|r| r.engine.as_str() == "opencode" && r.why == RejectionWhy::MissingCapability)
+    );
+}

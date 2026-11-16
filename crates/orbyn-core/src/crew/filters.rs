@@ -20,10 +20,13 @@ pub struct Want {
     pub needs: Vec<String>,
     pub image: bool,
     pub tier: RouteTier,
+    /// The role checks someone else's work, so the engine's model must fill a mapped tier: an engine with no mapping is a
+    /// builder only, even when the role's tier is the worker tier.
+    pub reviewer: bool,
 }
 
 impl Want {
-    pub fn of(brief: &Brief, tier: RouteTier) -> Self {
+    pub fn of(brief: &Brief, tier: RouteTier, reviewer: bool) -> Self {
         let needs: Vec<String> = brief
             .needs
             .iter()
@@ -36,6 +39,7 @@ impl Want {
             image: needs.iter().any(|need| need == "image"),
             needs,
             tier,
+            reviewer,
         }
     }
 }
@@ -263,6 +267,16 @@ pub fn screen<'a>(
             RejectionWhy::TierBelowLead,
             format!(
                 "{} is below the lead tier, which this role needs.",
+                model.id
+            ),
+        ));
+    }
+    if want.reviewer && tier.is_none() {
+        return Err(rejection(
+            view,
+            RejectionWhy::MissingCapability,
+            format!(
+                "{name} has no tier mapped for {}, so it is offered only as a builder.",
                 model.id
             ),
         ));

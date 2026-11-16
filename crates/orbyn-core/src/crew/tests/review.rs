@@ -28,7 +28,7 @@ async fn an_unconfirmed_finding_does_not_block() {
     let lanes = w.review(&subject, &["correctness"]).await;
     w.until_state(&lanes[0], "passed").await;
 
-    // The lane is its own run, routed by role to the other vendor at the lead tier.
+    // The lane is its own run, routed by role to the other vendor at the worker tier (it is not a security or locked lane).
     let decision = w
         .core
         .store
@@ -37,7 +37,8 @@ async fn an_unconfirmed_finding_does_not_block() {
         .pop()
         .unwrap();
     assert_eq!(decision.role, RouteRole::Review);
-    assert_eq!(decision.tier, RouteTier::Lead);
+    assert_eq!(decision.tier, RouteTier::Worker);
+    assert_eq!(decision.model.as_str(), "beta-model");
     assert_eq!(
         decision.lane.as_ref().map(|l| l.as_str()),
         Some("correctness")
@@ -330,6 +331,65 @@ async fn repo_rules_add_lanes() {
             ("licence", true, false)
         ],
         "docs is not asked for by a change under src/"
+    );
+    // The lane's route reports its tier: the locked rule lane (security) stays lead, the others run on the worker tier.
+    let tiers: Vec<(&str, &str)> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["lane"].as_str().unwrap(),
+                l["route"]["tier"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        tiers,
+        [
+            ("correctness", "worker"),
+            ("security", "lead"),
+            ("licence", "worker")
+        ]
+    );
+}
+
+/// A lane a rule locks keeps the lead tier even when its name is an ordinary one.
+#[tokio::test]
+async fn a_locked_rule_lane_keeps_the_lead_tier() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(
+        &w,
+        &json!({ "lanes": [{ "lane": "correctness", "locked": true }] }).to_string(),
+    );
+    let subject = w.built_work().await;
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["correctness", "docs"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let tiers: Vec<(&str, &str, &str)> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["lane"].as_str().unwrap(),
+                l["route"]["tier"].as_str().unwrap(),
+                l["route"]["engine"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        tiers,
+        [("correctness", "lead", "beta"), ("docs", "worker", "beta")],
+        "the builder was alpha, so beta reviews both"
     );
 }
 

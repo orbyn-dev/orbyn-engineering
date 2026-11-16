@@ -15,7 +15,7 @@ use orbyn_contracts::{
 use super::classes::PathClasses;
 use super::filters::{Admitted, Want, class_screen, rejection, screen, short};
 use super::score::{EvalHistory, Scored, score};
-use super::tiers::{RouterConfig, reviews, role_for_kind, role_tier};
+use super::tiers::{RouterConfig, lane_is_lead_only, reviews, role_for_kind, role_tier};
 use super::view::EngineView;
 
 /// Everything one routing needs besides the engines.
@@ -27,6 +27,8 @@ pub struct RouteInput<'a> {
     pub role: Option<RouteRole>,
     /// The reviewer lane, exactly when the role is `review`.
     pub lane: Option<CrewToken>,
+    /// A repository rule locks this review lane, so it stays on the lead tier. Unknown counts as locked.
+    pub lane_locked: bool,
     /// The engine that did the work being reviewed, for the other-vendor rule.
     pub author_engine: Option<CrewToken>,
     /// The person's default engine. It breaks a tie and adds no points.
@@ -178,7 +180,11 @@ pub fn route(
         }
         _ => {}
     }
-    let want = Want::of(brief, role_tier(role));
+    let lead_only = input
+        .lane
+        .as_ref()
+        .is_some_and(|lane| lane_is_lead_only(lane.as_str(), input.lane_locked));
+    let want = Want::of(brief, role_tier(role, lead_only), reviews(role));
     let request = brief.engine.as_ref();
     let requested = request.map(|r| RouteRequested {
         engine: r.id.clone(),
@@ -360,6 +366,16 @@ pub fn route(
             super::wire_name(&chosen.tier)
         ),
     ));
+    if role == RouteRole::Review {
+        reasons.push(reason(
+            "review_lane_tier",
+            if lead_only {
+                "This lane is the security lane or locked by a repository rule, so it stays on the lead tier."
+            } else {
+                "A review lane runs on the worker tier unless the brief pins a model or the lane is security or locked."
+            },
+        ));
+    }
     reasons.push(reason("effort_medium", "Effort stays at medium."));
     if chosen_same_vendor {
         reasons.push(reason("same_engine_as_author", "Same engine as author."));

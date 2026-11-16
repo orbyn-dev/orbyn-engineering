@@ -115,6 +115,7 @@ impl Core {
             key,
             role: None,
             lane: None,
+            lane_locked: false,
             author_engine: None,
             prefix: "worker",
             prompt: None,
