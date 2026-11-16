@@ -20,7 +20,7 @@ use super::account_tests::{SECRET, serve};
 const CAPTURE_CAP: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Default)]
-struct Lines(Arc<Mutex<Vec<u8>>>);
+pub(super) struct Lines(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for Lines {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -52,7 +52,7 @@ impl<'a> MakeWriter<'a> for Lines {
 /// may. CI runs these with nextest, one process per test, where each test owns its subscriber;
 /// under plain `cargo test` the tests of this file share the one capture, which is harmless
 /// because every value is unique to its test.
-fn captured() -> &'static Lines {
+pub(super) fn captured() -> &'static Lines {
     static LINES: OnceLock<Lines> = OnceLock::new();
     LINES.get_or_init(|| {
         let lines = Lines::default();
@@ -77,12 +77,12 @@ fn captured() -> &'static Lines {
     })
 }
 
-fn text() -> String {
+pub(super) fn text() -> String {
     String::from_utf8_lossy(&captured().0.lock().unwrap()).into_owned()
 }
 
 /// A value nobody could guess and no source file holds: `label` and a random tail.
-fn canary(label: &str) -> String {
+pub(super) fn canary(label: &str) -> String {
     let mut bytes = [0u8; 12];
     getrandom::fill(&mut bytes).unwrap();
     let tail: String = bytes.iter().map(|b| format!("{b:02x}")).collect();

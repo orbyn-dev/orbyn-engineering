@@ -632,9 +632,13 @@ Where the Engine's API differs from the traits the screens and the worker were w
 - **Snapshot.** The client does no IO. `SealedSnapshots` (`account/engine/sealed.rs`) seals it with XChaCha20-Poly1305
   under the vault key, binding the purpose, the profile id, the format version and a counter; the key store keeps the
   counter and the hash of the newest file and an older or different file is refused. The keys live behind the `KeyStore`
-  trait. The only implementation in the app is `FileKeyStore` (`account/engine/keystore.rs`), a development store that
-  exists in debug builds and tests only, so a release has no file key store and the OS keychain implementation
-  (`account::keystore`, condition 5) is still to come. `connect` keeps the keys and the snapshot in memory;
+  trait. `KeychainKeyStore` (`account/engine/keychain.rs`) keeps the identity and the snapshot's anchor as one macOS
+  login-keychain item per profile, over the `security-framework` crate (MIT or Apache-2.0, already in the desktop
+  lock); it uses plain generic-password items, so it works unsigned, under the development service name
+  `app.orbyn.engineering.account.dev`. A failed delete blanks the item and returns the failure, and the next load,
+  save or clear finishes it. What waits for a Developer ID (condition 5) is the access list that trusts only `orbynd`
+  and the release service name. `FileKeyStore` (`account/engine/keystore.rs`) is the development fallback and the test
+  store; it exists in debug builds and tests only, so a release has no file key store. which store a profile uses is decided once and recorded in a marker in its data folder (`account-keys-<profile>.store`). With no marker the file store is chosen only when there is no keychain to ask (so no item can exist) or the profile already has a file store; a keychain that is locked, refused or failing is "unavailable, retry", never a reason to fall back, because a fallback would make a second identity and leave the keychain's to return on the next run. With a marker the choice is final. A wipe clears both stores, and the failure of the one in use is returned. `connect_local` does this in debug builds only; nothing selects it while sign-in is off. `connect` keeps the keys and the snapshot in memory;
   `connect_sealed` uses the file pair. Sign-out, removing this device, `Unauthorized` and `AccountGone` call one wipe
   (`Shared::forget`): snapshot file, then keys, token, vault key and anchor.
 - **Invite.** The invite step calls `check_invite` (`POST /v1/invites/check`): a good code spends nothing, an unknown, used

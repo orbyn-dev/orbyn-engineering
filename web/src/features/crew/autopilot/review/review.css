@@ -543,6 +543,9 @@ button.crew-risk {
   box-shadow: 0 0 0 1px var(--color-warnBorder);
 }
 .crew-tk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   color: var(--color-muted);
   font-size: var(--text-label);
 }
@@ -583,18 +586,6 @@ button.crew-risk {
   gap: 7px;
   color: var(--color-muted);
   font-size: var(--text-label);
-}
-.crew-bar {
-  flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-borderStrong);
-  overflow: hidden;
-}
-.crew-bar i {
-  display: block;
-  height: 100%;
-  background: var(--color-success);
 }
 
 /* Review queue */

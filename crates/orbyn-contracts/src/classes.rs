@@ -174,3 +174,39 @@ pub struct CrewRouteView {
     pub rows: Vec<CrewRouteClassRow>,
 }
 }
+
+wire! {
+/// The default branch a project last pinned, and the one its checkout has now (`GET /api/crew/projects/{id}/pinned-ref`).
+/// A start accepts the current ref when it is the remembered commit or a descendant of it; a person confirms anything else.
+pub struct CrewPinnedRefView {
+    pub project: String,
+    /// The ref the checkout reads now, such as `origin/main`. Absent when it has none.
+    #[ts(optional = nullable)]
+    pub current_ref: Option<String>,
+    /// The commit that ref points at now. Absent when it has none.
+    #[ts(optional = nullable)]
+    pub current_commit: Option<String>,
+    /// The ref last accepted for this project. Absent until a task first read one.
+    #[ts(optional = nullable)]
+    pub stored_ref: Option<String>,
+    /// The commit last accepted for this project.
+    #[ts(optional = nullable)]
+    pub stored_commit: Option<String>,
+    /// True when a start would read the current state without a person: nothing is remembered, the ref is the remembered
+    /// commit, or it descends from it.
+    pub accepted: bool,
+    /// True when the remembered ref is gone: no ref at all, or only a local branch where the remembered remote-tracking
+    /// ref was. The person may confirm the branch the checkout has now, or reset.
+    pub missing: bool,
+    /// Set when a start would block until the git setup is fixed, or a person confirms or resets, in plain words.
+    #[ts(optional = nullable)]
+    pub blocked: Option<String>,
+}
+}
+
+wire! {
+/// A person's confirmation of a project's new default branch: the whole commit they saw.
+pub struct CrewPinnedRefConfirm {
+    pub commit: String,
+}
+}
