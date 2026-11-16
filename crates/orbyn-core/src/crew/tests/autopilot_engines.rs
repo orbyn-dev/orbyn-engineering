@@ -152,6 +152,10 @@ async fn a_task_ending_during_an_approval_cancels_it_and_cannot_apply_a_late_ans
     let (verdict, ()) = tokio::join!(decide, end);
     assert!(matches!(verdict, Verdict::Deny(_)));
     assert!(events(&w, &id, "allowed").is_empty());
+    let denied = events(&w, &id, "denied");
+    assert_eq!(denied.len(), 1, "a stale approval leaves one denied row");
+    assert_eq!(denied[0].body["rule"], "approval_stale");
+    assert_eq!(denied[0].body["decided_by"], "hard_rule");
     let spec = w.approval_specs.lock().unwrap()[0].1.clone();
     assert!(w.core.store.run(&spec.run_id).unwrap().state.is_terminal());
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("budget"));

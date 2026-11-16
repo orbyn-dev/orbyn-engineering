@@ -318,7 +318,9 @@ retries with the reason. The same failure twice means one change of approach, an
   - The failure fingerprint is the failing checks, how each ended and the names of what failed; the output is
     left out, since it changes between runs. The checks run after the worker's turn has ended. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
   - A turn that ends with no `crew_report` is a failed attempt with its own fingerprint. An engine that fails ends the
-    task (`engine_error`). `budget.minutes` ends a task even mid-turn; `budget.turns` is not enforced yet.
+    task (`engine_error`). `budget.minutes` ends a task even mid-turn. `budget.turns` is not enforced for worker turns yet, but with
+    Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`): with the default 30
+    turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
   - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
     `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report

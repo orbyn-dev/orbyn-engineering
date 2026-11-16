@@ -347,9 +347,14 @@ impl Core {
         }
         let outcome = decide(mode, tiered.need, &summary, &approvers).await;
         if !self.approval_task_live(task, run, mode) {
-            return Ok(Review::Deny(
-                "This task or its approval permission has changed.".into(),
-            ));
+            // An answer is never applied to a task that changed under it, and the refusal still leaves a ledger row.
+            let body = json!({ "action": action, "decided_by": "hard_rule", "rule": "approval_stale", "mode": mode.name() });
+            return self.autopilot_denied(
+                task,
+                &body,
+                "This task or its approval permission has changed.",
+                &needles,
+            );
         }
         // A command the chain refused is held for a person, who may approve that one command once.
         if let Outcome::Deny { reason, .. } = &outcome {
