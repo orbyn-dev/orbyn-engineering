@@ -7,6 +7,12 @@
 //! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`. Browser mode and the
 //! CLI will not be able to use `Person` routes (owner ruling).
 //!
+//! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push) and `POST /api/threads/{id}/runs`. `runs` takes
+//! `permission_mode` (and model, effort, options) in its body, so raising the mode there needs a field-level person
+//! check in step 2. Checked for the same field: `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`;
+//! `queue` and `steer` take model, effort and options but no `permission_mode`. `PATCH /api/threads/{id}` also takes it
+//! and is `Person` as a whole.
+//!
 //! `Person` routes are listed here with a reason each. Every other protected route is `"local"` in `tests/routes.json`,
 //! one line each, so a new route must be classified in a diff: the route-table test fails for a route with no class.
 
@@ -139,6 +145,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/acp/registry/{id}",
+        "installs an agent from the registry",
+    ),
+    (
+        "POST",
         "/api/approvals/{id}/decide",
         "the person's yes or no on an engine's request; a worker must not approve itself (owner ruling)",
     ),
@@ -249,6 +260,31 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/engines/custom",
+        "registers a program to run as an engine",
+    ),
+    (
+        "POST",
+        "/api/engines/probe-binary",
+        "runs a program the caller names",
+    ),
+    (
+        "POST",
+        "/api/engines/update-all",
+        "updates all engine software",
+    ),
+    (
+        "POST",
+        "/api/engines/{id}/install-recommended",
+        "installs engine software",
+    ),
+    (
+        "POST",
+        "/api/engines/{id}/update",
+        "updates engine software",
+    ),
+    (
+        "POST",
         "/api/policy/rules",
         "adds a rule that can auto-allow an engine's tool calls",
     ),
@@ -258,9 +294,39 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "removes a rule the person set; changes what is allowed or asked",
     ),
     (
+        "PUT",
+        "/api/preferences",
+        "changes preferences that can set permission defaults",
+    ),
+    (
+        "PUT",
+        "/api/projects/{id}/preferences",
+        "changes a project's preferences",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/publish",
+        "publishes the project to the forge",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/merge",
+        "merges a pull request as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/review",
+        "submits a review, which can approve, as the person",
+    ),
+    (
         "POST",
         "/api/projects/{id}/trust",
         "grants a project's own settings and scripts authority to run",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/workflows/{run}/approve",
+        "approves a workflow run on the forge",
     ),
     (
         "POST",
@@ -276,6 +342,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/questions/{id}/dismiss",
         "the person's dismissal of an agent's question",
+    ),
+    (
+        "PUT",
+        "/api/settings/preferences",
+        "changes scoped preferences",
     ),
     (
         "PUT",
@@ -309,8 +380,58 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/shell/actions",
+        "runs a native shell action as the person",
+    ),
+    (
+        "POST",
+        "/api/tasks",
+        "creates a scheduled task that runs unattended",
+    ),
+    (
+        "PUT",
+        "/api/tasks/{id}",
+        "edits a scheduled task that runs unattended",
+    ),
+    (
+        "POST",
+        "/api/tasks/{id}/enabled",
+        "turns a scheduled task on or off",
+    ),
+    (
+        "PATCH",
+        "/api/threads/{id}",
+        "can set the thread's permission_mode",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/computer",
+        "computer use on the person's machine",
+    ),
+    (
+        "POST",
         "/api/threads/{id}/console",
         "runs a command as the person in the thread's checkout",
+    ),
+    (
+        "PUT",
+        "/api/threads/{id}/files/content",
+        "writes a file in the person's checkout",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/pulls/{number}/merge",
+        "merges a pull request as the person",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/pulls/{number}/review",
+        "submits a review, which can approve, as the person",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/scripts",
+        "runs a project script as the person",
     ),
     (
         "POST",
@@ -326,6 +447,21 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/updates/apply-all",
         "installs app and engine updates",
+    ),
+    (
+        "POST",
+        "/api/workspace/rollback",
+        "rolls back the skills workspace",
+    ),
+    (
+        "POST",
+        "/api/workspace/setup",
+        "sets up the skills workspace",
+    ),
+    (
+        "POST",
+        "/api/workspace/update",
+        "updates the skills workspace the engines read",
     ),
     (
         "GET",
