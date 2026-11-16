@@ -340,13 +340,25 @@ pub async fn world_tiered(
     engines: &[(&str, bool)],
     tiered: bool,
 ) -> World {
-    world_full(preview, script, engines, tiered, false).await
+    world_full(preview, script, engines, tiered, false, Vec::new()).await
 }
 
 /// `world`, with the restriction on workers left on, as it ships: a start is refused where
 /// none can be applied, and a worker run is handed its rules.
 pub async fn world_confined(script: Script) -> World {
-    world_full(true, script, &[("alpha", false)], false, true).await
+    world_full(true, script, &[("alpha", false)], false, true, Vec::new()).await
+}
+
+pub async fn world_forge(script: Script) -> World {
+    world_full(
+        true,
+        script,
+        &[("alpha", false)],
+        false,
+        false,
+        vec!["ci".into()],
+    )
+    .await
 }
 
 async fn world_full(
@@ -355,23 +367,19 @@ async fn world_full(
     engines: &[(&str, bool)],
     tiered: bool,
     confine: bool,
+    merge_checks: Vec<String>,
 ) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
-    config.engines.claude_program = dir
-        .path()
-        .join("absent-claude")
-        .to_string_lossy()
-        .into_owned();
-    config.engines.codex_program = dir
-        .path()
-        .join("absent-codex")
-        .to_string_lossy()
-        .into_owned();
+    let absent = dir.path().join("absent-native");
+    assert!(absent.is_absolute() && absent.starts_with(dir.path()) && !absent.exists());
+    config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
+    config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    config.crew_merge_required_checks = merge_checks;
     config.crew_confine_workers = confine;
     if tiered {
         let words = crate::crew::TierWords {

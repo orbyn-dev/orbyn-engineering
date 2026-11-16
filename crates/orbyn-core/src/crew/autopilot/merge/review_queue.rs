@@ -42,7 +42,7 @@ pub struct ReviewItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReviewAnswer {
     LooksGood,
-    /// A comment. It is kept; turning it into a fix brief is not built yet.
+    /// The person's comment, admitted as a normal scoped fix after it is stored.
     Comment(String),
     /// Open and verify a revert.
     Revert,
@@ -136,8 +136,24 @@ impl Core {
                     "person_told",
                     &json!({ "about": "comment", "recorded": true }),
                 );
+                drop(_one_at_a_time);
+                let admitted: crate::error::Result<_> = async {
+                    let run = self.store.crew_run(task_id)?.ok_or_else(|| CoreError::NotFound("merge lead".into()))?;
+                    let thread = self.store.thread(&run.lead_thread_id)?;
+                    self.crew_merge_comment_fix(&thread, task_id).await.map_err(|error| CoreError::Invalid(error.message))
+                }.await;
+                if let Err(error) = admitted {
+                    // Admission can include an engine failure. Persist only code-owned text, never its output.
+                    let why = if matches!(error, CoreError::NotFound(_)) {
+                        "Comment fix was not admitted: the merge lead or thread was not found."
+                    } else {
+                        "Comment fix was not admitted: review the task context before retrying."
+                    };
+                    self.store.set_merge_needs_person(task_id, Some(why))?;
+                }
                 Ok(None)
             }
+            ReviewAnswer::Revert if self.store.crew_forge_merge(task_id)?.is_some() => Err(CoreError::Invalid("a forge merge needs a reviewed revert PR; the local compatibility revert cannot change the forge".into())),
             ReviewAnswer::Revert => match revert_merge(self, &record, target, now).await? {
                 Ok(commit) => Ok(Some(commit)),
                 Err(why) => Err(CoreError::Invalid(why)),

@@ -24,6 +24,30 @@ pub async fn create_pull(
     body: &str,
     base: Option<&str>,
 ) -> Result<String> {
+    create_pull_selected(forge, cwd, branch, title, body, base, None).await
+}
+
+pub(crate) async fn create_pull_in(
+    forge: Forge,
+    cwd: &Path,
+    branch: &str,
+    title: &str,
+    body: &str,
+    base: Option<&str>,
+    repository: &str,
+) -> Result<String> {
+    create_pull_selected(forge, cwd, branch, title, body, base, Some(repository)).await
+}
+
+async fn create_pull_selected(
+    forge: Forge,
+    cwd: &Path,
+    branch: &str,
+    title: &str,
+    body: &str,
+    base: Option<&str>,
+    repository: Option<&str>,
+) -> Result<String> {
     check_branch_operand(branch)?;
     if let Some(base) = base {
         check_branch_operand(base)?;
@@ -77,6 +101,16 @@ pub async fn create_pull(
             Forge::Azure | Forge::Bitbucket => "--target-branch",
         });
         args.push(base);
+    }
+    if let Some(repository) = repository {
+        if !matches!(forge, Forge::GitHub | Forge::GitLab) {
+            return Err(forge.unsupported("select a Crew repository"));
+        }
+        args.extend(["--repo", repository]);
+        if forge == Forge::GitLab {
+            // Override GITLAB_HEAD_REPO as well as the target/default repository.
+            args.extend(["--head", repository, "--push=false"]);
+        }
     }
     let output = call(forge, cwd, &args).await?;
     if forge == Forge::Azure {

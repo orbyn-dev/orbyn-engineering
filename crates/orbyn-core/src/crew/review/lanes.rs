@@ -37,56 +37,62 @@ pub(super) enum Run<'a> {
 }
 
 impl Core {
-    /// The commit the finished work was checked at, else the checkout's HEAD.
-    pub(super) async fn review_commit(
+    /// Passed work is pinned by its Result, never later finding/merge Evidence or a mutable checkout.
+    pub(in crate::crew) async fn review_commit(
         &self,
         task: &CrewTask,
         cwd: &Path,
     ) -> Result<String, CrewError> {
-        let at = self
-            .verification_evidence(task)?
-            .last()
-            .map(|e| e.commit.as_str().to_owned())
-            .filter(|c| c != ZERO_COMMIT);
-        if let Some(commit) = at {
-            return Ok(commit);
+        let passed = self
+            .store
+            .crew_results(&task.id)
+            .map_err(internal)?
+            .into_iter()
+            .rfind(|result| result.state == orbyn_contracts::ResultState::Passed);
+        if let Some(result) = passed {
+            self.verification_evidence(task)?;
+            return result
+                .commit
+                .map(|commit| commit.as_str().to_owned())
+                .filter(|commit| commit != ZERO_COMMIT)
+                .ok_or_else(|| invalid("the passed result has no verified commit to review"));
         }
-        let out = crate::source_control::git::git_hardened(cwd, &["rev-parse", "HEAD"])
+        if task.state == "passed" {
+            return Err(invalid("the passed task has no Result to pin its review"));
+        }
+        // A pre-pass caller may inspect HEAD, but it is not represented as verification evidence.
+        let out = crate::source_control::git::git_hardened(cwd, &["rev-parse", "--verify", "HEAD"])
             .await
             .map_err(|e| invalid(e.public_message()))?;
         Ok(crate::source_control::git::text(&out))
     }
 
-    /// The task's own verification Evidence: what the finding checks the core added later are left out, so they change
-    /// neither the count a reviewer is told nor the commit a later lane reads.
-    pub(super) fn verification_evidence(
+    /// Only the last passed Result's check citations are verification of the passed candidate.
+    pub(in crate::crew) fn verification_evidence(
         &self,
         task: &CrewTask,
     ) -> Result<Vec<orbyn_contracts::Evidence>, CrewError> {
-        let cited: std::collections::BTreeSet<String> = self
+        let Some(result) = self
             .store
-            .crew_gates(&task.id)
-            .map_err(internal)?
-            .iter()
-            // A Gate about a finding (its check, or a repro that cleared it), as opposed to one about the task.
-            .filter(|g| {
-                g.stage == orbyn_contracts::GateStage::FindingCheck
-                    || self
-                        .store
-                        .crew_finding(g.subject.as_str())
-                        .ok()
-                        .flatten()
-                        .is_some()
-            })
-            .flat_map(|g| g.evidence.iter().map(|e| e.as_str().to_owned()))
-            .collect();
-        Ok(self
-            .store
-            .crew_evidence(&task.id)
+            .crew_results(&task.id)
             .map_err(internal)?
             .into_iter()
-            .filter(|e| !cited.contains(e.id.as_str()))
-            .collect())
+            .rfind(|result| result.state == orbyn_contracts::ResultState::Passed)
+        else {
+            return Ok(Vec::new());
+        };
+        let commit = result
+            .commit
+            .ok_or_else(|| invalid("the passed result has no verified commit"))?;
+        let all = self.store.crew_evidence(&task.id).map_err(internal)?;
+        if result.checks.is_empty() {
+            return Err(invalid("the passed result cites no verification evidence"));
+        }
+        result.checks.iter().map(|check| {
+            all.iter().find(|evidence| evidence.id == check.evidence && evidence.check == check.check
+                && evidence.outcome == check.outcome && evidence.commit == commit)
+                .cloned().ok_or_else(|| invalid("a passed Result citation is missing or belongs to another commit/check"))
+        }).collect()
     }
 
     /// The paths the work changed since it started (committed or not), or `None` when that cannot be known.

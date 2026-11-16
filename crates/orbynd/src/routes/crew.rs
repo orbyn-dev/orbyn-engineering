@@ -10,10 +10,11 @@
 //!
 //! **Writes only through the core's guards.** The only routes that change anything are in `orbyn_core::crew::changes::STATE_CHANGING`
 //! (the marker Autopilot's N1 refuses by path), each with its guard in [`GUARDS`]. No route takes a command from the client or runs
-//! one, and no route pushes or merges. A revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
+//! one. The typed `/tasks/{id}/merge` route requests Core-owned forge queue/process/watch operations with stored targets and
+//! person-owned startup CI policy; it grants no agent direct merge authority. A local compatibility revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
 //! merge, a commit the crew did not write) in a scratch checkout under the data folder, which is always removed, and then moves the
 //! local branch by compare-and-swap; it is refused when a later merge needs the merge, when the branch is checked out anywhere or
-//! no longer holds the merge, and nothing reaches a remote. The repository and branch come from the stored merge, never from the
+//! no longer holds the merge. It refuses forge records, which need a corrective PR. The repository and branch come from the stored merge, never from the
 //! request, and the request must name the whole merge commit it was shown. Writes are refused for a remote viewer, as the account's
 //! are. The Preview flag is never settable from here.
 //!
@@ -58,6 +59,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/approvals/second-engine/{id}/dismiss",
         "core autopilot_dismiss_second_engine_notice: Preview, durable idempotent dismissal; never approves or retries; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/merge",
+        "core forge queue: stored task/project target, person-owned CI policy, pinned head/base, durable effect reconciliation; person release, local only",
     ),
     (
         "PUT",
@@ -189,6 +195,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
+        .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -227,6 +234,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_board::routes())
         .merge(super::crew_map::routes())
         .layer(from_fn_with_state(state, preview_gate))
+}
+
+async fn merge_request(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<orbyn_core::crew::MergeRequest>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_merge_request(&id, &body).await?))
 }
 
 /// With the flag off the route is not there: the same answer as any other path nothing serves, for every method (a wrong one
