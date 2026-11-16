@@ -219,6 +219,7 @@ pub async fn diff_facts(repo: &Path, branch: &str, candidate: &str) -> Result<(V
             "--no-ext-diff",
             "-z",
             &format!("{branch}...{candidate}"),
+            "--",
         ],
     )
     .await?;
@@ -299,6 +300,68 @@ mod tests {
             ],
         );
         dir
+    }
+
+    #[tokio::test]
+    async fn full_commit_ranges_are_revisions_in_a_long_checkout() {
+        let owned = crate::testing::TempDir::new();
+        let parent_len = owned.path().to_string_lossy().chars().count();
+        let leaf = if cfg!(windows) {
+            // Keep ordinary repository files below MAX_PATH, while a possible
+            // 83-character SHA...SHA pathname crosses it. No global Git settings.
+            assert!(
+                parent_len < 190,
+                "use a shorter owned TEMP for the controlled repro"
+            );
+            "r".repeat(190 - parent_len - 1)
+        } else {
+            "repo".to_owned()
+        };
+        let repo = owned.path().join(leaf);
+        std::fs::create_dir_all(&repo).unwrap();
+        run_git(&repo, &["init", "-q", "-b", "main"]);
+        run_git(&repo, &["config", "core.longpaths", "false"]);
+        std::fs::write(repo.join("feature.txt"), "before\n").unwrap();
+        run_git(&repo, &["add", "feature.txt"]);
+        run_git(
+            &repo,
+            &[
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "before",
+            ],
+        );
+        let before = rev(&repo, "HEAD").await.unwrap();
+        std::fs::write(repo.join("feature.txt"), "after\n").unwrap();
+        run_git(&repo, &["add", "feature.txt"]);
+        run_git(
+            &repo,
+            &[
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "after",
+            ],
+        );
+        let candidate = rev(&repo, "HEAD").await.unwrap();
+        if cfg!(windows) {
+            assert!(
+                repo.to_string_lossy().chars().count() + 1 + before.len() + 3 + candidate.len()
+                    >= 260
+            );
+        }
+        let (paths, lines) = diff_facts(&repo, &before, &candidate).await.unwrap();
+        assert_eq!(paths, ["feature.txt"]);
+        assert_eq!(lines, 2);
     }
 
     #[tokio::test]
