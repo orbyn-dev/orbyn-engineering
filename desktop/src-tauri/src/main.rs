@@ -7,6 +7,7 @@ mod desktop_origin;
 mod image_picker;
 mod links;
 mod menu;
+mod person_key;
 mod presence;
 mod restart_policy;
 mod shell_state;
@@ -552,7 +553,7 @@ fn main() {
         .manage(menu::QuitItem::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
-        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence])
+        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key])
         .setup(|app| {
             core_process::startup_phase("setup-started");
             let handle = app.handle().clone();

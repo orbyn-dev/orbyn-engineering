@@ -8,6 +8,7 @@ fn main() {
         "show_core_log",
         "quit_core",
         "crew_presence",
+        "person_key",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("run tauri-build");

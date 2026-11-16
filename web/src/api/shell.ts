@@ -1,4 +1,5 @@
 import { serviceUrl } from "./origin";
+import { bridge } from "./bridge";
 import { api, authHeaders } from "./client";
 import { SseParser } from "./sse";
 import type { ShellAction, ShellEvent } from "./types";
@@ -19,11 +20,6 @@ export async function readShellStatus(signal?: AbortSignal) {
   attached = status.attached;
   return status;
 }
-
-/** What the desktop shell hands a page: the Tauri bridge the window has. No other module reads it for this. */
-type Bridge = { invoke?: (command: string, args?: Record<string, unknown>) => unknown };
-
-const bridge = (): Bridge | undefined => (window as unknown as { __TAURI_INTERNALS__?: Bridge }).__TAURI_INTERNALS__;
 
 /**
  * True when this page can ask the desktop shell to confirm a person is there: the service says the window belongs

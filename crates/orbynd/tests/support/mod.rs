@@ -48,6 +48,8 @@ pub struct Service {
     pub url: String,
     pub token: String,
     pub access_key: Option<String>,
+    /// The person key from the ready line, which only a service started with `--parent-stdin` prints.
+    pub person_key: Option<String>,
     pub client: reqwest::Client,
     pub child: Child,
     /// Everything after the ready line, for tests of the shell channel.
@@ -68,6 +70,9 @@ impl Service {
             .env("ORBYN_CLAUDE_BIN", FAKE)
             .env("ORBYN_CODEX_BIN", FAKE)
             .env("ORBYN_OFFLINE", "1")
+            // Person routes need the desktop shell's key. Most tests have no shell, so the development
+            // override (debug builds only) is on; a test of the key itself sets it to "0".
+            .env("ORBYN_DEV_DISABLE_PERSON_KEY", "1")
             .current_dir(data.parent().unwrap_or(data))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -91,6 +96,7 @@ impl Service {
             url: start["url"].as_str().unwrap().to_owned(),
             token: start["token"].as_str().unwrap().to_owned(),
             access_key: start["access_key"].as_str().map(str::to_owned),
+            person_key: start["person_key"].as_str().map(str::to_owned),
             client: reqwest::Client::new(),
             child,
             stdout,

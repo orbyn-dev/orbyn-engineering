@@ -7,6 +7,7 @@ mod agent_mcp;
 mod auth;
 mod automations;
 mod checkpoints;
+mod classes;
 mod composer;
 mod crew;
 mod crew_areas;
@@ -47,8 +48,6 @@ mod account_canary_tests;
 mod account_logging_tests;
 #[cfg(test)]
 mod account_tests;
-#[cfg(test)]
-mod classes;
 #[cfg(test)]
 mod crew_areas_tests;
 #[cfg(test)]
@@ -118,6 +117,7 @@ pub fn router(state: AppState) -> Router {
         .merge(stream::routes())
         .merge(terminal::routes())
         .route_layer(from_fn_with_state(state.clone(), note_activity))
+        .route_layer(from_fn_with_state(access.clone(), classes::require_person))
         .route_layer(from_fn_with_state(access.clone(), access::require_auth));
     Router::new()
         .merge(protected)

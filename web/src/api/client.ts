@@ -1,4 +1,5 @@
 import { serviceUrl } from "./origin";
+import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
 import type { SteerResult } from "../generated/SteerResult";
@@ -132,6 +133,8 @@ async function send<T>(
   extra?: Record<string, string>,
 ): Promise<T> {
   let response: Response;
+  // Only a person route asks the shell for the key; every other request is unchanged.
+  const person = await personKeyHeaders(method, path);
   try {
     response = await fetch(serviceUrl(path), {
       method,
@@ -140,6 +143,7 @@ async function send<T>(
       headers: {
         ...authHeaders(),
         ...extra,
+        ...person,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -151,6 +155,8 @@ async function send<T>(
   if (!response.ok) {
     const failure = await failureFrom(response);
     if (response.status === 401) onUnauthorized();
+    // A key the service refused is stale (it restarted); the next request asks the shell again.
+    if (failure.code === "person_required") forgetPersonKey();
     throw failure;
   }
   if (response.status === 204) return undefined as T;
