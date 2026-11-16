@@ -122,13 +122,30 @@ pub fn connect_local(
     dir: &std::path::Path,
     profile: &str,
 ) -> Result<Backend, DeviceError> {
-    use profile::{Kind, Paired};
-    let unavailable = || DeviceError::Server { retryable: true };
-    let file_path = dir.join(format!("dev-keystore-{profile}.json"));
     #[cfg(target_os = "macos")]
     let keychain = Some(KeychainKeyStore::system(profile));
     #[cfg(not(target_os = "macos"))]
     let keychain: Option<KeychainKeyStore> = None;
+    connect_local_with(address, device_name, dir, profile, keychain)
+}
+
+/// [`connect_local`] over the keychain it is given (`None` where there is none), so a test can
+/// stand in for the keychain.
+#[cfg(any(test, debug_assertions))]
+pub(crate) fn connect_local_with(
+    address: &str,
+    device_name: &str,
+    dir: &std::path::Path,
+    profile: &str,
+    keychain: Option<KeychainKeyStore>,
+) -> Result<Backend, DeviceError> {
+    use profile::{Kind, Paired};
+    // Before anything is chosen or recorded: an address that is not loopback decides nothing.
+    if !dc::is_loopback_literal(address) {
+        return Err(DeviceError::Offline);
+    }
+    let unavailable = || DeviceError::Server { retryable: true };
+    let file_path = dir.join(format!("dev-keystore-{profile}.json"));
     let kind = profile::choose(dir, profile, keychain.as_ref(), file_path.exists())
         .map_err(|_| unavailable())?;
     let file = FileKeyStore::new(&file_path);

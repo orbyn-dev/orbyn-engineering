@@ -34,6 +34,9 @@ pub const DEV_SERVICE: &str = "app.orbyn.engineering.account.dev";
 /// Why the keychain did not answer. The difference decides what the app may do: with no keychain at
 /// all there can be no item, so a development build may use its file store; when the keychain is
 /// locked, refused or failing it may hold this profile's identity, so nothing may switch stores.
+// Only the macOS backend makes these; the other platforms have no keychain backend, and the tests make
+// them with a fake.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Failure {
     /// There is no keychain to ask (no default keychain, not available in this session).
@@ -95,14 +98,15 @@ impl SecretBackend for SystemKeychain {
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
 /// The Security framework's status, as the decision it drives: no keychain at all
-/// (`errSecNotAvailable`, `errSecNoSuchKeychain`, `errSecNoDefaultKeychain`), a keychain that
-/// said no for now (`errSecInteractionNotAllowed`, `errSecAuthFailed`, `errSecUserCanceled`,
-/// `errSecInvalidKeychain`'s locked cousin `errSecReadOnly`), or something else.
+/// (`errSecNotAvailable` -25291, `errSecNoSuchKeychain` -25294, `errSecNoDefaultKeychain` -25307), a
+/// keychain that exists and said no for now (`errSecInteractionNotAllowed` -25308,
+/// `errSecAuthFailed` -25293, `errSecUserCanceled` -128, `errSecInvalidKeychain` -25295,
+/// `errSecReadOnly` -25292, `errSecWrPerm` -61), or something else, which may pass.
 #[cfg(target_os = "macos")]
 fn failure_of(code: i32) -> Failure {
     match code {
         -25291 | -25294 | -25307 => Failure::Unusable,
-        -25308 | -25293 | -128 | -25295 | -61 => Failure::Blocked,
+        -25308 | -25293 | -128 | -25295 | -25292 | -61 => Failure::Blocked,
         _ => Failure::Other,
     }
 }
@@ -132,6 +136,8 @@ enum Item {
 }
 
 impl KeychainKeyStore {
+    // Built by `system` (macOS) and by the tests; no other platform has a backend to give it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn new(backend: Arc<dyn SecretBackend>, service: &str, profile: &str) -> Self {
         Self {
             backend,

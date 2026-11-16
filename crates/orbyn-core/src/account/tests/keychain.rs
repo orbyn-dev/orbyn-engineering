@@ -529,3 +529,91 @@ fn the_real_macos_keychain_round_trips_and_deletes() {
     assert!(keys.load().unwrap().is_none());
     keys.clear().unwrap();
 }
+
+// ---- connect_local: the choice, end to end ----
+
+#[tokio::test]
+async fn connect_local_over_a_locked_keychain_is_unavailable_and_makes_no_second_identity() {
+    use crate::account::engine::connect_local_with;
+    let dir = TempDir::new();
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    keys.save(&identity(&label("token"), FIRST)).unwrap();
+    fake.down(Some(Failure::Blocked));
+    let locked = connect_local_with(
+        "http://127.0.0.1:1",
+        "x",
+        dir.path(),
+        "p",
+        Some(keys.clone()),
+    );
+    assert!(matches!(
+        locked,
+        Err(DeviceError::Server { retryable: true })
+    ));
+    assert!(marker_text(dir.path(), "p").is_none());
+    assert!(
+        !dir.path().join("dev-keystore-p.json").exists(),
+        "no file store, no second identity"
+    );
+    // Unlocked again, it is the keychain and the same identity, and a marker says so.
+    fake.down(None);
+    assert!(
+        connect_local_with(
+            "http://127.0.0.1:1",
+            "x",
+            dir.path(),
+            "p",
+            Some(keys.clone())
+        )
+        .is_ok()
+    );
+    assert_eq!(marker_text(dir.path(), "p").as_deref(), Some("keychain"));
+    assert_eq!(keys.load().unwrap().unwrap().device_id, FIRST);
+    // The profile stays on the keychain when it goes away later.
+    fake.down(Some(Failure::Unusable));
+    assert!(connect_local_with("http://127.0.0.1:1", "x", dir.path(), "p", Some(keys)).is_err());
+}
+
+#[tokio::test]
+async fn connect_local_without_a_keychain_uses_the_file_store_and_a_wipe_clears_both() {
+    use crate::account::engine::connect_local_with;
+    let dir = TempDir::new();
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    fake.down(Some(Failure::Unusable));
+    let backend = connect_local_with(
+        "http://127.0.0.1:1",
+        "x",
+        dir.path(),
+        "p",
+        Some(keys.clone()),
+    )
+    .unwrap();
+    assert_eq!(marker_text(dir.path(), "p").as_deref(), Some("file"));
+    // A stray identity in the keychain (it came back) and one in the file store; sign-out clears both.
+    fake.down(None);
+    keys.save(&identity(&label("token"), FIRST)).unwrap();
+    let file = crate::account::engine::FileKeyStore::new(dir.path().join("dev-keystore-p.json"));
+    file.save(&identity(&label("token"), SECOND)).unwrap();
+    let _ = backend.account.sign_out().await;
+    assert!(
+        !dir.path().join("dev-keystore-p.json").exists(),
+        "the file store"
+    );
+    assert!(fake.items().is_empty(), "the keychain too");
+}
+
+#[test]
+fn a_non_loopback_address_builds_nothing_whatever_the_keychain() {
+    use crate::account::engine::connect_local_with;
+    let dir = TempDir::new();
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    let refused = connect_local_with("http://example.com:1", "x", dir.path(), "p", Some(keys));
+    assert!(matches!(refused, Err(DeviceError::Offline)));
+    assert!(
+        marker_text(dir.path(), "p").is_none(),
+        "nothing was chosen or recorded"
+    );
+}
