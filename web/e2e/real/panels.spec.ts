@@ -24,16 +24,27 @@ async function wheelBothEnds(page: Page, target: Locator) {
   }
 }
 
-/** Parks the chat at 600px once a finished turn has folded, which would otherwise move the position set here. */
-async function parkChat(page: Page) {
+/** Resolves once the chat's height and position hold still for 400 ms. */
+async function chatSettled(page: Page) {
+  const state = () => chat(page).evaluate((element) => `${element.scrollHeight}/${element.scrollTop}`);
   await expect(async () => {
-    const height = await chat(page).evaluate((element) => element.scrollHeight);
+    const before = await state();
     await page.waitForTimeout(400);
-    expect(await chat(page).evaluate((element) => element.scrollHeight)).toBe(height);
+    expect(await state()).toBe(before);
   }).toPass();
+}
+
+/**
+ * Parks the chat near 600px. A finished turn folds first, which would move the position set here. Rows that mount at the
+ * new place are then measured, and the view shifts by the difference so the row at its top stays put, so the park only
+ * counts once that has settled too.
+ */
+async function parkChat(page: Page) {
+  await chatSettled(page);
   await chat(page).evaluate((element) => {
     element.scrollTop = 600;
   });
+  await chatSettled(page);
 }
 
 async function expectChatUntouched(page: Page, target: Locator) {
