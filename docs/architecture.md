@@ -2389,6 +2389,18 @@ After a run ends, member tools refuse (H7), but the core can verify again and ad
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
 
+Crew's Git scope and size checks retain Git's ignore rules and disable the untracked cache.
+Unchanged ignored caches do not require broader scope or data removal; ignored new files
+remain an accepted blind spot, pending isolated-checkout work (#436).
+Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
+checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
+other Git reads keep their settings.
+Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
+which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
+A fix's touched-file guard compares the file's exact byte digest with the digest the core
+recorded in its immutable key. Only a stored fix task can run that internal check; it writes
+normal Evidence and cannot clear a finding by itself. Missing or unreadable files decide nothing.
+
 `crew_review` (the lead only) runs finished work through any number of reviewer lanes, also after the task has passed and
 without reopening it. Each lane is a task of its own through the same start path as `crew_start`: a read-only reviewer, routed by
 role `review` and its lane at the lead tier to another vendor than the builder where one is configured, told the work's purpose

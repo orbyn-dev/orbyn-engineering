@@ -51,7 +51,7 @@ impl Core {
         if let Some(commit) = at {
             return Ok(commit);
         }
-        let out = crate::source_control::git::git(cwd, &["rev-parse", "HEAD"])
+        let out = crate::source_control::git::git_hardened(cwd, &["rev-parse", "HEAD"])
             .await
             .map_err(|e| invalid(e.public_message()))?;
         Ok(crate::source_control::git::text(&out))

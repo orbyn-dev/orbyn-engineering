@@ -57,14 +57,20 @@ pub fn key_needles(key: &AnswerKey) -> Vec<String> {
         .collect()
 }
 
-/// The command of every check of 8 or more characters: what a repro check, kept apart from any key, must never share
-/// with a worker either.
+/// Commands and the core's internal fix digest must not reach a worker.
 pub fn check_needles(checks: &[orbyn_contracts::CrewCheck]) -> Vec<String> {
-    checks
+    let mut needles: Vec<String> = checks
         .iter()
         .filter_map(orbyn_contracts::CrewCheck::command)
         .filter(|run| run.len() >= 8)
-        .collect()
+        .collect();
+    needles.extend(checks.iter().filter_map(|check| {
+        (check.params["name"] == "crew-fix-touched")
+            .then(|| check.params["note"].as_str().map(str::to_owned))
+            .flatten()
+            .filter(|digest| !digest.is_empty())
+    }));
+    needles
 }
 
 /// A needle and what it is, for a refusal that names the check and never the text.

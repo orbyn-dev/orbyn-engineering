@@ -431,6 +431,15 @@ merge).
   the fix, and a finding shows as fixed only after such a fix passed and a repro has proved it: a finding confirmed by agreement has no repro, so it keeps
   blocking until the lead supplies one that passes after the fix (or a person clears it). A reviewer's silence clears nothing. One fix per lane and file,
   at most three per task. Reviewers are read-only by bytes, and the second review needs another vendor than the first.
+- **Review integrity** (behaviour changes to know about):
+  - Sparse checkouts are refused when a task starts. Admission and every verification read the Git index, and any
+    `assume-unchanged` or `skip-worktree` entry, including the ones a sparse checkout sets, refuses the start or fails the
+    check, because such an entry can hide an edit from the scope and size checks.
+  - The changed-file check errors when any index flag is set, whether or not the flag was there at the start. A task
+    that began under the old guard (which only failed flags added since the start) now fails verification on an existing
+    flag. Re-run that task after clearing the flag.
+  - The scope, size and changed-path checks read Git without line-ending conversion or the untracked cache, so those settings
+    cannot hide a byte change. Other Git reads keep their normal settings.
 - Not yet: PR review on the forge, the same-engine badge, a per-lane `review` Gate, locked-lane removal by a person.
   `crew_finding` refuses after the reviewer's run has ended (H7); the Gates are core writes and do not.
 
