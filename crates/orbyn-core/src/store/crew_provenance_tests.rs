@@ -10,6 +10,11 @@ use crate::crew::capacity::{Author, AuthoredHunk, Hunk, NOTE_REF, hunks_of, reco
 use crate::crew::fixtures::{git, merge_record};
 use crate::testing::TempDir;
 
+/// File text that must never reach the note, built at run time.
+fn canary() -> String {
+    format!("canary-body-{}", 40 + 2)
+}
+
 fn open() -> (TempDir, Store) {
     let dir = TempDir::new();
     let store = Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
@@ -54,7 +59,7 @@ fn merged_repo(root: &Path) -> (std::path::PathBuf, String, String) {
     std::fs::write(repo.join("a.txt"), a.join("\n") + "\n").unwrap();
     std::fs::write(
         repo.join("new.txt"),
-        "SECRET-CONTENT-1\nSECRET-CONTENT-2\nthree\n",
+        format!("{0}-1\n{0}-2\nthree\n", canary()),
     )
     .unwrap();
     std::fs::remove_file(repo.join("gone.txt")).unwrap();
@@ -230,14 +235,14 @@ async fn a_merge_stores_agent_and_person_rows_and_a_local_note() {
     let note: serde_json::Value = serde_json::from_str(&text).expect("the note is JSON");
     assert_eq!(note["vcs"]["revision"], merge);
     assert_eq!(note["counts"]["hunks"], 7);
-    for secret in [
-        "SECRET-CONTENT",
+    for marker in [
+        canary().as_str(),
         "three",
         "agent work",
         "person fix",
         "changed 2",
     ] {
-        assert!(!text.contains(secret), "the note must not hold {secret}");
+        assert!(!text.contains(marker), "the note must not hold {marker}");
     }
     let paths: Vec<&str> = note["files"]
         .as_array()
