@@ -19,7 +19,7 @@ its own. Code, not a model, decides whether a finding is true.
 
 - **Lanes.** The lead names lanes (any lowercase word); repo rules add more, read from `.orbyn/crew.json` **at the commit the work
   started from**, so a worker cannot edit a lane away; a broken file is an error. Each lane is a task with a `review` brief, routed by role
-  `review` and its lane at the lead tier, to another vendor than the builder where one is configured. It has no write lease and posts
+  `review` and its lane at the worker tier (lead tier for the `security` lane, a locked lane, the merge-owed `correctness` lane and a lane only the builder's vendor can review), to another vendor than the builder where one is configured. It has no write lease and posts
   only to the lead. It is told the work's purpose, the commit and how many checks passed (the task's own, not a finding check's), never a check,
   its command or the builder's transcript.
 - **Read-only is checked by bytes.** Every file already changed when the review begins (the work under review, in the usual case)

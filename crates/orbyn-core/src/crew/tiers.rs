@@ -72,7 +72,7 @@ pub(super) fn acp_model<'a>(
     tier: RouteTier,
     named: Option<&str>,
     image: bool,
-) -> Result<(&'a ModelInfo, RouteTier), Unfit> {
+) -> Result<(&'a ModelInfo, Option<RouteTier>), Unfit> {
     debug_assert_eq!(view.tier, EngineTier::Acp);
     let default = explicit_default(models);
     let model = match named {
@@ -90,7 +90,8 @@ pub(super) fn acp_model<'a>(
     if tier != RouteTier::Worker && !assigned.is_some_and(|a| a.tier == tier) {
         return Err(Unfit::Tier(tier));
     }
-    Ok((model, assigned.map_or(RouteTier::Worker, |a| a.tier)))
+    // `None` is an engine the person has not assigned a tier: a builder only.
+    Ok((model, assigned.map(|a| a.tier)))
 }
 
 impl RouterConfig {
@@ -113,11 +114,14 @@ pub fn role_for_kind(kind: BriefKind) -> RouteRole {
     }
 }
 
-/// Reviewers, the finding check and the second key are lead tier (the harness routes
-/// `reviewer`, `security` and `lead` to the lead tier); builders are worker tier.
-pub fn role_tier(role: RouteRole) -> RouteTier {
+/// The tier a role needs. Builders and review lanes are worker tier; the code-review role, the security
+/// review, the finding check and the second key are lead tier (the harness routes `reviewer`, `security` and
+/// `lead` to the lead tier). A review lane is the one cheaper reviewer: it defaults to the worker tier unless
+/// `lead_only` says it is not to be lowered (see [`lane_is_lead_only`]).
+pub fn role_tier(role: RouteRole, lead_only: bool) -> RouteTier {
     match role {
         RouteRole::Builder => RouteTier::Worker,
+        RouteRole::Review if !lead_only => RouteTier::Worker,
         RouteRole::Scout => RouteTier::Scout,
         RouteRole::CodeReview
         | RouteRole::SecurityReview
@@ -125,6 +129,12 @@ pub fn role_tier(role: RouteRole) -> RouteTier {
         | RouteRole::SecondKey
         | RouteRole::Review => RouteTier::Lead,
     }
+}
+
+/// A review lane that is never lowered below the lead tier: the security lane (which a high-risk diff owes) and any
+/// lane a repository rule locks. A free-form lane named `secrets` is not the security lane.
+pub fn lane_is_lead_only(lane: &str, locked: bool) -> bool {
+    locked || lane == crate::crew::SECURITY_LANE
 }
 
 /// A role that checks someone else's work, for the other-vendor rule.

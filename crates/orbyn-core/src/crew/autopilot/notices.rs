@@ -36,6 +36,7 @@ impl Core {
             needs: vec![],
             image: false,
             tier: RouteTier::Lead,
+            reviewer: false,
         };
         let config = self.crew_router_config();
         machine

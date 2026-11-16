@@ -232,12 +232,26 @@ impl Core {
         // nothing about classes. A start there is refused: it cannot read the rules, and the checks it needs need a commit too.
         let (base, classes) = self.crew_path_classes(&thread, &brief, false).await;
         let classes = base.is_some().then_some(classes);
+        // A dry run has no task, so a merge may be owed the lane: it keeps the lead tier like a real launch with no merge entry.
+        let lane_keeps_lead = match &lane {
+            Some(lane) => {
+                self.lane_keeps_lead(
+                    std::path::Path::new(&thread.cwd),
+                    base.as_deref(),
+                    None,
+                    lane,
+                )
+                .await
+            }
+            None => false,
+        };
         let input = RouteInput {
             brief: &brief,
             run_id: CrewId::new(crate::util::new_id()).map_err(invalid)?,
             created_at: stamper.now.clone(),
             role,
             lane,
+            lane_keeps_lead,
             author_engine,
             default_engine: machine.default_engine.clone(),
             classes: classes.as_ref(),

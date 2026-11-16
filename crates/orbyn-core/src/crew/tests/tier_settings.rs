@@ -15,6 +15,7 @@ fn lead() -> Want {
         needs: Vec::new(),
         image: false,
         tier: RouteTier::Lead,
+        reviewer: false,
     }
 }
 

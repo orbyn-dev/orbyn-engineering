@@ -14,6 +14,8 @@ mod fix;
 mod gates;
 mod lanes;
 pub(in crate::crew) mod publication;
+#[cfg(test)]
+pub(in crate::crew) use lanes::lane_locked;
 mod rules;
 mod status;
 
