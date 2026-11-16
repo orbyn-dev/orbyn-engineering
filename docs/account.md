@@ -638,8 +638,7 @@ Where the Engine's API differs from the traits the screens and the worker were w
   `app.orbyn.engineering.account.dev`. A failed delete blanks the item and returns the failure, and the next load,
   save or clear finishes it. What waits for a Developer ID (condition 5) is the access list that trusts only `orbynd`
   and the release service name. `FileKeyStore` (`account/engine/keystore.rs`) is the development fallback and the test
-  store; it exists in debug builds and tests only, so a release has no file key store. `connect_local` picks the keychain when it answers and the file store
-  otherwise, in debug builds only; nothing selects it while sign-in is off. `connect` keeps the keys and the snapshot in memory;
+  store; it exists in debug builds and tests only, so a release has no file key store. which store a profile uses is decided once and recorded in a marker in its data folder (`account-keys-<profile>.store`). With no marker the file store is chosen only when there is no keychain to ask (so no item can exist) or the profile already has a file store; a keychain that is locked, refused or failing is "unavailable, retry", never a reason to fall back, because a fallback would make a second identity and leave the keychain's to return on the next run. With a marker the choice is final. A wipe clears both stores, and the failure of the one in use is returned. `connect_local` does this in debug builds only; nothing selects it while sign-in is off. `connect` keeps the keys and the snapshot in memory;
   `connect_sealed` uses the file pair. Sign-out, removing this device, `Unauthorized` and `AccountGone` call one wipe
   (`Shared::forget`): snapshot file, then keys, token, vault key and anchor.
 - **Invite.** The invite step calls `check_invite` (`POST /v1/invites/check`): a good code spends nothing, an unknown, used

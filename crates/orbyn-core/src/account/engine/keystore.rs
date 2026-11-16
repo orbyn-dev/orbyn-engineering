@@ -39,13 +39,13 @@ pub(crate) trait Vault: Send + Sync {
     fn set_anchor(&self, anchor: Anchor) -> Result<(), dc::StoreError>;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub(super) struct DiskSession {
     token: String,
     expires_at: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub(super) struct DiskIdentity {
     device_keys: String,
     account_id: String,
@@ -215,17 +215,27 @@ pub(super) fn disk_of(identity: &dc::StoredIdentity, anchor: Option<DiskAnchor>)
     }
 }
 
-pub(super) fn identity_of(id: DiskIdentity) -> Result<dc::StoredIdentity, dc::StoreError> {
+pub(super) fn identity_of(mut id: DiskIdentity) -> Result<dc::StoredIdentity, dc::StoreError> {
+    // The encoded copies of the secrets are overwritten as soon as they are decoded.
+    let device_keys = decode::<64>(&id.device_keys);
+    let vault_key = decode::<32>(&id.vault_key);
+    zeroize::Zeroize::zeroize(&mut id.device_keys);
+    zeroize::Zeroize::zeroize(&mut id.vault_key);
+    let session = id.session.take().map(|mut session| {
+        let token = dc::Zeroizing::new(std::mem::take(&mut session.token));
+        zeroize::Zeroize::zeroize(&mut session.token);
+        dc::StoredSession {
+            token,
+            expires_at: session.expires_at,
+        }
+    });
     Ok(dc::StoredIdentity {
-        device_keys: decode::<64>(&id.device_keys)?,
+        device_keys: device_keys?,
         account_id: id.account_id,
         device_id: id.device_id,
         email: id.email,
-        session: id.session.map(|session| dc::StoredSession {
-            token: dc::Zeroizing::new(session.token),
-            expires_at: session.expires_at,
-        }),
-        vault_key: decode::<32>(&id.vault_key)?,
+        session,
+        vault_key: vault_key?,
     })
 }
 
@@ -319,8 +329,10 @@ impl dc::KeyStore for FileKeyStore {
 impl Vault for FileKeyStore {
     fn vault_key(&self) -> Option<dc::Zeroizing<[u8; 32]>> {
         let _held = self.guard();
-        let disk = self.read().ok()??;
-        decode::<32>(&disk.identity.vault_key).ok()
+        let mut disk = self.read().ok()??;
+        let key = decode::<32>(&disk.identity.vault_key).ok();
+        wipe_disk(&mut disk);
+        key
     }
 
     fn anchor(&self) -> Option<Anchor> {

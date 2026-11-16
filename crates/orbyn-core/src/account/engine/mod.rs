@@ -30,6 +30,8 @@ mod keychain;
 #[cfg(any(test, debug_assertions))]
 mod keystore;
 #[cfg(any(test, debug_assertions))]
+mod profile;
+#[cfg(any(test, debug_assertions))]
 mod sealed;
 mod shared;
 mod snapshot;
@@ -39,16 +41,18 @@ mod zones;
 pub(crate) use errors::map_for_test;
 
 pub use account::EngineAccount;
-#[cfg(test)]
-pub(crate) use keychain::SecretBackend;
 #[cfg(all(target_os = "macos", any(test, debug_assertions)))]
 pub use keychain::SystemKeychain;
 #[cfg(any(test, debug_assertions))]
 pub use keychain::{DEV_SERVICE, KeychainKeyStore};
+#[cfg(test)]
+pub(crate) use keychain::{Failure, Probe, SecretBackend};
 #[cfg(any(test, debug_assertions))]
 pub use keystore::FileKeyStore;
 #[cfg(test)]
 pub(crate) use keystore::{Anchor, Vault};
+#[cfg(test)]
+pub(crate) use profile::{Kind, Paired, choose};
 #[cfg(test)]
 pub(crate) use sealed::{PURPOSE, Refusal, SealedSnapshots, VERSION, bound_for};
 pub use snapshot::{MemorySnapshots, SnapshotStore};
@@ -105,10 +109,12 @@ pub fn connect_sealed(
     connect_sealed_with(address, device_name, dir, profile, keys)
 }
 
-/// The keys live in the macOS login keychain when it answers, and in the development file
-/// store when it does not (an unsigned or headless build, a locked keychain). The fallback
-/// exists in debug builds and tests only; a release has neither the file store nor this
-/// function, so a release with no keychain has no sign-in. Real sign-in stays off.
+/// Which store a profile's keys live in is decided once and recorded (`profile::choose`): the macOS
+/// login keychain when it answers, the development file store when there is no keychain to ask or
+/// the profile already has one. A keychain that is locked, refused or failing is
+/// "unavailable, retry", never a reason to fall back: a fallback would make a second identity and
+/// leave the keychain's to return on the next run. A wipe clears both stores. The file store is
+/// debug-build only, so a release has neither it nor this function. Real sign-in stays off.
 #[cfg(any(test, debug_assertions))]
 pub fn connect_local(
     address: &str,
@@ -116,15 +122,41 @@ pub fn connect_local(
     dir: &std::path::Path,
     profile: &str,
 ) -> Result<Backend, DeviceError> {
+    use profile::{Kind, Paired};
+    let unavailable = || DeviceError::Server { retryable: true };
+    let file_path = dir.join(format!("dev-keystore-{profile}.json"));
     #[cfg(target_os = "macos")]
-    {
-        let keys = KeychainKeyStore::system(profile);
-        if keys.available() {
-            return connect_sealed_with(address, device_name, dir, profile, keys);
+    let keychain = Some(KeychainKeyStore::system(profile));
+    #[cfg(not(target_os = "macos"))]
+    let keychain: Option<KeychainKeyStore> = None;
+    let kind = profile::choose(dir, profile, keychain.as_ref(), file_path.exists())
+        .map_err(|_| unavailable())?;
+    let file = FileKeyStore::new(&file_path);
+    match kind {
+        Kind::File => {
+            let other = keychain.clone();
+            let keys = Paired {
+                primary: file,
+                other: Arc::new(move || {
+                    if let Some(keychain) = &other {
+                        let _ = dc::KeyStore::clear(keychain);
+                    }
+                }),
+            };
+            connect_sealed_with(address, device_name, dir, profile, keys)
         }
-        tracing::warn!("the keychain did not answer; the development file key store is used");
+        Kind::Keychain => {
+            let keychain = keychain.ok_or_else(unavailable)?;
+            let other = file.clone();
+            let keys = Paired {
+                primary: keychain,
+                other: Arc::new(move || {
+                    let _ = dc::KeyStore::clear(&other);
+                }),
+            };
+            connect_sealed_with(address, device_name, dir, profile, keys)
+        }
     }
-    connect_sealed(address, device_name, dir, profile)
 }
 
 /// The sealed snapshot beside `dir`, the keys wherever `keys` keeps them.

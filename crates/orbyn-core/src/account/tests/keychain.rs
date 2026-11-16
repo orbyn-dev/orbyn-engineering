@@ -16,33 +16,40 @@ use super::*;
 use crate::account::DeviceApi as _;
 use crate::account::api::AccountApi;
 use crate::account::engine::{
-    Anchor, DEV_SERVICE, EngineAccount, EngineZones, KeychainKeyStore, SealedSnapshots,
-    SecretBackend, SnapshotStore, Vault, parts_with,
+    Anchor, DEV_SERVICE, EngineAccount, EngineZones, Failure, KeychainKeyStore, Kind, Paired,
+    Probe, SealedSnapshots, SecretBackend, SnapshotStore, Vault, choose, parts_with,
 };
 
 const FIRST: &str = "0a0a0a0a-0000-4000-8000-0000000000a1";
 const SECOND: &str = "0a0a0a0a-0000-4000-8000-0000000000b2";
 
-/// A keychain in memory. `fail_delete` makes every delete fail; `fail_set` every write.
+/// A keychain in memory. `fail_delete` makes every delete fail; `fail_set` every write; `down` makes
+/// every call fail the way a locked, refused or absent keychain does.
 #[derive(Default)]
 struct Fake {
     items: Mutex<BTreeMap<(String, String), Vec<u8>>>,
     fail_delete: AtomicBool,
     fail_set: AtomicBool,
+    down: Mutex<Option<Failure>>,
 }
 
 impl Fake {
     fn items(&self) -> std::sync::MutexGuard<'_, BTreeMap<(String, String), Vec<u8>>> {
         self.items.lock().unwrap()
     }
+
+    fn down(&self, failure: Option<Failure>) {
+        *self.down.lock().unwrap() = failure;
+    }
+
+    fn check(&self) -> Result<(), Failure> {
+        self.down.lock().unwrap().map_or(Ok(()), Err)
+    }
 }
 
 impl SecretBackend for Fake {
-    fn get(
-        &self,
-        service: &str,
-        account: &str,
-    ) -> Result<Option<dc::Zeroizing<Vec<u8>>>, dc::StoreError> {
+    fn get(&self, service: &str, account: &str) -> Result<Option<dc::Zeroizing<Vec<u8>>>, Failure> {
+        self.check()?;
         Ok(self
             .items()
             .get(&(service.to_owned(), account.to_owned()))
@@ -50,18 +57,20 @@ impl SecretBackend for Fake {
             .map(dc::Zeroizing::new))
     }
 
-    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), dc::StoreError> {
+    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), Failure> {
+        self.check()?;
         if self.fail_set.load(Ordering::SeqCst) {
-            return Err(dc::StoreError);
+            return Err(Failure::Other);
         }
         self.items()
             .insert((service.to_owned(), account.to_owned()), bytes.to_vec());
         Ok(())
     }
 
-    fn delete(&self, service: &str, account: &str) -> Result<(), dc::StoreError> {
+    fn delete(&self, service: &str, account: &str) -> Result<(), Failure> {
+        self.check()?;
         if self.fail_delete.load(Ordering::SeqCst) {
-            return Err(dc::StoreError);
+            return Err(Failure::Other);
         }
         self.items()
             .remove(&(service.to_owned(), account.to_owned()));
@@ -214,13 +223,163 @@ fn nothing_prints_a_key_a_token_or_the_record() {
 }
 
 #[test]
-fn the_probe_tells_a_working_keychain_from_a_broken_one_and_leaves_nothing() {
+fn the_probe_tells_a_working_keychain_a_missing_one_and_one_that_said_no() {
     let fake = Arc::new(Fake::default());
     let keys = store(&fake, "p");
-    assert!(keys.available());
-    assert!(fake.items().is_empty());
+    assert_eq!(keys.probe(), Probe::Works);
+    assert!(fake.items().is_empty(), "the probe leaves nothing");
+    fake.down(Some(Failure::Unusable));
+    assert_eq!(keys.probe(), Probe::Unusable);
+    // Locked, interaction not allowed, a refused prompt: the keychain exists and may hold the identity.
+    fake.down(Some(Failure::Blocked));
+    assert_eq!(keys.probe(), Probe::Blocked);
+    fake.down(Some(Failure::Other));
+    assert_eq!(
+        keys.probe(),
+        Probe::Blocked,
+        "a transient error is not an absent keychain"
+    );
+    fake.down(None);
     fake.fail_set.store(true, Ordering::SeqCst);
-    assert!(!keys.available());
+    assert_eq!(keys.probe(), Probe::Blocked);
+}
+
+#[test]
+fn a_probe_that_could_not_delete_itself_is_overwritten_and_removed_by_the_next() {
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    fake.fail_delete.store(true, Ordering::SeqCst);
+    assert_eq!(keys.probe(), Probe::Works);
+    assert_eq!(fake.items().len(), 1, "a stale probe item");
+    fake.fail_delete.store(false, Ordering::SeqCst);
+    assert_eq!(keys.probe(), Probe::Works);
+    assert!(fake.items().is_empty(), "the next probe swept it");
+}
+
+// ---- which store a profile uses ----
+
+fn marker_text(dir: &std::path::Path, profile: &str) -> Option<String> {
+    std::fs::read_to_string(dir.join(format!("account-keys-{profile}.store"))).ok()
+}
+
+#[test]
+fn a_keychain_that_is_locked_or_failing_never_switches_the_profile_to_the_file_store() {
+    for failure in [Failure::Blocked, Failure::Other] {
+        let dir = TempDir::new();
+        let fake = Arc::new(Fake::default());
+        let keys = store(&fake, "p");
+        // The profile already has an identity in the keychain from an earlier run.
+        keys.save(&identity(&label("token"), FIRST)).unwrap();
+        fake.down(Some(failure));
+        // Locked or failing: an error to retry, no marker, no choice, no second identity.
+        assert!(
+            choose(dir.path(), "p", Some(&keys), false).is_err(),
+            "{failure:?}"
+        );
+        assert!(marker_text(dir.path(), "p").is_none());
+        assert!(!dir.path().join("dev-keystore-p.json").exists());
+        // Unlocked again: it is the keychain, and it is the same identity.
+        fake.down(None);
+        assert_eq!(
+            choose(dir.path(), "p", Some(&keys), false),
+            Ok(Kind::Keychain)
+        );
+        assert_eq!(keys.load().unwrap().unwrap().device_id, FIRST);
+    }
+}
+
+#[test]
+fn only_a_missing_keychain_lets_a_new_profile_use_the_file_store() {
+    let dir = TempDir::new();
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    fake.down(Some(Failure::Unusable));
+    assert_eq!(choose(dir.path(), "p", Some(&keys), false), Ok(Kind::File));
+    assert_eq!(marker_text(dir.path(), "p").as_deref(), Some("file"));
+    // No keychain backend at all (not macOS) is the same.
+    assert_eq!(choose(dir.path(), "q", None, false), Ok(Kind::File));
+    // A file store already on disk from before the marker existed is kept, and recorded.
+    fake.down(None);
+    assert_eq!(choose(dir.path(), "r", Some(&keys), true), Ok(Kind::File));
+    assert_eq!(marker_text(dir.path(), "r").as_deref(), Some("file"));
+    // A working keychain is the choice for a new profile, and recorded.
+    assert_eq!(
+        choose(dir.path(), "s", Some(&keys), false),
+        Ok(Kind::Keychain)
+    );
+    assert_eq!(marker_text(dir.path(), "s").as_deref(), Some("keychain"));
+}
+
+#[test]
+fn the_marker_is_final_in_both_directions() {
+    let dir = TempDir::new();
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    assert_eq!(
+        choose(dir.path(), "p", Some(&keys), false),
+        Ok(Kind::Keychain)
+    );
+    // The keychain goes away, even for good: the profile is unavailable, not moved to a file.
+    for failure in [Failure::Unusable, Failure::Blocked, Failure::Other] {
+        fake.down(Some(failure));
+        assert!(
+            choose(dir.path(), "p", Some(&keys), false).is_err(),
+            "{failure:?}"
+        );
+        assert!(
+            choose(dir.path(), "p", Some(&keys), true).is_err(),
+            "{failure:?}"
+        );
+    }
+    assert_eq!(marker_text(dir.path(), "p").as_deref(), Some("keychain"));
+    // A file profile stays a file profile even when a keychain starts answering.
+    fake.down(None);
+    assert_eq!(choose(dir.path(), "f", None, false), Ok(Kind::File));
+    assert_eq!(choose(dir.path(), "f", Some(&keys), false), Ok(Kind::File));
+    // A marker that says something else is refused.
+    std::fs::write(dir.path().join("account-keys-x.store"), "somewhere").unwrap();
+    assert!(choose(dir.path(), "x", Some(&keys), false).is_err());
+}
+
+#[test]
+fn two_identities_for_one_profile_are_refused_not_picked() {
+    let dir = TempDir::new();
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    keys.save(&identity(&label("token"), FIRST)).unwrap();
+    assert!(choose(dir.path(), "p", Some(&keys), true).is_err());
+    assert!(marker_text(dir.path(), "p").is_none());
+}
+
+#[test]
+fn a_wipe_clears_both_stores_and_returns_the_failure_of_the_one_in_use() {
+    let fake = Arc::new(Fake::default());
+    let keys = store(&fake, "p");
+    keys.save(&identity(&label("token"), FIRST)).unwrap();
+    let dir = TempDir::new();
+    let file = crate::account::engine::FileKeyStore::new(dir.path().join("k.json"));
+    file.save(&identity(&label("token"), SECOND)).unwrap();
+    let other = file.clone();
+    let paired = Paired {
+        primary: keys.clone(),
+        other: Arc::new(move || {
+            let _ = other.clear();
+        }),
+    };
+    paired.clear().unwrap();
+    assert!(fake.items().is_empty(), "the one in use");
+    assert!(!dir.path().join("k.json").exists(), "the other");
+
+    // The one in use failing is returned, and the other is still cleared.
+    keys.save(&identity(&label("token"), FIRST)).unwrap();
+    file.save(&identity(&label("token"), SECOND)).unwrap();
+    fake.fail_delete.store(true, Ordering::SeqCst);
+    assert!(paired.clear().is_err());
+    assert!(!dir.path().join("k.json").exists());
+    assert!(
+        fake.items().values().all(Vec::is_empty),
+        "blanked, no usable key"
+    );
 }
 
 // ---- the adapter: every wipe path deletes the item ----
@@ -356,7 +515,7 @@ async fn a_failed_keychain_delete_blocks_the_client_and_the_retry_wipes() {
 fn the_real_macos_keychain_round_trips_and_deletes() {
     let profile = label("smoke");
     let keys = KeychainKeyStore::system(&profile);
-    assert!(keys.available());
+    assert_eq!(keys.probe(), Probe::Works);
     let token = label("token");
     keys.save(&identity(&token, FIRST)).unwrap();
     assert_eq!(keys.load().unwrap().unwrap().device_id, FIRST);

@@ -31,15 +31,34 @@ use super::keystore::{
 /// one, so neither can read the other's items.
 pub const DEV_SERVICE: &str = "app.orbyn.engineering.account.dev";
 
+/// Why the keychain did not answer. The difference decides what the app may do: with no keychain at
+/// all there can be no item, so a development build may use its file store; when the keychain is
+/// locked, refused or failing it may hold this profile's identity, so nothing may switch stores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Failure {
+    /// There is no keychain to ask (no default keychain, not available in this session).
+    Unusable,
+    /// There is one and it said no for now: locked, interaction not allowed, a refused prompt.
+    Blocked,
+    /// Anything else, which may pass.
+    Other,
+}
+
 /// Where the secrets are kept. `get` answers `None` for no item; `delete` of no item is fine.
 pub(crate) trait SecretBackend: Send + Sync {
-    fn get(
-        &self,
-        service: &str,
-        account: &str,
-    ) -> Result<Option<dc::Zeroizing<Vec<u8>>>, dc::StoreError>;
-    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), dc::StoreError>;
-    fn delete(&self, service: &str, account: &str) -> Result<(), dc::StoreError>;
+    fn get(&self, service: &str, account: &str) -> Result<Option<dc::Zeroizing<Vec<u8>>>, Failure>;
+    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), Failure>;
+    fn delete(&self, service: &str, account: &str) -> Result<(), Failure>;
+}
+
+/// What the probe found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Probe {
+    Works,
+    /// No keychain exists here: no item can exist either.
+    Unusable,
+    /// A keychain exists and did not answer now. It may hold this profile's identity.
+    Blocked,
 }
 
 /// The macOS login keychain.
@@ -48,37 +67,44 @@ pub struct SystemKeychain;
 
 #[cfg(target_os = "macos")]
 impl SecretBackend for SystemKeychain {
-    fn get(
-        &self,
-        service: &str,
-        account: &str,
-    ) -> Result<Option<dc::Zeroizing<Vec<u8>>>, dc::StoreError> {
+    fn get(&self, service: &str, account: &str) -> Result<Option<dc::Zeroizing<Vec<u8>>>, Failure> {
         use security_framework::passwords::{PasswordOptions, generic_password};
         match generic_password(PasswordOptions::new_generic_password(service, account)) {
             Ok(bytes) => Ok(Some(dc::Zeroizing::new(bytes))),
-            Err(error) if error.code() == security_framework_sys_not_found() => Ok(None),
-            Err(_) => Err(dc::StoreError),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(error) => Err(failure_of(error.code())),
         }
     }
 
-    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), dc::StoreError> {
+    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), Failure> {
         security_framework::passwords::set_generic_password(service, account, bytes)
-            .map_err(|_| dc::StoreError)
+            .map_err(|error| failure_of(error.code()))
     }
 
-    fn delete(&self, service: &str, account: &str) -> Result<(), dc::StoreError> {
+    fn delete(&self, service: &str, account: &str) -> Result<(), Failure> {
         match security_framework::passwords::delete_generic_password(service, account) {
             Ok(()) => Ok(()),
-            Err(error) if error.code() == security_framework_sys_not_found() => Ok(()),
-            Err(_) => Err(dc::StoreError),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            Err(error) => Err(failure_of(error.code())),
         }
     }
 }
 
 /// `errSecItemNotFound`.
 #[cfg(target_os = "macos")]
-const fn security_framework_sys_not_found() -> i32 {
-    -25300
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+/// The Security framework's status, as the decision it drives: no keychain at all
+/// (`errSecNotAvailable`, `errSecNoSuchKeychain`, `errSecNoDefaultKeychain`), a keychain that
+/// said no for now (`errSecInteractionNotAllowed`, `errSecAuthFailed`, `errSecUserCanceled`,
+/// `errSecInvalidKeychain`'s locked cousin `errSecReadOnly`), or something else.
+#[cfg(target_os = "macos")]
+fn failure_of(code: i32) -> Failure {
+    match code {
+        -25291 | -25294 | -25307 => Failure::Unusable,
+        -25308 | -25293 | -128 | -25295 | -61 => Failure::Blocked,
+        _ => Failure::Other,
+    }
 }
 
 /// The keychain-backed store for one profile.
@@ -122,17 +148,28 @@ impl KeychainKeyStore {
         Self::new(Arc::new(SystemKeychain), DEV_SERVICE, profile)
     }
 
-    /// Whether the keychain answers: a throwaway item is written, read back and deleted. A
-    /// locked or missing keychain, or a user who refuses the prompt, is `false`.
-    pub fn available(&self) -> bool {
-        let probe = format!("{}-probe-{}", self.account, crate::util::new_id());
-        let ok = self
+    /// Whether the keychain answers: one throwaway item is written, read back and deleted. Its
+    /// name is fixed per profile, so a probe that could not delete itself is overwritten and
+    /// deleted by the next one. A missing keychain and a keychain that said no are different
+    /// answers: only the first may let a development build use its file store.
+    pub(crate) fn probe(&self) -> Probe {
+        let probe = format!("{}-probe", self.account);
+        let answer = self
             .backend
             .set(&self.service, &probe, b"probe")
-            .and_then(|()| self.backend.get(&self.service, &probe))
-            .is_ok_and(|read| read.is_some_and(|read| read.as_slice() == b"probe"));
+            .and_then(|()| self.backend.get(&self.service, &probe));
         let _ = self.backend.delete(&self.service, &probe);
-        ok
+        match answer {
+            Ok(Some(read)) if read.as_slice() == b"probe" => Probe::Works,
+            Err(Failure::Unusable) => Probe::Unusable,
+            // A locked keychain, a refused prompt, a read that did not match, a transient error.
+            _ => Probe::Blocked,
+        }
+    }
+
+    /// Whether an item for this profile exists. `Err` when the keychain cannot say.
+    pub(crate) fn holds_identity(&self) -> Result<bool, Failure> {
+        Ok(self.backend.get(&self.service, &self.account)?.is_some())
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -142,7 +179,11 @@ impl KeychainKeyStore {
     }
 
     fn read(&self) -> Result<Item, dc::StoreError> {
-        match self.backend.get(&self.service, &self.account)? {
+        match self
+            .backend
+            .get(&self.service, &self.account)
+            .map_err(|_| dc::StoreError)?
+        {
             None => Ok(Item::Absent),
             Some(bytes) if bytes.is_empty() => Ok(Item::Tombstone),
             Some(bytes) => parse_disk(&bytes).map(|disk| Item::Record(Box::new(disk))),
@@ -151,12 +192,17 @@ impl KeychainKeyStore {
 
     /// Finishes a wipe that was owed: the item goes, or the failure is returned.
     fn finish_wipe(&self) -> Result<(), dc::StoreError> {
-        self.backend.delete(&self.service, &self.account)
+        self.backend
+            .delete(&self.service, &self.account)
+            .map_err(|_| dc::StoreError)
     }
 
     fn write(&self, disk: &mut super::keystore::Disk) -> Result<(), dc::StoreError> {
         let bytes = encode_disk(disk)?;
-        let written = self.backend.set(&self.service, &self.account, &bytes);
+        let written = self
+            .backend
+            .set(&self.service, &self.account, &bytes)
+            .map_err(|_| dc::StoreError);
         wipe_disk(disk);
         written
     }
@@ -173,7 +219,11 @@ impl dc::KeyStore for KeychainKeyStore {
                 self.finish_wipe()?;
                 Ok(None)
             }
-            Item::Record(disk) => identity_of(disk.identity).map(Some),
+            Item::Record(mut disk) => {
+                let identity = identity_of(std::mem::take(&mut disk.identity));
+                wipe_disk(&mut disk);
+                identity.map(Some)
+            }
         }
     }
 
@@ -214,7 +264,11 @@ impl Vault for KeychainKeyStore {
     fn vault_key(&self) -> Option<dc::Zeroizing<[u8; 32]>> {
         let _held = self.guard();
         match self.read().ok()? {
-            Item::Record(disk) => identity_of(disk.identity).ok().map(|id| id.vault_key),
+            Item::Record(mut disk) => {
+                let key = identity_of(std::mem::take(&mut disk.identity)).ok();
+                wipe_disk(&mut disk);
+                key.map(|id| id.vault_key)
+            }
             _ => None,
         }
     }
@@ -222,7 +276,11 @@ impl Vault for KeychainKeyStore {
     fn anchor(&self) -> Option<Anchor> {
         let _held = self.guard();
         match self.read().ok()? {
-            Item::Record(disk) => anchor_of(&disk.anchor?),
+            Item::Record(mut disk) => {
+                let anchor = disk.anchor.as_ref().and_then(anchor_of);
+                wipe_disk(&mut disk);
+                anchor
+            }
             _ => None,
         }
     }
