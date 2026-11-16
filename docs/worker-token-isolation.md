@@ -18,7 +18,6 @@ the explorer's file actions. Today two flags stand in for a fix:
 - Explorer file actions (#601) answer only under the Preview flag (`routes/explorer.rs`, `preview_gate`; core refuses
   too in `project/explorer/write.rs`).
 - Crew routes and tools are Preview-only (`docs/crew.md`, slice 4f).
-
 ## What exists today
 
 - **macOS Crew workers** start under `sandbox-exec` with the data folder denied (`host::confine`, #527). So a confined
@@ -39,7 +38,6 @@ the explorer's file actions. Today two flags stand in for a fix:
   another program prompt. That needs a stable Developer ID identity; CI ad-hoc signs today, so the list would change
   every build ([account threat model, control 1](account-threat-model.md)). Main has only the development key store.
 - On Windows, Credential Manager and DPAPI open to any process of the same user. No gain.
-- The CLI and browser mode still need the credential, so the keychain adds prompts for the person's own tools.
 
 **(b) Per-worker scoped token** (task-scoped, small route allowlist, no person routes, revoked at the end).
 - Alone it protects nothing: the worker already holds, or can read, the full token, and it needs no HTTP API (it uses the
@@ -89,7 +87,6 @@ The final list is an open question below.
   service's own argv for the key: none.
 - **Class table.** A test walks the router and fails for a route with no class; another fails if a handler listed `Person`
   is reachable without the key. A mutation (check removed) must fail both.
-- **Confined macOS worker** tests stay as they are; they now cover the store and the answer key, not the token.
 
 ## Platform notes
 
@@ -112,7 +109,6 @@ actions, as it already does for approve-once.
 
 - Explorer file actions: the Preview gate and the core check (step 3). This is the one that goes first.
 - The #441 wording on Crew's Preview flag (step 4). The flag itself stays while Crew is unfinished.
-- Not removable by this: `CODEX_WORKERS_ALLOWED`, the Windows worker refusal, `crew_confine_workers`.
 
 ## Open questions for the owner
 
