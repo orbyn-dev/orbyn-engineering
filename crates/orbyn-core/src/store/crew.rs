@@ -8,10 +8,23 @@ use orbyn_contracts::{
     Report, RouteDecision, WorkerObject, canonical_json,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
+use serde::{Deserialize, Serialize};
 
-use super::Store;
+use super::{AuditRecord, Store, insert_audit};
 use crate::error::{CoreError, Result};
 use crate::util::now;
+
+/// The default branch last accepted for a project: the ref's short name and the commit it pointed at. Kept in the existing
+/// `project_preferences` table under a key no setting reads, so a task compares the next ref to the one it accepted earlier.
+/// A person's confirm or reset moves or clears it; nothing else does.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CrewPinnedRef {
+    pub reference: String,
+    pub commit: String,
+}
+
+/// The preference key holding [`CrewPinnedRef`]. Not a settings key: the settings catalog does not read it.
+const PINNED_REF_KEY: &str = "crew_pinned_ref";
 
 /// One task: a brief, its key and everything the run produced. Keyed by the brief's id.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -461,4 +474,85 @@ impl Store {
             })
             .collect())
     }
+
+    /// The default branch last accepted for a project. A value that no longer parses is a broken row, never "nothing
+    /// remembered": the caller fails closed on the error.
+    pub fn crew_pinned_ref(&self, project_id: &str) -> Result<Option<CrewPinnedRef>> {
+        let value: Option<String> = self
+            .reader()
+            .query_row(
+                "SELECT value FROM project_preferences WHERE project_id = ?1 AND key = ?2",
+                params![project_id, PINNED_REF_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        value
+            .map(|text| serde_json::from_str(&text).map_err(CoreError::from))
+            .transpose()
+    }
+
+    /// Moves the remembered pin to the commit a task just accepted. No audit row: every routing already records the
+    /// pinned ref and commit it read in its `route_class` row.
+    pub fn set_crew_pinned_ref(&self, project_id: &str, pin: &CrewPinnedRef) -> Result<()> {
+        self.commit(|tx, _| write_pinned_ref(tx, project_id, pin))
+    }
+
+    /// A person's confirmation of a new default branch: the pin moves and the choice is audited in one transaction.
+    pub fn confirm_crew_pinned_ref(
+        &self,
+        project_id: &str,
+        pin: &CrewPinnedRef,
+        actor: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            audit_pin(tx, project_id, "crew.pinned_ref.confirm", actor, Some(pin))?;
+            write_pinned_ref(tx, project_id, pin)
+        })
+    }
+
+    /// A person's reset: nothing is remembered until a later task reads a ref. The choice is audited in one transaction.
+    pub fn reset_crew_pinned_ref(&self, project_id: &str, actor: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            audit_pin(tx, project_id, "crew.pinned_ref.reset", actor, None)?;
+            tx.execute(
+                "DELETE FROM project_preferences WHERE project_id = ?1 AND key = ?2",
+                params![project_id, PINNED_REF_KEY],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+fn write_pinned_ref(tx: &Transaction<'_>, project_id: &str, pin: &CrewPinnedRef) -> Result<()> {
+    tx.execute(
+        "INSERT INTO project_preferences (project_id, key, value) VALUES (?1, ?2, ?3)
+         ON CONFLICT (project_id, key) DO UPDATE SET value = excluded.value",
+        params![project_id, PINNED_REF_KEY, serde_json::to_string(pin)?],
+    )?;
+    Ok(())
+}
+
+fn audit_pin(
+    tx: &Transaction<'_>,
+    project_id: &str,
+    action: &str,
+    actor: &str,
+    pin: Option<&CrewPinnedRef>,
+) -> Result<i64> {
+    insert_audit(
+        tx,
+        &AuditRecord {
+            actor: actor.to_owned(),
+            action: action.to_owned(),
+            target: project_id.to_owned(),
+            decision: None,
+            source: "user".to_owned(),
+            thread_id: None,
+            run_id: None,
+            detail: pin.map_or(
+                serde_json::Value::Null,
+                |pin| serde_json::json!({ "reference": pin.reference, "commit": pin.commit }),
+            ),
+        },
+    )
 }

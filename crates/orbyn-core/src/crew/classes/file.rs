@@ -159,19 +159,44 @@ pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
     None
 }
 
+/// What a checkout's default branch looks like: the ref and the file at it, a git setup that makes it unreadable, or nothing
+/// to read at all.
+#[derive(Clone, Debug)]
+pub enum Pinned {
+    /// No default-branch ref, and no `origin` remote: HEAD alone is read, as before.
+    Absent,
+    /// The default branch and the file at it.
+    Read(PinnedRef, ClassFile),
+    /// `origin` is configured but its default branch cannot be read. The file blocks every engine; a local branch never
+    /// stands in for a ref an agent could have deleted.
+    Unreadable(PinnedRef, ClassFile),
+}
+
+impl Pinned {
+    /// The ref and the file, for a view that shows the default branch's copy whether or not it is readable.
+    pub fn parts(self) -> Option<(PinnedRef, ClassFile)> {
+        match self {
+            Self::Absent => None,
+            Self::Read(pin, file) | Self::Unreadable(pin, file) => Some((pin, file)),
+        }
+    }
+}
+
 /// The default branch and the file at it. When `origin` is a configured remote and none of its branches has been fetched, the
 /// default branch cannot be read: that is a file that cannot be trusted, never a repository with no default branch. With no
 /// `origin` remote and no default-branch ref there is nothing to read, and `None` leaves HEAD alone.
-pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
+pub async fn read_pinned(root: &Path) -> Pinned {
     let url = git(root, &["config", "--get", "remote.origin.url"])
         .await
         .map(|out| text(&out))
         .unwrap_or_default();
     let pin = pinned_ref(root).await;
     if url.is_empty() {
-        let pin = pin?;
+        let Some(pin) = pin else {
+            return Pinned::Absent;
+        };
         let file = read_class_file(root, Some(&pin.commit)).await;
-        return Some((pin, file));
+        return Pinned::Read(pin, file);
     }
     let fetched = git(root, &["for-each-ref", "--count=1", "refs/remotes/origin/"])
         .await
@@ -181,7 +206,7 @@ pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
     // local branch would stand in for a ref an agent could have deleted.
     if let Some(pin) = pin.filter(|p| fetched && p.name.starts_with("origin/")) {
         let file = read_class_file(root, Some(&pin.commit)).await;
-        return Some((pin, file));
+        return Pinned::Read(pin, file);
     }
     let pin = PinnedRef {
         name: "origin".to_owned(),
@@ -192,7 +217,7 @@ pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
     } else {
         "the project has a remote named origin but none of its branches has been fetched, so the default branch cannot be read. Run `git fetch origin`; for a new remote with no branches yet, push the default branch first"
     };
-    Some((pin, ClassFile::refused(why.to_owned())))
+    Pinned::Unreadable(pin, ClassFile::refused(why.to_owned()))
 }
 
 fn is_object_id(text: &str) -> bool {

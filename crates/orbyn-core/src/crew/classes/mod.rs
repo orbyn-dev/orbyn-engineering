@@ -21,6 +21,7 @@ mod api;
 mod classify;
 mod file;
 mod glob;
+mod pin;
 mod record;
 
 pub(in crate::crew) use api::engine_words;
@@ -41,11 +42,13 @@ use crate::app::Core;
 
 impl Core {
     /// The commit a task starts from and the classes of its brief's files at that commit. The commit is read once, so the
-    /// classes and the worker's base are the same one.
+    /// classes and the worker's base are the same one. `record` moves the project's remembered default-branch pin when the ref
+    /// is the remembered commit or a descendant of it; a dry run passes `false` and changes nothing.
     pub(super) async fn crew_path_classes(
         &self,
         lead: &Thread,
         brief: &Brief,
+        record: bool,
     ) -> (Option<String>, PathClasses) {
         let root = std::path::Path::new(&lead.cwd);
         let base = base_commit(root).await;
@@ -56,10 +59,57 @@ impl Core {
             .map(|grant| grant.path.as_str().to_owned())
             .collect();
         let mut classes = classify(root, base.as_deref(), file, &patterns).await;
-        if let Some((pin, there)) = read_pinned(root).await {
-            // The default branch's rules are matched against the task's own tree, so leases and symlinks list the same files.
-            let side = classify(root, base.as_deref(), there, &patterns).await;
-            classes = classes.with_pinned(pin.name, pin.commit, side);
+        let stored = match self.store.crew_pinned_ref(&lead.project_id) {
+            Ok(pin) => pin,
+            Err(error) => {
+                return (
+                    base,
+                    classes.with_pinned_blocked(
+                        "default branch".to_owned(),
+                        "none".to_owned(),
+                        format!(
+                            "the default branch Orbyn remembered cannot be read ({}), so this task cannot tell whether a ref was weakened",
+                            error.public_message()
+                        ),
+                    ),
+                );
+            }
+        };
+        match pin::decide(root, stored.as_ref()).await {
+            pin::Decision::None => {}
+            pin::Decision::Read { pin, file, write } => {
+                if record
+                    && let Some(next) = write
+                    && let Err(error) = self.store.set_crew_pinned_ref(&lead.project_id, &next)
+                {
+                    return (
+                        base,
+                        classes.with_pinned_blocked(
+                            pin.name,
+                            pin.commit,
+                            format!(
+                                "the default branch's commit cannot be remembered ({}), so this task cannot tell whether the next one would read a looser ref",
+                                error.public_message()
+                            ),
+                        ),
+                    );
+                }
+                // The default branch's rules are matched against the task's own tree, so leases and symlinks list the same files.
+                let side = classify(root, base.as_deref(), file, &patterns).await;
+                classes = classes.with_pinned(pin.name, pin.commit, side);
+            }
+            pin::Decision::Unreadable { pin, file } => {
+                let side = classify(root, base.as_deref(), file, &patterns).await;
+                classes = classes.with_pinned(pin.name, pin.commit, side);
+            }
+            pin::Decision::Blocked {
+                name,
+                commit,
+                reason,
+                ..
+            } => {
+                classes = classes.with_pinned_blocked(name, commit, reason);
+            }
         }
         (base, classes)
     }

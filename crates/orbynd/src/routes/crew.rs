@@ -149,6 +149,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/tasks/{id}/rerun-checks",
         "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/confirm",
+        "core crew_confirm_pinned_ref: the default branch must still be the whole commit the person saw, else stale; the pin and its audit row in one transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/reset",
+        "core crew_reset_pinned_ref: clears only this project's remembered default branch, audited in the same transaction; a later task reads the ref the checkout has then; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -176,6 +186,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
+        .route(
+            "/api/crew/projects/{id}/pinned-ref/confirm",
+            post(pinned_ref_confirm),
+        )
+        .route(
+            "/api/crew/projects/{id}/pinned-ref/reset",
+            post(pinned_ref_reset),
+        )
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
@@ -206,6 +224,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background/{id}/runs", get(background_runs))
         .route("/api/crew/guard/targets", get(guard_targets))
         .route("/api/crew/guard/test", get(guard_test))
+        .route("/api/crew/projects/{id}/pinned-ref", get(pinned_ref))
         .route("/api/crew/classes", get(classes))
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
@@ -328,6 +347,36 @@ async fn route_view(
     Path(task_id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_route_view(&task_id)?))
+}
+
+/// The default branch this project remembers, the one the checkout reads now, and whether a start would accept it. Read-only.
+async fn pinned_ref(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_pinned_ref_view(&project_id).await?))
+}
+
+/// A person accepts the default branch's new commit, naming the whole commit the view showed.
+async fn pinned_ref_confirm(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewPinnedRefConfirm>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .crew_confirm_pinned_ref(&project_id, &body.commit)
+            .await?,
+    ))
+}
+
+/// A person forgets the remembered default branch; the next start reads the ref the checkout has then.
+async fn pinned_ref_reset(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_reset_pinned_ref(&project_id).await?))
 }
 
 fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {

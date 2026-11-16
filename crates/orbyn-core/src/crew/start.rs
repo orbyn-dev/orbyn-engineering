@@ -255,7 +255,7 @@ impl Core {
 
         // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
         // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
-        let (base, classes) = self.crew_path_classes(thread, &brief).await;
+        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let machine = self
             .crew_machine(Some(&thread.project_id))
             .await

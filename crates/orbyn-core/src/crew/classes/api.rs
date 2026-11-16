@@ -178,7 +178,7 @@ impl Core {
         let views = self.class_machine(&target.project_id).await;
         let differs = working_copy_differs(root, &file).await;
         let mut notes = file.notes.clone();
-        if let Some((pin, there)) = read_pinned(root).await {
+        if let Some((pin, there)) = read_pinned(root).await.parts() {
             let both = PathClasses::of_file(file.clone()).with_pinned(
                 pin.name,
                 pin.commit,
@@ -229,7 +229,7 @@ impl Core {
         let base = base_commit(root).await;
         let file = read_class_file(root, base.as_deref()).await;
         let views = self.class_machine(&target.project_id).await;
-        let pinned = read_pinned(root).await;
+        let pinned = read_pinned(root).await.parts();
         let mut results = Vec::new();
         for path in paths {
             let problem = if path.chars().count() > PATH_MAX {
