@@ -21,6 +21,11 @@ impl Core {
         action: &ExplorerFileAction,
         actor: &str,
     ) -> Result<()> {
+        // The route is behind the Preview flag until #441 is fixed; the core fails closed too, so
+        // a second caller cannot reach it with the flag off.
+        if !self.config.crew_preview {
+            return Err(CoreError::NotFound("file actions".into()));
+        }
         let _writer = self.explorer.writer.clone().lock_owned().await;
         let audit = AuditRecord {
             actor: actor.to_owned(),
@@ -269,10 +274,23 @@ fn apply(guard: &Guard, action: &ExplorerFileAction) -> Result<()> {
             if dest.path.starts_with(&source.path) {
                 return Err(invalid("A folder cannot move inside itself."));
             }
+            // Where names fold case, `Dir` into `dir/x` is the same folder under another
+            // spelling; the rename refuses it and the answer must say why.
+            let inside_by_case = dest
+                .path
+                .to_string_lossy()
+                .to_lowercase()
+                .starts_with(&source.path.to_string_lossy().to_lowercase());
             movable_tree(guard, &source.path)?;
             source.confirm(guard)?;
             dest.confirm(guard)?;
-            platform::move_entry(&source, &dest)
+            platform::move_entry(&source, &dest).map_err(|error| {
+                if inside_by_case && error.kind() == std::io::ErrorKind::Unsupported {
+                    std::io::Error::from(std::io::ErrorKind::InvalidInput)
+                } else {
+                    error
+                }
+            })
         }
         ExplorerFileAction::Delete { .. } => {
             let directory = no_link(&source.path)?.is_dir();
@@ -284,6 +302,7 @@ fn apply(guard: &Guard, action: &ExplorerFileAction) -> Result<()> {
         std::io::ErrorKind::AlreadyExists => invalid("The destination already exists."),
         std::io::ErrorKind::NotFound => CoreError::NotFound("file or folder".into()),
         std::io::ErrorKind::DirectoryNotEmpty => invalid("Only empty folders can be deleted."),
+        std::io::ErrorKind::InvalidInput => invalid("A folder cannot move inside itself."),
         std::io::ErrorKind::Unsupported => {
             invalid("This folder's file system cannot move files safely.")
         }

@@ -1636,10 +1636,14 @@ a person's create, move (including rename), or delete request without a thread.
   attempt precedes effects, and the outcome records allow or deny. No file contents
   or arbitrary request paths enter those audit rows. Reads retain their existing
   thread-relative read-only display policy.
-- **Person only.** The route is a protected one: it needs the per-launch service token, which no
-  engine, worker or crew child receives (`child_env` removes it), and its handler is the only
-  caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a second
-  one). No agent tool, crew task or MCP tool reaches it, and there is no thread-relative form.
+- **Person only, and gated.** The route is protected like every token route, and its handler is the
+  only caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a
+  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. That is not enough on its
+  own: until #441 is fixed, `orbynd` writes the per-launch service token to the data folder and the
+  `orbyn` CLI reads it, so an engine or crew worker that can read the data folder can call this
+  route as the person. For that reason it is behind the Preview flag Crew uses
+  (`ORBYN_CREW_PREVIEW`, off by default): with the flag off the route answers `404` like a path
+  that does not exist, and Core refuses too. The gate switches on when #441 is fixed.
 - **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
   really is before any check, for reads and writes alike, so a project registered under another
   spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside

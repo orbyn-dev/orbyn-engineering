@@ -306,6 +306,7 @@ async fn application_data_is_not_a_mutation_destination() {
     std::fs::create_dir_all(&root).unwrap();
     let mut config = CoreConfig::new(root.join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
+    config.crew_preview = true;
     let core = Core::open(config).unwrap();
     core.workspace
         .setup(WorkspaceSetup {
@@ -603,10 +604,11 @@ async fn a_case_only_rename_is_refused_as_an_existing_destination_where_case_fol
     }
 }
 
-/// Only the route handler may reach `explorer_file_action`: a worker, an agent tool or a
-/// crew path that called it would write as the person. Every engine runs without the service
-/// token (`child_env` scrubs it, see its tests) and the route is a protected one
-/// (`orbynd/tests/routes.json` and the 401 test in `orbynd/tests/explorer.rs`).
+/// Only the route handler may reach `explorer_file_action`, so no tool, crew task or engine
+/// feature inside Orbyn calls it. That is all this checks: an agent that reads the service token
+/// from the data folder and calls the HTTP route is a separate hole (#441). The route is a
+/// protected one like every token route (`orbynd/tests/routes.json`, the 401 test in
+/// `orbynd/tests/explorer.rs`) and is behind the Preview flag until #441 is fixed.
 #[test]
 fn no_engine_agent_or_crew_code_calls_the_file_action() {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -668,4 +670,60 @@ fn a_file_system_without_exclusive_rename_gets_a_clear_error_and_no_fallback() {
     }
     let other = unsupported(std::io::Error::from_raw_os_error(libc::EEXIST));
     assert_eq!(other.raw_os_error(), Some(libc::EEXIST));
+}
+
+#[tokio::test]
+async fn the_core_refuses_file_actions_while_the_preview_flag_is_off() {
+    let dir = TempDir::new();
+    let mut config = crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    assert!(!config.crew_preview, "off by default");
+    let off = Core::open(config).unwrap();
+    let result = off
+        .explorer_file_action(
+            "no-such-project",
+            "wt-0000000000000000",
+            &Action::CreateFile { path: "x".into() },
+            "test",
+        )
+        .await;
+    assert!(matches!(result, Err(CoreError::NotFound(_))), "{result:?}");
+    // Nothing was audited as an attempt: the action never started.
+    assert!(
+        off.store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .all(|row| row.action != "explorer.file_action")
+    );
+}
+
+/// Where names fold case, a folder moved into itself under another spelling is refused by the
+/// file system; the answer names that, not an unsupported file system.
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test]
+async fn moving_a_folder_into_itself_by_another_spelling_says_so() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    std::fs::create_dir(root.join("Dir")).unwrap();
+    if !root.join("dIR").exists() {
+        return; // a case-sensitive volume: the spellings are two folders
+    }
+    let moved = act(
+        &core,
+        &project,
+        &id,
+        Action::Move {
+            path: "Dir".into(),
+            destination: "dIR/inner".into(),
+        },
+    )
+    .await;
+    match moved {
+        Err(CoreError::Invalid(message)) => assert!(message.contains("inside itself"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(root.join("Dir").is_dir());
 }

@@ -31,9 +31,25 @@ struct Fixture {
     worktree: String,
 }
 
+/// File actions are behind the Preview flag until #441 is fixed, so these tests turn it on.
 async fn fixture() -> Fixture {
+    fixture_with(true).await
+}
+
+async fn fixture_with(preview: bool) -> Fixture {
     let dir = TempDir::new();
-    let service = Service::start(&dir.path().join("data"), Options::default());
+    let env = if preview {
+        vec![("ORBYN_CREW_PREVIEW".to_owned(), "1".to_owned())]
+    } else {
+        Vec::new()
+    };
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            env,
+            ..Options::default()
+        },
+    );
     let folder = dir.path().join("app");
     repo(&folder);
     let project = service.project(&folder, true).await;
@@ -401,4 +417,39 @@ async fn file_actions_refuse_a_newly_locked_worktree() {
         .unwrap();
     assert_eq!(response.status(), 403);
     assert!(linked.join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn file_actions_are_not_there_without_the_preview_flag_and_reads_still_are() {
+    let off = fixture_with(false).await;
+    let route = format!("{}/file-actions", base(&off));
+    for action in [
+        serde_json::json!({"action":"create_file", "path":"made.txt"}),
+        serde_json::json!({"action":"delete", "path":"a.txt"}),
+    ] {
+        let response = off.service.post(&route).json(&action).send().await.unwrap();
+        assert_eq!(response.status(), 404, "{action}");
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["code"], "not_found", "{body}");
+    }
+    // A wrong method is not there either, and nothing changed on disk.
+    let get_route = off.service.get(&route).send().await.unwrap();
+    assert_eq!(get_route.status(), 404);
+    assert!(!off._dir.path().join("app/made.txt").exists());
+    assert!(off._dir.path().join("app/a.txt").exists());
+    // The reads are not gated.
+    let (status, tree) = get(&off.service, &format!("{}/tree", base(&off))).await;
+    assert_eq!(status, 200, "{tree}");
+
+    // With the flag on the same request is a real answer.
+    let on = fixture_with(true).await;
+    let made = on
+        .service
+        .post(&format!("{}/file-actions", base(&on)))
+        .json(&serde_json::json!({"action":"create_file", "path":"made.txt"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(made.status(), 204);
+    assert!(on._dir.path().join("app/made.txt").exists());
 }
