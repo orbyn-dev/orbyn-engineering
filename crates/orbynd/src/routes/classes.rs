@@ -245,6 +245,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/projects/{id}/pinned-ref/confirm",
+        "Crew write behind local_only: the person confirms the project's default-branch commit that class rules are read from",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/reset",
+        "Crew write behind local_only: the person clears the project's remembered default-branch commit",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "Crew write behind local_only: the person stops a task",
     ),

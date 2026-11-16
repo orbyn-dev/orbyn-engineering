@@ -51,7 +51,7 @@ mod tests;
 mod threads;
 
 pub use changes::{KeptChange, Snapshot};
-pub use crew::CrewTask;
+pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};

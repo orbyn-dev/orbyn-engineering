@@ -971,8 +971,16 @@ recognise is not seen; a bare `git checkout <rev>` names no path and is not held
 default-branch ref resolves.** A local branch no longer stands in once `origin` is configured, because an agent could have deleted the ref and left the local branch to read. Two cases, with their fixes, which a person
 runs (N7 holds them for an agent): nothing of `origin` is fetched, so run `git fetch origin` (for a new remote with no branches yet, push the default branch first); or `origin` has branches but none is
 `main`, `master`, `trunk` or the one `origin/HEAD` names, so run `git remote set-head origin --auto` (or `git fetch origin <default>`). **A brand-new project whose remote is empty is blocked until its first push (fail closed, by
-design).** With no `origin` remote at all, the local default branch is the ref read, and with none of those either HEAD alone is read, as before; Orbyn does not remember the last pinned commit between tasks, so a repository
-with no `origin` that loses its local default branch is read at HEAD alone again (follow-up #574). **A person or an agent that can push to the
+design).** **Each project remembers the default-branch ref and commit its last started task read** (in the existing
+`project_preferences` table, key `crew_pinned_ref`; no migration). A start that reads the same commit or a descendant is accepted and moves the memory
+to the new tip, so a later rewind is compared with the newest accepted commit, never an older one. A remembered ref that is gone (the remote removed, the
+ref deleted, or only a local branch left where a remote-tracking ref was) and any move that does not descend from it (a rewritten branch) block every engine
+under the rule name `default branch changed`, with the ref and both commits in plain words, until a person decides. `GET /api/crew/projects/{id}/pinned-ref` shows what the checkout reads now, what the project
+remembered and whether a start would accept it; `POST .../pinned-ref/confirm` names the whole commit the view showed (a ref that moved again is refused as
+stale) and `POST .../pinned-ref/reset` forgets it, after which the next start reads the ref the checkout has then. Both writes are local-only, need no
+agent tool, refuse a remote viewer, and write `crew.pinned_ref.confirm` / `crew.pinned_ref.reset` audit rows in the same transaction; every `route_class` row
+already records the pinned ref and commit it read. With no `origin` remote at all, the local default branch is the ref read, and with none of those either HEAD alone is read, as before; a remembered
+pin from an earlier remote still blocks until a person confirms the local branch or resets it. **A person or an agent that can push to the
 base branch can still change the rules for later tasks.** A rule that is tighter at HEAD applies at once, because an engine must be allowed by both; a loosening takes effect only once it is on the default branch's tip. `review` lanes, `checks`, `required` and `allowed_hosts` are still read at the base commit only. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
 counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
 that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
