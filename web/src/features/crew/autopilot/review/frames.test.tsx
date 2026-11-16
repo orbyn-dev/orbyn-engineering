@@ -13,7 +13,7 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "risk-high-on": ["Waiting for you before the merge.", "Autopilot is On for this repo, and this change is High risk.", "Review", "Send back to Build", "Switch to Full", "Add reviewer", "Round 1", "Inbox · 3", "Planned: after the autonomy-by-area slice", "Revert rate"],
   "risk-raised": ["Raised from Medium", "Same engine as author · lead tier", "Sign in to another engine"],
   "risk-board-card": ["Low · Full", "High · On", "Waiting for you before the merge (On)"],
-  "risk-demoted": ["Area auth is on On: 2 reverts in 14 days · 9 merges", "Where the area mode comes from"],
+  "risk-demoted": ["Area web/auth is on On: 2 reverts in 14 days · 9 merges", "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.", "docs/guides follows your ceiling, Full.", "Planned", "Where the area mode comes from (Planned)", "Override… (its row in Settings › Crew is Planned)"],
   "mergequeue-main": ["Re-checking combined", "Merging is code", "How the queue works"],
   "mergequeue-forecast": ["Conflict forecast", "Run them in order, the rename, then the move", "Why ordered, not parallel"],
   "mergequeue-removed": ["Left the queue", "What happens next"],
