@@ -230,7 +230,7 @@ impl Core {
         // The dry run reads the repository's data classes the way a start does, so it never says yes to what a start refuses.
         // A thread with no commit (a fresh `git init`, or a folder that is not a repository) has no file to read, so the dry run says
         // nothing about classes. A start there is refused: it cannot read the rules, and the checks it needs need a commit too.
-        let (base, classes) = self.crew_path_classes(&thread, &brief).await;
+        let (base, classes) = self.crew_path_classes(&thread, &brief, false).await;
         let classes = base.is_some().then_some(classes);
         let input = RouteInput {
             brief: &brief,

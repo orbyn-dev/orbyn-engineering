@@ -224,19 +224,15 @@ export function RiskBoardScreen() {
             {column.cards.map((card) => (
               <article key={card.title + column.label} className={`crew-tcard${card.needs ? " crew-tcard-needs" : ""}`}>
                 <div className="crew-tk">
-                  <b>implement</b> · Lead · now
+                  <b>implement</b>
+                  <span>updated now</span>
                 </div>
                 <div className="crew-tt">{card.title}</div>
                 <div className="crew-te">
                   <b>{card.engine}</b>
                   <span>{card.model}</span>
                 </div>
-                <div className="crew-tck">
-                  <div className="crew-bar" aria-hidden>
-                    <i style={{ width: "100%" }} />
-                  </div>
-                  {card.checks}
-                </div>
+                <div className="crew-tck">{card.checks}</div>
                 <div className="crew-tln">{card.paths}</div>
                 {card.needs ? <div className="crew-tln crew-tln-amber">{card.line}</div> : null}
                 <div className="crew-tln">

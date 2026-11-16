@@ -59,7 +59,7 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Usage, the Limits tab.** `usage-claude-windows`, `usage-claude-windows-unavailable`, `usage-claude-windows-loading`, `usage-claude-windows-narrow`, `usage-claude-windows-near`, `usage-claude-windows-reached`, `usage-claude-windows-signedout`, `usage-providers`, `usage-providers-error`
 
-**Crew, Autopilot by area** (Crew Designs v39). `autonomy-table`, `autonomy-tripped`, `autonomy-demoted-ceiling-lowered`, `autonomy-recovering`, `autonomy-criteria-met`, `autonomy-restored`, `autonomy-lowdata`, `autonomy-override`, `autonomy-override-warning`, `autonomy-override-off-warning`, `autonomy-thresholds`, `autonomy-narrow`
+**Crew, Autopilot by area** (Crew Designs v39). `autonomy-table`, `autonomy-tripped`, `autonomy-demoted-ceiling-lowered`, `autonomy-recovering`, `autonomy-criteria-met`, `autonomy-restored`, `autonomy-lowdata`, `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, `autonomy-override`, `autonomy-override-warning`, `autonomy-override-off-warning`, `autonomy-thresholds`, `autonomy-narrow`
 
 **Crew, the guard, path classes and routing** (Crew Designs v39). `guard-held`, `guard-denied-no-second`, `guard-denied`, `guard-approved`, `guard-approved-person`, `guard-approved-person-unknown`, `guard-settings`, `classes-list`, `classes-error`, `classes-test`, `classes-edit`, `classes-narrow`, `route-log-none`, `route-log`
 

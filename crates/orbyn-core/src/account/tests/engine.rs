@@ -635,3 +635,145 @@ async fn a_peer_record_with_never_sync_keys_is_refused_on_apply_through_the_engi
     }
     assert!(record.contains_key("preview_appearance"));
 }
+
+/// The smallest engine a thread can be created on: it never runs.
+struct Idle;
+
+#[async_trait::async_trait]
+impl crate::agents::driver::EngineDriver for Idle {
+    fn descriptor(&self) -> crate::agents::driver::EngineDescriptor {
+        crate::agents::driver::EngineDescriptor {
+            id: "idle".into(),
+            name: "Idle".into(),
+            tier: orbyn_contracts::EngineTier::Terminal,
+            capabilities: orbyn_contracts::EngineCapabilities {
+                streaming: true,
+                approvals: true,
+                resume: false,
+                mcp: false,
+                sandbox: false,
+                managed: true,
+                skill_delivery: Vec::new(),
+                goal_control: false,
+                decline_feedback: false,
+                permission_modes: orbyn_contracts::PermissionMode::ALL.to_vec(),
+            },
+        }
+    }
+
+    async fn probe(&self) -> crate::agents::driver::EngineProbe {
+        crate::agents::driver::EngineProbe {
+            path: Some("/bin/sh".into()),
+            version: Some("1.0.0".into()),
+            ..Default::default()
+        }
+    }
+
+    async fn start_run(
+        &self,
+        _spec: crate::agents::driver::RunSpec,
+        _events: tokio::sync::mpsc::Sender<crate::agents::driver::EngineEvent>,
+    ) -> crate::error::Result<crate::agents::driver::RunHandle> {
+        Err(crate::error::CoreError::Invalid("never runs".into()))
+    }
+}
+
+fn new_thread() -> orbyn_contracts::CreateThread {
+    orbyn_contracts::CreateThread {
+        project_id: None,
+        engine: "idle".into(),
+        model: None,
+        title: None,
+        worktree: None,
+        skill_profile: None,
+        base_branch: None,
+        effort: None,
+        options: std::collections::BTreeMap::new(),
+    }
+}
+
+/// A permissive default permission mode and a default engine, sent by a peer in a record made without the settings type, are
+/// received and not applied: this device's own mode and engine stay as they were, a thread started afterwards opens in this
+/// device's mode (and in its new one when the person changes it, never in the peer's), and nothing from the record is stored
+/// or queued. The values are chosen at run time so a mutation that reads them from the record cannot match by luck.
+#[tokio::test]
+async fn a_synced_permission_mode_never_becomes_this_devices_default_or_a_new_threads_mode() {
+    use orbyn_contracts::PermissionMode;
+    let dir = TempDir::new();
+    let (a, _b, _server, _workers, b_zones) = trusted_pair_parts(&dir).await;
+    a.engines.register(Arc::new(Idle));
+    a.setup_workspace(orbyn_contracts::WorkspaceSetup {
+        url: None,
+        adopt_path: Some(
+            crate::testing::library(&dir.path().join("lib"))
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    })
+    .await
+    .unwrap();
+    // This device's own choices, away from the defaults so a change would show.
+    set(&a, "default_permission_mode", json!("auto_edits"));
+    set(&a, "default_engine", json!("idle"));
+    until(&a, online).await;
+    let mine = |core: &Core| {
+        (
+            stored(core, "default_permission_mode"),
+            stored(core, "default_engine"),
+        )
+    };
+    assert_eq!(mine(&a), (json!("auto_edits"), json!("idle")));
+    let before = globals(&a);
+
+    let now = crate::util::unix_now_ms();
+    b_zones
+        .peer_stage_raw(
+            &[
+                ("default_permission_mode".to_owned(), json!("full_access")),
+                ("default_engine".to_owned(), json!("peer-engine")),
+                ("preview_appearance".to_owned(), json!("dark")),
+            ],
+            u64::try_from(now + 60_000).unwrap(),
+            u64::try_from(now).unwrap(),
+        )
+        .await
+        .unwrap();
+    a.store.account_poke();
+    // The pass ran: the allowlisted setting in the same record arrived.
+    until(&a, |a| {
+        stored(a, "preview_appearance") == json!("dark") && online(a)
+    })
+    .await;
+
+    // The local mode and engine are unchanged, and nothing was stored or queued for either.
+    assert_eq!(mine(&a), (json!("auto_edits"), json!("idle")));
+    let mut expected = before;
+    expected.insert("pref:preview_appearance".into(), "\"dark\"".into());
+    assert_eq!(
+        globals(&a),
+        expected,
+        "something beyond the allowlisted key was stored"
+    );
+    let record = a.store.account_record(ZONE).unwrap();
+    assert!(
+        !record.contains_key("default_permission_mode") && !record.contains_key("default_engine")
+    );
+    assert_eq!(waiting(&a), 0);
+
+    // A thread started now opens in this device's mode, and again after the person changes it.
+    let mode = |core: &Core, thread: orbyn_contracts::Thread| {
+        core.store
+            .thread(&thread.id)
+            .unwrap()
+            .lifecycle
+            .expect("a thread has its lifecycle")
+            .permission_mode
+    };
+    let thread = a.create_thread(new_thread()).await.unwrap();
+    assert_eq!(mode(&a, thread), PermissionMode::AutoEdits);
+    set(&a, "default_permission_mode", json!("supervised"));
+    let later = a.create_thread(new_thread()).await.unwrap();
+    let later = mode(&a, later);
+    assert_eq!(later, PermissionMode::Supervised);
+    assert_ne!(later, PermissionMode::FullAccess);
+}

@@ -216,7 +216,7 @@ impl Core {
         {
             return Err(invalid("this required lane was removed by a person"));
         }
-        let (_, classes) = self.crew_path_classes(thread, brief).await;
+        let (_, classes) = self.crew_path_classes(thread, brief, false).await;
         let machine = self
             .crew_machine(Some(&thread.project_id))
             .await

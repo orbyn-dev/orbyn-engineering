@@ -168,7 +168,7 @@ impl Core {
                         })
             })
         };
-        let (_, classes) = self.crew_path_classes(&parent, brief).await;
+        let (_, classes) = self.crew_path_classes(&parent, brief, false).await;
         let config = self.crew_router_config();
         let want = Want {
             writes: false,
