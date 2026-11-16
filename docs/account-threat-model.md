@@ -86,6 +86,9 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
 - **Sign-out destroys key material.** After sign-out, device removal or `Unauthorized`, the app deletes the device
   keys, the token and the vault key from the keychain and the sealed snapshot file; only settings stay. Without the
   vault key the old file cannot be read. Otherwise a removed device would keep every zone key (D10).
+  - *Decided for the beta:* an expired or ended session (the Engine's 401, which it also gives a removed device) wipes
+    the keys like the rest, and fails closed. The person signs in again and a trusted device lets this one in; the
+    sign-in screen says the local copy was cleared (docs/account.md, error table).
   - *Check:* after each of the three, the keychain has no item for the profile and the snapshot file is gone.
 
 ### 2. No account material in any process environment (built)
