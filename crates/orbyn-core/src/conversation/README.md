@@ -5,6 +5,7 @@ Threads and the runs inside them, from a message being composed to a run settlin
 | Module | Owns |
 | --- | --- |
 | `runs` | The run manager: admission, execution and cleanup |
+| `delegation` | Child-thread admission; `delegation/approval` owns bounded tool-free approval turns without MCP, session reuse or parent transcript delivery |
 | `threads` | Thread operations beyond the store: settling, titles, the lifecycle tick |
 | `composer` | What a message needs before sending: attachments, mentions, slash commands |
 | `questions` | Questions an engine puts to the person |

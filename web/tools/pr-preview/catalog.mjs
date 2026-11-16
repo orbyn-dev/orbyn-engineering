@@ -605,6 +605,7 @@ export const FRAMES = {
   // Crew, the guard, the path classes and routing (Crew Designs frames `guard-*`, `classes-*`, `route-log*`). Crew shows only while the mock has Preview on.
   // Not here: `guard-in-flow`, `guard-needsyou` and `route-class-*` are drawn inside Flow, Needs you and the Route card, which other work owns; `guard-approve-myself`
   // is the desktop shell's own dialog over `guard-denied-no-second`; `guard-narrow-panel` is the side panel's card list, and `route-class-*-narrow` the Route card at 320 px.
+  "approval-one-vendor": { route: "#/crew/approvals", scenario: "crew-one-vendor", steps: [click("button", "Install zod", { prefix: true })] },
   "guard-held": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM orders', { prefix: true })] },
   "guard-denied-no-second": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log', { prefix: true })] },
   "guard-denied": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users', { prefix: true })] },

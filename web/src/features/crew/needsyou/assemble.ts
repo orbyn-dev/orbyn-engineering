@@ -1,6 +1,7 @@
 // Assembles the Needs you inbox from the routes that exist: held commands, stops, the after-merge Review queue and the
 // background runs waiting for review. Pure: the same reads give the same rows, in the same order.
 import type { AutopilotLogRow } from "../../../generated/AutopilotLogRow";
+import type { AutopilotSecondEngineNotice } from "../../../generated/AutopilotSecondEngineNotice";
 import type { AutopilotReviewItem } from "../../../generated/AutopilotReviewItem";
 import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
@@ -12,6 +13,18 @@ const time = (text: string | null | undefined) => {
   const at = text ? Date.parse(text) : Number.NaN;
   return Number.isNaN(at) ? null : at;
 };
+
+/** Existing approval-one-vendor frame, pinned to design Git a582a9ba4fb9.
+ * Ordinary notices have Sign in and Dismiss; guarded-command authority is separate. */
+export function secondEngineItems(notices: AutopilotSecondEngineNotice[]): NeedsItem[] {
+  return notices.map((notice) => ({
+    id: `second-engine:${notice.id}`, kind: "denied", title: `Sign in to a second engine to allow: ${notice.target}`,
+    risk: null, undo: null, from: `Task ${notice.task_id}`, since: time(notice.at),
+    cost: "The worker is told to take another approach, and the rest of the crew carries on.",
+    actions: [{ key: "sign-in", label: "Sign in to a second engine", primary: true }, { key: "dismiss", label: "Dismiss" }],
+    ref: String(notice.id),
+  }));
+}
 
 /** A held command that still waits for the person. A decided, expired or dismissed one is not an item. */
 export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {

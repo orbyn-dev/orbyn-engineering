@@ -1,12 +1,18 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 
 let mock: MockApi;
+// App's cold module graph is fixture setup, not part of the live-frame assertion deadline.
+// Install the owned mock first; importing does not render App or start its effects.
+beforeAll(async () => {
+  installMockFetch();
+  await import("../../../app/App");
+});
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
@@ -162,7 +168,7 @@ describe("the Needs you inbox on live data", () => {
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
     mock.reset("crew");
-    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held"]) mock.fail(path, 1, 503, "unavailable");
+    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine"]) mock.fail(path, 1, 503, "unavailable");
     const user = userEvent.setup();
     render(<NeedsYouInbox />);
     expect(await screen.findByText("Can't read what needs you")).toBeVisible();

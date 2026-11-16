@@ -13,6 +13,8 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `hosts` | `allowed_hosts` of `.orbyn/crew.json`, read at the commit the work started from |
 | `tier` | What an action needs: nobody, the lead, or the lead and a second key |
 | `chain` | The approval chain over the `Approver` trait: the lead, then a second key on another vendor |
+| `notices` | Server-persistent missing-second-key notices, cursor paging and idempotent dismissal or sign-in resolution |
+| `engine` | Per-request lead selection and a lead-tier second vendor through the registry, filters and data classes; strict JSON answers from bounded tool-free runs |
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |
@@ -162,7 +164,7 @@ sit inside the data folder, which a worker running as the same user can read: th
 ## Ledger
 
 `crew_autopilot_events` (migration 38) is append-only: `allowed`, `denied`, `person`, `disagreement`, `tripwire`, and the rows of a held command (`held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used`, `hold_ended`) and, one per routing, `route_class` (the data classes a brief was in and the engines they blocked),
-each with the action, who decided and the rule or reasons. Counters are read from the rows. This is not the hash-chained
+`approval_started`, `approval_usage`, `approval_ended`, `second_engine_dismissed` and `second_engine_resolved` also retain approval turn reservations, redacted usage and notice resolution. Each decision has the action, who decided and the rule or reasons. Counters are read from the rows. This is not the hash-chained
 ledger of slice 4c; when that lands these rows move into it.
 
 ## Seams for later slices
@@ -174,11 +176,44 @@ ledger of slice 4c; when that lands these rows move into it.
   per area in [`areas/effective`](areas/effective.rs): the lower of the ceiling and every touched area, where a lowered area is On only
   under a Full ceiling. The chain and the tier do not read an area.
 
+## Engine approval runs
+
+The service enables request-scoped engine approvers only with Preview. An approval is a separate delegated turn on the lead's
+engine and selected model, with its effort/options captured for the request. A busy lead is never steered. The only prompt data
+is the redacted `Summary`. A second key must pass the registry, quota, data-class and lead-tier filters on another vendor.
+
+The chain shares a 30-second deadline, shortened by the task's remaining minute budget. Each admitted approval atomically reserves
+one of the brief's existing turns, counting prior approval reservations and known worker admissions. Missing or ended budgets refuse.
+This does not complete global worker-turn enforcement (#438). Redacted `approval_usage` rows keep reported tokens and estimated cost,
+even for rejected answers; an interrupted or malformed response with no usage receipt is explicitly unknown, never zero.
+
+Claude Code 2.1.295+ has a dedicated CLI adapter: no builtin tools, strict empty MCP, customizations/hooks disabled, no saved/resumed
+session and one turn. It sets a 1,024-output-token limit and a $0.05 estimated-spend stop. Total reported usage above 16,384 tokens,
+or reported estimated cost above $0.05, rejects the answer **after** that usage was spent. These are not hard pre-spend limits on
+input/reasoning tokens or billed dollars; the provider's spend stop can overshoot. Unsupported options, older/unknown versions,
+missing usage and invalid responses fail closed. See the [CLI reference](https://code.claude.com/docs/en/cli-reference) and
+[output-token environment contract](https://code.claude.com/docs/en/env-vars.md).
+
+Claude model aliases require the bounded effective model reported by the exact active lead run. The approval passes that full
+model ID and accepts only an exact matching receipt. Missing or ambiguous metadata refuses before an approval launch. An idle
+lead or second Claude instance needs an explicitly pinned full Anthropic model ID; a catalog containing only aliases is unavailable
+for that role. Provider-specific model IDs are not yet qualified. See [model aliases](https://code.claude.com/docs/en/model-config#model-aliases).
+
+Core denies permission/question/tool/session events, bounds reply text to 4 KiB, and accepts only strict `{approve, reason}` with a
+nonempty reason of at most 300 characters. Cancellation intent, task end, changed attempt or mode invalidate late answers. Dropping
+the requester stops its owned driver task and closes admission. No MCP binding, inherited transcript, raw page/tool text or answer
+key enters the turn. This is a tool-admission contract, not an OS sandbox claim.
+
+Ordinary Full-mode missing-second-key denials project to a server-persistent Needs you notice. It blocks nothing and offers only
+Sign in and Dismiss. The ledger pins the lead's vendor. An eligible signed-in other vendor or a local caller's explicit dismissal
+writes one durable resolution row; another instance of the same vendor cannot clear it. Cursor pages enumerate all pending notices,
+including old ones; neither action approves or retries work. Guarded commands retain their separate person-approval flow.
+
 ## Limits of Preview
 
-- No engine-backed approver exists yet: `Approver` is the seam, and tests script it. Until one is wired, a lead that is
-  not set means `full` denies and `on` asks a person.
-- The lead's thread is not asked mid-turn; wiring an approver to a live lead thread and a second engine is [#456](https://github.com/orbyn-dev/orbyn-engineering/issues/456).
+- Codex and other native/ACP drivers have no bounded tool-free adapter yet and remain `Unsupported`; they are never substituted
+  with ordinary one-shot or read-only turns. Claude backing and the notice are covered by synthetic tests in
+  [#456](https://github.com/orbyn-dev/orbyn-engineering/issues/456). Real-provider and installed-platform qualification remains pending.
 - The queue and the watch are called by whoever drives them: no tool exposes them to the lead, and nothing runs them on a
   schedule or after a merge yet. The merge Gate (stage `merge`) is not written, since it needs Evidence objects.
   See [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
