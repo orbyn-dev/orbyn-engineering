@@ -290,8 +290,23 @@ async fn the_second_review_needs_another_vendor() {
     )
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let (waiting, error) = w
+        .lead(
+            "crew_review",
+            json!({"task":subject,"lanes":["correctness"]}),
+        )
+        .await;
+    assert!(!error, "{waiting}");
+    let request = waiting["lanes"][0]["same_engine_consent"]["id"]
+        .as_str()
+        .unwrap();
+    let lane = w
+        .core
+        .crew_review_consent(&subject, &json!({"request":request,"choice":"once"}))
+        .await
+        .unwrap();
+    w.until_state(lane["task"].as_str().unwrap(), "passed")
+        .await;
     let id = w.first_finding(&subject);
     let (done, error) = w.lead("crew_check_finding", json!({ "finding": id })).await;
     assert!(!error, "{done}");
@@ -360,7 +375,15 @@ async fn a_noisy_second_review_does_not_confirm() {
             .any(|g| g.stage == GateStage::FindingCheck)
     })
     .await;
-    let gate = w.core.store.crew_gates(&subject).unwrap().pop().unwrap();
+    let gate = w
+        .core
+        .store
+        .crew_gates(&subject)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find(|g| g.stage == GateStage::FindingCheck)
+        .unwrap();
     assert_eq!(gate.decision, orbyn_contracts::GateDecision::Unconfirmed);
     assert!(gate.reason.as_str().contains("too many"), "{}", gate.reason);
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());

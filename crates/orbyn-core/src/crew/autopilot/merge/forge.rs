@@ -452,8 +452,8 @@ impl Core {
         Ok(None)
     }
 
-    /// Narrow seam for the review owner's code-written lane gates. At this revision a same-vendor
-    /// Security fallback has no consent/risk receipt, so only an explicit person release can clear it.
+    /// Fresh lane Gates and persisted same-engine authorization. Locked lanes
+    /// remain owed; a historical pass or a model verdict is never admission.
     pub(in crate::crew) async fn forge_review_precondition(
         &self,
         entry: &MergeEntry,
@@ -483,15 +483,17 @@ impl Core {
         let status = self
             .review_status(&entry.task_id)
             .map_err(|e| CoreError::Invalid(e.message))?;
+        if status["blocked"] == json!(true) {
+            return Ok(Some("a confirmed finding blocks it".into()));
+        }
+        let risk = self.refresh_merge_review_risk(entry)?;
         let mut required: std::collections::BTreeSet<String> = if entry.released {
             Default::default()
         } else {
             target
                 .owed
                 .clone()
-                .unwrap_or_else(|| {
-                    super::owed_lanes(super::Risk::parse(&entry.risk).unwrap_or(super::Risk::High))
-                })
+                .unwrap_or_else(|| super::owed_lanes(risk))
                 .into_iter()
                 .collect()
         };
@@ -502,36 +504,45 @@ impl Core {
         {
             required.insert(rule.lane.as_str().to_owned());
         }
-        let reviews = self.store.crew_reviews_of(&entry.task_id)?;
         for lane in &required {
-            if !super::lane_ran(&status, lane) {
-                return Ok(Some(format!(
-                    "the required {lane} lane must pass; locked lanes survive a person's release"
-                )));
+            let locked = rules.iter().any(|r| r.lane.as_str() == lane && r.locked);
+            if !locked && self.review_lane_removed(&entry.task_id, lane)? {
+                continue;
             }
-            let latest = reviews
-                .iter()
-                .filter(|review| &review.lane == lane && review.role == "review")
-                .max_by_key(|review| review.round);
-            if latest.is_none_or(|review| review.commit != entry.candidate) {
+            let gate = self
+                .review_lane_gate(&entry.task_id, lane, &entry.candidate)
+                .map_err(|e| CoreError::Invalid(e.message))?;
+            if gate.is_none_or(|g| g.decision != orbyn_contracts::GateDecision::Pass) {
                 return Ok(Some(format!(
-                    "the required {lane} lane has no review of the current candidate"
+                    "the required {lane} lane has no passing Gate for the current candidate; locked lanes survive a person's release"
                 )));
             }
         }
         if entry.released {
             return Ok(None);
         }
-        for review in self.store.crew_reviews_of(&entry.task_id)? {
-            if review.lane != crate::crew::SECURITY_LANE {
-                continue;
-            }
+        if let Some(review) = self
+            .store
+            .crew_reviews_of(&entry.task_id)?
+            .iter()
+            .filter(|r| r.role == "review" && r.lane == crate::crew::SECURITY_LANE)
+            .max_by_key(|r| r.round)
+        {
             let routes = self.store.crew_route_decisions(&review.task_id)?;
             if routes.last().is_none_or(|route| {
-                route
+                let same = route
                     .reasons
                     .iter()
-                    .any(|reason| reason.code.as_str() == "same_engine_as_author")
+                    .any(|r| r.code.as_str() == "same_engine_as_author");
+                let authorized = route.reasons.iter().any(|r| {
+                    matches!(
+                        r.code.as_str(),
+                        "same_engine_person_once" | "same_engine_full_security"
+                    )
+                });
+                same && (!authorized
+                    || route.tier != orbyn_contracts::RouteTier::Lead
+                    || risk != super::Risk::High)
             }) {
                 return Ok(Some("Security review has no distinct-vendor consent/risk receipt; a person must release this entry".into()));
             }

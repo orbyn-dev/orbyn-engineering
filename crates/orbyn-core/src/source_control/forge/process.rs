@@ -20,6 +20,20 @@ type Fixture = std::sync::Arc<dyn Fn(Forge, &Path, &[&str]) -> Result<String> + 
 #[cfg(test)]
 tokio::task_local! { static CREW_FIXTURE: Fixture; }
 
+#[cfg(test)]
+type InputFixture =
+    std::sync::Arc<dyn Fn(Forge, &Path, &[&str], Option<&str>) -> Result<String> + Send + Sync>;
+#[cfg(test)]
+tokio::task_local! { static CREW_INPUT_FIXTURE: InputFixture; }
+
+#[cfg(test)]
+pub(crate) async fn with_crew_input_fixture<T>(
+    fixture: InputFixture,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    CREW_INPUT_FIXTURE.scope(fixture, future).await
+}
+
 /// Scoped to one test future; never changes PATH or a process-wide credential/CLI setting.
 #[cfg(test)]
 pub(crate) async fn with_crew_fixture<T>(
@@ -42,6 +56,14 @@ pub(super) async fn spawn(
     args: &[&str],
     input: Option<&str>,
 ) -> Result<Output> {
+    #[cfg(test)]
+    if let Ok(answer) = CREW_INPUT_FIXTURE.try_with(|fixture| fixture(forge, cwd, args, input)) {
+        return answer.map(|stdout| Output {
+            success: true,
+            stdout,
+            stderr: String::new(),
+        });
+    }
     #[cfg(test)]
     if let Ok(answer) = CREW_FIXTURE.try_with(|fixture| fixture(forge, cwd, args)) {
         return answer.map(|stdout| Output {

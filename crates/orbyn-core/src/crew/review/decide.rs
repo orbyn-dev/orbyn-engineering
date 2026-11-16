@@ -137,6 +137,7 @@ impl Core {
         if !stored {
             return Err(invalid("finding: it has already been checked"));
         }
+        self.snapshot_review_gates(&subject.id)?;
         Ok(gate.id)
     }
 
@@ -302,6 +303,7 @@ impl Core {
         self.store
             .add_crew_object(&subject.id, &CrewObject::Gate(gate.clone()))
             .map_err(internal)?;
+        self.snapshot_review_gates(&subject.id)?;
         Ok(json!({
             "finding": found.finding.id,
             "decision": if passed { "cleared" } else { "still_failing" },

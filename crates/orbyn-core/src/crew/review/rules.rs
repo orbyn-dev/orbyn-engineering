@@ -42,7 +42,7 @@ struct When {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuleLane {
     pub lane: CrewToken,
-    /// Only a person removes a locked lane. Nothing here removes one.
+    /// A locked lane cannot be removed, including by a person.
     pub locked: bool,
     /// `None` means the lane always runs; otherwise it runs when the change touches one of these.
     when: Option<Vec<CrewPathPattern>>,

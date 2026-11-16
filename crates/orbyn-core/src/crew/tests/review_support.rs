@@ -99,7 +99,12 @@ impl World {
             )
         })
         .await;
-        assert_eq!(self.task(&id).state, "passed");
+        assert_eq!(
+            self.task(&id).state,
+            "passed",
+            "{}",
+            json!({"task":id,"results":self.core.store.crew_results(&id).unwrap(),"evidence":self.core.store.crew_evidence(&id).unwrap()})
+        );
         id
     }
 

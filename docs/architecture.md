@@ -2303,9 +2303,18 @@ refused, so pages cannot start arbitrary registered programs.
 
 `orbyn://` links come from outside the app, so they only move a window, and only to a
 place spelled as a route: `thread/<id>`, `new[/<project>]`, `settings[/<section>]`,
-`usage`, `pulls`, or nothing for home. The service turns one into a route and drops
+`usage`, `pulls`, `crew/task/<encoded-task-id>`, or nothing for home. The service turns one into a route and drops
 anything else, and a link that started the app waits in the shell until the service
 runs. A second launch hands its links to the first and exits.
+
+The Crew task locator maps to `#/crew/flow/task/<encoded-task-id>` and only reads the existing Flow task.
+Its ID has the Flow API's grammar: 1–96 ASCII letters, digits, underscore, hyphen, dot or colon, never starting with a dot.
+The locator decodes one segment once and refuses separators, double encoding, query/fragment parameters and extra components.
+Preview off makes no task read; a missing or non-work task uses Flow's existing missing state. The task need not occur in the
+bounded crew list or current task page. Async reads remain scoped to the requested task; the stored task detail supplies its crew.
+Navigation grants no action. This is a copyable installation-local locator for a device holding the task, not a hosted report;
+forge renderers' support for clicking the custom scheme and native macOS/Windows delivery have not been qualified here.
+Generic Markdown safe links and external-open policies retain their own scheme rules.
 
 On macOS the bundle also declares `http` and `https`, and HTML pages at Alternate rank
 (`desktop/src-tauri/Info.plist`), so a person can pick the app as their default browser in
@@ -2459,6 +2468,64 @@ A confirmed finding sends the core's own fix brief to a builder, checked like `c
 finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
 ([review group](../crates/orbyn-core/src/crew/review/README.md)).
 
+Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
+subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch
+rechecks the head and atomically consumes the consent under the start lock. A new head or round needs another
+answer; a finished or cancelled run never reopens. A finding-check run always needs another vendor. The exception
+is Security under Full when no other vendor is signed in: a separate lead-tier run, persistent "Same engine as author"
+badge and High risk. The owner reaffirmed the High-risk rule on 16 November 2026; conflicting design copy does not
+lower it. On and Off still ask. A route proposal is not consent, and a failed launch is not a launched reviewer badge.
+
+Each lane has a code-authored `review` Gate with its `lane`, derived from the latest round's completed read-only
+verification Evidence at the expected commit and the unresolved findings. Unchecked or pending findings hold that
+lane's Gate; the existing review `blocked` field remains confirmed-only. Missing Evidence is no pass. A reround or
+different expected head invalidates an older pass. Lifecycle transitions store append-only content-addressed snapshots;
+reads do not write, and merge admission recomputes rather than trusting a historical snapshot. A passing lane Gate
+proves workflow completion, never that a model's review proved correctness.
+
+`crew_publish_review` is a Preview-only lead request to export one advisory lane summary to its same-repository PR.
+The core requires a completed clean-baseline read-only review at the subject's verified Result head and pinned PR base,
+and resolves immutable repository ID and current authenticated author without using CLI defaults. Dirty-baseline reviews
+remain local. Findings retain their adjudication state; publication never approves a PR, changes a Gate or follows reviewer
+completion automatically. The body includes a copyable installation-local task locator, not a public task report.
+An immutable migration-46 intent and private live-run claim bind destination, snapshot, lane/round, exact body digest and mode.
+The real lead binding's Network request enters the hard/host rules and existing two-key chain before ordinary gate policy.
+Off reaches the existing person approval path even with Full Access; an explicit policy deny still wins. No account-only
+or unbound-gate fallback can mint publication authority. Mode, identity, run liveness and head are checked again before sending.
+Publication-specific claim and Sending transactions also reject a persisted Stop while the run is still nonterminal;
+the generic run/event guard is unchanged. Receipt recovery remains possible from a new live lead run after cancellation.
+A CAS commits sending before the single POST; crash/timeout/unknown effects only read-reconcile full comment pages and an
+exact author/body/target receipt. Empty visibility never authorizes retry. A known receipt with head drift needs a person;
+no automatic delete, edit or correction comment follows. Top-level comments do not offer an atomic head CAS.
+Closed/merged PRs remain ineligible for new sends, but immutable destination/auth reads can still recover an existing exact
+receipt and retain it as needing a person. A deliberate `renew` request may supersede only a stale or expired pre-send
+intent proven never to have reached Sending. It creates a fresh immutable intent and admission, links the old record and
+audits the replacement; old bytes remain intact. A partial unique active-scope index and monotonic ever-Sending fence
+prevent renewal from bypassing Sending, Unknown, Published or ambiguous NeedsPerson records.
+
+A local person's review endpoint can remove an unlocked required lane for one subject, with a nonempty reason and
+an audit record. Locked lanes cannot be removed, by anyone. The core reads rules at the subject's pinned base and
+never rewrites the rule file. Removal waives the lane requirement, never a confirmed finding. No model tool exposes
+consent or removal; their HTTP paths are state-changing Crew routes refused by N1. This is the app's local-person
+boundary, not an OS sandbox against another process running as the same user.
+
+ACP tier Settings use a separate device-local exact-engine-id assignment map. Native `CoreConfig::crew_tiers`
+family/model words retain their existing behavior; they do not guess ACP tiers. An unmapped ACP engine is builder-only.
+A local-person save replaces the map with a revision compare-and-swap and audit record, rejecting duplicate,
+unknown, native, unconfigured or unavailable engines. The core pins each assignment to the current configured
+visible explicitly marked default model, refusing no default or multiple defaults. Each submitted assignment names
+`expected_default_model` as a precondition only; the core resolves the default independently and refuses a mismatch
+before any map change. The editor retains saved model pins on untouched rows until the person explicitly resolves
+default drift; a save cannot silently repin those rows. Only the pinned model gains the assigned tier; another engine instance, a hidden model or a changed
+default cannot inherit it. Registry health and model visibility are rechecked on use. Clearing the map restores
+builder-only admission and overrides any initial CoreConfig seed. No model tool edits these settings. The missing
+Settings editor states remain a separate UI criterion.
+
+The map revision guards saved settings, not engine discovery. The saved response's model pins are authoritative
+receipts and stay separate from current discovery facts. If discovery changes after validation, use-time admission
+still requires that exact pin to remain the unique visible default. Builder baseline selection keeps its existing
+fallback; absent or ambiguous defaults never grant an assigned non-builder tier. No registry epoch is introduced.
+
 Autopilot (slice 4f, behind the same flag) puts every request of a Crew worker through the gate's `ActionReview` before any
 rule or person: the always-denied list of the protocol (N1 to N10) first, which no lead, second key, mode or saved allow rule
 can undo, then the lead's approval with a reason, and a second approver on another vendor for network, installs, generated
@@ -2513,9 +2580,10 @@ and host overrides cannot select the destination. Credential-bearing or unsuppor
 merge tree and parents are compared to the checked combination; a mismatch commits with the Review record as needing a person.
 The existing local branch API is explicit compatibility behavior: compare-and-swap only when no checkout holds the branch, and it
 refuses forge intents. Under `off` every merge waits for a person; under `on` high risk waits; mode, area ceilings, holds, findings
-and owed lanes are rechecked before the forge writer. Until review consent/risk receipts are available, same-vendor Security
-fallback is held for a person's explicit release.
-Every applicable pinned-base rule and default owed lane needs its latest passed review at the candidate; a person's release may
+and owed lanes are rechecked before the forge writer. Same-vendor Security needs a persisted once-consent or Full exception
+receipt, a separate lead-tier run and High risk, or a person's explicit merge release. Risk refreshes on completion and merge
+admission only raise the queued risk; reads do not write and the after-merge Review window uses that effective risk.
+Every applicable pinned-base rule and default owed lane needs its latest passing code-owned lane Gate at the candidate; a person's release may
 stand in for a nonlocked lane but never a locked lane. Reviewer commit and verification counts come from the last passed Result
 and its exact check/Evidence citations, so later merge or finding Gates/Evidence cannot change what work the reviewer reads.
 

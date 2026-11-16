@@ -255,6 +255,21 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/review/{task_id}/consent",
+        "Crew write behind local_only: the person consents once or waits for a same-engine reviewer",
+    ),
+    (
+        "POST",
+        "/api/crew/review/{task_id}/remove-lane",
+        "Crew write behind local_only: the person removes an unlocked review lane with a reason",
+    ),
+    (
+        "POST",
+        "/api/crew/settings/engine-tiers/save",
+        "Crew write behind local_only: the person assigns ACP engines to tiers",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "Crew write behind local_only: the person stops a task",
     ),

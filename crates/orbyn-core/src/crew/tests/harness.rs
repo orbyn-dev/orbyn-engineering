@@ -199,13 +199,19 @@ impl EngineDriver for Fake {
     async fn models(&self) -> Result<Option<ModelCatalog>> {
         let mut models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
         if self.tiered {
-            // The review tests map each fake's `-lead` model to the lead tier (see `world_tiered`).
+            // The review tests assign each fake's default `-model` to the lead tier (see `world_tiered`); a nondefault `-lead`
+            // model stays listed to show that an assignment does not promote it. A lead-tier approver run asks for
+            // `medium` effort, so both models offer it.
             let mut lead = model(&format!("{}-lead", self.id), &self.id, false);
             lead.options.push(crate::agents::driver::effort_option(
                 ["medium"],
                 Some("medium"),
             ));
             models.push(lead);
+            models[0].options.push(crate::agents::driver::effort_option(
+                ["medium"],
+                Some("medium"),
+            ));
         }
         Ok(Some(ModelCatalog::engine(models)))
     }
@@ -332,21 +338,43 @@ pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)])
     world_tiered(preview, script, engines, false).await
 }
 
-/// `world_with`, and with `tiered` every fake also lists a lead-tier model and the router maps it: `-lead` is the
-/// lead tier and `-model` the worker tier, so a review role (lead tier) can be routed to any of them.
+/// `world_with`, with an explicit ACP lead assignment pinned to each fake's default
+/// model. Builder admission remains; a nondefault model is not promoted by that assignment.
 pub async fn world_tiered(
     preview: bool,
     script: Script,
     engines: &[(&str, bool)],
     tiered: bool,
 ) -> World {
-    world_full(preview, script, engines, tiered, false, Vec::new()).await
+    world_full(preview, script, engines, tiered, false, Vec::new(), None).await
+}
+
+pub async fn world_publication(script: Script, timeout: Option<std::time::Duration>) -> World {
+    world_full(
+        true,
+        script,
+        &[("alpha", false), ("beta", false)],
+        true,
+        false,
+        Vec::new(),
+        timeout,
+    )
+    .await
 }
 
 /// `world`, with the restriction on workers left on, as it ships: a start is refused where
 /// none can be applied, and a worker run is handed its rules.
 pub async fn world_confined(script: Script) -> World {
-    world_full(true, script, &[("alpha", false)], false, true, Vec::new()).await
+    world_full(
+        true,
+        script,
+        &[("alpha", false)],
+        false,
+        true,
+        Vec::new(),
+        None,
+    )
+    .await
 }
 
 pub async fn world_forge(script: Script) -> World {
@@ -357,6 +385,7 @@ pub async fn world_forge(script: Script) -> World {
         false,
         false,
         vec!["ci".into()],
+        None,
     )
     .await
 }
@@ -368,6 +397,7 @@ async fn world_full(
     tiered: bool,
     confine: bool,
     merge_checks: Vec<String>,
+    approval_timeout: Option<std::time::Duration>,
 ) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
@@ -379,6 +409,9 @@ async fn world_full(
     config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    if let Some(timeout) = approval_timeout {
+        config.approval_timeout = timeout;
+    }
     config.crew_merge_required_checks = merge_checks;
     config.crew_confine_workers = confine;
     if tiered {
@@ -391,6 +424,18 @@ async fn world_full(
             tiers: engines
                 .iter()
                 .map(|(id, _)| ((*id).to_owned(), words.clone()))
+                .collect(),
+            acp_tiers: engines
+                .iter()
+                .map(|(id, _)| {
+                    (
+                        (*id).to_owned(),
+                        crate::crew::AcpTierAssignment {
+                            tier: orbyn_contracts::RouteTier::Lead,
+                            model: format!("{id}-model"),
+                        },
+                    )
+                })
                 .collect(),
         });
     }

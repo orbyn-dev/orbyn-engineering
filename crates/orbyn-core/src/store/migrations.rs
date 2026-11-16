@@ -53,6 +53,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (43, CREW_GUARD_TARGETS),
     (44, CREW_AUTONOMY),
     (45, super::crew_merge_forge::SCHEMA),
+    (46, include_str!("crew_review_controls.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the

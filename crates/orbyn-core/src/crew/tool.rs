@@ -245,7 +245,7 @@ impl Core {
         let answer = match route(
             &input,
             &machine.views,
-            &self.crew_router_config(),
+            &self.crew_router_config_with_mappings()?,
             &EvalHistory::default(),
         ) {
             Ok(decision) => {
