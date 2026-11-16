@@ -36,6 +36,10 @@ ESLint and `npm run check` fail the change that tries. A file used by one featur
 lives in that feature; shared code appears only by hoisting (docs/refactor.md).
 Each feature's `index.ts` exports API views, dialogs, commands and state only; pure
 helpers live in `src/product` or `src/lib`.
+Features import another feature only through its `index.ts`, in an acyclic order.
+`npm run check` runs `scripts/arch-check.mjs`, which rejects deep cross-feature
+imports, file import cycles and feature cycles without a baseline exemption
+([rules and feature order](../docs/refactor.md#checks)).
 
 ## Names
 
@@ -52,8 +56,10 @@ Browser tests are in `e2e/`, against the mock API (`mock/`) or a real service
 
 ## Known limitations
 
-- Features still import each other, most often `panels` and `thread`. Each such
-  import is a candidate for moving the shared piece to its real owner.
-- ESLint enforces the inward direction for shared folders only, and only for
-  static `import` and `export … from`. Dynamic `import()`, type queries, imports
-  between features and tests are not checked.
+- The architecture checker matches text, not a TypeScript syntax tree. It follows
+  relative string-literal imports and re-exports, including type-only imports,
+  literal `import()` and import type queries. Computed specifiers and path aliases
+  are not checked; unresolved relative imports only warn.
+- Generated code, `*.test.ts(x)`, `test-setup.ts` and `test-support.ts` are excluded
+  from the architecture graph. ESLint's import restrictions cover static imports
+  and re-exports; tests are exempt.
