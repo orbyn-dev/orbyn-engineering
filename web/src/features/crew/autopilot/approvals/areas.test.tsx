@@ -411,8 +411,16 @@ describe("autonomy-thresholds", () => {
     expect(screen.getByText("Proposed: Engineering sets the real values")).toBeVisible();
     expect(screen.getByRole("region", { name: "What counts" })).toHaveTextContent("An escapeNot measured");
     expect(screen.queryByText("Earn upward")).toBeNull();
-    expect(screen.queryByRole("button")).toBeNull();
+    // Read-only besides the way back to Autopilot by area.
+    expect(within(screen.getByRole("list", { name: "Thresholds" })).queryByRole("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Autopilot by area" })).toBeVisible();
     expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("the back link returns to Autopilot by area for the repository in the address", async () => {
+    const { user } = await open("crew-areas", "thresholds");
+    await user.click(screen.getByRole("button", { name: "Autopilot by area" }));
+    expect(window.location.hash).toBe("#/settings/crew/areas?repo=p-app");
   });
 
   it("opens from the table, with the repository kept", async () => {
@@ -425,6 +433,21 @@ describe("autonomy-thresholds", () => {
     const { user } = await open("crew-areas");
     await user.click(screen.getByRole("button", { name: "Open the ledger" }));
     expect(window.location.hash).toBe("#/crew/approvals");
+  });
+});
+
+describe("autonomy-entry", () => {
+  it("Settings › Crew opens Autopilot by area from the row under Autopilot", async () => {
+    mock.reset("crew-areas");
+    window.location.hash = "#/settings/crew";
+    const user = userEvent.setup();
+    render(<CrewSettingsSection />);
+    const row = (await screen.findByText("Autopilot by area")).closest(".ar-set") as HTMLElement;
+    expect(row).toHaveAttribute("data-frame", "autonomy-entry");
+    expect(row).toHaveTextContent("Each area of the code with the mode it is on now and its record, why it moved, and your override. The repo ceiling above applies to every area.");
+    await user.click(within(row).getByRole("button", { name: "Open" }));
+    expect(window.location.hash).toBe("#/settings/crew/areas");
+    expect(await screen.findByRole("heading", { name: "Crew › Autopilot by area" })).toBeVisible();
   });
 });
 

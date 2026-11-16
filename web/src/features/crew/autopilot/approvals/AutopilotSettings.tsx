@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { Loading, ErrorState } from "../../../../product/ui/states";
 import { toFailure } from "../../../../lib/useAsync";
+import { navigate } from "../../../../product/state/route";
+import { Button } from "../../../../ui/controls";
 import { crewApi } from "./api";
 import { MODE_COPY } from "./copy";
 import type { AutopilotGuards } from "../../../../generated/AutopilotGuards";
@@ -140,6 +142,17 @@ export function AutopilotSettings() {
       <ModePicker mode={mode} onChange={choose} disabled={busy} />
       {failed ? <p role="alert" className="ap-error">{failed}</p> : null}
       <ModeNotes mode={mode} guards={guards.data} />
+      {/* Settings › Crew › Autopilot by area entry (Crew Designs v39, frame `autonomy-entry`). The row opens the page; the design's
+          Planned chip marked the missing link and is not drawn now that it works. */}
+      <div className="ar-set" data-frame="autonomy-entry">
+        <div className="ar-setrow">
+          <div>
+            <b>Autopilot by area</b>
+            <small>Each area of the code with the mode it is on now and its record, why it moved, and your override. The repo ceiling above applies to every area.</small>
+          </div>
+          <Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "areas" })}>Open</Button>
+        </div>
+      </div>
       {overrides.length ? (
         <>
           <PerCrew entries={overrides} />
