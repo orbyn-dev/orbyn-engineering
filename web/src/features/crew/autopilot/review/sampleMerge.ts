@@ -130,21 +130,21 @@ export const board: BoardColumn[] = [
   {
     label: "Low · Full",
     tone: "ok",
-    cards: [{ title: "Update the login docs", engine: "Codex", model: "GPT-5.5 · Low", checks: "2/2 checks", paths: "docs/login.md", tier: "low", line: "Merged by itself · 14:12" }],
+    cards: [{ title: "Update the login docs", engine: "Codex", model: "GPT-5.5 · Low", checks: "2 of 2 checks passed", paths: "docs/login.md", tier: "low", line: "Merged by itself · 14:12" }],
   },
   {
     label: "Medium · Full",
     tone: "ok",
-    cards: [{ title: "Use next in the auth redirect", engine: "Claude Code", model: "Sonnet 5.5 · Medium", checks: "3/3 checks", paths: "auth/redirect.ts", tier: "medium", line: "Merged by itself · 14:32" }],
+    cards: [{ title: "Use next in the auth redirect", engine: "Claude Code", model: "Sonnet 5.5 · Medium", checks: "3 of 3 checks passed", paths: "auth/redirect.ts", tier: "medium", line: "Merged by itself · 14:32" }],
   },
   {
     label: "High · Full",
     tone: "ok",
-    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · High", checks: "5/5 checks", paths: "keys/rotate.ts", tier: "high", line: "Merged · top of your queue" }],
+    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · Medium", checks: "5 of 5 checks passed", paths: "keys/rotate.ts", tier: "high", line: "Merged · top of your queue" }],
   },
   {
     label: "High · On",
     tone: "warn",
-    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · High", checks: "5/5 checks", paths: "keys/rotate.ts", tier: "high", line: "Waiting for you before the merge (On)", needs: true }],
+    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · Medium", checks: "5 of 5 checks passed", paths: "keys/rotate.ts", tier: "high", line: "Waiting for you before the merge (On)", needs: true }],
   },
 ];
