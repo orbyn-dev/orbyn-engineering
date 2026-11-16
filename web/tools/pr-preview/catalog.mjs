@@ -589,6 +589,9 @@ export const FRAMES = {
   "autonomy-criteria-met": { route: AREAS, scenario: "crew-areas-criteria-met" },
   "autonomy-restored": { route: AREAS, scenario: "crew-areas-restored" },
   "autonomy-lowdata": { route: AREAS, scenario: "crew-areas-lowdata" },
+  "autonomy-empty": { route: AREAS, scenario: "crew-areas-empty" },
+  "autonomy-repos": { route: AREAS, scenario: "crew" },
+  "autonomy-entry": { route: "#/settings/crew", scenario: "crew-areas" },
   "autonomy-override": { route: AREAS, scenario: "crew-areas-tripped", steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" })] },
   "autonomy-override-warning": {
     route: AREAS,
