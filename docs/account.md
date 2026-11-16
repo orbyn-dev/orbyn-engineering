@@ -205,7 +205,7 @@ How the client's errors become app behaviour:
 | `Server { retryable: false }`, `InvalidKey` | Zone paused with a reason; other zones continue |
 | `Conflict` | Merge and upload again; surface only a lost offline edit |
 | `TooLarge` | The record is not uploaded; the setting stays local and the status says so |
-| `Unauthorized` | Signed out with the reason "session ended". **Key material is destroyed** (device keys, token, vault key and the sealed snapshot are deleted); settings and the outbox stay. Sign in again to resume |
+| `Unauthorized` | Signed out with the reason "session ended". **Key material is destroyed** (device keys, token, vault key and the sealed snapshot are deleted); settings and the outbox stay. Sign in again to resume. **This fails closed, and it is intended for the beta, not a bug:** the Engine answers an expired session, an ended one and a removed device with the same 401 (`NotSignedIn` or `SessionExpired`), and the app cannot tell them apart, so every 401 is treated as the worst case and the keys go. The cost is that a session that merely expires (30 days unused, one year at most) makes this computer a new device that a trusted one has to let in again. The sign-in screen says the local copy was cleared |
 | `RateLimited { retry_after }` | Shown with the wait; no retry before it |
 | `ProtectionAdvanced`, `DeletionScheduled` | Paused with that reason |
 | `AccountGone` | Signed out locally, data kept, the reason stated |
