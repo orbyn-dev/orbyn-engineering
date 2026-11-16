@@ -1,8 +1,10 @@
 // Settings › Crew › Autopilot by area › Thresholds (Crew Designs v39, frame `autonomy-thresholds`): the breaker's constants, read-only, each Proposed.
 // "Earn upward" is drawn in the design as Planned; earning a higher mode is not built, so the row is left out until it is.
-import { Info } from "lucide-react";
+import { ChevronLeft, Info } from "lucide-react";
 import { useAsync } from "../../../../lib/useAsync";
+import { navigate, useRoute } from "../../../../product/state/route";
 import { ErrorState, Loading } from "../../../../product/ui/states";
+import { Button } from "../../../../ui/controls";
 import { crewApi } from "./api";
 import { plural } from "./areas";
 import { GUARD_WORKERS } from "./copy";
@@ -10,8 +12,10 @@ import { Chip, Facts } from "./parts";
 
 export function AutonomyThresholds() {
   const read = useAsync("crew-thresholds", (signal) => crewApi.thresholds(signal), { keep: true });
+  const route = useRoute();
   if (read.status === "loading") return <Loading label="Reading the thresholds" rows={4} />;
   if (read.status === "error") return <ErrorState title="Can't read the thresholds" failure={read.error} onRetry={read.reload} />;
+  const repo = route.name === "settings" ? route.repo : undefined;
   const t = read.data;
   const mark = t.proposed ? " · Proposed" : "";
   const rows: { title: string; text: string; value: string }[] = [
@@ -26,6 +30,14 @@ export function AutonomyThresholds() {
   ];
   return (
     <section className="ap-set ar" aria-labelledby="ar-title" data-frame="autonomy-thresholds">
+      <Button
+        small
+        className="ar-back"
+        onClick={() => navigate({ name: "settings", section: "crew", crewPage: "areas", ...(repo ? { repo } : {}) })}
+      >
+        <ChevronLeft size={14} aria-hidden />
+        Autopilot by area
+      </Button>
       <header className="ap-set-head">
         <h2 id="ar-title">Crew › Autopilot by area › Thresholds</h2>
         <Chip tone="plain">Preview</Chip>

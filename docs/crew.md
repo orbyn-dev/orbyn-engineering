@@ -844,14 +844,16 @@ says `user`, not which process. A lowered area returns at the next merge or queu
 ledger itself is unreadable: the log then holds the only trace, though the gate still treats an unreadable area as Off. An `off` posted while merge checks are running does not stop the merge already in flight (the same as `set_mode`).
 
 **As built (slice 4j, screens):** Settings › Crew › Autopilot by area and its Thresholds, from the Crew Designs v39 frames `autonomy-table`, `-tripped`,
-`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-override`, `-override-warning`, `-thresholds` and `-narrow`, plus
-`autonomy-override-off-warning` (Designer ruling on #573). Code: `web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas}.ts*`, routes
+`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-empty`, `-repos`, `-entry`, `-override`, `-override-warning`,
+`-thresholds` and `-narrow`, plus `autonomy-override-off-warning` (Designer ruling on #573). Code:
+`web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas,AutopilotSettings}.ts*`, routes
 `#/settings/crew/areas[/thresholds]?repo=<project id>` (the first visible repository when `repo` is absent). One component, driven by the areas read; the page's
 `data-frame` names the frame its data is in. **Ceiling:** the header says "Repo ceiling: X" (the project's) once and the table has no ceiling column; rows show the mode the area is on now, and
 a row whose own ceiling (the service sets one per area) differs from the repo's says so in its state text. Both Keep the ceiling and Off ask first in the same dialog and send `acknowledged: true` only after the box is ticked;
 Override… is on the tripped, recovering, criteria-met, ceiling-wins and restored panels and in every overridden row; Keep the ceiling is offered only when the area is below a Full ceiling; Follow the record undoes a choice (sent without `seen` when the row has no `since`, as the service stores the trip time through an override). A `stale` answer closes the warning and shows the service's words on the page. The words are the design's,
 written from the served fields. No date is drawn that the service does not serve (recovery clock, who reverted, when a ceiling was lowered).
-Not built (the Designer draws them later): `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, a back link on Thresholds, `autonomy-promoted`, `autonomy-by-area`.
+**Empty:** with no area in the window the page keeps its header, chips, as-of line and, above 560 px, the table's head row; it draws no row. At 560 px and below the head row is the whole table, so the empty table is not drawn. The design's sentence in the table is Planned and is not drawn. **Several repos:** the page is about one repo at a time (`?repo=`, else the first visible project); with more than one the Repo chip is drawn as the design's selector (bordered, with the Planned label) from the workspace's project list, and its menu is not built. **Entry:** the Settings › Crew › Autopilot section has a row under it that opens Autopilot by area, and Thresholds has the back link that returns to it with the repository kept; both are drawn without the design's Planned chip because they now work.
+Not built: the repo selector's menu, `autonomy-promoted`, `autonomy-by-area`.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**
