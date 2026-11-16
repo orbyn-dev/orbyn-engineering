@@ -35,6 +35,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | [`autopilot`](autopilot/README.md) | Autopilot: the always-denied list, the approval chain, two keys, trip wires and the approval ledger |
 | [`review`](review/README.md) | Review stages: reviewer lanes, typed findings, the finding check, the fix loop and repo rules that add lanes |
 | `capacity` | Review capacity: the count of waiting High and Medium merges, whether a new Low-priority start that Crew began itself pauses over the limit (8), and the seeded random sample of a batch (off by default, one in four). Pure: no store, no process, no model. Its settings, a task's priority and the recorded samples are kept by `store/crew_capacity.rs` (migration 47) |
+| `backtest` | Reviewer backtest, pure part (slice 4n PR 1): which pull requests are eligible (merged within 180 days, at least 30 days old), the `EscapeSource` trait for outcomes (the escape log is not merged, so the only source reports Not measured), and each lane's recall and precision from 5 escapes and 10 findings, matched by file only. Pure: no store, no process, no model, nothing that starts a run. Budgets, the store and the replay are later PRs |
 | `background` | Background crews' state: definition, strict validation, redaction, runs with spend against a budget set at creation, and the stop for the budget that queues a review. Stored in the data folder, audited, no trigger and no engine |
 | `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
 
