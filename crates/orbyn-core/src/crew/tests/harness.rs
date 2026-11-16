@@ -199,13 +199,19 @@ impl EngineDriver for Fake {
     async fn models(&self) -> Result<Option<ModelCatalog>> {
         let mut models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
         if self.tiered {
-            // The review tests map each fake's `-lead` model to the lead tier (see `world_tiered`).
+            // The review tests assign each fake's default `-model` to the lead tier (see `world_tiered`); a nondefault `-lead`
+            // model stays listed to show that an assignment does not promote it. A lead-tier approver run asks for
+            // `medium` effort, so both models offer it.
             let mut lead = model(&format!("{}-lead", self.id), &self.id, false);
             lead.options.push(crate::agents::driver::effort_option(
                 ["medium"],
                 Some("medium"),
             ));
             models.push(lead);
+            models[0].options.push(crate::agents::driver::effort_option(
+                ["medium"],
+                Some("medium"),
+            ));
         }
         Ok(Some(ModelCatalog::engine(models)))
     }
