@@ -221,12 +221,28 @@ impl Core {
             .crew_machine(Some(&thread.project_id))
             .await
             .map_err(internal)?;
+        let lane = CrewToken::new(review.lane.clone()).map_err(invalid)?;
+        // The same locked-lane answer as the real launch, so preflight and launch route a lane to the same tier.
+        let base = self
+            .store
+            .crew_run(&review.subject_id)
+            .map_err(internal)?
+            .and_then(|run| run.base_commit);
+        let lane_keeps_lead = self
+            .lane_keeps_lead(
+                std::path::Path::new(&thread.cwd),
+                base.as_deref(),
+                Some(&review.subject_id),
+                &lane,
+            )
+            .await;
         let input = RouteInput {
             brief,
             run_id: orbyn_contracts::CrewId::new(crate::util::new_id()).map_err(invalid)?,
             created_at: stamp_now()?,
             role: Some(RouteRole::Review),
-            lane: Some(CrewToken::new(review.lane.clone()).map_err(invalid)?),
+            lane: Some(lane),
+            lane_keeps_lead,
             author_engine,
             default_engine: machine.default_engine.clone(),
             classes: Some(&classes),

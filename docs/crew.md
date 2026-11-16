@@ -251,7 +251,7 @@ the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium
 | Lead (briefs, approves in Autopilot, merges) | Opus | Sol | The engine the person picks for the lead thread |
 | Router, verifier, merge queue, watch on main | No model | No model | Code |
 | Builder | Sonnet | Terra | Complex work on Codex goes to Sol (harness `engineer_complex`) |
-| Review lane (`crew_review`) | Sonnet | Terra | Worker tier by default, on the other vendor from the builder. Security and locked lanes stay on the lead tier |
+| Review lane (`crew_review`) | Sonnet | Terra | Worker tier by default, on the other vendor from the builder. The `security` lane, locked lanes, the `correctness` lane a merge is owed (until a merge entry says low risk) and any lane only the builder's own vendor can take stay on the lead tier |
 | Code review (a review brief) | Opus | Sol | Lead tier, on the other vendor from the builder by default |
 | Security review and finding check | Opus | Sol | Lead tier always; never lower |
 | Second key (Autopilot) | Opus | Sol | Must be the other vendor from the lead |
@@ -264,7 +264,10 @@ raise a tier. Only the person can change a lead tier.
 To pin a worker's model (for example a Haiku-only run), the lead sets `engine: { id, model, assigned_by }` in the brief
 (`"model": "haiku"`). A review lane defaults to the worker tier (Sonnet or Terra), so it costs less than the lead. The `security` lane,
 any lane a repository rule locks (`"locked": true`), the finding check and a second key stay on the lead tier, and a pinned model that is
-below the lead tier is refused for them, never swapped. When the rules cannot be read, a lane counts as locked. A model pinned in the brief's
+below the lead tier is refused for them, never swapped. The `correctness` lane (`CODE_LANE`), which a medium or high risk merge is owed,
+stays on the lead tier too: risk is only known once a merge entry exists, so only an entry that says low frees it, and with no entry it stays
+lead. When the rules cannot be read, or the work has no base commit, a lane counts as locked. When every reviewer the router admits is the
+author's own vendor (a single-vendor machine), the lane keeps the lead tier instead of lowering the only review available. A model pinned in the brief's
 `engine` wins over the lane default in either direction. An engine with no tier mapping (OpenCode before Settings maps it) is a builder only,
 so it never takes a lane. The reviewer is still another vendor than the builder where one is configured. The route card of a lane carries
 a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` answer reports its `tier`, `model` and `reasons`.

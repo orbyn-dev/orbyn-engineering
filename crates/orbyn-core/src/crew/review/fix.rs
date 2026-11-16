@@ -262,7 +262,7 @@ impl Core {
                 key,
                 role: None,
                 lane: None,
-                lane_locked: false,
+                lane_keeps_lead: false,
                 author_engine: None,
                 prefix: "worker",
                 prompt: None,

@@ -249,7 +249,6 @@ pub fn screen<'a>(
     let models: &[ModelInfo] = view.models.as_deref().unwrap_or(&[]);
     let selected = if view.tier == EngineTier::Acp {
         acp_model(config, view, models, want.tier, named, want.image)
-            .map(|(m, tier)| (m, Some(tier)))
     } else {
         match named {
             Some(asked) => model_named(models, asked, want.image),

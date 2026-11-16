@@ -161,7 +161,11 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
         ]
     );
     assert_eq!(lane.group, "code");
-    assert_eq!(lane.tier.as_deref(), Some("worker"));
+    assert_eq!(
+        lane.tier.as_deref(),
+        Some("lead"),
+        "the code lane is owed to a merge"
+    );
     let security = detail.lanes.iter().find(|l| l.group == "security").unwrap();
     assert_eq!(security.tier.as_deref(), Some("lead"));
     assert!(

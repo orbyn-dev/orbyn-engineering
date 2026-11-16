@@ -1,7 +1,7 @@
 //! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. A lane named after the
 //! work has passed runs like any other, and a lane the repo's rules ask for runs without being named. A lane
 //! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
-//! tier (the lead tier for the security lane and a lane a repo rule locks), to another vendor than the builder where one is configured, and its key holds one check: the review
+//! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
 //! and how many checks passed, never a check, its command or the builder's transcript.
 
@@ -39,6 +39,30 @@ pub(in crate::crew) async fn lane_locked(
     match read_rules_at(root, base).await {
         Ok(rules) => rules.iter().any(|r| r.lane == *lane && r.locked),
         Err(_) => true,
+    }
+}
+
+impl Core {
+    /// Whether `lane` keeps the lead tier: a repository rule locks it, or it is the `correctness` lane (`CODE_LANE`) that a
+    /// medium or high risk merge is owed. Risk is only known once a merge entry exists, so with no entry (or no task) the code
+    /// lane is treated as owed: not knowing never lowers a review. Only a merge entry that says `low` frees the lane.
+    pub(in crate::crew) async fn lane_keeps_lead(
+        &self,
+        root: &Path,
+        base: Option<&str>,
+        subject: Option<&str>,
+        lane: &CrewToken,
+    ) -> bool {
+        if lane_locked(root, base, lane).await {
+            return true;
+        }
+        if lane.as_str() != super::CODE_LANE {
+            return false;
+        }
+        match subject.map(|id| self.store.merge_entry(id)) {
+            Some(Ok(Some(entry))) => entry.risk != "low",
+            _ => true,
+        }
     }
 }
 
@@ -262,8 +286,16 @@ impl Core {
         })
         .await
         .map_err(internal)?;
-        let lane_locked = match kind {
-            Run::Lane => lane_locked(&cwd, subject_run.base_commit.as_deref(), lane).await,
+        let lane_keeps_lead = match kind {
+            Run::Lane => {
+                self.lane_keeps_lead(
+                    &cwd,
+                    subject_run.base_commit.as_deref(),
+                    Some(&subject.id),
+                    lane,
+                )
+                .await
+            }
             Run::Second { .. } => false,
         };
         let judge = match kind {
@@ -382,7 +414,7 @@ impl Core {
                 RouteRole::Review
             }),
             lane: (!second).then(|| lane.clone()),
-            lane_locked,
+            lane_keeps_lead,
             author_engine,
             prefix: "reviewer",
             prompt: Some(prompt),

@@ -287,18 +287,53 @@ fn security_and_locked_lanes_stay_on_the_lead_tier_even_when_pinned_lower() {
 #[test]
 fn an_engine_with_no_tier_mapping_is_not_a_default_lane_reviewer() {
     // OpenCode has no mapping: it would fill the worker tier as a builder, but it never reviews.
-    let engines = [engine("claude"), engine("opencode")];
+    let engines = [engine("claude"), engine("opencode"), engine("codex")];
     let work = reading(json!({ "kind": "review" }));
     let decision = routed(&work, &engines, &lane("correctness", "claude", false));
-    assert_eq!(
-        decision.engine.as_str(),
-        "claude",
-        "only the author's vendor reviews"
-    );
+    assert_eq!(decision.engine.as_str(), "codex");
     assert!(
         decision
             .rejected
             .iter()
             .any(|r| r.engine.as_str() == "opencode" && r.why == RejectionWhy::MissingCapability)
+    );
+}
+
+#[test]
+fn a_lane_keeps_the_lead_tier_when_only_the_authors_vendor_can_review() {
+    let work = reading(json!({ "kind": "review" }));
+    // Claude alone (OpenCode never reviews): the lane cannot have another vendor's eyes, so it stays on the lead tier.
+    let alone = [engine("claude"), engine("opencode")];
+    let decision = routed(&work, &alone, &lane("docs", "claude", false));
+    assert_eq!(decision.engine.as_str(), "claude");
+    assert_eq!(decision.tier, orbyn_contracts::RouteTier::Lead);
+    assert_eq!(decision.model.as_str(), "claude-opus-4");
+    assert!(
+        decision
+            .reasons
+            .iter()
+            .any(|r| r.code.as_str() == "same_engine_as_author")
+    );
+    assert!(
+        decision.reasons.iter().any(
+            |r| r.code.as_str() == "review_lane_tier" && r.text.as_str().contains("own engine")
+        )
+    );
+    verified(&decision);
+}
+
+#[test]
+fn a_merge_owed_code_lane_is_pinned_lead_by_the_caller_and_others_stay_worker() {
+    let both = [engine("claude"), engine("codex")];
+    let work = reading(json!({ "kind": "review" }));
+    let owed = Ask {
+        locked: true,
+        ..lane("correctness", "claude", false)
+    };
+    let decision = routed(&work, &both, &owed);
+    assert_eq!(decision.tier, orbyn_contracts::RouteTier::Lead);
+    assert_eq!(
+        routed(&work, &both, &lane("performance", "claude", false)).tier,
+        orbyn_contracts::RouteTier::Worker
     );
 }

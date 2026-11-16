@@ -43,7 +43,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   field for the answer key, and no function here takes one except the leak check on storing.
 - An engine or model the machine has not configured is never routed to. An explicit engine
   that fails a filter is refused with its reason, never swapped for another.
-- Effort is `medium`, never higher. A review brief, the finding check and a second key are lead tier, and a named model below it is refused. A review lane is worker tier unless it is the `security` lane or a repo rule locks it; a pinned model wins otherwise.
+- Effort is `medium`, never higher. A review brief, the finding check and a second key are lead tier, and a named model below it is refused. A review lane is worker tier unless it is the `security` lane, a repo rule locks it, it is the merge-owed `correctness` lane or only the author's vendor can review it; a pinned model wins otherwise.
 - Every rejection carries a reason, and a score carries its basis (`used_defaults`, or the
   measured rate with its sample size).
 - No learning, trust score or counterfactual fork here: those are later slices, and

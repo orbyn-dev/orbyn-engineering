@@ -72,7 +72,7 @@ pub(super) fn acp_model<'a>(
     tier: RouteTier,
     named: Option<&str>,
     image: bool,
-) -> Result<(&'a ModelInfo, RouteTier), Unfit> {
+) -> Result<(&'a ModelInfo, Option<RouteTier>), Unfit> {
     debug_assert_eq!(view.tier, EngineTier::Acp);
     let default = explicit_default(models);
     let model = match named {
@@ -90,7 +90,8 @@ pub(super) fn acp_model<'a>(
     if tier != RouteTier::Worker && !assigned.is_some_and(|a| a.tier == tier) {
         return Err(Unfit::Tier(tier));
     }
-    Ok((model, assigned.map_or(RouteTier::Worker, |a| a.tier)))
+    // `None` is an engine the person has not assigned a tier: a builder only.
+    Ok((model, assigned.map(|a| a.tier)))
 }
 
 impl RouterConfig {

@@ -149,7 +149,7 @@ pub fn run(
             created_at: CrewTimestamp::new("2026-11-12T09:00:00Z").unwrap(),
             role: ask.role,
             lane: ask.lane.map(|l| CrewToken::new(l).unwrap()),
-            lane_locked: ask.locked,
+            lane_keeps_lead: ask.locked,
             author_engine: ask.author.map(|a| CrewToken::new(a).unwrap()),
             default_engine: ask.default_engine.map(str::to_owned),
             classes: None,
