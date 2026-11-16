@@ -14,8 +14,8 @@ mod sampling;
 
 pub use backpressure::{StartDecision, start_allowed, waiting_count};
 pub use provenance::{
-    Author, AuthoredHunk, Hunk, NOTE_REF, Recorded, attribute, hunks_of, parse_diff,
-    record_at_merge, trace_note,
+    Author, AuthoredHunk, Hunk, NOTE_REF, Recorded, hunks_of, parse_blame, parse_diff,
+    record_at_merge, split_by_author, trace_note,
 };
 pub use sampling::{Seeded, choose, plan_size};
 

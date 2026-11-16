@@ -71,7 +71,7 @@ fn merged_repo(root: &Path) -> (std::path::PathBuf, String, String) {
         &repo,
         &[
             "-c",
-            "user.email=agent@example.com",
+            "user.email=person@example.com",
             "commit",
             "-q",
             "-m",
@@ -86,7 +86,7 @@ fn merged_repo(root: &Path) -> (std::path::PathBuf, String, String) {
         &repo,
         &[
             "-c",
-            "user.email=person@example.com",
+            "user.email=agent@example.com",
             "commit",
             "-q",
             "-m",
@@ -193,7 +193,8 @@ async fn a_merge_stores_agent_and_person_rows_and_a_local_note() {
     let (repo, before, merge) = merged_repo(dir.path());
     let (_db, store) = open();
     let record = store_merge(&store, 1, &repo, &before, &merge);
-    let people = vec!["person@example.com".to_owned()];
+    // Crew recorded only the agent commit. Its email says "person" and the person commit's says "agent": emails are not read.
+    let people = vec![git(&repo, &["rev-parse", "feature~1"])];
     let done = record_at_merge(&store, &record, &agent(), &people, 1000)
         .await
         .unwrap();
@@ -426,4 +427,139 @@ async fn the_note_ref_is_never_pushed_by_what_the_app_runs() {
             );
         }
     }
+}
+
+/// An agent commit changes lines 3 to 7 and 10; a later person commit inserts three lines at the top and edits one
+/// of the agent's lines. Returns the checkout, before, merge and the agent commit.
+fn shifted_repo(root: &Path) -> (std::path::PathBuf, String, String, String) {
+    let repo = root.join("shift");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), lines("a", 10)).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    let mut a: Vec<String> = lines("a", 10).lines().map(str::to_owned).collect();
+    for i in [2, 3, 4, 5, 6, 9] {
+        a[i] = format!("agent {i}");
+    }
+    std::fs::write(repo.join("a.txt"), a.join("\n") + "\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "agent work"]);
+    let agent_commit = git(&repo, &["rev-parse", "HEAD"]);
+    a[4] = "person edit".into();
+    a.splice(0..0, ["p1".to_owned(), "p2".to_owned(), "p3".to_owned()]);
+    std::fs::write(repo.join("a.txt"), a.join("\n") + "\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "person"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    let before = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    let merge = git(&repo, &["rev-parse", "HEAD"]);
+    (repo, before, merge, agent_commit)
+}
+
+#[tokio::test]
+async fn a_later_person_commit_that_shifts_lines_does_not_take_the_agents_hunk() {
+    let dir = TempDir::new();
+    let (repo, before, merge, agent_commit) = shifted_repo(dir.path());
+    let (_db, store) = open();
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    record_at_merge(&store, &record, &agent(), &[agent_commit], 1)
+        .await
+        .unwrap()
+        .note
+        .unwrap();
+    let got = kinds(&store.crew_hunks_of_merge(record.id).unwrap());
+    assert_eq!(
+        got,
+        [
+            ("a.txt".into(), 1, 3, "person"),
+            ("a.txt".into(), 6, 2, "agent"),
+            ("a.txt".into(), 8, 1, "person"),
+            ("a.txt".into(), 9, 2, "agent"),
+            ("a.txt".into(), 13, 1, "agent"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_forged_email_on_an_agent_commit_stays_agent_and_no_recorded_commit_means_all_agent() {
+    let dir = TempDir::new();
+    let (repo, before, merge, agent_commit) = shifted_repo(dir.path());
+    let (_db, store) = open();
+    // The agent commit claims to be a person; nothing reads the email.
+    git(&repo, &["config", "user.email", "x@example.com"]);
+    let author = git(&repo, &["log", "-1", "--format=%ae", &agent_commit]);
+    assert_ne!(author, "");
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    record_at_merge(&store, &record, &agent(), &[], 1)
+        .await
+        .unwrap();
+    let rows = store.crew_hunks_of_merge(record.id).unwrap();
+    assert!(
+        rows.iter().all(|r| r.hunk.author == agent()),
+        "nothing recorded means nobody is a person"
+    );
+}
+
+#[tokio::test]
+async fn a_note_far_over_the_command_line_limit_is_written_and_read_back() {
+    let dir = TempDir::new();
+    let repo = dir.path().join("big");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("big.txt"), lines("l", 6000)).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    let changed: String = (1..=6000)
+        .map(|i| {
+            if i % 2 == 0 {
+                format!("new{i}\n")
+            } else {
+                format!("l{i}\n")
+            }
+        })
+        .collect();
+    std::fs::write(repo.join("big.txt"), changed).unwrap();
+    git(&repo, &["commit", "-q", "-am", "work"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    let before = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    let merge = git(&repo, &["rev-parse", "HEAD"]);
+    let (_db, store) = open();
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    let done = record_at_merge(&store, &record, &agent(), &[], 1)
+        .await
+        .unwrap();
+    done.note.expect("a large note is written");
+    assert_eq!(done.hunks, 3000);
+    let text = git(
+        &repo,
+        &["notes", &format!("--ref={NOTE_REF}"), "show", &merge],
+    );
+    assert!(text.len() > 100_000, "{}", text.len());
+    let note: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(note["counts"]["hunks"], 3000);
+}
+
+#[tokio::test]
+async fn a_merge_with_no_hunk_has_no_note_and_no_note_ref() {
+    let dir = TempDir::new();
+    let repo = dir.path().join("empty");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "nothing"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    let before = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    let merge = git(&repo, &["rev-parse", "HEAD"]);
+    let (_db, store) = open();
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    let done = record_at_merge(&store, &record, &agent(), &[], 1)
+        .await
+        .unwrap();
+    assert_eq!(done.hunks, 0);
+    assert!(git(&repo, &["for-each-ref", NOTE_REF]).is_empty());
+    assert!(store.crew_hunks_of_merge(record.id).unwrap().is_empty());
 }

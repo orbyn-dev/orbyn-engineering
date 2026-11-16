@@ -83,28 +83,57 @@ fn quoted_and_spaced_paths_are_read_back_and_unsafe_ones_are_dropped() {
     }
 }
 
-#[test]
-fn a_hunk_a_person_touched_is_the_persons_and_the_rest_the_agents() {
-    let hunks = vec![
-        hunk("a.txt", 1, 3),
-        hunk("a.txt", 10, 2),
-        hunk("b.txt", 1, 3),
-    ];
-    let person = vec![hunk("a.txt", 3, 1), hunk("b.txt", 7, 1)];
-    let out = attribute(hunks, &person, &agent());
-    let kinds: Vec<bool> = out.iter().map(|h| h.author == Author::Person).collect();
-    assert_eq!(kinds, [true, false, false]);
-    assert!(out[1].author == agent());
+fn blame_text(rows: &[(&str, u32)]) -> Vec<u8> {
+    let mut out = String::new();
+    for (id, line) in rows {
+        out.push_str(&format!(
+            "{id} {line} {line} 1\nauthor someone\nfilename x\n\tcontent {line}\n"
+        ));
+    }
+    out.into_bytes()
 }
 
 #[test]
-fn only_a_known_person_email_counts_and_without_case() {
-    let log = "aaa\tPerson@Example.com\nbbb\tagent@example.com\nccc\tother@example.com\n";
-    assert_eq!(person_commits(log, &["person@example.com".into()]), ["aaa"]);
-    assert!(
-        person_commits(log, &[]).is_empty(),
-        "nobody known means all agent"
+fn blame_gives_each_line_its_commit_and_ignores_content_and_metadata() {
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    let mut text = blame_text(&[(&a, 3), (&b, 4)]);
+    // A content line that looks like a header starts with a tab, so it is never read.
+    text.extend_from_slice(format!("\t{b} 9 9 1\n").as_bytes());
+    let map = parse_blame(&text);
+    assert_eq!(map.len(), 2);
+    assert_eq!(map[&3], a);
+    assert_eq!(map[&4], b);
+}
+
+#[test]
+fn a_merged_hunk_splits_into_runs_and_only_a_persons_commit_makes_a_person_line() {
+    let (agent_id, person_id) = ("a".repeat(40), "b".repeat(40));
+    let blame = parse_blame(&blame_text(&[
+        (&agent_id, 6),
+        (&agent_id, 7),
+        (&person_id, 8),
+        (&agent_id, 9),
+    ]));
+    let person: std::collections::HashSet<String> = [person_id].into();
+    let out = split_by_author(&hunk("a.txt", 6, 5), &blame, &person, &agent());
+    let got: Vec<(u32, u32, bool)> = out
+        .iter()
+        .map(|h| (h.hunk.start, h.hunk.len, h.author == Author::Person))
+        .collect();
+    // Line 10 has no blame row: unknown is the agent's.
+    assert_eq!(got, [(6, 2, false), (8, 1, true), (9, 2, false)]);
+}
+
+#[test]
+fn with_no_person_commit_every_line_is_the_agents() {
+    let out = split_by_author(
+        &hunk("a", 1, 4),
+        &Default::default(),
+        &Default::default(),
+        &agent(),
     );
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].hunk, hunk("a", 1, 4));
 }
 
 #[test]

@@ -3,6 +3,7 @@
 //! ids. Parsing git's diff text is pure and separate from running git. Ids, ranges and counts only: never file
 //! content, a prompt, a secret or a path outside the repository.
 
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -182,39 +183,59 @@ pub fn parse_diff(diff: &[u8]) -> Vec<Hunk> {
     hunks
 }
 
-fn overlaps(a: &Hunk, b: &Hunk) -> bool {
-    a.path == b.path && a.start < b.start + b.len && b.start < a.start + a.len
+/// The line to commit map of `git blame --porcelain` output: each result line (final line number) and the full
+/// commit id that last changed it. Content lines start with a tab and are never read.
+pub fn parse_blame(blame: &[u8]) -> BTreeMap<u32, String> {
+    let mut lines = BTreeMap::new();
+    for line in blame.split(|b| *b == b'\n') {
+        if line.first() == Some(&b'\t') {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(line) else {
+            continue;
+        };
+        let mut parts = text.split(' ');
+        let (Some(id), Some(_orig), Some(fin)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        if is_revision(id)
+            && let Ok(fin) = fin.parse::<u32>()
+        {
+            lines.insert(fin, id.to_ascii_lowercase());
+        }
+    }
+    lines
 }
 
-/// Gives each merged hunk its author: a person when a person's own commit touched an overlapping range of the same
-/// path, the agent otherwise. A person's range comes from that commit's own diff, so a later commit that shifted the lines
-/// can leave it a few lines off; the whole merged hunk counts as the person's.
-pub fn attribute(hunks: Vec<Hunk>, person: &[Hunk], agent: &Author) -> Vec<AuthoredHunk> {
-    hunks
-        .into_iter()
-        .map(|hunk| {
-            let author = if person.iter().any(|p| overlaps(&hunk, p)) {
-                Author::Person
-            } else {
-                agent.clone()
-            };
-            AuthoredHunk { hunk, author }
-        })
-        .collect()
-}
-
-/// The commits of a `git log --format=%H<TAB>%ae` text whose author email is one of `person_emails` (compared
-/// without case).
-fn person_commits(log: &str, person_emails: &[String]) -> Vec<String> {
-    log.lines()
-        .filter_map(|line| line.split_once('\t'))
-        .filter(|(_, email)| {
-            person_emails
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(email.trim()))
-        })
-        .map(|(hash, _)| hash.to_owned())
-        .collect()
+/// Splits one merged hunk into contiguous runs of the same author. A line is a person's only if blame names a commit
+/// in `person`; a line blame did not name is the agent's.
+pub fn split_by_author(
+    hunk: &Hunk,
+    blame: &BTreeMap<u32, String>,
+    person: &HashSet<String>,
+    agent: &Author,
+) -> Vec<AuthoredHunk> {
+    let mut out: Vec<AuthoredHunk> = Vec::new();
+    for line in hunk.start..hunk.start + hunk.len {
+        let is_person = blame.get(&line).is_some_and(|id| person.contains(id));
+        let author = if is_person {
+            Author::Person
+        } else {
+            agent.clone()
+        };
+        match out.last_mut() {
+            Some(last) if last.author == author => last.hunk.len += 1,
+            _ => out.push(AuthoredHunk {
+                hunk: Hunk {
+                    path: hunk.path.clone(),
+                    start: line,
+                    len: 1,
+                },
+                author,
+            }),
+        }
+    }
+    out
 }
 
 /// The Agent Trace-shaped note body: version, the revision, and per file the ranges by contributor. Contributor
@@ -307,66 +328,137 @@ pub async fn hunks_of(repo: &Path, before: &str, merge: &str) -> Result<Vec<Hunk
     Ok(parse_diff(&git_byte_exact(repo, &args).await?))
 }
 
-/// The ranges of the commits in `before..merge` that a person committed (author email in `person_emails`).
-async fn person_hunks(
+/// The commits of `before..merge` that are not merges and are not one of the worker commits Crew recorded. With no
+/// recorded worker commit nothing is known, so nobody is a person.
+async fn person_commits(
     repo: &Path,
     before: &str,
     merge: &str,
-    person_emails: &[String],
-) -> Result<Vec<Hunk>> {
-    if person_emails.is_empty() {
-        return Ok(Vec::new());
+    worker_commits: &[String],
+) -> Result<HashSet<String>> {
+    if worker_commits.is_empty() {
+        return Ok(HashSet::new());
     }
     let range = format!("{before}..{merge}");
-    let log = git_byte_exact(
-        repo,
-        &["log", "--no-merges", "--format=%H%x09%ae", &range, "--"],
-    )
-    .await?;
-    let mut ranges = Vec::new();
-    for commit in person_commits(&String::from_utf8_lossy(&log), person_emails) {
-        need_revision(&commit)?;
-        let mut args = vec!["show", "--format="];
-        args.extend(DIFF_ARGS);
-        args.extend([commit.as_str(), "--"]);
-        ranges.extend(parse_diff(&git_byte_exact(repo, &args).await?));
-    }
-    Ok(ranges)
+    let listed = git_byte_exact(repo, &["rev-list", "--no-merges", &range, "--"]).await?;
+    let worker: HashSet<String> = worker_commits
+        .iter()
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    Ok(String::from_utf8_lossy(&listed)
+        .lines()
+        .map(|line| line.trim().to_ascii_lowercase())
+        .filter(|id| is_revision(id) && !worker.contains(id))
+        .collect())
 }
 
-/// Writes the note on the merge commit, replacing an earlier one. Local only.
+/// Gives each hunk its author by `git blame` of the merge commit: a line is a person's only when the commit that last
+/// changed it is one of `person`. A blame that fails leaves that file's hunks with the agent.
+async fn attribute_by_blame(
+    repo: &Path,
+    merge: &str,
+    hunks: Vec<Hunk>,
+    person: &HashSet<String>,
+    agent: &Author,
+) -> Vec<AuthoredHunk> {
+    if person.is_empty() {
+        return hunks
+            .into_iter()
+            .map(|hunk| AuthoredHunk {
+                hunk,
+                author: agent.clone(),
+            })
+            .collect();
+    }
+    let mut paths: Vec<&str> = hunks.iter().map(|h| h.path.as_str()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let mut blamed: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+    for path in paths {
+        let ranges: Vec<String> = hunks
+            .iter()
+            .filter(|h| h.path == path)
+            .map(|h| format!("{},{}", h.start, h.start + h.len - 1))
+            .collect();
+        let mut args = vec!["blame", "--porcelain"];
+        for range in &ranges {
+            args.extend(["-L", range]);
+        }
+        args.extend([merge, "--", path]);
+        if let Ok(out) = git_byte_exact(repo, &args).await {
+            blamed.insert(path.to_owned(), parse_blame(&out));
+        }
+    }
+    let none = BTreeMap::new();
+    hunks
+        .iter()
+        .flat_map(|hunk| {
+            split_by_author(hunk, blamed.get(&hunk.path).unwrap_or(&none), person, agent)
+        })
+        .collect()
+}
+
+/// Writes the note on the merge commit, replacing an earlier one. Local only. The body goes through a temporary file
+/// (`-F`), not the command line, so its size cannot hit a command-line limit.
 async fn write_note(repo: &Path, merge: &str, body: &Value) -> Result<()> {
     need_revision(merge)?;
-    let text = serde_json::to_string(body)?;
-    let mut args: Vec<&str> = NOTE_IDENTITY.to_vec();
+    let file = std::env::temp_dir().join(format!(
+        "orbyn-note-{}-{}.json",
+        std::process::id(),
+        &merge[..16]
+    ));
+    let _ = std::fs::remove_file(&file);
+    {
+        use std::io::Write;
+        let mut handle = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)?;
+        handle.write_all(&serde_json::to_vec(body)?)?;
+    }
+    let file_text = file.to_string_lossy().into_owned();
     let notes_ref = format!("--ref={NOTE_REF}");
-    args.extend(["notes", &notes_ref, "add", "-f", "-m", &text, merge]);
-    git(repo, &args).await?;
+    let mut args: Vec<&str> = NOTE_IDENTITY.to_vec();
+    args.extend(["notes", &notes_ref, "add", "-f", "-F", &file_text, merge]);
+    let result = git(repo, &args).await;
+    let _ = std::fs::remove_file(&file);
+    result?;
     Ok(())
 }
 
-/// Records a merge's hunks and its local git note. Hunks are found from the diff of `before..merge`; `agent` wrote them
-/// except where a commit by one of `person_emails` touched the same lines. The store write is one transaction and its
-/// error is returned. The note is written after it, and a failure there is returned inside `Recorded` for the caller
-/// to log, because the merge has already happened.
+/// Records a merge's hunks and its local git note. Hunks come from the diff of `before..merge`. `worker_commits` are the
+/// commit ids Crew recorded for the worker on this merge: a commit in the range that is not one of them is a person's,
+/// and `git blame` of the merge commit gives each line to the commit that last changed it, so only lines a person's
+/// commit last changed are the person's. Author emails are never trusted. Anything unknown is the agent's. The store
+/// write is one transaction and its error is returned. The note is written after it, and a failure there is returned
+/// inside `Recorded` for the caller to log, because the merge has already happened. A merge with no hunk gets no
+/// note and no `note_ref`.
 pub async fn record_at_merge(
     store: &Store,
     merge: &MergeRecord,
     agent: &Author,
-    person_emails: &[String],
+    worker_commits: &[String],
     now: i64,
 ) -> Result<Recorded> {
     let repo = Path::new(&merge.repo);
     let hunks = hunks_of(repo, &merge.before_commit, &merge.merge_commit).await?;
-    let people = person_hunks(
+    let people = person_commits(
         repo,
         &merge.before_commit,
         &merge.merge_commit,
-        person_emails,
+        worker_commits,
     )
-    .await?;
-    let authored = attribute(hunks, &people, agent);
+    .await
+    // A range git could not list leaves everyone the agent.
+    .unwrap_or_default();
+    let authored = attribute_by_blame(repo, &merge.merge_commit, hunks, &people, agent).await;
     store.record_crew_hunks(merge.id, &merge.repo, now, &authored)?;
+    if authored.is_empty() {
+        return Ok(Recorded {
+            hunks: 0,
+            note: Ok(()),
+        });
+    }
     let body = trace_note(&merge.merge_commit, &authored, now);
     let note = match write_note(repo, &merge.merge_commit, &body).await {
         Ok(()) => store.set_crew_hunks_note_ref(merge.id, NOTE_REF),

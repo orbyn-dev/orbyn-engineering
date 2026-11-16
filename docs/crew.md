@@ -1049,9 +1049,11 @@ separate PRs.
 **As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
 merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
 and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps them in `crew_hunks` with the author: the
-task's engine and model for the agent, or a person where a commit by a known person email touched the same lines (none
-known means every hunk is the agent's). The first time provenance is recorded for a repository is kept once in
-`crew_provenance_start` and never moves; coverage will say "Not measured" before it. Hunks and that start go in one
+task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
+commit) is in the range but is not a worker commit Crew recorded; an author email is never trusted, a merged hunk is split
+into runs of one author, and nothing recorded or any error means the agent. The first time provenance is recorded for a repository is kept once in
+`crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
+merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
 transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
 `person`, engine and model ids, counts) is written on the merge commit under `refs/notes/orbyn-agent-trace`. The ref is
 local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
