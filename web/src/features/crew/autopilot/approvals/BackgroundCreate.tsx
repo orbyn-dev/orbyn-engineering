@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { cloneElement, useState, type ReactElement } from "react";
 import { toFailure } from "../../../../lib/useAsync";
 import { Button } from "../../../../ui/controls";
 import { Dialog } from "../../../../ui/Dialog";
@@ -38,11 +38,12 @@ const whole = (text: string, max: number): number | null => {
   return text.trim() !== "" && Number.isInteger(value) && value >= 1 && value <= max ? value : null;
 };
 
-function Entry({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: React.ReactNode }) {
+function Entry({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: ReactElement<{ "aria-describedby"?: string }> }) {
+  const described = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      {children}
+      {cloneElement(children, { "aria-describedby": described })}
       {error ? <span className="field-error" id={`${id}-error`} role="alert">{error}</span> : hint ? <span className="field-hint" id={`${id}-hint`}>{hint}</span> : null}
     </div>
   );
@@ -66,6 +67,8 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [general, setGeneral] = useState<string | null>(null);
 
+  /** An edit to a field drops the route's refusal of it. */
+  const clear = (field: Field) => setErrors((now) => (now[field] ? { ...now, [field]: undefined } : now));
   const choose = (next: TemplateId) => {
     setTemplate(next);
     setStarts(triggerOf(next));
@@ -120,7 +123,7 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
           <Segmented label="Template" value={template} onChange={choose} options={TEMPLATES.map((one) => ({ value: one.id, label: one.name }))} />
         </div>
         <Entry id="bg-name" label="Name" hint={`1 to ${LIMITS.name} characters`} error={errors.name}>
-          <input id="bg-name" value={name} aria-invalid={errors.name ? true : undefined} onChange={(event) => { setName(event.target.value); setNamed(true); }} />
+          <input id="bg-name" value={name} aria-invalid={errors.name ? true : undefined} onChange={(event) => { setName(event.target.value); setNamed(true); clear("name"); }} />
         </Entry>
         <div className="field">
           <label>Starts when <Chip tone="plain">Not built yet</Chip></label>
@@ -129,31 +132,31 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
         {starts === "ci_fails" ? (
           <div className="ap-pair">
             <Entry id="bg-workflow" label="CI workflow" error={errors.workflow}>
-              <input id="bg-workflow" className="ap-mono" value={workflow} placeholder="Any workflow" onChange={(event) => setWorkflow(event.target.value)} />
+              <input id="bg-workflow" className="ap-mono" value={workflow} placeholder="Any workflow" onChange={(event) => { setWorkflow(event.target.value); clear("workflow"); }} />
             </Entry>
             <Entry id="bg-branch" label="Branch" error={errors.branch}>
-              <input id="bg-branch" className="ap-mono" value={branch} placeholder="Any branch" onChange={(event) => setBranch(event.target.value)} />
+              <input id="bg-branch" className="ap-mono" value={branch} placeholder="Any branch" onChange={(event) => { setBranch(event.target.value); clear("branch"); }} />
             </Entry>
           </div>
         ) : null}
         {starts === "issue_label" ? (
           <Entry id="bg-label" label="Label" hint={`1 to ${LIMITS.text} characters`} error={errors.label}>
-            <input id="bg-label" className="ap-mono" value={label} maxLength={LIMITS.text} onChange={(event) => setLabel(event.target.value)} />
+            <input id="bg-label" className="ap-mono" value={label} maxLength={LIMITS.text} onChange={(event) => { setLabel(event.target.value); clear("label"); }} />
           </Entry>
         ) : null}
         {starts === "schedule" ? (
           <Entry id="bg-hours" label="Hours between runs" hint={`1 to ${LIMITS.hours} hours`} error={errors.hours}>
-            <input id="bg-hours" type="number" min={1} max={LIMITS.hours} value={hours} onChange={(event) => setHours(event.target.value)} />
+            <input id="bg-hours" type="number" min={1} max={LIMITS.hours} value={hours} onChange={(event) => { setHours(event.target.value); clear("hours"); }} />
           </Entry>
         ) : null}
         <div className="field">
           <label id="bg-budget">Budget for each run</label>
           <div className="ap-pair" role="group" aria-labelledby="bg-budget">
           <Entry id="bg-turns" label="Turns for each run" hint={`1 to ${LIMITS.turns}`} error={errors.turns}>
-            <input id="bg-turns" type="number" min={1} max={LIMITS.turns} value={turns} onChange={(event) => setTurns(event.target.value)} />
+            <input id="bg-turns" type="number" min={1} max={LIMITS.turns} value={turns} onChange={(event) => { setTurns(event.target.value); clear("turns"); }} />
           </Entry>
           <Entry id="bg-minutes" label="Minutes for each run" hint={`1 to ${LIMITS.minutes}`} error={errors.minutes}>
-            <input id="bg-minutes" type="number" min={1} max={LIMITS.minutes} value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+            <input id="bg-minutes" type="number" min={1} max={LIMITS.minutes} value={minutes} onChange={(event) => { setMinutes(event.target.value); clear("minutes"); }} />
           </Entry>
           </div>
         </div>

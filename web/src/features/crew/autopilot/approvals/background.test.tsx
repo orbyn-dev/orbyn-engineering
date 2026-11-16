@@ -126,6 +126,26 @@ describe("Background crews on the Crew routes", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("links each input to its hint, and to the route's refusal while there is one, and drops the refusal when the field is edited", async () => {
+    mock.reset("crew-background");
+    const user = userEvent.setup();
+    render(<BackgroundTab />);
+    await user.click(await screen.findByRole("button", { name: "New background crew" }));
+    const dialog = await screen.findByRole("dialog", { name: /New background crew/ });
+    const name = within(dialog).getByLabelText("Name");
+    expect(name).toHaveAccessibleDescription("1 to 80 characters");
+    expect(within(dialog).getByLabelText("Turns for each run")).toHaveAccessibleDescription("1 to 1000");
+    await user.clear(name);
+    await user.type(name, "Fix failing CI");
+    await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
+    expect(await within(dialog).findByText("this project already has a background crew with that name")).toBeVisible();
+    expect(name).toHaveAccessibleDescription("this project already has a background crew with that name");
+    await user.type(name, "!");
+    expect(within(dialog).queryByText("this project already has a background crew with that name")).toBeNull();
+    expect(name).not.toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAccessibleDescription("1 to 80 characters");
+  });
+
   it("keeps Create off while a budget is outside the route's limits", async () => {
     mock.reset("crew-background");
     const user = userEvent.setup();
