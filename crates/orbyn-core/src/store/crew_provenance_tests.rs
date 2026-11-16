@@ -193,8 +193,9 @@ async fn a_merge_stores_agent_and_person_rows_and_a_local_note() {
     let (repo, before, merge) = merged_repo(dir.path());
     let (_db, store) = open();
     let record = store_merge(&store, 1, &repo, &before, &merge);
-    // Crew recorded only the agent commit. Its email says "person" and the person commit's says "agent": emails are not read.
-    let people = vec![git(&repo, &["rev-parse", "feature~1"])];
+    // Only the person's commit is positively known. Emails are not read: the agent commit says "person" and the
+    // person commit says "agent".
+    let people = vec![git(&repo, &["rev-parse", "feature"])];
     let done = record_at_merge(&store, &record, &agent(), &people, 1000)
         .await
         .unwrap();
@@ -459,10 +460,11 @@ fn shifted_repo(root: &Path) -> (std::path::PathBuf, String, String, String) {
 #[tokio::test]
 async fn a_later_person_commit_that_shifts_lines_does_not_take_the_agents_hunk() {
     let dir = TempDir::new();
-    let (repo, before, merge, agent_commit) = shifted_repo(dir.path());
+    let (repo, before, merge, _agent_commit) = shifted_repo(dir.path());
     let (_db, store) = open();
     let record = store_merge(&store, 1, &repo, &before, &merge);
-    record_at_merge(&store, &record, &agent(), &[agent_commit], 1)
+    let person = git(&repo, &["rev-parse", "feature"]);
+    record_at_merge(&store, &record, &agent(), &[person], 1)
         .await
         .unwrap()
         .note
@@ -562,4 +564,152 @@ async fn a_merge_with_no_hunk_has_no_note_and_no_note_ref() {
     assert_eq!(done.hunks, 0);
     assert!(git(&repo, &["for-each-ref", NOTE_REF]).is_empty());
     assert!(store.crew_hunks_of_merge(record.id).unwrap().is_empty());
+}
+
+const SHIFTED: [(&str, u32, u32, &str); 5] = [
+    ("a.txt", 1, 3, "person"),
+    ("a.txt", 6, 2, "agent"),
+    ("a.txt", 8, 1, "person"),
+    ("a.txt", 9, 2, "agent"),
+    ("a.txt", 13, 1, "agent"),
+];
+
+#[tokio::test]
+async fn an_id_that_is_not_in_the_list_stays_agent_even_if_rewritten() {
+    let dir = TempDir::new();
+    let (repo, before, merge, _agent_commit) = shifted_repo(dir.path());
+    let (_db, store) = open();
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    // The person's commit was rewritten, so the id the caller knows is no longer in the history.
+    let rewritten = "c".repeat(40);
+    let not_hex = "feature".to_owned();
+    let list = [rewritten, not_hex];
+    record_at_merge(&store, &record, &agent(), &list, 1)
+        .await
+        .unwrap();
+    let rows = store.crew_hunks_of_merge(record.id).unwrap();
+    assert!(rows.iter().all(|r| r.hunk.author == agent()));
+    assert_eq!(
+        rows.len(),
+        3,
+        "unsplit: the person's lines are the agent's too"
+    );
+}
+
+#[tokio::test]
+async fn a_repository_ignore_revs_file_cannot_reattribute_lines() {
+    let dir = TempDir::new();
+    let (repo, before, merge, _) = shifted_repo(dir.path());
+    let person = git(&repo, &["rev-parse", "feature"]);
+    std::fs::write(repo.join("ignore-revs"), format!("{person}\n")).unwrap();
+    git(&repo, &["config", "blame.ignoreRevsFile", "ignore-revs"]);
+    let (_db, store) = open();
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    record_at_merge(&store, &record, &agent(), &[person], 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        kinds(&store.crew_hunks_of_merge(record.id).unwrap()),
+        SHIFTED.map(|(p, s, l, k)| (p.to_owned(), s, l, k))
+    );
+}
+
+#[tokio::test]
+async fn a_failed_blame_leaves_the_hunks_with_the_agent() {
+    let dir = TempDir::new();
+    let (repo, _before, merge, _) = shifted_repo(dir.path());
+    let person: std::collections::HashSet<String> = [merge.clone()].into();
+    let hunks = vec![hunk("missing.txt", 1, 3)];
+    let out =
+        crate::crew::capacity::attribute_by_blame(&repo, &merge, hunks, &person, &agent()).await;
+    assert_eq!(
+        out,
+        [AuthoredHunk {
+            hunk: hunk("missing.txt", 1, 3),
+            author: agent()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn thousands_of_hunks_are_blamed_without_a_long_command_line() {
+    let dir = TempDir::new();
+    let repo = dir.path().join("big");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("big.txt"), lines("l", 6000)).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    let edit = |every: u32, tag: &str| -> String {
+        (1..=6000)
+            .map(|i| {
+                if i % every == 0 {
+                    format!("{tag}{i}\n")
+                } else {
+                    format!("l{i}\n")
+                }
+            })
+            .collect()
+    };
+    std::fs::write(repo.join("big.txt"), edit(2, "agent")).unwrap();
+    git(&repo, &["commit", "-q", "-am", "agent"]);
+    // The person then rewrites line 2 only.
+    let mut text = edit(2, "agent");
+    text = text.replacen("agent2\n", "person2\n", 1);
+    std::fs::write(repo.join("big.txt"), text).unwrap();
+    git(&repo, &["commit", "-q", "-am", "person"]);
+    let person = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    let before = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    let merge = git(&repo, &["rev-parse", "HEAD"]);
+    let (_db, store) = open();
+    let record = store_merge(&store, 1, &repo, &before, &merge);
+    let done = record_at_merge(&store, &record, &agent(), &[person], 1)
+        .await
+        .unwrap();
+    done.note.unwrap();
+    let rows = store.crew_hunks_of_merge(record.id).unwrap();
+    assert_eq!(rows.len(), 3000);
+    let people: Vec<u32> = rows
+        .iter()
+        .filter(|r| r.hunk.author == Author::Person)
+        .map(|r| r.hunk.hunk.start)
+        .collect();
+    assert_eq!(people, [2]);
+}
+
+#[tokio::test]
+async fn the_scratch_file_is_unique_inside_the_git_dir_and_gone_after_success_and_failure() {
+    let dir = TempDir::new();
+    let (repo, before, merge) = merged_repo(dir.path());
+    let leftovers = |repo: &Path| -> Vec<String> {
+        std::fs::read_dir(repo.join(".git"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("orbyn-note-"))
+            .collect()
+    };
+    let (_db, store) = open();
+    let first = store_merge(&store, 1, &repo, &before, &merge);
+    record_at_merge(&store, &first, &agent(), &[], 1)
+        .await
+        .unwrap()
+        .note
+        .unwrap();
+    assert!(leftovers(&repo).is_empty(), "removed after success");
+
+    // A note that git refuses leaves nothing behind either.
+    std::fs::remove_dir_all(repo.join(".git/refs/notes")).ok();
+    let _ = std::fs::remove_file(repo.join(".git/refs/notes"));
+    git(&repo, &["update-ref", "-d", NOTE_REF]);
+    std::fs::remove_dir_all(repo.join(".git/refs/notes")).ok();
+    std::fs::write(repo.join(".git/refs/notes"), "not a folder").unwrap();
+    let second = store_merge(&store, 2, &repo, &before, &merge);
+    let done = record_at_merge(&store, &second, &agent(), &[], 2)
+        .await
+        .unwrap();
+    assert!(done.note.is_err());
+    assert!(leftovers(&repo).is_empty(), "removed after failure");
 }

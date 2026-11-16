@@ -13,6 +13,7 @@ mod provenance;
 mod sampling;
 
 pub use backpressure::{StartDecision, start_allowed, waiting_count};
+pub(crate) use provenance::attribute_by_blame;
 pub use provenance::{
     Author, AuthoredHunk, Hunk, NOTE_REF, Recorded, hunks_of, parse_blame, parse_diff,
     record_at_merge, split_by_author, trace_note,

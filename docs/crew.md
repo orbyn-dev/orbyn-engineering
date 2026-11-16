@@ -1050,8 +1050,11 @@ separate PRs.
 merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
 and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps them in `crew_hunks` with the author: the
 task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
-commit) is in the range but is not a worker commit Crew recorded; an author email is never trusted, a merged hunk is split
-into runs of one author, and nothing recorded or any error means the agent. The first time provenance is recorded for a repository is kept once in
+commit, one blame per file, repository ignore-revs lists cleared) is in the positive `person_commits` list the caller
+passes. Anything not positively a person's is the agent's: an empty list, an unknown or rewritten id, a conflict
+resolution, a failed blame. An author email is never read, and a merged hunk is split into runs of one author. The merge
+hook must pass only positively identified person commits (for example commits the person made through the app or
+pressed Looks good on), never a guess. The first time provenance is recorded for a repository is kept once in
 `crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
 merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
 transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or

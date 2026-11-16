@@ -9,7 +9,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::error::{CoreError, Result};
-use crate::source_control::git::{git, git_byte_exact};
+use crate::source_control::git::{git, git_byte_exact, text};
 use crate::store::{MergeRecord, Store};
 
 /// The ref the note lives under. It is local only: the app never pushes or fetches it.
@@ -328,33 +328,22 @@ pub async fn hunks_of(repo: &Path, before: &str, merge: &str) -> Result<Vec<Hunk
     Ok(parse_diff(&git_byte_exact(repo, &args).await?))
 }
 
-/// The commits of `before..merge` that are not merges and are not one of the worker commits Crew recorded. With no
-/// recorded worker commit nothing is known, so nobody is a person.
-async fn person_commits(
-    repo: &Path,
-    before: &str,
-    merge: &str,
-    worker_commits: &[String],
-) -> Result<HashSet<String>> {
-    if worker_commits.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let range = format!("{before}..{merge}");
-    let listed = git_byte_exact(repo, &["rev-list", "--no-merges", &range, "--"]).await?;
-    let worker: HashSet<String> = worker_commits
+/// The ids positively known to be a person's, as a lowercase set. Anything that is not a full hex id is dropped, so
+/// it can never match a blamed commit.
+fn person_set(person_commits: &[String]) -> HashSet<String> {
+    person_commits
         .iter()
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    Ok(String::from_utf8_lossy(&listed)
-        .lines()
-        .map(|line| line.trim().to_ascii_lowercase())
-        .filter(|id| is_revision(id) && !worker.contains(id))
-        .collect())
+        .map(|id| id.trim().to_ascii_lowercase())
+        .filter(|id| is_revision(id))
+        .collect()
 }
 
 /// Gives each hunk its author by `git blame` of the merge commit: a line is a person's only when the commit that last
-/// changed it is one of `person`. A blame that fails leaves that file's hunks with the agent.
-async fn attribute_by_blame(
+/// changed it is one of `person`. Anything else is the agent's: an unknown commit, a rewritten id, a conflict
+/// resolution, a line blame did not name and a file whose blame failed. One blame runs per file, without `-L`, and
+/// the result is sliced, so the number of hunks cannot grow the command line. Repository config cannot reattribute
+/// lines: the ignore-revs list is cleared.
+pub(crate) async fn attribute_by_blame(
     repo: &Path,
     merge: &str,
     hunks: Vec<Hunk>,
@@ -375,16 +364,17 @@ async fn attribute_by_blame(
     paths.dedup();
     let mut blamed: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
     for path in paths {
-        let ranges: Vec<String> = hunks
-            .iter()
-            .filter(|h| h.path == path)
-            .map(|h| format!("{},{}", h.start, h.start + h.len - 1))
-            .collect();
-        let mut args = vec!["blame", "--porcelain"];
-        for range in &ranges {
-            args.extend(["-L", range]);
-        }
-        args.extend([merge, "--", path]);
+        let args = [
+            "-c",
+            "blame.ignoreRevsFile=",
+            "blame",
+            "--porcelain",
+            "--ignore-revs-file",
+            "",
+            merge,
+            "--",
+            path,
+        ];
         if let Ok(out) = git_byte_exact(repo, &args).await {
             blamed.insert(path.to_owned(), parse_blame(&out));
         }
@@ -398,60 +388,85 @@ async fn attribute_by_blame(
         .collect()
 }
 
-/// Writes the note on the merge commit, replacing an earlier one. Local only. The body goes through a temporary file
+/// A scratch file inside the repository's own git directory, with a name nobody can predict, created exclusively
+/// and removed when this is dropped, whether the note was written or not.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    async fn create(repo: &Path, body: &[u8]) -> Result<Self> {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let dir = text(&git(repo, &["rev-parse", "--absolute-git-dir"]).await?);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        for _ in 0..8 {
+            let name = format!(
+                "orbyn-note-{}-{nanos:x}-{}.tmp",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            );
+            let path = Path::new(&dir).join(name);
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    let scratch = Self(path);
+                    file.write_all(body)?;
+                    return Ok(scratch);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(CoreError::Internal("no free scratch name".into()))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Writes the note on the merge commit, replacing an earlier one. Local only. The body goes through a scratch file
 /// (`-F`), not the command line, so its size cannot hit a command-line limit.
 async fn write_note(repo: &Path, merge: &str, body: &Value) -> Result<()> {
     need_revision(merge)?;
-    let file = std::env::temp_dir().join(format!(
-        "orbyn-note-{}-{}.json",
-        std::process::id(),
-        &merge[..16]
-    ));
-    let _ = std::fs::remove_file(&file);
-    {
-        use std::io::Write;
-        let mut handle = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&file)?;
-        handle.write_all(&serde_json::to_vec(body)?)?;
-    }
-    let file_text = file.to_string_lossy().into_owned();
+    let scratch = Scratch::create(repo, &serde_json::to_vec(body)?).await?;
+    let file_text = scratch.0.to_string_lossy().into_owned();
     let notes_ref = format!("--ref={NOTE_REF}");
     let mut args: Vec<&str> = NOTE_IDENTITY.to_vec();
     args.extend(["notes", &notes_ref, "add", "-f", "-F", &file_text, merge]);
-    let result = git(repo, &args).await;
-    let _ = std::fs::remove_file(&file);
-    result?;
+    git(repo, &args).await?;
     Ok(())
 }
 
-/// Records a merge's hunks and its local git note. Hunks come from the diff of `before..merge`. `worker_commits` are the
-/// commit ids Crew recorded for the worker on this merge: a commit in the range that is not one of them is a person's,
-/// and `git blame` of the merge commit gives each line to the commit that last changed it, so only lines a person's
-/// commit last changed are the person's. Author emails are never trusted. Anything unknown is the agent's. The store
-/// write is one transaction and its error is returned. The note is written after it, and a failure there is returned
-/// inside `Recorded` for the caller to log, because the merge has already happened. A merge with no hunk gets no
-/// note and no `note_ref`.
+/// Records a merge's hunks and its local git note. Hunks come from the diff of `before..merge`.
+///
+/// `person_commits` are full commit ids positively known to be a person's (for example commits the person made
+/// through the app). `git blame` of the merge commit gives each line to the commit that last changed it; a line is
+/// a person's only if that commit is in the list. Anything not positively a person's is the agent's: an empty list,
+/// an unknown or rewritten id, a conflict resolution, a failed blame. Author emails are never read. The caller must
+/// pass only commits it positively identified, never a guess.
+///
+/// The store write is one transaction and its error is returned. The note is written after it, and a failure there
+/// is returned inside `Recorded` for the caller to log, because the merge has already happened. A merge with no hunk
+/// gets no note and no `note_ref`.
 pub async fn record_at_merge(
     store: &Store,
     merge: &MergeRecord,
     agent: &Author,
-    worker_commits: &[String],
+    person_commits: &[String],
     now: i64,
 ) -> Result<Recorded> {
     let repo = Path::new(&merge.repo);
     let hunks = hunks_of(repo, &merge.before_commit, &merge.merge_commit).await?;
-    let people = person_commits(
-        repo,
-        &merge.before_commit,
-        &merge.merge_commit,
-        worker_commits,
-    )
-    .await
-    // A range git could not list leaves everyone the agent.
-    .unwrap_or_default();
-    let authored = attribute_by_blame(repo, &merge.merge_commit, hunks, &people, agent).await;
+    let person = person_set(person_commits);
+    let authored = attribute_by_blame(repo, &merge.merge_commit, hunks, &person, agent).await;
     store.record_crew_hunks(merge.id, &merge.repo, now, &authored)?;
     if authored.is_empty() {
         return Ok(Recorded {
