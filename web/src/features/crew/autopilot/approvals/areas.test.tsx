@@ -194,7 +194,9 @@ describe("autonomy-empty", () => {
     // The design's sentence in the table is Planned; the app draws the head row alone, and nothing is changed.
     expect(screen.queryByText(/No merges in the window yet/)).toBeNull();
     expect(screen.getByText("Repo: orbyn-engineering")).toBeVisible();
+    expect(screen.getByText("Repo ceiling: Full · change it in Settings › Crew")).toBeVisible();
     expect(screen.getByText("Window: 14 days")).toBeVisible();
+    expect(screen.getByText(/^As of /)).toBeVisible();
     expect(screen.getByRole("button", { name: "Open the thresholds" })).toBeVisible();
     expect(screen.getByText("Workers run as you, with your machine’s permissions.")).toBeVisible();
   });
@@ -411,9 +413,10 @@ describe("autonomy-thresholds", () => {
     expect(screen.getByText("Proposed: Engineering sets the real values")).toBeVisible();
     expect(screen.getByRole("region", { name: "What counts" })).toHaveTextContent("An escapeNot measured");
     expect(screen.queryByText("Earn upward")).toBeNull();
-    // Read-only besides the way back to Autopilot by area.
+    // Read-only besides the way back to Autopilot by area; the design's Planned chip marked the missing link and is gone now it works.
     expect(within(screen.getByRole("list", { name: "Thresholds" })).queryByRole("button")).toBeNull();
     expect(screen.getByRole("button", { name: "Autopilot by area" })).toBeVisible();
+    expect(screen.queryByText("Planned")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -444,7 +447,8 @@ describe("autonomy-entry", () => {
     render(<CrewSettingsSection />);
     const row = (await screen.findByText("Autopilot by area")).closest(".ar-set") as HTMLElement;
     expect(row).toHaveAttribute("data-frame", "autonomy-entry");
-    expect(row).toHaveTextContent("Each area of the code with the mode it is on now and its record, why it moved, and your override. The repo ceiling above applies to every area.");
+    expect(row).toHaveTextContent("Each area of the code with the mode it is on now and its record, why it moved, and your override. The Autopilot mode above is the ceiling for every area.");
+    expect(within(row).queryByText("Planned")).toBeNull();
     await user.click(within(row).getByRole("button", { name: "Open" }));
     expect(window.location.hash).toBe("#/settings/crew/areas");
     expect(await screen.findByRole("heading", { name: "Crew › Autopilot by area" })).toBeVisible();

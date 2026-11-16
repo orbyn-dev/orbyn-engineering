@@ -23,8 +23,8 @@ import { Chip, Facts } from "./parts";
 const HISTORY_ROWS = 12;
 
 /**
- * The repository the page is about: `?repo=` in the address, else the first project that is not hidden.
- * `several` is the workspace's count of projects the person sees, for the Repo chip: with more than one the page is
+ * The repository the page is about: `?repo=` in the address, else the first visible git project.
+ * `several` is the workspace's count of visible git projects, for the Repo chip: with more than one the page is
  * about one repo at a time, and the design draws that chip as a selector (still Planned: there is no menu yet).
  */
 function useRepo(): { id: string; name: string; several: boolean } | "loading" | null {
@@ -32,9 +32,10 @@ function useRepo(): { id: string; name: string; several: boolean } | "loading" |
   const projects = useWorkspace((now) => now.projects.data);
   const visible = useVisibleProjects();
   if (!projects || !visible) return "loading";
+  const repos = visible.filter((project) => project.is_git);
   const wanted = route.name === "settings" ? route.repo : undefined;
-  const one = projects.find((project) => (wanted ? project.id === wanted : !project.scratch && !project.library));
-  return one ? { id: one.id, name: one.name, several: visible.length > 1 } : null;
+  const one = wanted ? projects.find((project) => project.id === wanted) : repos[0];
+  return one ? { id: one.id, name: one.name, several: repos.length > 1 } : null;
 }
 
 function ModeChip({ mode, ceiling, now }: { mode: AutopilotAreaRow["now"]; ceiling: AutopilotAreaRow["ceiling"]; now?: boolean }) {

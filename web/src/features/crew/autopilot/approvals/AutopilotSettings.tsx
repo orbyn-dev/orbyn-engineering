@@ -144,11 +144,11 @@ export function AutopilotSettings() {
       <ModeNotes mode={mode} guards={guards.data} />
       {/* Settings › Crew › Autopilot by area entry (Crew Designs v39, frame `autonomy-entry`). The row opens the page; the design's
           Planned chip marked the missing link and is not drawn now that it works. */}
-      <div className="ar-set" data-frame="autonomy-entry">
+      <div className="ar-set ar" data-frame="autonomy-entry">
         <div className="ar-setrow">
           <div>
             <b>Autopilot by area</b>
-            <small>Each area of the code with the mode it is on now and its record, why it moved, and your override. The repo ceiling above applies to every area.</small>
+            <small>Each area of the code with the mode it is on now and its record, why it moved, and your override. The Autopilot mode above is the ceiling for every area.</small>
           </div>
           <Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "areas" })}>Open</Button>
         </div>
