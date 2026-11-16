@@ -162,6 +162,21 @@ describe("autonomy-lowdata", () => {
   });
 });
 
+describe("autonomy-empty", () => {
+  it("draws the header and the table's head row, with no area row and no Planned sentence", async () => {
+    await open("crew-areas-empty");
+    expect(frame()).toBe("autonomy-empty");
+    expect(within(table()).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Area", "Now", "Reverted", "Escaped", "Window"]);
+    expect(within(table()).getAllByRole("row")).toHaveLength(1);
+    // The design's sentence in the table is Planned; the app draws the head row alone, and nothing is changed.
+    expect(screen.queryByText(/No merges in the window yet/)).toBeNull();
+    expect(screen.getByText("Repo: orbyn-engineering")).toBeVisible();
+    expect(screen.getByText("Window: 14 days")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open the thresholds" })).toBeVisible();
+    expect(screen.getByText("Workers run as you, with your machine’s permissions.")).toBeVisible();
+  });
+});
+
 describe("autonomy-override", () => {
   it("offers three choices from the panel, with the current one checked, and the rule under them", async () => {
     const { user } = await open("crew-areas-tripped");

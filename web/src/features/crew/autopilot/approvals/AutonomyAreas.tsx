@@ -255,7 +255,7 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
         <span className="ar-mk">Window: {plural(t.window_days, "day")}</span>
       </div>
       <small className="ar-sub">As of {asOf(areas.as_of)}</small>
-      <div className="ar-table" role="table" aria-label="Autopilot by area">
+      <div className="ar-table" role="table" aria-label="Autopilot by area" data-empty={rows.length === 0 ? "" : undefined}>
         <div className="ar-row ap-head" role="row">
           {["Area", "Now", "Reverted", "Escaped", "Window"].map((name) => <span key={name} role="columnheader">{name}</span>)}
         </div>

@@ -215,6 +215,8 @@ h4.ap-sub { margin: 0; }
 @container ar (max-width: 560px) {
   .ar-table { gap: 8px; box-shadow: none; border-radius: 0; overflow: visible; }
   .ar-row.ap-head { display: none; }
+  /* No area: the head row is the whole table at this width, so an empty box is not drawn. */
+  .ar-table[data-empty] { display: none; }
   .ar-row { grid-template-columns: auto auto minmax(0, 1fr); grid-template-areas: "area area chip" "why why why" "rev esc win"; gap: 4px 8px; border: 0; border-radius: 10px; background: var(--color-chip); padding: 10px 12px; justify-content: start; }
   .ar-area { grid-area: area; }
   .ar-now { display: contents; }
