@@ -1,5 +1,5 @@
 import { startDataRefresh, registerRefresh, EVERYTHING } from "../../lib/dataRefresh";
-import { reloadHeldPulls } from "../../features/pulls/model/pullStore";
+import { reloadHeldPulls } from "../../features/pulls";
 import { useModelStore } from "../../product/state/modelStore";
 import { useWorkspace } from "../../product/state/workspace";
 

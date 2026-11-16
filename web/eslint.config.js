@@ -1,6 +1,46 @@
 import js from "@eslint/js";
 import hooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+import path from "node:path";
+
+const sourceRoot = path.join(import.meta.dirname, "src");
+const sharedFolders = new Set(["ui", "state", "lib", "api", "styles", "product"]);
+const boundaryRule = {
+  meta: {
+    type: "problem",
+    schema: [],
+    messages: {
+      private: "Import this feature through its index.ts front door (web/README.md).",
+      inward: "Shared folders never import a feature or app (web/README.md).",
+    },
+  },
+  create(context) {
+    const importer = path.relative(sourceRoot, context.filename).split(path.sep);
+    function check(node) {
+      const source = node.source ?? node.argument;
+      const value = source?.type === "TemplateLiteral" && source.expressions.length === 0
+        ? source.quasis[0]?.value.cooked
+        : source?.value;
+      if (typeof value !== "string" || !value.startsWith(".")) return;
+      const target = path.relative(sourceRoot, path.resolve(path.dirname(context.filename), value))
+        .split(path.sep);
+      if (target[0] !== "features" || !target[1]) return;
+      if (sharedFolders.has(importer[0])) {
+        context.report({ node: source, messageId: "inward" });
+      } else if (!(importer[0] === "features" && importer[1] === target[1]) &&
+          !(target.length === 2 || (target.length === 3 && ["index", "index.ts"].includes(target[2])))) {
+        context.report({ node: source, messageId: "private" });
+      }
+    }
+    return {
+      ImportDeclaration: check,
+      ExportNamedDeclaration: check,
+      ExportAllDeclaration: check,
+      ImportExpression: check,
+      TSImportType: check,
+    };
+  },
+};
 
 const everywhere = [
   { group: ["@tauri-apps/*"], message: "web must not import Tauri." },
@@ -20,6 +60,11 @@ export default tseslint.config(
       "no-restricted-imports": ["error", { patterns: everywhere }],
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: { architecture: { rules: { boundaries: boundaryRule } } },
+    rules: { "architecture/boundaries": "error" },
   },
   {
     files: ["src/{ui,lib,api,styles,product}/**/*.{ts,tsx}"],
@@ -61,7 +106,7 @@ export default tseslint.config(
   },
   {
     files: ["mock/**", "e2e/**", "src/**/*.test.{ts,tsx}", "src/test-setup.ts", "src/test-support.ts", "vite.config.ts", "playwright.config.ts"],
-    rules: { "no-restricted-imports": "off" },
+    rules: { "no-restricted-imports": "off", "architecture/boundaries": "off" },
   },
   {
     files: ["scripts/**", "tools/**/*.mjs"],
