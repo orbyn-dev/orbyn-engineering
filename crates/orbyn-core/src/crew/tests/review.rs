@@ -250,19 +250,11 @@ async fn a_lane_added_after_a_pass_runs() {
     assert_eq!(w.task(&subject).state, "passed");
     let first = w.review(&subject, &["correctness"]).await;
     w.until_state(&first[0], "passed").await;
-    // Later, with the task long final, more lanes at once.
-    let more = w
-        .review(
-            &subject,
-            &[
-                "security",
-                "performance",
-                "accessibility",
-                "design",
-                "licence",
-            ],
-        )
-        .await;
+    // Later, with the task long final, more lanes. Each call starts its lanes one after the other inside the tool's
+    // 45 second budget, and a lane takes seconds on a slow Windows runner, so the five come in short calls.
+    let mut more = w.review(&subject, &["security", "performance"]).await;
+    more.extend(w.review(&subject, &["accessibility", "design"]).await);
+    more.extend(w.review(&subject, &["licence"]).await);
     assert_eq!(more.len(), 5);
     for task in &more {
         w.until_state(task, "passed").await;
