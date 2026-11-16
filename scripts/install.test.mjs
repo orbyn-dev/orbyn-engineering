@@ -175,6 +175,20 @@ test("the Windows launcher preserves Unicode paths, arguments, exit status and c
   }
 });
 
+test("the Windows launcher saves only the digits of the code page, in any locale", { skip: !windows }, async () => {
+  const result = await install({ ORBYN_HOME: join(root, "cp-data"), ORBYN_INSTALL_DIR: join(root, "cp-bin") });
+  assert.equal(result.status, 0, result.stderr);
+  const line = readFileSync(join(root, "cp-bin", "orbyn.cmd"), "utf8").split(/\r?\n/).find((l) => l.startsWith("for /f"));
+  assert.ok(line, "the launcher reads the code page");
+  for (const [output, digits] of [["Active code page: 437", "437"], ["Aktive Codepage: 850.", "850"], ["Page de codes active : 1252", "1252"]]) {
+    const driver = join(root, "codepage.cmd");
+    // Replace chcp with a fixed line of output so every locale's form can be parsed here.
+    writeFileSync(driver, ["@echo off", line.replace(/\('.*'\)/, `('echo ${output}')`), "echo [%_orbyn_cp%]", ""].join("\r\n"));
+    const actual = await new Promise((done) => execFile("cmd.exe", ["/d", "/c", driver], { encoding: "utf8" }, (error, stdout) => done(stdout)));
+    assert.equal(actual.trim(), `[${digits}]`, output);
+  }
+});
+
 test("an exact version and the nightly channel pick their own release", { skip }, async () => {
   for (const [env, folder] of [
     [{ ORBYN_VERSION: "v1.2.3" }, "/download/v1.2.3/"],

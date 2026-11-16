@@ -88,10 +88,11 @@ try {
   $launcher = Join-Path $bin "orbyn.cmd"
   # cmd reads batch files in the active code page. Switch before it reads the
   # UTF-8 path, then restore the caller's code page and the command's exit status.
+  # The saved code page is digits only (German prints "850."); Ctrl+C then Y at "Terminate batch job" skips the restore.
   $launcherText = @(
     '@echo off'
     'setlocal DisableDelayedExpansion'
-    'for /f "tokens=2 delims=:" %%c in (''""%SystemRoot%\System32\chcp.com""'') do set "_orbyn_cp=%%c"'
+    'for /f "tokens=2 delims=:." %%c in (''""%SystemRoot%\System32\chcp.com""'') do for %%d in (%%c) do set "_orbyn_cp=%%d"'
     '"%SystemRoot%\System32\chcp.com" 65001 >nul'
     "`"$($installed.Replace('%', '%%'))\orbyn.exe`" %*"
     'set "_orbyn_exit=%errorlevel%"'
