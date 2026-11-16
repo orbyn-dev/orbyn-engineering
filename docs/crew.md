@@ -1039,6 +1039,13 @@ shows a rate from 5 escapes and from 10 findings, and takes its outcomes from re
 The lane picker's backtest counts are information and never change what Auto picks. All values the design marks
 Proposed stay Proposed.
 
+**As built (slice 4l, store, migration 47):** `store/crew_capacity.rs` keeps a project's review-capacity settings
+(`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and
+`crew_started` (default 0, a person's start) on `crew_tasks`, and each sampled batch in `crew_review_samples`: task
+ids, chosen or not, the seed and the time, with no prompt or path. A task stored before 47 is Medium and
+person-started, so it can never be paused. Nothing reads these in `crew_start` or the merge queue yet; those hooks are
+separate PRs.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with

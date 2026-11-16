@@ -22,6 +22,9 @@ mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
 mod crew_cancel;
+mod crew_capacity;
+#[cfg(test)]
+mod crew_capacity_tests;
 mod crew_flow;
 mod crew_guard;
 mod crew_merge_forge;
@@ -66,6 +69,7 @@ pub use crew_background::{
 };
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
+pub use crew_capacity::{SampleBatch, SampledTask};
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};

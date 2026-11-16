@@ -2,7 +2,8 @@
 //! pauses, and which low-risk merges are sampled for a closer look. Everything here is pure: no store, no
 //! process, no file and no model. The facts come in, a decision goes out.
 
-// Nothing calls this yet: the store and the start check arrive in the next PR of the slice.
+// The store (`store/crew_capacity.rs`) now uses the settings, `Priority` and `Sampling`. The start check, the
+// merge hook and the sampling run still call nothing here; the PRs that wire them remove this allow.
 #![allow(dead_code, unused_imports)]
 
 mod backpressure;

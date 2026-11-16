@@ -100,7 +100,7 @@ fn entry_row(row: &Row<'_>) -> rusqlite::Result<MergeEntry> {
     })
 }
 
-fn merge_row(row: &Row<'_>) -> rusqlite::Result<MergeRecord> {
+pub(super) fn merge_row(row: &Row<'_>) -> rusqlite::Result<MergeRecord> {
     let areas = strings(&json(row.get("areas")?)?);
     Ok(MergeRecord {
         id: row.get("id")?,
