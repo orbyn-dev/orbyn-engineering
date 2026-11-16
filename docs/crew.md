@@ -1046,6 +1046,18 @@ ids, chosen or not, the seed and the time, with no prompt or path. A task stored
 person-started, so it can never be paused. Nothing reads these in `crew_start` or the merge queue yet; those hooks are
 separate PRs.
 
+**As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
+merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
+and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps them in `crew_hunks` with the author: the
+task's engine and model for the agent, or a person where a commit by a known person email touched the same lines (none
+known means every hunk is the agent's). The first time provenance is recorded for a repository is kept once in
+`crew_provenance_start` and never moves; coverage will say "Not measured" before it. Hunks and that start go in one
+transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
+`person`, engine and model ids, counts) is written on the merge commit under `refs/notes/orbyn-agent-trace`. The ref is
+local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
+carries it, and a test keeps it so. A note that fails is returned for the caller to log; the merge is not failed.
+Nothing calls this from the merge queue yet; the hook is a separate PR.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with
