@@ -200,9 +200,9 @@ export function RiskDemotedScreen() {
         <RiskCard report={risk.demotedLow} />
       </div>
       <div className="crew-pad">
-        <Box heading="Where the area mode comes from">
+        <Box heading="Where the area mode comes from (Planned)">
           <p>
-            Autopilot by area measures each area of the code and moves it between your ceiling and On. Open Settings › Crew › Autopilot by area for the record, the thresholds and the override.
+            Autopilot by area measures each area of the code and moves it between your ceiling and On, and never above it. Open Autopilot by area for the record, the thresholds and Override… (its row in Settings › Crew is Planned).
           </p>
         </Box>
       </div>

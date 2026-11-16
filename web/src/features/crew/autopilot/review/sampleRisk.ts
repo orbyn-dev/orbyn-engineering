@@ -85,15 +85,14 @@ export const demotedMedium: RiskReport = {
   tier: "medium",
   title: "Add a rate limit to the login route",
   reasons: [
-    { icon: "paths", label: "Paths", value: "auth/redirect.ts (an auth path)", effect: "raises" },
-    { icon: "size", label: "Size", value: "2 files · +18 −4", effect: "none" },
-    { icon: "coverage", label: "Coverage", value: "84% of touched lines", effect: "lowers" },
-    { icon: "revert-rate", label: "Revert rate", value: "auth/ · 2 of 14 · last 60 days", effect: "raises" },
-    { icon: "area-mode", label: "Area mode", value: "Area auth is on On: 2 reverts in 14 days · 9 merges", effect: "raises" },
+    { icon: "paths", label: "Paths", value: "web/auth/login.ts (an auth path)", effect: "raises" },
+    { icon: "size", label: "Size", value: "2 files · +31 −3", effect: "none" },
+    { icon: "revert-rate", label: "Revert rate", value: "web/auth · 2 of 15 · last 60 days", effect: "none" },
+    { icon: "area-mode", label: "Area mode", value: "Area web/auth is on On: 2 reverts in 14 days · 9 merges", effect: "planned" },
   ],
   outcome: {
     heading: "Merges by itself · review within 24 hours",
-    text: "auth/ is on On after 2 reverts in 14 days, so a High risk change in auth/ now waits for you before it merges.",
+    text: "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.",
   },
 };
 
@@ -101,11 +100,11 @@ export const demotedLow: RiskReport = {
   tier: "low",
   title: "Update the login docs",
   reasons: [
-    { icon: "paths", label: "Paths", value: "docs/login.md", effect: "lowers" },
-    { icon: "size", label: "Size", value: "1 file · +6 −2", effect: "lowers" },
-    { icon: "area-mode", label: "Area mode", value: "Area docs is on Full: 0 reverts in 14 days · 12 merges", effect: "none" },
+    { icon: "paths", label: "Paths", value: "docs/guides/login.md", effect: "none" },
+    { icon: "size", label: "Size", value: "1 file · +6 −2", effect: "none" },
+    { icon: "area-mode", label: "Area mode", value: "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", effect: "planned" },
   ],
-  outcome: { heading: "Merges by itself", text: "docs/ follows your ceiling, Full. Review it in a batch whenever you like." },
+  outcome: { heading: "Merges by itself", text: "docs/guides follows your ceiling, Full. Review it in a batch whenever you like." },
 };
 
 /** The popover's rows are shorter than the card's: each reason and how it moved the tier. */

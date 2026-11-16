@@ -8,8 +8,8 @@ export type Tier = "low" | "medium" | "high";
 export const TIER_LABEL: Record<Tier, string> = { low: "Low", medium: "Medium", high: "High" };
 
 /** How one reason moved the tier. */
-export type Effect = "raises" | "lowers" | "none";
-export const EFFECT_LABEL: Record<Effect, string> = { raises: "Raises risk", lowers: "Lowers risk", none: "No effect" };
+export type Effect = "raises" | "lowers" | "none" | "planned";
+export const EFFECT_LABEL: Record<Effect, string> = { raises: "Raises risk", lowers: "Lowers risk", none: "No effect", planned: "Planned" };
 
 export type ReasonIcon = "paths" | "size" | "coverage" | "revert-rate" | "area-mode" | "security";
 
