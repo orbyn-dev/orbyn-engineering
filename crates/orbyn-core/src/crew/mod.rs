@@ -6,6 +6,7 @@ mod autopilot;
 mod background;
 mod bus;
 mod cancel;
+mod capacity;
 pub mod changes;
 mod checks;
 mod classes;

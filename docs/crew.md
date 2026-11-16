@@ -1062,7 +1062,7 @@ Settings › Crew page (v23, `settings-crew`, with its Review capacity, Independ
 display-only Preview screens in `web/src/features/crew/{escape,capacity,settings}`, opened by `#/preview/crew/<frame>` in
 dev builds only. They share one stage in `features/crew/shared`: the design's own markup, with its rules renamed `cx-*` in
 `shared/design.css` on the app's tokens. None of them has a backend, a client or a guessed route: every button is disabled
-with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices. Values the design
+with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices (escape design: [crew/escapes.md](crew/escapes.md)). Values the design
 marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
 stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
 show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads
