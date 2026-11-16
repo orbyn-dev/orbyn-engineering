@@ -12,12 +12,14 @@ its own. Code, not a model, decides whether a finding is true.
 | `ended` | What follows a task that passed: a second run decides, a fix re-runs the lanes, a lane tells the lead |
 | `status` | `crew_review_status`: lanes, rounds, each finding's check and standing. Derived, never stored |
 | `rules` | The `lanes` of `.orbyn/crew.json`: a repo rule can only add a lane |
+| `controls` | Person-owned once consent and unlocked required-lane waivers; exact launch admission |
+| `gates` | Fresh per-lane workflow Gates and lifecycle snapshots; no model pass/fail verdict |
 
 ## How it works
 
 - **Lanes.** The lead names lanes (any lowercase word); repo rules add more, read from `.orbyn/crew.json` **at the commit the work
   started from**, so a worker cannot edit a lane away; a broken file is an error. Each lane is a task with a `review` brief, routed by role
-  `review` and its lane at the lead tier, to another vendor than the builder where one is configured. It has no write lease and posts
+  `review` and its lane at the worker tier (lead tier for the `security` lane, a locked lane, the merge-owed `correctness` lane and a lane only the builder's vendor can review), to another vendor than the builder where one is configured. It has no write lease and posts
   only to the lead. It is told the work's purpose, the commit and how many checks passed (the task's own, not a finding check's), never a check,
   its command or the builder's transcript.
 - **Read-only is checked by bytes.** Every file already changed when the review begins (the work under review, in the usual case)
@@ -56,6 +58,9 @@ its own. Code, not a model, decides whether a finding is true.
 
 ## Limits of Preview
 
+The #450 source changes add review-control and lane-Gate contracts, register migration 46 after the forge migration 45,
+and connect launch and merge admission. Focused fake-engine, store and HTTP tests cover these paths; real-engine qualification is not claimed.
+
 - A fingerprint (lane, file, claim) only labels a finding across rounds; the guard and the blocking keep to the lane and file.
 - Accepted remaining Git limits (#451): a new file hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile`;
   a crafted `.git/index` whose saved file times match an edited file; a `.git` file pointing to another git folder;
@@ -72,9 +77,28 @@ its own. Code, not a model, decides whether a finding is true.
 - The lead's clearing repro is the lead's responsibility: it must pass now and is not shown to have failed before the fix (the Gate says so). Every attempt, a failing one too, is recorded. Exact-commit repro and fail-before/pass-after evidence remain work for #451 with isolation/process ownership in #436.
 - A repro runs in the checkout as it is now, not at the finding's commit (its Evidence records the commit it ran on).
 - Reviewers share the lead's checkout. The lease rule, the protected-file comparison and the scope check keep them read-only; no sandbox does (#436).
-- A rule's `when.paths` are file or `dir/**` patterns, like a lease; `required` and `checks` in the rule file are not read yet. Removing a locked lane
-  is a person's act and nothing builds it yet.
-- Not built: the same-engine badge and its question, PR review on the forge, a `review` Gate per lane, Autopilot and the merge queue.
+- A rule's `when.paths` are file or `dir/**` patterns, like a lease; `required` and `checks` in the rule file are not read here yet.
+  Locked lanes cannot be removed. A local-person endpoint records a reasoned waiver for another required lane; it never clears findings.
+- The approved consent/badge UI is integrated on the live stage list. The required-lane removal dialog and engine-tier Settings editor
+  have mock-backed Chromium interaction and Light, Dark and Dim visual checks, including narrow layouts.
+  PR advisory-comment delivery uses a lead-only Network action covered by fake-protocol and recovery tests.
+  The read-only task locator is installation-local, not a publicly accessible report or publication grant; forge clickability is unqualified.
+  ACP engine-tier Settings have a separate core map, explicit default-model pins and person-only CAS API.
+  Existing native `CoreConfig::crew_tiers` family/model words keep their contract.
+  Real-engine behavior, native URI delivery and real forge publication remain unqualified.
+
+## Review controls and lane Gates
+
+Same-vendor fallback asks the person for once consent for a particular subject, lane, commit, round, engine and model.
+It expires after ten minutes; Wait authorizes nothing. The actual start consumes it atomically and rechecks the head.
+The Full-mode Security exception is a separate lead-tier run with the "Same engine as author" badge and High risk;
+On and Off ask. Finding checks remain cross-vendor. The badge comes from the stored route of a launched reviewer.
+
+`review_lane_gate(subject, lane, expected_commit)` derives a protocol Gate at stage `review` with `lane`, from the
+latest round's read-only Evidence and unresolved findings. No Evidence means no Gate; unchecked/pending findings,
+a failed/incomplete run or another commit cannot pass. Global `blocked` remains confirmed-only. Lifecycle writes
+append snapshots; status reads never write and consumers must derive fresh state for their expected head. The Gate
+records workflow completion, not proof of code correctness. A required-lane waiver never counts as a passing review.
 
 ## Decisions for #451
 
@@ -93,6 +117,15 @@ its own. Code, not a model, decides whether a finding is true.
 This is partial hardening, not full #451 qualification. Exact-commit repro, isolated review and real-lane measurements stay visible.
 
 ## Tested
+
+The focused `review_publication` and forge `crew_review_tests` regressions pass with private fake engines and forge protocols. Publication
+requires a completed clean-baseline lane at the PR's exact base/head, real live lead binding, same-repository identity,
+and ordinary Network gate admission. Blocking findings may be included; comments never approve a PR or change Gates.
+Intent/body/admission are immutable and audited; an uncertain send only reconciles and never automatically retries.
+Publication-only transaction fences reject persisted Stop before claim and Sending, even while a run is nonterminal.
+Explicit renewal creates a linked fresh intent/admission only for a provably pre-send stale/expired record; possible effects
+retain their scope fence. Closed/merged PRs may still yield an exact receipt during read-only reconciliation, never a new send.
+Focused repair regressions cover Stop at both transaction boundaries, pre-send renewal and closed-PR receipt recovery.
 
 `tests/review.rs` runs fake engines: an unconfirmed finding blocks nothing, a confirmed one sends a fix brief and the re-review shows it fixed, the
 same finding twice stops the loop, a lane added after a pass runs, repo rules add lanes, a second review confirms by agreement or leaves a finding unconfirmed, and a

@@ -70,7 +70,7 @@ const AUTONOMY = item({
   id: "s-autonomy",
   kind: "autonomy",
   title: "web/auth moved from Full to On: 2 reverts in 14 days. Review or override.",
-  from: "Autonomy by area · circuit breaker · 9 merges in the window",
+  from: "Autopilot by area · circuit breaker · 9 merges in the window",
   cost: "Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.",
   actions: [{ key: "review", label: "Review", primary: true }, { key: "override", label: "Override…" }, { key: "dismiss", label: "Dismiss" }],
 });

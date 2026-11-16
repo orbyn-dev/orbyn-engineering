@@ -4,6 +4,7 @@ import type { FlowFinding } from "./FlowFinding";
 import type { FlowGate } from "./FlowGate";
 import type { FlowLane } from "./FlowLane";
 import type { FlowMerge } from "./FlowMerge";
+import type { FlowReviewConsent } from "./FlowReviewConsent";
 import type { FlowRound } from "./FlowRound";
 import type { FlowRoute } from "./FlowRoute";
 import type { FlowTaskRow } from "./FlowTaskRow";
@@ -12,12 +13,4 @@ import type { FlowYou } from "./FlowYou";
 /**
  * One task zoomed. No check, command, output excerpt or answer key is in it.
  */
-export type FlowTaskDetail = { row: FlowTaskRow, brief: FlowBrief, route?: FlowRoute | null, lanes: Array<FlowLane>, findings: Array<FlowFinding>, gates: Array<FlowGate>, rounds: Array<FlowRound>, merge?: FlowMerge | null, 
-/**
- * `unknown`, `green` or `broken` once merged.
- */
-watch?: string | null, you?: FlowYou | null, 
-/**
- * A list was cut at its cap.
- */
-truncated: boolean, };
+export type FlowTaskDetail = { crew: string, row: FlowTaskRow, brief: FlowBrief, route?: FlowRoute | null, lanes: Array<FlowLane>, review_consents?: Array<FlowReviewConsent>, same_engine_security_high?: boolean, findings: Array<FlowFinding>, gates: Array<FlowGate>, rounds: Array<FlowRound>, merge?: FlowMerge | null, watch?: string | null, you?: FlowYou | null, truncated: boolean, };

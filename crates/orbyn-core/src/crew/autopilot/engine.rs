@@ -168,13 +168,14 @@ impl Core {
                         })
             })
         };
-        let (_, classes) = self.crew_path_classes(&parent, brief).await;
+        let (_, classes) = self.crew_path_classes(&parent, brief, false).await;
         let config = self.crew_router_config();
         let want = Want {
             writes: false,
             needs: Vec::new(),
             image: false,
             tier: RouteTier::Lead,
+            reviewer: false,
         };
         let Some(lead_view) = machine
             .views
@@ -208,6 +209,7 @@ impl Core {
             needs: Vec::new(),
             image: false,
             tier: RouteTier::Worker,
+            reviewer: false,
         };
         let Ok(lead) = screen(lead_view, &lead_want, Some(lead_model), &config) else {
             return empty();

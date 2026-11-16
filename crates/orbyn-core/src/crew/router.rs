@@ -15,7 +15,7 @@ use orbyn_contracts::{
 use super::classes::PathClasses;
 use super::filters::{Admitted, Want, class_screen, rejection, screen, short};
 use super::score::{EvalHistory, Scored, score};
-use super::tiers::{RouterConfig, reviews, role_for_kind, role_tier};
+use super::tiers::{RouterConfig, lane_is_lead_only, reviews, role_for_kind, role_tier};
 use super::view::EngineView;
 
 /// Everything one routing needs besides the engines.
@@ -27,6 +27,8 @@ pub struct RouteInput<'a> {
     pub role: Option<RouteRole>,
     /// The reviewer lane, exactly when the role is `review`.
     pub lane: Option<CrewToken>,
+    /// This review lane keeps the lead tier: a repository rule locks it, or a merge is owed it. Unknown counts as keeping it.
+    pub lane_keeps_lead: bool,
     /// The engine that did the work being reviewed, for the other-vendor rule.
     pub author_engine: Option<CrewToken>,
     /// The person's default engine. It breaks a tie and adds no points.
@@ -161,6 +163,28 @@ pub fn route(
     config: &RouterConfig,
     history: &EvalHistory,
 ) -> Result<RouteDecision, RouteFailure> {
+    let first = route_at(input, engines, config, history, false)?;
+    // A default review lane drops to the worker tier only for another vendor's eyes. When every admitted reviewer is the author's
+    // own family, the lane keeps the lead tier: independence is never traded for cost.
+    let same_vendor = first.role == RouteRole::Review
+        && input.brief.engine.is_none()
+        && first
+            .reasons
+            .iter()
+            .any(|r| r.code.as_str() == "same_engine_as_author");
+    if same_vendor && first.tier != orbyn_contracts::RouteTier::Lead {
+        return route_at(input, engines, config, history, true);
+    }
+    Ok(first)
+}
+
+fn route_at(
+    input: &RouteInput<'_>,
+    engines: &[EngineView],
+    config: &RouterConfig,
+    history: &EvalHistory,
+    lead_fallback: bool,
+) -> Result<RouteDecision, RouteFailure> {
     let brief = input.brief;
     let role = input.role.unwrap_or_else(|| role_for_kind(brief.kind));
     match (role == RouteRole::Review, input.lane.is_some()) {
@@ -178,7 +202,12 @@ pub fn route(
         }
         _ => {}
     }
-    let want = Want::of(brief, role_tier(role));
+    let lead_only = lead_fallback
+        || input
+            .lane
+            .as_ref()
+            .is_some_and(|lane| lane_is_lead_only(lane.as_str(), input.lane_keeps_lead));
+    let want = Want::of(brief, role_tier(role, lead_only), reviews(role));
     let request = brief.engine.as_ref();
     let requested = request.map(|r| RouteRequested {
         engine: r.id.clone(),
@@ -360,6 +389,18 @@ pub fn route(
             super::wire_name(&chosen.tier)
         ),
     ));
+    if role == RouteRole::Review {
+        reasons.push(reason(
+            "review_lane_tier",
+            if lead_fallback {
+                "Only the author's own engine can review this lane, so it stays on the lead tier."
+            } else if lead_only {
+                "This lane is the security lane or locked by a repository rule, so it stays on the lead tier."
+            } else {
+                "A review lane runs on the worker tier unless the brief pins a model or the lane is security or locked."
+            },
+        ));
+    }
     reasons.push(reason("effort_medium", "Effort stays at medium."));
     if chosen_same_vendor {
         reasons.push(reason("same_engine_as_author", "Same engine as author."));

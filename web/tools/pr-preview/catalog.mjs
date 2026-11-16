@@ -581,6 +581,15 @@ export const FRAMES = {
     ],
   },
 
+  // Live stage-list adaptations of the approved consent/badge frames.
+  "flow-offline": { route: "#/crew/flow", scenario: "crew-review-consent", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "security: Needs you")] },
+  "lane-same-engine": { route: "#/crew/flow", scenario: "crew-review-same", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
+  "lane-same-engine-full": { route: "#/crew/flow", scenario: "crew-review-full", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
+
+  // Approved two-control additions @ git:6e509d39c0486c2c51a119416d24c5443937acd5.
+  "lane-remove-reason": { route: "#/crew/flow", scenario: "crew-review-remove", steps: [click("button", "Review dependency licences", { prefix: true }), click("button", "Remove…"), { do: "fill", label: "Reason", value: "This change only updates documentation; the dependency licences are unchanged." }] },
+  "settings-acp-tier-editor": { route: "#/settings/crew", scenario: "crew", steps: [click("button", "Edit tiers"), click("region", "Engine tiers")] },
+
   // Crew, Autopilot by area (Crew Designs v39). Settings › Crew only draws while the mock has Crew Preview on.
   "autonomy-table": { route: AREAS, scenario: "crew-areas" },
   "autonomy-tripped": { route: AREAS, scenario: "crew-areas-tripped" },
@@ -589,6 +598,9 @@ export const FRAMES = {
   "autonomy-criteria-met": { route: AREAS, scenario: "crew-areas-criteria-met" },
   "autonomy-restored": { route: AREAS, scenario: "crew-areas-restored" },
   "autonomy-lowdata": { route: AREAS, scenario: "crew-areas-lowdata" },
+  "autonomy-empty": { route: AREAS, scenario: "crew-areas-empty" },
+  "autonomy-repos": { route: AREAS, scenario: "crew" },
+  "autonomy-entry": { route: "#/settings/crew", scenario: "crew-areas" },
   "autonomy-override": { route: AREAS, scenario: "crew-areas-tripped", steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" })] },
   "autonomy-override-warning": {
     route: AREAS,

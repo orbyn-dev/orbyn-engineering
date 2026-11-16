@@ -153,13 +153,25 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
             "model",
             "round",
             "same_engine",
+            "same_engine_allowed_by",
             "state",
             "task",
             "tier",
             "unconfirmed"
         ]
     );
-    assert_eq!(lane.tier.as_deref(), Some("lead"));
+    assert_eq!(lane.group, "code");
+    assert_eq!(
+        lane.tier.as_deref(),
+        Some("lead"),
+        "the code lane is owed to a merge"
+    );
+    let security = detail.lanes.iter().find(|l| l.group == "security").unwrap();
+    assert_eq!(security.tier.as_deref(), Some("lead"));
+    assert!(
+        lane.same_engine_allowed_by.is_none(),
+        "a cross-vendor review has no same-engine consent authority"
+    );
     assert!(lane.commit.as_ref().is_some_and(|c| !c.is_empty()));
     assert_eq!(
         lane.same_engine,

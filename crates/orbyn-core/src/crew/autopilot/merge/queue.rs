@@ -30,7 +30,8 @@ pub struct MergeTarget {
 }
 
 /// What came of one entry when the queue was processed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
 pub enum MergeOutcome {
     Merged {
         task_id: String,
@@ -117,7 +118,11 @@ impl Core {
         gitops::rev(&repo, &candidate).await.map_err(|_| {
             CoreError::Invalid("the commit to merge is not in the target repository".into())
         })?;
-        let (paths, lines) = gitops::diff_facts(&repo, &target.branch, &candidate).await?;
+        let base = self
+            .store
+            .crew_forge_merge(task_id)?
+            .map_or_else(|| target.branch.clone(), |intent| intent.base);
+        let (paths, lines) = gitops::diff_facts(&repo, &base, &candidate).await?;
         let engine = self
             .store
             .crew_route_decisions(task_id)?
@@ -138,7 +143,13 @@ impl Core {
             engine: Some((engine.clone(), by_engine)),
             recent,
         };
-        let scored = score(&facts);
+        let mut scored = score(&facts);
+        if self.review_security_requires_high(task_id)? {
+            scored.risk = Risk::High;
+            scored
+                .reasons
+                .push("Same engine as author: Security review raises risk to High.".into());
+        }
         // The mode the diff runs under: the crew's mode (recorded as the entry's `mode`) lowered by every area it touches.
         let effect = self.merge_effect(task_id, &areas, now)?;
         let mode = effect.ceiling;
@@ -231,6 +242,10 @@ impl Core {
             .store
             .merge_entries(&repo, &branch, &["queued", "blocked"])?
         {
+            // A forge intent must never fall back to a local update-ref after an auth or network failure.
+            if self.store.crew_forge_merge(&entry.task_id)?.is_some() {
+                continue;
+            }
             if let Some(why) = self.merge_blocker(&entry, target)? {
                 // A change of reason is news; the same reason on every pass is not.
                 if entry.note.as_deref() != Some(why.as_str()) {
@@ -369,7 +384,7 @@ impl Core {
                 true,
             );
         }
-        self.record_merge(entry, &before, &merge_commit, ran, now)?;
+        self.record_merge(entry, &before, &merge_commit, ran, now, None)?;
         Ok(MergeOutcome::Merged {
             task_id,
             merge_commit,
@@ -408,15 +423,17 @@ impl Core {
         Ok(Ok((merge_commit, ran)))
     }
 
-    fn record_merge(
+    pub(super) fn record_merge(
         &self,
         entry: &MergeEntry,
         before: &str,
         merge_commit: &str,
         merge_checks: u32,
         now: i64,
+        needs_person: Option<&str>,
     ) -> Result<()> {
         let task_id = &entry.task_id;
+        let effective_risk = self.refresh_merge_review_risk(entry)?;
         let results = self.store.crew_results(task_id)?;
         let passed = results
             .iter()
@@ -449,6 +466,7 @@ impl Core {
                 .filter(|f| f["status"] == "fixed")
                 .count()
         });
+        let forge = self.store.crew_forge_merge(task_id)?;
         let proof = json!({
             "task_checks": passed.map(|r| r.checks.iter().map(|c| json!({ "check": c.check, "outcome": c.outcome })).collect::<Vec<_>>()),
             "merge_checks_run": merge_checks,
@@ -456,6 +474,7 @@ impl Core {
             "findings": { "confirmed": findings("confirmed"), "unconfirmed": findings("unconfirmed"), "fixed": fixed },
             "cost": passed.map(|r| &r.usage),
             "risk_samples": entry.samples,
+            "forge": forge.as_ref().map(|intent| json!({ "pull": intent.pull, "head": intent.candidate, "base": intent.base, "combined": intent.combined, "evidence": intent.evidence })),
         });
         let mut not_verified: Vec<String> = passed
             .map(|r| {
@@ -466,9 +485,21 @@ impl Core {
             })
             .unwrap_or_default();
         not_verified.push("test coverage of the touched code".to_owned());
-        not_verified
-            .push("a forge or CI run: the checks ran locally on the merged state".to_owned());
-        let risk = Risk::parse(&entry.risk).unwrap_or(Risk::High);
+        if forge.is_none() {
+            not_verified
+                .push("a forge or CI run: the checks ran locally on the merged state".to_owned());
+        } else if !self.store.crew_evidence(task_id)?.iter().any(|evidence| {
+            evidence.command.as_str() == "forge CI receipt"
+                && evidence.commit.as_str() == entry.candidate
+                && evidence.outcome == CheckOutcome::Pass
+                && forge.as_ref().is_some_and(|intent| {
+                    intent.evidence.iter().any(|id| id == evidence.id.as_str())
+                })
+        }) {
+            not_verified
+                .push("current-head forge CI has no Core receipt for this observed merge".into());
+        }
+        let risk = effective_risk;
         let record = MergeRecord {
             id: 0,
             task_id: task_id.clone(),
@@ -478,8 +509,11 @@ impl Core {
             before_commit: before.to_owned(),
             merge_commit: merge_commit.to_owned(),
             candidate: entry.candidate.clone(),
-            risk: entry.risk.clone(),
-            reasons: entry.reasons.clone(),
+            risk: risk.name().to_owned(),
+            reasons: self
+                .store
+                .merge_entry(task_id)?
+                .map_or_else(|| entry.reasons.clone(), |e| e.reasons),
             areas: entry.areas.clone(),
             engine: entry.engine.clone(),
             mode: entry.mode.clone(),
@@ -493,7 +527,7 @@ impl Core {
             comment: None,
             watch: "unknown".to_owned(),
             reverted_commit: None,
-            needs_person: None,
+            needs_person: needs_person.map(str::to_owned),
         };
         let id = self.store.add_crew_merge(&record)?;
         // Under the merge lock `crew_process_merges` holds. The merge just recorded counts toward a trip and toward the way back.
@@ -505,7 +539,7 @@ impl Core {
             self.area_breaker_failed(task_id, "merge", None, &error);
         }
         // A merge a person released was reviewed by that act.
-        if entry.released {
+        if entry.released && record.needs_person.is_none() {
             self.store.set_merge_review(task_id, "looks_good", None)?;
         }
         self.merge_event(task_id, "merged", &json!({ "merge": merge_commit, "before": before, "risk": entry.risk, "mode": entry.mode, "due": record.due_unix }));

@@ -340,6 +340,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
     assert_eq!(
         tables(&store.reader()),
         [
+            "crew_acp_tier_revision",
+            "crew_acp_tiers",
             "crew_answer_keys",
             "crew_area_events",
             "crew_area_modes",
@@ -355,14 +357,18 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_finding_repros",
             "crew_findings",
             "crew_fixes",
+            "crew_forge_merges",
             "crew_gates",
             "crew_guard_targets",
             "crew_leases",
             "crew_merge_queue",
+            "crew_merge_work",
             "crew_merges",
             "crew_messages",
             "crew_reports",
             "crew_results",
+            "crew_review_controls",
+            "crew_review_publications",
             "crew_reviews",
             "crew_route_decisions",
             "crew_runs",
@@ -401,6 +407,80 @@ fn migration_30_is_the_crew_migration_and_numbering_has_no_gap() {
         .unwrap()
         .1;
     assert!(sql.contains("CREATE TABLE crew_answer_keys"));
+}
+
+fn forge_intent(task_id: &str) -> ForgeMerge {
+    ForgeMerge {
+        task_id: task_id.into(),
+        repo: "owned-fixture".into(),
+        remote: "owned-bare-fixture".into(),
+        branch: "main".into(),
+        source: "crew/task".into(),
+        candidate: "a".repeat(40),
+        base: "b".repeat(40),
+        combined: None,
+        pull: None,
+        phase: ForgePhase::Prepared,
+        merge_commit: None,
+        evidence: Vec::new(),
+        note: None,
+        revision: 0,
+    }
+}
+
+#[test]
+fn forge_intent_keeps_identity_and_rejects_stale_or_backward_writers() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let mut intent = forge_intent(&id);
+    store.add_crew_forge_merge(&intent).unwrap();
+    let mut stale = intent.clone();
+    intent.combined = Some("c".repeat(40));
+    intent.evidence = vec![format!("sha256:{}", "d".repeat(64))];
+    intent.phase = ForgePhase::Publishing;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    assert!(store.save_crew_forge_merge(&mut stale).is_err());
+    let mut wrong = intent.clone();
+    wrong.candidate = "e".repeat(40);
+    assert!(store.save_crew_forge_merge(&mut wrong).is_err());
+    wrong = intent.clone();
+    wrong.phase = ForgePhase::Prepared;
+    assert!(store.save_crew_forge_merge(&mut wrong).is_err());
+    assert_eq!(store.crew_forge_merge(&id).unwrap(), Some(intent));
+    assert!(store.add_crew_forge_merge(&forge_intent(&id)).is_err());
+}
+
+#[test]
+fn watch_claim_recovers_on_restart_but_completed_work_never_dispatches_twice() {
+    let (dir, store) = open();
+    let id = task(&store);
+    assert!(
+        store
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
+    drop(store);
+    let restarted = Store::open(&dir.path().join("orbyn.sqlite3"), "epoch-b").unwrap();
+    assert!(
+        restarted
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
+    restarted
+        .finish_crew_merge_watch("watch:fixture:main:commit")
+        .unwrap();
+    drop(restarted);
+    let restarted = Store::open(&dir.path().join("orbyn.sqlite3"), "epoch-c").unwrap();
+    assert!(
+        !restarted
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
 }
 
 #[test]

@@ -71,7 +71,13 @@ async fn two_live_protocol_runs_approve_without_sharing_tools_key_or_transcript(
         ["alpha", "beta"]
     );
     for (engine, spec) in specs.iter() {
-        assert_eq!(spec.model, format!("{engine}-lead"));
+        // The first approver keeps the lead thread's own selection; the second is routed to its assigned lead model.
+        let expected = if *engine == "alpha" {
+            "alpha-lead"
+        } else {
+            "beta-model"
+        };
+        assert_eq!(spec.model, expected);
         assert!(spec.max_reported_tokens > 0 && spec.estimated_spend_stop_usd > 0.0);
         assert!(!spec.prompt.contains(KEY_MARKER));
         assert!(!spec.prompt.contains("run-lead"));

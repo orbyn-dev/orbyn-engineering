@@ -30,12 +30,13 @@ impl Core {
         let Ok(statuses) = self.engines.statuses(false).await else {
             return None;
         };
-        let (_, classes) = self.crew_path_classes(&lead, &brief).await;
+        let (_, classes) = self.crew_path_classes(&lead, &brief, false).await;
         let want = Want {
             writes: false,
             needs: vec![],
             image: false,
             tier: RouteTier::Lead,
+            reviewer: false,
         };
         let config = self.crew_router_config();
         machine

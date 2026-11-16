@@ -24,13 +24,19 @@ mod crew_bus_tests;
 mod crew_cancel;
 mod crew_flow;
 mod crew_guard;
+mod crew_merge_forge;
 mod crew_merges;
 mod crew_rerun;
 mod crew_review;
+mod crew_review_controls;
+#[cfg(test)]
+mod crew_review_migration_tests;
+mod crew_review_publications;
 mod crew_runs;
 mod crew_schema;
 #[cfg(test)]
 mod crew_tests;
+mod crew_tier_settings;
 mod hub;
 mod installs;
 mod migrations;
@@ -50,7 +56,7 @@ mod tests;
 mod threads;
 
 pub use changes::{KeptChange, Snapshot};
-pub use crew::CrewTask;
+pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
@@ -64,8 +70,11 @@ pub use crew_cancel::CancelStart;
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
+pub use crew_merge_forge::{ForgeMerge, ForgePhase};
 pub use crew_merges::{MergeEntry, MergeRecord};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
+pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
+pub(crate) use crew_review_publications::{Publication, PublicationState};
 pub use crew_runs::CrewRun;
 
 use std::path::Path;

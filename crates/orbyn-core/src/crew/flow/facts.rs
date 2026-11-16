@@ -2,7 +2,7 @@
 //! write, a process or a file. The answer key is not read into it; only its text, to withhold it from what is shown.
 
 use orbyn_contracts::{Brief, Evidence, Gate, RouteDecision};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -62,12 +62,9 @@ impl Core {
                         .is_some_and(|brief| *brief == g.subject)
             })
             .collect();
-        let review = if store.crew_reviews_of(&id)?.is_empty() {
-            json!({ "lanes": [], "findings": [], "blocked": false })
-        } else {
-            self.review_status(&id)
-                .map_err(|_| CoreError::Internal("the review could not be read".into()))?
-        };
+        let review = self
+            .review_status(&id)
+            .map_err(|_| CoreError::Internal("the review could not be read".into()))?;
         Ok(Facts {
             run: store.crew_run(&id)?,
             brief: store.crew_brief(&id)?,

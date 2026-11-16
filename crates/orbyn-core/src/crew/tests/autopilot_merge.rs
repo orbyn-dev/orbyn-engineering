@@ -557,7 +557,7 @@ async fn the_lanes_owed_must_have_run_unless_a_person_released_it_and_a_release_
             .await
             .unwrap();
     assert!(
-        matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why.contains("correctness review has not run")),
+        matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why == "the correctness review has no passing current-candidate lane Gate"),
         "{outcomes:?}"
     );
     assert_eq!(
@@ -713,7 +713,7 @@ async fn a_lane_that_slice_4b_ran_satisfies_the_owed_check_and_a_block_is_one_ev
             .await
             .unwrap();
         assert!(
-            matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why.contains("correctness review has not run")),
+            matches!(&outcomes[..], [MergeOutcome::Blocked { why, .. }] if why == "the correctness review has no passing current-candidate lane Gate"),
             "{outcomes:?}"
         );
     }

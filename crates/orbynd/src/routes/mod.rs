@@ -42,9 +42,13 @@ mod workspace;
 #[cfg(test)]
 mod account_approval_tests;
 #[cfg(test)]
+mod account_canary_tests;
+#[cfg(test)]
 mod account_logging_tests;
 #[cfg(test)]
 mod account_tests;
+#[cfg(test)]
+mod classes;
 #[cfg(test)]
 mod crew_areas_tests;
 #[cfg(test)]
@@ -96,7 +100,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
-        .merge(explorer::routes())
+        .merge(explorer::routes(state.clone()))
         .merge(files::routes())
         .merge(raw_files::routes())
         .merge(mcp_apps::routes())

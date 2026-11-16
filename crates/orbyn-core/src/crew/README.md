@@ -11,9 +11,10 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | --- | --- |
 | `router` | Router v0: filters, scores from seeded defaults, an explicit engine honoured and still checked, and the `RouteDecision`. Pure: no model, no process, no file |
 | `filters` | The hard filters, in order, each rejection with its reason. `class_screen` runs first |
-| `classes` | Data classes: `.orbyn/crew.json` read at the pinned base commit and at the default branch, the stricter applies (strict, fail closed), the glob, a brief's files against the classes, the `route_class` ledger row and the three read-only views |
+| `classes` | Data classes: `.orbyn/crew.json` read at the pinned base commit and at the default branch, the stricter applies (strict, fail closed), the last accepted default-branch ref and commit remembered per project with a person's confirm or reset, the glob, a brief's files against the classes, the `route_class` ledger row and the three read-only views |
 | `score` | Pass rate for the brief's kind (seeded defaults until `EvalHistory` has a measured rate) and quota headroom, in permille |
-| `tiers` | The tier a role needs and the model that fills it, matched against the models this machine lists |
+| `tiers` | The tier a role needs; native model-family words and explicit exact ACP engine/model admission |
+| `tier_settings` | Person-owned ACP assignments: revision saves plus reviewed-default preconditions; no tier guessing |
 | `view` | A plain copy of one engine's status, models and usage |
 | `gather` | Builds the views from the engine registry and model list the engine picker reads, and limits from the usage cache only |
 | `stamp` | A brief draft becomes a brief: the core adds the envelope, a draft that carries one is refused |
@@ -42,7 +43,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   field for the answer key, and no function here takes one except the leak check on storing.
 - An engine or model the machine has not configured is never routed to. An explicit engine
   that fails a filter is refused with its reason, never swapped for another.
-- Effort is `medium`, never higher. A review role is lead tier, and a named model below it is refused.
+- Effort is `medium`, never higher. A review brief, the finding check and a second key are lead tier, and a named model below it is refused. A review lane is worker tier unless it is the `security` lane, a repo rule locks it, it is the merge-owed `correctness` lane or only the author's vendor can review it; a pinned model wins otherwise.
 - Every rejection carries a reason, and a score carries its basis (`used_defaults`, or the
   measured rate with its sample size).
 - No learning, trust score or counterfactual fork here: those are later slices, and

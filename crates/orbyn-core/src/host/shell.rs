@@ -418,6 +418,34 @@ pub fn web_link(url: &str) -> Option<String> {
 /// only move the window, and only to a place spelled exactly as a route.
 pub fn link_route(url: &str) -> Option<String> {
     let rest = url.strip_prefix("orbyn://")?;
+    // Task locators have a stricter grammar than legacy navigation links:
+    // exactly one encoded Flow ID, no query, fragment or action parameters.
+    if rest.starts_with("crew/") {
+        let segment = rest.strip_prefix("crew/task/")?;
+        if segment.is_empty()
+            || segment.len() > 288
+            || !segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':' | b'%'))
+        {
+            return None;
+        }
+        let mut bytes = segment.bytes();
+        let mut decoded = Vec::new();
+        while let Some(byte) = bytes.next() {
+            let byte = if byte == b'%' {
+                let high = char::from(bytes.next()?).to_digit(16)?;
+                let low = char::from(bytes.next()?).to_digit(16)?;
+                u8::try_from(high * 16 + low).ok()?
+            } else {
+                byte
+            };
+            decoded.push(byte);
+        }
+        let id = String::from_utf8(decoded).ok()?;
+        crate::crew::valid_id(&id).ok()?;
+        return Some(format!("#/crew/flow/task/{}", id.replace(':', "%3A")));
+    }
     let path = rest.split(['?', '#']).next().unwrap_or_default();
     let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
     match parts[..] {
@@ -436,6 +464,47 @@ pub fn link_route(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crew_task_locators_are_single_read_only_flow_ids() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        assert_eq!(
+            link_route(&format!("orbyn://crew/task/{}", id.replace(':', "%3A"))),
+            Some(format!("#/crew/flow/task/{}", id.replace(':', "%3A")))
+        );
+        assert_eq!(
+            link_route("orbyn://crew/task/task_1-a.b").as_deref(),
+            Some("#/crew/flow/task/task_1-a.b")
+        );
+        for segment in [
+            "",
+            ".",
+            "..",
+            "%2Ehidden",
+            "a/b",
+            "a/",
+            "a//b",
+            "a%2Fb",
+            "a%5Cb",
+            "a%252Fb",
+            "a%3Fb",
+            "a%23b",
+            "a%00b",
+            "a%20b",
+            "a%",
+            "a?once=1",
+            "a#publish",
+            "a/publish",
+        ] {
+            assert_eq!(
+                link_route(&format!("orbyn://crew/task/{segment}")),
+                None,
+                "{segment}"
+            );
+        }
+        assert!(link_route(&format!("orbyn://crew/task/{}", "a".repeat(97))).is_none());
+        assert!(link_route("orbyn://crew/publish/task-1").is_none());
+    }
 
     #[test]
     fn links_reach_only_known_routes() {

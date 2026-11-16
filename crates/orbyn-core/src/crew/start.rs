@@ -37,6 +37,8 @@ pub(super) struct Launch<'a> {
     pub key: orbyn_contracts::AnswerKey,
     pub role: Option<orbyn_contracts::RouteRole>,
     pub lane: Option<CrewToken>,
+    /// The lane keeps the lead tier (locked by a repository rule, or owed to a merge). Only a review lane reads it.
+    pub lane_keeps_lead: bool,
     pub author_engine: Option<CrewToken>,
     pub prefix: &'static str,
     pub prompt: Option<String>,
@@ -128,6 +130,7 @@ impl Core {
             key,
             role: None,
             lane: None,
+            lane_keeps_lead: false,
             author_engine: None,
             prefix: "worker",
             prompt: None,
@@ -180,6 +183,7 @@ impl Core {
             key,
             role,
             lane,
+            lane_keeps_lead,
             author_engine,
             prefix,
             prompt,
@@ -277,7 +281,7 @@ impl Core {
 
         // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
         // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
-        let (base, classes) = self.crew_path_classes(thread, &brief).await;
+        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let machine = self
             .crew_machine(Some(&thread.project_id))
             .await
@@ -288,14 +292,22 @@ impl Core {
             created_at,
             role,
             lane,
+            lane_keeps_lead,
             author_engine,
             default_engine: machine.default_engine.clone(),
             classes: Some(&classes),
         };
-        let decision = match route(
+        let router_config = match self.crew_router_config_with_mappings() {
+            Ok(config) => config,
+            Err(error) => {
+                self.crew_needs_person(&task.id, &error.message, false);
+                return Err(error);
+            }
+        };
+        let mut decision = match route(
             &input,
             &machine.views,
-            &self.crew_router_config(),
+            &router_config,
             &EvalHistory::default(),
         ) {
             Ok(decision) => decision,
@@ -328,6 +340,19 @@ impl Core {
                 }));
             }
         };
+        if let Err(error) = self
+            .admit_review_route(
+                thread,
+                links.review.as_ref(),
+                &mut decision,
+                &machine.views,
+                now,
+            )
+            .await
+        {
+            self.crew_needs_person(&task.id, &error.message, false);
+            return Err(error);
+        }
         self.route_crew_task(&task.id, &decision)?;
         // The row names the engine only once the decision is stored, so a failed route leaves no row that says one was chosen. A
         // decision with no record is not one: if the row cannot be written, the task waits for a person.

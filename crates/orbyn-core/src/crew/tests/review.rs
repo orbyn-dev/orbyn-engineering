@@ -28,7 +28,8 @@ async fn an_unconfirmed_finding_does_not_block() {
     let lanes = w.review(&subject, &["correctness"]).await;
     w.until_state(&lanes[0], "passed").await;
 
-    // The lane is its own run, routed by role to the other vendor at the lead tier.
+    // The lane is its own run, routed by role to the other vendor. `correctness` is the lane a medium or high risk merge is owed
+    // and no merge entry says low yet, so it keeps the lead tier.
     let decision = w
         .core
         .store
@@ -38,6 +39,8 @@ async fn an_unconfirmed_finding_does_not_block() {
         .unwrap();
     assert_eq!(decision.role, RouteRole::Review);
     assert_eq!(decision.tier, RouteTier::Lead);
+    // The fake engines list one model, assigned the lead tier by the harness, so the lane's model is that one.
+    assert_eq!(decision.model.as_str(), "beta-model");
     assert_eq!(
         decision.lane.as_ref().map(|l| l.as_str()),
         Some("correctness")
@@ -331,6 +334,65 @@ async fn repo_rules_add_lanes() {
         ],
         "docs is not asked for by a change under src/"
     );
+    // The route reports why: the merge-owed code lane and the locked security lane stay lead, the others default to the worker tier.
+    // (The fake engines have one model, which the harness assigns the lead tier, so the reason is what tells the lanes apart.)
+    let why: Vec<(&str, bool)> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["lane"].as_str().unwrap(), stays_lead(l)))
+        .collect();
+    assert_eq!(
+        why,
+        [
+            ("correctness", true),
+            ("security", true),
+            ("licence", false)
+        ]
+    );
+}
+
+fn stays_lead(lane: &serde_json::Value) -> bool {
+    lane["route"]["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["code"] == "review_lane_tier")
+        .is_some_and(|r| {
+            r["text"]
+                .as_str()
+                .unwrap()
+                .contains("stays on the lead tier")
+        })
+}
+
+/// A lane a rule locks keeps the lead tier even when its name is an ordinary one.
+#[tokio::test]
+async fn a_locked_rule_lane_keeps_the_lead_tier() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(
+        &w,
+        &json!({ "lanes": [{ "lane": "performance", "locked": true }] }).to_string(),
+    );
+    let subject = w.built_work().await;
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["performance", "docs"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let why: Vec<(&str, bool)> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["lane"].as_str().unwrap(), stays_lead(l)))
+        .collect();
+    assert_eq!(why, [("performance", true), ("docs", false)]);
 }
 
 /// A broken rule file at the base commit is an error, never an empty rule set. The file is valid JSON, so the build starts:
@@ -427,7 +489,15 @@ async fn second_review(line: u32) -> (super::harness::World, String, String) {
 #[tokio::test]
 async fn a_second_review_that_agrees_confirms_a_finding() {
     let (w, subject, second) = second_review(6).await;
-    let gate = w.core.store.crew_gates(&subject).unwrap().pop().unwrap();
+    let gate = w
+        .core
+        .store
+        .crew_gates(&subject)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find(|g| g.stage == GateStage::FindingCheck)
+        .unwrap();
     assert_eq!(gate.decision, GateDecision::Confirmed);
     assert_eq!(gate.decided_by, GateDecider::Code);
     assert!(
@@ -478,7 +548,15 @@ async fn a_second_review_that_agrees_confirms_a_finding() {
 #[tokio::test]
 async fn a_second_review_elsewhere_leaves_the_finding_unconfirmed() {
     let (w, subject, _) = second_review(50).await;
-    let gate = w.core.store.crew_gates(&subject).unwrap().pop().unwrap();
+    let gate = w
+        .core
+        .store
+        .crew_gates(&subject)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find(|g| g.stage == GateStage::FindingCheck)
+        .unwrap();
     assert_eq!(gate.decision, GateDecision::Unconfirmed);
     assert_eq!(w.status(&subject)["blocked"], false);
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
@@ -557,4 +635,75 @@ async fn a_reviewer_reads_and_reports() {
         )
         .await;
     assert!(e && code(&v) == "run_ended", "{v}");
+}
+
+/// Not knowing never lowers a review: no base commit, a rules file that cannot be read, or no merge entry keep the lead tier.
+#[tokio::test]
+async fn lane_tier_checks_fail_closed() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(&w, r#"{"lanes":[{"lane":"licence","locked":true}]}"#);
+    let subject = w.built_work().await;
+    let base = w
+        .core
+        .store
+        .crew_run(&subject)
+        .unwrap()
+        .unwrap()
+        .base_commit;
+    let token = |t: &str| orbyn_contracts::CrewToken::new(t).unwrap();
+    async fn locked_at(root: &std::path::Path, base: Option<&str>, lane: &str) -> bool {
+        let lane = orbyn_contracts::CrewToken::new(lane).unwrap();
+        crate::crew::review::lane_locked(root, base, &lane).await
+    }
+    let repo = w.repo.clone();
+    macro_rules! locked {
+        ($base:expr, $lane:expr) => {
+            locked_at(&repo, $base, $lane)
+        };
+    }
+    assert!(locked!(base.as_deref(), "licence").await);
+    assert!(!locked!(base.as_deref(), "docs").await);
+    assert!(locked!(None, "docs").await, "no base commit: locked");
+    assert!(
+        locked!(Some("0123456789012345678901234567890123456789"), "docs").await,
+        "rules unreadable at an unknown commit: locked"
+    );
+    // A rules file that does not parse is unreadable too.
+    commit_rules(&w, "not json");
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&w.repo)
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap();
+    assert!(
+        locked!(Some(head.trim()), "docs").await,
+        "invalid rules: locked"
+    );
+    // No merge entry, so a merge may be owed the code lane: it keeps the lead tier; another lane does not.
+    let (root, base) = (w.repo.clone(), base.as_deref());
+    assert!(
+        w.core
+            .lane_keeps_lead(&root, base, Some(&subject), &token("correctness"))
+            .await
+    );
+    assert!(
+        w.core
+            .lane_keeps_lead(&root, base, None, &token("correctness"))
+            .await
+    );
+    assert!(
+        !w.core
+            .lane_keeps_lead(&root, base, Some(&subject), &token("docs"))
+            .await
+    );
+    assert!(
+        w.core
+            .lane_keeps_lead(&root, base, Some(&subject), &token("licence"))
+            .await
+    );
 }

@@ -28,6 +28,7 @@ import { createAccountMock } from "./account.ts";
 import { createCrewMock } from "./crew.ts";
 import { boardMock } from "./board.ts";
 import { flowMock } from "./flow.ts";
+import { createReviewControlsMock } from "./reviewControls.ts";
 import { mapMock } from "./map.ts";
 import { needsYouMock } from "./needsyou.ts";
 import { createExplorerMock } from "./explorer.ts";
@@ -55,6 +56,8 @@ export type Scenario =
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
+  /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". */
+  /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
@@ -138,6 +141,7 @@ export function createMockApi(options: MockOptions = {}) {
 
   const accountMock = createAccountMock();
   const crewMock = createCrewMock();
+  const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   function reset(next: Scenario = "default") {
@@ -146,6 +150,7 @@ export function createMockApi(options: MockOptions = {}) {
     scenario = next;
     accountMock.reset(next === "account");
     crewMock.reset(next);
+    reviewControlsMock.reset();
     secretsMock.reset();
     signedIn = false;
     idCounter = 0;
@@ -157,6 +162,8 @@ export function createMockApi(options: MockOptions = {}) {
     delayMs = 0;
     const blank = next === "empty" || next === "first-run" || next === "no-skills";
     projects = blank ? [] : structuredClone(fixtures.projects);
+    // Autopilot by area is drawn for one repository (the design has a separate frame for several): its scenarios keep the first project.
+    if (next.startsWith("crew-areas")) projects = projects.slice(0, 1);
     threads = blank ? [] : fixtures.threads();
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
@@ -1128,7 +1135,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? needsYouMock(scenario, method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
+      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? needsYouMock(scenario, method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */

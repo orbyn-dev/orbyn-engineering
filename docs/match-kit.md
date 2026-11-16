@@ -15,6 +15,9 @@ Frames built: pr-list-failed, pr-detail-running @ v56
 The ids are screens from the list below; `@ v56` is the version of the designs they were built to. A pull request that draws nothing says
 `Frames built: none` and gets no comment. A missing or empty line gets a comment asking for it. Nothing is blocked either way.
 
+An exact artifact source revision is also accepted: `Frames built: flow-offline @ git:a582a9ba4fb950d4024ac50541a63e9c01f7669a`.
+Use the actual full Git object id; no numbered published version is implied and no private source URL is needed.
+
 ## What it does
 
 `.github/workflows/ui-preview.yml` runs for a same-repository pull request that changes `web/` (a fork's is skipped: no `pull_request_target`, no
@@ -56,7 +59,7 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Usage, the Limits tab.** `usage-claude-windows`, `usage-claude-windows-unavailable`, `usage-claude-windows-loading`, `usage-claude-windows-narrow`, `usage-claude-windows-near`, `usage-claude-windows-reached`, `usage-claude-windows-signedout`, `usage-providers`, `usage-providers-error`
 
-**Crew, Autopilot by area** (Crew Designs v39). `autonomy-table`, `autonomy-tripped`, `autonomy-demoted-ceiling-lowered`, `autonomy-recovering`, `autonomy-criteria-met`, `autonomy-restored`, `autonomy-lowdata`, `autonomy-override`, `autonomy-override-warning`, `autonomy-override-off-warning`, `autonomy-thresholds`, `autonomy-narrow`
+**Crew, Autopilot by area** (Crew Designs v39). `autonomy-table`, `autonomy-tripped`, `autonomy-demoted-ceiling-lowered`, `autonomy-recovering`, `autonomy-criteria-met`, `autonomy-restored`, `autonomy-lowdata`, `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, `autonomy-override`, `autonomy-override-warning`, `autonomy-override-off-warning`, `autonomy-thresholds`, `autonomy-narrow`
 
 **Crew, the guard, path classes and routing** (Crew Designs v39). `guard-held`, `guard-denied-no-second`, `guard-denied`, `guard-approved`, `guard-approved-person`, `guard-approved-person-unknown`, `guard-settings`, `classes-list`, `classes-error`, `classes-test`, `classes-edit`, `classes-narrow`, `route-log-none`, `route-log`
 
@@ -66,6 +69,10 @@ The existing ordinary Full-mode missing-second-engine drawer is `approval-one-ve
 It offers Sign in and Dismiss and grants no action.
 
 ## Add a screen
+
+Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`.
+Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`.
+These retain the beta stage list; the planned graph and PR cards are not drawn.
 
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
 2. Add an entry to `catalog.mjs`: `route`, `scenario`, `pre` (requests to hold or fail before the page opens), `steps` (click, fill, press, route, offline) and `wait` for states that show only after a delay.
