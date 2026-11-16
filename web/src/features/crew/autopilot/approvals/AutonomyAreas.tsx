@@ -1,11 +1,11 @@
 // Settings › Crew › Autopilot by area (Crew Designs v39, frames `autonomy-*`): each area of the code with the ceiling, the mode it is on now and
 // its record, why it moved, the way back, and a person's override. Every figure comes from the areas read; the thresholds are shown as Proposed.
-import { Info, Folder } from "lucide-react";
+import { Info, Folder, ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiFailure } from "../../../../api/client";
 import { toFailure, useAsync } from "../../../../lib/useAsync";
 import { navigate, useRoute } from "../../../../product/state/route";
-import { useWorkspace } from "../../../../product/state/workspace";
+import { useVisibleProjects, useWorkspace } from "../../../../product/state/workspace";
 import { ErrorState, Loading } from "../../../../product/ui/states";
 import type { AutopilotAreaEvent } from "../../../../generated/AutopilotAreaEvent";
 import type { AutopilotAreaRow } from "../../../../generated/AutopilotAreaRow";
@@ -22,14 +22,19 @@ import { Chip, Facts } from "./parts";
 
 const HISTORY_ROWS = 12;
 
-/** The repository the page is about: `?repo=` in the address, else the first project that is not hidden. */
-function useRepo(): { id: string; name: string } | "loading" | null {
+/**
+ * The repository the page is about: `?repo=` in the address, else the first project that is not hidden.
+ * `several` is the workspace's count of projects the person sees, for the Repo chip: with more than one the page is
+ * about one repo at a time, and the design draws that chip as a selector (still Planned: there is no menu yet).
+ */
+function useRepo(): { id: string; name: string; several: boolean } | "loading" | null {
   const route = useRoute();
   const projects = useWorkspace((now) => now.projects.data);
-  if (!projects) return "loading";
+  const visible = useVisibleProjects();
+  if (!projects || !visible) return "loading";
   const wanted = route.name === "settings" ? route.repo : undefined;
   const one = projects.find((project) => (wanted ? project.id === wanted : !project.scratch && !project.library));
-  return one ? { id: one.id, name: one.name } : null;
+  return one ? { id: one.id, name: one.name, several: visible.length > 1 } : null;
 }
 
 function ModeChip({ mode, ceiling, now }: { mode: AutopilotAreaRow["now"]; ceiling: AutopilotAreaRow["ceiling"]; now?: boolean }) {
@@ -190,7 +195,7 @@ function OverrideDialog({ row, choice, onClose, onConfirm }: { row: AutopilotAre
 
 const seenOf = (row: AutopilotAreaRow) => ({ merges: row.record.merges, reverts: row.record.reverts, tripped_at: row.since ?? null });
 
-function AreasView({ project, areas, t, reload }: { project: { id: string; name: string }; areas: AutopilotAreas; t: AutopilotThresholds; reload(): Promise<unknown> }) {
+function AreasView({ project, areas, t, reload }: { project: { id: string; name: string; several: boolean }; areas: AutopilotAreas; t: AutopilotThresholds; reload(): Promise<unknown> }) {
   const [trail, setTrail] = useState<Record<string, AutopilotAreaEvent[]>>({});
   const [menu, setMenu] = useState<{ row: AutopilotAreaRow; x: number; y: number } | null>(null);
   const [keep, setKeep] = useState<{ row: AutopilotAreaRow; choice: Risky } | null>(null);
@@ -250,7 +255,17 @@ function AreasView({ project, areas, t, reload }: { project: { id: string; name:
         Your Autopilot mode is the ceiling: no area goes higher. An area is the first two folders of a path, such as web/app. For each area Crew counts merges and reverts over a rolling window. If an area whose ceiling is Full has at least {t.min_merges} merges in the window and at least {t.trip_reverts} of them reverted, it drops to On and says why; it returns when its record recovers. Below {t.min_merges} merges the row says “Not enough data” and nothing changes. Escapes are not measured. {t.proposed ? "These thresholds are Proposed." : ""}
       </p>
       <div className="ar-chips">
-        <span className="ar-mk"><Folder size={12} aria-hidden />Repo: {project.name}</span>
+        {project.several ? (
+          <span className="ar-pick">
+            <span className="ar-mk ar-mk-pick">
+              <Folder size={12} aria-hidden />Repo: {project.name}
+              <ChevronDown size={12} aria-hidden />
+            </span>
+            <span className="ar-pv" title="Planned: the app has no repo selector; the page takes ?repo= or the first project">Planned</span>
+          </span>
+        ) : (
+          <span className="ar-mk"><Folder size={12} aria-hidden />Repo: {project.name}</span>
+        )}
         <span className="ar-mk">Repo ceiling: {modeName(areas.ceiling)} · change it in Settings › Crew</span>
         <span className="ar-mk">Window: {plural(t.window_days, "day")}</span>
       </div>

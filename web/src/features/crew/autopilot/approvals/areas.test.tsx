@@ -73,6 +73,29 @@ describe("autonomy-table", () => {
   });
 });
 
+describe("autonomy-repos", () => {
+  const project = (id: string, name: string): Project => ({ id, name, trusted: true, is_git: true, path: `/fixture/${id}` } as Project);
+
+  it("with more than one repo the Repo chip is the Planned selector, and the page reads the repo in the address", async () => {
+    useWorkspace.setState({ projects: { data: [project("p-app", "orbyn-engineering"), project("p-notes", "orbyn-notes")], loading: false, error: null } });
+    const spy = vi.spyOn(crewApi, "areas");
+    mock.reset("crew-areas");
+    window.location.hash = "#/settings/crew/areas?repo=p-notes";
+    render(<CrewSettingsSection />);
+    const chip = await screen.findByText("Repo: orbyn-notes");
+    expect(chip).toHaveClass("ar-mk-pick");
+    // The menu is not built: the chip and its Planned label are all the design's selector draws today.
+    expect(screen.getByTitle(/no repo selector/)).toHaveTextContent("Planned");
+    expect(spy).toHaveBeenCalledWith("p-notes", expect.anything());
+  });
+
+  it("with one repo the chip is plain, with no selector or Planned label", async () => {
+    await open("crew-areas");
+    expect(screen.getByText("Repo: orbyn-engineering")).not.toHaveClass("ar-mk-pick");
+    expect(screen.queryByTitle(/no repo selector/)).toBeNull();
+  });
+});
+
 describe("autonomy-tripped", () => {
   it("shows the demotion in the row and says what it changes, what returns it and what the ceiling is", async () => {
     await open("crew-areas-tripped");
