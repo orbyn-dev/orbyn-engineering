@@ -68,8 +68,8 @@ All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, on literal 
 
 ## Data model
 
-**Migration 47**, additive. Highest on main is 46 (`crew_review_controls.sql`), but Engineering 3 builds review capacity (4l) and
-the backtest (4n) as new modules and also takes migrations: **take the next free number at merge and rebase.**
+**One additive migration**, numbered when it merges. Migration numbers are contiguous and checked by tests, so the first
+migration PR to merge takes the next free number and any other renumbers at its merge (rebase, bump, rerun).
 
 - `crew_escapes(id PK, project_id, merge_task_id UNIQUE REFERENCES crew_merges(task_id), source, state, gap, gap_by, engine,
   model, areas, lane, reason, found_unix, decided_unix, decided_by)`. `state`: `possible`, `confirmed`, `dismissed`.
