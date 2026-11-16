@@ -102,10 +102,11 @@ export function recentRestore(events: AutopilotAreaEvent[] | undefined, now: num
 export const trips = (t: AutopilotThresholds) => `${plural(t.min_merges, "merge")} and ${t.trip_reverts} reverted`;
 
 /**
- * The frame of Crew Designs v39 the table's data is in, for `data-frame`: the first state that has a panel of its own, else the table.
+ * The frame of Crew Designs v39 the table's data is in, for `data-frame`: no area at all, the first state that has a panel of its own, else the table.
  * The override menu and the warning are drawn over the table, so the page names them while they are open.
  */
 export function frameOf(rows: AutopilotAreaRow[], restored: boolean): string {
+  if (rows.length === 0) return "autonomy-empty";
   if (rows.some((row) => isLowered(row) && row.ceiling === "off")) return "autonomy-demoted-ceiling-lowered";
   if (rows.some((row) => row.state === "demoted" && row.ceiling === "full")) return "autonomy-tripped";
   if (rows.some((row) => row.state === "recovering" && row.ceiling === "full")) return "autonomy-recovering";

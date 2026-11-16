@@ -13,7 +13,8 @@
  *
  * Autopilot by area (slice 4j): `crew-areas` (every area follows its ceiling, one is held at On by its own ceiling, one has too few merges),
  * `crew-areas-tripped`, `crew-areas-ceiling-off` (web/auth demoted, then its ceiling lowered to Off), `crew-areas-recovering`,
- * `crew-areas-criteria-met`, `crew-areas-restored` (web/auth came back, with the trail's `restored` row) and `crew-areas-lowdata`. The override
+ * `crew-areas-criteria-met`, `crew-areas-restored` (web/auth came back, with the trail's `restored` row), `crew-areas-lowdata` and
+ * `crew-areas-empty` (the service sends no area). The override
  * and follow routes change the area as the service does and answer 409 `stale` when the record the person saw is not the current one;
  * `crew-areas-stale` makes the first choice stale. The ceiling is per repository, as in the service: no area has its own.
  * The guard (slice 4i): `crew-guard` (Autopilot On: a hold for the person, and the person's one approval with an exit status), `crew-guard-unknown` (the same, and no exit status came: `unknown`),
@@ -206,6 +207,8 @@ function areaScenario(scenario: string): { ceiling: AutopilotAreas["ceiling"]; a
       return { ceiling: full, asOf: at(21, 16, 10), rows: web(areaRow("web/auth", 6, 0)), trail: [restored] };
     case "crew-areas-lowdata":
       return { ceiling: full, asOf: at(2, 9, 0), rows: [areaRow("web/auth", 3, 0), areaRow("crates/orbyn-core", 4, 0), areaRow("web/app", 2, 0), areaRow(".github/workflows", 3, 0)], trail: [] };
+    case "crew-areas-empty":
+      return { ceiling: full, asOf: at(2, 9, 0), rows: [], trail: [] };
     default:
       return { ceiling: full, asOf: at(6, 17, 0), rows: web(areaRow("web/auth", 8, 1)), trail: [] };
   }
