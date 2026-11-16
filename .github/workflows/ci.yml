@@ -29,7 +29,8 @@ permissions:
 
 # A new push to a pull request cancels its older run. Runs on main never cancel.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  # A label other than full-ci gets a group of its own, so labelling a pull request never cancels its running checks.
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}{1}', github.event.pull_request.number, (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && format('-label-{0}', github.run_id) || '') || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
