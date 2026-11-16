@@ -1046,6 +1046,8 @@ ids, chosen or not, the seed and the time, with no prompt or path. A task stored
 person-started, so it can never be paused. Nothing reads these in `crew_start` or the merge queue yet; those hooks are
 separate PRs.
 
+**As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run, and there is no migration, budget or replay yet.
+
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
 - **Review windows under Full:** High within 4 h (top of the queue, overdue alert), Medium within 24 h, Low batched with
