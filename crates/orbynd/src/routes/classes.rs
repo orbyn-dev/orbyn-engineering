@@ -18,6 +18,10 @@
 //! `Person` routes are listed here with a reason each. Every other protected route is `"local"` in `tests/routes.json`,
 //! one line each, so a new route must be classified in a diff: the route-table test fails for a route with no class.
 //!
+//! `POST /agui/threads/{id}` is `Local` in the table because a plain run needs no key, but a non-empty `resume[]` on it
+//! answers an interrupt and is checked in the handler (`routes/stream.rs`), exactly like `decide`. A route that needs a key for
+//! only part of its body is checked in its handler, not listed in [`ENFORCED`].
+//!
 //! To enforce another `Person` route, add its `(method, path)` to [`ENFORCED`]: one line. A test fails for an entry
 //! that is not a `Person` route or not a registered route, and the web client's list of routes that send the key
 //! (`web/src/api/personKey.ts`) gets the same line.

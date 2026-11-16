@@ -125,7 +125,8 @@ key travels by a Tauri command). This is what step 2 does.
 
 - **The key.** `orbynd serve --parent-stdin` draws a 32-byte random key at start and adds it to the ready line as
   `person_key`. Without `--parent-stdin` there is no key and the line has no such field. `Access` keeps only the key's SHA-256.
-  The channel is the pipe the shell spawned, the same stdout the token and `access_key` already use. Nothing writes the key to
+  The channel is the pipe the shell spawned, the same stdout the token and `access_key` already use. The line is printed before any
+  engine is spawned, and only the parent holds the pipe. Nothing writes the key to
   `service.json`, the environment, argv, a URL or a log (`tests/person_key.rs` searches for it in the data folder, the
   service's argv and env from the process table, the engine's own argv and env, and the service log).
 - **The shell.** `core_process.rs` keeps the key in the `CoreProcess` it already owns. The `person_key` Tauri command returns it
@@ -140,11 +141,15 @@ key travels by a Tauri command). This is what step 2 does.
   enforced route without a valid key is `403 person_required`; a service with no shell is `403 desktop_required`. The compare is
   constant time (digest to digest, `secrets_match`). Enforcing another route is one line in `ENFORCED`, one in `PERSON_ROUTES`
   on the web side, and a test fails for an entry that is not a `Person` row.
-- **Enforced now:** `POST /api/projects/{id}/worktrees/{worktree}/file-actions` and `POST /api/approvals/{id}/decide`. The other
+- **Enforced now:** `POST /api/projects/{id}/worktrees/{worktree}/file-actions`, `POST /api/approvals/{id}/decide`, and
+  `POST /agui/threads/{id}` when its `resume[]` is non-empty. A resume answers an interrupt, which approves or denies a pending
+  request exactly as `decide` does, so it needs the key (`routes/stream.rs`, a field-level check). A plain run on that route stays
+  `Local`. No other route answers an approval: `gate.decide` has two callers in `orbynd`, these two. `queue` and `steer` do not
+  touch approvals. The other
   `Person` routes stay classified only until their step. The explorer Preview gate stays until step 3.
 - **Development override.** `ORBYN_DEV_DISABLE_PERSON_KEY=1` lets `Person` routes through with no key, so web tests, the
   browser e2e and local development work. It is off by default, read only under `cfg(debug_assertions)`, and not compiled into a
-  release build, which logs a warning and ignores the variable. Every Rust integration test and the real-service e2e set it,
+  release build: the code that reads it is compiled out, so a release service ignores the variable entirely. Every Rust integration test and the real-service e2e set it,
   except `tests/person_key.rs`, which sets it to `0`.
 
 ### What browser mode and the CLI lose
@@ -153,3 +158,18 @@ Browser mode (`orbyn start`, a tab on the service address, a remote session) has
 `403 desktop_required`. Today that means no file actions in the explorer and no approving or denying from the browser. The `orbyn`
 CLI reads `service.json` and has the token only, so it cannot call an enforced route either, and `orbyn` cannot approve. Both
 still read, run threads and use every `Local` route. Each later group moved to `ENFORCED` adds its routes to this list.
+
+### Still open after step 2
+
+Step 2 closes only the routes above. `orbyn` cannot approve through `decide`, but a process holding the token can still do each of
+these as the person until its step moves it to `ENFORCED`:
+
+- `POST /api/policy/rules` (grant a rule that auto-approves).
+- `PATCH /api/threads/{id}` and `POST /api/threads/{id}/runs` (`permission_mode` can be raised; `runs` needs a field-level check).
+- `POST /api/projects/{id}/trust`.
+- `POST /api/projects/{id}/workflows/{run}/approve`.
+- `POST /api/questions/{id}/answer` and the dismiss route.
+- Crew's approve-once, deny and dismiss routes (approve-once also needs the shell's nonce).
+- The console, terminals, scripts, file writes, pull merges and reviews, updates, workspace and account routes.
+
+So "cannot approve" holds for a command or tool approval only, not for every grant of authority. Closing the list is steps 3 and 4.

@@ -135,7 +135,7 @@ async fn an_engine_with_only_the_service_token_is_refused_and_the_shells_key_pas
     f.service.admit(&f.thread, "[approve]").await;
     let report = f.probe().await;
     let calls = report["calls"].as_array().unwrap();
-    assert_eq!(calls.len(), 2, "{report}");
+    assert_eq!(calls.len(), 3, "{report}");
     for call in calls {
         assert_eq!(call["status"], 403, "{call}");
         assert_eq!(call["code"], "person_required", "{call}");
@@ -150,17 +150,46 @@ async fn an_engine_with_only_the_service_token_is_refused_and_the_shells_key_pas
     assert_eq!((status, &body["code"]), (403, &json!("person_required")));
     let (status, body) = f.call(&decide, allow.clone(), Some(&"0".repeat(64))).await;
     assert_eq!((status, &body["code"]), (403, &json!("person_required")));
-    let (status, body) = f.call(&decide, allow.clone(), Some(&key[..63])).await;
+    let (status, body) = f.call(&decide, allow, Some(&key[..63])).await;
     assert_eq!((status, &body["code"]), (403, &json!("person_required")));
     assert_eq!(f.service.run_state(&f.thread).await, "awaiting_approval");
+    // `decide` with the key is covered by the key-nowhere test below; here the approval is answered through the AG-UI resume.
 
     // Local routes still answer to the token alone.
     let local = f.service.get("/api/approvals?state=pending").send().await;
     assert_eq!(local.unwrap().status(), 200);
 
-    // With the key, both routes do their work.
-    let (status, body) = f.call(&decide, allow, Some(&key)).await;
-    assert_eq!(status, 200, "{body}");
+    // The AG-UI resume decides the same approval, so it needs the key too. A plain run on that route does not.
+    let resume = json!({
+        "threadId": f.thread, "runId": "r1",
+        "resume": [{ "interruptId": id, "status": "resolved", "payload": { "approved": true } }],
+    });
+    let agui = format!("/agui/threads/{}", f.thread);
+    for sent in [None, Some("0".repeat(64))] {
+        let (status, body) = f.call(&agui, resume.clone(), sent.as_deref()).await;
+        assert_eq!((status, &body["code"]), (403, &json!("person_required")));
+    }
+    assert_eq!(f.service.run_state(&f.thread).await, "awaiting_approval");
+    assert_eq!(
+        f.service.pending().await["id"],
+        id.as_str(),
+        "still pending"
+    );
+    let plain = json!({ "threadId": f.thread, "runId": "r2", "resume": [] });
+    let (status, _) = f.call(&agui, plain, None).await;
+    assert_ne!(status, 403, "a plain run on the AG-UI route stays Local");
+
+    // With the key, the AG-UI resume answers the interrupt (a stream, so read the answer from the thread).
+    let response = f
+        .service
+        .post(&agui)
+        .header(KEY_HEADER, &key)
+        .json(&resume)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    drop(response);
     assert_eq!(f.service.finished(&f.thread).await, "completed");
 }
 

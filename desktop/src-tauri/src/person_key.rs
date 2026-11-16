@@ -4,7 +4,10 @@
 //! A worker that reads the service's `service.json` has the token and not this, so it cannot call those routes.
 //!
 //! Only the bundled app's main window may ask (the same check as `crew_presence`): the startup page and a preview window
-//! cannot. This is not a defence against a process that can read this one's memory or open devtools in the page.
+//! cannot. `require_caller` checks the top-level window's URL only. A `127.0.0.1` iframe inside the main window (an MCP App, an
+//! HTML render, file media) is excluded only because the capability has no `remote` entry, so the IPC is not exposed to it:
+//! the same exposure as `crew_presence`. The service prints the ready line before it spawns any engine, and only this
+//! process holds the pipe it is printed to. This is not a defence against a process that can read this one's memory or open devtools in the page.
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 

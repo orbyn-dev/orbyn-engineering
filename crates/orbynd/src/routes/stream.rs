@@ -347,13 +347,23 @@ fn apply_resume(core: &Core, thread_id: &str, resume: &[Value]) -> Result<i64, S
     Ok(cursor)
 }
 
-/// `POST /agui/threads/:id`.
+/// `POST /agui/threads/:id`. A plain run is `Local`. A non-empty `resume[]` answers an interrupt, which approves or denies a
+/// pending request exactly as `POST /api/approvals/{id}/decide` does, so it needs the person key too (#441): without it a
+/// process holding only the service token could approve its own request here.
 pub async fn agui_run(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     ApiJson(input): ApiJson<Value>,
 ) -> ApiResult<Response> {
     let core = state.core.clone();
+    if input
+        .get("resume")
+        .and_then(Value::as_array)
+        .is_some_and(|resume| !resume.is_empty())
+    {
+        state.access.person_check(&headers)?;
+    }
     core.store.thread(&id)?;
     if input.get("threadId").and_then(Value::as_str) != Some(id.as_str()) {
         return Err(CoreError::Invalid("threadId does not match this thread.".into()).into());

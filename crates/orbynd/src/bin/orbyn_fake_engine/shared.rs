@@ -168,17 +168,25 @@ pub(crate) fn probe_service(args: &[String]) {
     .expect("service.json is JSON");
     let url = found["url"].as_str().expect("url");
     let token = found["token"].as_str().expect("token");
+    // The AG-UI resume answers an interrupt, so it is the third way to approve and needs the key too.
+    let resume = json!({
+        "threadId": "t", "runId": "r",
+        "resume": [{ "interruptId": "a", "status": "resolved", "payload": { "approved": true } }],
+    })
+    .to_string();
     let calls: Vec<Value> = [
-        "/api/projects/p/worktrees/w/file-actions",
-        "/api/approvals/a/decide",
+        ("/api/projects/p/worktrees/w/file-actions", "{}".to_owned()),
+        ("/api/approvals/a/decide", "{}".to_owned()),
+        ("/agui/threads/t", resume),
     ]
     .iter()
-    .map(|path| {
+    .map(|(path, body)| {
         let host = url.strip_prefix("http://").expect("http url");
         let mut stream = TcpStream::connect(host).expect("connect");
         write!(
             stream,
-            "POST {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            "POST {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
         )
         .expect("write");
         let mut response = String::new();
