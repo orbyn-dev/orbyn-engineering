@@ -290,7 +290,11 @@ async fn check_invite(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::AccountInvite>,
 ) -> ApiResult<StatusCode> {
-    state.core.account.check_invite(&body.invite).await?;
+    state
+        .core
+        .account
+        .check_invite(body.invite.expose())
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -302,7 +306,7 @@ async fn start_sign_up(
         .core
         .account
         .start_sign_up(
-            &body.invite,
+            body.invite.expose(),
             &body.email,
             Password::new(body.password.expose().to_owned()),
         )
@@ -319,7 +323,11 @@ async fn verify_code(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::AccountCode>,
 ) -> ApiResult<StatusCode> {
-    state.core.account.verify_email_code(&body.code).await?;
+    state
+        .core
+        .account
+        .verify_email_code(body.code.expose())
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -342,7 +350,7 @@ async fn second_factor(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::AccountCode>,
 ) -> ApiResult<StatusCode> {
-    state.core.account.second_factor(&body.code).await?;
+    state.core.account.second_factor(body.code.expose()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

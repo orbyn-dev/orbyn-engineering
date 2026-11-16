@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use base64::Engine as _;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tracing::field::{Field, Visit};
@@ -138,7 +138,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// A secret made of bytes: raw, in base64 (all four alphabets), in hex (both cases) and printed
+/// A secret made of bytes: raw, in base64 (standard and URL-safe, padded and not), in hex (both cases) and printed
 /// as a list of numbers, which is what `{:?}` of a byte slice writes.
 fn bytes_of(label: &'static str, bytes: &[u8]) -> Canary {
     assert!(bytes.len() >= 16, "{label}: too short to be a canary");
@@ -148,6 +148,7 @@ fn bytes_of(label: &'static str, bytes: &[u8]) -> Canary {
         forms: vec![
             bytes.to_vec(),
             STANDARD.encode(bytes).into_bytes(),
+            STANDARD_NO_PAD.encode(bytes).into_bytes(),
             URL_SAFE.encode(bytes).into_bytes(),
             URL_SAFE_NO_PAD.encode(bytes).into_bytes(),
             hex(bytes).into_bytes(),
@@ -157,7 +158,7 @@ fn bytes_of(label: &'static str, bytes: &[u8]) -> Canary {
     }
 }
 
-/// A secret made of text: as written and in base64.
+/// A secret made of text: as written, in base64 (standard and URL-safe, padded and not) and in hex.
 fn text_of(label: &'static str, text: &str) -> Canary {
     assert!(text.len() >= 16, "{label}: too short to be a canary");
     Canary {
@@ -165,8 +166,11 @@ fn text_of(label: &'static str, text: &str) -> Canary {
         forms: vec![
             text.as_bytes().to_vec(),
             STANDARD.encode(text).into_bytes(),
+            STANDARD_NO_PAD.encode(text).into_bytes(),
+            URL_SAFE.encode(text).into_bytes(),
             URL_SAFE_NO_PAD.encode(text).into_bytes(),
             hex(text.as_bytes()).into_bytes(),
+            hex(text.as_bytes()).to_uppercase().into_bytes(),
         ],
     }
 }
@@ -353,7 +357,11 @@ async fn no_secret_of_the_real_adapter_reaches_a_log_an_error_a_debug_line_a_war
         .collect();
     let in_keys: Vec<&Canary> = my_zone.into_iter().chain(their_zone).collect();
     let key_form = mine.identity[0].forms[1].clone();
-    let both: Vec<Canary> = mine.all().into_iter().chain(theirs.all()).collect();
+    let invite = format!("invite-{}", crate::util::new_id());
+    let code = format!("code-{}", crate::util::new_id());
+    let mut both: Vec<Canary> = mine.all().into_iter().chain(theirs.all()).collect();
+    both.push(text_of("an invite", &invite));
+    both.push(text_of("a code", &code));
     let mut printed = String::new();
 
     // The adapter's own calls, working: a pull, the device list, a password check, the approval
@@ -365,6 +373,17 @@ async fn no_secret_of_the_real_adapter_reaches_a_log_an_error_a_debug_line_a_war
     printed += &format!("{:?}\n", d.account.approval_requests().await);
     let password = crate::account::Password::new(PASSWORD.to_owned());
     printed += &format!("{:?}\n", d.account.verify_password(&password).await);
+    // The sign-up and second-factor steps of the same adapter, each with a value to find. Their
+    // answers do not matter here; nothing they write may carry the invite or the code.
+    printed += &format!("{:?}\n", d.account.check_invite(&invite).await);
+    printed += &format!(
+        "{:?}\n",
+        d.account
+            .start_sign_up(&invite, "a@example.com", &password)
+            .await
+    );
+    printed += &format!("{:?}\n", d.account.verify_email_code(&code).await);
+    printed += &format!("{:?}\n", d.account.second_factor(&code).await);
 
     // A hostile or confused Engine: every refusal echoes a secret in its error code. The adapter
     // must map it to its own words and repeat none of it.
