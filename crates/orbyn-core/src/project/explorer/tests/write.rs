@@ -422,3 +422,250 @@ async fn links_and_folder_moves_carrying_git_are_refused() {
     assert!(!root.join("src/new").exists());
     assert!(root.join("a.txt").exists());
 }
+
+/// A linked worktree whose path Git lists under another spelling than the real one: the folder
+/// a worktree was made under keeps its name in Git's records (`/var` for `/private/var`, a
+/// Windows 8.3 short name). A link above the folder stands in for both here.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_linked_worktree_recorded_through_a_link_still_reads_and_writes_stay_inside_it() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let real = crate::util::canonicalize(dir.path()).unwrap().join("trees");
+    std::fs::create_dir_all(&real).unwrap();
+    let linked = real.join("linked");
+    run_git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "other",
+            &linked.to_string_lossy(),
+        ],
+    );
+    std::fs::write(linked.join("only-here.txt"), "x").unwrap();
+    // Git now names the worktree through a link above it.
+    let above = dir.path().join("above");
+    std::os::unix::fs::symlink(&real, &above).unwrap();
+    let spelled = above.join("linked");
+    let record = root.join(".git/worktrees/linked/gitdir");
+    std::fs::write(&record, format!("{}\n", spelled.join(".git").display())).unwrap();
+    let listed = core
+        .explorer_worktrees(&project.id, None, true)
+        .await
+        .unwrap();
+    let entry = listed
+        .worktrees
+        .iter()
+        .find(|w| !w.is_main)
+        .expect("the linked worktree is listed");
+    let id = entry.id.clone();
+
+    // Reads still work.
+    let tree = core
+        .explorer_tree(&project.id, &id, "", "", true)
+        .await
+        .unwrap();
+    assert!(tree.entries.iter().any(|e| e.name == "only-here.txt"));
+    assert!(
+        core.explorer_file(&project.id, &id, "only-here.txt")
+            .await
+            .is_ok()
+    );
+
+    // Writes land in the real folder and nowhere else.
+    act(
+        &core,
+        &project,
+        &id,
+        Action::CreateFile {
+            path: "made.txt".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(linked.join("made.txt").is_file());
+    for escape in ["../outside.txt", "src/../../outside.txt"] {
+        assert!(
+            act(
+                &core,
+                &project,
+                &id,
+                Action::CreateFile {
+                    path: escape.into()
+                }
+            )
+            .await
+            .is_err(),
+            "{escape}"
+        );
+    }
+    assert!(!real.join("outside.txt").exists());
+    assert!(!root.join("made.txt").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_open_engine_console_blocks_writes_like_a_running_session() {
+    use crate::agents::console::CONSOLE_TERMINAL;
+    use crate::host::terminal::{PtySpec, TerminalLabel};
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    let thread = thread_in(&core, &project, None).await;
+    let spec = || PtySpec {
+        program: "/bin/sleep".into(),
+        args: vec!["30".into()],
+        cwd: root.clone(),
+        cols: 80,
+        rows: 24,
+        engine: false,
+    };
+    // A person's own terminal is not an agent and does not block.
+    core.terminals
+        .open_named(&thread.id, "mine", TerminalLabel::default(), spec())
+        .unwrap();
+    act(
+        &core,
+        &project,
+        &id,
+        Action::CreateFile { path: "one".into() },
+    )
+    .await
+    .unwrap();
+    // The engine's console runs an agent with no run record: it blocks.
+    core.terminals
+        .open_named(
+            &thread.id,
+            CONSOLE_TERMINAL,
+            TerminalLabel::default(),
+            spec(),
+        )
+        .unwrap();
+    let denied = act(
+        &core,
+        &project,
+        &id,
+        Action::CreateFile { path: "two".into() },
+    )
+    .await;
+    assert!(
+        matches!(denied, Err(CoreError::PolicyDenied(_))),
+        "{denied:?}"
+    );
+    assert!(!root.join("two").exists());
+    core.terminals
+        .named(&thread.id, CONSOLE_TERMINAL)
+        .unwrap()
+        .kill();
+}
+
+/// A move that only changes the case of a name, where the file system folds case (macOS,
+/// Windows): the exclusive rename either renames the entry (APFS does) or sees the same entry
+/// and refuses it as an existing destination (some volumes do). Both are fine; losing or
+/// duplicating the file is not.
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test]
+async fn a_case_only_rename_is_refused_as_an_existing_destination_where_case_folds() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    let moved = act(
+        &core,
+        &project,
+        &id,
+        Action::Move {
+            path: "a.txt".into(),
+            destination: "A.TXT".into(),
+        },
+    )
+    .await;
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.eq_ignore_ascii_case("a.txt"))
+        .collect();
+    // Whatever the file system answers, the file exists once, under one of the two names, and
+    // a refusal is the plain "destination exists" error, never a crash or a lost file.
+    assert_eq!(names.len(), 1, "{names:?}");
+    match moved {
+        Ok(()) => assert_eq!(names[0], "A.TXT"),
+        Err(error) => {
+            assert!(matches!(error, CoreError::Invalid(_)), "{error:?}");
+            assert_eq!(names[0], "a.txt");
+        }
+    }
+}
+
+/// Only the route handler may reach `explorer_file_action`: a worker, an agent tool or a
+/// crew path that called it would write as the person. Every engine runs without the service
+/// token (`child_env` scrubs it, see its tests) and the route is a protected one
+/// (`orbynd/tests/routes.json` and the 401 test in `orbynd/tests/explorer.rs`).
+#[test]
+fn no_engine_agent_or_crew_code_calls_the_file_action() {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path
+                    .file_name()
+                    .is_some_and(|n| n != "target" && n != "node_modules")
+                {
+                    walk(&path, out);
+                }
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    let name = ["explorer_file", "_action"].concat();
+    let mut callers: Vec<String> = files
+        .iter()
+        .filter(|path| {
+            std::fs::read_to_string(path).is_ok_and(|text| text.contains(&format!("{name}(")))
+        })
+        .map(|path| {
+            path.canonicalize()
+                .unwrap()
+                .strip_prefix(root.canonicalize().unwrap())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "orbyn-core/src/project/explorer/tests/write.rs",
+            "orbyn-core/src/project/explorer/write.rs",
+            "orbynd/src/routes/explorer.rs",
+        ]
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn a_file_system_without_exclusive_rename_gets_a_clear_error_and_no_fallback() {
+    use super::super::write::platform::unsupported;
+    for code in [libc::ENOSYS, libc::ENOTSUP, libc::EINVAL] {
+        let error = unsupported(std::io::Error::from_raw_os_error(code));
+        // A mapped error is a plain `Unsupported` with no raw system code behind it.
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported, "{code}");
+        assert_eq!(error.raw_os_error(), None, "{code} was not mapped");
+    }
+    let other = unsupported(std::io::Error::from_raw_os_error(libc::EEXIST));
+    assert_eq!(other.raw_os_error(), Some(libc::EEXIST));
+}

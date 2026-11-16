@@ -88,21 +88,25 @@ pub(super) struct Resolved {
 }
 
 impl Guard {
+    /// The library's `repo/` is excluded only when the library sits inside the root, so the
+    /// comparison is made between canonical paths: a root registered under another spelling
+    /// (an 8.3 short name, `/var` for `/private/var`) is the same folder.
     pub fn with_library(root: &Path, data: &Path, library: Option<PathBuf>) -> Result<Self> {
+        let canonical =
+            crate::util::canonicalize(root).map_err(|_| CoreError::NotFound("worktree".into()))?;
         let library_repo = library
             .and_then(|library| resolve_existing(&library))
-            .filter(|library| library.starts_with(root))
+            .filter(|library| library.starts_with(&canonical))
             .map(|library| library.join("repo"));
-        Self::new(root, data, library_repo)
+        Self::new(&canonical, data, library_repo)
     }
 
+    /// The root is canonicalized, never refused for its spelling: every later check compares
+    /// against the folder it really is, so reads and writes stay inside it whatever name the
+    /// project was registered under.
     pub fn new(root: &Path, data: &Path, library_repo: Option<PathBuf>) -> Result<Self> {
-        let expected = root;
         let root =
             crate::util::canonicalize(root).map_err(|_| CoreError::NotFound("worktree".into()))?;
-        if root != expected {
-            return Err(refused());
-        }
         // Missing protected folders remain protected against creation too.
         let data = resolve_existing(data);
         Ok(Self {
@@ -347,6 +351,27 @@ mod tests {
         assert!(windows_device("com1.txt"));
         assert!(!windows_device("console"));
         assert!(!windows_device("com10"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_root_in_another_spelling_is_canonicalized_not_refused() {
+        let dir = crate::testing::TempDir::new();
+        let real = crate::util::canonicalize(dir.path()).unwrap().join("real");
+        std::fs::create_dir_all(real.join("library")).unwrap();
+        std::fs::write(real.join("a.txt"), "x").unwrap();
+        let alias = real.parent().unwrap().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let data = real.join("data");
+        let guard = Guard::new(&alias, &data, None).unwrap();
+        assert_eq!(guard.root(), real);
+        assert!(guard.mutation_path("a.txt").is_ok());
+        assert!(guard.resolve("a.txt").is_ok());
+        // The library inside the root is still found through the other spelling.
+        let with_library = Guard::with_library(&alias, &data, Some(alias.join("library"))).unwrap();
+        assert!(with_library.mutation_path("library/repo").is_err());
+        // A root that is gone is still not found.
+        assert!(Guard::new(&real.join("missing"), &data, None).is_err());
     }
 
     #[test]

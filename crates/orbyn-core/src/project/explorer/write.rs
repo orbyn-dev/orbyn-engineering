@@ -1,6 +1,6 @@
 //! User file actions. Resolve fresh membership, then fence admission and effects.
 
-mod platform;
+pub(super) mod platform;
 
 use std::path::{Path, PathBuf};
 
@@ -75,6 +75,7 @@ impl Core {
         let (store, workspace) = (self.store.clone(), self.workspace.clone());
         let explorer = self.explorer.clone();
         let data_dir = self.config.data_dir.clone();
+        let terminals = self.terminals.clone();
         let (project_id, action) = (project_id.to_owned(), action.clone());
         // Move the serialization permit into the blocking task: dropping an HTTP
         // future cannot let a second action race a still-running filesystem call.
@@ -88,10 +89,22 @@ impl Core {
                 let guard = Guard::with_library(&target.path, &data_dir, workspace.root().ok())?;
                 // Inspect all live threads, including other trusted project
                 // registrations over this checkout. Admission uses this same fence.
+                // A thread counts when a run is going or its engine console is open: a
+                // console runs an agent without a run record. A person's own terminal does
+                // not. Folders are compared by the name the project was registered under
+                // and by the real one, so another spelling cannot slip past the fence.
+                let roots = [target.path.clone(), guard.root().to_path_buf()];
                 if store.list_threads(None, false)?.iter().any(|thread| {
                     let cwd = plain(Path::new(&thread.cwd));
-                    thread.active_run.is_some()
-                        && (cwd.starts_with(&target.path) || target.path.starts_with(&cwd))
+                    let real = crate::util::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
+                    let inside = roots.iter().any(|root| {
+                        [&cwd, &real]
+                            .iter()
+                            .any(|cwd| cwd.starts_with(root) || root.starts_with(cwd))
+                    });
+                    inside
+                        && (thread.active_run.is_some()
+                            || crate::agents::console::console_alive(&terminals, &thread.id))
                 }) {
                     return Err(CoreError::PolicyDenied(
                         "This worktree has an active session.".into(),
@@ -271,6 +284,9 @@ fn apply(guard: &Guard, action: &ExplorerFileAction) -> Result<()> {
         std::io::ErrorKind::AlreadyExists => invalid("The destination already exists."),
         std::io::ErrorKind::NotFound => CoreError::NotFound("file or folder".into()),
         std::io::ErrorKind::DirectoryNotEmpty => invalid("Only empty folders can be deleted."),
+        std::io::ErrorKind::Unsupported => {
+            invalid("This folder's file system cannot move files safely.")
+        }
         _ => error.into(),
     })
 }

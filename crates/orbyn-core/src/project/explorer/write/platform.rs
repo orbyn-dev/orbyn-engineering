@@ -93,7 +93,22 @@ pub(super) fn move_entry(from: &Location, to: &Location) -> io::Result<()> {
             libc::RENAME_NOREPLACE,
         )
     };
-    result(code)
+    result(code).map_err(unsupported)
+}
+
+/// A file system that cannot do an exclusive rename (an old kernel, FUSE, some network
+/// shares) answers with one of a few errors. They become `Unsupported`, so the person sees
+/// that the folder cannot move files safely instead of a raw system error, and nothing falls
+/// back to a rename that could overwrite.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(in crate::project::explorer) fn unsupported(error: io::Error) -> io::Error {
+    let code = error.raw_os_error();
+    if code
+        .is_some_and(|code| code == libc::ENOSYS || code == libc::ENOTSUP || code == libc::EINVAL)
+    {
+        return io::ErrorKind::Unsupported.into();
+    }
+    error
 }
 
 #[cfg(windows)]

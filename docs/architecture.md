@@ -1636,6 +1636,23 @@ a person's create, move (including rename), or delete request without a thread.
   attempt precedes effects, and the outcome records allow or deny. No file contents
   or arbitrary request paths enter those audit rows. Reads retain their existing
   thread-relative read-only display policy.
+- **Person only.** The route is a protected one: it needs the per-launch service token, which no
+  engine, worker or crew child receives (`child_env` removes it), and its handler is the only
+  caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a second
+  one). No agent tool, crew task or MCP tool reaches it, and there is no thread-relative form.
+- **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
+  really is before any check, for reads and writes alike, so a project registered under another
+  spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside
+  the real folder. The active-run fence compares both spellings.
+- **What counts as active.** A thread with a run going, or whose engine console is open (the console
+  runs an agent without a run record), blocks writes in any worktree that overlaps its folder. A
+  person's own terminal does not.
+- **File-system limits.** Moves use an exclusive rename (`RENAME_EXCL` on macOS, `RENAME_NOREPLACE`
+  on Linux, `MoveFileExW` without replace on Windows). A file system that cannot do that (an old
+  kernel, some network or FUSE mounts) answers `400` "cannot move files safely"; nothing falls back
+  to a rename that could overwrite. Where names fold case (macOS default, Windows), a rename that
+  changes only the case of a name either renames the entry or, on a volume whose exclusive rename
+  sees the same entry, is refused as an existing destination; the file is never lost or duplicated.
 - **Mutation handles** identify every existing parent without following a final link,
   fail closed when handle identity is unavailable, and check parents again before
   effects. Unix operations are relative to the held parent; Windows holds ancestors
