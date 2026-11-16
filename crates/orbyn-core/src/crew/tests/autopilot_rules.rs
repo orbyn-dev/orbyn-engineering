@@ -53,6 +53,62 @@ fn command(text: &str) -> Option<&'static str> {
 }
 
 #[test]
+fn n3_validates_configured_hosts_at_the_detector_boundary() {
+    // Synthetic inputs, not captured engine runs. Exercise the actual N3 detector.
+    let hosts: Vec<String> = [
+        "COLLECTOR.Internal.",
+        "*.logs.internal",
+        "10.0.0.7",
+        "fd00::7",
+        "*.",
+        "*.10.0.0.8",
+        "-bad.internal",
+        "0x",
+        "*.0X.",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let scene = Scene {
+        worktree: Path::new(TREE),
+        protected: &[],
+        allowed_hosts: &hosts,
+        data_dir: None,
+        branch: Some("feat/x"),
+        default_branch: None,
+    };
+    for target in [
+        "curl https://collector.internal/health",
+        "curl https://a.logs.internal/health",
+        "curl http://10.0.0.7/health",
+        "curl http://[fd00::7]/health",
+        "curl http://127.0.0.1/health",
+    ] {
+        assert_eq!(
+            refuse(ActionKind::Command, target, &[], &scene).map(|r| r.id),
+            None,
+            "{target}"
+        );
+    }
+    for target in [
+        "curl https://unlisted.internal/health",
+        "curl https://collector./health",
+        "curl https://x.10.0.0.8/health",
+        "curl https://-bad.internal/health",
+        "curl http://10.0.0.8/health",
+        "curl http://[fd00::8]/health",
+        "curl http://0x/health",
+        "curl http://collector.0x/health",
+    ] {
+        assert_eq!(
+            refuse(ActionKind::Command, target, &[], &scene).map(|r| r.id),
+            Some("N3"),
+            "{target}"
+        );
+    }
+}
+
+#[test]
 fn the_list_has_the_ten_rules_of_the_spec_in_order() {
     let ids: Vec<&str> = RULES.iter().map(|(id, _)| *id).collect();
     assert_eq!(
