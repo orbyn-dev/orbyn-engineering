@@ -54,6 +54,8 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
     names `orbynd`'s designated requirement (team ID plus identifier) and survives updates signed with the same
     Developer ID and identifier. It needs Developer ID signing with hardened runtime and the entitlements in control 6
     (the signing work is parity rows P34 and P35).
+  - *Built so far:* the keychain item and its wipe (`KeychainKeyStore`, generic-password items under a development service
+    name); not built: the access list and the release service name, which need the Developer ID.
   - *Development builds.* An unsigned or ad-hoc build has no stable identity, so the list protects nothing there. Such
     builds use a different service name or the in-memory `KeyStore`, and never create an item a release build would
     later trust.

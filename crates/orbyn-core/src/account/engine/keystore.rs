@@ -40,31 +40,31 @@ pub(crate) trait Vault: Send + Sync {
 }
 
 #[derive(Serialize, Deserialize)]
-struct DiskSession {
+pub(super) struct DiskSession {
     token: String,
     expires_at: String,
 }
 
 #[derive(Serialize, Deserialize)]
-struct DiskIdentity {
+pub(super) struct DiskIdentity {
     device_keys: String,
     account_id: String,
     device_id: String,
     email: String,
     session: Option<DiskSession>,
-    vault_key: String,
+    pub(super) vault_key: String,
 }
 
 #[derive(Serialize, Deserialize)]
-struct DiskAnchor {
+pub(super) struct DiskAnchor {
     counter: u64,
     hash: String,
 }
 
 #[derive(Serialize, Deserialize)]
-struct Disk {
-    identity: DiskIdentity,
-    anchor: Option<DiskAnchor>,
+pub(super) struct Disk {
+    pub(super) identity: DiskIdentity,
+    pub(super) anchor: Option<DiskAnchor>,
 }
 
 /// The development key store: one file, replaced atomically.
@@ -197,6 +197,72 @@ fn decode<const N: usize>(text: &str) -> Result<dc::Zeroizing<[u8; N]>, dc::Stor
     Ok(out)
 }
 
+/// The record both key stores keep: the identity and the anchor, as one document.
+pub(super) fn disk_of(identity: &dc::StoredIdentity, anchor: Option<DiskAnchor>) -> Disk {
+    Disk {
+        identity: DiskIdentity {
+            device_keys: B64.encode(identity.device_keys.as_slice()),
+            account_id: identity.account_id.clone(),
+            device_id: identity.device_id.clone(),
+            email: identity.email.clone(),
+            session: identity.session.as_ref().map(|session| DiskSession {
+                token: session.token.to_string(),
+                expires_at: session.expires_at.clone(),
+            }),
+            vault_key: B64.encode(identity.vault_key.as_slice()),
+        },
+        anchor,
+    }
+}
+
+pub(super) fn identity_of(id: DiskIdentity) -> Result<dc::StoredIdentity, dc::StoreError> {
+    Ok(dc::StoredIdentity {
+        device_keys: decode::<64>(&id.device_keys)?,
+        account_id: id.account_id,
+        device_id: id.device_id,
+        email: id.email,
+        session: id.session.map(|session| dc::StoredSession {
+            token: dc::Zeroizing::new(session.token),
+            expires_at: session.expires_at,
+        }),
+        vault_key: decode::<32>(&id.vault_key)?,
+    })
+}
+
+pub(super) fn anchor_of(anchor: &DiskAnchor) -> Option<Anchor> {
+    let hash = decode::<32>(&anchor.hash).ok()?;
+    Some(Anchor {
+        counter: anchor.counter,
+        hash: *hash,
+    })
+}
+
+pub(super) fn disk_anchor(anchor: Anchor) -> DiskAnchor {
+    DiskAnchor {
+        counter: anchor.counter,
+        hash: B64.encode(anchor.hash),
+    }
+}
+
+/// The encoded secrets are overwritten once written.
+pub(super) fn wipe_disk(disk: &mut Disk) {
+    zeroize::Zeroize::zeroize(&mut disk.identity.device_keys);
+    zeroize::Zeroize::zeroize(&mut disk.identity.vault_key);
+    if let Some(session) = disk.identity.session.as_mut() {
+        zeroize::Zeroize::zeroize(&mut session.token);
+    }
+}
+
+pub(super) fn encode_disk(disk: &Disk) -> Result<dc::Zeroizing<Vec<u8>>, dc::StoreError> {
+    serde_json::to_vec(disk)
+        .map(dc::Zeroizing::new)
+        .map_err(|_| dc::StoreError)
+}
+
+pub(super) fn parse_disk(bytes: &[u8]) -> Result<Disk, dc::StoreError> {
+    serde_json::from_slice(bytes).map_err(|_| dc::StoreError)
+}
+
 impl dc::KeyStore for FileKeyStore {
     fn load(&self) -> Result<Option<dc::StoredIdentity>, dc::StoreError> {
         let _held = self.guard();
@@ -210,18 +276,7 @@ impl dc::KeyStore for FileKeyStore {
         let Some(disk) = self.read()? else {
             return Ok(None);
         };
-        let id = disk.identity;
-        Ok(Some(dc::StoredIdentity {
-            device_keys: decode::<64>(&id.device_keys)?,
-            account_id: id.account_id,
-            device_id: id.device_id,
-            email: id.email,
-            session: id.session.map(|session| dc::StoredSession {
-                token: dc::Zeroizing::new(session.token),
-                expires_at: session.expires_at,
-            }),
-            vault_key: decode::<32>(&id.vault_key)?,
-        }))
+        identity_of(disk.identity).map(Some)
     }
 
     fn save(&self, identity: &dc::StoredIdentity) -> Result<(), dc::StoreError> {
@@ -232,27 +287,10 @@ impl dc::KeyStore for FileKeyStore {
         }
         // The anchor belongs to the vault key: it stays while the key does.
         let anchor = self.read()?.and_then(|disk| disk.anchor);
-        let mut disk = Disk {
-            identity: DiskIdentity {
-                device_keys: B64.encode(identity.device_keys.as_slice()),
-                account_id: identity.account_id.clone(),
-                device_id: identity.device_id.clone(),
-                email: identity.email.clone(),
-                session: identity.session.as_ref().map(|session| DiskSession {
-                    token: session.token.to_string(),
-                    expires_at: session.expires_at.clone(),
-                }),
-                vault_key: B64.encode(identity.vault_key.as_slice()),
-            },
-            anchor,
-        };
+        let mut disk = disk_of(identity, anchor);
         let written = self.write(&disk);
         // The encoded secrets do not outlive the call.
-        zeroize::Zeroize::zeroize(&mut disk.identity.device_keys);
-        zeroize::Zeroize::zeroize(&mut disk.identity.vault_key);
-        if let Some(session) = disk.identity.session.as_mut() {
-            zeroize::Zeroize::zeroize(&mut session.token);
-        }
+        wipe_disk(&mut disk);
         written
     }
 
@@ -287,21 +325,13 @@ impl Vault for FileKeyStore {
 
     fn anchor(&self) -> Option<Anchor> {
         let _held = self.guard();
-        let anchor = self.read().ok()??.anchor?;
-        let hash = decode::<32>(&anchor.hash).ok()?;
-        Some(Anchor {
-            counter: anchor.counter,
-            hash: *hash,
-        })
+        anchor_of(&self.read().ok()??.anchor?)
     }
 
     fn set_anchor(&self, anchor: Anchor) -> Result<(), dc::StoreError> {
         let _held = self.guard();
         let mut disk = self.read()?.ok_or(dc::StoreError)?;
-        disk.anchor = Some(DiskAnchor {
-            counter: anchor.counter,
-            hash: B64.encode(anchor.hash),
-        });
+        disk.anchor = Some(disk_anchor(anchor));
         self.write(&disk)
     }
 }

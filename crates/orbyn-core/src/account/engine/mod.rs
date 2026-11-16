@@ -26,6 +26,8 @@ mod account;
 mod approval;
 mod errors;
 #[cfg(any(test, debug_assertions))]
+mod keychain;
+#[cfg(any(test, debug_assertions))]
 mod keystore;
 #[cfg(any(test, debug_assertions))]
 mod sealed;
@@ -37,6 +39,12 @@ mod zones;
 pub(crate) use errors::map_for_test;
 
 pub use account::EngineAccount;
+#[cfg(test)]
+pub(crate) use keychain::SecretBackend;
+#[cfg(all(target_os = "macos", any(test, debug_assertions)))]
+pub use keychain::SystemKeychain;
+#[cfg(any(test, debug_assertions))]
+pub use keychain::{DEV_SERVICE, KeychainKeyStore};
 #[cfg(any(test, debug_assertions))]
 pub use keystore::FileKeyStore;
 #[cfg(test)]
@@ -93,11 +101,48 @@ pub fn connect_sealed(
     dir: &std::path::Path,
     profile: &str,
 ) -> Result<Backend, DeviceError> {
+    let keys = FileKeyStore::new(dir.join(format!("dev-keystore-{profile}.json")));
+    connect_sealed_with(address, device_name, dir, profile, keys)
+}
+
+/// The keys live in the macOS login keychain when it answers, and in the development file
+/// store when it does not (an unsigned or headless build, a locked keychain). The fallback
+/// exists in debug builds and tests only; a release has neither the file store nor this
+/// function, so a release with no keychain has no sign-in. Real sign-in stays off.
+#[cfg(any(test, debug_assertions))]
+pub fn connect_local(
+    address: &str,
+    device_name: &str,
+    dir: &std::path::Path,
+    profile: &str,
+) -> Result<Backend, DeviceError> {
+    #[cfg(target_os = "macos")]
+    {
+        let keys = KeychainKeyStore::system(profile);
+        if keys.available() {
+            return connect_sealed_with(address, device_name, dir, profile, keys);
+        }
+        tracing::warn!("the keychain did not answer; the development file key store is used");
+    }
+    connect_sealed(address, device_name, dir, profile)
+}
+
+/// The sealed snapshot beside `dir`, the keys wherever `keys` keeps them.
+#[cfg(any(test, debug_assertions))]
+pub(crate) fn connect_sealed_with<K>(
+    address: &str,
+    device_name: &str,
+    dir: &std::path::Path,
+    profile: &str,
+    keys: K,
+) -> Result<Backend, DeviceError>
+where
+    K: dc::KeyStore + keystore::Vault + Clone + 'static,
+{
     if !dc::is_loopback_literal(address) {
         return Err(DeviceError::Offline);
     }
     let transport = dc::HttpApi::new(address).map_err(|_| DeviceError::Offline)?;
-    let keys = FileKeyStore::new(dir.join(format!("dev-keystore-{profile}.json")));
     let snapshots = sealed::SealedSnapshots::new(
         dir.join(format!("account-snapshot-{profile}.sealed")),
         profile,

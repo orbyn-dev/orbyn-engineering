@@ -18,6 +18,8 @@ mod engine_scan;
 #[cfg(feature = "engine-client")]
 mod engine_server;
 mod flow;
+#[cfg(feature = "engine-client")]
+mod keychain;
 mod limits;
 #[cfg(feature = "engine-client")]
 mod never_sync;

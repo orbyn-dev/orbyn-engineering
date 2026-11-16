@@ -11,7 +11,7 @@ license-file.workspace = true
 test-support = []
 # The Engine adapter and its dependency. Off in every normal build, release included, because
 # nothing calls it while sign-in is off; the tests switch it on through the dev-dependency below.
-engine-client = ["dep:orbyn-device-client", "dep:chacha20poly1305"]
+engine-client = ["dep:orbyn-device-client", "dep:chacha20poly1305", "dep:security-framework"]
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
@@ -48,6 +48,12 @@ ulid.workspace = true
 icu_normalizer = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
 unicode-segmentation = "=1.13.3"
 tar = { version = "0.4", default-features = false }
+
+# The macOS keychain behind the Engine adapter (docs/account.md, "The device and its keys"): the
+# maintained, MIT or Apache-2.0 binding the rustls platform verifier already pulls into the desktop
+# lock. Only built with `engine-client`, which no normal build enables.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3.7", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
