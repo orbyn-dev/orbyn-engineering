@@ -704,7 +704,18 @@ async fn codex_feedback_routes_native_instances_and_rejects_unknown_engines() {
         json!({"classification": "bug", "includeLogs": true,
         "reason": "instance report", "threadId": "thread-fixture"})
     );
-    let before_rejections = launches(&launch);
+    // A status read starts a detached `claude mcp list` that logs whenever it gets
+    // scheduled, possibly during the rejected requests below. It is not a launch the
+    // rejections caused, so both snapshots leave it out and the read runs here to
+    // exercise that race on every run.
+    let engine_launches = || {
+        launches(&launch)
+            .into_iter()
+            .filter(|entry| entry["mode"] != "claude-mcp-list")
+            .collect::<Vec<_>>()
+    };
+    let before_rejections = engine_launches();
+    service.json("/api/engines").await;
     for (engine, expected_status, expected_code) in [
         ("unknown-feedback-engine", 404, "not_found"),
         ("claude", 422, "unsupported"),
@@ -715,7 +726,7 @@ async fn codex_feedback_routes_native_instances_and_rejects_unknown_engines() {
         assert_eq!(code, expected_status, "{body}");
         assert_eq!(body["code"], expected_code, "{body}");
     }
-    let records = launches(&launch);
+    let records = engine_launches();
     assert_eq!(
         records, before_rejections,
         "rejections must not launch an engine"
