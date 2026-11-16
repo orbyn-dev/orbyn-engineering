@@ -111,3 +111,4 @@ mod hardening;
 mod membership;
 mod subfolder;
 mod worktrees;
+mod write;

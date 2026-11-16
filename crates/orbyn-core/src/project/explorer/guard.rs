@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::resolve_existing;
 use crate::project::files::{names_git, opened_path};
+use crate::project::outside_files::within;
 
 const MAX_PATH_BYTES: usize = 4096;
 
@@ -37,6 +38,7 @@ fn reserved(part: &str, windows: bool) -> bool {
     }
     let trimmed = part.trim_end_matches(['.', ' ']);
     part.contains(':')
+        || part != trimmed
         || trimmed.eq_ignore_ascii_case(".git")
         || trimmed.eq_ignore_ascii_case("git~1")
         || windows_device(part)
@@ -86,14 +88,27 @@ pub(super) struct Resolved {
 }
 
 impl Guard {
+    pub fn with_library(root: &Path, data: &Path, library: Option<PathBuf>) -> Result<Self> {
+        let library_repo = library
+            .and_then(|library| resolve_existing(&library))
+            .filter(|library| library.starts_with(root))
+            .map(|library| library.join("repo"));
+        Self::new(root, data, library_repo)
+    }
+
     pub fn new(root: &Path, data: &Path, library_repo: Option<PathBuf>) -> Result<Self> {
+        let expected = root;
         let root =
             crate::util::canonicalize(root).map_err(|_| CoreError::NotFound("worktree".into()))?;
-        let data = crate::util::canonicalize(data).ok();
+        if root != expected {
+            return Err(refused());
+        }
+        // Missing protected folders remain protected against creation too.
+        let data = resolve_existing(data);
         Ok(Self {
             data,
             excluded: library_repo
-                .and_then(|path| crate::util::canonicalize(&path).ok())
+                .and_then(|path| resolve_existing(&path))
                 .into_iter()
                 .collect(),
             root,
@@ -104,11 +119,8 @@ impl Guard {
     fn allows(&self, real: &Path) -> bool {
         real.strip_prefix(&self.root)
             .is_ok_and(|inside| !names_git(inside))
-            && !self
-                .data
-                .as_ref()
-                .is_some_and(|data| real.starts_with(data))
-            && !self.excluded.iter().any(|folder| real.starts_with(folder))
+            && !self.data.as_ref().is_some_and(|data| within(real, data))
+            && !self.excluded.iter().any(|folder| within(real, folder))
     }
 
     /// True when a listing may show the entry `name` of the folder `dir`.
@@ -120,10 +132,19 @@ impl Guard {
     /// path the handle names. Hold it while the folder is read and pass it to
     /// [`Guard::confirm_dir`] afterwards.
     pub fn open_dir(&self, real: &Path) -> Result<std::fs::File> {
+        self.open_directory(real, false)
+    }
+
+    pub fn write_dir(&self, real: &Path) -> Result<std::fs::File> {
+        self.open_directory(real, true)
+    }
+
+    fn open_directory(&self, real: &Path, writing: bool) -> Result<std::fs::File> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
         {
+            let _ = writing;
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY);
         }
@@ -133,6 +154,10 @@ impl Guard {
             const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
             const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
             options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+            if writing {
+                // Keep every ancestor in place until the mutation ends.
+                options.share_mode(0x0000_0001 | 0x0000_0002);
+            }
         }
         let handle = options.open(real).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -141,8 +166,52 @@ impl Guard {
                 refused()
             }
         })?;
+        if writing {
+            self.confirm_write_dir(&handle, real)?;
+        }
         self.confirm_dir(&handle, real)?;
         Ok(handle)
+    }
+
+    pub fn confirm_write_dir(&self, handle: &std::fs::File, real: &Path) -> Result<()> {
+        let meta = handle.metadata()?;
+        if !meta.is_dir() {
+            return Err(refused());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if meta.file_attributes() & 0x400 != 0 {
+                return Err(refused());
+            }
+        }
+        // Write authority fails closed if the platform cannot identify the handle.
+        let opened = opened_path(handle).map_err(|_| refused())?;
+        if !self.allows(&opened)
+            || crate::util::canonicalize(real).map_err(|_| refused())? != opened
+        {
+            return Err(refused());
+        }
+        self.confirm_dir(handle, real)
+    }
+
+    /// A mutation may not move an ancestor of excluded application/library data.
+    pub fn mutation_path(&self, raw: &str) -> Result<Resolved> {
+        let resolved = self.resolve(raw)?;
+        if resolved.rel.is_empty()
+            || self
+                .data
+                .iter()
+                .chain(&self.excluded)
+                .any(|path| within(path, &resolved.real))
+        {
+            return Err(refused());
+        }
+        Ok(resolved)
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// Refuses when the folder the handle holds is no longer inside the worktree, or is
@@ -260,6 +329,8 @@ mod tests {
             "NUL",
             "a/con.txt",
             "COM1",
+            "ordinary.",
+            "ordinary ",
         ] {
             assert!(clean(bad, true).is_err(), "{bad:?}");
         }
@@ -276,5 +347,78 @@ mod tests {
         assert!(windows_device("com1.txt"));
         assert!(!windows_device("console"));
         assert!(!windows_device("com10"));
+    }
+
+    #[test]
+    fn missing_exclusions_and_their_ancestors_cannot_be_created_or_moved() {
+        let dir = crate::testing::TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join("parent")).unwrap();
+        let guard = Guard::new(&root, &root.join("parent/data"), Some(root.join("repo"))).unwrap();
+        for path in [
+            "repo",
+            "repo/new",
+            "parent/data",
+            "parent/data/new",
+            "parent",
+        ] {
+            assert!(guard.mutation_path(path).is_err(), "{path}");
+        }
+        assert!(guard.mutation_path("normal").is_ok());
+        let library = root.join("library");
+        std::fs::create_dir(&library).unwrap();
+        let current = Guard::with_library(&root, &root.join("parent/data"), Some(library)).unwrap();
+        assert!(current.mutation_path("library/repo").is_err());
+        assert!(current.mutation_path("library").is_err());
+        assert!(current.mutation_path("other/repo").is_ok());
+        let missing = Guard::with_library(
+            &root,
+            &root.join("parent/data"),
+            Some(root.join("absent-library")),
+        )
+        .unwrap();
+        assert!(missing.mutation_path("absent-library").is_err());
+        assert!(missing.mutation_path("absent-library/repo").is_err());
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            for path in ["REPO", "PARENT/DATA/new"] {
+                assert!(guard.mutation_path(path).is_err(), "{path}");
+            }
+            assert!(missing.mutation_path("ABSENT-LIBRARY/REPO").is_err());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_handles_must_name_directories() {
+        let dir = crate::testing::TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("file"), "content").unwrap();
+        let guard = Guard::new(&root, &root.join("data"), None).unwrap();
+        let file = std::fs::File::open(root.join("file")).unwrap();
+        assert!(guard.confirm_write_dir(&file, &root.join("file")).is_err());
+        let held = guard.write_dir(&root).unwrap();
+        assert!(guard.confirm_write_dir(&held, &root).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_handles_refuse_junctions_even_when_the_target_is_inside() {
+        let dir = crate::testing::TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join("inside")).unwrap();
+        // Junction creation needs no symbolic-link privilege on supported Windows.
+        // Both paths come exclusively from this disposable fixture.
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(root.join("junction"))
+            .arg(root.join("inside"))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let guard = Guard::new(&root, &root.join("data"), None).unwrap();
+        assert!(guard.write_dir(&root.join("junction")).is_err());
+        assert!(guard.write_dir(&root.join("inside")).is_ok());
     }
 }

@@ -177,7 +177,7 @@ async fn an_untrusted_project_is_refused() {
 }
 
 #[tokio::test]
-async fn the_routes_need_a_credential_and_offer_no_write() {
+async fn the_read_routes_need_a_credential_and_offer_no_write() {
     let f = fixture().await;
     let routes = [
         format!("/api/projects/{}/worktrees", f.project),
@@ -224,4 +224,181 @@ async fn the_routes_need_a_credential_and_offer_no_write() {
             assert_eq!(write.status(), 405, "{method} {route}");
         }
     }
+}
+
+#[tokio::test]
+async fn file_actions_create_move_and_delete_through_the_project_worktree_route() {
+    let f = fixture().await;
+    let route = format!("{}/file-actions", base(&f));
+    for action in [
+        serde_json::json!({"action":"create_directory", "path":"new"}),
+        serde_json::json!({"action":"create_file", "path":"new/empty"}),
+        serde_json::json!({"action":"move", "path":"new", "destination":"renamed"}),
+        serde_json::json!({"action":"move", "path":"renamed/empty", "destination":"empty"}),
+        serde_json::json!({"action":"delete", "path":"renamed"}),
+        serde_json::json!({"action":"delete", "path":"empty"}),
+    ] {
+        let response = f.service.post(&route).json(&action).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            204,
+            "{action}: {}",
+            response.text().await.unwrap()
+        );
+    }
+    assert!(!f._dir.path().join("app/empty").exists());
+    let (_, tree) = get(&f.service, &format!("{}/tree", base(&f))).await;
+    assert!(
+        tree["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["name"] != "renamed")
+    );
+}
+
+#[tokio::test]
+async fn file_actions_preserve_existing_data_and_refuse_invalid_paths() {
+    let f = fixture().await;
+    let route = format!("{}/file-actions", base(&f));
+    for action in [
+        serde_json::json!({"action":"create_file", "path":"a.txt"}),
+        serde_json::json!({"action":"move", "path":"src/lib.rs", "destination":"a.txt"}),
+        serde_json::json!({"action":"delete", "path":"src"}),
+        serde_json::json!({"action":"delete", "path":""}),
+        serde_json::json!({"action":"create_directory", "path":"../escape"}),
+        serde_json::json!({"action":"delete", "path":".git/config"}),
+    ] {
+        let response = f.service.post(&route).json(&action).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            400,
+            "{action}: {}",
+            response.text().await.unwrap()
+        );
+    }
+    let (_, file) = get(&f.service, &format!("{}/file?path=a.txt", base(&f))).await;
+    assert_eq!(file["content"], "one\n");
+    assert!(f._dir.path().join("app/src/lib.rs").exists());
+    let missing = f
+        .service
+        .post(&route)
+        .json(&serde_json::json!({"action":"delete", "path":"missing"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+}
+
+#[tokio::test]
+async fn file_actions_require_auth_trust_and_membership() {
+    let f = fixture().await;
+    let route = format!("{}/file-actions", base(&f));
+    let action = serde_json::json!({"action":"create_file", "path":"new"});
+    let bare = f
+        .service
+        .client
+        .post(format!("{}{route}", f.service.url))
+        .json(&action)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bare.status(), 401);
+    let query_token = f
+        .service
+        .client
+        .post(format!(
+            "{}{route}?token={}",
+            f.service.url, f.service.token
+        ))
+        .json(&action)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(query_token.status(), 401);
+    let unknown = format!(
+        "/api/projects/{}/worktrees/wt-0000000000000000/file-actions",
+        f.project
+    );
+    assert_eq!(
+        f.service
+            .post(&unknown)
+            .json(&action)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let folder = f._dir.path().join("untrusted");
+    repo(&folder);
+    let project = f.service.project(&folder, false).await;
+    let untrusted = format!(
+        "/api/projects/{project}/worktrees/{}/file-actions",
+        f.worktree
+    );
+    assert_eq!(
+        f.service
+            .post(&untrusted)
+            .json(&action)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let malformed = serde_json::json!({"action":"move", "path":"a.txt"});
+    assert_eq!(
+        f.service
+            .post(&route)
+            .json(&malformed)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    assert!(!f._dir.path().join("app/new").exists());
+}
+
+#[tokio::test]
+async fn file_actions_refuse_a_newly_locked_worktree() {
+    let f = fixture().await;
+    let root = f._dir.path().join("app");
+    let linked = f._dir.path().join("app-wt/feature");
+    run_git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            &linked.to_string_lossy(),
+        ],
+    );
+    let (_, listed) = get(
+        &f.service,
+        &format!("/api/projects/{}/worktrees?refresh=1", f.project),
+    )
+    .await;
+    let id = listed["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == "feature")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    run_git(&root, &["worktree", "lock", &linked.to_string_lossy()]);
+    let route = format!("/api/projects/{}/worktrees/{id}/file-actions", f.project);
+    let response = f
+        .service
+        .post(&route)
+        .json(&serde_json::json!({"action":"delete", "path":"a.txt"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    assert!(linked.join("a.txt").exists());
 }
