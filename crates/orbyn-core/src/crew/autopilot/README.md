@@ -128,6 +128,20 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
 
 ## The always-denied list: what it reads, and what it cannot
 
+`allowed_hosts` is read only at the task's base commit, with the existing 64 KiB file limit.
+Each entry must be an ASCII DNS name (nonempty labels of at most 63 bytes, no leading or trailing
+hyphens, at most 253 bytes), an IP literal, or `*.` followed by a DNS name within the same total
+limit. Case and one terminal DNS dot are normalized; IPv6 literals may have one bracket pair.
+Wildcards keep matching the apex and its subdomains, but never an IP literal. Malformed entries
+are dropped individually; valid entries in the same file remain usable. Ports, URLs, ambiguous
+numeric address spellings and malformed JSON grant nothing. Matching validates entries again,
+including those supplied directly to the detector. Loopback remains allowed, and explicitly
+listed private addresses, local collectors and internal names remain supported. These are syntax
+checks: they do not resolve DNS, prove destination ownership or prevent rebinding, redirects or tunnels.
+They apply only to hosts the text reader extracts: bare single-label, numeric shorthand and IPv6
+arguments of connecting programs are not consistently extracted. The synthetic N3 controls use
+explicit URL authorities; this admission change does not qualify those other command forms.
+
 It reads the kind, target and paths the gate is given, and for a command the simple commands inside it. It cannot see
 what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It follows a `cd` (so `cd .. && rm x` is outside), `git -C`, `git worktree add`, `find -delete`, `tar -C` and `unzip -d`, and counts a
 patch (`patch`, `git apply`), an interpreter reading a file, its input or a pipe, and `python -m` of a module that is not a well-known one
@@ -168,4 +182,7 @@ ledger of slice 4c; when that lands these rows move into it.
 - The queue and the watch are called by whoever drives them: no tool exposes them to the lead, and nothing runs them on a
   schedule or after a merge yet. The merge Gate (stage `merge`) is not written, since it needs Evidence objects.
   See [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
-- The detector and the list are heuristics (above); real runs will show what they miss ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)).
+- The detector and the list are heuristics (above). Host-admission regressions use synthetic inputs,
+  including malformed configuration and legitimate local/private destinations; they are not captured
+  engine runs. The three-engine real-run replay campaign and its observed misses remain outstanding
+  ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)); no real-run findings are claimed here.

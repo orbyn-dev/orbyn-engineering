@@ -2408,6 +2408,14 @@ an append-only ledger with no secret and no answer-key text. The mode is `full` 
 crew or repository. N1 also applies to threads outside Crew: an agent's command or request that names a state-changing account
 route, or a Crew route that changes state (`crew::changes`: the person's answers under `/api/crew`), is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
 
+N3 reads `allowed_hosts` at the task's base commit (at most 64 KiB). Admission and matching
+canonicalize ASCII DNS names and IP literals, reject malformed labels, ports, ambiguous numeric
+address spellings and wildcard IPs, and drop invalid entries individually. DNS labels are at most
+63 bytes and entries at most 253 bytes; case and one terminal DNS dot are normalized. A `*.` DNS
+entry still includes its apex. Loopback and explicitly listed local/private/internal destinations
+remain supported. This checks syntax only, without DNS resolution or proof of destination ownership;
+the detector's heuristic and sandbox limits remain in the Autopilot group README.
+
 A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
 merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,
 the task's and the repository's checks again on that combined state, then a compare-and-swap of the branch. Under `off` every merge
