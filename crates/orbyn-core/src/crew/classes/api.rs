@@ -189,16 +189,9 @@ impl Core {
                 );
                 notes.extend(both.differs());
             }
-            Shown::Blocked {
-                name,
-                commit,
-                reason,
-            } => {
-                let both =
-                    PathClasses::of_file(file.clone()).with_pinned_blocked(name, commit, reason);
+            Shown::Blocked { reason, .. } => {
                 notes.push(format!(
-                    "{CHANGED_RULE}: {}. Every engine is blocked until a person confirms or resets the remembered default branch.",
-                    both.problem_text()
+                    "{CHANGED_RULE}: {reason}. Every engine is blocked until a person confirms or resets the remembered default branch."
                 ));
             }
         }
