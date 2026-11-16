@@ -7,13 +7,13 @@ import { UNAVAILABLE_REASON } from "./Parts";
 
 /** What each frame must show, from Crew Designs v19. */
 const SHOWS: Record<ReviewFrameId, string[]> = {
-  "risk-reasons": ["Risk tiers", "Merges by itself · review within 24 hours", "count as High unless the changes are in a path class marked Low in .orbyn/crew.json", "Area mode", "Planned: after the autonomy-by-area slice"],
-  "risk-popover": ["Why Medium", "Area mode", "Planned: after the autonomy-by-area slice"],
-  "risk-high-full": ["Merged by Crew at 15:02.", "Why High", "Key rotation under load. No check covers it.", "Area mode", "Planned: after the autonomy-by-area slice"],
+  "risk-reasons": ["Risk tiers", "Merges by itself · review within 24 hours", "count as High unless the changes are in a path class marked Low in .orbyn/crew.json"],
+  "risk-popover": ["Why Medium"],
+  "risk-high-full": ["Merged by Crew at 15:02.", "Why High", "Key rotation under load. No check covers it."],
   "risk-high-on": ["Waiting for you before the merge.", "Autopilot is On for this repo, and this change is High risk.", "Review", "Send back to Build", "Switch to Full", "Add reviewer", "Round 1", "Inbox · 3", "Planned: after the autonomy-by-area slice", "Revert rate"],
-  "risk-raised": ["Raised from Medium", "Same engine as author · lead tier", "Sign in to another engine", "Area mode", "Planned: after the autonomy-by-area slice"],
+  "risk-raised": ["Raised from Medium", "Same engine as author · lead tier", "Sign in to another engine"],
   "risk-board-card": ["Low · Full", "High · On", "Waiting for you before the merge (On)"],
-  "risk-demoted": ["Area web/auth is on On: 2 reverts in 14 days · 9 merges", "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.", "docs/guides follows your ceiling, Full.", "Planned", "Where the area mode comes from (Planned)", "Override… (its row in Settings › Crew is Planned)"],
+  "risk-demoted": ["Area web/auth is on On: 2 reverts in 14 days · 9 merges", "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.", "docs/guides follows your ceiling, Full.", "Where the area mode comes from (Planned)", "Override… (its row in Settings › Crew is Planned)"],
   "mergequeue-main": ["Re-checking combined", "Merging is code", "How the queue works"],
   "mergequeue-forecast": ["Conflict forecast", "Run them in order, the rename, then the move", "Why ordered, not parallel"],
   "mergequeue-removed": ["Left the queue", "What happens next"],
@@ -74,6 +74,43 @@ describe("Autopilot review frames (Crew Designs v19)", () => {
   it.each(REVIEW_FRAMES)("#/preview/crew/%s: no frame of the group offers Approve and merge; merging stays with the person-only review routes", async (name) => {
     const { container } = await open(name);
     expect(container.textContent).not.toContain("Approve and merge");
+  });
+
+  const PLANNED = "Planned: after the autonomy-by-area slice";
+  const areaRow = (container: HTMLElement) => {
+    const rows = [...container.querySelectorAll("li")].filter((li) => li.querySelector("b")?.textContent === "Area mode");
+    return rows;
+  };
+
+  it.each(["risk-reasons", "risk-high-full", "risk-high-on", "risk-raised"] as const)(
+    "%s: the Area mode row is the muted Planned row and has no effect on the tier",
+    async (name) => {
+      const { container } = await open(name);
+      const rows = areaRow(container);
+      expect(rows).toHaveLength(1);
+      const row = within(rows[0]!);
+      expect(row.getByText(PLANNED)).toHaveClass("crew-muted");
+      expect(row.getByText("No effect")).toBeInTheDocument();
+    },
+  );
+
+  it("risk-popover: the Area mode row says Planned and carries no tag", async () => {
+    const { container } = await open("risk-popover");
+    const dt = [...container.querySelectorAll("dt")].find((el) => el.textContent === "Area mode");
+    expect(dt).toBeDefined();
+    const row = dt!.parentElement!;
+    expect(within(row).getByText(PLANNED)).toBeInTheDocument();
+    expect(row.querySelector(".crew-tag")).toBeNull();
+  });
+
+  it("risk-demoted: both Area mode rows carry the Planned tag, not a tier effect", async () => {
+    const { container } = await open("risk-demoted");
+    const rows = areaRow(container);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(within(row).getByText("Planned")).toHaveClass("crew-tag");
+      expect(within(row).queryByText(/Raises risk|Lowers risk|No effect/)).toBeNull();
+    }
   });
 
   it("risk-high-on: Review opens the item in the Review queue, and is inert in the preview", async () => {
