@@ -61,5 +61,7 @@ Browser tests are in `e2e/`, against the mock API (`mock/`) or a real service
   literal `import()` and import type queries. Computed specifiers and path aliases
   are not checked; unresolved relative imports only warn.
 - Generated code, `*.test.ts(x)`, `test-setup.ts` and `test-support.ts` are excluded
-  from the architecture graph. ESLint's import restrictions cover static imports
-  and re-exports; tests are exempt.
+  from the architecture graph. ESLint's `architecture/boundaries` rule covers static
+  imports, re-exports, literal `import()` and type queries: another feature only
+  through its `index.ts`, and shared folders never import a feature. A feature may
+  use its own internals; tests are exempt. Computed specifiers are not checked.
