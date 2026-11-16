@@ -5,7 +5,7 @@ import { CodeBlock } from "../code/CodeBlock";
 const dark = (theme: string) =>
   theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
-/** Draws a diagram; while it's incomplete or invalid, the source stands in. */
+/** Draws a diagram; while it's incomplete or invalid, the source stands in. Mermaid SVG renders inline; no other SVG or HTML is rendered. */
 export function Mermaid({ code }: { code: string }) {
   const theme = useUi((state) => state.theme);
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
