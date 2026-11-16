@@ -1,0 +1,713 @@
+//! Owned temporary Git repositories, fake forge replies and the normal fake-engine admission path.
+//! No installed forge CLI, account, network remote or provider is used.
+
+use std::sync::{Arc, Mutex};
+
+use serde_json::{Value, json};
+
+use super::autopilot_merge::{gitq, passed};
+use super::harness::{Turn, World, report, world_forge};
+use super::review_support::commit_all;
+use crate::crew::{MergeOutcome, MergeTarget, ReviewAnswer};
+use crate::error::CoreError;
+use crate::source_control::forge::{Forge, with_crew_fixture};
+use crate::store::ForgePhase;
+use crate::testing::{TempDir, run_git};
+
+const NOW: i64 = 1_800_000_000;
+
+struct Setup {
+    w: World,
+    remote: TempDir,
+    target: MergeTarget,
+    task: String,
+}
+
+async fn setup() -> Setup {
+    setup_with_rules(r#"{"checks":[{"run":"echo repository-check"}]}"#).await
+}
+
+async fn setup_with_rules(rules: &str) -> Setup {
+    let w = world_forge(Arc::new(|turn, repo| {
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("src/feature.txt"),
+            format!("implemented {turn}\n"),
+        )
+        .unwrap();
+        commit_all(repo, "feature");
+        Turn::Report(report("done"))
+    }))
+    .await;
+    // The checks are committed before the task starts; the candidate cannot define its own verifier.
+    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
+    std::fs::write(w.repo.join(".orbyn/crew.json"), rules).unwrap();
+    commit_all(&w.repo, "repository checks");
+    let branch = gitq(&w.repo, &["branch", "--show-current"]).await;
+    let remote = TempDir::new();
+    run_git(remote.path(), &["init", "--bare", "-q"]);
+    run_git(
+        &w.repo,
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
+    run_git(
+        &w.repo,
+        &["push", "-q", "origin", &format!("HEAD:refs/heads/{branch}")],
+    );
+    let target = MergeTarget {
+        repo: w.repo.clone(),
+        branch,
+        owed: Some(Vec::new()),
+    };
+    let task = passed(&w, &["src/**"], "Implement a small feature.").await;
+    Setup {
+        w,
+        remote,
+        target,
+        task,
+    }
+}
+
+#[derive(Default)]
+struct RemoteState {
+    base: String,
+    head: String,
+    source: String,
+    branch: String,
+    pending: bool,
+    published: bool,
+    merged: Option<String>,
+    creates: usize,
+    merges: usize,
+    unknown_merge: bool,
+    unknown_create: bool,
+    unreadable_once: bool,
+    wrong_merge_commit: bool,
+}
+
+type Fake =
+    Arc<dyn Fn(Forge, &std::path::Path, &[&str]) -> crate::error::Result<String> + Send + Sync>;
+
+async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
+    let state = Arc::new(Mutex::new(RemoteState {
+        base: gitq(
+            setup.remote.path(),
+            &["rev-parse", &format!("refs/heads/{}", setup.target.branch)],
+        )
+        .await,
+        head: setup
+            .w
+            .core
+            .store
+            .crew_results(&setup.task)
+            .unwrap()
+            .last()
+            .unwrap()
+            .commit
+            .as_ref()
+            .unwrap()
+            .as_str()
+            .to_owned(),
+        source: format!("crew/{}", setup.task.replace(':', "-")),
+        branch: setup.target.branch.clone(),
+        ..RemoteState::default()
+    }));
+    let state_in = state.clone();
+    let core = setup.w.core.clone();
+    let task = setup.task.clone();
+    let remote = setup.remote.path().to_owned();
+    let repo = setup.w.repo.clone();
+    let fixture: Fake = Arc::new(move |forge, _, args| {
+        assert_eq!(forge, Forge::GitHub);
+        // A fake with hostile GH_REPO/GH_HOST/default-repo settings accepts only explicit selectors.
+        if args.first() == Some(&"api") {
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--hostname", "fixture.invalid"])
+            );
+            assert!(args[1].starts_with("repos/fixture/repo/"));
+        } else {
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--repo", "fixture.invalid/fixture/repo"])
+            );
+        }
+        let mut s = state_in.lock().unwrap();
+        let value = match args {
+            ["pr", "create", ..] => {
+                s.creates += 1;
+                s.published = true;
+                if s.unknown_create {
+                    return Err(CoreError::Git("unknown fake create response".into()));
+                }
+                return Ok("https://example.invalid/repo/pull/7".into());
+            }
+            ["pr", "merge", "7", ..] => {
+                s.merges += 1;
+                assert!(
+                    args.windows(2)
+                        .any(|pair| pair == ["--match-head-commit", s.head.as_str()])
+                );
+                let intent = core.store.crew_forge_merge(&task).unwrap().unwrap();
+                let merged = if s.wrong_merge_commit {
+                    intent.candidate
+                } else {
+                    intent.combined.unwrap()
+                };
+                // This is the fake server's repository, never a real forge or the app's main checkout.
+                run_git(&remote, &["fetch", "-q", &repo.to_string_lossy(), &merged]);
+                run_git(
+                    &remote,
+                    &["update-ref", &format!("refs/heads/{}", s.branch), &merged],
+                );
+                s.merged = Some(merged);
+                if s.unknown_merge {
+                    s.unreadable_once = true;
+                    return Err(CoreError::Git("unknown fake merge response".into()));
+                }
+                return Ok(String::new());
+            }
+            ["api", path, ..] if path.contains("/pulls?state=") => {
+                if s.published {
+                    json!([{"number":7,"head":{"ref":s.source,"repo":{"full_name":"fixture/repo"}},"base":{"ref":s.branch,"repo":{"full_name":"fixture/repo"}}}])
+                } else {
+                    json!([])
+                }
+            }
+            ["api", path, ..] if path.ends_with("/pulls/7") => {
+                if s.unreadable_once {
+                    s.unreadable_once = false;
+                    return Err(CoreError::Git("fake read interrupted".into()));
+                }
+                json!({"number":7,"state": if s.merged.is_some() {"closed"} else {"open"},"merged":s.merged.is_some(),"merge_commit_sha":s.merged,"head":{"ref":s.source,"sha":s.head,"repo":{"full_name":"fixture/repo"}},"base":{"ref":s.branch,"sha":s.base,"repo":{"full_name":"fixture/repo"}}})
+            }
+            ["api", path, ..] if path.contains("/check-runs?") => {
+                json!({"check_runs":[{"name":"ci","head_sha":s.head,"status":if s.pending {"in_progress"} else {"completed"},"conclusion":if s.pending {Value::Null} else {json!("success")}}]})
+            }
+            ["api", path, ..] if path.contains("/status?") => {
+                json!({"sha":s.head,"total_count":0,"statuses":[]})
+            }
+            ["api", path, ..] if path.ends_with(&format!("/commits/{}", s.branch)) => {
+                json!({"sha":s.merged.as_ref().unwrap_or(&s.base)})
+            }
+            _ => panic!("unexpected fake forge call: {args:?}"),
+        };
+        Ok(value.to_string())
+    });
+    (state, fixture)
+}
+
+#[tokio::test]
+async fn forge_merge_pending_ci_cannot_merge_and_unknown_response_reconciles_once() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        state.lock().unwrap().pending = true;
+        let pending =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .unwrap();
+        assert!(matches!(pending.as_slice(), [MergeOutcome::Blocked { .. }]));
+        assert_eq!(state.lock().unwrap().merges, 0);
+        {
+            let mut remote = state.lock().unwrap();
+            remote.pending = false;
+            remote.unknown_merge = true;
+        }
+        assert!(
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 1)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .phase,
+            ForgePhase::MergeRequested
+        );
+        // Simulate the crash window after the exact receipt is durable but before Review/watch projection.
+        let mut intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        intent.phase = ForgePhase::Merged;
+        intent.merge_commit = state.lock().unwrap().merged.clone();
+        s.w.core.store.save_crew_forge_merge(&mut intent).unwrap();
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_none());
+        // Default None means no periodic scheduling; startup still reconciles already requested effects.
+        s.w.core
+            .run_crew_merge_watch(tokio_util::sync::CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 2)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        {
+            let remote = state.lock().unwrap();
+            assert_eq!((remote.creates, remote.merges), (1, 1));
+        }
+        assert!(
+            s.w.core
+                .store
+                .crew_gates(&s.task)
+                .unwrap()
+                .iter()
+                .any(|g| g.stage == orbyn_contracts::GateStage::Merge)
+        );
+        let record = s.w.core.store.crew_merge(&s.task).unwrap().unwrap();
+        assert_eq!(record.watch, "green");
+        let events = s.w.core.store.events_after(&s.w.lead, 0, 1000).unwrap();
+        s.w.core.crew_deliver_merge_notices(NOW + 3).unwrap();
+        assert_eq!(
+            s.w.core
+                .store
+                .events_after(&s.w.lead, 0, 1000)
+                .unwrap()
+                .len(),
+            events.len()
+        );
+        // Even a direct compatibility call cannot move the local branch for a forge intent.
+        let local = gitq(&s.w.repo, &["rev-parse", &s.target.branch]).await;
+        assert!(
+            s.w.core
+                .crew_process_merges(&s.target, NOW + 4)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            gitq(&s.w.repo, &["rev-parse", &s.target.branch]).await,
+            local
+        );
+        assert!(
+            s.w.core
+                .crew_answer_review(&s.task, ReviewAnswer::Revert, &s.target, NOW + 5)
+                .await
+                .is_err()
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_moved_forge_base_stops_before_publication() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        state.lock().unwrap().base = "c".repeat(40);
+        let result =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .unwrap();
+        assert!(matches!(
+            result.as_slice(),
+            [MergeOutcome::NeedsPerson { .. }]
+        ));
+        assert_eq!(state.lock().unwrap().creates, 0);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn merge_tools_cannot_answer_for_the_person_or_set_ci_policy() {
+    let s = setup().await;
+    for forbidden in [
+        json!({"task":s.task,"answer":"looks_good"}),
+        json!({"task":s.task,"required_checks":[]}),
+        json!({"task":s.task,"released":true}),
+    ] {
+        let (_, error) =
+            s.w.call(&s.w.lead_token, "crew_answer_review", forbidden)
+                .await;
+        assert!(error);
+    }
+    let worker_token = super::harness::bind(&s.w.core, &s.w.worker(&s.task), "run-worker-attempt");
+    for tool in crate::crew::MERGE_TOOLS {
+        let (_, error) =
+            s.w.call(
+                &worker_token,
+                tool,
+                json!({"task":s.task,"branch":s.target.branch}),
+            )
+            .await;
+        assert!(error, "a worker used {tool}");
+    }
+    assert!(
+        s.w.core
+            .merge_gate_from_evidence(&s.task, &[], &"a".repeat(40), &"b".repeat(40), NOW)
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn unknown_publication_finds_the_existing_pr_without_a_second_create() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        {
+            let mut remote = state.lock().unwrap();
+            remote.unknown_create = true;
+            remote.pending = true;
+        }
+        assert!(
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .phase,
+            ForgePhase::Publishing
+        );
+        let resumed =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 1)
+                .await
+                .unwrap();
+        assert!(matches!(resumed.as_slice(), [MergeOutcome::Blocked { .. }]));
+        let remote = state.lock().unwrap();
+        assert_eq!((remote.creates, remote.merges), (1, 0));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn lowering_the_mode_holds_forge_publication() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        s.w.core
+            .set_crew_autopilot_mode(&crate::crew::ModeScope::Default, crate::crew::Mode::Off)
+            .unwrap();
+        let held =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .unwrap();
+        assert!(matches!(held.as_slice(), [MergeOutcome::Blocked { .. }]));
+        let remote = state.lock().unwrap();
+        assert_eq!((remote.creates, remote.merges), (0, 0));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn person_release_does_not_remove_a_locked_review_lane() {
+    let s = setup_with_rules(
+        r#"{"checks":[{"run":"echo repository-check"}],"lanes":[{"lane":"correctness","locked":true}]}"#,
+    )
+    .await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core.set_crew_autopilot_mode(&crate::crew::ModeScope::Default, crate::crew::Mode::Off).unwrap();
+        s.w.core.crew_queue_forge_merge(&s.task, &s.target, NOW).await.unwrap();
+        s.w.core.crew_release_merge(&s.task).unwrap();
+        let result = s.w.core.crew_process_forge_merges(&s.target, NOW).await.unwrap();
+        assert!(matches!(result.as_slice(), [MergeOutcome::Blocked { why, .. }] if why.contains("locked")));
+        let remote = state.lock().unwrap();
+        assert_eq!((remote.creates, remote.merges), (0, 0));
+    }).await;
+}
+
+#[tokio::test]
+async fn a_changed_published_head_cannot_use_previous_ci() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        state.lock().unwrap().pending = true;
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW)
+            .await
+            .unwrap();
+        {
+            let mut remote = state.lock().unwrap();
+            remote.pending = false;
+            remote.head = "d".repeat(40);
+        }
+        let result =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 1)
+                .await
+                .unwrap();
+        assert!(matches!(
+            result.as_slice(),
+            [MergeOutcome::NeedsPerson { .. }]
+        ));
+        assert_eq!(state.lock().unwrap().merges, 0);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn actual_merge_mismatch_is_durable_with_the_review_record() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .set_crew_autopilot_mode(&crate::crew::ModeScope::Default, crate::crew::Mode::Off)
+            .unwrap();
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        s.w.core.crew_release_merge(&s.task).unwrap();
+        state.lock().unwrap().wrong_merge_commit = true;
+        let result =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .unwrap();
+        assert!(matches!(result.as_slice(), [MergeOutcome::Merged { .. }]));
+        let record = s.w.core.store.crew_merge(&s.task).unwrap().unwrap();
+        assert!(record.needs_person.as_deref().unwrap().contains("differs"));
+        assert_eq!(record.review_state, "waiting");
+        assert!(
+            s.w.core
+                .crew_review_queue(NOW + 1)
+                .unwrap()
+                .iter()
+                .any(|item| item.task_id == s.task && item.needs_person.is_some())
+        );
+        assert_eq!(
+            s.w.core.store.merge_entry(&s.task).unwrap().unwrap().state,
+            "merged"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn later_merge_evidence_and_gates_do_not_change_the_passed_review_commit() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        let task = s.w.core.store.crew_task(&s.task).unwrap().unwrap();
+        let original = s.w.core.verification_evidence(&task).unwrap();
+        let candidate = s.w.core.review_commit(&task, &s.w.repo).await.unwrap();
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        state.lock().unwrap().pending = true;
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW)
+            .await
+            .unwrap();
+        let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        assert_ne!(intent.combined.as_deref(), Some(candidate.as_str()));
+        assert!(s.w.core.store.crew_evidence(&s.task).unwrap().len() > original.len());
+        let mut gate =
+            s.w.core
+                .store
+                .crew_gates(&s.task)
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+        gate.stage = orbyn_contracts::GateStage::Merge;
+        gate.evidence = intent
+            .evidence
+            .iter()
+            .map(|id| orbyn_contracts::CrewHash::new(id.clone()).unwrap())
+            .collect();
+        gate.id = orbyn_contracts::CrewObject::Gate(gate.clone())
+            .computed_id()
+            .unwrap();
+        s.w.core
+            .store
+            .add_crew_object(&s.task, &orbyn_contracts::CrewObject::Gate(gate))
+            .unwrap();
+        run_git(&s.w.repo, &["checkout", "--detach", "-q", &intent.base]);
+        assert_eq!(
+            s.w.core.review_commit(&task, &s.w.repo).await.unwrap(),
+            candidate
+        );
+        assert_eq!(s.w.core.verification_evidence(&task).unwrap(), original);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn ordinary_owed_lane_needs_the_candidate_but_a_person_can_stand_in() {
+    let s = setup().await;
+    let (_, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .set_crew_autopilot_mode(&crate::crew::ModeScope::Default, crate::crew::Mode::Off)
+            .unwrap();
+        let mut target = s.target.clone();
+        target.owed = Some(vec!["correctness".into()]);
+        let entry =
+            s.w.core
+                .crew_queue_forge_merge(&s.task, &target, NOW)
+                .await
+                .unwrap();
+        let old_commit =
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .base;
+        // A synthetic stored lane is passed, but its commit is stale. State alone must not authorize this candidate.
+        let reviewer = passed(&s.w, &["src/**"], "Synthetic lane fixture.").await;
+        s.w.core
+            .store
+            .add_crew_review(&crate::store::CrewReview {
+                task_id: reviewer,
+                subject_id: s.task.clone(),
+                lane: "correctness".into(),
+                role: "review".into(),
+                round: 1,
+                commit: old_commit,
+                check_of: None,
+            })
+            .unwrap();
+        assert!(
+            s.w.core
+                .forge_review_precondition(&entry, &target)
+                .await
+                .unwrap()
+                .unwrap()
+                .contains("current candidate")
+        );
+        s.w.core.crew_release_merge(&s.task).unwrap();
+        let released = s.w.core.store.merge_entry(&s.task).unwrap().unwrap();
+        assert_eq!(
+            s.w.core
+                .forge_review_precondition(&released, &target)
+                .await
+                .unwrap(),
+            None
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn another_crew_cannot_overtake_an_unknown_publication() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core.crew_queue_forge_merge(&s.task, &s.target, NOW).await.unwrap();
+        state.lock().unwrap().unknown_create = true;
+        assert!(s.w.core.crew_process_forge_merges(&s.target, NOW).await.is_err());
+        let project = s.w.core.store.thread(&s.w.lead).unwrap().project_id;
+        let other = s.w.core.create_thread(orbyn_contracts::CreateThread {
+            project_id: Some(project), engine: "alpha".into(), model: None, title: Some("other lead".into()),
+            worktree: None, skill_profile: None, base_branch: None, effort: None, options: Default::default(),
+        }).await.unwrap();
+        let token = super::harness::bind(&s.w.core, &other.id, "other-lead-run");
+        let (answer, error) = s.w.call(&token, "crew_start", json!({"brief":super::harness::brief(json!({"files":[{"path":"src/**","mode":"write"}],"outcome":"Later queued work."})),"answer_key":{"checks":[{"id":"ok","kind":"command","params":{"run":"echo other-check"},"proves":"It runs."}],"protected_paths":[]}})).await;
+        assert!(!error, "{answer}");
+        let other_task = answer["task"].as_str().unwrap();
+        s.w.until_state(other_task, "passed").await;
+        s.w.core.crew_queue_forge_merge(other_task, &s.target, NOW + 1).await.unwrap();
+        let before = state.lock().unwrap().creates;
+        let result = s.w.core.process_forge_merges_for(&s.target, Some(&other.id), NOW + 2).await.unwrap();
+        assert!(matches!(result.as_slice(), [MergeOutcome::Blocked { why, .. }] if why.contains("another crew")));
+        assert_eq!(state.lock().unwrap().creates, before);
+    }).await;
+}
+
+#[tokio::test]
+async fn person_comment_admits_a_scoped_fix_through_the_normal_fake_engine() {
+    let s = setup().await;
+    let (_, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW)
+            .await
+            .unwrap();
+        let record = s.w.core.store.crew_merge(&s.task).unwrap().unwrap();
+        run_git(
+            &s.w.repo,
+            &["checkout", "--detach", "-q", &record.merge_commit],
+        );
+        let before =
+            s.w.core
+                .store
+                .crew_work_tasks(&s.w.lead, 100)
+                .unwrap()
+                .len();
+        s.w.core
+            .crew_answer_review(
+                &s.task,
+                ReviewAnswer::Comment(
+                    "Correct the small feature within its existing scope.".into(),
+                ),
+                &s.target,
+                NOW + 1,
+            )
+            .await
+            .unwrap();
+        let tasks = s.w.core.store.crew_work_tasks(&s.w.lead, 100).unwrap();
+        assert_eq!(tasks.len(), before + 1);
+        let fix = tasks.iter().find(|task| task.id != s.task).unwrap();
+        let original = s.w.core.store.crew_brief(&s.task).unwrap().unwrap();
+        let admitted = s.w.core.store.crew_brief(&fix.id).unwrap().unwrap();
+        assert_eq!(admitted.files, original.files);
+        assert_eq!(admitted.allowed_effects, original.allowed_effects);
+        let key = s.w.core.store.crew_answer_key(&fix.id).unwrap().unwrap();
+        assert!(
+            key.checks
+                .iter()
+                .any(|check| check.id.as_str() == "merge-comment-scope")
+        );
+        s.w.until_state(&fix.id, "passed").await;
+        // The same stored Comment cannot admit another task after a restart/retry.
+        let (_, error) =
+            s.w.call(
+                &s.w.lead_token,
+                "crew_answer_review",
+                json!({"task":s.task,"branch":s.target.branch}),
+            )
+            .await;
+        assert!(!error);
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_work_tasks(&s.w.lead, 100)
+                .unwrap()
+                .len(),
+            before + 1
+        );
+    })
+    .await;
+}

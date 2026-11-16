@@ -339,6 +339,9 @@ describe("a session the service ended", () => {
     const dialog = await screen.findByRole("dialog", { name: "You were signed out" });
     expect(dialog).toHaveTextContent("This device may have been removed, or your sessions ended.");
     expect(dialog).not.toHaveTextContent(/someone/i);
+    // The wipe is said plainly: the keys and the sync copy are gone, the person's own data is not.
+    expect(dialog).toHaveTextContent("Orbyn cleared this device’s keys and its sync copy from this computer.");
+    expect(dialog).toHaveTextContent("Your threads, projects and settings are still here");
     await user.click(within(dialog).getByRole("button", { name: "Sign in again" }));
     expect(await screen.findByLabelText("Email")).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "You were signed out" })).toBeNull();

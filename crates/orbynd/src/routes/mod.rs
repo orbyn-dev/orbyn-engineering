@@ -96,7 +96,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
-        .merge(explorer::routes())
+        .merge(explorer::routes(state.clone()))
         .merge(files::routes())
         .merge(raw_files::routes())
         .merge(mcp_apps::routes())

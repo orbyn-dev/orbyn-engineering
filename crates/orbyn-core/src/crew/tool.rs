@@ -26,6 +26,7 @@ pub fn is_tool(name: &str) -> bool {
     [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name)
         || super::BUS_TOOLS.contains(&name)
         || super::REVIEW_TOOLS.contains(&name)
+        || super::MERGE_TOOLS.contains(&name)
 }
 
 /// The member id the lead thread has in a crew (the conformance fixtures call it `lead-01`).
@@ -68,6 +69,7 @@ pub fn tool_specs() -> Vec<Value> {
     ];
     tools.extend(super::bus::specs());
     tools.extend(super::review::specs());
+    tools.extend(super::autopilot::merge_tool_specs());
     tools
 }
 
@@ -143,6 +145,9 @@ impl Core {
         let answer = match tool {
             START_TOOL => self.crew_start_tool(binding, args).await,
             REPORT_TOOL => self.crew_report_tool(binding, args).await,
+            merge if super::MERGE_TOOLS.contains(&merge) => {
+                self.crew_merge_tool(binding, merge, args).await
+            }
             bus if super::BUS_TOOLS.contains(&bus) => self.crew_bus_tool(binding, bus, args).await,
             review if super::REVIEW_TOOLS.contains(&review) => {
                 self.crew_review_tool(binding, review, args).await

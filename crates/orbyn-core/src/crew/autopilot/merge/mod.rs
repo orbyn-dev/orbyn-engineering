@@ -1,13 +1,18 @@
 //! The merge queue, the after-merge Review queue and the watch on main (slice 4f, part 2). See the [README](../README.md).
-//! Local only: a merge moves a local branch in a repository where no one has it checked out, and nothing is pushed.
+//! Forge merges use durable intent and commit-bound receipts. Local integration is a separate compatibility path.
 
 mod api;
+mod comment;
+mod evidence;
+mod forge;
+mod forge_watch;
 mod gitops;
 mod guard;
 mod holds;
 mod queue;
 mod review_queue;
 mod risk;
+mod tool;
 mod watch;
 
 pub use api::{
@@ -18,6 +23,9 @@ pub use holds::lane_ran;
 pub use queue::{MergeOutcome, MergeTarget};
 pub use review_queue::{ReviewAnswer, ReviewItem};
 pub use risk::{DiffFacts, Rate, RecentTotals, Risk, Scored, area_of, areas_of, score};
+pub use tool::MERGE_TOOLS;
+pub(crate) use tool::specs as merge_tool_specs;
+pub use tool::{MergeOperation, MergeRequest};
 pub use watch::WatchOutcome;
 
 /// The review window of a merge, in seconds: high 4 hours, medium 24 hours, low batched with no deadline

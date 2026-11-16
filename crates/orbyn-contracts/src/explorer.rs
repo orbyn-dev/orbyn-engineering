@@ -1,5 +1,5 @@
 //! The left explorer: a project's worktrees and a read-only look at their files.
-//! Nothing here writes; edits go through a thread's file routes.
+//! File actions name the same project and opaque worktree id as reads.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -169,5 +169,17 @@ pub struct ExplorerFile {
     pub revision: Option<String>,
     pub change: Option<ExplorerChange>,
     pub read_only: bool,
+}
+}
+
+wire! {
+/// A person's file action. Move also renames. Destinations must not exist;
+/// delete removes files or empty folders only. Links and the worktree root are refused.
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExplorerFileAction {
+    CreateFile { path: String },
+    CreateDirectory { path: String },
+    Move { path: String, destination: String },
+    Delete { path: String },
 }
 }

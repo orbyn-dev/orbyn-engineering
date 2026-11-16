@@ -1548,9 +1548,10 @@ the API or the network.
 ### Explorer
 
 The left explorer reads a project's worktrees and their files without a thread. It is a
-person's read-only view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
-and `.../worktrees/:worktree/file`, with no write, rename, delete or editor route; edits
-still go through a thread's file routes. `orbynd` only routes; Core
+person's view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
+and `.../worktrees/:worktree/file`. `POST .../worktrees/:worktree/file-actions` applies
+a person's create, move (including rename), or delete request without a thread.
+`orbynd` only routes; Core
 (`project::explorer`) decides. The project must be trusted like any file route
 (`403 folder_untrusted`).
 
@@ -1616,7 +1617,54 @@ still go through a thread's file routes. `orbynd` only routes; Core
   or Git calls it prunable; its tree is `404`), `locked` (`git worktree lock`) or `other_session`
   (the asking thread, `?thread=`, differs from a thread that has a run going in it). Each
   worktree lists its live threads by id and title.
-- **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
+- **File actions** take a tagged `ExplorerFileAction`: `create_file` creates an empty
+  file, `create_directory` creates one folder, `move` names a source `path` and a
+  `destination`, and `delete` removes a file or an empty folder. Success is `204`.
+  There is no overwrite, recursive delete, parent creation, cross-worktree move or
+  arbitrary absolute path. Existing destinations and nonempty deletion are `400`.
+  The root, links, reparse points and special files are refused. Moving a folder
+  inspects at most 20,000 entries and refuses links or protected entries anywhere
+  below it; larger trees are refused. Application data and the library's `repo/`
+  remain excluded even when absent, and their ancestors cannot be moved.
+  These deny checks fold case on Windows and macOS; worktree containment stays
+  strict after canonicalization.
+- **Write authority is fresh.** Every action reads membership directly, without the
+  read cache, and refuses missing, prunable, nonmember or locked targets. Any active
+  run whose folder overlaps the target refuses the action (`403 policy_denied`); no
+  thread id exempts a run. Core serializes actions, holds the workspace admission
+  fence across the run check and effect, and rechecks project trust there. An audit
+  attempt precedes effects, and the outcome records allow or deny. No file contents
+  or arbitrary request paths enter those audit rows. Reads retain their existing
+  thread-relative read-only display policy.
+- **Person only, and gated.** The route is protected like every token route, and its handler is the
+  only caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a
+  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. That is not enough on its
+  own: until #441 is fixed, `orbynd` writes the per-launch service token to the data folder and the
+  `orbyn` CLI reads it, so an engine or crew worker that can read the data folder can call this
+  route as the person. For that reason it is behind the Preview flag Crew uses
+  (`ORBYN_CREW_PREVIEW`, off by default): with the flag off the route answers `404` like a path
+  that does not exist, and Core refuses too. The gate is removed when #441 is fixed.
+- **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
+  really is before any check, for reads and writes alike, so a project registered under another
+  spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside
+  the real folder. The active-run fence compares both spellings.
+- **What counts as active.** A thread with a run going, or whose engine console is open (the console
+  runs an agent without a run record), blocks writes in any worktree that overlaps its folder. A
+  person's own terminal does not.
+- **File-system limits.** Moves use an exclusive rename (`RENAME_EXCL` on macOS, `RENAME_NOREPLACE`
+  on Linux, `MoveFileExW` without replace on Windows). A file system that cannot do that (an old
+  kernel, some network or FUSE mounts) answers `400` "cannot move files safely"; nothing falls back
+  to a rename that could overwrite. Where names fold case (macOS default, Windows), a rename that
+  changes only the case of a name either renames the entry or, on a volume whose exclusive rename
+  sees the same entry, is refused as an existing destination; the file is never lost or duplicated.
+- **Mutation handles** identify every existing parent without following a final link,
+  fail closed when handle identity is unavailable, and check parents again before
+  effects. Unix operations are relative to the held parent; Windows holds ancestors
+  without delete sharing. Moves use the platform's exclusive rename, never a
+  check-then-overwrite fallback. Concurrent external filesystem changes are not a
+  transaction: parent checks narrow the Unix ancestor-move window, and folder
+  inspection cannot freeze descendants against another process changing them.
+- **A file action drops what is kept** and announces `explorer:<project>`; a run that ends drops
   the project's and announces `explorer:<project>`.
 
 **The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
@@ -2450,12 +2498,37 @@ it. The read may record observed availability but grants no action. Stable ledge
 of recent denials. Sign in opens Providers; Dismiss hides that notice. Neither blocks, approves nor retries the denied action.
 
 A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
-merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,
-the task's and the repository's checks again on that combined state, then a compare-and-swap of the branch. Under `off` every merge
-waits for a person and under `on` a high-risk one does; under `full` it merges and tops the after-merge Review queue. After merges the
-watch runs the repository's own checks and, if they fail, bisects the first-parent commits and reverts the crew's merge it finds only
-when the failure reproduces with it, passes without it and the later merges pass after the revert; otherwise it asks the person.
-Nothing is pushed.
+merge queue serializes one task at a time. Its lead tools use the forge as final writer (GitHub or GitLab), retaining a `--no-ff`
+scratch merge and the task's and repository's checks on the combined state. The service's person-owned required CI names must be
+nonempty; every named check must succeed at the actual candidate head, every observed check must succeed, and the target base
+must still match the checked base. Missing, skipped, neutral, pending and wrong-head evidence cannot pass. Agents cannot supply
+CI policy, remove owed lanes, release holds or answer the person's Review queue. Ordinary agent main-push/forge-merge commands
+remain denied. A merge Gate is code-authored from stored combined-state and current-head CI Evidence, never a model's approval.
+
+Migration 45 stores immutable repository/remote/source/head/base intent and revision checks before publication and merge effects.
+An interrupted create is reconciled by its deterministic source/target and same-repository PR identity; an interrupted merge is
+reconciled by PR identity, head and merge commit. An absent or uncertain receipt never causes a duplicate effect or local fallback.
+Origin supplies the canonical host/repository, with explicit API hostname and PR repository selectors; CLI default repositories
+and host overrides cannot select the destination. Credential-bearing or unsupported origin URLs refuse admission. The actual
+merge tree and parents are compared to the checked combination; a mismatch commits with the Review record as needing a person.
+The existing local branch API is explicit compatibility behavior: compare-and-swap only when no checkout holds the branch, and it
+refuses forge intents. Under `off` every merge waits for a person; under `on` high risk waits; mode, area ceilings, holds, findings
+and owed lanes are rechecked before the forge writer. Until review consent/risk receipts are available, same-vendor Security
+fallback is held for a person's explicit release.
+Every applicable pinned-base rule and default owed lane needs its latest passed review at the candidate; a person's release may
+stand in for a nonlocked lane but never a locked lane. Reviewer commit and verification counts come from the last passed Result
+and its exact check/Evidence citations, so later merge or finding Gates/Evidence cannot change what work the reviewer reads.
+
+Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base,
+records `NoChecks` as unverified, and asks a person when checks break; it never uses a local branch revert as a forge repair.
+Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
+without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
+24 hours, observes at most 32 confirmed forge targets and never schedules publication or merging. With Preview enabled, startup
+first reconciles up to 128 unfinished effects/confirmed receipts and watches the resulting merges even when periodic work is off;
+only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local
+JSON list, never a tool or HTTP setting. A stored person's Comment becomes a deterministic ordinary task with the
+original write grants, effects and protected checks plus a scope check; a stale checkout or failed admission asks the person.
 
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
@@ -3051,7 +3124,8 @@ every method, path and which routes need a credential.
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
 | `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
-| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only, no write route exists |
+| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
+| `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
